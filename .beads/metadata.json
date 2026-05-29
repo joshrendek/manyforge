@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "manyforge",
+  "project_id": "90baa679-9274-4b55-b1ae-acb5fce904e6"
+}
