@@ -17,6 +17,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/account"
 	"github.com/manyforge/manyforge/internal/authz"
+	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/config"
 	"github.com/manyforge/manyforge/internal/platform/db"
@@ -69,9 +70,11 @@ func main() {
 	}
 	tenSvc := &tenancy.Service{DB: database}
 	authzSvc := &authz.Service{DB: database}
+	invSvc := &invitations.Service{DB: database, Mailer: mailer.LogMailer{Logger: logger}}
 	acctH := account.NewHandler(acctSvc)
 	tenH := tenancy.NewHandler(tenSvc)
 	authzH := authz.NewHandler(authzSvc)
+	invH := invitations.NewHandler(invSvc)
 
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
@@ -91,6 +94,7 @@ func main() {
 			acctH.ProtectedRoutes(pr)
 			tenH.ProtectedRoutes(pr)
 			authzH.ProtectedRoutes(pr)
+			invH.ProtectedRoutes(pr)
 		})
 	})
 
