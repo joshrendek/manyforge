@@ -123,8 +123,8 @@ auth, and RBAC machinery every story sits on.
 **Independent Test**: invite to a sub-business as Member → accept → see only that subtree; role-above-own refused; reused token → 410; custom role grants exactly its permissions (SC-009).
 
 ### Tests (write first, MUST fail)
-- [ ] T053 [P] [US3] Contract tests: invitations create/list/revoke/resend, `/invitations/accept`, roles CRUD, `/permissions` in `internal/invitations/contract_test.go`, `internal/authz/roles_contract_test.go`
-- [ ] T054 [P] [US3] Integration: invite→accept→scoped access; role-above-own refused (FR-023); reused token 410 in `internal/invitations/accept_test.go`
+- [X] T053 [P] [US3] Contract tests: invitations create/list/revoke/resend, `/invitations/accept`, roles CRUD, `/permissions` in `internal/invitations/contract_test.go`, `internal/authz/roles_contract_test.go`
+- [X] T054 [P] [US3] Integration: invite→accept→scoped access; role-above-own refused (FR-023); reused token 410 in `internal/invitations/accept_test.go`
 - [ ] T055 [P] [US3] Integration: custom role → assign → exactly-permitted/denied (SC-009) in `internal/authz/role_enforce_test.go`
 - [ ] T056 [P] [US3] Security regression: escalation refused at assign/edit/accept (FR-023) in `internal/security_regression/escalation_test.go`
 
@@ -132,9 +132,9 @@ auth, and RBAC machinery every story sits on.
 - [X] T057 [P] [US3] Permission catalog seed check + `GET /permissions` (paginated) in `internal/authz/permission.go` (impl in `internal/authz/{service,handler}.go`)
 - [X] T058 [P] [US3] Role service (presets + custom CRUD; tenant_root_id derived from path; superset/escalation check; delete-in-use refused, FR-025) in `internal/authz/role.go`
 - [X] T059 [US3] Roles handlers under `/businesses/{id}/roles` in `internal/authz/handler.go`
-- [ ] T060 [P] [US3] Invitations store+service: create (role ≤ inviter, hashed token), list, revoke, resend (throttled) in `internal/invitations/service.go`
-- [ ] T061 [US3] Accept service: auth-bound + verified + email-match + re-validate authority/role/active + single-use + membership + audit in `internal/invitations/accept.go`
-- [ ] T062 [US3] Invitations + accept handlers in `internal/invitations/handler.go`
+- [X] T060 [P] [US3] Invitations store+service: create (role ≤ inviter, hashed token), list, revoke, resend (throttled) in `internal/invitations/service.go`
+- [X] T061 [US3] Accept service: auth-bound + verified + email-match + re-validate authority/role/active + single-use + membership + audit in `internal/invitations/accept.go`
+- [X] T062 [US3] Invitations + accept handlers in `internal/invitations/handler.go`
 - [ ] T063 [US3] Change-member-role handler+service (members.manage, escalation, immediate) in `internal/tenancy/members.go`
 
 **Checkpoint**: US1–US3 work independently.

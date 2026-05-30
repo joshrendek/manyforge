@@ -26,6 +26,7 @@ type Querier interface {
 	// yet see (no membership at insert time). The caller builds the result from inputs.
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) error
 	CreateHumanPrincipal(ctx context.Context, arg CreateHumanPrincipalParams) (Principal, error)
+	CreateInvitation(ctx context.Context, arg CreateInvitationParams) error
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) error
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) (OneTimeToken, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
@@ -44,6 +45,7 @@ type Querier interface {
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
+	GetPendingInvitation(ctx context.Context, arg GetPendingInvitationParams) (GetPendingInvitationRow, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
 	GetRolePermissions(ctx context.Context, roleID uuid.UUID) ([]string, error)
@@ -58,6 +60,7 @@ type Querier interface {
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
@@ -71,7 +74,15 @@ type Querier interface {
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
 	RenameBusiness(ctx context.Context, arg RenameBusinessParams) error
+	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
+	// Invitation lifecycle queries. Create/list/revoke/resend run under the inviter's
+	// principal (a member with members.manage), so RLS scopes them to the business.
+	// Acceptance is handled by the accept_invitation() SECURITY DEFINER function
+	// (invitees are not yet members), invoked via raw SQL in the service.
+	// A role assignable within the tenant: a preset (NULL tenant) or the tenant's own.
+	RoleVisibleInTenant(ctx context.Context, arg RoleVisibleInTenantParams) (uuid.UUID, error)
+	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
 	SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
