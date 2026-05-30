@@ -98,6 +98,40 @@ func (q *Queries) InsertClosureSelf(ctx context.Context, arg InsertClosureSelfPa
 	return err
 }
 
+const listBusinesses = `-- name: ListBusinesses :many
+SELECT id, parent_id, tenant_root_id, name, status, deleted_at, created_at, updated_at FROM business WHERE deleted_at IS NULL ORDER BY created_at
+`
+
+// RLS scopes the result to businesses the caller can see.
+func (q *Queries) ListBusinesses(ctx context.Context) ([]Business, error) {
+	rows, err := q.db.Query(ctx, listBusinesses)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Business
+	for rows.Next() {
+		var i Business
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentID,
+			&i.TenantRootID,
+			&i.Name,
+			&i.Status,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const ownerRoleID = `-- name: OwnerRoleID :one
 SELECT id FROM role WHERE tenant_root_id IS NULL AND key = 'owner'
 `
