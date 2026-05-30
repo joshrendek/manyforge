@@ -107,13 +107,10 @@ CREATE POLICY role_permission_rls ON role_permission FOR ALL
     USING (role_is_visible(role_id, current_principal()))
     WITH CHECK (true);
 
-ALTER TABLE principal ENABLE ROW LEVEL SECURITY;
-CREATE POLICY principal_rls ON principal FOR ALL
-    USING (
-        id = current_principal()
-        OR id IN (
-            SELECT m.principal_id FROM membership m
-            WHERE m.business_id IN (SELECT business_id FROM authorized_businesses(current_principal()))
-        )
-    )
-    WITH CHECK (true);
+-- NOTE: the principal table is intentionally NOT RLS-scoped. Auth flows (signup,
+-- login, refresh) must read/write principals before any principal context
+-- exists, so RLS here would break the bootstrap. Cross-tenant principal exposure
+-- is instead prevented at the query layer: access lists join the RLS-scoped
+-- membership table, so only authorized members' principals are ever returned
+-- (FR-030). account, refresh_token, one_time_token are likewise auth-internal
+-- and unscoped.

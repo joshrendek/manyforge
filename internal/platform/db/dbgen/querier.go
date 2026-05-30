@@ -6,17 +6,43 @@ package dbgen
 
 import (
 	"context"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
 	AllPermissionKeys(ctx context.Context) ([]string, error)
+	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
+	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
+	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
+	// applies the SELECT/USING policy to the returned row, which the creator cannot
+	// yet see (no membership at insert time). The caller builds the result from inputs.
+	CreateBusiness(ctx context.Context, arg CreateBusinessParams) error
+	CreateHumanPrincipal(ctx context.Context, arg CreateHumanPrincipalParams) (Principal, error)
+	CreateMembership(ctx context.Context, arg CreateMembershipParams) error
+	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) (OneTimeToken, error)
+	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	// Effective permissions for a principal at a business: the union of permissions
 	// from every grant the principal holds on the business or any non-archived
 	// ancestor (downward-only inheritance, FR-010). The locked Owner role is handled
 	// separately (HasOwnerRole + AllPermissionKeys) so future catalog additions are
 	// covered automatically (research R3).
 	EffectivePermissions(ctx context.Context, arg EffectivePermissionsParams) ([]string, error)
+	GetAccountByEmail(ctx context.Context, email string) (Account, error)
+	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
+	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
+	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
+	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
+	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
+	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
+	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
+	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
+	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
+	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 }
 
 var _ Querier = (*Queries)(nil)

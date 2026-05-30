@@ -57,9 +57,9 @@ auth, and RBAC machinery every story sits on.
 - [X] T021 [P] sqlc query files for all tables in `db/query/*.sql`; run `make generate`
 - [X] T022 [P] argon2id hash/verify + fixed-cost dummy-compare helper in `internal/platform/auth/password.go`
 - [X] T023 [P] EdDSA key ring (`kid`) + JWT sign/verify pinning alg/iss/aud in `internal/platform/auth/jwt.go`
-- [ ] T024 Refresh-token store: hash, family, rotation (`FOR UPDATE`), reuse→family revoke in `internal/platform/auth/refresh.go`
+- [X] T024 Refresh-token store: hash, family, rotation (`FOR UPDATE`), reuse→family revoke in `internal/platform/auth/refresh.go`
 - [X] T025 HTTP router + middleware (request-id, recover, slog, auth→principal context) + error mapping (unauthorized+unknown→404) in `internal/platform/httpx/`
-- [ ] T026 Append-only audit writer (same-tx, correlation id) in `internal/platform/audit/audit.go`
+- [X] T026 Append-only audit writer (same-tx, correlation id) in `internal/platform/audit/audit.go`
 - [X] T027 [P] Mailer interface + dev(log) impl + suppression check in `internal/platform/mailer/mailer.go`
 - [X] T028 [P] Rate limiter (per-IP + per-account, Postgres-backed) + trusted-proxy IP resolution in `internal/platform/ratelimit/ratelimit.go`
 - [X] T029 [P] Cursor pagination helper with max-page-size cap in `internal/platform/httpx/page.go`
@@ -81,16 +81,16 @@ auth, and RBAC machinery every story sits on.
 ### Tests (write first, MUST fail)
 - [ ] T035 [P] [US1] Contract tests for `/auth/signup,/auth/verify-email,/auth/login,/auth/refresh,/auth/logout` in `internal/account/auth_contract_test.go`
 - [ ] T036 [P] [US1] Contract test for `POST /businesses` (master) in `internal/tenancy/business_contract_test.go`
-- [ ] T037 [P] [US1] Integration: signup→verify→login→create master→Owner recorded→audit row in `internal/account/signup_flow_test.go`
+- [X] T037 [P] [US1] Integration: signup→verify→login→create master→Owner recorded→audit row in `internal/account/signup_flow_test.go`
 
 ### Implementation
-- [ ] T038 [P] [US1] Account store + signup service (argon2id) + hashed single-use verification token in `internal/account/service.go`, `internal/account/store.go`
-- [ ] T039 [US1] Auth service: login (fixed-cost), token-pair issue, refresh, logout (family revoke) in `internal/account/auth.go` (depends T022–T024)
+- [X] T038 [P] [US1] Account store + signup service (argon2id) + hashed single-use verification token in `internal/account/service.go`, `internal/account/store.go`
+- [X] T039 [US1] Auth service: login (fixed-cost), token-pair issue, refresh, logout (family revoke) in `internal/account/auth.go` (depends T022–T024)
 - [ ] T040 [US1] Account HTTP handlers (signup/verify/login/refresh/logout) wired to router in `internal/account/handler.go`
-- [ ] T041 [P] [US1] Tenancy service: create master business (tenant_root_id=id, self closure row, Owner membership, audit) in one tx in `internal/tenancy/service.go`
+- [X] T041 [P] [US1] Tenancy service: create master business (tenant_root_id=id, self closure row, Owner membership, audit) in one tx in `internal/tenancy/service.go`
 - [ ] T042 [US1] `POST /businesses` (master) handler + validation in `internal/tenancy/handler.go`
 - [ ] T043 [US1] `GET /me`, `PATCH /me` handlers in `internal/account/handler.go`
-- [ ] T044 [US1] Verification gate (unverified accounts can't create business/accept invite, FR-002) in `internal/account/auth.go`
+- [X] T044 [US1] Verification gate (unverified accounts can't create business/accept invite, FR-002) in `internal/account/auth.go`
 
 **Checkpoint**: US1 independently functional — MVP demoable.
 
