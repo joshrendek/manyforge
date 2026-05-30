@@ -26,6 +26,11 @@ type PanelKind = 'add' | 'rename' | 'move';
 
       @if (loading()) {
         <p class="empty">Loading your businesses…</p>
+      } @else if (loadFailed()) {
+        <div class="empty">
+          <p>We couldn't load your businesses.</p>
+          <button class="ghost compact" (click)="loadBusinesses()">Try again</button>
+        </div>
       } @else {
         <ul class="tree">
           @for (row of rows(); track row.business.id) {
@@ -146,6 +151,7 @@ export class DashboardComponent implements OnInit {
   businesses = signal<Business[]>([]);
   collapsed = signal<ReadonlySet<string>>(new Set());
   loading = signal(true);
+  loadFailed = signal(false);
   busy = signal(false);
   error = signal('');
 
@@ -164,6 +170,7 @@ export class DashboardComponent implements OnInit {
 
   loadBusinesses(): void {
     this.loading.set(true);
+    this.loadFailed.set(false);
     this.api.list().subscribe({
       next: (r) => {
         this.businesses.set(r.items ?? []);
@@ -171,7 +178,7 @@ export class DashboardComponent implements OnInit {
       },
       error: () => {
         this.loading.set(false);
-        this.error.set('Could not load your businesses. Try refreshing.');
+        this.loadFailed.set(true);
       },
     });
   }
