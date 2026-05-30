@@ -1,0 +1,369 @@
+openapi: 3.1.0
+info:
+  title: ManyForge Tenant Foundation API
+  version: 0.2.0
+  description: >
+    Backend contract for the tenant foundation. Unknown AND unauthorized tenant resources return an
+    identical 404 — there is NO 403 for tenant authorization (status is observable; FR-011/FR-026).
+    All list endpoints are cursor-paginated with a server-enforced max page size (FR-029). Mutating
+    and auth endpoints are rate-limited (429, FR-029).
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------- Auth (unauthenticated unless noted) ----------
+  /auth/signup:
+    post:
+      summary: Create an account (FR-001). Uniform response; never reveals if email exists (FR-026).
+      security: []
+      requestBody: { $ref: '#/components/requestBodies/Signup' }
+      responses:
+        '202': { description: Accepted — verification email sent if applicable (uniform shape) }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/verify-email:
+    post:
+      summary: Consume a single-use email-verification token (FR-002).
+      security: []
+      requestBody: { $ref: '#/components/requestBodies/Token' }
+      responses: { '204': { description: Verified }, '400': { $ref: '#/components/responses/ValidationError' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /auth/login:
+    post:
+      summary: Authenticate (FR-001). Fixed-cost; generic failure (FR-026, SC-010).
+      security: []
+      requestBody: { $ref: '#/components/requestBodies/Login' }
+      responses:
+        '200': { $ref: '#/components/responses/TokenPair' }
+        '401': { $ref: '#/components/responses/InvalidCredentials' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/refresh:
+    post:
+      summary: Rotate refresh token; reuse ⇒ family revoke (R4).
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [refresh_token], properties: { refresh_token: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/TokenPair' }, '401': { $ref: '#/components/responses/Error401' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /auth/logout:
+    post:
+      summary: Revoke the presented refresh-token family (R4).
+      requestBody: { content: { application/json: { schema: { type: object, required: [refresh_token], properties: { refresh_token: { type: string } } } } } }
+      responses: { '204': { description: Logged out } }
+  /auth/password-reset:
+    post:
+      summary: Request a password reset — uniform response (FR-026).
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email } } } } } }
+      responses: { '202': { description: Accepted (uniform) }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /auth/password-reset/confirm:
+    post:
+      summary: Consume a reset token and set a new password.
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [token, password], properties: { token: { type: string }, password: { type: string, minLength: 12 } } } } } }
+      responses: { '204': { description: Password changed }, '400': { $ref: '#/components/responses/ValidationError' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /auth/magic-link:
+    post:
+      summary: Request a magic-link login — uniform response (FR-026).
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email } } } } } }
+      responses: { '202': { description: Accepted (uniform) }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /auth/magic-link/consume:
+    post:
+      summary: Consume a magic-link token and issue a token pair (works for password-less accounts).
+      security: []
+      requestBody: { $ref: '#/components/requestBodies/Token' }
+      responses: { '200': { $ref: '#/components/responses/TokenPair' }, '400': { $ref: '#/components/responses/ValidationError' }, '429': { $ref: '#/components/responses/RateLimited' } }
+
+  # ---------- Account ----------
+  /me:
+    get:
+      summary: Current account profile.
+      responses: { '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Account' } } }, description: ok } }
+    patch:
+      summary: Update profile (display name).
+      requestBody: { content: { application/json: { schema: { type: object, properties: { display_name: { type: string } } } } } }
+      responses: { '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Account' } } }, description: ok }, '400': { $ref: '#/components/responses/ValidationError' } }
+  /me/export:
+    get:
+      summary: Export the account's data + memberships (FR-028).
+      responses: { '200': { description: JSON export, content: { application/json: { schema: { type: object } } } } }
+  /me/deactivate:
+    post:
+      summary: Deactivate the account (FR-028). Refused if it would orphan a tenant of its last Owner.
+      responses: { '204': { description: Deactivated }, '409': { $ref: '#/components/responses/Conflict' } }
+  /me/delete:
+    post:
+      summary: Delete the account; PII anonymized, audit retained pseudonymized (FR-028). Refused if last Owner of any tenant.
+      responses: { '202': { description: Scheduled for erasure }, '409': { $ref: '#/components/responses/Conflict' } }
+  /me/email-change:
+    post:
+      summary: Request an email change (re-verification required before it becomes the login id).
+      requestBody: { content: { application/json: { schema: { type: object, required: [new_email], properties: { new_email: { type: string, format: email } } } } } }
+      responses: { '202': { description: Verification sent to the new address }, '400': { $ref: '#/components/responses/ValidationError' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /me/email-change/confirm:
+    post:
+      summary: Confirm the new email via its single-use token.
+      requestBody: { $ref: '#/components/requestBodies/Token' }
+      responses: { '204': { description: Email changed }, '400': { $ref: '#/components/responses/ValidationError' } }
+
+  # ---------- Businesses / hierarchy ----------
+  /businesses:
+    get:
+      summary: List businesses visible to the caller (scoped subtree, FR-011/SC-002).
+      parameters: [ { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+      responses: { '200': { $ref: '#/components/responses/BusinessPage' } }
+    post:
+      summary: Create a master (no parent_id) or sub-business (FR-003/FR-004). 404 if parent unknown/unauthorized.
+      requestBody: { content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 200 }, parent_id: { type: string, format: uuid, description: "omit ⇒ master; present ⇒ sub-business" } } } } } }
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/Business' } } }, description: created }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /businesses/{id}:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get:
+      summary: Get a business (404 if unknown OR unauthorized — no oracle).
+      responses: { '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Business' } } }, description: ok }, '404': { $ref: '#/components/responses/NotFound' } }
+    patch:
+      summary: Rename (requires hierarchy.manage).
+      requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string, minLength: 1, maxLength: 200 } } } } } }
+      responses: { '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Business' } } }, description: ok }, '404': { $ref: '#/components/responses/NotFound' } }
+    delete:
+      summary: Soft-delete — Owner-only, explicit confirmation, refused with active children (FR-017).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [confirm], properties: { confirm: { type: boolean, const: true } } } } } }
+      responses: { '204': { description: Deleted }, '400': { $ref: '#/components/responses/ValidationError' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /businesses/{id}/move:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    post:
+      summary: Reparent within the same tenant (no cycles/cross-tenant; FR-006/FR-031).
+      requestBody: { content: { application/json: { schema: { type: object, required: [new_parent_id], properties: { new_parent_id: { type: string, format: uuid } } } } } }
+      responses: { '204': { description: Moved }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /businesses/{id}/archive:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    post: { summary: Archive a business + descendants (FR-005), responses: { '204': { description: Archived }, '404': { $ref: '#/components/responses/NotFound' }, '429': { $ref: '#/components/responses/RateLimited' } } }
+  /businesses/{id}/restore:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    post: { summary: Restore an archived business (FR-005), responses: { '204': { description: Restored }, '404': { $ref: '#/components/responses/NotFound' }, '429': { $ref: '#/components/responses/RateLimited' } } }
+  /businesses/{id}/leave:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    post:
+      summary: Voluntarily leave a business (FR-018). Refused if caller is the tenant's last Owner.
+      responses: { '204': { description: Left }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ---------- Members / ownership ----------
+  /businesses/{id}/members:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+    get:
+      summary: Access list with full provenance (FR-016); no cross-tenant PII (FR-030). Requires members.manage or audit.read.
+      responses: { '200': { $ref: '#/components/responses/MemberPage' }, '404': { $ref: '#/components/responses/NotFound' } }
+  /businesses/{id}/members/{principalId}:
+    parameters: [ { $ref: '#/components/parameters/id' }, { name: principalId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    patch:
+      summary: Change a member's role (members.manage; no escalation FR-023; immediate FR-013). 404 if not visible.
+      requestBody: { content: { application/json: { schema: { type: object, required: [role_id], properties: { role_id: { type: string, format: uuid } } } } } }
+      responses: { '200': { description: ok }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+    delete:
+      summary: Revoke access (members.manage; last-Owner protected FR-014).
+      responses: { '204': { description: Revoked }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+  /businesses/{id}/transfer-ownership:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    post:
+      summary: Transfer ownership — Owner-only, atomic (FR-024). `{id}` MUST be the tenant root (master); else 409.
+      requestBody: { content: { application/json: { schema: { type: object, required: [to_principal_id], properties: { to_principal_id: { type: string, format: uuid } } } } } }
+      responses: { '204': { description: Transferred }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ---------- Invitations ----------
+  /businesses/{id}/invitations:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get:
+      summary: List invitations for a business (paginated). Requires members.manage.
+      parameters: [ { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+      responses: { '200': { $ref: '#/components/responses/InvitationPage' }, '404': { $ref: '#/components/responses/NotFound' } }
+    post:
+      summary: Invite by email with a role ≤ inviter's own (FR-008/FR-023). Uniform; no cross-tenant existence disclosure (FR-026).
+      requestBody: { content: { application/json: { schema: { type: object, required: [email, role_id], properties: { email: { type: string, format: email }, role_id: { type: string, format: uuid } } } } } }
+      responses: { '202': { description: Invitation created }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /businesses/{id}/invitations/{invId}:
+    parameters: [ { $ref: '#/components/parameters/id' }, { name: invId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    delete:
+      summary: Revoke a pending invitation (members.manage).
+      responses: { '204': { description: Revoked }, '404': { $ref: '#/components/responses/NotFound' } }
+  /businesses/{id}/invitations/{invId}/resend:
+    parameters: [ { $ref: '#/components/parameters/id' }, { name: invId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    post:
+      summary: Resend a pending invitation (throttled).
+      responses: { '202': { description: Resent }, '404': { $ref: '#/components/responses/NotFound' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /invitations/accept:
+    post:
+      summary: >
+        Accept an invitation as the authenticated, verified account whose email matches the invite
+        (FR-009). Re-validated at accept time (inviter authority, role level, business active).
+        Single-use. Requires auth — never grants access anonymously.
+      requestBody: { $ref: '#/components/requestBodies/Token' }
+      responses:
+        '200': { description: Membership granted }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { description: "Authenticated account's email does not match the invitation" , content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '410': { description: Invitation expired, revoked, or already used (FR-009), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  # ---------- Roles (nested under tenant root; tenant_root_id derived, never caller-supplied) ----------
+  /businesses/{id}/roles:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+    get:
+      summary: List built-in presets + this tenant's custom roles (FR-019/FR-020). `{id}` resolves to its tenant root.
+      responses: { '200': { $ref: '#/components/responses/RolePage' }, '404': { $ref: '#/components/responses/NotFound' } }
+    post:
+      summary: Create a custom role for this tenant (roles.manage; perms ⊆ creator's, FR-019/FR-023). tenant_root_id derived from `{id}`.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/RoleInput' } } } }
+      responses: { '201': { content: { application/json: { schema: { $ref: '#/components/schemas/Role' } } }, description: created }, '400': { $ref: '#/components/responses/ValidationError' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+  /businesses/{id}/roles/{roleId}:
+    parameters: [ { $ref: '#/components/parameters/id' }, { name: roleId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    patch:
+      summary: Edit a custom role; re-checks escalation; applies immediately to holders (FR-025).
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/RoleInput' } } } }
+      responses: { '200': { description: ok }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+    delete:
+      summary: Delete a custom role; refused while assigned (FR-025).
+      responses: { '204': { description: Deleted }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ---------- Catalog + audit ----------
+  /permissions:
+    get:
+      summary: List the permission catalog (FR-007), paginated.
+      parameters: [ { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+      responses: { '200': { $ref: '#/components/responses/PermissionPage' } }
+  /businesses/{id}/audit:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+    get:
+      summary: Read the append-only audit trail (audit.read), paginated (FR-016).
+      responses: { '200': { $ref: '#/components/responses/AuditPage' }, '404': { $ref: '#/components/responses/NotFound' } }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT, description: "EdDSA, alg/iss/aud/kid pinned (R4)" }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    cursor: { name: cursor, in: query, required: false, schema: { type: string }, description: keyset cursor }
+    limit: { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 100 }, description: "server caps at 100 (FR-029)" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [VALIDATION, NOT_FOUND, CONFLICT, INVALID_CREDENTIALS, RATE_LIMITED, GONE, EMAIL_MISMATCH] }
+        message: { type: string, description: "stable, non-leaking; details only for VALIDATION" }
+    Account:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        email_verified: { type: boolean }
+        status: { type: string, enum: [active, deactivated] }
+    Business:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        parent_id: { type: [string, "null"], format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [active, archived] }
+        depth: { type: integer }
+        is_tenant_root: { type: boolean }
+    Grant:
+      type: object
+      description: one contributing grant in the union (FR-016, fixes review #22)
+      properties:
+        role: { $ref: '#/components/schemas/Role' }
+        source: { type: string, enum: [direct, inherited] }
+        source_business_id: { type: string, format: uuid, description: business the grant is held on }
+    Member:
+      type: object
+      properties:
+        principal_id: { type: string, format: uuid }
+        kind: { type: string, enum: [human, agent] }
+        display_name: { type: string }
+        grants: { type: array, items: { $ref: '#/components/schemas/Grant' }, description: all contributing grants (direct + each inherited ancestor) }
+        effective_permissions: { type: array, items: { type: string }, description: union of all grants' permissions }
+    Permission:
+      type: object
+      properties: { key: { type: string }, module: { type: string }, description: { type: string } }
+    Role:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string }
+        name: { type: string }
+        builtin: { type: boolean }
+        locked: { type: boolean }
+        permissions: { type: array, items: { type: string } }
+    RoleInput:
+      type: object
+      required: [name, permissions]
+      description: tenant_root_id is derived from the path business, never caller-supplied (fixes review #23)
+      properties:
+        name: { type: string }
+        permissions: { type: array, items: { type: string } }
+    Invitation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+        status: { type: string, enum: [pending, accepted, expired, revoked] }
+        expires_at: { type: string, format: date-time }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: [string, "null"], format: uuid, description: null for global/account/security events }
+        actor_principal_id: { type: string, format: uuid }
+        action: { type: string }
+        target_type: { type: string }
+        target_id: { type: [string, "null"], format: uuid }
+        correlation_id: { type: string }
+        created_at: { type: string, format: date-time }
+    Page:
+      type: object
+      properties: { next_cursor: { type: [string, "null"] } }
+  requestBodies:
+    Signup:
+      required: true
+      content: { application/json: { schema: { type: object, required: [email, display_name], properties: { email: { type: string, format: email }, display_name: { type: string }, password: { type: string, minLength: 12 } } } } }
+    Login:
+      required: true
+      content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email }, password: { type: string } } } } }
+    Token:
+      required: true
+      content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } }
+  responses:
+    TokenPair:
+      description: access + refresh tokens
+      content: { application/json: { schema: { type: object, properties: { access_token: { type: string }, refresh_token: { type: string }, expires_in: { type: integer } } } } }
+    ValidationError: { description: Invalid input, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    InvalidCredentials: { description: Generic auth failure (no oracle), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Error401: { description: Unauthorized (missing/invalid token), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: "Not found — also returned for unauthorized tenant resources (no 403 oracle, FR-026)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: Conflict (last-owner, cycle, role-in-use, non-root transfer, concurrent move), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    RateLimited: { description: Too many requests (FR-029), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    BusinessPage:
+      description: paginated businesses
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Business' } } } } ] } } }
+    MemberPage:
+      description: paginated members
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Member' } } } } ] } } }
+    InvitationPage:
+      description: paginated invitations
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Invitation' } } } } ] } } }
+    RolePage:
+      description: paginated roles
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Role' } } } } ] } } }
+    PermissionPage:
+      description: paginated permission catalog
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Permission' } } } } ] } } }
+    AuditPage:
+      description: paginated audit entries
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } } } } ] } } }
