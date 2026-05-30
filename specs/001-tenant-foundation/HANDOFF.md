@@ -1,77 +1,63 @@
 # Tenant Foundation — Session Handoff
 
-**Branch**: `001-tenant-foundation` (15 commits ahead of `master`, all local — no remote).
-**Progress**: 51/85 backend tasks + full US1/US2 SPA. Backend Phase 1–2 complete; US1 + US2
-complete (backend + tests + UI). All `make test` / `make int-test` / `make lint` green;
-web: vitest (12) + Playwright (12) + prod build green.
+**Branch**: `001-tenant-foundation` — ~21 commits, all local, **no git remote** (push N/A by request).
+
+## ⚠️ Before you clear
+- **Uncommitted**: only `.beads/issues.jsonl` (a *generated* bd export the commit hook re-stamps every commit — non-substantive; all source is committed). Nothing to lose.
+- **Unpushed**: everything (no remote). `bd dolt push` also pending.
+- **Still running** (outlive this session): API `:8081`, Angular `:4300`, Postgres container `mf-dev`. The `go run` child binary lives in the go-build cache — `kill` it (not just the parent) to free `:8081`.
+
+## State
+Backend Phase 1–2 + US1 + US2 complete (backend + tests + SPA). **US3 is ~70% done**: GET /permissions, full role CRUD, and invitations + auth-bound accept are shipped and green. Remaining US3 = change-member-role (T063) and the escalation regression suite (T055/T056).
+
+## Resume here
+Start **`bd manyforge-iwf` (T063)**: `PATCH /businesses/{id}/members/{principalId}` change-member-role in `internal/tenancy/members.go` — gate on `members.manage`, escalation guard (new role's perms ⊆ actor's, FR-023), last-Owner protection, effective immediately. **Test-first** (it also unblocks the T055/T056 enforcement tests). Pattern to copy: `internal/invitations/service.go` (Resolve + `GetRolePermissions` superset check) and the `accept_invitation` SECURITY DEFINER approach if RLS gets in the way.
 
 ## What works (verified)
-- **Phase 1** setup, **Phase 2** platform (schema/RLS/auth/RBAC/audit/mailer/ratelimit/HTTP).
-- **US1**: signup → verify-email → login → create master business. API + Angular SPA, driven
-  live in a browser (Playwright) and `curl`. `make int-test` covers it (`TestUS1_*`).
-- **US2**: sub-business create/move/archive/restore/rename/delete, RLS-isolated, cycle/
-  cross-tenant/master-move/depth guards, concurrency-safe. **Now with full dashboard UI**:
-  collapsible hierarchy tree, per-node create-sub/rename/move/archive/restore/delete with
-  confirmation + friendly 409/4xx mapping. Verified live end-to-end via the Playwright MCP.
-- **SPA polish**: silent refresh-token renewal on 401 (single-flight interceptor; retries the
-  original request once; failed refresh → clear session + /login), recoverable load-error state.
-- **Design system**: cohesive dark theme — tokens, tree affordances/spine, focus-visible rings,
-  hover/active states, sticky blurred top bar, gradient cards (`web/src/styles.css`).
-- RLS proven fail-closed + cross-tenant isolated (`internal/security_regression`, `make sec-test`).
-
-## Web layout (new this session)
-- `web/src/app/core/tree.ts` — pure `buildTree`/`flatten` (parent_id→forest; orphans surfaced;
-  collapse-aware). Unit-tested in `tree.spec.ts`.
-- `web/src/app/core/business.service.ts` — typed tenancy API client.
-- `web/src/app/core/auth.interceptor.ts` + `auth.service.ts` — refresh-on-401 (single-flight).
-- `web/src/app/pages/dashboard.ts` — hierarchy tree + actions.
-- Specs: `web/e2e/{us1,us2,polish}.spec.ts` (API mocked via `page.route` for the authed flows —
-  the dev mailer only logs the verify token, so a self-contained e2e can't complete verification;
-  unauthed paths run against the real stack). Run all: `cd web && npx playwright test` (stack on :4300).
+- **US1**: signup→verify→login→create master. API + SPA, live-driven + `make int-test`.
+- **US2**: hierarchy CRUD/move/archive/restore/delete, RLS-isolated, all guards; full dashboard UI; HTTP contract tests (`internal/tenancy/hierarchy_contract_test.go`).
+- **US3 (new)**:
+  - `GET /permissions` — keyset-paginated catalog (`internal/authz/{service,handler}.go`).
+  - Role CRUD `/businesses/{id}/roles` — presets + custom, escalation/superset guard, delete-in-use refused (`internal/authz/{role,handler}.go`).
+  - Invitations create/list/revoke/resend + **auth-bound single-use accept** (`internal/invitations/`). Accept is RLS-exempt via `accept_invitation()` SECURITY DEFINER (migration 0010).
+  - Tests green: `internal/authz` (9 subtests), `internal/invitations` (10 subtests incl. escalation-at-create end-to-end).
+- **SPA**: refresh-on-401 (single-flight), recoverable load errors, cohesive design system.
+- RLS fail-closed + cross-tenant isolated (`internal/security_regression`, `make sec-test`).
 
 ## How to run locally
 ```bash
-# 1. Postgres (host 55432 to avoid a local PG on 5432)
+# 1. Postgres (host 55432; colima: DOCKER_HOST=unix://~/.colima/default/docker.sock)
 docker run -d --name mf-dev -e POSTGRES_USER=manyforge -e POSTGRES_PASSWORD=devpassword \
-  -e POSTGRES_DB=manyforge -p 55432:5432 postgres:16          # colima: DOCKER_HOST=unix://~/.colima/default/docker.sock
-# 2. migrate (as superuser) + enable the app role to log in
+  -e POSTGRES_DB=manyforge -p 55432:5432 postgres:16     # or: docker start mf-dev
+# 2. migrate (superuser) + let the app role log in. RE-RUN migrate after pulling new
+#    migrations — the running mf-dev is currently missing 0010 (accept_invitation).
 MANYFORGE_DATABASE_URL="postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" go run ./cmd/manyforge migrate
-psql "postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" -c "ALTER ROLE manyforge_app LOGIN PASSWORD 'devpassword';"
+docker exec mf-dev psql -U manyforge -d manyforge -c "ALTER ROLE manyforge_app LOGIN PASSWORD 'devpassword';"
 # 3. API (connects as manyforge_app)
 MANYFORGE_DATABASE_URL="postgres://manyforge_app:devpassword@localhost:55432/manyforge?sslmode=disable" MANYFORGE_ADDR=":8081" go run ./cmd/manyforge
-# 4. SPA (proxies /api -> :8081; proxy.conf.json target is :8081)
+# 4. SPA (proxies /api -> :8081)
 cd web && npx ng serve --proxy-config proxy.conf.json --port 4300
 ```
-Tests: `make test` (unit), `make int-test` (testcontainers; Docker required), `make lint`,
-`make sec-test`, `cd web && npx playwright test` (needs the stack on :4300).
+Tests: `make test` (unit) · `make int-test` (testcontainers; Docker) · `make lint` · `make sec-test` · `cd web && npx playwright test` (needs stack on :4300). Single Go pkg: `go test -tags integration ./internal/<pkg>/ -count=1`.
 
-## Gotchas learned (don't relearn these)
-- **Env is colima** (not Docker Desktop). testcontainers needs `DOCKER_HOST` from the docker
-  context; `testdb.Start` auto-detects it + disables Ryuk. A real local Postgres occupies :5432.
-- **zsh `noclobber` is on**: `cmd > file` fails if `file` exists. Use `>|` or `rm -f` first.
-- **`go run` orphans**: killing the `go run` parent leaves the child binary listening. Kill
-  `exe/manyforge` too; verify with `ps`.
-- **Node is v23** (non-LTS); Angular 21 warns but builds. Pin Node 22/24 in CI.
-- **RLS + `INSERT ... RETURNING`**: RETURNING applies the SELECT/USING policy; a just-created
-  row the caller can't yet see → 42501. Tenant inserts use `:exec`, build result from inputs.
-- **RLS + closure rewrites (move)**: mid-rewrite the subtree is transiently unauthorized, so the
-  rewrite must be RLS-exempt → `move_business()` SECURITY DEFINER (migration 0009). Auth is
-  checked in the service first.
-- **`principal`/`account`/`refresh_token`/`one_time_token` are NOT RLS-scoped** (auth bootstrap).
-- **sqlc**: schema mirror at `db/schema.sql` (tables only); `UNION`/bare-param SELECTs and
-  unaliased self-joins confuse its parser; boolean exprs need `::boolean`.
+## Gotchas (don't relearn these)
+- **zsh `noclobber` on**: `cmd > file` fails if `file` exists — use `>|` or `rm -f` first. (Bit the API/web log redirects this session.)
+- **`go run` orphans** its compiled child (in `~/Library/Caches/go-build/.../manyforge`, PPID 1) — `lsof -iTCP:8081` to find + `kill` it; the `exe/manyforge` pattern misses it.
+- **sqlc workflow**: edit `db/query/*.sql` → `make generate` (sqlc v1.27) → never hand-edit `internal/platform/db/dbgen/`. Schema mirror `db/schema.sql` is tables-only; functions (e.g. `accept_invitation`) are called via raw `tx.Query`, not sqlc.
+- **RLS + `INSERT ... RETURNING`** can hit 42501 (just-created row invisible) — tenant inserts use `:exec` + build result from inputs.
+- **RLS-exempt structural ops** = SECURITY DEFINER fns: `move_business` (0009), `accept_invitation` (0010, invitee isn't a member yet). Auth/identity checked in the service *before* the call.
+- **plpgsql `RETURNS TABLE(status …)` OUT columns shadow table columns** → `42702 ambiguous` on bare `status` in an UPDATE WHERE. Prefix OUT cols (`out_*`). (Cost a 500 on the accept success path.)
+- **httpx no longer imports authz**: `httpx.RequirePermission` takes an injected `PermissionResolver` + `Permissions` interface (broke the httpx→authz cycle so the authz handler can live in `internal/authz`). It's defined but **not yet wired** anywhere.
+- **chi**: `/businesses/{id}/roles` and `/businesses/{id}/invitations` coexist with tenancy's `/businesses/{id}` mount (chi merges the trees) — confirmed by tests.
+- **`principal`/`account`/`refresh_token`/`one_time_token` are NOT RLS-scoped** (auth bootstrap). Env is **colima**; Node is **v23** (Angular 21 warns, builds).
 
 ## What's next
-- **A (done)**: US2 hierarchy backend + **dashboard UI** (this session).
-- **B (done)**: refresh-token auto-renew interceptor + recoverable error states.
-- **C (done)**: design pass / cohesive design system.
-- **Remaining backend gap** (`bd manyforge-8i9`, P2): US2 HTTP-level contract tests for the
-  mutation routes (move/archive/restore/delete/rename) — T045 coverage is service-level only.
-- Then US3 (invites/roles, T053–T063), US4 (isolation surfacing, T064–T071),
-  US5 (admin/audit, T072–T078), polish (T079–T085).
-- Possible UI follow-ups: real verification-link UX (still token-paste in dev), move-target
-  picker is select-based (not drag-drop), and the move flow lacks a committed e2e (covered live).
+- **`bd manyforge-iwf`** (T063) — change-member-role (the resume point above).
+- **`bd manyforge-9au`** (T055/T056) — escalation security-regression suite in `internal/security_regression/escalation_test.go` (assign/edit/accept). Guards are implemented + exercised; this is the focused `make sec-test` coverage. Needs T063 for the assign path.
+- **`bd manyforge-o0c`** — roles & permissions: effectively shipped (permissions + role CRUD + contract tests). Close it or fold its remaining escalation-test bullet into 9au.
+- Then **US4** (isolation surfacing, T064–T071), **US5** (admin/audit + ownership transfer, T072–T078), **polish** (T079–T085).
+- UI follow-ups (deferred): real verification-link UX (still token-paste in dev); no US3 UI yet (invitations/roles are backend-only).
 
-## Open notes
-- bd epic `manyforge-5zt` (+7 planning children) tracks design decisions; resolved by research.md.
-- No git remote / no push yet (per request). Nothing pushed; `bd dolt push` also pending.
+## Pointers
+- Plan/spec: `specs/001-tenant-foundation/{plan,spec,research,data-model}.md`, `contracts/openapi.yaml`. Tasks: `tasks.md`. Governance: `.specify/memory/constitution.md`.
+- bd epic `manyforge-5zt` (+7 planning children) tracks design decisions (resolved by research.md). `bd remember` carries a condensed cross-session note (key `manyforge-001-tenant-foundation-51-85-tasks-branch`).
