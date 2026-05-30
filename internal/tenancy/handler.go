@@ -27,6 +27,7 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 		r.Post("/move", h.move)
 		r.Post("/archive", h.archive)
 		r.Post("/restore", h.restore)
+		r.Get("/members", h.listMembers)
 		r.Patch("/members/{principalId}", h.changeMemberRole)
 	})
 }
