@@ -39,6 +39,8 @@ type Querier interface {
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
+	// RLS scopes the result to businesses the caller can see.
+	ListBusinesses(ctx context.Context) ([]Business, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)

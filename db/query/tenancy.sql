@@ -16,5 +16,9 @@ VALUES ($1, $2, $3, $4, $5, $6, now());
 -- name: GetBusiness :one
 SELECT * FROM business WHERE id = $1 AND deleted_at IS NULL;
 
+-- name: ListBusinesses :many
+-- RLS scopes the result to businesses the caller can see.
+SELECT * FROM business WHERE deleted_at IS NULL ORDER BY created_at;
+
 -- name: OwnerRoleID :one
 SELECT id FROM role WHERE tenant_root_id IS NULL AND key = 'owner';
