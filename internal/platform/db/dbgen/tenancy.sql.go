@@ -12,6 +12,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const acquireTenantLock = `-- name: AcquireTenantLock :exec
+SELECT pg_advisory_xact_lock(hashtext($1))
+`
+
+// Serializes structural mutations within a tenant (research R5).
+func (q *Queries) AcquireTenantLock(ctx context.Context, hashtext string) error {
+	_, err := q.db.Exec(ctx, acquireTenantLock, hashtext)
+	return err
+}
+
+const countActiveChildren = `-- name: CountActiveChildren :one
+SELECT count(*) FROM business WHERE parent_id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveChildren, parentID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBusiness = `-- name: CreateBusiness :exec
 INSERT INTO business (id, parent_id, tenant_root_id, name, status, created_at, updated_at)
 VALUES ($1, $2, $3, $4, 'active', now(), now())
@@ -63,6 +84,22 @@ func (q *Queries) CreateMembership(ctx context.Context, arg CreateMembershipPara
 	return err
 }
 
+const depthFromRoot = `-- name: DepthFromRoot :one
+SELECT depth FROM business_closure WHERE ancestor_id = $2 AND descendant_id = $1
+`
+
+type DepthFromRootParams struct {
+	DescendantID uuid.UUID `json:"descendant_id"`
+	AncestorID   uuid.UUID `json:"ancestor_id"`
+}
+
+func (q *Queries) DepthFromRoot(ctx context.Context, arg DepthFromRootParams) (int32, error) {
+	row := q.db.QueryRow(ctx, depthFromRoot, arg.DescendantID, arg.AncestorID)
+	var depth int32
+	err := row.Scan(&depth)
+	return depth, err
+}
+
 const getBusiness = `-- name: GetBusiness :one
 SELECT id, parent_id, tenant_root_id, name, status, deleted_at, created_at, updated_at FROM business WHERE id = $1 AND deleted_at IS NULL
 `
@@ -83,6 +120,26 @@ func (q *Queries) GetBusiness(ctx context.Context, id uuid.UUID) (Business, erro
 	return i, err
 }
 
+const insertChildClosure = `-- name: InsertChildClosure :exec
+INSERT INTO business_closure (ancestor_id, descendant_id, depth, tenant_root_id)
+SELECT c.ancestor_id, $1, c.depth + 1, $3
+FROM business_closure c
+WHERE c.descendant_id = $2
+`
+
+type InsertChildClosureParams struct {
+	DescendantID   uuid.UUID `json:"descendant_id"`
+	DescendantID_2 uuid.UUID `json:"descendant_id_2"`
+	TenantRootID   uuid.UUID `json:"tenant_root_id"`
+}
+
+// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
+// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
+func (q *Queries) InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error {
+	_, err := q.db.Exec(ctx, insertChildClosure, arg.DescendantID, arg.DescendantID_2, arg.TenantRootID)
+	return err
+}
+
 const insertClosureSelf = `-- name: InsertClosureSelf :exec
 INSERT INTO business_closure (ancestor_id, descendant_id, depth, tenant_root_id)
 VALUES ($1, $1, 0, $2)
@@ -96,6 +153,25 @@ type InsertClosureSelfParams struct {
 func (q *Queries) InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error {
 	_, err := q.db.Exec(ctx, insertClosureSelf, arg.AncestorID, arg.TenantRootID)
 	return err
+}
+
+const isDescendant = `-- name: IsDescendant :one
+SELECT EXISTS (
+    SELECT 1 FROM business_closure WHERE ancestor_id = $1 AND descendant_id = $2
+) AS is_descendant
+`
+
+type IsDescendantParams struct {
+	AncestorID   uuid.UUID `json:"ancestor_id"`
+	DescendantID uuid.UUID `json:"descendant_id"`
+}
+
+// True if candidate ($2) is the node ($1) itself or a descendant of it.
+func (q *Queries) IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isDescendant, arg.AncestorID, arg.DescendantID)
+	var is_descendant bool
+	err := row.Scan(&is_descendant)
+	return is_descendant, err
 }
 
 const listBusinesses = `-- name: ListBusinesses :many
@@ -141,4 +217,58 @@ func (q *Queries) OwnerRoleID(ctx context.Context) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const renameBusiness = `-- name: RenameBusiness :exec
+
+UPDATE business SET name = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL
+`
+
+type RenameBusinessParams struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// Subtree move is performed by the SECURITY DEFINER move_business() function
+// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
+// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
+func (q *Queries) RenameBusiness(ctx context.Context, arg RenameBusinessParams) error {
+	_, err := q.db.Exec(ctx, renameBusiness, arg.ID, arg.Name)
+	return err
+}
+
+const setSubtreeStatus = `-- name: SetSubtreeStatus :exec
+UPDATE business SET status = $2, updated_at = now()
+WHERE id IN (SELECT descendant_id FROM business_closure WHERE ancestor_id = $1)
+  AND deleted_at IS NULL
+`
+
+type SetSubtreeStatusParams struct {
+	AncestorID uuid.UUID `json:"ancestor_id"`
+	Status     string    `json:"status"`
+}
+
+func (q *Queries) SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error {
+	_, err := q.db.Exec(ctx, setSubtreeStatus, arg.AncestorID, arg.Status)
+	return err
+}
+
+const softDeleteBusiness = `-- name: SoftDeleteBusiness :exec
+UPDATE business SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteBusiness, id)
+	return err
+}
+
+const subtreeHeight = `-- name: SubtreeHeight :one
+SELECT COALESCE(max(depth), 0)::int AS height FROM business_closure WHERE ancestor_id = $1
+`
+
+func (q *Queries) SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, subtreeHeight, ancestorID)
+	var height int32
+	err := row.Scan(&height)
+	return height, err
 }
