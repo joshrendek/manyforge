@@ -64,3 +64,31 @@ WHERE id IN (SELECT descendant_id FROM business_closure WHERE ancestor_id = $1)
 
 -- name: SoftDeleteBusiness :exec
 UPDATE business SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL;
+
+-- ---- Member role management (T063) ----
+
+-- name: GetMembershipAt :one
+-- The target principal's direct membership at a business. RLS scopes this to the
+-- caller's authorized subtree, so an admin can read members of a business they
+-- administer while a bare member sees only their own row.
+SELECT principal_id, business_id, tenant_root_id, role_id FROM membership
+WHERE principal_id = $1 AND business_id = $2;
+
+-- name: UpdateMembershipRole :exec
+-- Reassigns a member's role at a business, recording who made the change. :exec
+-- (no RETURNING): RLS can hide the just-updated row from the caller (42501).
+UPDATE membership SET role_id = $3, granted_by = $4
+WHERE principal_id = $1 AND business_id = $2;
+
+-- name: CountDirectOwners :one
+-- Direct Owners (locked role) whose membership is AT this business. At the tenant
+-- root this is the last-Owner count guarded by FR-014/FR-024.
+SELECT count(*) FROM membership m
+JOIN role r ON r.id = m.role_id
+WHERE m.business_id = $1 AND r.is_locked;
+
+-- name: GetRoleInTenant :one
+-- A role assignable within the tenant (a preset, or one the tenant owns), with
+-- the bits the assignment guard needs (is_locked marks the full-access Owner role).
+SELECT id, key, is_locked FROM role
+WHERE id = $1 AND (tenant_root_id IS NULL OR tenant_root_id = $2);
