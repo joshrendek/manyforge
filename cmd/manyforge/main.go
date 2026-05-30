@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/manyforge/manyforge/internal/account"
+	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/config"
 	"github.com/manyforge/manyforge/internal/platform/db"
@@ -67,8 +68,10 @@ func main() {
 		AccessTTL: cfg.AccessTokenTTL, RefreshTTL: 30 * 24 * time.Hour, TokenTTL: 24 * time.Hour,
 	}
 	tenSvc := &tenancy.Service{DB: database}
+	authzSvc := &authz.Service{DB: database}
 	acctH := account.NewHandler(acctSvc)
 	tenH := tenancy.NewHandler(tenSvc)
+	authzH := authz.NewHandler(authzSvc)
 
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
@@ -87,6 +90,7 @@ func main() {
 			pr.Use(httpx.RequireAuth)
 			acctH.ProtectedRoutes(pr)
 			tenH.ProtectedRoutes(pr)
+			authzH.ProtectedRoutes(pr)
 		})
 	})
 

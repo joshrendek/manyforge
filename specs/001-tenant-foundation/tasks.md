@@ -129,7 +129,7 @@ auth, and RBAC machinery every story sits on.
 - [ ] T056 [P] [US3] Security regression: escalation refused at assign/edit/accept (FR-023) in `internal/security_regression/escalation_test.go`
 
 ### Implementation
-- [ ] T057 [P] [US3] Permission catalog seed check + `GET /permissions` (paginated) in `internal/authz/permission.go`
+- [X] T057 [P] [US3] Permission catalog seed check + `GET /permissions` (paginated) in `internal/authz/permission.go` (impl in `internal/authz/{service,handler}.go`)
 - [ ] T058 [P] [US3] Role service (presets + custom CRUD; tenant_root_id derived from path; superset/escalation check; delete-in-use refused, FR-025) in `internal/authz/role.go`
 - [ ] T059 [US3] Roles handlers under `/businesses/{id}/roles` in `internal/authz/handler.go`
 - [ ] T060 [P] [US3] Invitations store+service: create (role ≤ inviter, hashed token), list, revoke, resend (throttled) in `internal/invitations/service.go`
