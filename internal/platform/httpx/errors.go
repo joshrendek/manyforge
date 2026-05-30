@@ -22,6 +22,16 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// DecodeJSON decodes the request body into v, writing a 400 and returning false
+// on malformed input.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		WriteJSON(w, http.StatusBadRequest, ErrorBody{Code: "VALIDATION", Message: "invalid JSON body"})
+		return false
+	}
+	return true
+}
+
 // WriteError maps a service-layer error to a stable HTTP response. Unauthorized
 // (ErrForbidden) collapses to 404 so it is indistinguishable from "doesn't
 // exist" — no existence oracle (FR-011/FR-026). Wrapped errors are logged
