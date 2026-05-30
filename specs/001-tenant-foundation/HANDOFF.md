@@ -1,16 +1,33 @@
 # Tenant Foundation — Session Handoff
 
-**Branch**: `001-tenant-foundation` (12 commits ahead of `master`, all local — no remote).
-**Progress**: 51/85 tasks. Backend Phase 1–2 complete; US1 + US2 complete (backend + tests);
-US1 has a working Angular SPA. All `make test` / `make int-test` / `make lint` green.
+**Branch**: `001-tenant-foundation` (15 commits ahead of `master`, all local — no remote).
+**Progress**: 51/85 backend tasks + full US1/US2 SPA. Backend Phase 1–2 complete; US1 + US2
+complete (backend + tests + UI). All `make test` / `make int-test` / `make lint` green;
+web: vitest (12) + Playwright (12) + prod build green.
 
 ## What works (verified)
 - **Phase 1** setup, **Phase 2** platform (schema/RLS/auth/RBAC/audit/mailer/ratelimit/HTTP).
 - **US1**: signup → verify-email → login → create master business. API + Angular SPA, driven
   live in a browser (Playwright) and `curl`. `make int-test` covers it (`TestUS1_*`).
 - **US2**: sub-business create/move/archive/restore/rename/delete, RLS-isolated, cycle/
-  cross-tenant/master-move/depth guards, concurrency-safe. Backend only — **no US2 UI yet**.
+  cross-tenant/master-move/depth guards, concurrency-safe. **Now with full dashboard UI**:
+  collapsible hierarchy tree, per-node create-sub/rename/move/archive/restore/delete with
+  confirmation + friendly 409/4xx mapping. Verified live end-to-end via the Playwright MCP.
+- **SPA polish**: silent refresh-token renewal on 401 (single-flight interceptor; retries the
+  original request once; failed refresh → clear session + /login), recoverable load-error state.
+- **Design system**: cohesive dark theme — tokens, tree affordances/spine, focus-visible rings,
+  hover/active states, sticky blurred top bar, gradient cards (`web/src/styles.css`).
 - RLS proven fail-closed + cross-tenant isolated (`internal/security_regression`, `make sec-test`).
+
+## Web layout (new this session)
+- `web/src/app/core/tree.ts` — pure `buildTree`/`flatten` (parent_id→forest; orphans surfaced;
+  collapse-aware). Unit-tested in `tree.spec.ts`.
+- `web/src/app/core/business.service.ts` — typed tenancy API client.
+- `web/src/app/core/auth.interceptor.ts` + `auth.service.ts` — refresh-on-401 (single-flight).
+- `web/src/app/pages/dashboard.ts` — hierarchy tree + actions.
+- Specs: `web/e2e/{us1,us2,polish}.spec.ts` (API mocked via `page.route` for the authed flows —
+  the dev mailer only logs the verify token, so a self-contained e2e can't complete verification;
+  unauthed paths run against the real stack). Run all: `cd web && npx playwright test` (stack on :4300).
 
 ## How to run locally
 ```bash
@@ -44,14 +61,16 @@ Tests: `make test` (unit), `make int-test` (testcontainers; Docker required), `m
 - **sqlc**: schema mirror at `db/schema.sql` (tables only); `UNION`/bare-param SELECTs and
   unaliased self-joins confuse its parser; boolean exprs need `::boolean`.
 
-## What's next (user asked for "all 3" — only A-backend is done)
-- **A (done)**: US2 hierarchy backend. **Remaining of A**: surface nesting in the dashboard UI
-  (create sub-business, tree view, move/archive/delete) + US2 HTTP-level contract tests (T045 was
-  marked done but coverage is service-level; add HTTP contract tests for the US2 mutation routes).
-- **B — US1/US2 UI polish**: refresh-token auto-renew on 401 (interceptor), nicer empty/error
-  states, real verification-link UX.
-- **C — design pass**: run a proper design system over the SPA (currently clean but minimal).
-- Then US3 (invites/roles), US4 (isolation surfacing), US5 (admin/audit), polish (T079–T085).
+## What's next
+- **A (done)**: US2 hierarchy backend + **dashboard UI** (this session).
+- **B (done)**: refresh-token auto-renew interceptor + recoverable error states.
+- **C (done)**: design pass / cohesive design system.
+- **Remaining backend gap** (`bd manyforge-8i9`, P2): US2 HTTP-level contract tests for the
+  mutation routes (move/archive/restore/delete/rename) — T045 coverage is service-level only.
+- Then US3 (invites/roles, T053–T063), US4 (isolation surfacing, T064–T071),
+  US5 (admin/audit, T072–T078), polish (T079–T085).
+- Possible UI follow-ups: real verification-link UX (still token-paste in dev), move-target
+  picker is select-based (not drag-drop), and the move flow lacks a committed e2e (covered live).
 
 ## Open notes
 - bd epic `manyforge-5zt` (+7 planning children) tracks design decisions; resolved by research.md.
