@@ -6,3 +6,20 @@
 
 # Local agent/session context (e.g. Codex session ids)
 .context/
+
+# Go
+/manyforge
+*.exe
+*.test
+*.out
+coverage.*
+/bin/
+vendor/
+
+# Local secrets / env
+.env
+/secrets/
+
+# OS
+.DS_Store
+
