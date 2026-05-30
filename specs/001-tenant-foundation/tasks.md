@@ -43,13 +43,13 @@ auth, and RBAC machinery every story sits on.
 **⚠️ CRITICAL**: No user-story work begins until this phase is complete.
 
 ### Schema & migrations (forward-only)
-- [ ] T012 Migration: extensions (`citext`,`pgcrypto`) + `account` + `principal` (kind CHECK) in `migrations/0001_identity.sql`
-- [ ] T013 Migration: `business` (UNIQUE(id,tenant_root_id); master-root + immutability triggers) + `business_closure` (composite FKs, indexes) in `migrations/0002_hierarchy.sql`
-- [ ] T014 Migration: `permission` (seed catalog, frozen `module.action` naming) + `role` (+ presets seed) + `role_permission` in `migrations/0003_rbac.sql`
-- [ ] T015 Migration: `membership` (composite FKs to business + custom role, uniqueness) + agent-containment trigger + DEFERRABLE last-Owner constraint trigger in `migrations/0004_membership.sql`
-- [ ] T016 Migration: `invitation` + `refresh_token` + `email_suppression` in `migrations/0005_invitations_sessions.sql`
-- [ ] T017 Migration: `audit_entry` (nullable business/tenant, agent + correlation fields, append-only grants) + `erasure` role & redaction proc in `migrations/0006_audit.sql`
-- [ ] T018 Migration: enable RLS + `FORCE ROW LEVEL SECURITY` + self-deriving (`principal_id`) policies on every tenant table; create non-superuser app role; revoke BYPASSRLS in `migrations/0007_rls.sql`
+- [X] T012 Migration: extensions (`citext`,`pgcrypto`) + `account` + `principal` (kind CHECK) in `migrations/0001_identity.sql`
+- [X] T013 Migration: `business` (UNIQUE(id,tenant_root_id); master-root + immutability triggers) + `business_closure` (composite FKs, indexes) in `migrations/0002_hierarchy.sql`
+- [X] T014 Migration: `permission` (seed catalog, frozen `module.action` naming) + `role` (+ presets seed) + `role_permission` in `migrations/0003_rbac.sql`
+- [X] T015 Migration: `membership` (composite FKs to business + custom role, uniqueness) + agent-containment trigger + DEFERRABLE last-Owner constraint trigger in `migrations/0004_membership.sql`
+- [X] T016 Migration: `invitation` + `refresh_token` + `email_suppression` in `migrations/0005_invitations_sessions.sql`
+- [X] T017 Migration: `audit_entry` (nullable business/tenant, agent + correlation fields, append-only grants) + `erasure` role & redaction proc in `migrations/0006_audit.sql`
+- [X] T018 Migration: enable RLS + `FORCE ROW LEVEL SECURITY` + self-deriving (`principal_id`) policies on every tenant table; create non-superuser app role; revoke BYPASSRLS in `migrations/0007_rls.sql`
 
 ### Platform services
 - [ ] T019 pgx pool + `WithTx` helper + `SET LOCAL manyforge.principal_id` context + acquire-time GUC assertion in `internal/platform/db/db.go`
