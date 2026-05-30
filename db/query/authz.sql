@@ -37,3 +37,36 @@ SELECT key, module, description FROM permission
 WHERE key > $1
 ORDER BY key
 LIMIT $2;
+
+-- name: ListTenantRoles :many
+-- Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
+-- this to roles the caller may see; the predicate narrows to one tenant.
+SELECT id, tenant_root_id, key, name, is_locked FROM role
+WHERE tenant_root_id IS NULL OR tenant_root_id = $1
+ORDER BY is_locked DESC, name;
+
+-- name: GetCustomRole :one
+-- A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
+SELECT id, tenant_root_id, key, name, is_locked FROM role
+WHERE id = $1 AND tenant_root_id = $2;
+
+-- name: GetRolePermissions :many
+SELECT permission_key FROM role_permission WHERE role_id = $1 ORDER BY permission_key;
+
+-- name: CreateRole :exec
+INSERT INTO role (id, tenant_root_id, key, name) VALUES ($1, $2, $3, $4);
+
+-- name: AddRolePermission :exec
+INSERT INTO role_permission (role_id, permission_key) VALUES ($1, $2);
+
+-- name: ClearRolePermissions :exec
+DELETE FROM role_permission WHERE role_id = $1;
+
+-- name: UpdateRoleName :exec
+UPDATE role SET name = $2 WHERE id = $1;
+
+-- name: CountRoleMemberships :one
+SELECT count(*) FROM membership WHERE role_id = $1;
+
+-- name: DeleteRole :exec
+DELETE FROM role WHERE id = $1 AND tenant_root_id = $2;

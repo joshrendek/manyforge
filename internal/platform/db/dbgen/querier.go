@@ -14,9 +14,12 @@ import (
 type Querier interface {
 	// Serializes structural mutations within a tenant (research R5).
 	AcquireTenantLock(ctx context.Context, hashtext string) error
+	AddRolePermission(ctx context.Context, arg AddRolePermissionParams) error
 	AllPermissionKeys(ctx context.Context) ([]string, error)
+	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
 	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
+	CountRoleMemberships(ctx context.Context, roleID uuid.UUID) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
@@ -26,6 +29,8 @@ type Querier interface {
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) error
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) (OneTimeToken, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
+	CreateRole(ctx context.Context, arg CreateRoleParams) error
+	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
 	DepthFromRoot(ctx context.Context, arg DepthFromRootParams) (int32, error)
 	// Effective permissions for a principal at a business: the union of permissions
 	// from every grant the principal holds on the business or any non-archived
@@ -37,8 +42,11 @@ type Querier interface {
 	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
 	GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
+	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
+	GetRolePermissions(ctx context.Context, roleID uuid.UUID) ([]string, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
 	// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
@@ -53,6 +61,9 @@ type Querier interface {
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
+	// Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
+	// this to roles the caller may see; the predicate narrows to one tenant.
+	ListTenantRoles(ctx context.Context, tenantRootID pgtype.UUID) ([]ListTenantRolesRow, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
@@ -65,6 +76,7 @@ type Querier interface {
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
+	UpdateRoleName(ctx context.Context, arg UpdateRoleNameParams) error
 }
 
 var _ Querier = (*Queries)(nil)
