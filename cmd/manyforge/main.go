@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/manyforge/manyforge/internal/platform/config"
+	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
@@ -24,6 +25,16 @@ func main() {
 	if err != nil {
 		logger.Error("load config", "err", err)
 		os.Exit(1)
+	}
+
+	// `manyforge migrate` applies migrations then exits.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := db.Migrate(cfg.DatabaseURL, "migrations"); err != nil {
+			logger.Error("migrate", "err", err)
+			os.Exit(1)
+		}
+		logger.Info("migrations applied")
+		return
 	}
 
 	// Phase 2 mounts the chi router + modules here; the stdlib mux carries the

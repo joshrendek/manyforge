@@ -53,20 +53,20 @@ auth, and RBAC machinery every story sits on.
 
 ### Platform services
 - [X] T019 pgx pool + `WithTx` helper + `SET LOCAL manyforge.principal_id` context + acquire-time GUC assertion in `internal/platform/db/db.go`
-- [ ] T020 Migration runner wired to `make migrate` + `cmd/manyforge` in `internal/platform/db/migrate.go`
+- [X] T020 Migration runner wired to `make migrate` + `cmd/manyforge` in `internal/platform/db/migrate.go`
 - [X] T021 [P] sqlc query files for all tables in `db/query/*.sql`; run `make generate`
 - [X] T022 [P] argon2id hash/verify + fixed-cost dummy-compare helper in `internal/platform/auth/password.go`
 - [X] T023 [P] EdDSA key ring (`kid`) + JWT sign/verify pinning alg/iss/aud in `internal/platform/auth/jwt.go`
 - [ ] T024 Refresh-token store: hash, family, rotation (`FOR UPDATE`), reuse→family revoke in `internal/platform/auth/refresh.go`
-- [ ] T025 HTTP router + middleware (request-id, recover, slog, auth→principal context) + error mapping (unauthorized+unknown→404) in `internal/platform/httpx/`
+- [X] T025 HTTP router + middleware (request-id, recover, slog, auth→principal context) + error mapping (unauthorized+unknown→404) in `internal/platform/httpx/`
 - [ ] T026 Append-only audit writer (same-tx, correlation id) in `internal/platform/audit/audit.go`
-- [ ] T027 [P] Mailer interface + dev(log) impl + suppression check in `internal/platform/mailer/mailer.go`
-- [ ] T028 [P] Rate limiter (per-IP + per-account, Postgres-backed) + trusted-proxy IP resolution in `internal/platform/ratelimit/ratelimit.go`
+- [X] T027 [P] Mailer interface + dev(log) impl + suppression check in `internal/platform/mailer/mailer.go`
+- [X] T028 [P] Rate limiter (per-IP + per-account, Postgres-backed) + trusted-proxy IP resolution in `internal/platform/ratelimit/ratelimit.go`
 - [X] T029 [P] Cursor pagination helper with max-page-size cap in `internal/platform/httpx/page.go`
 - [X] T030 [P] SSRF-guarded HTTP client in `internal/platform/netsafe/client.go`
 - [ ] T031 Closure-table maintenance (self-row on create; move rewrite under `pg_advisory_xact_lock`) in `internal/tenancy/closure.go`
 - [X] T032 Effective-permission resolver (union over non-archived-ancestor closure; agent direct-only) in `internal/authz/resolver.go`
-- [ ] T033 `RequirePermission` authz middleware using the resolver in `internal/platform/httpx/authz.go`
+- [X] T033 `RequirePermission` authz middleware using the resolver in `internal/platform/httpx/authz.go`
 - [X] T034 Security-regression harness: seed adversarial tenants as the non-bypass app role in `internal/security_regression/harness_test.go`
 
 **Checkpoint**: foundation ready — user stories can proceed.
