@@ -34,7 +34,12 @@ type PanelKind = 'add' | 'rename' | 'move';
       } @else {
         <ul class="tree">
           @for (row of rows(); track row.business.id) {
-            <li class="biz" data-testid="biz-row" [style.paddingLeft.px]="row.depth * 22 + 16">
+            <li
+              class="biz"
+              data-testid="biz-row"
+              [class.is-child]="row.depth > 0"
+              [style.paddingLeft.px]="row.depth * 22 + 16"
+            >
               <div class="biz-main">
                 @if (row.hasChildren) {
                   <button
