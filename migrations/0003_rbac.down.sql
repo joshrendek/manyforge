@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS role_permission;
+DROP TABLE IF EXISTS role;
+DROP TABLE IF EXISTS permission;

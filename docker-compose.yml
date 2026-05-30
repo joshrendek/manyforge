@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: manyforge
     ports:
-      - "5432:5432"
+      - "55432:5432"  # host 55432 to avoid clashing with a local Postgres on 5432
     volumes:
       - manyforge_pg:/var/lib/postgresql/data
     healthcheck:

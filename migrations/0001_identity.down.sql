@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS principal;
+DROP TABLE IF EXISTS account;

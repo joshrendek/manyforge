@@ -32,5 +32,9 @@ generate:
 migrate:
 	migrate -path migrations -database "$$MANYFORGE_DATABASE_URL" up
 
+# Fast RLS isolation smoke check (connect as a superuser DSN; resets tenant data).
+db-smoke:
+	psql "$$MANYFORGE_DATABASE_URL" -v ON_ERROR_STOP=1 -tA -f db/tests/rls_smoke.sql
+
 tidy:
 	$(GO) mod tidy

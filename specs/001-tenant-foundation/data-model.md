@@ -140,5 +140,9 @@ business ─< invitation     business ─< audit_entry(business_id NULLABLE)    
 5. `invitation`; `refresh_token`; `email_suppression`.
 6. `audit_entry` (nullable business/tenant, agent + correlation fields; append-only grants; `erasure`
    role + redaction proc).
-7. RLS enable + `FORCE ROW LEVEL SECURITY` + self-deriving policies on every 🔒 table; create the
-   non-superuser app role and the restricted `erasure` role; revoke BYPASSRLS.
+7. RLS `ENABLE` + self-deriving (`principal_id`-only) policies via `SECURITY DEFINER` authorization
+   functions on every 🔒 table; create the non-superuser, non-BYPASSRLS app role + restricted
+   `erasure` role. `FORCE ROW LEVEL SECURITY` is intentionally omitted: the app role is never a table
+   owner (so `ENABLE` already applies to it), and `FORCE` would subject the `SECURITY DEFINER`
+   authorization functions to RLS (policy recursion) unless their owner has BYPASSRLS. Migrations
+   therefore run as a superuser/owner.
