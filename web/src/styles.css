@@ -86,14 +86,41 @@ button.linklike { background: none; width: auto; margin: 0; padding: 0; color: v
 .switch { margin-top: 18px; font-size: 13px; color: var(--muted); }
 
 .biz-list { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 10px; }
+
+/* Hierarchy tree */
+.tree { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
 .biz {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px 16px;
+  border-radius: 10px; padding: 12px 16px;
 }
+.biz-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .biz .name { font-weight: 600; }
+.biz .name.muted { color: var(--muted); text-decoration: line-through; }
+.caret {
+  width: auto; margin: 0; padding: 0; background: none; color: var(--muted);
+  font-size: 13px; line-height: 1; cursor: pointer; border: 0;
+}
+.caret-spacer { display: inline-block; width: 13px; }
+.biz-actions { display: flex; align-items: center; gap: 12px; }
 .pill { font-size: 11px; color: var(--accent-2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; }
+.badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; }
 .empty { color: var(--muted); font-size: 14px; padding: 20px 0; text-align: center; }
+
+.panel {
+  flex-basis: 100%; margin-top: 4px; padding: 12px; border-radius: 9px;
+  background: var(--panel); border: 1px solid var(--border);
+}
+.panel .row { margin-top: 8px; }
+.panel .row input, .panel .row select { margin: 0; }
+.panel.danger-panel { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+select {
+  padding: 11px 12px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 9px; color: var(--text); font-size: 14px; outline: none;
+}
+
+button.compact { width: auto; margin: 0; padding: 9px 14px; white-space: nowrap; }
+.linklike.danger { color: var(--danger); }
 .profile { color: var(--muted); font-size: 13px; }
 .profile b { color: var(--text); }
 .hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
