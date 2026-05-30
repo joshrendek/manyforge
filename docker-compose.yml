@@ -1,0 +1,21 @@
+# Local development Postgres. Integration tests use ephemeral testcontainers
+# instead of this instance.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: manyforge
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: manyforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - manyforge_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manyforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  manyforge_pg:
