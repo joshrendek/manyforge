@@ -180,3 +180,52 @@ func (s *Service) Logout(ctx context.Context, rawRefresh string) error {
 		return auth.RevokeRefreshByToken(ctx, tx, rawRefresh)
 	})
 }
+
+// Profile is the /me view of an account.
+type Profile struct {
+	ID            uuid.UUID
+	Email         string
+	DisplayName   string
+	EmailVerified bool
+	Status        string
+}
+
+func toProfile(a dbgen.Account) Profile {
+	return Profile{ID: a.ID, Email: a.Email, DisplayName: a.DisplayName, EmailVerified: a.EmailVerifiedAt.Valid, Status: a.Status}
+}
+
+// GetProfile returns the account for the given principal.
+func (s *Service) GetProfile(ctx context.Context, principalID uuid.UUID) (Profile, error) {
+	var p Profile
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		acc, err := dbgen.New(tx).GetAccountByPrincipal(ctx, principalID)
+		if err != nil {
+			return errs.ErrNotFound
+		}
+		p = toProfile(acc)
+		return nil
+	})
+	return p, err
+}
+
+// UpdateProfile updates the display name of the principal's account.
+func (s *Service) UpdateProfile(ctx context.Context, principalID uuid.UUID, displayName string) (Profile, error) {
+	if displayName == "" {
+		return Profile{}, fmt.Errorf("display name is required: %w", errs.ErrValidation)
+	}
+	var p Profile
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		acc, err := q.GetAccountByPrincipal(ctx, principalID)
+		if err != nil {
+			return errs.ErrNotFound
+		}
+		updated, err := q.UpdateDisplayName(ctx, dbgen.UpdateDisplayNameParams{ID: acc.ID, DisplayName: displayName})
+		if err != nil {
+			return err
+		}
+		p = toProfile(updated)
+		return nil
+	})
+	return p, err
+}

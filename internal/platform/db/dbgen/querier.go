@@ -31,6 +31,7 @@ type Querier interface {
 	EffectivePermissions(ctx context.Context, arg EffectivePermissionsParams) ([]string, error)
 	GetAccountByEmail(ctx context.Context, email string) (Account, error)
 	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
+	GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
