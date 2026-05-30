@@ -64,7 +64,7 @@ auth, and RBAC machinery every story sits on.
 - [X] T028 [P] Rate limiter (per-IP + per-account, Postgres-backed) + trusted-proxy IP resolution in `internal/platform/ratelimit/ratelimit.go`
 - [X] T029 [P] Cursor pagination helper with max-page-size cap in `internal/platform/httpx/page.go`
 - [X] T030 [P] SSRF-guarded HTTP client in `internal/platform/netsafe/client.go`
-- [ ] T031 Closure-table maintenance (self-row on create; move rewrite under `pg_advisory_xact_lock`) in `internal/tenancy/closure.go`
+- [X] T031 Closure-table maintenance (self-row on create; move rewrite under `pg_advisory_xact_lock`) in `internal/tenancy/closure.go`
 - [X] T032 Effective-permission resolver (union over non-archived-ancestor closure; agent direct-only) in `internal/authz/resolver.go`
 - [X] T033 `RequirePermission` authz middleware using the resolver in `internal/platform/httpx/authz.go`
 - [X] T034 Security-regression harness: seed adversarial tenants as the non-bypass app role in `internal/security_regression/harness_test.go`
@@ -102,16 +102,16 @@ auth, and RBAC machinery every story sits on.
 **Independent Test**: nest sub-businesses, move one, archive/restore; tree reflects changes; cycle & cross-tenant moves refused.
 
 ### Tests (write first, MUST fail)
-- [ ] T045 [P] [US2] Contract tests: `POST /businesses` (sub), `GET /businesses`, `GET/PATCH /businesses/{id}`, move, archive, restore in `internal/tenancy/hierarchy_contract_test.go`
-- [ ] T046 [P] [US2] Integration: nest/move/archive/restore tree correctness in `internal/tenancy/hierarchy_test.go`
-- [ ] T047 [P] [US2] Concurrency matrix: create+delete, move+move overlap, move+archive, restore+delete — acyclic, non-orphaning, deterministic 409 (FR-031) in `internal/tenancy/concurrency_test.go`
+- [X] T045 [P] [US2] Contract tests: `POST /businesses` (sub), `GET /businesses`, `GET/PATCH /businesses/{id}`, move, archive, restore in `internal/tenancy/hierarchy_contract_test.go`
+- [X] T046 [P] [US2] Integration: nest/move/archive/restore tree correctness in `internal/tenancy/hierarchy_test.go`
+- [X] T047 [P] [US2] Concurrency matrix: create+delete, move+move overlap, move+archive, restore+delete — acyclic, non-orphaning, deterministic 409 (FR-031) in `internal/tenancy/concurrency_test.go`
 
 ### Implementation
-- [ ] T048 [US2] Create sub-business (closure insert, depth cap, composite FK) under advisory lock in `internal/tenancy/service.go`
-- [ ] T049 [US2] Move (cycle check, cross-tenant reject, closure rewrite) under advisory lock in `internal/tenancy/service.go`
-- [ ] T050 [US2] Archive/restore subtree in `internal/tenancy/service.go`
-- [ ] T051 [US2] Scoped `GET /businesses` (list) + `GET/PATCH /businesses/{id}` handlers in `internal/tenancy/handler.go`
-- [ ] T052 [US2] Soft-delete business (Owner-only, confirm body, refuse active children, FR-017) in `internal/tenancy/service.go`, `handler.go`
+- [X] T048 [US2] Create sub-business (closure insert, depth cap, composite FK) under advisory lock in `internal/tenancy/service.go`
+- [X] T049 [US2] Move (cycle check, cross-tenant reject, closure rewrite) under advisory lock in `internal/tenancy/service.go`
+- [X] T050 [US2] Archive/restore subtree in `internal/tenancy/service.go`
+- [X] T051 [US2] Scoped `GET /businesses` (list) + `GET/PATCH /businesses/{id}` handlers in `internal/tenancy/handler.go`
+- [X] T052 [US2] Soft-delete business (Owner-only, confirm body, refuse active children, FR-017) in `internal/tenancy/service.go`, `handler.go`
 
 **Checkpoint**: US1+US2 work independently.
 

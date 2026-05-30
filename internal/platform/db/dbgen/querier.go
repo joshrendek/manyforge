@@ -12,8 +12,11 @@ import (
 )
 
 type Querier interface {
+	// Serializes structural mutations within a tenant (research R5).
+	AcquireTenantLock(ctx context.Context, hashtext string) error
 	AllPermissionKeys(ctx context.Context) ([]string, error)
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
+	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
@@ -23,6 +26,7 @@ type Querier interface {
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) error
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) (OneTimeToken, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
+	DepthFromRoot(ctx context.Context, arg DepthFromRootParams) (int32, error)
 	// Effective permissions for a principal at a business: the union of permissions
 	// from every grant the principal holds on the business or any non-archived
 	// ancestor (downward-only inheritance, FR-010). The locked Owner role is handled
@@ -37,14 +41,26 @@ type Querier interface {
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
+	// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
+	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
+	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
+	// True if candidate ($2) is the node ($1) itself or a descendant of it.
+	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
+	// Subtree move is performed by the SECURITY DEFINER move_business() function
+	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
+	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
+	RenameBusiness(ctx context.Context, arg RenameBusinessParams) error
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
+	SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error
+	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
+	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 }
 
