@@ -114,6 +114,29 @@ func (q *Queries) GetAccountByID(ctx context.Context, id uuid.UUID) (Account, er
 	return i, err
 }
 
+const getAccountByPrincipal = `-- name: GetAccountByPrincipal :one
+SELECT a.id, a.email, a.email_verified_at, a.password_hash, a.display_name, a.status, a.deleted_at, a.created_at, a.updated_at FROM account a
+JOIN principal p ON p.account_id = a.id
+WHERE p.id = $1 AND a.deleted_at IS NULL
+`
+
+func (q *Queries) GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccountByPrincipal, id)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerifiedAt,
+		&i.PasswordHash,
+		&i.DisplayName,
+		&i.Status,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPrincipalByAccount = `-- name: GetPrincipalByAccount :one
 SELECT id, kind, account_id, home_business_id, tenant_root_id, created_at FROM principal WHERE account_id = $1 AND kind = 'human'
 `

@@ -14,6 +14,8 @@ type Config struct {
 	DatabaseURL      string        // PostgreSQL DSN for the app role (non-superuser, non-BYPASSRLS)
 	AccessTokenTTL   time.Duration // EdDSA access-token lifetime
 	TrustedProxyCIDR string        // CIDR allowed to set the client IP via X-Forwarded-For
+	JWTIssuer        string        // expected/stamped token issuer
+	JWTAudience      string        // expected/stamped token audience
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -23,6 +25,8 @@ func Load() (Config, error) {
 		Addr:             env("MANYFORGE_ADDR", ":8080"),
 		DatabaseURL:      os.Getenv("MANYFORGE_DATABASE_URL"),
 		TrustedProxyCIDR: os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
+		JWTIssuer:        env("MANYFORGE_JWT_ISSUER", "manyforge"),
+		JWTAudience:      env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
 	}
 
 	ttl, err := envDuration("MANYFORGE_ACCESS_TOKEN_TTL", 15*time.Minute)

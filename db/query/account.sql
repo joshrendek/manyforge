@@ -24,6 +24,11 @@ RETURNING *;
 -- name: GetPrincipalByAccount :one
 SELECT * FROM principal WHERE account_id = $1 AND kind = 'human';
 
+-- name: GetAccountByPrincipal :one
+SELECT a.* FROM account a
+JOIN principal p ON p.account_id = a.id
+WHERE p.id = $1 AND a.deleted_at IS NULL;
+
 -- name: IsAccountVerifiedByPrincipal :one
 SELECT (a.email_verified_at IS NOT NULL)::boolean AS verified
 FROM principal p

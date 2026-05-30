@@ -20,6 +20,16 @@ type KeyRing struct {
 	verify    map[string]ed25519.PublicKey // kid -> public key
 }
 
+// NewDevKeyRing generates an ephemeral EdDSA key ring for local development.
+// Tokens do not survive a restart; configure persistent keys for production.
+func NewDevKeyRing(issuer, audience string) (*KeyRing, error) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return nil, err
+	}
+	return NewKeyRing(issuer, audience, "dev", priv, map[string]ed25519.PublicKey{"dev": pub})
+}
+
 // NewKeyRing builds a key ring. activeKID must exist in verify.
 func NewKeyRing(issuer, audience, activeKID string, signing ed25519.PrivateKey, verify map[string]ed25519.PublicKey) (*KeyRing, error) {
 	if _, ok := verify[activeKID]; !ok {

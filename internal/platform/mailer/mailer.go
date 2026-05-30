@@ -34,7 +34,9 @@ func (m LogMailer) Send(ctx context.Context, msg Message) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	logger.InfoContext(ctx, "dev mailer: would send", "to", msg.To, "subject", msg.Subject)
+	// Body is logged so dev flows (email verification, etc.) are completable
+	// without a real mail server. Never use LogMailer in production.
+	logger.InfoContext(ctx, "dev mailer: would send", "to", msg.To, "subject", msg.Subject, "body", msg.Body)
 	return nil
 }
 
