@@ -5,6 +5,8 @@
 package dbgen
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -17,25 +19,25 @@ type Account struct {
 	DisplayName     string             `json:"display_name"`
 	Status          string             `json:"status"`
 	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
 type AuditEntry struct {
-	ID               uuid.UUID          `json:"id"`
-	BusinessID       pgtype.UUID        `json:"business_id"`
-	TenantRootID     pgtype.UUID        `json:"tenant_root_id"`
-	ActorPrincipalID pgtype.UUID        `json:"actor_principal_id"`
-	Action           string             `json:"action"`
-	TargetType       *string            `json:"target_type"`
-	TargetID         pgtype.UUID        `json:"target_id"`
-	Inputs           []byte             `json:"inputs"`
-	Outputs          []byte             `json:"outputs"`
-	Decision         *string            `json:"decision"`
-	CorrelationID    *string            `json:"correlation_id"`
-	OldValue         []byte             `json:"old_value"`
-	NewValue         []byte             `json:"new_value"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ID               uuid.UUID   `json:"id"`
+	BusinessID       pgtype.UUID `json:"business_id"`
+	TenantRootID     pgtype.UUID `json:"tenant_root_id"`
+	ActorPrincipalID pgtype.UUID `json:"actor_principal_id"`
+	Action           string      `json:"action"`
+	TargetType       *string     `json:"target_type"`
+	TargetID         pgtype.UUID `json:"target_id"`
+	Inputs           []byte      `json:"inputs"`
+	Outputs          []byte      `json:"outputs"`
+	Decision         *string     `json:"decision"`
+	CorrelationID    *string     `json:"correlation_id"`
+	OldValue         []byte      `json:"old_value"`
+	NewValue         []byte      `json:"new_value"`
+	CreatedAt        time.Time   `json:"created_at"`
 }
 
 type Business struct {
@@ -45,8 +47,8 @@ type Business struct {
 	Name         string             `json:"name"`
 	Status       string             `json:"status"`
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
 type BusinessClosure struct {
@@ -57,9 +59,9 @@ type BusinessClosure struct {
 }
 
 type EmailSuppression struct {
-	Email     string             `json:"email"`
-	Reason    string             `json:"reason"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Email     string    `json:"email"`
+	Reason    string    `json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Invitation struct {
@@ -71,19 +73,31 @@ type Invitation struct {
 	TokenHash    string             `json:"token_hash"`
 	Status       string             `json:"status"`
 	CreatedBy    pgtype.UUID        `json:"created_by"`
-	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	ExpiresAt    time.Time          `json:"expires_at"`
 	AcceptedAt   pgtype.Timestamptz `json:"accepted_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	CreatedAt    time.Time          `json:"created_at"`
 }
 
 type Membership struct {
-	ID           uuid.UUID          `json:"id"`
-	PrincipalID  uuid.UUID          `json:"principal_id"`
-	BusinessID   uuid.UUID          `json:"business_id"`
-	TenantRootID uuid.UUID          `json:"tenant_root_id"`
-	RoleID       uuid.UUID          `json:"role_id"`
-	GrantedBy    pgtype.UUID        `json:"granted_by"`
-	GrantedAt    pgtype.Timestamptz `json:"granted_at"`
+	ID           uuid.UUID   `json:"id"`
+	PrincipalID  uuid.UUID   `json:"principal_id"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	RoleID       uuid.UUID   `json:"role_id"`
+	GrantedBy    pgtype.UUID `json:"granted_by"`
+	GrantedAt    time.Time   `json:"granted_at"`
+}
+
+type OneTimeToken struct {
+	ID         uuid.UUID          `json:"id"`
+	AccountID  pgtype.UUID        `json:"account_id"`
+	Email      string             `json:"email"`
+	Purpose    string             `json:"purpose"`
+	TokenHash  string             `json:"token_hash"`
+	NewEmail   *string            `json:"new_email"`
+	ExpiresAt  time.Time          `json:"expires_at"`
+	ConsumedAt pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt  time.Time          `json:"created_at"`
 }
 
 type Permission struct {
@@ -93,12 +107,12 @@ type Permission struct {
 }
 
 type Principal struct {
-	ID             uuid.UUID          `json:"id"`
-	Kind           string             `json:"kind"`
-	AccountID      pgtype.UUID        `json:"account_id"`
-	HomeBusinessID pgtype.UUID        `json:"home_business_id"`
-	TenantRootID   pgtype.UUID        `json:"tenant_root_id"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID             uuid.UUID   `json:"id"`
+	Kind           string      `json:"kind"`
+	AccountID      pgtype.UUID `json:"account_id"`
+	HomeBusinessID pgtype.UUID `json:"home_business_id"`
+	TenantRootID   pgtype.UUID `json:"tenant_root_id"`
+	CreatedAt      time.Time   `json:"created_at"`
 }
 
 type RefreshToken struct {
@@ -109,17 +123,17 @@ type RefreshToken struct {
 	ParentID    pgtype.UUID        `json:"parent_id"`
 	UsedAt      pgtype.Timestamptz `json:"used_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt   time.Time          `json:"expires_at"`
+	CreatedAt   time.Time          `json:"created_at"`
 }
 
 type Role struct {
-	ID           uuid.UUID          `json:"id"`
-	TenantRootID pgtype.UUID        `json:"tenant_root_id"`
-	Key          string             `json:"key"`
-	Name         string             `json:"name"`
-	IsLocked     bool               `json:"is_locked"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ID           uuid.UUID   `json:"id"`
+	TenantRootID pgtype.UUID `json:"tenant_root_id"`
+	Key          string      `json:"key"`
+	Name         string      `json:"name"`
+	IsLocked     bool        `json:"is_locked"`
+	CreatedAt    time.Time   `json:"created_at"`
 }
 
 type RolePermission struct {

@@ -42,6 +42,21 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 func (d *DB) Pool() *pgxpool.Pool { return d.pool }
 func (d *DB) Close()              { d.pool.Close() }
 
+// WithTx runs fn in a transaction WITHOUT a principal context — for system and
+// auth operations on non-RLS tables (account, principal, refresh_token,
+// one_time_token). Use WithPrincipal for tenant-scoped work.
+func (d *DB) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // WithPrincipal runs fn inside a transaction whose RLS context is scoped to
 // principalID. A uuid.Nil principal sets an empty GUC, so RLS fails closed
 // (no rows). The GUC is transaction-local via set_config(..., true).

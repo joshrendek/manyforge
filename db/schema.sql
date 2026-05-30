@@ -108,6 +108,18 @@ CREATE TABLE email_suppression (
     created_at timestamptz NOT NULL
 );
 
+CREATE TABLE one_time_token (
+    id          uuid PRIMARY KEY,
+    account_id  uuid,
+    email       citext NOT NULL,
+    purpose     text NOT NULL,
+    token_hash  text NOT NULL UNIQUE,
+    new_email   citext,
+    expires_at  timestamptz NOT NULL,
+    consumed_at timestamptz,
+    created_at  timestamptz NOT NULL
+);
+
 CREATE TABLE audit_entry (
     id                 uuid PRIMARY KEY,
     business_id        uuid,
