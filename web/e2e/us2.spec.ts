@@ -157,3 +157,33 @@ test('archiving a node marks it archived and offers restore', async ({ page }) =
   await expect(sales.getByText('archived')).toBeVisible();
   await expect(sales.getByRole('button', { name: 'Restore' })).toBeVisible();
 });
+
+test('moving a sub-business re-parents it; the target menu excludes self and the current parent', async ({ page }) => {
+  await installStack(page, seed());
+  await page.goto('/dashboard');
+  // Backend sits under Engineering — initial order: Acme, Engineering, Backend, Sales.
+  await page.getByTestId('biz-row').filter({ hasText: 'Backend' }).getByRole('button', { name: 'Move' }).click();
+
+  // The picker offers a valid new parent (Sales) but never the node itself or its
+  // current parent (Engineering) — those would be no-ops / cycles.
+  const select = page.locator('#move-b');
+  await expect(select.locator('option', { hasText: 'Sales' })).toHaveCount(1);
+  await expect(select.locator('option', { hasText: 'Backend' })).toHaveCount(0);
+  await expect(select.locator('option', { hasText: 'Engineering' })).toHaveCount(0);
+
+  const [req] = await Promise.all([
+    page.waitForRequest((r) => /\/businesses\/b\/move$/.test(r.url()) && r.method() === 'POST'),
+    (async () => {
+      await select.selectOption('s');
+      await page.getByRole('button', { name: 'Move here' }).click();
+    })(),
+  ]);
+  expect(req.postDataJSON()).toMatchObject({ new_parent_id: 's' });
+
+  // After the reload Backend is nested under Sales — order: Acme, Engineering, Sales, Backend.
+  const rows = page.getByTestId('biz-row');
+  await expect(rows).toHaveCount(4);
+  await expect(rows.nth(1)).toContainText('Engineering');
+  await expect(rows.nth(2)).toContainText('Sales');
+  await expect(rows.nth(3)).toContainText('Backend');
+});
