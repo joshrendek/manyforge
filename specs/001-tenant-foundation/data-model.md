@@ -146,3 +146,18 @@ business ─< invitation     business ─< audit_entry(business_id NULLABLE)    
    owner (so `ENABLE` already applies to it), and `FORCE` would subject the `SECURITY DEFINER`
    authorization functions to RLS (policy recursion) unless their owner has BYPASSRLS. Migrations
    therefore run as a superuser/owner.
+
+## Implementation notes (deltas found while building)
+
+- **`one_time_token` table** (migration 0008): single-use hashed tokens for email
+  verification / password reset / email change / magic link (`purpose` column).
+  Auth-internal, account-level, not RLS-scoped. (Was implicit in research R4; now explicit.)
+- **`principal` is intentionally NOT RLS-scoped.** Auth flows (signup, login, refresh)
+  read/write principals before any principal context exists, so RLS there breaks the
+  bootstrap. Cross-tenant principal exposure is prevented at the query layer instead:
+  access lists join the RLS-scoped `membership` table (FR-030). `account`,
+  `refresh_token`, `one_time_token` are likewise auth-internal and unscoped.
+- **Tenant-table inserts avoid `INSERT ... RETURNING`.** Under RLS, RETURNING applies the
+  SELECT/`USING` policy to the returned row; a freshly-created master business is not yet
+  visible to its creator (no membership at insert time), so a RETURNING insert fails with
+  42501. Such inserts use `:exec` and the service builds the result from inputs.

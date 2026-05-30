@@ -19,5 +19,5 @@ jobs:
         run: make lint
       - name: Test
         run: make test
-      - name: Security regression
-        run: make sec-test
+      - name: Integration tests (testcontainers)
+        run: make int-test

@@ -1,4 +1,3 @@
-DROP POLICY IF EXISTS principal_rls ON principal;
 DROP POLICY IF EXISTS role_permission_rls ON role_permission;
 DROP POLICY IF EXISTS role_rls ON role;
 DROP POLICY IF EXISTS audit_rls ON audit_entry;
@@ -7,7 +6,6 @@ DROP POLICY IF EXISTS membership_rls ON membership;
 DROP POLICY IF EXISTS closure_rls ON business_closure;
 DROP POLICY IF EXISTS business_rls ON business;
 
-ALTER TABLE principal DISABLE ROW LEVEL SECURITY;
 ALTER TABLE role_permission DISABLE ROW LEVEL SECURITY;
 ALTER TABLE role DISABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_entry DISABLE ROW LEVEL SECURITY;
