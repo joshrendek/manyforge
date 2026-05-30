@@ -33,6 +33,21 @@ func (q *Queries) CountActiveChildren(ctx context.Context, parentID pgtype.UUID)
 	return count, err
 }
 
+const countDirectOwners = `-- name: CountDirectOwners :one
+SELECT count(*) FROM membership m
+JOIN role r ON r.id = m.role_id
+WHERE m.business_id = $1 AND r.is_locked
+`
+
+// Direct Owners (locked role) whose membership is AT this business. At the tenant
+// root this is the last-Owner count guarded by FR-014/FR-024.
+func (q *Queries) CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countDirectOwners, businessID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBusiness = `-- name: CreateBusiness :exec
 INSERT INTO business (id, parent_id, tenant_root_id, name, status, created_at, updated_at)
 VALUES ($1, $2, $3, $4, 'active', now(), now())
@@ -117,6 +132,65 @@ func (q *Queries) GetBusiness(ctx context.Context, id uuid.UUID) (Business, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getMembershipAt = `-- name: GetMembershipAt :one
+
+SELECT principal_id, business_id, tenant_root_id, role_id FROM membership
+WHERE principal_id = $1 AND business_id = $2
+`
+
+type GetMembershipAtParams struct {
+	PrincipalID uuid.UUID `json:"principal_id"`
+	BusinessID  uuid.UUID `json:"business_id"`
+}
+
+type GetMembershipAtRow struct {
+	PrincipalID  uuid.UUID `json:"principal_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	RoleID       uuid.UUID `json:"role_id"`
+}
+
+// ---- Member role management (T063) ----
+// The target principal's direct membership at a business. RLS scopes this to the
+// caller's authorized subtree, so an admin can read members of a business they
+// administer while a bare member sees only their own row.
+func (q *Queries) GetMembershipAt(ctx context.Context, arg GetMembershipAtParams) (GetMembershipAtRow, error) {
+	row := q.db.QueryRow(ctx, getMembershipAt, arg.PrincipalID, arg.BusinessID)
+	var i GetMembershipAtRow
+	err := row.Scan(
+		&i.PrincipalID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.RoleID,
+	)
+	return i, err
+}
+
+const getRoleInTenant = `-- name: GetRoleInTenant :one
+SELECT id, key, is_locked FROM role
+WHERE id = $1 AND (tenant_root_id IS NULL OR tenant_root_id = $2)
+`
+
+type GetRoleInTenantParams struct {
+	ID           uuid.UUID   `json:"id"`
+	TenantRootID pgtype.UUID `json:"tenant_root_id"`
+}
+
+type GetRoleInTenantRow struct {
+	ID       uuid.UUID `json:"id"`
+	Key      string    `json:"key"`
+	IsLocked bool      `json:"is_locked"`
+}
+
+// A role assignable within the tenant (a preset, or one the tenant owns), with
+// the bits the assignment guard needs (is_locked marks the full-access Owner role).
+func (q *Queries) GetRoleInTenant(ctx context.Context, arg GetRoleInTenantParams) (GetRoleInTenantRow, error) {
+	row := q.db.QueryRow(ctx, getRoleInTenant, arg.ID, arg.TenantRootID)
+	var i GetRoleInTenantRow
+	err := row.Scan(&i.ID, &i.Key, &i.IsLocked)
 	return i, err
 }
 
@@ -271,4 +345,28 @@ func (q *Queries) SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int3
 	var height int32
 	err := row.Scan(&height)
 	return height, err
+}
+
+const updateMembershipRole = `-- name: UpdateMembershipRole :exec
+UPDATE membership SET role_id = $3, granted_by = $4
+WHERE principal_id = $1 AND business_id = $2
+`
+
+type UpdateMembershipRoleParams struct {
+	PrincipalID uuid.UUID   `json:"principal_id"`
+	BusinessID  uuid.UUID   `json:"business_id"`
+	RoleID      uuid.UUID   `json:"role_id"`
+	GrantedBy   pgtype.UUID `json:"granted_by"`
+}
+
+// Reassigns a member's role at a business, recording who made the change. :exec
+// (no RETURNING): RLS can hide the just-updated row from the caller (42501).
+func (q *Queries) UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error {
+	_, err := q.db.Exec(ctx, updateMembershipRole,
+		arg.PrincipalID,
+		arg.BusinessID,
+		arg.RoleID,
+		arg.GrantedBy,
+	)
+	return err
 }

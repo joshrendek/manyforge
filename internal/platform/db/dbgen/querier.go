@@ -19,6 +19,9 @@ type Querier interface {
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
 	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
+	// Direct Owners (locked role) whose membership is AT this business. At the tenant
+	// root this is the last-Owner count guarded by FR-014/FR-024.
+	CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error)
 	CountRoleMemberships(ctx context.Context, roleID uuid.UUID) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
@@ -45,9 +48,17 @@ type Querier interface {
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
+	// ---- Member role management (T063) ----
+	// The target principal's direct membership at a business. RLS scopes this to the
+	// caller's authorized subtree, so an admin can read members of a business they
+	// administer while a bare member sees only their own row.
+	GetMembershipAt(ctx context.Context, arg GetMembershipAtParams) (GetMembershipAtRow, error)
 	GetPendingInvitation(ctx context.Context, arg GetPendingInvitationParams) (GetPendingInvitationRow, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
+	// A role assignable within the tenant (a preset, or one the tenant owns), with
+	// the bits the assignment guard needs (is_locked marks the full-access Owner role).
+	GetRoleInTenant(ctx context.Context, arg GetRoleInTenantParams) (GetRoleInTenantRow, error)
 	GetRolePermissions(ctx context.Context, roleID uuid.UUID) ([]string, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
@@ -87,6 +98,9 @@ type Querier interface {
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
+	// Reassigns a member's role at a business, recording who made the change. :exec
+	// (no RETURNING): RLS can hide the just-updated row from the caller (42501).
+	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error
 	UpdateRoleName(ctx context.Context, arg UpdateRoleNameParams) error
 }
 
