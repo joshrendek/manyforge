@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -167,4 +168,159 @@ func (h *Handler) changeMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Member is a business's access-list entry: a principal's identity, the union of
+// grants (direct + each inherited ancestor) conferring access here, and its
+// effective permission set (FR-016). display_name is the only identity field
+// surfaced — email and other PII are withheld (FR-030).
+type Member struct {
+	PrincipalID          string   `json:"principal_id"`
+	Kind                 string   `json:"kind"`
+	DisplayName          string   `json:"display_name"`
+	Grants               []Grant  `json:"grants"`
+	EffectivePermissions []string `json:"effective_permissions"`
+}
+
+// Grant is one contributing membership: a role held directly on this business or
+// inherited from a named ancestor.
+type Grant struct {
+	Role             GrantRole `json:"role"`
+	Source           string    `json:"source"` // direct | inherited
+	SourceBusinessID string    `json:"source_business_id"`
+}
+
+// GrantRole is the API role view embedded in a grant.
+type GrantRole struct {
+	ID          string   `json:"id"`
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Builtin     bool     `json:"builtin"`
+	Locked      bool     `json:"locked"`
+	Permissions []string `json:"permissions"`
+}
+
+// ListMembers returns a business's access list with full provenance. The caller
+// must hold members.manage or audit.read at the business (FR-016); otherwise the
+// business is reported as not-found (no oracle, FR-026). Inherited grants live on
+// ancestor businesses the caller may not see under RLS, so the grant set is read
+// via the access_list SECURITY DEFINER function AFTER the authorization check.
+func (s *Service) ListMembers(ctx context.Context, viewerID, businessID uuid.UUID) ([]Member, error) {
+	var out []Member
+	err := s.DB.WithPrincipal(ctx, viewerID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		if _, err := loadVisible(ctx, q, businessID); err != nil {
+			return err
+		}
+		perms, err := authz.Resolve(ctx, tx, viewerID, businessID)
+		if err != nil {
+			return err
+		}
+		if !perms.Has("members.manage") && !perms.Has("audit.read") {
+			return errs.ErrNotFound
+		}
+		catalog, err := q.AllPermissionKeys(ctx)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx,
+			`SELECT principal_id, kind, display_name, source_business, is_direct,
+			        role_id, role_key, role_name, role_builtin, role_locked, permissions
+			 FROM access_list($1)`, businessID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		idx := map[string]int{}
+		for rows.Next() {
+			var (
+				pid, srcBiz, roleID            uuid.UUID
+				kind, dname, roleKey, roleName string
+				isDirect, builtin, locked      bool
+				rolePerms                      []string
+			)
+			if err := rows.Scan(&pid, &kind, &dname, &srcBiz, &isDirect,
+				&roleID, &roleKey, &roleName, &builtin, &locked, &rolePerms); err != nil {
+				return err
+			}
+			source := "inherited"
+			if isDirect {
+				source = "direct"
+			}
+			g := Grant{
+				Role: GrantRole{
+					ID: roleID.String(), Key: roleKey, Name: roleName,
+					Builtin: builtin, Locked: locked, Permissions: nonNilStrings(rolePerms),
+				},
+				Source: source, SourceBusinessID: srcBiz.String(),
+			}
+			i, ok := idx[pid.String()]
+			if !ok {
+				idx[pid.String()] = len(out)
+				out = append(out, Member{PrincipalID: pid.String(), Kind: kind, DisplayName: dname})
+				i = len(out) - 1
+			}
+			out[i].Grants = append(out[i].Grants, g)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for i := range out {
+			out[i].EffectivePermissions = effectivePermissions(out[i].Grants, catalog)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// effectivePermissions unions a member's grants. A locked (Owner) grant resolves
+// to the entire catalog so future permissions are covered (mirrors authz.Resolve).
+func effectivePermissions(grants []Grant, catalog []string) []string {
+	for _, g := range grants {
+		if g.Role.Locked {
+			return append([]string(nil), catalog...)
+		}
+	}
+	set := map[string]struct{}{}
+	for _, g := range grants {
+		for _, p := range g.Role.Permissions {
+			set[p] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// listMembers handles GET /businesses/{id}/members.
+func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
+	pid, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	members, err := h.svc.ListMembers(r.Context(), pid, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.Page[Member]{Items: members, NextCursor: nil})
 }

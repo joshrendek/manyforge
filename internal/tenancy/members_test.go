@@ -194,3 +194,88 @@ func TestChangeMemberRole(t *testing.T) {
 		}
 	})
 }
+
+func TestAccessList(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	svc := &tenancy.Service{DB: tdb.App}
+
+	adminRole := presetRole(ctx, t, tdb, "admin")
+	viewerRole := presetRole(ctx, t, tdb, "viewer")
+
+	owner, master := seedFounder(ctx, t, tdb, "al-owner@x.test")
+	sub, err := svc.CreateSubBusiness(ctx, owner, master, "Sub")
+	if err != nil {
+		t.Fatalf("create sub: %v", err)
+	}
+	// An admin granted DIRECTLY at the sub-business (not at any ancestor): under
+	// membership_rls they cannot see the owner's ancestor membership, so this
+	// exercises the RLS-exempt access_list path.
+	subAdmin := seedMemberAt(ctx, t, tdb, sub.ID, master, adminRole, "al-subadmin@x.test")
+	viewerP := seedMemberAt(ctx, t, tdb, sub.ID, master, viewerRole, "al-viewer@x.test")
+
+	index := func(ms []tenancy.Member) map[string]tenancy.Member {
+		m := map[string]tenancy.Member{}
+		for _, x := range ms {
+			m[x.PrincipalID] = x
+		}
+		return m
+	}
+
+	t.Run("provenance: direct grant at sub + inherited owner from master", func(t *testing.T) {
+		members, err := svc.ListMembers(ctx, subAdmin, sub.ID)
+		if err != nil {
+			t.Fatalf("list members: %v", err)
+		}
+		by := index(members)
+
+		og, ok := by[owner.String()]
+		if !ok {
+			t.Fatalf("owner missing from sub access list (inherited grant not surfaced)")
+		}
+		if len(og.Grants) != 1 || og.Grants[0].Source != "inherited" || og.Grants[0].SourceBusinessID != master.String() {
+			t.Fatalf("owner grant should be inherited from master, got %+v", og.Grants)
+		}
+		if og.Grants[0].Role.Key != "owner" || !og.Grants[0].Role.Locked {
+			t.Errorf("owner grant role: want locked owner, got %+v", og.Grants[0].Role)
+		}
+		// Owner resolves to the whole catalog (locked role).
+		if len(og.EffectivePermissions) < 9 {
+			t.Errorf("owner effective_permissions should be the full catalog, got %v", og.EffectivePermissions)
+		}
+		if og.DisplayName == "" || og.Kind != "human" {
+			t.Errorf("owner identity: display_name=%q kind=%q", og.DisplayName, og.Kind)
+		}
+
+		sa, ok := by[subAdmin.String()]
+		if !ok {
+			t.Fatalf("subAdmin missing from access list")
+		}
+		if len(sa.Grants) != 1 || sa.Grants[0].Source != "direct" || sa.Grants[0].SourceBusinessID != sub.ID.String() {
+			t.Fatalf("subAdmin grant should be direct at sub, got %+v", sa.Grants)
+		}
+	})
+
+	t.Run("gate: viewer (business.read only) cannot view -> 404", func(t *testing.T) {
+		if _, err := svc.ListMembers(ctx, viewerP, sub.ID); !errors.Is(err, errs.ErrNotFound) {
+			t.Fatalf("viewer access list: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("gate: audit.read holder may view", func(t *testing.T) {
+		auditRole := customRole(ctx, t, tdb, master, "Auditor", "audit.read")
+		auditor := seedMemberAt(ctx, t, tdb, master, master, auditRole, "al-auditor@x.test")
+		members, err := svc.ListMembers(ctx, auditor, master)
+		if err != nil {
+			t.Fatalf("auditor list members: %v", err)
+		}
+		if len(index(members)) == 0 {
+			t.Fatal("auditor should see the master access list")
+		}
+	})
+}
