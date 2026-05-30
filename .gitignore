@@ -23,3 +23,7 @@ vendor/
 # OS
 .DS_Store
 
+
+# Playwright MCP + demo screenshots
+.playwright-mcp/
+/us1-*.png

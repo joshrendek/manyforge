@@ -28,6 +28,28 @@ type Business struct {
 	Status       string
 }
 
+// ListBusinesses returns the businesses visible to the principal (RLS-scoped).
+func (s *Service) ListBusinesses(ctx context.Context, principalID uuid.UUID) ([]Business, error) {
+	var out []Business
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		rows, err := dbgen.New(tx).ListBusinesses(ctx)
+		if err != nil {
+			return err
+		}
+		out = make([]Business, 0, len(rows))
+		for _, b := range rows {
+			var parent *uuid.UUID
+			if b.ParentID.Valid {
+				p := uuid.UUID(b.ParentID.Bytes)
+				parent = &p
+			}
+			out = append(out, Business{ID: b.ID, ParentID: parent, TenantRootID: b.TenantRootID, Name: b.Name, Status: b.Status})
+		}
+		return nil
+	})
+	return out, err
+}
+
 // CreateMasterBusiness creates a top-level business owned by the creator: the
 // business, its self closure row, the creator's Owner membership, and an audit
 // entry — all in one transaction. The creator's email must be verified (FR-002).
