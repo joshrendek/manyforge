@@ -21,6 +21,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/mailer"
+	"github.com/manyforge/manyforge/internal/tenancy"
 )
 
 type capturingMailer struct{ last string }
@@ -57,10 +58,11 @@ type harness struct {
 	c      *http.Client
 	base   string
 	access string
+	master string // id of a master business owned by the logged-in caller
 }
 
-// setup spins an ephemeral DB + router (account + authz) and returns a verified,
-// logged-in caller.
+// setup spins an ephemeral DB + router (account + tenancy + authz) and returns a
+// verified, logged-in caller who owns one master business ("Acme").
 func setup(t *testing.T) harness {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
@@ -75,7 +77,6 @@ func setup(t *testing.T) harness {
 	ring, _ := auth.NewKeyRing("manyforge", "manyforge-api", "k1", priv, map[string]ed25519.PublicKey{"k1": pub})
 	cm := &capturingMailer{}
 	acctSvc := &account.Service{DB: tdb.App, Ring: ring, Mailer: cm, AccessTTL: 15 * time.Minute, RefreshTTL: 24 * time.Hour, TokenTTL: time.Hour}
-	authzH := authz.NewHandler(&authz.Service{DB: tdb.App})
 
 	mux := httpx.NewRouter(ring)
 	mux.Route("/api/v1", func(r chi.Router) {
@@ -83,7 +84,8 @@ func setup(t *testing.T) harness {
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
 			account.NewHandler(acctSvc).ProtectedRoutes(pr)
-			authzH.ProtectedRoutes(pr)
+			tenancy.NewHandler(&tenancy.Service{DB: tdb.App}).ProtectedRoutes(pr)
+			authz.NewHandler(&authz.Service{DB: tdb.App}).ProtectedRoutes(pr)
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -99,7 +101,12 @@ func setup(t *testing.T) harness {
 	if access == "" {
 		t.Fatalf("setup failed: no access token (%v)", lb)
 	}
-	return harness{c: c, base: base, access: access}
+	_, mb := do(t, c, http.MethodPost, base+"/businesses", access, map[string]any{"name": "Acme"})
+	master, _ := mb["id"].(string)
+	if master == "" {
+		t.Fatalf("setup failed: no master business (%v)", mb)
+	}
+	return harness{c: c, base: base, access: access, master: master}
 }
 
 func keysOf(body map[string]any) []string {

@@ -130,8 +130,8 @@ auth, and RBAC machinery every story sits on.
 
 ### Implementation
 - [X] T057 [P] [US3] Permission catalog seed check + `GET /permissions` (paginated) in `internal/authz/permission.go` (impl in `internal/authz/{service,handler}.go`)
-- [ ] T058 [P] [US3] Role service (presets + custom CRUD; tenant_root_id derived from path; superset/escalation check; delete-in-use refused, FR-025) in `internal/authz/role.go`
-- [ ] T059 [US3] Roles handlers under `/businesses/{id}/roles` in `internal/authz/handler.go`
+- [X] T058 [P] [US3] Role service (presets + custom CRUD; tenant_root_id derived from path; superset/escalation check; delete-in-use refused, FR-025) in `internal/authz/role.go`
+- [X] T059 [US3] Roles handlers under `/businesses/{id}/roles` in `internal/authz/handler.go`
 - [ ] T060 [P] [US3] Invitations store+service: create (role ≤ inviter, hashed token), list, revoke, resend (throttled) in `internal/invitations/service.go`
 - [ ] T061 [US3] Accept service: auth-bound + verified + email-match + re-validate authority/role/active + single-use + membership + audit in `internal/invitations/accept.go`
 - [ ] T062 [US3] Invitations + accept handlers in `internal/invitations/handler.go`
