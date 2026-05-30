@@ -13,18 +13,16 @@ test:
 	$(GO) test $(PKG)
 
 # Security-regression suite is the merge gate for Principles I/II/IV.
+# DB-backed tests build under the `integration` tag and spin ephemeral Postgres
+# via testcontainers (Docker required).
 sec-test:
-	@if [ -d internal/security_regression ]; then \
-		$(GO) test ./internal/security_regression/... ; \
-	else \
-		echo "no internal/security_regression package yet"; \
-	fi
+	$(GO) test -tags integration -timeout 600s ./internal/security_regression/...
 
 vet:
 	$(GO) vet $(PKG)
 
 lint: vet
-	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run || echo "golangci-lint not installed; ran go vet only"
+	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run; else echo "golangci-lint not installed; ran go vet only"; fi
 
 generate:
 	sqlc generate
