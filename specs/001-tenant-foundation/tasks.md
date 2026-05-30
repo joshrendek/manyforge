@@ -24,17 +24,17 @@ auth, and RBAC machinery every story sits on.
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Initialize Go module + `cmd/manyforge/main.go` skeleton (Go 1.23) in `go.mod`, `cmd/manyforge/main.go`
+- [X] T001 Initialize Go module + `cmd/manyforge/main.go` skeleton (Go 1.23) in `go.mod`, `cmd/manyforge/main.go`
 - [ ] T002 [P] Add dependencies (chi, pgx v5, sqlc, golang-migrate, golang-jwt/jwt v5, x/crypto/argon2) in `go.mod`
-- [ ] T003 [P] `Makefile` with targets: `dev test lint sec-test generate migrate`
-- [ ] T004 [P] `.golangci.yml` + `.editorconfig`
-- [ ] T005 [P] `sqlc.yaml` (db/query → internal/*/store) + create `migrations/` and `db/query/`
-- [ ] T006 [P] `.env.example` (DB DSN, EdDSA key paths, SMTP, trusted-proxy CIDRs)
+- [X] T003 [P] `Makefile` with targets: `dev test lint sec-test generate migrate`
+- [X] T004 [P] `.golangci.yml` + `.editorconfig`
+- [X] T005 [P] `sqlc.yaml` (db/query → internal/*/store) + create `migrations/` and `db/query/`
+- [X] T006 [P] `.env.example` (DB DSN, EdDSA key paths, SMTP, trusted-proxy CIDRs)
 - [ ] T007 [P] `docker-compose.yml` (Postgres 16) + testcontainers helper in `internal/platform/db/testdb/testdb.go`
-- [ ] T008 [P] CI workflow `.github/workflows/ci.yml` running `make test && make sec-test && make lint`
-- [ ] T009 [P] Config loader in `internal/platform/config/config.go`
-- [ ] T010 [P] Typed error sentinels (`ErrNotFound/ErrForbidden/ErrValidation/ErrConflict`) in `internal/platform/errs/errs.go`
-- [ ] T011 [P] Structured logging + `/healthz` `/readyz` `/metrics` in `internal/platform/observability/observability.go`
+- [X] T008 [P] CI workflow `.github/workflows/ci.yml` running `make test && make sec-test && make lint`
+- [X] T009 [P] Config loader in `internal/platform/config/config.go`
+- [X] T010 [P] Typed error sentinels (`ErrNotFound/ErrForbidden/ErrValidation/ErrConflict`) in `internal/platform/errs/errs.go`
+- [X] T011 [P] Structured logging + `/healthz` `/readyz` `/metrics` in `internal/platform/observability/observability.go`
 
 ---
 
