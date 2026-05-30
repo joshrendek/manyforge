@@ -29,3 +29,11 @@ SELECT EXISTS (
 
 -- name: AllPermissionKeys :many
 SELECT key FROM permission ORDER BY key;
+
+-- name: ListPermissions :many
+-- Keyset pagination over the global catalog; pass '' as the cursor for the first
+-- page and the last returned key thereafter. Fetch limit+1 to detect a next page.
+SELECT key, module, description FROM permission
+WHERE key > $1
+ORDER BY key
+LIMIT $2;

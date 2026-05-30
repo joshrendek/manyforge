@@ -50,6 +50,9 @@ type Querier interface {
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// Keyset pagination over the global catalog; pass '' as the cursor for the first
+	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
+	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)

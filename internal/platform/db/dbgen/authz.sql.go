@@ -102,3 +102,37 @@ func (q *Queries) HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (boo
 	err := row.Scan(&has_owner)
 	return has_owner, err
 }
+
+const listPermissions = `-- name: ListPermissions :many
+SELECT key, module, description FROM permission
+WHERE key > $1
+ORDER BY key
+LIMIT $2
+`
+
+type ListPermissionsParams struct {
+	Key   string `json:"key"`
+	Limit int32  `json:"limit"`
+}
+
+// Keyset pagination over the global catalog; pass ” as the cursor for the first
+// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
+func (q *Queries) ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error) {
+	rows, err := q.db.Query(ctx, listPermissions, arg.Key, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Permission
+	for rows.Next() {
+		var i Permission
+		if err := rows.Scan(&i.Key, &i.Module, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
