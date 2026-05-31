@@ -1,0 +1,525 @@
+openapi: 3.1.0
+info:
+  title: ManyForge Support Desk API
+  version: 0.3.0
+  description: >
+    Backend contract for the Native Support Desk (spec 002), layered on the tenant foundation
+    (spec 001). Inherits every foundation convention: Bearer JWT auth, cursor pagination with a
+    server-enforced max page size (FR-020), the {code,message} error shape, and the
+    no-existence-oracle boundary — unknown AND unauthorized tenant resources return an identical 404,
+    there is NO 403 for tenant authorization (FR-015/SC-006). This file describes ONLY the new 002
+    endpoints; auth, account, business, member, role, permission, and audit endpoints are defined in
+    spec 001's contract and are reused unchanged.
+
+    Two endpoint groups: (1) unauthenticated inbound ingestion authenticated by a per-provider
+    HMAC signature header, body-size capped, idempotent, and returning 202; (2) authenticated
+    (Bearer JWT), tenant-scoped, business-nested ticketing/inbox endpoints. Every mutation writes an
+    append-only audit entry in the same transaction (FR-014). Mutating and ingestion endpoints are
+    rate-limited (429, FR-020).
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Ingress
+    description: Unauthenticated inbound-email ingestion (provider-signature auth). Principal-less, business-scoped, idempotent (FR-002/FR-003/FR-005/FR-017/FR-020).
+  - name: Tickets
+    description: Ticket list/create/read/triage, replies, notes, and the message thread (FR-004/FR-008..FR-011).
+  - name: Requesters
+    description: Tenant-scoped external senders, deduped by email (FR-006).
+  - name: Inbox
+    description: Inbound addresses and custom email domains / sending identities (FR-001/FR-012/FR-013).
+
+paths:
+  # ---------- Ingress (unauthenticated; provider-signature auth) ----------
+  /inbound/email/{provider}:
+    parameters: [ { $ref: '#/components/parameters/provider' } ]
+    post:
+      tags: [Ingress]
+      summary: >
+        Ingest one inbound email from a provider adapter (FR-002). Authenticated by the per-provider
+        HMAC signature header (constant-time compare), NOT by Bearer JWT. Body size is capped in the
+        handler (413 over the cap, FR-020). Carries no end-user principal: the message is resolved to
+        exactly one business by recipient address and ingested through a controlled, audited,
+        business-scoped path (FR-017). Idempotent by RFC822 Message-ID within the tenant — re-delivery
+        is a no-op (FR-005). A recipient that resolves to no business is silently dropped with the same
+        202 as a routable address, disclosing nothing (no existence oracle, FR-003/SC-006).
+      security: []
+      parameters:
+        - name: X-MF-Signature
+          in: header
+          required: true
+          description: >
+            Provider HMAC signature over the raw request body (and provider-specific signed fields),
+            verified in constant time against the per-provider shared secret. Invalid/absent ⇒ 401.
+          schema: { type: string }
+        - name: X-MF-Timestamp
+          in: header
+          required: false
+          description: Provider-supplied signing timestamp; rejected outside the allowed skew window (replay defense).
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: >
+          Raw provider payload (MIME or provider JSON envelope). Capped at the server's inbound body
+          limit; bodies over the cap are refused with 413 (FR-020). Attachments are MIME-sniffed and
+          allowlisted on ingest (FR-007).
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InboundEmailEnvelope' }
+          message/rfc822:
+            schema: { type: string, format: binary, description: Raw RFC822 message bytes (SMTP-style providers). }
+      responses:
+        '202':
+          description: >
+            Accepted for ingestion. Returned uniformly whether the recipient routed to a business, was
+            an unknown/unroutable address (dropped, no data written), or was a duplicate Message-ID
+            (no-op) — so the response never distinguishes these cases (FR-003/FR-005/SC-006).
+        '401': { $ref: '#/components/responses/Error401' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  # ---------- Tickets ----------
+  /businesses/{id}/tickets:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get:
+      tags: [Tickets]
+      summary: >
+        List tickets for a business and its authorized descendants (FR-015). Keyset-paginated,
+        server-capped page size (FR-020). 404 if the business is unknown/unauthorized (no oracle).
+        Requires tickets.read.
+      parameters:
+        - { $ref: '#/components/parameters/cursor' }
+        - { $ref: '#/components/parameters/limit' }
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/TicketStatus' }
+        - name: priority
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/TicketPriority' }
+        - name: assignee
+          in: query
+          required: false
+          description: Filter by assignee principal id. Use the literal `unassigned` to list tickets with no assignee.
+          schema: { type: string }
+        - name: tag
+          in: query
+          required: false
+          description: Filter to tickets carrying this tag (exact match).
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/TicketPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Tickets]
+      summary: >
+        Manually create a ticket in a business (FR-004). Upserts/dedupes the requester by email within
+        the tenant (FR-006). Audited in-transaction (FR-014). Requires tickets.write. 404 if the
+        business is unknown/unauthorized.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CreateTicket' } } } }
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } }, description: created }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /businesses/{id}/tickets/{tid}:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/tid' } ]
+    get:
+      tags: [Tickets]
+      summary: Get a ticket (FR-015). 404 if unknown OR unauthorized (no oracle). Requires tickets.read.
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } }, description: ok }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Tickets]
+      summary: >
+        Triage a ticket — set status, priority, tags, and/or assignee (FR-010/FR-011). PARTIAL UPDATE:
+        only fields present in the body change; omitted fields keep their current value. Setting
+        `assignee_principal_id` validates that the principal is a member of the ticket's business or an
+        authorized ancestor — an ineligible assignee is refused (FR-011). Status transitions follow the
+        lifecycle. Audited in-transaction (FR-014). Requires tickets.write; assignment additionally
+        requires tickets.assign. 404 if unknown/unauthorized.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/PatchTicket' } } } }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } }, description: ok }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /businesses/{id}/tickets/{tid}/reply:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/tid' } ]
+    post:
+      tags: [Tickets]
+      summary: >
+        Send an outbound reply to the requester (FR-008). The reply is delivered as a threaded email
+        (In-Reply-To/References + a system reply token) from the verified custom identity if present,
+        else the always-available system address (FR-013), and is recorded as an outbound
+        TicketMessage. Audited in-transaction (FR-014). Requires tickets.reply. 404 if
+        unknown/unauthorized.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ReplyBody' } } } }
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/TicketMessage' } } }, description: outbound message recorded }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /businesses/{id}/tickets/{tid}/note:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/tid' } ]
+    post:
+      tags: [Tickets]
+      summary: >
+        Add an internal note to a ticket (FR-009). Recorded and attributed as a `note`-direction
+        TicketMessage; NEVER delivered to the requester. Audited in-transaction (FR-014). Requires
+        tickets.write. 404 if unknown/unauthorized.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/NoteBody' } } } }
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/TicketMessage' } } }, description: note recorded }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /businesses/{id}/tickets/{tid}/messages:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/tid' }, { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+    get:
+      tags: [Tickets]
+      summary: >
+        List the messages on a ticket thread — inbound, outbound, and internal notes — in order
+        (FR-004/FR-008/FR-009). Keyset-paginated, server-capped (FR-020). Requires tickets.read. 404 if
+        the ticket is unknown/unauthorized.
+      responses:
+        '200': { $ref: '#/components/responses/TicketMessagePage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------- Requesters ----------
+  /businesses/{id}/requesters:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+    get:
+      tags: [Requesters]
+      summary: >
+        List requesters visible to the authorized business subtree (FR-006/FR-015). Tenant-scoped and
+        deduped by email; never shared across tenants. Keyset-paginated, server-capped. Requires
+        tickets.read. 404 if the business is unknown/unauthorized.
+      parameters:
+        - name: email
+          in: query
+          required: false
+          description: Optional exact (case-insensitive) email filter for lookup/dedup.
+          schema: { type: string, format: email }
+      responses:
+        '200': { $ref: '#/components/responses/RequesterPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /businesses/{id}/requesters/{rid}:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/rid' } ]
+    get:
+      tags: [Requesters]
+      summary: Get a requester (FR-006/FR-015). 404 if unknown OR unauthorized (no oracle). Requires tickets.read.
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Requester' } } }, description: ok }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------- Inbox: addresses + domains ----------
+  /businesses/{id}/inbound-addresses:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get:
+      tags: [Inbox]
+      summary: >
+        List the business's inbound addresses — the auto-provisioned system address plus any custom
+        addresses (FR-001/FR-012). Keyset-paginated, server-capped. Requires inbox.manage. 404 if the
+        business is unknown/unauthorized.
+      parameters: [ { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+      responses:
+        '200': { $ref: '#/components/responses/InboundAddressPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Inbox]
+      summary: >
+        Add a custom inbound address to the business (FR-012). The address must belong to a verified
+        email domain owned by the business; an unverified domain is refused. Audited in-transaction
+        (FR-014). Requires inbox.manage. 404 if the business or referenced domain is
+        unknown/unauthorized.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CreateInboundAddress' } } } }
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/InboundAddress' } } }, description: created }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /businesses/{id}/email-domains:
+    parameters: [ { $ref: '#/components/parameters/id' } ]
+    get:
+      tags: [Inbox]
+      summary: >
+        List the business's custom email domains / sending identities with verification and
+        DKIM/SPF state (FR-012/FR-013). Keyset-paginated, server-capped. Requires inbox.manage. 404 if
+        the business is unknown/unauthorized.
+      parameters: [ { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+      responses:
+        '200': { $ref: '#/components/responses/EmailDomainPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Inbox]
+      summary: >
+        Add a custom email domain in one of three modes — forward_in, subdomain_mx, or provider_route
+        — none of which reroutes the domain's primary mail (FR-012). Returns the domain in `unverified`
+        state with the DNS challenge records (TXT for ownership; DKIM/SPF guidance) to publish before
+        calling verify. Audited in-transaction (FR-014). Requires inbox.manage. 404 if the business is
+        unknown/unauthorized.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CreateEmailDomain' } } } }
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/EmailDomain' } } }, description: created (unverified; publish the challenge then verify) }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /businesses/{id}/email-domains/{did}/verify:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/did' } ]
+    post:
+      tags: [Inbox]
+      summary: >
+        Trigger verification of a custom email domain (FR-012/FR-013). Checks the published DNS TXT
+        ownership challenge and the DKIM/SPF records; on success the domain becomes `verified` and its
+        addresses can route inbound and authenticate outbound. Idempotent — re-verifying an already
+        verified domain returns its current state. Audited in-transaction (FR-014). Requires
+        inbox.manage. 404 if the domain is unknown/unauthorized.
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/EmailDomain' } } }, description: verification result (verified or still pending with current dns state) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT, description: "EdDSA, alg/iss/aud/kid pinned (inherited from spec 001)" }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: business id }
+    tid: { name: tid, in: path, required: true, schema: { type: string, format: uuid }, description: ticket id }
+    rid: { name: rid, in: path, required: true, schema: { type: string, format: uuid }, description: requester id }
+    did: { name: did, in: path, required: true, schema: { type: string, format: uuid }, description: email-domain id }
+    provider: { name: provider, in: path, required: true, schema: { type: string, enum: [postmark, mailgun, sendgrid, ses, smtp] }, description: inbound provider adapter key }
+    cursor: { name: cursor, in: query, required: false, schema: { type: string }, description: keyset cursor }
+    limit: { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 100 }, description: "server caps at 100 (FR-020)" }
+  schemas:
+    # ----- shared (mirrors spec 001) -----
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [VALIDATION, NOT_FOUND, CONFLICT, RATE_LIMITED, PAYLOAD_TOO_LARGE, UNAUTHORIZED] }
+        message: { type: string, description: "stable, non-leaking; details only for VALIDATION" }
+    Page:
+      type: object
+      properties: { next_cursor: { type: [string, "null"] } }
+
+    # ----- enums -----
+    TicketStatus:
+      type: string
+      enum: [new, open, pending, solved, closed]
+      description: ticket lifecycle (FR-010); an inbound reply on solved/closed reopens to open.
+    TicketPriority:
+      type: string
+      enum: [low, normal, high, urgent]
+    MessageDirection:
+      type: string
+      enum: [inbound, outbound, note]
+      description: inbound (from requester), outbound (reply to requester), note (internal, never delivered).
+    InboundAddressKind:
+      type: string
+      enum: [system, custom]
+      description: system (auto-provisioned, zero-config) or custom (tied to a verified email domain).
+    EmailDomainMode:
+      type: string
+      enum: [forward_in, subdomain_mx, provider_route]
+      description: custom-identity mode; none reroutes the domain's primary mail (FR-012).
+    EmailDomainVerification:
+      type: string
+      enum: [unverified, pending, verified, failed]
+    DnsRecordState:
+      type: string
+      enum: [unknown, pending, pass, fail]
+      description: observed state of a DNS-backed check (DKIM/SPF) at last verification (FR-013/FR-019).
+
+    # ----- entities -----
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        subject: { type: string }
+        status: { $ref: '#/components/schemas/TicketStatus' }
+        priority: { $ref: '#/components/schemas/TicketPriority' }
+        assignee_principal_id: { type: [string, "null"], format: uuid, description: member principal of this business or an authorized ancestor (FR-011); null = unassigned }
+        requester: { $ref: '#/components/schemas/Requester' }
+        tags: { type: array, items: { type: string } }
+        message_count: { type: integer }
+        last_message_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TicketMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticket_id: { type: string, format: uuid }
+        direction: { $ref: '#/components/schemas/MessageDirection' }
+        message_id: { type: [string, "null"], description: RFC822 Message-ID; basis of idempotent threading (FR-004/FR-005) }
+        in_reply_to: { type: [string, "null"], description: RFC822 In-Reply-To header }
+        references: { type: array, items: { type: string }, description: RFC822 References chain }
+        author_principal_id: { type: [string, "null"], format: uuid, description: member who authored an outbound reply or note; null for inbound }
+        body_text: { type: [string, "null"] }
+        body_html: { type: [string, "null"] }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' } }
+        spf_result: { $ref: '#/components/schemas/DnsRecordState' }
+        dkim_result: { $ref: '#/components/schemas/DnsRecordState' }
+        dmarc_result: { $ref: '#/components/schemas/DnsRecordState' }
+        created_at: { type: string, format: date-time }
+    Requester:
+      type: object
+      description: tenant-scoped external sender, deduped by email within the tenant; never a principal (FR-006).
+      properties:
+        id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: [string, "null"] }
+        contact_id: { type: [string, "null"], format: uuid, description: reserved CRM-contact seam (spec 005); always null in this slice }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+    Attachment:
+      type: object
+      description: a file on a ticket message; bytes live in object storage (SL-E), content_type is sniffed not declared (FR-007).
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        content_type: { type: string, description: sniffed MIME type (allowlisted); the declared header is never trusted (FR-007) }
+        size: { type: integer, description: bytes; subject to a per-attachment cap }
+        blob_key: { type: string, description: tenant-scoped object-storage key }
+    InboundAddress:
+      type: object
+      description: routing entry mapping a recipient address to a business (FR-001/FR-003/FR-012).
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        address: { type: string, format: email }
+        kind: { $ref: '#/components/schemas/InboundAddressKind' }
+        email_domain_id: { type: [string, "null"], format: uuid, description: the verified custom domain for kind=custom; null for kind=system }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+    EmailDomain:
+      type: object
+      description: custom domain / sending identity with mode, verification, and outbound-auth state (FR-012/FR-013).
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        domain: { type: string }
+        mode: { $ref: '#/components/schemas/EmailDomainMode' }
+        verification: { $ref: '#/components/schemas/EmailDomainVerification' }
+        verified_at: { type: [string, "null"], format: date-time }
+        dkim_state: { $ref: '#/components/schemas/DnsRecordState' }
+        spf_state: { $ref: '#/components/schemas/DnsRecordState' }
+        dns_challenge:
+          type: object
+          description: records to publish to prove ownership and enable outbound auth (FR-012/FR-013).
+          properties:
+            verification_txt: { type: object, properties: { name: { type: string }, value: { type: string } } }
+            dkim_record: { type: object, properties: { name: { type: string }, value: { type: string } } }
+            spf_hint: { type: string, description: recommended SPF include/value; never overrides the domain's primary SPF }
+            mx_hint: { type: [string, "null"], description: subdomain MX target for mode=subdomain_mx; null otherwise }
+        created_at: { type: string, format: date-time }
+
+    # ----- ingress payload -----
+    InboundEmailEnvelope:
+      type: object
+      description: normalized provider JSON envelope; exact provider fields are adapter-specific and validated server-side.
+      properties:
+        to: { type: array, items: { type: string, format: email } }
+        from: { type: string, format: email }
+        subject: { type: string }
+        message_id: { type: string }
+        in_reply_to: { type: [string, "null"] }
+        references: { type: array, items: { type: string } }
+        body_text: { type: [string, "null"] }
+        body_html: { type: [string, "null"] }
+        headers: { type: object, additionalProperties: { type: string } }
+        raw_mime: { type: [string, "null"], description: base64 raw MIME if the provider supplies it }
+
+    # ----- request bodies (inline schemas) -----
+    CreateTicket:
+      type: object
+      required: [subject, requester_email]
+      properties:
+        subject: { type: string, minLength: 1, maxLength: 998 }
+        requester_email: { type: string, format: email, description: upserts/dedupes the requester within the tenant (FR-006) }
+        requester_display_name: { type: [string, "null"] }
+        body_text: { type: [string, "null"] }
+        body_html: { type: [string, "null"] }
+        priority: { $ref: '#/components/schemas/TicketPriority' }
+        tags: { type: array, items: { type: string } }
+        assignee_principal_id: { type: [string, "null"], format: uuid, description: validated as an eligible member of this business or an authorized ancestor (FR-011) }
+    PatchTicket:
+      type: object
+      description: >
+        Partial update — only present fields change; omitted fields keep their current value
+        (constitution partial-update rule). Send assignee_principal_id=null to explicitly unassign.
+      properties:
+        status: { $ref: '#/components/schemas/TicketStatus' }
+        priority: { $ref: '#/components/schemas/TicketPriority' }
+        tags: { type: array, items: { type: string }, description: full replacement of the tag set when present }
+        assignee_principal_id: { type: [string, "null"], format: uuid, description: eligible member of this business or an authorized ancestor; null unassigns (FR-011) }
+    ReplyBody:
+      type: object
+      required: [body_text]
+      properties:
+        body_text: { type: string, minLength: 1 }
+        body_html: { type: [string, "null"] }
+        attachment_blob_keys: { type: array, items: { type: string }, description: keys of pre-uploaded, MIME-sniffed blobs to attach (FR-007) }
+    NoteBody:
+      type: object
+      required: [body_text]
+      properties:
+        body_text: { type: string, minLength: 1 }
+    CreateInboundAddress:
+      type: object
+      required: [address, email_domain_id]
+      properties:
+        address: { type: string, format: email }
+        email_domain_id: { type: string, format: uuid, description: must reference a verified email domain owned by this business (FR-012); ownership re-checked in SQL }
+    CreateEmailDomain:
+      type: object
+      required: [domain, mode]
+      properties:
+        domain: { type: string, description: the custom domain or support subdomain (e.g. acme.com or support.acme.com) }
+        mode: { $ref: '#/components/schemas/EmailDomainMode' }
+
+  responses:
+    ValidationError: { description: Invalid input, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Error401: { description: Unauthorized (missing/invalid bearer token, or invalid/absent provider signature on ingress), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: "Not found — also returned for unauthorized tenant resources (no 403 oracle, FR-015/SC-006)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: "Conflict (invalid status transition, ineligible assignee, duplicate address/domain, unverified-domain reference, send to a suppressed recipient)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    PayloadTooLarge: { description: "Inbound body or attachment exceeds the configured cap (FR-007/FR-020)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    RateLimited: { description: Too many requests (FR-020), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    TicketPage:
+      description: paginated tickets
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Ticket' } } } } ] } } }
+    TicketMessagePage:
+      description: paginated ticket messages (thread)
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/TicketMessage' } } } } ] } } }
+    RequesterPage:
+      description: paginated requesters
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Requester' } } } } ] } } }
+    InboundAddressPage:
+      description: paginated inbound addresses
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/InboundAddress' } } } } ] } } }
+    EmailDomainPage:
+      description: paginated email domains
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/EmailDomain' } } } } ] } } }
