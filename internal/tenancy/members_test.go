@@ -403,3 +403,65 @@ func TestLeaveBusiness(t *testing.T) {
 		}
 	})
 }
+
+func TestTransferOwnership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	svc := &tenancy.Service{DB: tdb.App}
+	adminRole := presetRole(ctx, t, tdb, "admin")
+	ownerRole := presetRole(ctx, t, tdb, "owner")
+
+	t.Run("owner transfers to a root member; roles swap atomically, audited", func(t *testing.T) {
+		owner, master := seedFounder(ctx, t, tdb, "tx-owner1@x.test")
+		bob := seedMemberAt(ctx, t, tdb, master, master, adminRole, "tx-bob1@x.test")
+
+		if err := svc.TransferOwnership(ctx, owner, master, bob); err != nil {
+			t.Fatalf("transfer: %v", err)
+		}
+		if got := memberRole(ctx, t, tdb, bob, master); got != ownerRole {
+			t.Errorf("new owner role: want owner, got %s", got)
+		}
+		if got := memberRole(ctx, t, tdb, owner, master); got != adminRole {
+			t.Errorf("old owner should step down to admin, got %s", got)
+		}
+		if n := auditCount(ctx, t, tdb, "ownership.transferred", bob); n != 1 {
+			t.Errorf("audit entries = %d, want 1", n)
+		}
+	})
+
+	t.Run("guards", func(t *testing.T) {
+		owner, master := seedFounder(ctx, t, tdb, "tx-owner2@x.test")
+		admin := seedMemberAt(ctx, t, tdb, master, master, adminRole, "tx-admin2@x.test")
+		bob := seedMemberAt(ctx, t, tdb, master, master, adminRole, "tx-bob2@x.test")
+		sub, err := svc.CreateSubBusiness(ctx, owner, master, "Sub")
+		if err != nil {
+			t.Fatalf("create sub: %v", err)
+		}
+
+		// Not the tenant root -> conflict.
+		if err := svc.TransferOwnership(ctx, owner, sub.ID, bob); !errors.Is(err, errs.ErrConflict) {
+			t.Errorf("transfer at sub-business: want ErrConflict, got %v", err)
+		}
+		// Non-owner actor -> not-found (no oracle).
+		if err := svc.TransferOwnership(ctx, admin, master, bob); !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("non-owner transfer: want ErrNotFound, got %v", err)
+		}
+		// To self -> conflict.
+		if err := svc.TransferOwnership(ctx, owner, master, owner); !errors.Is(err, errs.ErrConflict) {
+			t.Errorf("transfer to self: want ErrConflict, got %v", err)
+		}
+		// To a non-member -> conflict.
+		if err := svc.TransferOwnership(ctx, owner, master, uuid.New()); !errors.Is(err, errs.ErrConflict) {
+			t.Errorf("transfer to non-member: want ErrConflict, got %v", err)
+		}
+		// After all failed attempts, ownership is unchanged.
+		if got := memberRole(ctx, t, tdb, owner, master); got != ownerRole {
+			t.Errorf("owner should be unchanged after failed transfers, got %s", got)
+		}
+	})
+}

@@ -185,6 +185,18 @@ func (q *Queries) GetMembershipAt(ctx context.Context, arg GetMembershipAtParams
 	return i, err
 }
 
+const getPrincipalKind = `-- name: GetPrincipalKind :one
+SELECT kind FROM principal WHERE id = $1
+`
+
+// The kind ('human'|'agent') of a principal; ownership may pass only to a human.
+func (q *Queries) GetPrincipalKind(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getPrincipalKind, id)
+	var kind string
+	err := row.Scan(&kind)
+	return kind, err
+}
+
 const getRoleInTenant = `-- name: GetRoleInTenant :one
 SELECT id, key, is_locked FROM role
 WHERE id = $1 AND (tenant_root_id IS NULL OR tenant_root_id = $2)
@@ -304,6 +316,18 @@ SELECT id FROM role WHERE tenant_root_id IS NULL AND key = 'owner'
 
 func (q *Queries) OwnerRoleID(ctx context.Context) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, ownerRoleID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const presetRoleID = `-- name: PresetRoleID :one
+SELECT id FROM role WHERE tenant_root_id IS NULL AND key = $1
+`
+
+// The id of a built-in preset role by key (owner/admin/member/viewer).
+func (q *Queries) PresetRoleID(ctx context.Context, key string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, presetRoleID, key)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
