@@ -27,7 +27,9 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 		r.Post("/move", h.move)
 		r.Post("/archive", h.archive)
 		r.Post("/restore", h.restore)
+		r.Post("/leave", h.leaveBusiness)
 		r.Get("/members", h.listMembers)
+		r.Delete("/members/{principalId}", h.revokeMember)
 		r.Patch("/members/{principalId}", h.changeMemberRole)
 	})
 }

@@ -99,6 +99,22 @@ func (q *Queries) CreateMembership(ctx context.Context, arg CreateMembershipPara
 	return err
 }
 
+const deleteMembershipAt = `-- name: DeleteMembershipAt :exec
+DELETE FROM membership WHERE principal_id = $1 AND business_id = $2
+`
+
+type DeleteMembershipAtParams struct {
+	PrincipalID uuid.UUID `json:"principal_id"`
+	BusinessID  uuid.UUID `json:"business_id"`
+}
+
+// Removes a principal's DIRECT membership at a business (revoke / leave).
+// Inherited access from ancestors is unaffected (edge: grants are independent).
+func (q *Queries) DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error {
+	_, err := q.db.Exec(ctx, deleteMembershipAt, arg.PrincipalID, arg.BusinessID)
+	return err
+}
+
 const depthFromRoot = `-- name: DepthFromRoot :one
 SELECT depth FROM business_closure WHERE ancestor_id = $2 AND descendant_id = $1
 `
