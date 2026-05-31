@@ -127,9 +127,13 @@ type Querier interface {
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
+	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
+	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error
 	// Reassigns a member's role at a business, recording who made the change. :exec
 	// (no RETURNING): RLS can hide the just-updated row from the caller (42501).
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error
+	// ---- Auth flows (T078) ----
+	UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) error
 	UpdateRoleName(ctx context.Context, arg UpdateRoleNameParams) error
 }
 
