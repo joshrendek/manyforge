@@ -1,0 +1,3 @@
+-- Notify/events queries (spec 002, SL-C/SL-D): transactional-outbox enqueue and
+-- drain, and in-app notification insert/read-state.
+-- Populated in T011 once the events/notify schema mirror lands in db/schema.sql.

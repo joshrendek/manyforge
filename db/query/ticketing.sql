@@ -1,0 +1,3 @@
+-- Ticketing queries (spec 002): ticket/message/requester/tag CRUD, keyset list
+-- queries (SC-010), reply-token lookup, and triage mutations.
+-- Populated in T011 once the support-desk schema mirror lands in db/schema.sql.

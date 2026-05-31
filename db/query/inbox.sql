@@ -1,0 +1,3 @@
+-- Inbox queries (spec 002): inbound-address resolution, custom-address/domain
+-- CRUD, and the threading/idempotency lookups used by ingestion.
+-- Populated in T011 once the support-desk schema mirror lands in db/schema.sql.
