@@ -1,3 +1,10 @@
--- Inbox queries (spec 002): inbound-address resolution, custom-address/domain
--- CRUD, and the threading/idempotency lookups used by ingestion.
--- Populated in T011 once the support-desk schema mirror lands in db/schema.sql.
+-- Inbox queries (spec 002).
+--
+-- The principal-less routing + ingestion primitives are the SECURITY DEFINER
+-- functions resolve_inbound_address() and ingest_inbound_message() (migration
+-- 0014). They are invoked via raw pgx from internal/inbox (US1), exactly as the
+-- foundation calls accept_invitation() — sqlc cannot resolve a function's
+-- RETURNS TABLE columns because functions are not part of db/schema.sql.
+--
+-- Any plain-table inbox queries (custom inbound-address / email-domain CRUD for
+-- US4) are added here when those stories land.
