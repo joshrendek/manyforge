@@ -24,6 +24,10 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
 	r.Post("/auth/logout", h.logout)
+	r.Post("/auth/password-reset", h.requestPasswordReset)
+	r.Post("/auth/password-reset/confirm", h.confirmPasswordReset)
+	r.Post("/auth/magic-link", h.requestMagicLink)
+	r.Post("/auth/magic-link/consume", h.consumeMagicLink)
 }
 
 // ProtectedRoutes mounts endpoints that require authentication.
@@ -33,6 +37,8 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 	r.Get("/me/export", h.exportMe)
 	r.Post("/me/deactivate", h.deactivateMe)
 	r.Post("/me/delete", h.deleteMe)
+	r.Post("/me/email-change", h.requestEmailChange)
+	r.Post("/me/email-change/confirm", h.confirmEmailChange)
 }
 
 type tokenResp struct {
@@ -231,4 +237,98 @@ func (h *Handler) deleteMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"purge_after": purgeAfter.UTC().Format(time.RFC3339)})
+}
+
+// requestPasswordReset always returns 202 (FR-026 uniform): the response never
+// reveals whether the email maps to an account.
+func (h *Handler) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Email string `json:"email"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	if _, err := h.svc.RequestPasswordReset(r.Context(), in.Email); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	if err := h.svc.ConfirmPasswordReset(r.Context(), in.Token, in.Password); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// requestMagicLink always returns 202 (FR-026 uniform).
+func (h *Handler) requestMagicLink(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Email string `json:"email"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	if _, err := h.svc.RequestMagicLink(r.Context(), in.Email); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) consumeMagicLink(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token string `json:"token"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	tp, err := h.svc.ConsumeMagicLink(r.Context(), in.Token)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, tokenResp{tp.Access, tp.Refresh, tp.ExpiresIn})
+}
+
+func (h *Handler) requestEmailChange(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorBody{Code: "UNAUTHORIZED", Message: "authentication required"})
+		return
+	}
+	var in struct {
+		NewEmail string `json:"new_email"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	if _, err := h.svc.RequestEmailChange(r.Context(), pid, in.NewEmail); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token string `json:"token"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	if err := h.svc.ConfirmEmailChange(r.Context(), in.Token); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
