@@ -23,13 +23,14 @@ Health: `curl localhost:8080/healthz` → `200`. Metrics: `/metrics`. Readiness:
 ## Test (the merge gate — Constitution Principle III)
 
 ```bash
-make test       # unit + integration (testcontainers spins ephemeral Postgres)
-make sec-test    # internal/security_regression: isolation, oracle, privilege-escalation, agent containment
+make test       # unit tests (fast, no DB): source-level security pins + OpenAPI-drift check
+make int-test    # ALL integration tests (testcontainers spins ephemeral Postgres; Docker required)
+make sec-test    # internal/security_regression subset: isolation, oracle, escalation, agent containment
 make lint        # vet + golangci-lint
 cd web && npm run e2e   # Playwright foundation flows (real browser)
 ```
 
-CI runs `make test && make sec-test && make lint`; all green required to merge.
+CI runs `make test && make int-test && make lint` (`int-test` ⊇ `sec-test`); all green required to merge.
 
 ## Validation walkthrough (maps to spec acceptance scenarios)
 
@@ -63,6 +64,11 @@ CI runs `make test && make sec-test && make lint`; all green required to merge.
    - Change a role; revoke another; transfer ownership; try to remove the last Owner → `409` (FR-014).
    - `GET /businesses/{id}/audit` shows an append-only entry for every change above.
    - ✅ Expect: every mutation audited (SC-005); last-Owner protected (SC-008).
+   - **Account lifecycle (FR-028):** `GET /me/export` (data export), `POST /me/deactivate`
+     (reversible), `POST /me/delete` → `202` (soft-delete + sessions revoked + 30-day erasure
+     schedule). Deactivate/delete are refused `409` for the last Owner of any tenant.
+   - **Auth flows:** `POST /auth/password-reset[/confirm]`, `POST /auth/magic-link[/consume]`
+     (uniform `202`, no existence oracle), `POST /me/email-change[/confirm]`. All tokens single-use.
 
 6. **RBAC + agent containment**
    - `POST /roles` to define a custom role with a narrow permission set; assign it; confirm the holder
@@ -71,5 +77,5 @@ CI runs `make test && make sec-test && make lint`; all green required to merge.
 
 ## Performance check (SC-007)
 
-`go test ./internal/tenancy -run TestBench -bench Subtree` seeds 1,000 businesses / 10 levels and asserts
-listing + access-check p95 < 200 ms.
+`go test -tags integration ./internal/tenancy -run TestSC007 -count=1` seeds 1,000 businesses / 10 levels
+and asserts listing + access-check p95 < 200 ms (RLS enabled).
