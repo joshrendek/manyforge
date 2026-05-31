@@ -5,11 +5,274 @@
 package dbgen
 
 import (
+	"database/sql/driver"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type EmailDomainMode string
+
+const (
+	EmailDomainModeForwardIn     EmailDomainMode = "forward_in"
+	EmailDomainModeSubdomainMx   EmailDomainMode = "subdomain_mx"
+	EmailDomainModeProviderRoute EmailDomainMode = "provider_route"
+)
+
+func (e *EmailDomainMode) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = EmailDomainMode(s)
+	case string:
+		*e = EmailDomainMode(s)
+	default:
+		return fmt.Errorf("unsupported scan type for EmailDomainMode: %T", src)
+	}
+	return nil
+}
+
+type NullEmailDomainMode struct {
+	EmailDomainMode EmailDomainMode `json:"email_domain_mode"`
+	Valid           bool            `json:"valid"` // Valid is true if EmailDomainMode is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullEmailDomainMode) Scan(value interface{}) error {
+	if value == nil {
+		ns.EmailDomainMode, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.EmailDomainMode.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullEmailDomainMode) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.EmailDomainMode), nil
+}
+
+type EmailDomainSpfState string
+
+const (
+	EmailDomainSpfStateUnknown EmailDomainSpfState = "unknown"
+	EmailDomainSpfStatePending EmailDomainSpfState = "pending"
+	EmailDomainSpfStatePass    EmailDomainSpfState = "pass"
+	EmailDomainSpfStateFail    EmailDomainSpfState = "fail"
+)
+
+func (e *EmailDomainSpfState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = EmailDomainSpfState(s)
+	case string:
+		*e = EmailDomainSpfState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for EmailDomainSpfState: %T", src)
+	}
+	return nil
+}
+
+type NullEmailDomainSpfState struct {
+	EmailDomainSpfState EmailDomainSpfState `json:"email_domain_spf_state"`
+	Valid               bool                `json:"valid"` // Valid is true if EmailDomainSpfState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullEmailDomainSpfState) Scan(value interface{}) error {
+	if value == nil {
+		ns.EmailDomainSpfState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.EmailDomainSpfState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullEmailDomainSpfState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.EmailDomainSpfState), nil
+}
+
+type InboundAddressKind string
+
+const (
+	InboundAddressKindSystem InboundAddressKind = "system"
+	InboundAddressKindCustom InboundAddressKind = "custom"
+)
+
+func (e *InboundAddressKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = InboundAddressKind(s)
+	case string:
+		*e = InboundAddressKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for InboundAddressKind: %T", src)
+	}
+	return nil
+}
+
+type NullInboundAddressKind struct {
+	InboundAddressKind InboundAddressKind `json:"inbound_address_kind"`
+	Valid              bool               `json:"valid"` // Valid is true if InboundAddressKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullInboundAddressKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.InboundAddressKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.InboundAddressKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullInboundAddressKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.InboundAddressKind), nil
+}
+
+type TicketMessageDirection string
+
+const (
+	TicketMessageDirectionInbound  TicketMessageDirection = "inbound"
+	TicketMessageDirectionOutbound TicketMessageDirection = "outbound"
+	TicketMessageDirectionNote     TicketMessageDirection = "note"
+)
+
+func (e *TicketMessageDirection) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TicketMessageDirection(s)
+	case string:
+		*e = TicketMessageDirection(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TicketMessageDirection: %T", src)
+	}
+	return nil
+}
+
+type NullTicketMessageDirection struct {
+	TicketMessageDirection TicketMessageDirection `json:"ticket_message_direction"`
+	Valid                  bool                   `json:"valid"` // Valid is true if TicketMessageDirection is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTicketMessageDirection) Scan(value interface{}) error {
+	if value == nil {
+		ns.TicketMessageDirection, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TicketMessageDirection.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTicketMessageDirection) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TicketMessageDirection), nil
+}
+
+type TicketPriority string
+
+const (
+	TicketPriorityLow    TicketPriority = "low"
+	TicketPriorityNormal TicketPriority = "normal"
+	TicketPriorityHigh   TicketPriority = "high"
+	TicketPriorityUrgent TicketPriority = "urgent"
+)
+
+func (e *TicketPriority) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TicketPriority(s)
+	case string:
+		*e = TicketPriority(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TicketPriority: %T", src)
+	}
+	return nil
+}
+
+type NullTicketPriority struct {
+	TicketPriority TicketPriority `json:"ticket_priority"`
+	Valid          bool           `json:"valid"` // Valid is true if TicketPriority is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTicketPriority) Scan(value interface{}) error {
+	if value == nil {
+		ns.TicketPriority, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TicketPriority.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTicketPriority) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TicketPriority), nil
+}
+
+type TicketStatus string
+
+const (
+	TicketStatusNew     TicketStatus = "new"
+	TicketStatusOpen    TicketStatus = "open"
+	TicketStatusPending TicketStatus = "pending"
+	TicketStatusSolved  TicketStatus = "solved"
+	TicketStatusClosed  TicketStatus = "closed"
+)
+
+func (e *TicketStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TicketStatus(s)
+	case string:
+		*e = TicketStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TicketStatus: %T", src)
+	}
+	return nil
+}
+
+type NullTicketStatus struct {
+	TicketStatus TicketStatus `json:"ticket_status"`
+	Valid        bool         `json:"valid"` // Valid is true if TicketStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTicketStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.TicketStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TicketStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTicketStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TicketStatus), nil
+}
 
 type Account struct {
 	ID              uuid.UUID          `json:"id"`
@@ -29,6 +292,18 @@ type AccountErasure struct {
 	PurgeAfter  time.Time          `json:"purge_after"`
 	PurgedAt    pgtype.Timestamptz `json:"purged_at"`
 	CreatedAt   time.Time          `json:"created_at"`
+}
+
+type Attachment struct {
+	ID              uuid.UUID `json:"id"`
+	TicketMessageID uuid.UUID `json:"ticket_message_id"`
+	BusinessID      uuid.UUID `json:"business_id"`
+	TenantRootID    uuid.UUID `json:"tenant_root_id"`
+	BlobKey         string    `json:"blob_key"`
+	Filename        *string   `json:"filename"`
+	ContentType     string    `json:"content_type"`
+	Size            int64     `json:"size"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type AuditEntry struct {
@@ -66,10 +341,37 @@ type BusinessClosure struct {
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 }
 
+type EmailDomain struct {
+	ID                uuid.UUID           `json:"id"`
+	BusinessID        uuid.UUID           `json:"business_id"`
+	TenantRootID      uuid.UUID           `json:"tenant_root_id"`
+	Domain            string              `json:"domain"`
+	Mode              EmailDomainMode     `json:"mode"`
+	VerifyToken       string              `json:"verify_token"`
+	VerifiedAt        pgtype.Timestamptz  `json:"verified_at"`
+	DkimSelector      *string             `json:"dkim_selector"`
+	DkimPublicKey     *string             `json:"dkim_public_key"`
+	DkimPrivateKeyRef *string             `json:"dkim_private_key_ref"`
+	SpfState          EmailDomainSpfState `json:"spf_state"`
+	CreatedAt         time.Time           `json:"created_at"`
+	UpdatedAt         time.Time           `json:"updated_at"`
+}
+
 type EmailSuppression struct {
 	Email     string    `json:"email"`
 	Reason    string    `json:"reason"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type InboundAddress struct {
+	ID            uuid.UUID          `json:"id"`
+	BusinessID    uuid.UUID          `json:"business_id"`
+	TenantRootID  uuid.UUID          `json:"tenant_root_id"`
+	Address       string             `json:"address"`
+	Kind          InboundAddressKind `json:"kind"`
+	EmailDomainID pgtype.UUID        `json:"email_domain_id"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 type Invitation struct {
@@ -96,6 +398,16 @@ type Membership struct {
 	GrantedAt    time.Time   `json:"granted_at"`
 }
 
+type Notification struct {
+	ID           uuid.UUID          `json:"id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	PrincipalID  uuid.UUID          `json:"principal_id"`
+	Kind         string             `json:"kind"`
+	Ref          []byte             `json:"ref"`
+	ReadAt       pgtype.Timestamptz `json:"read_at"`
+	CreatedAt    time.Time          `json:"created_at"`
+}
+
 type OneTimeToken struct {
 	ID         uuid.UUID          `json:"id"`
 	AccountID  pgtype.UUID        `json:"account_id"`
@@ -106,6 +418,17 @@ type OneTimeToken struct {
 	ExpiresAt  time.Time          `json:"expires_at"`
 	ConsumedAt pgtype.Timestamptz `json:"consumed_at"`
 	CreatedAt  time.Time          `json:"created_at"`
+}
+
+type Outbox struct {
+	ID           uuid.UUID          `json:"id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	Topic        string             `json:"topic"`
+	Payload      []byte             `json:"payload"`
+	AvailableAt  time.Time          `json:"available_at"`
+	ProcessedAt  pgtype.Timestamptz `json:"processed_at"`
+	Attempts     int32              `json:"attempts"`
+	CreatedAt    time.Time          `json:"created_at"`
 }
 
 type Permission struct {
@@ -135,6 +458,19 @@ type RefreshToken struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type Requester struct {
+	ID           uuid.UUID   `json:"id"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	Email        string      `json:"email"`
+	DisplayName  *string     `json:"display_name"`
+	ContactID    pgtype.UUID `json:"contact_id"`
+	FirstSeenAt  time.Time   `json:"first_seen_at"`
+	LastSeenAt   time.Time   `json:"last_seen_at"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+}
+
 type Role struct {
 	ID           uuid.UUID   `json:"id"`
 	TenantRootID pgtype.UUID `json:"tenant_root_id"`
@@ -147,4 +483,45 @@ type Role struct {
 type RolePermission struct {
 	RoleID        uuid.UUID `json:"role_id"`
 	PermissionKey string    `json:"permission_key"`
+}
+
+type Ticket struct {
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	TenantRootID        uuid.UUID          `json:"tenant_root_id"`
+	RequesterID         uuid.UUID          `json:"requester_id"`
+	Subject             string             `json:"subject"`
+	Status              TicketStatus       `json:"status"`
+	Priority            TicketPriority     `json:"priority"`
+	AssigneePrincipalID pgtype.UUID        `json:"assignee_principal_id"`
+	ReplyToken          string             `json:"reply_token"`
+	LastMessageAt       time.Time          `json:"last_message_at"`
+	RedactedAt          pgtype.Timestamptz `json:"redacted_at"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+type TicketMessage struct {
+	ID                uuid.UUID              `json:"id"`
+	TicketID          uuid.UUID              `json:"ticket_id"`
+	BusinessID        uuid.UUID              `json:"business_id"`
+	TenantRootID      uuid.UUID              `json:"tenant_root_id"`
+	Direction         TicketMessageDirection `json:"direction"`
+	AuthorPrincipalID pgtype.UUID            `json:"author_principal_id"`
+	MessageID         string                 `json:"message_id"`
+	InReplyTo         *string                `json:"in_reply_to"`
+	References        []string               `json:"references"`
+	BodyText          *string                `json:"body_text"`
+	BodyHtml          *string                `json:"body_html"`
+	AuthResults       []byte                 `json:"auth_results"`
+	IsAutoReply       bool                   `json:"is_auto_reply"`
+	CreatedAt         time.Time              `json:"created_at"`
+}
+
+type TicketTag struct {
+	TicketID     uuid.UUID `json:"ticket_id"`
+	Tag          string    `json:"tag"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	CreatedAt    time.Time `json:"created_at"`
 }
