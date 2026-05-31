@@ -131,9 +131,80 @@ func guardLastOwner(ctx context.Context, q *dbgen.Queries, biz dbgen.Business, b
 		return err
 	}
 	if owners <= 1 {
-		return fmt.Errorf("cannot demote the last Owner; transfer ownership first: %w", errs.ErrConflict)
+		return fmt.Errorf("the tenant must retain at least one Owner; transfer ownership first: %w", errs.ErrConflict)
 	}
 	return nil
+}
+
+// RevokeMember removes targetPrincipal's DIRECT membership at businessID. Requires
+// members.manage (FR-013); inherited access from ancestors is untouched. The last
+// direct Owner of the tenant root cannot be revoked (FR-014/FR-024). Effective
+// immediately, audited in-tx (FR-015). Unknown business/member or an unauthorized
+// caller -> not-found (FR-026); a last-Owner removal -> conflict.
+func (s *Service) RevokeMember(ctx context.Context, actorID, businessID, targetPrincipal uuid.UUID) error {
+	return s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		biz, err := loadVisible(ctx, q, businessID)
+		if err != nil {
+			return err
+		}
+		if err := q.AcquireTenantLock(ctx, biz.TenantRootID.String()); err != nil {
+			return err
+		}
+		if err := requirePerm(ctx, tx, actorID, businessID, "members.manage"); err != nil {
+			return err
+		}
+		current, err := q.GetMembershipAt(ctx, dbgen.GetMembershipAtParams{PrincipalID: targetPrincipal, BusinessID: businessID})
+		if err != nil {
+			return errs.ErrNotFound // no direct membership at this business
+		}
+		if err := guardLastOwner(ctx, q, biz, businessID, current.RoleID, false); err != nil {
+			return err
+		}
+		if err := q.DeleteMembershipAt(ctx, dbgen.DeleteMembershipAtParams{PrincipalID: targetPrincipal, BusinessID: businessID}); err != nil {
+			return err
+		}
+		return auditMembership(ctx, tx, actorID, businessID, biz.TenantRootID, targetPrincipal, "membership.revoked", current.RoleID)
+	})
+}
+
+// LeaveBusiness lets the caller voluntarily give up their OWN direct membership at
+// businessID (FR-018) — no management permission required. The tenant's last direct
+// Owner cannot leave until ownership is transferred (FR-014/FR-024). A caller with
+// only inherited access (no direct membership here) gets not-found.
+func (s *Service) LeaveBusiness(ctx context.Context, callerID, businessID uuid.UUID) error {
+	return s.DB.WithPrincipal(ctx, callerID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		biz, err := loadVisible(ctx, q, businessID)
+		if err != nil {
+			return err
+		}
+		if err := q.AcquireTenantLock(ctx, biz.TenantRootID.String()); err != nil {
+			return err
+		}
+		current, err := q.GetMembershipAt(ctx, dbgen.GetMembershipAtParams{PrincipalID: callerID, BusinessID: businessID})
+		if err != nil {
+			return errs.ErrNotFound // nothing to leave (no direct membership)
+		}
+		if err := guardLastOwner(ctx, q, biz, businessID, current.RoleID, false); err != nil {
+			return err
+		}
+		if err := q.DeleteMembershipAt(ctx, dbgen.DeleteMembershipAtParams{PrincipalID: callerID, BusinessID: businessID}); err != nil {
+			return err
+		}
+		return auditMembership(ctx, tx, callerID, businessID, biz.TenantRootID, callerID, "membership.left", current.RoleID)
+	})
+}
+
+// auditMembership records a membership mutation that removes a grant (revoke/leave),
+// capturing the role that was held, in the same transaction as the change (FR-015).
+func auditMembership(ctx context.Context, tx pgx.Tx, actor, business, tenantRoot, target uuid.UUID, action string, roleID uuid.UUID) error {
+	tt := "membership"
+	return audit.Write(ctx, tx, audit.Entry{
+		BusinessID: &business, TenantRootID: &tenantRoot, ActorPrincipalID: &actor,
+		Action: action, TargetType: &tt, TargetID: &target,
+		NewValue: map[string]any{"role": roleID.String()},
+	})
 }
 
 // changeMemberRole handles PATCH /businesses/{id}/members/{principalId}.
@@ -323,4 +394,45 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[Member]{Items: members, NextCursor: nil})
+}
+
+// revokeMember handles DELETE /businesses/{id}/members/{principalId}.
+func (h *Handler) revokeMember(w http.ResponseWriter, r *http.Request) {
+	pid, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	target, err := uuid.Parse(chi.URLParam(r, "principalId"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err := h.svc.RevokeMember(r.Context(), pid, id, target); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// leaveBusiness handles POST /businesses/{id}/leave.
+func (h *Handler) leaveBusiness(w http.ResponseWriter, r *http.Request) {
+	pid, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err := h.svc.LeaveBusiness(r.Context(), pid, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -92,3 +92,8 @@ WHERE m.business_id = $1 AND r.is_locked;
 -- the bits the assignment guard needs (is_locked marks the full-access Owner role).
 SELECT id, key, is_locked FROM role
 WHERE id = $1 AND (tenant_root_id IS NULL OR tenant_root_id = $2);
+
+-- name: DeleteMembershipAt :exec
+-- Removes a principal's DIRECT membership at a business (revoke / leave).
+-- Inherited access from ancestors is unaffected (edge: grants are independent).
+DELETE FROM membership WHERE principal_id = $1 AND business_id = $2;

@@ -279,3 +279,127 @@ func TestAccessList(t *testing.T) {
 		}
 	})
 }
+
+func membershipCount(ctx context.Context, t *testing.T, tdb *testdb.TestDB, principal, business uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := tdb.Super.QueryRow(ctx, "SELECT count(*) FROM membership WHERE principal_id=$1 AND business_id=$2", principal, business).Scan(&n); err != nil {
+		t.Fatalf("membership count: %v", err)
+	}
+	return n
+}
+
+func TestRevokeMember(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	svc := &tenancy.Service{DB: tdb.App}
+	memberRoleID := presetRole(ctx, t, tdb, "member")
+	ownerRole := presetRole(ctx, t, tdb, "owner")
+	viewerRole := presetRole(ctx, t, tdb, "viewer")
+
+	t.Run("owner revokes a member, audited", func(t *testing.T) {
+		owner, master := seedFounder(ctx, t, tdb, "rv-owner1@x.test")
+		bob := seedMemberAt(ctx, t, tdb, master, master, memberRoleID, "rv-bob1@x.test")
+
+		if err := svc.RevokeMember(ctx, owner, master, bob); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+		if n := membershipCount(ctx, t, tdb, bob, master); n != 0 {
+			t.Fatalf("membership should be gone, count=%d", n)
+		}
+		if n := auditCount(ctx, t, tdb, "membership.revoked", bob); n != 1 {
+			t.Fatalf("audit entries = %d, want 1", n)
+		}
+	})
+
+	t.Run("guards: non-member 404, viewer-actor 404, unknown business 404", func(t *testing.T) {
+		owner, master := seedFounder(ctx, t, tdb, "rv-owner2@x.test")
+		viewer := seedMemberAt(ctx, t, tdb, master, master, viewerRole, "rv-viewer2@x.test")
+		bob := seedMemberAt(ctx, t, tdb, master, master, memberRoleID, "rv-bob2@x.test")
+
+		if err := svc.RevokeMember(ctx, owner, master, uuid.New()); !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("revoke non-member: want ErrNotFound, got %v", err)
+		}
+		if err := svc.RevokeMember(ctx, viewer, master, bob); !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("revoke by viewer (no members.manage): want ErrNotFound, got %v", err)
+		}
+		if err := svc.RevokeMember(ctx, owner, uuid.New(), bob); !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("revoke unknown business: want ErrNotFound, got %v", err)
+		}
+		if n := membershipCount(ctx, t, tdb, bob, master); n != 1 {
+			t.Errorf("bob should still be a member, count=%d", n)
+		}
+	})
+
+	t.Run("last Owner cannot be revoked until another exists", func(t *testing.T) {
+		owner, master := seedFounder(ctx, t, tdb, "rv-owner3@x.test")
+
+		if err := svc.RevokeMember(ctx, owner, master, owner); !errors.Is(err, errs.ErrConflict) {
+			t.Fatalf("revoke last owner: want ErrConflict, got %v", err)
+		}
+		if n := membershipCount(ctx, t, tdb, owner, master); n != 1 {
+			t.Fatalf("owner should still be a member, count=%d", n)
+		}
+		seedMemberAt(ctx, t, tdb, master, master, ownerRole, "rv-owner3b@x.test")
+		if err := svc.RevokeMember(ctx, owner, master, owner); err != nil {
+			t.Fatalf("revoke with second owner present: %v", err)
+		}
+	})
+}
+
+func TestLeaveBusiness(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	svc := &tenancy.Service{DB: tdb.App}
+	memberRoleID := presetRole(ctx, t, tdb, "member")
+	ownerRole := presetRole(ctx, t, tdb, "owner")
+
+	t.Run("member leaves voluntarily, audited", func(t *testing.T) {
+		_, master := seedFounder(ctx, t, tdb, "lv-owner1@x.test")
+		bob := seedMemberAt(ctx, t, tdb, master, master, memberRoleID, "lv-bob1@x.test")
+
+		if err := svc.LeaveBusiness(ctx, bob, master); err != nil {
+			t.Fatalf("leave: %v", err)
+		}
+		if n := membershipCount(ctx, t, tdb, bob, master); n != 0 {
+			t.Fatalf("membership should be gone, count=%d", n)
+		}
+		if n := auditCount(ctx, t, tdb, "membership.left", bob); n != 1 {
+			t.Fatalf("audit entries = %d, want 1", n)
+		}
+	})
+
+	t.Run("cannot leave a business you only inherit (no direct membership) -> 404", func(t *testing.T) {
+		owner, master := seedFounder(ctx, t, tdb, "lv-owner2@x.test")
+		sub, err := svc.CreateSubBusiness(ctx, owner, master, "Sub")
+		if err != nil {
+			t.Fatalf("create sub: %v", err)
+		}
+		// owner has inherited access to sub but no direct membership there.
+		if err := svc.LeaveBusiness(ctx, owner, sub.ID); !errors.Is(err, errs.ErrNotFound) {
+			t.Fatalf("leave inherited-only business: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("last Owner cannot leave until another exists", func(t *testing.T) {
+		owner, master := seedFounder(ctx, t, tdb, "lv-owner3@x.test")
+
+		if err := svc.LeaveBusiness(ctx, owner, master); !errors.Is(err, errs.ErrConflict) {
+			t.Fatalf("last owner leaves: want ErrConflict, got %v", err)
+		}
+		seedMemberAt(ctx, t, tdb, master, master, ownerRole, "lv-owner3b@x.test")
+		if err := svc.LeaveBusiness(ctx, owner, master); err != nil {
+			t.Fatalf("leave with second owner present: %v", err)
+		}
+	})
+}

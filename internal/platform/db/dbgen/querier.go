@@ -34,6 +34,9 @@ type Querier interface {
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) (OneTimeToken, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateRole(ctx context.Context, arg CreateRoleParams) error
+	// Removes a principal's DIRECT membership at a business (revoke / leave).
+	// Inherited access from ancestors is unaffected (edge: grants are independent).
+	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
 	DepthFromRoot(ctx context.Context, arg DepthFromRootParams) (int32, error)
 	// Effective permissions for a principal at a business: the union of permissions
