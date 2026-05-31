@@ -151,6 +151,16 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
+const revokeAllRefreshForPrincipal = `-- name: RevokeAllRefreshForPrincipal :exec
+UPDATE refresh_token SET revoked_at = now() WHERE principal_id = $1 AND revoked_at IS NULL
+`
+
+// Cuts off every live session for a principal (account delete, T077).
+func (q *Queries) RevokeAllRefreshForPrincipal(ctx context.Context, principalID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, revokeAllRefreshForPrincipal, principalID)
+	return err
+}
+
 const revokeRefreshFamily = `-- name: RevokeRefreshFamily :exec
 UPDATE refresh_token SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL
 `

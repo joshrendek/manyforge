@@ -120,6 +120,14 @@ CREATE TABLE one_time_token (
     created_at  timestamptz NOT NULL
 );
 
+CREATE TABLE account_erasure (
+    account_id   uuid PRIMARY KEY,
+    requested_at timestamptz NOT NULL,
+    purge_after  timestamptz NOT NULL,
+    purged_at    timestamptz,
+    created_at   timestamptz NOT NULL
+);
+
 CREATE TABLE audit_entry (
     id                 uuid PRIMARY KEY,
     business_id        uuid,

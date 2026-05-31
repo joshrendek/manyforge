@@ -3,6 +3,7 @@ package account
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -29,6 +30,9 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 func (h *Handler) ProtectedRoutes(r chi.Router) {
 	r.Get("/me", h.me)
 	r.Patch("/me", h.updateMe)
+	r.Get("/me/export", h.exportMe)
+	r.Post("/me/deactivate", h.deactivateMe)
+	r.Post("/me/delete", h.deleteMe)
 }
 
 type tokenResp struct {
@@ -166,4 +170,65 @@ func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toProfileResp(p))
+}
+
+type exportMembershipResp struct {
+	BusinessID   string `json:"business_id"`
+	BusinessName string `json:"business_name"`
+	TenantRootID string `json:"tenant_root_id"`
+	RoleKey      string `json:"role_key"`
+	GrantedAt    string `json:"granted_at"`
+}
+
+type exportResp struct {
+	Account     profileResp            `json:"account"`
+	Memberships []exportMembershipResp `json:"memberships"`
+}
+
+func (h *Handler) exportMe(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorBody{Code: "UNAUTHORIZED", Message: "authentication required"})
+		return
+	}
+	exp, err := h.svc.Export(r.Context(), pid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := exportResp{Account: toProfileResp(exp.Account), Memberships: make([]exportMembershipResp, 0, len(exp.Memberships))}
+	for _, m := range exp.Memberships {
+		out.Memberships = append(out.Memberships, exportMembershipResp{
+			BusinessID: m.BusinessID, BusinessName: m.BusinessName, TenantRootID: m.TenantRootID,
+			RoleKey: m.RoleKey, GrantedAt: m.GrantedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) deactivateMe(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorBody{Code: "UNAUTHORIZED", Message: "authentication required"})
+		return
+	}
+	if err := h.svc.Deactivate(r.Context(), pid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) deleteMe(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorBody{Code: "UNAUTHORIZED", Message: "authentication required"})
+		return
+	}
+	purgeAfter, err := h.svc.Delete(r.Context(), pid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"purge_after": purgeAfter.UTC().Format(time.RFC3339)})
 }
