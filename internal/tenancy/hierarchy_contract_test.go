@@ -63,8 +63,9 @@ type fixture struct {
 }
 
 // setup spins an ephemeral DB + full router and returns a verified, logged-in
-// Owner with one master business ("Acme").
-func setup(t *testing.T) fixture {
+// Owner with one master business ("Acme"). The *testdb.TestDB is returned so
+// contract tests that need a second principal can seed one directly.
+func setup(t *testing.T) (fixture, *testdb.TestDB) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	t.Cleanup(cancel)
@@ -104,7 +105,7 @@ func setup(t *testing.T) fixture {
 	if access == "" || masterID == "" {
 		t.Fatalf("setup failed: access=%q master=%v", access, mb)
 	}
-	return fixture{c: c, base: base, access: access, masterID: masterID}
+	return fixture{c: c, base: base, access: access, masterID: masterID}, tdb
 }
 
 func (f fixture) items(t *testing.T) []map[string]any {
@@ -134,7 +135,7 @@ func (f fixture) find(t *testing.T, id string) map[string]any {
 // shapes) of the US2 mutation routes. Service-level behaviour is covered by
 // hierarchy_test.go; this asserts the handler/router layer specifically.
 func TestUS2_HierarchyContract(t *testing.T) {
-	f := setup(t)
+	f, _ := setup(t)
 
 	mkSub := func(parent, name string) string {
 		t.Helper()
