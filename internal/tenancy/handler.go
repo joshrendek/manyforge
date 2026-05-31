@@ -22,6 +22,7 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 	r.Get("/businesses", h.list)
 	r.Post("/businesses", h.create)
 	r.Route("/businesses/{id}", func(r chi.Router) {
+		r.Get("/", h.getOne)
 		r.Patch("/", h.rename)
 		r.Delete("/", h.delete)
 		r.Post("/move", h.move)
@@ -66,6 +67,25 @@ func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (uuid.UUID, 
 }
 
 func pathID(r *http.Request) (uuid.UUID, error) { return uuid.Parse(chi.URLParam(r, "id")) }
+
+// getOne handles GET /businesses/{id}: a single business or a no-oracle 404.
+func (h *Handler) getOne(w http.ResponseWriter, r *http.Request) {
+	pid, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	b, err := h.svc.GetBusiness(r.Context(), pid, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toResp(b))
+}
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	pid, ok := h.principal(w, r)

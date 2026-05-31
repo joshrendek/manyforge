@@ -53,6 +53,26 @@ type Business struct {
 	Status       string
 }
 
+// GetBusiness returns a single business the caller can see (RLS-scoped), or
+// ErrNotFound for an unknown or unauthorized id — the same shape, no oracle.
+func (s *Service) GetBusiness(ctx context.Context, principalID, id uuid.UUID) (Business, error) {
+	var out Business
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		b, err := loadVisible(ctx, dbgen.New(tx), id)
+		if err != nil {
+			return err
+		}
+		var parent *uuid.UUID
+		if b.ParentID.Valid {
+			p := uuid.UUID(b.ParentID.Bytes)
+			parent = &p
+		}
+		out = Business{ID: b.ID, ParentID: parent, TenantRootID: b.TenantRootID, Name: b.Name, Status: b.Status}
+		return nil
+	})
+	return out, err
+}
+
 // ListBusinesses returns the businesses visible to the principal (RLS-scoped).
 func (s *Service) ListBusinesses(ctx context.Context, principalID uuid.UUID) ([]Business, error) {
 	var out []Business
