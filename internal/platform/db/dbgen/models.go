@@ -23,6 +23,14 @@ type Account struct {
 	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
+type AccountErasure struct {
+	AccountID   uuid.UUID          `json:"account_id"`
+	RequestedAt time.Time          `json:"requested_at"`
+	PurgeAfter  time.Time          `json:"purge_after"`
+	PurgedAt    pgtype.Timestamptz `json:"purged_at"`
+	CreatedAt   time.Time          `json:"created_at"`
+}
+
 type AuditEntry struct {
 	ID               uuid.UUID   `json:"id"`
 	BusinessID       pgtype.UUID `json:"business_id"`

@@ -34,6 +34,9 @@ type Querier interface {
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) (OneTimeToken, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateRole(ctx context.Context, arg CreateRoleParams) error
+	// ---- Account lifecycle (T077, FR-028) ----
+	// Reversible deactivation; Login already denies any non-active account (FR-026).
+	DeactivateAccount(ctx context.Context, id uuid.UUID) error
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
@@ -45,12 +48,16 @@ type Querier interface {
 	// separately (HasOwnerRole + AllPermissionKeys) so future catalog additions are
 	// covered automatically (research R3).
 	EffectivePermissions(ctx context.Context, arg EffectivePermissionsParams) ([]string, error)
+	// The caller's own grants (data portability). RLS scopes business/role joins to
+	// what the caller may already see; their own memberships are always visible.
+	ExportMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ExportMembershipsForPrincipalRow, error)
 	GetAccountByEmail(ctx context.Context, email string) (Account, error)
 	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
 	GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
+	GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error)
 	// ---- Member role management (T063) ----
 	// The target principal's direct membership at a business. RLS scopes this to the
 	// caller's authorized subtree, so an admin can read members of a business they
@@ -82,6 +89,10 @@ type Querier interface {
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
 	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
+	// Tenant roots where this principal directly holds the locked Owner role. RLS
+	// always exposes the caller's own membership rows, so this is reliable under
+	// WithPrincipal even before any cross-member visibility is established.
+	ListOwnerRootMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]uuid.UUID, error)
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
@@ -97,6 +108,8 @@ type Querier interface {
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
 	RenameBusiness(ctx context.Context, arg RenameBusinessParams) error
+	// Cuts off every live session for a principal (account delete, T077).
+	RevokeAllRefreshForPrincipal(ctx context.Context, principalID uuid.UUID) error
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
 	// Invitation lifecycle queries. Create/list/revoke/resend run under the inviter's
@@ -106,7 +119,11 @@ type Querier interface {
 	// A role assignable within the tenant: a preset (NULL tenant) or the tenant's own.
 	RoleVisibleInTenant(ctx context.Context, arg RoleVisibleInTenantParams) (uuid.UUID, error)
 	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
+	// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
+	ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error
 	SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error
+	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
+	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
