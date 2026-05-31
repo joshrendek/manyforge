@@ -7,6 +7,7 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -43,4 +44,69 @@ func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryPara
 		arg.NewValue,
 	)
 	return err
+}
+
+const listAuditEntries = `-- name: ListAuditEntries :many
+SELECT id, business_id, actor_principal_id, action, target_type, target_id, correlation_id, created_at
+FROM audit_entry
+WHERE business_id = $1
+  AND (created_at, id) < ($2::timestamptz, $3::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+`
+
+type ListAuditEntriesParams struct {
+	BusinessID      pgtype.UUID `json:"business_id"`
+	BeforeCreatedAt time.Time   `json:"before_created_at"`
+	BeforeID        uuid.UUID   `json:"before_id"`
+	Lim             int32       `json:"lim"`
+}
+
+type ListAuditEntriesRow struct {
+	ID               uuid.UUID   `json:"id"`
+	BusinessID       pgtype.UUID `json:"business_id"`
+	ActorPrincipalID pgtype.UUID `json:"actor_principal_id"`
+	Action           string      `json:"action"`
+	TargetType       *string     `json:"target_type"`
+	TargetID         pgtype.UUID `json:"target_id"`
+	CorrelationID    *string     `json:"correlation_id"`
+	CreatedAt        time.Time   `json:"created_at"`
+}
+
+// A business's audit trail, newest first, keyset-paginated on (created_at, id).
+// The first page passes a far-future sentinel cursor so the predicate is uniform.
+// RLS scopes audit_entry to the caller's authorized businesses; the service
+// additionally gates on audit.read. Projection omits new_value/old_value.
+func (q *Queries) ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error) {
+	rows, err := q.db.Query(ctx, listAuditEntries,
+		arg.BusinessID,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAuditEntriesRow
+	for rows.Next() {
+		var i ListAuditEntriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.ActorPrincipalID,
+			&i.Action,
+			&i.TargetType,
+			&i.TargetID,
+			&i.CorrelationID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -97,3 +97,11 @@ WHERE id = $1 AND (tenant_root_id IS NULL OR tenant_root_id = $2);
 -- Removes a principal's DIRECT membership at a business (revoke / leave).
 -- Inherited access from ancestors is unaffected (edge: grants are independent).
 DELETE FROM membership WHERE principal_id = $1 AND business_id = $2;
+
+-- name: PresetRoleID :one
+-- The id of a built-in preset role by key (owner/admin/member/viewer).
+SELECT id FROM role WHERE tenant_root_id IS NULL AND key = $1;
+
+-- name: GetPrincipalKind :one
+-- The kind ('human'|'agent') of a principal; ownership may pass only to a human.
+SELECT kind FROM principal WHERE id = $1;

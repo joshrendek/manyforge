@@ -58,6 +58,8 @@ type Querier interface {
 	GetMembershipAt(ctx context.Context, arg GetMembershipAtParams) (GetMembershipAtRow, error)
 	GetPendingInvitation(ctx context.Context, arg GetPendingInvitationParams) (GetPendingInvitationRow, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
+	// The kind ('human'|'agent') of a principal; ownership may pass only to a human.
+	GetPrincipalKind(ctx context.Context, id uuid.UUID) (string, error)
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
 	// A role assignable within the tenant (a preset, or one the tenant owns), with
 	// the bits the assignment guard needs (is_locked marks the full-access Owner role).
@@ -72,6 +74,11 @@ type Querier interface {
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
 	// True if candidate ($2) is the node ($1) itself or a descendant of it.
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
+	// A business's audit trail, newest first, keyset-paginated on (created_at, id).
+	// The first page passes a far-future sentinel cursor so the predicate is uniform.
+	// RLS scopes audit_entry to the caller's authorized businesses; the service
+	// additionally gates on audit.read. Projection omits new_value/old_value.
+	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
 	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
@@ -84,6 +91,8 @@ type Querier interface {
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
+	// The id of a built-in preset role by key (owner/admin/member/viewer).
+	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
 	// Subtree move is performed by the SECURITY DEFINER move_business() function
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
