@@ -1,8 +1,10 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/001-tenant-foundation/plan.md` (with `spec.md`, `research.md`,
-`data-model.md`, `contracts/openapi.yaml`). Governance: `.specify/memory/constitution.md`.
+`specs/002-support-desk/plan.md` (with its `spec.md`, `plan-inputs.md`,
+`research.md`, `data-model.md`, `contracts/openapi.yaml`), which builds on the
+foundation in `specs/001-tenant-foundation/`. Program roadmap: `docs/ROADMAP.md`.
+Governance: `.specify/memory/constitution.md`.
 <!-- SPECKIT END -->
 
 
