@@ -35,6 +35,15 @@ FROM principal p
 JOIN account a ON a.id = p.account_id
 WHERE p.id = $1;
 
+-- ---- Auth flows (T078) ----
+
+-- name: UpdatePasswordHash :exec
+UPDATE account SET password_hash = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: UpdateEmail :exec
+-- Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
+UPDATE account SET email = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL;
+
 -- ---- Account lifecycle (T077, FR-028) ----
 
 -- name: DeactivateAccount :exec

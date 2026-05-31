@@ -343,3 +343,34 @@ func (q *Queries) UpdateDisplayName(ctx context.Context, arg UpdateDisplayNamePa
 	)
 	return i, err
 }
+
+const updateEmail = `-- name: UpdateEmail :exec
+UPDATE account SET email = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdateEmailParams struct {
+	ID    uuid.UUID `json:"id"`
+	Email string    `json:"email"`
+}
+
+// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
+func (q *Queries) UpdateEmail(ctx context.Context, arg UpdateEmailParams) error {
+	_, err := q.db.Exec(ctx, updateEmail, arg.ID, arg.Email)
+	return err
+}
+
+const updatePasswordHash = `-- name: UpdatePasswordHash :exec
+
+UPDATE account SET password_hash = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdatePasswordHashParams struct {
+	ID           uuid.UUID `json:"id"`
+	PasswordHash *string   `json:"password_hash"`
+}
+
+// ---- Auth flows (T078) ----
+func (q *Queries) UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) error {
+	_, err := q.db.Exec(ctx, updatePasswordHash, arg.ID, arg.PasswordHash)
+	return err
+}
