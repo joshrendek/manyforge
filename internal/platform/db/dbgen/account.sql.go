@@ -7,6 +7,7 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -70,6 +71,64 @@ func (q *Queries) CreateHumanPrincipal(ctx context.Context, arg CreateHumanPrinc
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const deactivateAccount = `-- name: DeactivateAccount :exec
+
+UPDATE account SET status = 'deactivated', updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+// ---- Account lifecycle (T077, FR-028) ----
+// Reversible deactivation; Login already denies any non-active account (FR-026).
+func (q *Queries) DeactivateAccount(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deactivateAccount, id)
+	return err
+}
+
+const exportMembershipsForPrincipal = `-- name: ExportMembershipsForPrincipal :many
+SELECT m.business_id, b.name AS business_name, m.tenant_root_id, r.key AS role_key, m.granted_at
+FROM membership m
+JOIN business b ON b.id = m.business_id
+JOIN role r ON r.id = m.role_id
+WHERE m.principal_id = $1
+ORDER BY m.granted_at
+`
+
+type ExportMembershipsForPrincipalRow struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	BusinessName string    `json:"business_name"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	RoleKey      string    `json:"role_key"`
+	GrantedAt    time.Time `json:"granted_at"`
+}
+
+// The caller's own grants (data portability). RLS scopes business/role joins to
+// what the caller may already see; their own memberships are always visible.
+func (q *Queries) ExportMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ExportMembershipsForPrincipalRow, error) {
+	rows, err := q.db.Query(ctx, exportMembershipsForPrincipal, principalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExportMembershipsForPrincipalRow
+	for rows.Next() {
+		var i ExportMembershipsForPrincipalRow
+		if err := rows.Scan(
+			&i.BusinessID,
+			&i.BusinessName,
+			&i.TenantRootID,
+			&i.RoleKey,
+			&i.GrantedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAccountByEmail = `-- name: GetAccountByEmail :one
@@ -137,6 +196,29 @@ func (q *Queries) GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Acco
 	return i, err
 }
 
+const getErasureSchedule = `-- name: GetErasureSchedule :one
+SELECT account_id, requested_at, purge_after, purged_at FROM account_erasure WHERE account_id = $1
+`
+
+type GetErasureScheduleRow struct {
+	AccountID   uuid.UUID          `json:"account_id"`
+	RequestedAt time.Time          `json:"requested_at"`
+	PurgeAfter  time.Time          `json:"purge_after"`
+	PurgedAt    pgtype.Timestamptz `json:"purged_at"`
+}
+
+func (q *Queries) GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error) {
+	row := q.db.QueryRow(ctx, getErasureSchedule, accountID)
+	var i GetErasureScheduleRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.RequestedAt,
+		&i.PurgeAfter,
+		&i.PurgedAt,
+	)
+	return i, err
+}
+
 const getPrincipalByAccount = `-- name: GetPrincipalByAccount :one
 SELECT id, kind, account_id, home_business_id, tenant_root_id, created_at FROM principal WHERE account_id = $1 AND kind = 'human'
 `
@@ -169,12 +251,69 @@ func (q *Queries) IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID
 	return verified, err
 }
 
+const listOwnerRootMembershipsForPrincipal = `-- name: ListOwnerRootMembershipsForPrincipal :many
+SELECT m.tenant_root_id FROM membership m
+JOIN role r ON r.id = m.role_id
+WHERE m.principal_id = $1 AND m.business_id = m.tenant_root_id AND r.is_locked
+`
+
+// Tenant roots where this principal directly holds the locked Owner role. RLS
+// always exposes the caller's own membership rows, so this is reliable under
+// WithPrincipal even before any cross-member visibility is established.
+func (q *Queries) ListOwnerRootMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listOwnerRootMembershipsForPrincipal, principalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var tenant_root_id uuid.UUID
+		if err := rows.Scan(&tenant_root_id); err != nil {
+			return nil, err
+		}
+		items = append(items, tenant_root_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markEmailVerified = `-- name: MarkEmailVerified :exec
 UPDATE account SET email_verified_at = now(), updated_at = now() WHERE id = $1
 `
 
 func (q *Queries) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markEmailVerified, id)
+	return err
+}
+
+const scheduleErasure = `-- name: ScheduleErasure :exec
+INSERT INTO account_erasure (account_id, purge_after)
+VALUES ($1, $2)
+ON CONFLICT (account_id) DO NOTHING
+`
+
+type ScheduleErasureParams struct {
+	AccountID  uuid.UUID `json:"account_id"`
+	PurgeAfter time.Time `json:"purge_after"`
+}
+
+// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
+func (q *Queries) ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error {
+	_, err := q.db.Exec(ctx, scheduleErasure, arg.AccountID, arg.PurgeAfter)
+	return err
+}
+
+const softDeleteAccount = `-- name: SoftDeleteAccount :exec
+UPDATE account SET status = 'deactivated', deleted_at = now(), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+// Cuts off access immediately; PII anonymization is deferred to the purge worker.
+func (q *Queries) SoftDeleteAccount(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteAccount, id)
 	return err
 }
 
