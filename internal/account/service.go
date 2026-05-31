@@ -125,6 +125,11 @@ func (s *Service) Login(ctx context.Context, email, password string) (TokenPair,
 		if err := auth.VerifyPassword(password, *acc.PasswordHash); err != nil {
 			return ErrInvalidCredentials
 		}
+		// security: a deactivated/suspended account is denied with the same generic
+		// failure as a wrong password — no "account disabled" oracle (FR-026).
+		if acc.Status != "active" {
+			return ErrInvalidCredentials
+		}
 		prin, err := q.GetPrincipalByAccount(ctx, db.PGUUID(acc.ID))
 		if err != nil {
 			return err
