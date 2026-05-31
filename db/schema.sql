@@ -1,7 +1,7 @@
 -- sqlc schema input: TABLE definitions only, mirroring migrations/ (the runtime
 -- source of truth). Triggers, RLS policies, roles, and functions live in the
 -- migrations and are intentionally excluded here so sqlc's parser stays happy.
--- Keep this in sync with migrations/0001..0006 when table shapes change.
+-- Keep this in sync with migrations/0001..0016 when table shapes change.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 
@@ -143,4 +143,140 @@ CREATE TABLE audit_entry (
     old_value          jsonb,
     new_value          jsonb,
     created_at         timestamptz NOT NULL
+);
+
+-- ============================================================================
+-- Native Support Desk (spec 002) — mirrors migrations/0013..0016.
+-- ============================================================================
+
+CREATE TYPE inbound_address_kind     AS ENUM ('system', 'custom');
+CREATE TYPE email_domain_mode        AS ENUM ('forward_in', 'subdomain_mx', 'provider_route');
+CREATE TYPE email_domain_spf_state   AS ENUM ('unknown', 'pending', 'pass', 'fail');
+CREATE TYPE ticket_status            AS ENUM ('new', 'open', 'pending', 'solved', 'closed');
+CREATE TYPE ticket_priority          AS ENUM ('low', 'normal', 'high', 'urgent');
+CREATE TYPE ticket_message_direction AS ENUM ('inbound', 'outbound', 'note');
+
+CREATE TABLE email_domain (
+    id                   uuid PRIMARY KEY,
+    business_id          uuid NOT NULL,
+    tenant_root_id       uuid NOT NULL,
+    domain               citext NOT NULL,
+    mode                 email_domain_mode NOT NULL,
+    verify_token         text NOT NULL,
+    verified_at          timestamptz,
+    dkim_selector        text,
+    dkim_public_key      text,
+    dkim_private_key_ref text,
+    spf_state            email_domain_spf_state NOT NULL,
+    created_at           timestamptz NOT NULL,
+    updated_at           timestamptz NOT NULL,
+    UNIQUE (tenant_root_id, domain),
+    UNIQUE (id, tenant_root_id)
+);
+
+CREATE TABLE inbound_address (
+    id              uuid PRIMARY KEY,
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    address         citext NOT NULL,
+    kind            inbound_address_kind NOT NULL,
+    email_domain_id uuid,
+    created_at      timestamptz NOT NULL,
+    updated_at      timestamptz NOT NULL,
+    UNIQUE (tenant_root_id, address)
+);
+
+CREATE TABLE requester (
+    id             uuid PRIMARY KEY,
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    email          citext NOT NULL,
+    display_name   text,
+    contact_id     uuid,
+    first_seen_at  timestamptz NOT NULL,
+    last_seen_at   timestamptz NOT NULL,
+    created_at     timestamptz NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    UNIQUE (tenant_root_id, email),
+    UNIQUE (id, tenant_root_id)
+);
+
+CREATE TABLE ticket (
+    id                    uuid PRIMARY KEY,
+    business_id           uuid NOT NULL,
+    tenant_root_id        uuid NOT NULL,
+    requester_id          uuid NOT NULL,
+    subject               text NOT NULL,
+    status                ticket_status NOT NULL,
+    priority              ticket_priority NOT NULL,
+    assignee_principal_id uuid,
+    reply_token           text NOT NULL,
+    last_message_at       timestamptz NOT NULL,
+    redacted_at           timestamptz,
+    created_at            timestamptz NOT NULL,
+    updated_at            timestamptz NOT NULL,
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (tenant_root_id, reply_token)
+);
+
+CREATE TABLE ticket_tag (
+    ticket_id      uuid NOT NULL,
+    tag            citext NOT NULL,
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    created_at     timestamptz NOT NULL,
+    PRIMARY KEY (ticket_id, tag)
+);
+
+CREATE TABLE ticket_message (
+    id                  uuid PRIMARY KEY,
+    ticket_id           uuid NOT NULL,
+    business_id         uuid NOT NULL,
+    tenant_root_id      uuid NOT NULL,
+    direction           ticket_message_direction NOT NULL,
+    author_principal_id uuid,
+    message_id          text NOT NULL,
+    in_reply_to         text,
+    "references"        text[] NOT NULL,
+    body_text           text,
+    body_html           text,
+    auth_results        jsonb,
+    is_auto_reply       boolean NOT NULL,
+    created_at          timestamptz NOT NULL,
+    UNIQUE (tenant_root_id, message_id),
+    UNIQUE (id, tenant_root_id)
+);
+
+CREATE TABLE attachment (
+    id                uuid PRIMARY KEY,
+    ticket_message_id uuid NOT NULL,
+    business_id       uuid NOT NULL,
+    tenant_root_id    uuid NOT NULL,
+    blob_key          text NOT NULL,
+    filename          text,
+    content_type      text NOT NULL,
+    size              bigint NOT NULL,
+    created_at        timestamptz NOT NULL,
+    UNIQUE (tenant_root_id, blob_key)
+);
+
+CREATE TABLE outbox (
+    id             uuid PRIMARY KEY,
+    tenant_root_id uuid NOT NULL,
+    topic          text NOT NULL,
+    payload        jsonb NOT NULL,
+    available_at   timestamptz NOT NULL,
+    processed_at   timestamptz,
+    attempts       int NOT NULL,
+    created_at     timestamptz NOT NULL
+);
+
+CREATE TABLE notification (
+    id             uuid PRIMARY KEY,
+    tenant_root_id uuid NOT NULL,
+    principal_id   uuid NOT NULL,
+    kind           text NOT NULL,
+    ref            jsonb NOT NULL,
+    read_at        timestamptz,
+    created_at     timestamptz NOT NULL
 );
