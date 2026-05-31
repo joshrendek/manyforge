@@ -25,7 +25,7 @@ auth, and RBAC machinery every story sits on.
 ## Phase 1: Setup (Shared Infrastructure)
 
 - [X] T001 Initialize Go module + `cmd/manyforge/main.go` skeleton (Go 1.23) in `go.mod`, `cmd/manyforge/main.go`
-- [ ] T002 [P] Add dependencies (chi, pgx v5, sqlc, golang-migrate, golang-jwt/jwt v5, x/crypto/argon2) in `go.mod`
+- [X] T002 [P] Add dependencies (chi, pgx v5, sqlc, golang-migrate, golang-jwt/jwt v5, x/crypto/argon2) in `go.mod`
 - [X] T003 [P] `Makefile` with targets: `dev test lint sec-test generate migrate`
 - [X] T004 [P] `.golangci.yml` + `.editorconfig`
 - [X] T005 [P] `sqlc.yaml` (db/query → internal/*/store) + create `migrations/` and `db/query/`
@@ -125,8 +125,8 @@ auth, and RBAC machinery every story sits on.
 ### Tests (write first, MUST fail)
 - [X] T053 [P] [US3] Contract tests: invitations create/list/revoke/resend, `/invitations/accept`, roles CRUD, `/permissions` in `internal/invitations/contract_test.go`, `internal/authz/roles_contract_test.go`
 - [X] T054 [P] [US3] Integration: invite→accept→scoped access; role-above-own refused (FR-023); reused token 410 in `internal/invitations/accept_test.go`
-- [ ] T055 [P] [US3] Integration: custom role → assign → exactly-permitted/denied (SC-009) in `internal/authz/role_enforce_test.go`
-- [ ] T056 [P] [US3] Security regression: escalation refused at assign/edit/accept (FR-023) in `internal/security_regression/escalation_test.go`
+- [X] T055 [P] [US3] Integration: custom role → assign → exactly-permitted/denied (SC-009) in `internal/authz/role_enforce_test.go`
+- [X] T056 [P] [US3] Security regression: escalation refused at assign/edit/accept (FR-023) in `internal/security_regression/escalation_test.go`
 
 ### Implementation
 - [X] T057 [P] [US3] Permission catalog seed check + `GET /permissions` (paginated) in `internal/authz/permission.go` (impl in `internal/authz/{service,handler}.go`)
@@ -135,7 +135,7 @@ auth, and RBAC machinery every story sits on.
 - [X] T060 [P] [US3] Invitations store+service: create (role ≤ inviter, hashed token), list, revoke, resend (throttled) in `internal/invitations/service.go`
 - [X] T061 [US3] Accept service: auth-bound + verified + email-match + re-validate authority/role/active + single-use + membership + audit in `internal/invitations/accept.go`
 - [X] T062 [US3] Invitations + accept handlers in `internal/invitations/handler.go`
-- [ ] T063 [US3] Change-member-role handler+service (members.manage, escalation, immediate) in `internal/tenancy/members.go`
+- [X] T063 [US3] Change-member-role handler+service (members.manage, escalation, immediate) in `internal/tenancy/members.go`
 
 **Checkpoint**: US1–US3 work independently.
 
@@ -147,16 +147,16 @@ auth, and RBAC machinery every story sits on.
 **Independent Test**: two unrelated tenants → 0% cross-visibility, cross-tenant fetch → 404; revoke → access gone next action.
 
 ### Tests (write first, MUST fail) — the trust guarantee
-- [ ] T064 [P] [US4] RLS matrix: every tenant table × CRUD with absent/malformed/sideways/cross-root principal context; app-predicate AND RLS separately; as non-bypass app role in `internal/security_regression/rls_matrix_test.go`
-- [ ] T065 [P] [US4] Integration: two tenants 0% cross-visibility; cross-tenant GET → 404 (SC-002/003) in `internal/security_regression/isolation_test.go`
-- [ ] T066 [P] [US4] Integration: revoke member → access gone next action (SC-004) in `internal/security_regression/revocation_test.go`
-- [ ] T067 [P] [US4] Oracle-timing: shape+latency indistinguishable across login miss/wrong-pw/deactivated/unverified/invalid/expired/reused invite (SC-010) in `internal/security_regression/oracle_test.go`
+- [X] T064 [P] [US4] RLS matrix: every tenant table × CRUD with absent/malformed/sideways/cross-root principal context; app-predicate AND RLS separately; as non-bypass app role in `internal/security_regression/rls_matrix_test.go`
+- [X] T065 [P] [US4] Integration: two tenants 0% cross-visibility; cross-tenant GET → 404 (SC-002/003) in `internal/security_regression/isolation_test.go`
+- [X] T066 [P] [US4] Integration: revoke member → access gone next action (SC-004) in `internal/security_regression/revocation_test.go`
+- [X] T067 [P] [US4] Oracle-timing: shape+latency indistinguishable across login miss/wrong-pw/deactivated/unverified/invalid/expired/reused invite (SC-010) in `internal/security_regression/oracle_test.go`
 
 ### Implementation
-- [ ] T068 [US4] Access list `GET /businesses/{id}/members` with direct/inherited provenance (grants[] union), no cross-tenant PII (FR-030) in `internal/tenancy/members.go`
-- [ ] T069 [US4] Revoke membership (members.manage, last-owner protected, immediate) in `internal/tenancy/members.go`
-- [ ] T070 [US4] Leave business (FR-018, last-owner protected) in `internal/tenancy/members.go`
-- [ ] T071 [US4] Oracle hardening: uniform responses + fixed-cost paths across auth/invite + rate-limit wiring in `internal/account/`, `internal/invitations/`
+- [X] T068 [US4] Access list `GET /businesses/{id}/members` with direct/inherited provenance (grants[] union), no cross-tenant PII (FR-030) in `internal/tenancy/members.go`
+- [X] T069 [US4] Revoke membership (members.manage, last-owner protected, immediate) in `internal/tenancy/members.go`
+- [X] T070 [US4] Leave business (FR-018, last-owner protected) in `internal/tenancy/members.go`
+- [X] T071 [US4] Oracle hardening: uniform responses + fixed-cost paths across auth/invite + rate-limit wiring in `internal/account/`, `internal/invitations/`
 
 **Checkpoint**: isolation guarantees proven by `make sec-test`.
 
@@ -168,15 +168,15 @@ auth, and RBAC machinery every story sits on.
 **Independent Test**: change role/revoke/transfer; last-Owner removal → 409; every mutation produces an audit entry.
 
 ### Tests (write first, MUST fail)
-- [ ] T072 [P] [US5] Contract tests: `transfer-ownership` (tenant-root only), `GET /businesses/{id}/audit` in `internal/tenancy/ownership_contract_test.go`
-- [ ] T073 [P] [US5] Integration: change/revoke/transfer atomic; last-Owner → 409 (FR-014/024); all mutations audited (SC-005) in `internal/tenancy/ownership_test.go`
-- [ ] T074 [P] [US5] Security regression: agent-principal containment — no cross-business reach, no admin perms (SC-011/FR-027) in `internal/security_regression/agent_containment_test.go`
+- [X] T072 [P] [US5] Contract tests: `transfer-ownership` (tenant-root only), `GET /businesses/{id}/audit` in `internal/tenancy/ownership_contract_test.go`
+- [X] T073 [P] [US5] Integration: change/revoke/transfer atomic; last-Owner → 409 (FR-014/024); all mutations audited (SC-005) in `internal/tenancy/ownership_test.go`
+- [X] T074 [P] [US5] Security regression: agent-principal containment — no cross-business reach, no admin perms (SC-011/FR-027) in `internal/security_regression/agent_containment_test.go`
 
 ### Implementation
-- [ ] T075 [US5] Transfer ownership (tenant-root only, atomic under lock, deferred Owner trigger) in `internal/tenancy/ownership.go`
-- [ ] T076 [US5] Audit read `GET /businesses/{id}/audit` (paginated, audit.read) in `internal/audit/handler.go` (or `internal/tenancy/audit_handler.go`)
-- [ ] T077 [US5] Account lifecycle: deactivate, delete (erasure schedule + last-Owner refuse), export (FR-028) in `internal/account/lifecycle.go`
-- [ ] T078 [US5] Complete auth flows: email-change request/confirm, password-reset confirm, magic-link request/consume in `internal/account/auth.go`, `handler.go`
+- [X] T075 [US5] Transfer ownership (tenant-root only, atomic under lock, deferred Owner trigger) in `internal/tenancy/ownership.go`
+- [X] T076 [US5] Audit read `GET /businesses/{id}/audit` (paginated, audit.read) in `internal/audit/handler.go` (or `internal/tenancy/audit_handler.go`)
+- [X] T077 [US5] Account lifecycle: deactivate, delete (erasure schedule + last-Owner refuse), export (FR-028) in `internal/account/lifecycle.go`
+- [X] T078 [US5] Complete auth flows: email-change request/confirm, password-reset confirm, magic-link request/consume in `internal/account/auth.go`, `handler.go`
 
 **Checkpoint**: all user stories independently functional.
 
@@ -184,13 +184,13 @@ auth, and RBAC machinery every story sits on.
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T079 [P] Performance bench: listing + access-check p95 < 200 ms at 1,000 businesses / 10 levels, RLS enabled (SC-007) in `internal/tenancy/bench_test.go`
-- [ ] T080 [P] Source-level CI backstop pins (ownership predicate + RLS SQL via strings.Contains) in `internal/security_regression/pins_test.go`
-- [ ] T081 [P] Angular Playwright e2e: signup→master→sub→invite→scoped login in `web/e2e/foundation.spec.ts`
-- [ ] T082 [P] OpenAPI drift check (generated types vs `contracts/openapi.yaml`) in CI
-- [ ] T083 Docs: `README.md` (run/test), `ARCHITECTURE.md` (module map), refresh `quickstart.md` validation
-- [ ] T084 Wire all modules in `cmd/manyforge/main.go`; full `make test && make sec-test && make lint` green
-- [ ] T085 [P] Mark bd planning issues `manyforge-5zt.1`–`.7` resolved (decisions landed in research.md/data-model.md)
+- [X] T079 [P] Performance bench: listing + access-check p95 < 200 ms at 1,000 businesses / 10 levels, RLS enabled (SC-007) in `internal/tenancy/bench_test.go`
+- [X] T080 [P] Source-level CI backstop pins (ownership predicate + RLS SQL via strings.Contains) in `internal/security_regression/pins_test.go`
+- [X] T081 [P] Angular Playwright e2e: signup→master→sub→invite→scoped login in `web/e2e/foundation.spec.ts`
+- [X] T082 [P] OpenAPI drift check (generated types vs `contracts/openapi.yaml`) in CI
+- [X] T083 Docs: `README.md` (run/test), `ARCHITECTURE.md` (module map), refresh `quickstart.md` validation
+- [X] T084 Wire all modules in `cmd/manyforge/main.go`; full `make test && make sec-test && make lint` green
+- [X] T085 [P] Mark bd planning issues `manyforge-5zt.1`–`.7` resolved (decisions landed in research.md/data-model.md)
 
 ---
 
