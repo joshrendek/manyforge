@@ -23,6 +23,7 @@ type Querier interface {
 	// root this is the last-Owner count guarded by FR-014/FR-024.
 	CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error)
 	CountRoleMemberships(ctx context.Context, roleID uuid.UUID) (int64, error)
+	CountUnreadNotifications(ctx context.Context, principalID uuid.UUID) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
@@ -48,6 +49,15 @@ type Querier interface {
 	// separately (HasOwnerRole + AllPermissionKeys) so future catalog additions are
 	// covered automatically (research R3).
 	EffectivePermissions(ctx context.Context, arg EffectivePermissionsParams) ([]string, error)
+	// Notify/events queries (spec 002, SL-C/SL-D). Plain table ops only; the
+	// SECURITY DEFINER drain functions (claim_outbox_batch / mark_outbox_processed /
+	// reschedule_outbox) are called via raw pgx in internal/platform/events (sqlc
+	// can't resolve a function's RETURNS columns — functions aren't in db/schema.sql,
+	// mirroring how the foundation calls accept_invitation).
+	// ---- outbox (SL-C) ----
+	// Enqueue a side-effect in the SAME transaction as the source mutation. Rides
+	// the WITH CHECK (true) policy, so it works with or without a principal context.
+	EnqueueOutbox(ctx context.Context, arg EnqueueOutboxParams) error
 	// The caller's own grants (data portability). RLS scopes business/role joins to
 	// what the caller may already see; their own memberships are always visible.
 	ExportMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ExportMembershipsForPrincipalRow, error)
@@ -78,6 +88,8 @@ type Querier interface {
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	// ---- notification (SL-D) ----
+	InsertNotification(ctx context.Context, arg InsertNotificationParams) error
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
 	// True if candidate ($2) is the node ($1) itself or a descendant of it.
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
@@ -89,6 +101,7 @@ type Querier interface {
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
 	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
+	ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]Notification, error)
 	// Tenant roots where this principal directly holds the locked Owner role. RLS
 	// always exposes the caller's own membership rows, so this is reliable under
 	// WithPrincipal even before any cross-member visibility is established.
@@ -100,6 +113,7 @@ type Querier interface {
 	// this to roles the caller may see; the predicate narrows to one tenant.
 	ListTenantRoles(ctx context.Context, tenantRootID pgtype.UUID) ([]ListTenantRolesRow, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
+	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).

@@ -23,6 +23,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/config"
 	"github.com/manyforge/manyforge/internal/platform/db"
+	"github.com/manyforge/manyforge/internal/platform/events"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/mailer"
 	"github.com/manyforge/manyforge/internal/platform/observability"
@@ -79,6 +80,14 @@ func main() {
 	authzH := authz.NewHandler(authzSvc)
 	invH := invitations.NewHandler(invSvc)
 
+	// SL-C event bus + transactional-outbox worker. Support-desk services
+	// (US1/US2) register their subscribers on eventBus before the worker starts,
+	// so no event is drained without a handler. The in-process SMTP receiver
+	// (cfg.SMTPAddr) and the inbox/ticketing routes are wired with their adapters
+	// and handlers in US1.
+	eventBus := events.NewBus()
+	outboxWorker := &events.Worker{DB: database, Bus: eventBus, Logger: logger}
+
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +126,11 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// Drain the transactional outbox in the background until shutdown.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	go outboxWorker.Run(workerCtx)
+
 	go func() {
 		logger.Info("starting server", "addr", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -129,6 +143,7 @@ func main() {
 	defer stop()
 	<-sigCtx.Done()
 
+	workerCancel() // stop draining the outbox before closing the DB pool
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
