@@ -1,7 +1,7 @@
 GO ?= go
 PKG := ./...
 
-.PHONY: build dev test sec-test lint vet generate migrate tidy
+.PHONY: build dev test sec-test int-test contract-test lint vet generate migrate db-smoke tidy
 
 build:
 	$(GO) build $(PKG)
@@ -21,6 +21,12 @@ sec-test:
 # All integration tests (testcontainers; Docker required). Superset of sec-test.
 int-test:
 	$(GO) test -tags integration -timeout 600s ./...
+
+# Shared-layer interface contracts (InboundSource, Blob, Notifier, event bus)
+# plus the support OpenAPI-drift checks. Tag-gated so it can grow independently
+# of the fast unit suite; no Docker required.
+contract-test:
+	$(GO) test -tags contract -timeout 120s ./...
 
 vet:
 	$(GO) vet $(PKG)

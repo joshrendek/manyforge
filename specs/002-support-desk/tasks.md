@@ -32,12 +32,12 @@ platform layers (SL-C events/outbox, SL-D notify, SL-E blob), so Phase 2 (Founda
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Add Go dependencies (`emersion/go-smtp`, `jhillyerd/enmime`, `emersion/go-msgauth`, `gocloud.dev/blob` + `gocloud.dev/blob/fileblob` + `gocloud.dev/blob/s3blob`) to `go.mod`; run `go mod tidy`
-- [ ] T002 [P] Add support-desk config to `internal/platform/config/config.go` (fields: `SMTPAddr`, `InboundWebhookSecret`, `BlobURL`, `InboundSystemDomain`, `DKIMKeyPath`, inbound/attachment size caps, ingest/outbound rate-limit knobs) and document them in `.env.example` per quickstart.md
-- [ ] T003 [P] Add `make contract-test` target to `Makefile` (runs `go test -tags contract ./...` for shared-layer interface + OpenAPI-drift contracts) and add it to `.github/workflows/ci.yml`
-- [ ] T004 [P] Create empty sqlc query files `db/query/inbox.sql`, `db/query/ticketing.sql`, `db/query/notify.sql`; confirm `sqlc.yaml` globs them into the right output packages
-- [ ] T005 [P] Scaffold module dirs with `doc.go` package docs: `internal/inbox/`, `internal/ticketing/`, `internal/platform/events/`, `internal/platform/notify/`, `internal/platform/blob/`
-- [ ] T006 [P] Add `internal/security_regression/doc_support.go` documenting the 002 finding-ID headers (ingestion-scope, threading-idempotency, mime-sniff, webhook-sig, support-isolation) so each pin file references a stable ID
+- [X] T001 Add Go dependencies (`emersion/go-smtp`, `jhillyerd/enmime/v2`, `emersion/go-msgauth`, `gocloud.dev/blob` + `fileblob` + `s3blob`). Fetched + cached; `go mod tidy` prunes unused requires, so each is re-pinned (offline, from cache) at its first import in Phase 2/US1 — keeps a CI tidy-check clean
+- [X] T002 [P] Add support-desk config to `internal/platform/config/config.go` (`SMTPAddr`, `InboundWebhookSecret`, `BlobURL`, `InboundSystemDomain`, `DKIMKeyPath`, `InboundMaxBytes`, `AttachmentMaxBytes`, ingest/outbound rate knobs) + `.env.example` block per quickstart.md
+- [X] T003 [P] Added `make contract-test` (`go test -tags contract ./...`) to `Makefile` + a CI step in `.github/workflows/ci.yml`
+- [X] T004 [P] Created sqlc query placeholders `db/query/{inbox,ticketing,notify}.sql` (auto-globbed by `sqlc.yaml`'s `queries: db/query`; filled in T011)
+- [X] T005 [P] Scaffolded module dirs with `doc.go`: `internal/inbox/`, `internal/ticketing/`, `internal/platform/{events,notify,blob}/`
+- [X] T006 [P] Added `internal/security_regression/doc_support.go` with stable finding-ID constants (`MF-002-ISOLATION`/`INGEST-SCOPE`/`THREAD-IDEMPOTENCY`/`MIME-SNIFF`/`WEBHOOK-SIG`)
 
 ---
 
