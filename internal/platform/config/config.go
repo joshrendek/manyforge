@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type Config struct {
 	TrustedProxyCIDR string        // CIDR allowed to set the client IP via X-Forwarded-For
 	JWTIssuer        string        // expected/stamped token issuer
 	JWTAudience      string        // expected/stamped token audience
+	RateLimitRPS     float64       // per-IP token refill rate for abuse-sensitive routes (FR-029)
+	RateLimitBurst   float64       // per-IP burst allowance for abuse-sensitive routes
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -35,6 +38,13 @@ func Load() (Config, error) {
 	}
 	cfg.AccessTokenTTL = ttl
 
+	if cfg.RateLimitRPS, err = envFloat("MANYFORGE_RATELIMIT_RPS", 5); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_RATELIMIT_RPS: %w", err)
+	}
+	if cfg.RateLimitBurst, err = envFloat("MANYFORGE_RATELIMIT_BURST", 20); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_RATELIMIT_BURST: %w", err)
+	}
+
 	return cfg, nil
 }
 
@@ -51,4 +61,12 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 		return def, nil
 	}
 	return time.ParseDuration(v)
+}
+
+func envFloat(key string, def float64) (float64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	return strconv.ParseFloat(v, 64)
 }

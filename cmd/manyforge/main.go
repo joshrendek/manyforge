@@ -7,9 +7,11 @@ import (
 	"errors"
 	"expvar"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +26,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/mailer"
 	"github.com/manyforge/manyforge/internal/platform/observability"
+	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/tenancy"
 )
 
@@ -87,8 +90,18 @@ func main() {
 	})
 	mux.Handle("/metrics", expvar.Handler())
 
+	// Per-IP rate limiting for the unauthenticated abuse surface — signup, login,
+	// email verification (FR-029). The key is the trusted-proxy-aware client IP so
+	// a spoofed X-Forwarded-For cannot evade it.
+	trusted := parseTrustedCIDRs(cfg.TrustedProxyCIDR, logger)
+	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
+
 	mux.Route("/api/v1", func(r chi.Router) {
-		acctH.PublicRoutes(r)
+		r.Group(func(pub chi.Router) {
+			pub.Use(httpx.RateLimit(authLimiter, ipKey))
+			acctH.PublicRoutes(pub)
+		})
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
 			acctH.ProtectedRoutes(pr)
@@ -122,4 +135,25 @@ func main() {
 		logger.Error("graceful shutdown failed", "err", err)
 	}
 	logger.Info("server stopped")
+}
+
+// parseTrustedCIDRs parses a comma-separated CIDR list (MANYFORGE_TRUSTED_PROXY_CIDR)
+// into networks whose X-Forwarded-For headers are honored for client-IP resolution.
+// Malformed entries are logged and skipped; an empty list means no proxy is trusted
+// (the direct peer is authoritative).
+func parseTrustedCIDRs(s string, logger *slog.Logger) []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range strings.Split(s, ",") {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			logger.Warn("ignoring malformed trusted proxy CIDR", "cidr", c, "err", err)
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
