@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -320,6 +322,117 @@ func TestSMTPRateLimitNoRecipientOracle(t *testing.T) {
 		knownReply.Message != unknownReply.Message {
 		t.Errorf("SMTP rate-limit reply is a recipient oracle: %q vs %q must be identical",
 			knownReply.Error(), unknownReply.Error())
+	}
+}
+
+// TestRateLimitedIndistinguishableFromTempFailure pins the deliberate no-oracle
+// property that the per-IP throttle reply (errRateLimited) is BYTE-FOR-BYTE
+// identical to the generic internal-blip reply (errTempFailure): code, enhanced
+// code, message, and Error() must all match, so a sender (or attacker) cannot tell a
+// throttle apart from a transient internal failure. A future edit that diverges
+// either reply trips this test. security: MF-002-INGEST-SCOPE.
+func TestRateLimitedIndistinguishableFromTempFailure(t *testing.T) {
+	if errRateLimited.Code != errTempFailure.Code {
+		t.Errorf("Code differs: rate-limited %d vs temp-failure %d", errRateLimited.Code, errTempFailure.Code)
+	}
+	if errRateLimited.EnhancedCode != errTempFailure.EnhancedCode {
+		t.Errorf("EnhancedCode differs: rate-limited %v vs temp-failure %v", errRateLimited.EnhancedCode, errTempFailure.EnhancedCode)
+	}
+	if errRateLimited.Message != errTempFailure.Message {
+		t.Errorf("Message differs (oracle): rate-limited %q vs temp-failure %q", errRateLimited.Message, errTempFailure.Message)
+	}
+	if errRateLimited.Error() != errTempFailure.Error() {
+		t.Errorf("Error() differs (oracle): rate-limited %q vs temp-failure %q", errRateLimited.Error(), errTempFailure.Error())
+	}
+}
+
+// TestDataMultiRecipientFanOut exercises the multi-RCPT DATA fan-out: two accepted
+// recipients in ONE DATA transaction ingest TWICE, once per recipient, each carrying
+// its own EnvelopeRecipient (the same raw bytes are replayed so each ingest is
+// independent and correctly scoped). Without this, the per-recipient loop in Data is
+// untested.
+func TestDataMultiRecipientFanOut(t *testing.T) {
+	const rcptA = "support@biz-a.example"
+	const rcptB = "help@biz-b.example"
+	v := &fakeValidator{routes: map[string]bool{rcptA: true, rcptB: true}}
+	ing := &recordingIngester{result: IngestResult{Created: true}}
+	s := newTestSession(v, ing)
+
+	if err := s.Mail("ada@sender.example", &smtp.MailOptions{}); err != nil {
+		t.Fatalf("Mail: %v", err)
+	}
+	if err := s.Rcpt(rcptA, &smtp.RcptOptions{}); err != nil {
+		t.Fatalf("Rcpt A: %v", err)
+	}
+	if err := s.Rcpt(rcptB, &smtp.RcptOptions{}); err != nil {
+		t.Fatalf("Rcpt B: %v", err)
+	}
+
+	raw := "Subject: multi\r\nMessage-ID: <multi-1@example.com>\r\n\r\nbody\r\n"
+	if err := s.Data(strings.NewReader(raw)); err != nil {
+		t.Fatalf("Data: %v", err)
+	}
+
+	if len(ing.got) != 2 {
+		t.Fatalf("Ingest called %d times for 2 accepted recipients, want 2", len(ing.got))
+	}
+	gotRcpts := map[string]bool{}
+	for _, m := range ing.got {
+		gotRcpts[m.EnvelopeRecipient] = true
+		if m.EnvelopeSender != "ada@sender.example" {
+			t.Errorf("EnvelopeSender = %q, want shared MAIL FROM", m.EnvelopeSender)
+		}
+		if string(m.Raw) != raw {
+			t.Errorf("Raw bytes differ for %q; the same DATA bytes must be replayed per recipient", m.EnvelopeRecipient)
+		}
+	}
+	if !gotRcpts[rcptA] || !gotRcpts[rcptB] {
+		t.Errorf("per-recipient EnvelopeRecipient missing: got %v, want both %q and %q", gotRcpts, rcptA, rcptB)
+	}
+}
+
+// TestIngestIPKeyShared pins the cross-transport anti-evasion invariant: the SMTP
+// per-IP rate-limit key and the webhook per-IP key are IDENTICAL for the same source
+// IP, so a single shared ingestIPLimiter genuinely bounds an IP across BOTH
+// transports — a source cannot evade the cap by hopping webhook↔SMTP. We exhaust the
+// budget by delivering over SMTP, then assert the webhook side (keyed on the same
+// IPRateLimitKey(bare IP)) is already throttled on the shared limiter.
+func TestIngestIPKeyShared(t *testing.T) {
+	const ip = "203.0.113.5"
+	const burst = 1
+
+	// One bucket shared by both transports, exactly as main.go wires ingestIPLimiter.
+	limiter := ratelimit.NewTokenBucket(0, burst)
+
+	// SMTP key: the session keys on IPRateLimitKey(s.remoteIP).
+	smtpKey := IPRateLimitKey(ip)
+	// Webhook key: ratelimit.ClientIP yields the bare peer IP, then IPRateLimitKey.
+	req := httptest.NewRequest(http.MethodPost, "/inbound/email/postmark", nil)
+	req.RemoteAddr = ip + ":4444"
+	webhookKey := IPRateLimitKey(ratelimit.ClientIP(req, nil))
+
+	if smtpKey != webhookKey {
+		t.Fatalf("per-IP key drift: SMTP key %q != webhook key %q for the same source IP — buckets are not shared", smtpKey, webhookKey)
+	}
+
+	// Exhaust the (burst=1) budget for this IP via the SMTP transport.
+	const rcpt = "support@biz.example"
+	v := &fakeValidator{routes: map[string]bool{rcpt: true}}
+	ing := &recordingIngester{result: IngestResult{Created: true}}
+	s := newTestSession(v, ing)
+	s.remoteIP = ip
+	s.limiter = limiter
+	if err := s.Rcpt(rcpt, &smtp.RcptOptions{}); err != nil {
+		t.Fatalf("Rcpt: %v", err)
+	}
+	if err := s.Data(strings.NewReader("Subject: x\r\n\r\nbody\r\n")); err != nil {
+		t.Fatalf("first SMTP delivery under cap must pass, got %v", err)
+	}
+
+	// The webhook transport, keyed identically, now finds the bucket empty: the IP is
+	// throttled on the OTHER transport without ever having sent a webhook itself.
+	if limiter.Allow(webhookKey) {
+		t.Errorf("webhook key %q still has budget after SMTP exhausted the shared bucket — transports are NOT sharing one per-IP bucket (evasion possible)", webhookKey)
 	}
 }
 

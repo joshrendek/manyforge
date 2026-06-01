@@ -52,6 +52,13 @@ func NewWebhookAdapter(secret string) *WebhookAdapter {
 // decoder is wired (YAGNI: no speculative provider-specific parsers). The OpenAPI
 // provider enum is [postmark, mailgun, sendgrid, ses, smtp]; the quickstart also
 // uses a literal "webhook" segment. All route through the same generic decoder.
+//
+// TODO(US4/per-provider): the generic raw-MIME path extracts a single envelope
+// recipient best-effort from the message's To/Cc headers (see decodeGeneric). For
+// providers that supply authoritative envelope/recipient metadata out-of-band
+// (e.g. SES `receipt.recipients`, mailgun `recipient`, postmark `OriginalRecipient`),
+// slot in a provider-specific decoder here that reads that metadata instead — it is
+// the spoof-resistant routing signal and supports multi-recipient delivery.
 func defaultDecoders() map[string]providerDecoder {
 	generic := decodeGeneric
 	return map[string]providerDecoder{
@@ -121,6 +128,29 @@ func decodeGeneric(provider, remoteIP string, body []byte) (RawMessage, error) {
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" || trimmed[0] != '{' {
 		msg.Raw = body
+		// The JSON-envelope path carries the recipient explicitly; a bare rfc822
+		// body does not, so Service.Ingest (which routes ONLY on EnvelopeRecipient)
+		// would no-route and silently drop a delivery the OpenAPI advertises as
+		// supported (message/rfc822). Populate EnvelopeRecipient best-effort from the
+		// recipient headers: first To address, falling back to the first Cc.
+		// ParsedEmail.Recipients is the union of header To then Cc, in order, so
+		// Recipients[0] is exactly that (To-first, Cc-fallback). This is a deliberate
+		// SINGLE-recipient extraction; multi-recipient / Cc-only / provider-specific
+		// routing (e.g. SES receipt.recipients) is a future per-provider-decoder
+		// enhancement — see the TODO in defaultDecoders.
+		//
+		// security: MF-002-INGEST-SCOPE (no-oracle) is preserved — this only chooses a
+		// routing CANDIDATE from the header. resolve_inbound_address still gates on the
+		// business's actual inbound address existing; an unknown/unresolving recipient
+		// (or one we couldn't extract) still yields the uniform 202, disclosing nothing.
+		if parsed, err := Parse(body); err == nil || parsed != nil {
+			if len(parsed.Recipients) > 0 {
+				msg.EnvelopeRecipient = parsed.Recipients[0]
+			}
+			if parsed.From.Address != "" {
+				msg.EnvelopeSender = parsed.From.Address
+			}
+		}
 		return msg, nil
 	}
 
@@ -208,6 +238,15 @@ func synthesizeRFC822(env inboundEmailEnvelope) []byte {
 	}
 	return []byte(b.String())
 }
+
+// IPRateLimitKey is the SINGLE per-IP ingest rate-limit key shared by BOTH inbound
+// transports (webhook + SMTP). It is the bare client IP with no transport prefix, so
+// the same source IP maps to the SAME bucket in the shared ingestIPLimiter whether
+// it arrives over HTTP or SMTP — a source cannot evade the per-IP cap by hopping
+// transports. The webhook side derives the IP via ratelimit.ClientIP (trusted-proxy
+// aware) and the SMTP side from the connection peer; both feed their bare-IP string
+// through this function so the key shape can never silently drift apart.
+func IPRateLimitKey(ip string) string { return ip }
 
 // remoteIP returns the connecting client's IP (host portion of r.RemoteAddr ONLY).
 // X-Forwarded-For is INTENTIONALLY ignored here: this value is recorded for

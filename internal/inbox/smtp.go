@@ -257,7 +257,13 @@ func (s *smtpSession) Data(r io.Reader) error {
 	// byte-identical regardless of which (or whether a) recipient routes — it cannot
 	// be an existence oracle (security: MF-002-INGEST-SCOPE). Over the cap → generic
 	// 451 so the sender retries; nothing is read or ingested.
-	if s.limiter != nil && !s.limiter.Allow("ip:"+s.remoteIP) {
+	//
+	// The key is the BARE remote IP — IDENTICAL to the webhook path's per-IP key
+	// (ratelimit.ClientIP, wired as middleware in main.go). The two transports share
+	// one ingestIPLimiter instance, so an IP at its budget on one transport is also
+	// throttled on the other: a source cannot evade the cap by hopping webhook↔SMTP.
+	// Do NOT reintroduce a transport prefix here — it would split the buckets.
+	if s.limiter != nil && !s.limiter.Allow(IPRateLimitKey(s.remoteIP)) {
 		s.logger.WarnContext(s.ctx, "inbox: smtp ingest rate-limited", "remote_ip", s.remoteIP)
 		return errRateLimited
 	}

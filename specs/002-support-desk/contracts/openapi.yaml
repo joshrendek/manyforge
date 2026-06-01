@@ -57,7 +57,12 @@ paths:
         - name: X-MF-Timestamp
           in: header
           required: false
-          description: Provider-supplied signing timestamp; rejected outside the allowed skew window (replay defense).
+          description: >
+            Provider-supplied signing timestamp. When present it is bound into the HMAC signed content
+            ("<timestamp>.<body>"), so tampering with it invalidates the signature (⇒ 401). There is no
+            timestamp skew-window rejection in this slice; replay is bounded by RFC822 Message-ID
+            idempotency at ingest (re-delivery is a no-op, FR-005). A skew-window check is a tracked
+            hardening follow-up.
           schema: { type: string }
       requestBody:
         required: true

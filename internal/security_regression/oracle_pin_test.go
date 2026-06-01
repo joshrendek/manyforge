@@ -33,11 +33,14 @@ func TestOracleDefensesPinned(t *testing.T) {
 		// Ingest rate limiting (FR-020) must NOT become a recipient-existence oracle.
 		// The webhook per-recipient cap is keyed on the NORMALIZED recipient and run
 		// BEFORE Ingest (which resolves the recipient), so known/unknown throttle
-		// identically. The SMTP per-IP cap is keyed on the connection IP and returns
-		// the generic temp-failure errRateLimited — never varied by recipient.
+		// identically. The SMTP per-IP cap is keyed on the connection IP (via the
+		// shared IPRateLimitKey, NOT the recipient) and returns the generic
+		// temp-failure errRateLimited — never varied by recipient. The bare-IP key is
+		// shared with the webhook transport so an IP cannot evade by hopping.
 		// MF-002-INGEST-SCOPE / FR-020.
 		{"webhook per-recipient key normalized", "../inbox/handler.go", `h.recipientLimiter.Allow("rcpt:" + key)`},
-		{"smtp per-ip key, not recipient", "../inbox/smtp.go", `s.limiter.Allow("ip:"+s.remoteIP)`},
+		{"smtp per-ip key, not recipient", "../inbox/smtp.go", `s.limiter.Allow(IPRateLimitKey(s.remoteIP))`},
+		{"shared cross-transport ip key", "../inbox/webhook.go", "func IPRateLimitKey(ip string) string"},
 		{"smtp rate-limit generic temp", "../inbox/smtp.go", "return errRateLimited"},
 	}
 	for _, c := range cases {
