@@ -24,12 +24,14 @@ import (
 // can be asserted in isolation.
 type fakeIngester struct {
 	called bool
+	calls  int
 	result IngestResult
 	err    error
 }
 
 func (f *fakeIngester) Ingest(_ context.Context, _ RawMessage) (IngestResult, error) {
 	f.called = true
+	f.calls++
 	return f.result, f.err
 }
 
@@ -120,6 +122,23 @@ func TestWebhookUniform202(t *testing.T) {
 				t.Errorf("body not byte-identical to routed case (oracle!):\n routed=%q\n  this=%q", refBody, rec.Body.Bytes())
 			}
 		})
+	}
+}
+
+// TestWebhookSha256PrefixAccepted exercises the "sha256=" prefix branch of
+// verify(): some providers prefix the hex digest with "sha256=". The adapter strips
+// it and the signature is accepted (202), and ingestion runs. Without this test the
+// prefix-strip is untested dead code.
+func TestWebhookSha256PrefixAccepted(t *testing.T) {
+	body := envelopeBody(t)
+	sig := "sha256=" + signBody(testWebhookSecret, body)
+	ing := &fakeIngester{result: IngestResult{TicketID: uuid.New(), MessageID: uuid.New(), Created: true}}
+	rec := doRequest(newTestHandler(t, ing), "postmark", body, sig)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("sha256= prefixed signature: want 202, got %d (body %q)", rec.Code, rec.Body.String())
+	}
+	if !ing.called {
+		t.Error("sha256= prefixed signature: Ingest should have been called (signature is valid)")
 	}
 }
 

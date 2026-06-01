@@ -32,7 +32,7 @@ func startSMTPAdapter(ctx context.Context, t *testing.T, svc *Service) string {
 	addr := probe.Addr().String()
 	_ = probe.Close()
 
-	adapter := NewSMTPAdapter(addr, svc, svc, 1<<20, nil, discardLogger())
+	adapter := NewSMTPAdapter(addr, svc, svc, 1<<20, nil, nil, discardLogger())
 	errCh := make(chan error, 1)
 	go func() { errCh <- adapter.ListenAndServe() }()
 	t.Cleanup(func() {

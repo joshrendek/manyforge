@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/httpx"
+	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 )
 
 // Handler exposes the inbound provider webhook over HTTP. It is PUBLIC: there is no
@@ -19,6 +20,13 @@ type Handler struct {
 	ingester Ingester
 	maxBytes int64
 	logger   *slog.Logger
+
+	// recipientLimiter throttles ingestion per DECODED recipient address (FR-020).
+	// It is applied AFTER decode but BEFORE recipient resolution, uniformly on the
+	// normalized recipient string, so a 429 cannot reveal whether the recipient
+	// routes (no existence oracle). nil disables the per-recipient cap (the per-IP
+	// cap is a separate middleware on the route group, wired in main.go).
+	recipientLimiter ratelimit.Limiter
 }
 
 // NewWebhookHandler builds the inbound webhook HTTP handler. It depends on the
@@ -39,9 +47,14 @@ func NewWebhookHandler(ing Ingester, secret string, maxBytes int64, _ Config, lo
 	}
 }
 
-// PublicRoutes mounts the unauthenticated inbound ingress. It is mounted in the
-// public route group; a public-group rate limiter (T032) can later wrap this route
-// without changing the handler.
+// SetRecipientLimiter installs the per-recipient ingest limiter (FR-020). It is set
+// after construction so the limiter (shared with the per-IP middleware's knobs) is
+// built once in main.go. A nil limiter disables the per-recipient cap.
+func (h *Handler) SetRecipientLimiter(l ratelimit.Limiter) { h.recipientLimiter = l }
+
+// PublicRoutes mounts the unauthenticated inbound ingress. It is mounted in a
+// dedicated public group whose per-IP rate limiter (T032) wraps this route in
+// main.go; the per-recipient cap is enforced inside ingest.
 func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Post("/inbound/email/{provider}", h.ingest)
 }
@@ -50,10 +63,16 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 //  1. Body cap → 413 (http.MaxBytesReader; over the cap is refused before any work).
 //  2. HMAC verify → 401 on missing/forged signature (constant-time).
 //  3. Decode the verified body → RawMessage; a malformed body is a 400.
-//  4. Ingest. Routed (Created), duplicate (Duplicate), and unknown-recipient
+//  4. Per-recipient rate limit (FR-020) → 429. Applied on the NORMALIZED recipient
+//     string BEFORE resolution, so a KNOWN and an UNKNOWN recipient are throttled
+//     IDENTICALLY — the 429 never reveals whether the recipient routes (no oracle).
+//  5. Ingest. Routed (Created), duplicate (Duplicate), and unknown-recipient
 //     (IsNoRoute) ALL return an IDENTICAL 202 — no existence oracle (FR-003/005).
-//  5. Any other error → 500 with a stable generic body; the wrapped error is logged
+//  6. Any other error → 500 with a stable generic body; the wrapped error is logged
 //     server-side and NEVER echoed to the caller.
+//
+// The per-IP cap is a separate middleware (httpx.RateLimit + ratelimit.ClientIP) on
+// the route group in main.go; this method enforces only the per-recipient layer.
 func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 	// 1. Body cap. MaxBytesReader makes Read return an error once the cap is
 	//    exceeded; we surface that as 413 (FR-020). Enforced here so the signature
@@ -88,7 +107,21 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Ingest. Map routed / duplicate / unknown-recipient ALL to an identical 202.
+	// 4. Per-recipient rate limit (FR-020). Keyed on the NORMALIZED recipient (plus/
+	//    VERP segment stripped, lowercased) so plus-addressing variants share one
+	//    budget. Enforced BEFORE Ingest (which is what resolves the recipient), so an
+	//    unknown recipient is throttled identically to a routing one — the 429 reveals
+	//    nothing about existence. security: MF-002-INGEST-SCOPE (no-oracle).
+	if h.recipientLimiter != nil {
+		key, _ := normalizeRecipient(msg.EnvelopeRecipient)
+		if !h.recipientLimiter.Allow("rcpt:" + key) {
+			w.Header().Set("Retry-After", "1")
+			httpx.WriteJSON(w, http.StatusTooManyRequests, httpx.ErrorBody{Code: "RATE_LIMITED", Message: "too many requests"})
+			return
+		}
+	}
+
+	// 5. Ingest. Map routed / duplicate / unknown-recipient ALL to an identical 202.
 	if _, err := h.ingester.Ingest(r.Context(), msg); err != nil {
 		if IsNoRoute(err) {
 			// Unknown recipient: dropped, zero rows written, byte-identical to a
@@ -96,7 +129,7 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 			h.writeAccepted(w)
 			return
 		}
-		// 5. Any other error: log server-side (wrapped), return a stable generic
+		// 6. Any other error: log server-side (wrapped), return a stable generic
 		//    body. NEVER echo err.Error() — it can leak DB/schema/library internals.
 		h.logger.ErrorContext(r.Context(), "inbox: webhook ingest failed",
 			"err", err, "provider", chiProvider(r))

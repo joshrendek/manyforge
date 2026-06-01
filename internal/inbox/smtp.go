@@ -11,6 +11,8 @@ import (
 
 	smtp "github.com/emersion/go-smtp"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 )
 
 // maxSMTPRecipients caps recipients per SMTP transaction. Inbound support mail is
@@ -51,6 +53,18 @@ var errNoRecipient = &smtp.SMTPError{
 	Code:         554,
 	EnhancedCode: smtp.EnhancedCode{5, 5, 1},
 	Message:      "no valid recipients",
+}
+
+// errRateLimited is the generic 451 returned when an inbound connection exceeds the
+// per-IP ingest message rate (FR-020). It is a 4xx so the sender RETRIES rather than
+// bouncing real customer mail, and the message is UNIFORM — keyed only on the
+// connection IP, never the recipient — so it can never be a recipient-existence
+// oracle (security: MF-002-INGEST-SCOPE). It is deliberately indistinguishable from
+// errTempFailure's class so a throttle cannot be told apart from a transient blip.
+var errRateLimited = &smtp.SMTPError{
+	Code:         451,
+	EnhancedCode: smtp.EnhancedCode{4, 3, 0},
+	Message:      "temporary failure, please retry",
 }
 
 // RecipientValidator decides whether an envelope recipient routes to a business,
@@ -110,11 +124,13 @@ type SMTPAdapter struct {
 // NewSMTPAdapter builds the in-process SMTP receiver listening on addr. ing and
 // validator are the *Service (injected as interfaces so they can be faked in
 // tests). maxBytes caps a single message (MaxMessageBytes); the library rejects an
-// oversize message with 552. tlsConfig is OPTIONAL: when non-nil, STARTTLS is
-// advertised opportunistically (inbound MX is best-effort TLS — we never require
-// it, so dev without a cert still works). logger is used for server-internal errors
-// and per-session diagnostics.
-func NewSMTPAdapter(addr string, ing Ingester, validator RecipientValidator, maxBytes int64, tlsConfig *tls.Config, logger *slog.Logger) *SMTPAdapter {
+// oversize message with 552. limiter throttles inbound by the connection remote IP
+// (FR-020): over the cap, DATA returns the generic 451 errRateLimited — uniform,
+// never keyed on the recipient (no oracle). A nil limiter disables the cap.
+// tlsConfig is OPTIONAL: when non-nil, STARTTLS is advertised opportunistically
+// (inbound MX is best-effort TLS — we never require it, so dev without a cert still
+// works). logger is used for server-internal errors and per-session diagnostics.
+func NewSMTPAdapter(addr string, ing Ingester, validator RecipientValidator, maxBytes int64, limiter ratelimit.Limiter, tlsConfig *tls.Config, logger *slog.Logger) *SMTPAdapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -122,6 +138,7 @@ func NewSMTPAdapter(addr string, ing Ingester, validator RecipientValidator, max
 		ingester:  ing,
 		validator: validator,
 		maxBytes:  maxBytes,
+		limiter:   limiter,
 		logger:    logger,
 	}
 	srv := smtp.NewServer(be)
@@ -161,6 +178,7 @@ type smtpBackend struct {
 	ingester  Ingester
 	validator RecipientValidator
 	maxBytes  int64
+	limiter   ratelimit.Limiter
 	logger    *slog.Logger
 }
 
@@ -171,6 +189,7 @@ func (b *smtpBackend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		ingester:  b.ingester,
 		validator: b.validator,
 		maxBytes:  b.maxBytes,
+		limiter:   b.limiter,
 		logger:    b.logger,
 		remoteIP:  peerIP(c),
 		ctx:       context.Background(),
@@ -184,6 +203,7 @@ type smtpSession struct {
 	ingester  Ingester
 	validator RecipientValidator
 	maxBytes  int64
+	limiter   ratelimit.Limiter
 	logger    *slog.Logger
 	remoteIP  string
 	ctx       context.Context
@@ -230,6 +250,16 @@ func (s *smtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 func (s *smtpSession) Data(r io.Reader) error {
 	if len(s.recipients) == 0 {
 		return errNoRecipient
+	}
+
+	// Per-IP ingest rate limit (FR-020). Keyed ONLY on the connection remote IP and
+	// checked ONCE per message, never on the recipient, so an over-cap reply is
+	// byte-identical regardless of which (or whether a) recipient routes — it cannot
+	// be an existence oracle (security: MF-002-INGEST-SCOPE). Over the cap → generic
+	// 451 so the sender retries; nothing is read or ingested.
+	if s.limiter != nil && !s.limiter.Allow("ip:"+s.remoteIP) {
+		s.logger.WarnContext(s.ctx, "inbox: smtp ingest rate-limited", "remote_ip", s.remoteIP)
+		return errRateLimited
 	}
 
 	// Read the message under the session cap. The server also enforces
