@@ -3,6 +3,7 @@ package ticketing
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -29,6 +30,26 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/tickets/{tid}/messages", h.listMessages)
 	r.Get("/businesses/{id}/requesters", h.listRequesters)
 	r.Get("/businesses/{id}/requesters/{rid}", h.getRequester)
+}
+
+// WriteRoutes mounts the authenticated write endpoints (US2: reply + note). The
+// caller wraps these with httpx.RequirePermission("tickets.reply", …): BOTH reply
+// and note are gated on tickets.reply per the migration-0015 catalog ("Send replies
+// AND internal notes on a ticket").
+func (h *Handler) WriteRoutes(r chi.Router) {
+	r.Post("/businesses/{id}/tickets/{tid}/reply", h.reply)
+	r.Post("/businesses/{id}/tickets/{tid}/note", h.addNote)
+}
+
+// --- request DTOs: exact OpenAPI component schemas ---
+
+type replyBody struct {
+	BodyText string  `json:"body_text"`
+	BodyHTML *string `json:"body_html"`
+}
+
+type noteBody struct {
+	BodyText string `json:"body_text"`
 }
 
 // --- response DTOs: exact OpenAPI component schemas ---
@@ -81,6 +102,7 @@ type messageResp struct {
 	SPFResult         string           `json:"spf_result"`
 	DKIMResult        string           `json:"dkim_result"`
 	DMARCResult       string           `json:"dmarc_result"`
+	DeliveryState     *string          `json:"delivery_state"`
 	CreatedAt         string           `json:"created_at"`
 }
 
@@ -151,6 +173,7 @@ func toMessageResp(m Message) messageResp {
 		SPFResult:         m.SPFResult,
 		DKIMResult:        m.DKIMResult,
 		DMARCResult:       m.DMARCResult,
+		DeliveryState:     m.DeliveryState,
 		CreatedAt:         m.CreatedAt.UTC().Format(rfc3339),
 	}
 }
@@ -286,6 +309,70 @@ func (h *Handler) getRequester(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toRequesterResp(rq))
+}
+
+func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	tid, err := pathUUID(r, "tid")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	var body replyBody
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.BodyText) == "" {
+		httpx.WriteError(w, r, errValidation("body_text required"))
+		return
+	}
+	m, err := h.svc.Reply(r.Context(), pid, bid, tid, ReplyInput{BodyText: body.BodyText, BodyHTML: body.BodyHTML})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, toMessageResp(m))
+}
+
+func (h *Handler) addNote(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	tid, err := pathUUID(r, "tid")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	var body noteBody
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.BodyText) == "" {
+		httpx.WriteError(w, r, errValidation("body_text required"))
+		return
+	}
+	m, err := h.svc.AddNote(r.Context(), pid, bid, tid, NoteInput{BodyText: body.BodyText})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, toMessageResp(m))
 }
 
 // --- input parsing ---
