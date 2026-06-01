@@ -87,8 +87,11 @@ type businessCreatedPayload struct {
 // Handle is the events.Handler for the business.created topic. It runs INSIDE the
 // outbox worker's (principal-less) transaction, so the system-address INSERT
 // commits atomically with the event being marked processed. It is safe to run
-// multiple times (at-least-once): the deterministic address + ON CONFLICT DO
-// NOTHING makes a replay a no-op.
+// multiple times (at-least-once): the deterministic address + a SAVEPOINT-guarded
+// INSERT that swallows the unique-violation (23505) makes a replay a no-op. We do
+// NOT use ON CONFLICT DO NOTHING: under the principal-less worker tx, ON CONFLICT
+// evaluates the table's RLS USING predicate against the conflict row (zero
+// authorized rows → 42501), whereas a plain INSERT only checks WITH CHECK(true).
 func (p *Provisioner) Handle(ctx context.Context, tx pgx.Tx, e events.Event) error {
 	var payload businessCreatedPayload
 	if err := json.Unmarshal(e.Payload, &payload); err != nil {
