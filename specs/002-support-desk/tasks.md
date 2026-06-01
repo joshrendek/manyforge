@@ -112,17 +112,17 @@ appends to the same ticket. Add a note → recorded, never mailed. Bounce a repl
 failure visible.
 
 ### Tests for User Story 2 (write FIRST, must FAIL) ⚠️
-- [ ] T035 [P] [US2] Contract tests for `POST …/tickets/{tid}/reply` and `…/tickets/{tid}/note` (201 shapes, 404 no-oracle, 409 suppressed recipient) in `cmd/drift_test.go`
-- [ ] T036 [P] [US2] Integration test `internal/ticketing/reply_integration_test.go`: reply → outbound message + threading headers round-trip; requester reply with `In-Reply-To` → appends to same ticket; note never enqueues outbound mail; hard bounce → `email_suppression` + ticket-visible failure
+- [X] T035 [P] [US2] Contract tests for `POST …/tickets/{tid}/reply` and `…/tickets/{tid}/note` (201 shapes, 404 no-oracle, 409 suppressed recipient) in `cmd/drift_test.go`
+- [X] T036 [P] [US2] Integration test `internal/ticketing/reply_integration_test.go`: reply → outbound message + threading headers round-trip; requester reply with `In-Reply-To` → appends to same ticket; note never enqueues outbound mail; hard bounce → `email_suppression` + ticket-visible failure
 
 ### Implementation for User Story 2
-- [ ] T037 [US2] `internal/ticketing/service.go` reply path: `POST …/tickets/{tid}/reply` (`tickets.reply`) — insert outbound `ticket_message`, update `last_message_at` in-tx, enqueue threaded outbound mail + notify via outbox, audit in-tx; build outbound headers (`In-Reply-To`/`References` + `Reply-To: support+{token}@…` + `[#ref]` subject)
-- [ ] T038 [US2] Internal note path: `POST …/tickets/{tid}/note` (`tickets.reply`) — insert `note`-direction message, audited; NEVER enqueues outbound mail (FR-009)
-- [ ] T039 [US2] Outbound send in `internal/platform/notify` worker subscriber: dispatch the queued reply through the extended mailer (system-address from-identity for US2; custom identity added in US4), stamp `Auto-Submitted` headers (loop cooperation), record dispatch on the message
-- [ ] T040 [US2] Bounce handling: process hard bounces → insert into 001's `email_suppression`, mark the outbound message failed, surface on the ticket; block sends to suppressed recipients (409)
-- [ ] T041 [US2] Outbound send rate limit per business/per requester (FR-020) in the send path
-- [ ] T042 [P] [US2] Frontend: reply composer + note toggle in `web/src/app/pages/support/` thread view; wire to `ticket.service.ts`
-- [ ] T043 [US2] Playwright `web/e2e/support.spec.ts` (US2 portion): open a ticket → send a reply → outbound message appears in the thread; add a note → appears, distinct from a reply
+- [X] T037 [US2] `internal/ticketing/service.go` reply path: `POST …/tickets/{tid}/reply` (`tickets.reply`) — insert outbound `ticket_message`, update `last_message_at` in-tx, enqueue threaded outbound mail + notify via outbox, audit in-tx; build outbound headers (`In-Reply-To`/`References` + `Reply-To: support+{token}@…` + `[#ref]` subject)
+- [X] T038 [US2] Internal note path: `POST …/tickets/{tid}/note` (`tickets.reply`) — insert `note`-direction message, audited; NEVER enqueues outbound mail (FR-009)
+- [X] T039 [US2] Outbound send in `internal/platform/notify` worker subscriber: dispatch the queued reply through the extended mailer (system-address from-identity for US2; custom identity added in US4), stamp `Auto-Submitted` headers (loop cooperation), record dispatch on the message
+- [X] T040 [US2] Bounce handling: process hard bounces → insert into 001's `email_suppression`, mark the outbound message failed, surface on the ticket; block sends to suppressed recipients (409)
+- [X] T041 [US2] Outbound send rate limit per business/per requester (FR-020) in the send path
+- [X] T042 [P] [US2] Frontend: reply composer + note toggle in `web/src/app/pages/support/` thread view; wire to `ticket.service.ts`
+- [X] T043 [US2] Playwright `web/e2e/support.spec.ts` (US2 portion): open a ticket → send a reply → outbound message appears in the thread; add a note → appears, distinct from a reply
 
 **Checkpoint**: Two-way threaded conversation works end-to-end; notes stay internal; bounces are handled.
 
