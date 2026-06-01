@@ -142,6 +142,49 @@ func (ns NullInboundAddressKind) Value() (driver.Value, error) {
 	return string(ns.InboundAddressKind), nil
 }
 
+type MessageDeliveryState string
+
+const (
+	MessageDeliveryStatePending MessageDeliveryState = "pending"
+	MessageDeliveryStateSent    MessageDeliveryState = "sent"
+	MessageDeliveryStateFailed  MessageDeliveryState = "failed"
+)
+
+func (e *MessageDeliveryState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MessageDeliveryState(s)
+	case string:
+		*e = MessageDeliveryState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MessageDeliveryState: %T", src)
+	}
+	return nil
+}
+
+type NullMessageDeliveryState struct {
+	MessageDeliveryState MessageDeliveryState `json:"message_delivery_state"`
+	Valid                bool                 `json:"valid"` // Valid is true if MessageDeliveryState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMessageDeliveryState) Scan(value interface{}) error {
+	if value == nil {
+		ns.MessageDeliveryState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MessageDeliveryState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMessageDeliveryState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MessageDeliveryState), nil
+}
+
 type TicketMessageDirection string
 
 const (
@@ -502,20 +545,22 @@ type Ticket struct {
 }
 
 type TicketMessage struct {
-	ID                uuid.UUID              `json:"id"`
-	TicketID          uuid.UUID              `json:"ticket_id"`
-	BusinessID        uuid.UUID              `json:"business_id"`
-	TenantRootID      uuid.UUID              `json:"tenant_root_id"`
-	Direction         TicketMessageDirection `json:"direction"`
-	AuthorPrincipalID pgtype.UUID            `json:"author_principal_id"`
-	MessageID         string                 `json:"message_id"`
-	InReplyTo         *string                `json:"in_reply_to"`
-	References        []string               `json:"references"`
-	BodyText          *string                `json:"body_text"`
-	BodyHtml          *string                `json:"body_html"`
-	AuthResults       []byte                 `json:"auth_results"`
-	IsAutoReply       bool                   `json:"is_auto_reply"`
-	CreatedAt         time.Time              `json:"created_at"`
+	ID                uuid.UUID                `json:"id"`
+	TicketID          uuid.UUID                `json:"ticket_id"`
+	BusinessID        uuid.UUID                `json:"business_id"`
+	TenantRootID      uuid.UUID                `json:"tenant_root_id"`
+	Direction         TicketMessageDirection   `json:"direction"`
+	AuthorPrincipalID pgtype.UUID              `json:"author_principal_id"`
+	MessageID         string                   `json:"message_id"`
+	InReplyTo         *string                  `json:"in_reply_to"`
+	References        []string                 `json:"references"`
+	BodyText          *string                  `json:"body_text"`
+	BodyHtml          *string                  `json:"body_html"`
+	AuthResults       []byte                   `json:"auth_results"`
+	IsAutoReply       bool                     `json:"is_auto_reply"`
+	CreatedAt         time.Time                `json:"created_at"`
+	DeliveryState     NullMessageDeliveryState `json:"delivery_state"`
+	DeliveryError     *string                  `json:"delivery_error"`
 }
 
 type TicketTag struct {

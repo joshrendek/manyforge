@@ -155,6 +155,7 @@ CREATE TYPE email_domain_spf_state   AS ENUM ('unknown', 'pending', 'pass', 'fai
 CREATE TYPE ticket_status            AS ENUM ('new', 'open', 'pending', 'solved', 'closed');
 CREATE TYPE ticket_priority          AS ENUM ('low', 'normal', 'high', 'urgent');
 CREATE TYPE ticket_message_direction AS ENUM ('inbound', 'outbound', 'note');
+CREATE TYPE message_delivery_state   AS ENUM ('pending', 'sent', 'failed');
 
 CREATE TABLE email_domain (
     id                   uuid PRIMARY KEY,
@@ -243,6 +244,8 @@ CREATE TABLE ticket_message (
     auth_results        jsonb,
     is_auto_reply       boolean NOT NULL,
     created_at          timestamptz NOT NULL,
+    delivery_state      message_delivery_state,
+    delivery_error      text,
     UNIQUE (tenant_root_id, message_id),
     UNIQUE (id, tenant_root_id)
 );

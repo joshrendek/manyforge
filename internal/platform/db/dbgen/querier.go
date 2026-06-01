@@ -16,6 +16,9 @@ type Querier interface {
 	AcquireTenantLock(ctx context.Context, hashtext string) error
 	AddRolePermission(ctx context.Context, arg AddRolePermissionParams) error
 	AllPermissionKeys(ctx context.Context) ([]string, error)
+	// BumpTicketActivity touches the denormalized last_message_at/updated_at after a
+	// new message; runs in the same tx as the message insert.
+	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
 	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
@@ -67,6 +70,10 @@ type Querier interface {
 	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
 	GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	// GetBusinessSystemInboundAddress loads the system (kind='system') inbound address
+	// for a business — the From/Reply-To routing base for outbound. US2 sends from the
+	// system identity only.
+	GetBusinessSystemInboundAddress(ctx context.Context, arg GetBusinessSystemInboundAddressParams) (string, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
 	GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error)
@@ -75,6 +82,13 @@ type Querier interface {
 	// caller's authorized subtree, so an admin can read members of a business they
 	// administer while a bare member sees only their own row.
 	GetMembershipAt(ctx context.Context, arg GetMembershipAtParams) (GetMembershipAtRow, error)
+	// GetMessageDeliveryState reads the delivery lifecycle for a message (see
+	// MarkMessageDelivered note on the tenant-only scoping).
+	GetMessageDeliveryState(ctx context.Context, arg GetMessageDeliveryStateParams) (NullMessageDeliveryState, error)
+	// GetOutboundMessageForBounce correlates a bounce to the most recent outbound
+	// message to a recipient on a business, for surfacing the failure. Bounce intake
+	// is principal-less.
+	GetOutboundMessageForBounce(ctx context.Context, arg GetOutboundMessageForBounceParams) (GetOutboundMessageForBounceRow, error)
 	GetPendingInvitation(ctx context.Context, arg GetPendingInvitationParams) (GetPendingInvitationRow, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	// The kind ('human'|'agent') of a principal; ownership may pass only to a human.
@@ -90,6 +104,11 @@ type Querier interface {
 	// the bits the assignment guard needs (is_locked marks the full-access Owner role).
 	GetRoleInTenant(ctx context.Context, arg GetRoleInTenantParams) (GetRoleInTenantRow, error)
 	GetRolePermissions(ctx context.Context, roleID uuid.UUID) ([]string, error)
+	// ---- US2 write / threading queries ----
+	// GetThreadingParent loads the latest message on a ticket (any direction) — its
+	// message_id becomes the new outbound In-Reply-To; its references chain (+ its own
+	// id) becomes References.
+	GetThreadingParent(ctx context.Context, arg GetThreadingParentParams) (GetThreadingParentRow, error)
 	// GetTicket loads a single ticket scoped to (id, business_id) — the service-layer
 	// ownership predicate. RLS already scopes rows to the caller's authorized
 	// businesses; the explicit business_id is defense in depth. pgx.ErrNoRows ⇒ the
@@ -101,11 +120,19 @@ type Querier interface {
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	// InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
+	InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error)
 	// ---- notification (SL-D) ----
 	InsertNotification(ctx context.Context, arg InsertNotificationParams) error
+	// InsertOutboundMessage persists an agent reply as a pending-delivery outbound row.
+	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
+	InsertSuppression(ctx context.Context, arg InsertSuppressionParams) error
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
 	// True if candidate ($2) is the node ($1) itself or a descendant of it.
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
+	// Email suppression queries (spec 001 email_suppression table, US2 outbound safety).
+	// Table: email_suppression (email citext PK, reason text, created_at timestamptz).
+	IsSuppressed(ctx context.Context, email string) (bool, error)
 	// ListAttachmentsForMessages fetches every attachment for a page of messages in
 	// one round trip (avoids N+1). The service groups by ticket_message_id.
 	ListAttachmentsForMessages(ctx context.Context, arg ListAttachmentsForMessagesParams) ([]Attachment, error)
@@ -167,6 +194,15 @@ type Querier interface {
 	// (DESC, DESC) order. The row-value comparison rides the same composite index.
 	ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]Ticket, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
+	// MarkMessageDelivered/MarkMessageFailed/GetMessageDeliveryState are scoped on
+	// (id, tenant_root_id) WITHOUT business_id on purpose: they are driven by the
+	// principal-less outbox-send / bounce worker, which holds the message id + tenant
+	// but no business predicate. Do NOT "fix" this by adding business_id — the worker
+	// has no business context to supply.
+	MarkMessageDelivered(ctx context.Context, arg MarkMessageDeliveredParams) error
+	// MarkMessageFailed records a delivery failure (see MarkMessageDelivered note on
+	// the tenant-only scoping).
+	MarkMessageFailed(ctx context.Context, arg MarkMessageFailedParams) error
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)

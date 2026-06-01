@@ -13,6 +13,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bumpTicketActivity = `-- name: BumpTicketActivity :exec
+UPDATE ticket SET last_message_at = now(), updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3
+`
+
+type BumpTicketActivityParams struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// BumpTicketActivity touches the denormalized last_message_at/updated_at after a
+// new message; runs in the same tx as the message insert.
+func (q *Queries) BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error {
+	_, err := q.db.Exec(ctx, bumpTicketActivity, arg.ID, arg.BusinessID, arg.TenantRootID)
+	return err
+}
+
 const countTicketMessages = `-- name: CountTicketMessages :one
 SELECT count(*) FROM ticket_message
 WHERE ticket_id = $1 AND business_id = $2
@@ -29,6 +47,77 @@ func (q *Queries) CountTicketMessages(ctx context.Context, arg CountTicketMessag
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const getBusinessSystemInboundAddress = `-- name: GetBusinessSystemInboundAddress :one
+SELECT address FROM inbound_address
+WHERE business_id = $1 AND tenant_root_id = $2 AND kind = 'system'
+ORDER BY created_at ASC
+LIMIT 1
+`
+
+type GetBusinessSystemInboundAddressParams struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// GetBusinessSystemInboundAddress loads the system (kind='system') inbound address
+// for a business — the From/Reply-To routing base for outbound. US2 sends from the
+// system identity only.
+func (q *Queries) GetBusinessSystemInboundAddress(ctx context.Context, arg GetBusinessSystemInboundAddressParams) (string, error) {
+	row := q.db.QueryRow(ctx, getBusinessSystemInboundAddress, arg.BusinessID, arg.TenantRootID)
+	var address string
+	err := row.Scan(&address)
+	return address, err
+}
+
+const getMessageDeliveryState = `-- name: GetMessageDeliveryState :one
+SELECT delivery_state FROM ticket_message
+WHERE id = $1 AND tenant_root_id = $2
+`
+
+type GetMessageDeliveryStateParams struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// GetMessageDeliveryState reads the delivery lifecycle for a message (see
+// MarkMessageDelivered note on the tenant-only scoping).
+func (q *Queries) GetMessageDeliveryState(ctx context.Context, arg GetMessageDeliveryStateParams) (NullMessageDeliveryState, error) {
+	row := q.db.QueryRow(ctx, getMessageDeliveryState, arg.ID, arg.TenantRootID)
+	var delivery_state NullMessageDeliveryState
+	err := row.Scan(&delivery_state)
+	return delivery_state, err
+}
+
+const getOutboundMessageForBounce = `-- name: GetOutboundMessageForBounce :one
+SELECT tm.id, tm.tenant_root_id
+FROM ticket_message tm
+JOIN ticket t ON t.id = tm.ticket_id AND t.tenant_root_id = tm.tenant_root_id
+JOIN requester rq ON rq.id = t.requester_id AND rq.tenant_root_id = t.tenant_root_id
+WHERE tm.direction = 'outbound' AND rq.email = $1 AND tm.tenant_root_id = $2
+ORDER BY tm.created_at DESC
+LIMIT 1
+`
+
+type GetOutboundMessageForBounceParams struct {
+	Email        string    `json:"email"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+type GetOutboundMessageForBounceRow struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// GetOutboundMessageForBounce correlates a bounce to the most recent outbound
+// message to a recipient on a business, for surfacing the failure. Bounce intake
+// is principal-less.
+func (q *Queries) GetOutboundMessageForBounce(ctx context.Context, arg GetOutboundMessageForBounceParams) (GetOutboundMessageForBounceRow, error) {
+	row := q.db.QueryRow(ctx, getOutboundMessageForBounce, arg.Email, arg.TenantRootID)
+	var i GetOutboundMessageForBounceRow
+	err := row.Scan(&i.ID, &i.TenantRootID)
+	return i, err
 }
 
 const getRequester = `-- name: GetRequester :one
@@ -92,6 +181,37 @@ func (q *Queries) GetRequesterForTicket(ctx context.Context, arg GetRequesterFor
 	return i, err
 }
 
+const getThreadingParent = `-- name: GetThreadingParent :one
+
+SELECT message_id, "references"
+FROM ticket_message
+WHERE ticket_id = $1 AND business_id = $2 AND tenant_root_id = $3
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetThreadingParentParams struct {
+	TicketID     uuid.UUID `json:"ticket_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+type GetThreadingParentRow struct {
+	MessageID  string   `json:"message_id"`
+	References []string `json:"references"`
+}
+
+// ---- US2 write / threading queries ----
+// GetThreadingParent loads the latest message on a ticket (any direction) — its
+// message_id becomes the new outbound In-Reply-To; its references chain (+ its own
+// id) becomes References.
+func (q *Queries) GetThreadingParent(ctx context.Context, arg GetThreadingParentParams) (GetThreadingParentRow, error) {
+	row := q.db.QueryRow(ctx, getThreadingParent, arg.TicketID, arg.BusinessID, arg.TenantRootID)
+	var i GetThreadingParentRow
+	err := row.Scan(&i.MessageID, &i.References)
+	return i, err
+}
+
 const getTicket = `-- name: GetTicket :one
 SELECT id, business_id, tenant_root_id, requester_id, subject, status, priority, assignee_principal_id, reply_token, last_message_at, redacted_at, created_at, updated_at FROM ticket
 WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL
@@ -123,6 +243,116 @@ func (q *Queries) GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, e
 		&i.RedactedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertNoteMessage = `-- name: InsertNoteMessage :one
+INSERT INTO ticket_message (
+    id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
+    message_id, body_text, body_html)
+VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8)
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error
+`
+
+type InsertNoteMessageParams struct {
+	ID                uuid.UUID   `json:"id"`
+	TicketID          uuid.UUID   `json:"ticket_id"`
+	BusinessID        uuid.UUID   `json:"business_id"`
+	TenantRootID      uuid.UUID   `json:"tenant_root_id"`
+	AuthorPrincipalID pgtype.UUID `json:"author_principal_id"`
+	MessageID         string      `json:"message_id"`
+	BodyText          *string     `json:"body_text"`
+	BodyHtml          *string     `json:"body_html"`
+}
+
+// InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
+func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error) {
+	row := q.db.QueryRow(ctx, insertNoteMessage,
+		arg.ID,
+		arg.TicketID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.AuthorPrincipalID,
+		arg.MessageID,
+		arg.BodyText,
+		arg.BodyHtml,
+	)
+	var i TicketMessage
+	err := row.Scan(
+		&i.ID,
+		&i.TicketID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Direction,
+		&i.AuthorPrincipalID,
+		&i.MessageID,
+		&i.InReplyTo,
+		&i.References,
+		&i.BodyText,
+		&i.BodyHtml,
+		&i.AuthResults,
+		&i.IsAutoReply,
+		&i.CreatedAt,
+		&i.DeliveryState,
+		&i.DeliveryError,
+	)
+	return i, err
+}
+
+const insertOutboundMessage = `-- name: InsertOutboundMessage :one
+INSERT INTO ticket_message (
+    id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
+    message_id, in_reply_to, "references", body_text, body_html, delivery_state)
+VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending')
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error
+`
+
+type InsertOutboundMessageParams struct {
+	ID                uuid.UUID   `json:"id"`
+	TicketID          uuid.UUID   `json:"ticket_id"`
+	BusinessID        uuid.UUID   `json:"business_id"`
+	TenantRootID      uuid.UUID   `json:"tenant_root_id"`
+	AuthorPrincipalID pgtype.UUID `json:"author_principal_id"`
+	MessageID         string      `json:"message_id"`
+	InReplyTo         *string     `json:"in_reply_to"`
+	References        []string    `json:"references"`
+	BodyText          *string     `json:"body_text"`
+	BodyHtml          *string     `json:"body_html"`
+}
+
+// InsertOutboundMessage persists an agent reply as a pending-delivery outbound row.
+func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error) {
+	row := q.db.QueryRow(ctx, insertOutboundMessage,
+		arg.ID,
+		arg.TicketID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.AuthorPrincipalID,
+		arg.MessageID,
+		arg.InReplyTo,
+		arg.References,
+		arg.BodyText,
+		arg.BodyHtml,
+	)
+	var i TicketMessage
+	err := row.Scan(
+		&i.ID,
+		&i.TicketID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Direction,
+		&i.AuthorPrincipalID,
+		&i.MessageID,
+		&i.InReplyTo,
+		&i.References,
+		&i.BodyText,
+		&i.BodyHtml,
+		&i.AuthResults,
+		&i.IsAutoReply,
+		&i.CreatedAt,
+		&i.DeliveryState,
+		&i.DeliveryError,
 	)
 	return i, err
 }
@@ -172,7 +402,7 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, arg ListAttach
 
 const listMessages = `-- name: ListMessages :many
 
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error FROM ticket_message
 WHERE ticket_id = $1 AND business_id = $2
 ORDER BY created_at ASC, id ASC
 LIMIT $3
@@ -213,6 +443,8 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 			&i.AuthResults,
 			&i.IsAutoReply,
 			&i.CreatedAt,
+			&i.DeliveryState,
+			&i.DeliveryError,
 		); err != nil {
 			return nil, err
 		}
@@ -225,7 +457,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 }
 
 const listMessagesAfter = `-- name: ListMessagesAfter :many
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error FROM ticket_message
 WHERE ticket_id = $1 AND business_id = $2
   AND (created_at, id) > ($3::timestamptz, $4::uuid)
 ORDER BY created_at ASC, id ASC
@@ -271,6 +503,8 @@ func (q *Queries) ListMessagesAfter(ctx context.Context, arg ListMessagesAfterPa
 			&i.AuthResults,
 			&i.IsAutoReply,
 			&i.CreatedAt,
+			&i.DeliveryState,
+			&i.DeliveryError,
 		); err != nil {
 			return nil, err
 		}
@@ -575,4 +809,42 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const markMessageDelivered = `-- name: MarkMessageDelivered :exec
+UPDATE ticket_message SET delivery_state = 'sent', delivery_error = NULL
+WHERE id = $1 AND tenant_root_id = $2
+`
+
+type MarkMessageDeliveredParams struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// MarkMessageDelivered/MarkMessageFailed/GetMessageDeliveryState are scoped on
+// (id, tenant_root_id) WITHOUT business_id on purpose: they are driven by the
+// principal-less outbox-send / bounce worker, which holds the message id + tenant
+// but no business predicate. Do NOT "fix" this by adding business_id — the worker
+// has no business context to supply.
+func (q *Queries) MarkMessageDelivered(ctx context.Context, arg MarkMessageDeliveredParams) error {
+	_, err := q.db.Exec(ctx, markMessageDelivered, arg.ID, arg.TenantRootID)
+	return err
+}
+
+const markMessageFailed = `-- name: MarkMessageFailed :exec
+UPDATE ticket_message SET delivery_state = 'failed', delivery_error = $3
+WHERE id = $1 AND tenant_root_id = $2
+`
+
+type MarkMessageFailedParams struct {
+	ID            uuid.UUID `json:"id"`
+	TenantRootID  uuid.UUID `json:"tenant_root_id"`
+	DeliveryError *string   `json:"delivery_error"`
+}
+
+// MarkMessageFailed records a delivery failure (see MarkMessageDelivered note on
+// the tenant-only scoping).
+func (q *Queries) MarkMessageFailed(ctx context.Context, arg MarkMessageFailedParams) error {
+	_, err := q.db.Exec(ctx, markMessageFailed, arg.ID, arg.TenantRootID, arg.DeliveryError)
+	return err
 }
