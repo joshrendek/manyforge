@@ -10,5 +10,15 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/dashboard').then((m) => m.DashboardComponent),
   },
+  {
+    path: 'support',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/support/ticket-list').then((m) => m.TicketListComponent),
+  },
+  {
+    path: 'support/:businessId/:tid',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/support/thread-view').then((m) => m.ThreadViewComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
