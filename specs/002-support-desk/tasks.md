@@ -94,7 +94,7 @@ duplicate. Send to an unrouted address: no data written, response identical to t
 - [X] T031 [US1] `internal/ticketing/service.go` (read slice) + `internal/ticketing/handler.go`: `GET /businesses/{id}/tickets` (keyset, status/priority/assignee/tag filters), `GET …/tickets/{tid}`, `GET …/tickets/{tid}/messages` (keyset), `GET …/requesters` + `…/requesters/{rid}` — all `tickets.read`-gated, dual-enforced (RLS + app predicate), cross-tenant/unknown → identical 404; issue `reply_token` at ticket creation
 - [X] T032 [US1] Per-provider/per-recipient ingest rate limit (reuse `internal/platform/ratelimit`) + webhook per-IP cap (FR-020); wire into T028/T029
 - [X] T033 [P] [US1] Frontend: `web/src/app/core/ticket.service.ts` (ticket/requester/messages API client) + `web/src/app/pages/support/` ticket-list + thread-view components; route under the dashboard; add to `web/src/app/app.routes.ts`
-- [ ] T034 [US1] Playwright `web/e2e/support.spec.ts` (US1 portion): ingest a message (seeded via API/webhook) → ticket appears in the support list → open thread shows the inbound message + requester
+- [X] T034 [US1] Playwright `web/e2e/support.spec.ts` (US1 portion): ingest a message (seeded via API/webhook) → ticket appears in the support list → open thread shows the inbound message + requester
 
 **Checkpoint**: A business receives email (both adapters) as an idempotent, threaded, isolated ticket. MVP shippable.
 
