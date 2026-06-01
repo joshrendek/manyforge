@@ -24,6 +24,7 @@ type Config struct {
 	SMTPAddr                string  // built-in inbound SMTP receiver listen address; empty disables it
 	InboundWebhookSecret    string  // HMAC-SHA256 secret for the provider webhook signature (constant-time verified)
 	InboundReplyTokenSecret []byte  // HMAC key minting/verifying the threading reply token; purpose-separated from the webhook + JWT secrets
+	InboundSystemAddrSecret []byte  // HMAC key deriving the unguessable system inbound-address localpart (FR-001); purpose-separated from the reply-token/webhook/JWT secrets
 	BlobURL                 string  // attachment object-storage backend (file:///… or s3://…); empty disables attachments
 	InboundSystemDomain     string  // platform-hosted domain that auto-provisioned system inbound addresses live on
 	DKIMKeyPath             string  // path to the default DKIM private key for verified custom sending identities
@@ -66,6 +67,11 @@ func Load() (Config, error) {
 	// leak of one cannot forge the others. Decoded as raw bytes (the string is the
 	// key material); empty in dev is tolerated (threading falls back to headers).
 	cfg.InboundReplyTokenSecret = []byte(os.Getenv("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET"))
+	// System inbound-address HMAC key (FR-001): derives the unguessable localpart of
+	// the auto-provisioned b-…@<domain> address. Purpose-separated from the reply-token
+	// key; empty in dev is tolerated (the address is still deterministic+idempotent,
+	// just not key-protected against enumeration in dev).
+	cfg.InboundSystemAddrSecret = []byte(os.Getenv("MANYFORGE_INBOUND_SYSTEM_ADDRESS_SECRET"))
 	cfg.BlobURL = os.Getenv("MANYFORGE_BLOB_URL")
 	cfg.InboundSystemDomain = env("MANYFORGE_INBOUND_SYSTEM_DOMAIN", "inbound.localhost")
 	cfg.DKIMKeyPath = os.Getenv("MANYFORGE_DKIM_KEY_PATH")
