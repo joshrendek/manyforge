@@ -7,7 +7,9 @@ import { Page, expect, test } from '@playwright/test';
 // the ticket (subject + requester), and opening the row shows the thread with
 // the inbound message body + requester. The /api/v1 surface is mocked via
 // page.route so the flow is deterministic and needs no live backend (mirrors
-// us2.spec.ts / foundation.spec.ts). US2 reply/note is a later task.
+// us2.spec.ts / foundation.spec.ts).
+//
+// US2 reply/note composer tests (T043) follow in the second describe block.
 
 const BIZ_ID = 'biz-1';
 const TICKET_ID = 'tkt-1';
@@ -154,4 +156,273 @@ test('opening the ticket shows the inbound message body and the requester in the
   await expect(message.getByTestId('spf-result')).toContainText('SPF: pass');
   await expect(message.getByTestId('dkim-result')).toContainText('DKIM: pass');
   await expect(message.getByTestId('dmarc-result')).toContainText('DMARC: pass');
+});
+
+// ── US2 composer tests (T043) ─────────────────────────────────────────────────
+//
+// installThreadStack seeds auth + all routes needed to land on the thread view
+// directly, including mutable POST overrides passed per-test. Caller registers
+// the reply/note POST mocks AFTER calling this helper (last-registered wins in
+// Playwright), so per-test POST mocks override the catch-all.
+async function installThreadStack(page: Page, initialMessages: object[] = [inboundMessage]) {
+  await page.addInitScript(() => {
+    localStorage.setItem('mf_access', 'test-access');
+    localStorage.setItem('mf_refresh', 'test-refresh');
+  });
+  await page.route('**/api/v1/me', (route) =>
+    route.fulfill({
+      json: {
+        id: 'u1',
+        email: 'owner@manyforge.test',
+        display_name: 'Owner',
+        email_verified: true,
+        status: 'active',
+      },
+    }),
+  );
+  await page.route('**/api/v1/businesses**', (route) =>
+    route.fulfill({ json: { items: [business], next_cursor: null } }),
+  );
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}`, (route) =>
+    route.fulfill({ json: ticket }),
+  );
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/messages**`, (route) =>
+    route.fulfill({ json: { items: initialMessages, next_cursor: null } }),
+  );
+}
+
+// (a) Reply renders outbound in the thread after submit.
+test('US2: reply submit POSTs to /reply and renders an outbound message', async ({ page }) => {
+  await installThreadStack(page);
+
+  const replyMessage = {
+    id: 'msg-reply-1',
+    ticket_id: TICKET_ID,
+    direction: 'outbound',
+    message_id: '<reply-1@manyforge.test>',
+    in_reply_to: '<abc123@example.com>',
+    references: ['<abc123@example.com>'],
+    author_principal_id: 'u1',
+    body_text: 'Thanks for reaching out! We will look into this right away.',
+    body_html: null,
+    attachments: [],
+    spf_result: 'unknown',
+    dkim_result: 'unknown',
+    dmarc_result: 'unknown',
+    delivery_state: 'pending',
+    created_at: '2026-05-31T10:00:00Z',
+  };
+
+  let replyEndpointHit = false;
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/reply`, (route) => {
+    replyEndpointHit = true;
+    route.fulfill({ status: 201, json: replyMessage });
+  });
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+
+  // Default mode is reply — verify the toggle shows Reply active.
+  await expect(page.getByTestId('toggle-reply')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('toggle-note')).toHaveAttribute('aria-pressed', 'false');
+
+  // Type a reply and submit.
+  await page.getByTestId('composer-body').fill('Thanks for reaching out! We will look into this right away.');
+  await page.getByTestId('composer-submit').click();
+
+  // The new outbound message must appear in the thread.
+  const outbound = page.locator('[data-testid="message"][data-direction="outbound"]');
+  await expect(outbound).toBeVisible();
+  await expect(outbound.getByTestId('message-body')).toHaveText(
+    'Thanks for reaching out! We will look into this right away.',
+  );
+  await expect(outbound.getByTestId('message-direction')).toContainText('Reply');
+
+  // Assert the correct endpoint was called.
+  expect(replyEndpointHit).toBe(true);
+
+  // Composer clears after send.
+  await expect(page.getByTestId('composer-body')).toHaveValue('');
+});
+
+// (b) Note renders distinct (direction="note", "Internal note" label).
+test('US2: note submit POSTs to /note and renders a note-direction message', async ({ page }) => {
+  await installThreadStack(page);
+
+  const noteMessage = {
+    id: 'msg-note-1',
+    ticket_id: TICKET_ID,
+    direction: 'note',
+    message_id: null,
+    in_reply_to: null,
+    references: [],
+    author_principal_id: 'u1',
+    body_text: 'Internal: escalate to tier-2.',
+    body_html: null,
+    attachments: [],
+    spf_result: 'unknown',
+    dkim_result: 'unknown',
+    dmarc_result: 'unknown',
+    delivery_state: null,
+    created_at: '2026-05-31T11:00:00Z',
+  };
+
+  let noteEndpointHit = false;
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/note`, (route) => {
+    noteEndpointHit = true;
+    route.fulfill({ status: 201, json: noteMessage });
+  });
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+
+  // Switch to note mode.
+  await page.getByTestId('toggle-note').click();
+  await expect(page.getByTestId('toggle-note')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('toggle-reply')).toHaveAttribute('aria-pressed', 'false');
+
+  // Placeholder text changes to reflect note mode.
+  await expect(page.getByTestId('composer-body')).toHaveAttribute('placeholder', 'Add an internal note…');
+
+  await page.getByTestId('composer-body').fill('Internal: escalate to tier-2.');
+  await page.getByTestId('composer-submit').click();
+
+  // The note message must render with direction="note".
+  const note = page.locator('[data-testid="message"][data-direction="note"]');
+  await expect(note).toBeVisible();
+  await expect(note.getByTestId('message-body')).toHaveText('Internal: escalate to tier-2.');
+  await expect(note.getByTestId('message-direction')).toContainText('Internal note');
+
+  // Notes are structurally distinct: no auth-flags block (inbound-only).
+  await expect(note.getByTestId('auth-flags')).not.toBeVisible();
+
+  // Assert the correct endpoint was called.
+  expect(noteEndpointHit).toBe(true);
+});
+
+// (c) Delivery-failed badge is visible on a message with delivery_state="failed".
+test('US2: failed delivery_state renders the delivery-failed badge', async ({ page }) => {
+  const failedMessage = {
+    id: 'msg-failed-1',
+    ticket_id: TICKET_ID,
+    direction: 'outbound',
+    message_id: '<failed-1@manyforge.test>',
+    in_reply_to: null,
+    references: [],
+    author_principal_id: 'u1',
+    body_text: 'This reply could not be delivered.',
+    body_html: null,
+    attachments: [],
+    spf_result: 'unknown',
+    dkim_result: 'unknown',
+    dmarc_result: 'unknown',
+    delivery_state: 'failed',
+    created_at: '2026-05-31T09:30:00Z',
+  };
+
+  // Seed the thread with both the inbound message and the failed outbound.
+  await installThreadStack(page, [inboundMessage, failedMessage]);
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+
+  // The failed outbound message must render the delivery-failed badge.
+  const failedMsg = page.locator('[data-testid="message"][data-direction="outbound"]');
+  await expect(failedMsg).toBeVisible();
+  await expect(failedMsg.getByTestId('delivery-failed')).toBeVisible();
+  await expect(failedMsg.getByTestId('delivery-failed')).toContainText('Failed to send');
+
+  // The inbound message must NOT show a delivery-failed badge.
+  const inbound = page.locator('[data-testid="message"][data-direction="inbound"]');
+  await expect(inbound).toBeVisible();
+  await expect(inbound.getByTestId('delivery-failed')).not.toBeVisible();
+});
+
+// (d) Toggle routing: reply hits /reply; note hits /note (not the other endpoint).
+test('US2: toggle correctly routes to /reply vs /note endpoint', async ({ page }) => {
+  await installThreadStack(page);
+
+  const outboundMsg = {
+    id: 'msg-out-2',
+    ticket_id: TICKET_ID,
+    direction: 'outbound',
+    message_id: null,
+    in_reply_to: null,
+    references: [],
+    author_principal_id: 'u1',
+    body_text: 'Reply text',
+    body_html: null,
+    attachments: [],
+    spf_result: 'unknown',
+    dkim_result: 'unknown',
+    dmarc_result: 'unknown',
+    delivery_state: 'sent',
+    created_at: '2026-05-31T12:00:00Z',
+  };
+  const noteMsg = {
+    id: 'msg-note-2',
+    ticket_id: TICKET_ID,
+    direction: 'note',
+    message_id: null,
+    in_reply_to: null,
+    references: [],
+    author_principal_id: 'u1',
+    body_text: 'Note text',
+    body_html: null,
+    attachments: [],
+    spf_result: 'unknown',
+    dkim_result: 'unknown',
+    dmarc_result: 'unknown',
+    delivery_state: null,
+    created_at: '2026-05-31T12:01:00Z',
+  };
+
+  let replyHits = 0;
+  let noteHits = 0;
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/reply`, (route) => {
+    replyHits++;
+    route.fulfill({ status: 201, json: outboundMsg });
+  });
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/note`, (route) => {
+    noteHits++;
+    route.fulfill({ status: 201, json: noteMsg });
+  });
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+
+  // 1. Send a reply in default (reply) mode.
+  await page.getByTestId('composer-body').fill('Reply text');
+  await page.getByTestId('composer-submit').click();
+  await expect(page.locator('[data-testid="message"][data-direction="outbound"]')).toBeVisible();
+
+  // 2. Switch to note mode and send a note.
+  await page.getByTestId('toggle-note').click();
+  await page.getByTestId('composer-body').fill('Note text');
+  await page.getByTestId('composer-submit').click();
+  await expect(page.locator('[data-testid="message"][data-direction="note"]')).toBeVisible();
+
+  // Each endpoint hit exactly once; no cross-routing.
+  expect(replyHits).toBe(1);
+  expect(noteHits).toBe(1);
+});
+
+// (e) Submit button is disabled when the composer textarea is blank.
+test('US2: submit is disabled when composer body is empty', async ({ page }) => {
+  await installThreadStack(page);
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+
+  // Initially empty — submit must be disabled.
+  await expect(page.getByTestId('composer-body')).toHaveValue('');
+  await expect(page.getByTestId('composer-submit')).toBeDisabled();
+
+  // Type something — submit becomes enabled.
+  await page.getByTestId('composer-body').fill('Hello');
+  await expect(page.getByTestId('composer-submit')).toBeEnabled();
+
+  // Clear it back to empty — disabled again.
+  await page.getByTestId('composer-body').fill('');
+  await expect(page.getByTestId('composer-submit')).toBeDisabled();
 });
