@@ -184,35 +184,16 @@ func main() {
 	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	inboxWebhookH.SetRecipientLimiter(ingestRecipientLimiter)
 
-	mux.Route("/api/v1", func(r chi.Router) {
-		r.Group(func(pub chi.Router) {
-			pub.Use(httpx.RateLimit(authLimiter, ipKey))
-			acctH.PublicRoutes(pub)
-		})
-		// Inbound provider webhook (US1): public, authenticated by the per-provider
-		// HMAC signature, NOT by JWT and NOT the per-IP auth limiter. Its own public
-		// group carries the per-IP INGEST limiter (trusted-proxy-aware client IP, so a
-		// spoofed X-Forwarded-For can't evade it); the per-recipient cap is enforced
-		// inside the handler before resolution (no existence oracle). T032/FR-020.
-		r.Group(func(ingress chi.Router) {
-			ingress.Use(httpx.RateLimit(ingestIPLimiter, ipKey))
-			inboxWebhookH.PublicRoutes(ingress)
-		})
-		r.Group(func(pr chi.Router) {
-			pr.Use(httpx.RequireAuth)
-			acctH.ProtectedRoutes(pr)
-			tenH.ProtectedRoutes(pr)
-			authzH.ProtectedRoutes(pr)
-			invH.ProtectedRoutes(pr)
-			// US1 ticketing read slice: every endpoint gated on tickets.read at the
-			// {id} business. RequirePermission resolves under the caller's RLS
-			// principal and 404s (never 403) on a lacking perm — so an outsider sees
-			// the same not-found as for a business that does not exist.
-			pr.Group(func(tk chi.Router) {
-				tk.Use(httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath))
-				ticketH.ProtectedRoutes(tk)
-			})
-		})
+	mountAPIRoutes(mux, apiHandlers{
+		account:      acctH,
+		tenancy:      tenH,
+		authz:        authzH,
+		invitations:  invH,
+		ticketing:    ticketH,
+		inboxWebhook: inboxWebhookH,
+		authLimit:    httpx.RateLimit(authLimiter, ipKey),
+		ingestLimit:  httpx.RateLimit(ingestIPLimiter, ipKey),
+		ticketsRead:  httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -268,6 +249,62 @@ func main() {
 		logger.Error("graceful shutdown failed", "err", err)
 	}
 	logger.Info("server stopped")
+}
+
+// apiHandlers carries the feature handlers and the group-level middleware that
+// mountAPIRoutes wires onto the /api/v1 router. Extracting the mount logic into a
+// single function (called by main and by the OpenAPI-drift contract test) keeps
+// production route registration and the test's view of it from drifting apart.
+type apiHandlers struct {
+	account      *account.Handler
+	tenancy      *tenancy.Handler
+	authz        *authz.Handler
+	invitations  *invitations.Handler
+	ticketing    *ticketing.Handler
+	inboxWebhook *inbox.Handler
+
+	// Group-level middleware. Each gates a route group exactly as main wires it:
+	// authLimit (per-IP auth abuse cap), ingestLimit (per-IP inbound ingest cap),
+	// ticketsRead (tickets.read permission gate for the US1 ticketing read slice).
+	authLimit   func(http.Handler) http.Handler
+	ingestLimit func(http.Handler) http.Handler
+	ticketsRead func(http.Handler) http.Handler
+}
+
+// mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
+// truth for the route table, shared by main (runtime) and the OpenAPI-drift test
+// (which passes zero-value handlers + no-op middleware to enumerate the routes).
+func mountAPIRoutes(mux chi.Router, h apiHandlers) {
+	mux.Route("/api/v1", func(r chi.Router) {
+		r.Group(func(pub chi.Router) {
+			pub.Use(h.authLimit)
+			h.account.PublicRoutes(pub)
+		})
+		// Inbound provider webhook (US1): public, authenticated by the per-provider
+		// HMAC signature, NOT by JWT and NOT the per-IP auth limiter. Its own public
+		// group carries the per-IP INGEST limiter (trusted-proxy-aware client IP, so a
+		// spoofed X-Forwarded-For can't evade it); the per-recipient cap is enforced
+		// inside the handler before resolution (no existence oracle). T032/FR-020.
+		r.Group(func(ingress chi.Router) {
+			ingress.Use(h.ingestLimit)
+			h.inboxWebhook.PublicRoutes(ingress)
+		})
+		r.Group(func(pr chi.Router) {
+			pr.Use(httpx.RequireAuth)
+			h.account.ProtectedRoutes(pr)
+			h.tenancy.ProtectedRoutes(pr)
+			h.authz.ProtectedRoutes(pr)
+			h.invitations.ProtectedRoutes(pr)
+			// US1 ticketing read slice: every endpoint gated on tickets.read at the
+			// {id} business. RequirePermission resolves under the caller's RLS
+			// principal and 404s (never 403) on a lacking perm — so an outsider sees
+			// the same not-found as for a business that does not exist.
+			pr.Group(func(tk chi.Router) {
+				tk.Use(h.ticketsRead)
+				h.ticketing.ProtectedRoutes(tk)
+			})
+		})
+	})
 }
 
 // parseTrustedCIDRs parses a comma-separated CIDR list (MANYFORGE_TRUSTED_PROXY_CIDR)
