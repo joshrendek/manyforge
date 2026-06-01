@@ -1,6 +1,7 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service';
 
@@ -11,7 +12,7 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
 // inbound/outbound/note styling, attachments, and the SPF/DKIM/DMARC flags.
 @Component({
   selector: 'app-thread-view',
-  imports: [RouterLink, DatePipe],
+  imports: [RouterLink, DatePipe, FormsModule],
   template: `
     <section class="card">
       <div class="spread">
@@ -75,6 +76,10 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
                 {{ m.body_text || '(no text body)' }}
               </div>
 
+              @if (m.delivery_state === 'failed') {
+                <div class="delivery-failed" data-testid="delivery-failed">Failed to send</div>
+              }
+
               @if (m.attachments.length) {
                 <ul class="attachments" data-testid="message-attachments">
                   @for (a of m.attachments; track a.id) {
@@ -115,6 +120,50 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
             {{ busy() ? 'Loading…' : 'Load earlier messages' }}
           </button>
         }
+
+        <div class="composer" data-testid="composer">
+          <div class="composer-toggle" data-testid="composer-toggle">
+            <button
+              class="toggle-btn"
+              data-testid="toggle-reply"
+              [class.active]="!noteMode()"
+              [attr.aria-pressed]="!noteMode()"
+              (click)="noteMode.set(false)"
+            >
+              Reply
+            </button>
+            <button
+              class="toggle-btn"
+              data-testid="toggle-note"
+              [class.active]="noteMode()"
+              [attr.aria-pressed]="noteMode()"
+              (click)="noteMode.set(true)"
+            >
+              Internal note
+            </button>
+          </div>
+          <textarea
+            class="composer-body"
+            data-testid="composer-body"
+            [placeholder]="noteMode() ? 'Add an internal note…' : 'Write a reply…'"
+            [(ngModel)]="composerText"
+            [disabled]="sending()"
+            rows="4"
+          ></textarea>
+          @if (sendError()) {
+            <p class="msg error" data-testid="composer-error">{{ sendError() }}</p>
+          }
+          <div class="composer-actions">
+            <button
+              class="primary compact"
+              data-testid="composer-submit"
+              [disabled]="!composerText.trim() || sending()"
+              (click)="submitComposer()"
+            >
+              {{ sending() ? 'Sending…' : (noteMode() ? 'Add note' : 'Send reply') }}
+            </button>
+          </div>
+        </div>
       }
     </section>
   `,
@@ -232,6 +281,73 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
       [data-testid='load-more-messages'] {
         margin-top: 16px;
       }
+
+      .delivery-failed {
+        margin-top: 8px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--danger);
+        padding: 2px 8px;
+        border: 1px solid var(--danger-dim);
+        border-radius: 999px;
+        display: inline-block;
+      }
+
+      .composer {
+        margin-top: 24px;
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
+        display: grid;
+        gap: 10px;
+      }
+      .composer-toggle {
+        display: flex;
+        gap: 0;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        width: fit-content;
+      }
+      .toggle-btn {
+        background: var(--panel-2);
+        border: none;
+        padding: 6px 14px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        color: var(--muted);
+        transition: background 0.1s;
+      }
+      .toggle-btn:not(:last-child) {
+        border-right: 1px solid var(--border);
+      }
+      .toggle-btn.active {
+        background: var(--accent-soft);
+        color: var(--text);
+      }
+      .composer-body {
+        width: 100%;
+        box-sizing: border-box;
+        resize: vertical;
+        font-size: 14px;
+        line-height: 1.5;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--panel);
+        color: var(--text);
+        font-family: inherit;
+      }
+      .composer-body:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .composer-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
     `,
   ],
 })
@@ -249,6 +365,12 @@ export class ThreadViewComponent implements OnInit {
   loadFailed = signal(false);
   busy = signal(false);
   error = signal('');
+
+  // Composer state (US2)
+  noteMode = signal(false);
+  composerText = '';
+  sending = signal(false);
+  sendError = signal('');
 
   ngOnInit(): void {
     this.businessId = this.route.snapshot.paramMap.get('businessId') ?? '';
@@ -304,6 +426,28 @@ export class ThreadViewComponent implements OnInit {
         this.busy.set(false);
       },
       error: () => this.busy.set(false),
+    });
+  }
+
+  // Submit reply or note from the composer (US2).
+  submitComposer(): void {
+    const text = this.composerText.trim();
+    if (!text || this.sending()) return;
+    this.sending.set(true);
+    this.sendError.set('');
+    const req$ = this.noteMode()
+      ? this.api.addNote(this.businessId, this.ticketId, { body_text: text })
+      : this.api.reply(this.businessId, this.ticketId, { body_text: text });
+    req$.subscribe({
+      next: (msg) => {
+        this.messages.update((cur) => [...cur, msg]);
+        this.composerText = '';
+        this.sending.set(false);
+      },
+      error: () => {
+        this.sendError.set('Failed to send. Please try again.');
+        this.sending.set(false);
+      },
     });
   }
 

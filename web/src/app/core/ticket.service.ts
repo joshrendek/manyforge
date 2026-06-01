@@ -75,6 +75,8 @@ export interface TicketMessage {
   spf_result: DnsRecordState;
   dkim_result: DnsRecordState;
   dmarc_result: DnsRecordState;
+  // Outbound delivery state (pending|sent|failed); null for inbound/note (US2).
+  delivery_state?: 'pending' | 'sent' | 'failed' | null;
   created_at: string;
 }
 
@@ -154,5 +156,31 @@ export class TicketService {
   // GET /businesses/{id}/requesters/{rid} — single requester (requires tickets.read).
   getRequester(businessId: string, requesterId: string): Observable<Requester> {
     return this.http.get<Requester>(`/api/v1/businesses/${businessId}/requesters/${requesterId}`);
+  }
+
+  // POST /businesses/{bid}/tickets/{tid}/reply — send an outbound reply (US2).
+  // Returns the created TicketMessage (201). Requires tickets.reply permission.
+  reply(
+    businessId: string,
+    ticketId: string,
+    body: { body_text: string; body_html?: string },
+  ): Observable<TicketMessage> {
+    return this.http.post<TicketMessage>(
+      `/api/v1/businesses/${businessId}/tickets/${ticketId}/reply`,
+      body,
+    );
+  }
+
+  // POST /businesses/{bid}/tickets/{tid}/note — add an internal note (US2).
+  // Returns the created TicketMessage (201). Requires tickets.reply permission.
+  addNote(
+    businessId: string,
+    ticketId: string,
+    body: { body_text: string },
+  ): Observable<TicketMessage> {
+    return this.http.post<TicketMessage>(
+      `/api/v1/businesses/${businessId}/tickets/${ticketId}/note`,
+      body,
+    );
   }
 }
