@@ -4,6 +4,9 @@ package main
 
 import (
 	"context"
+	"crypto"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"expvar"
 	"log/slog"
@@ -163,6 +166,34 @@ func main() {
 		SystemKey:    cfg.InboundSystemAddrSecret,
 	}, logger)
 	eventBus.Subscribe(events.TopicBusinessCreated, inboxProvisioner.Handle)
+
+	// US2 outbound send worker (T039): drains ticket.replied → builds the threaded
+	// Mail (From/Reply-To on the business's system inbound address) → dispatches via
+	// the Sender → records delivery_state. Registered BEFORE the worker starts so no
+	// reply event is drained without a handler. Sender selection: a configured SMTP
+	// relay (MANYFORGE_SMTP_HOST) uses the real SMTPSender (optionally DKIM-signed);
+	// otherwise the dev LogSender logs the threaded reply. Both honor the suppression
+	// list. The handler is idempotent (skips a message already 'sent').
+	var sender notify.Sender
+	if cfg.SMTPHost != "" {
+		dkimCfg, derr := dkimConfigFromCfg(cfg)
+		if derr != nil {
+			// A configured-but-unparseable DKIM key fails startup loudly rather than
+			// silently sending unsigned mail (deliverability/spoofing risk).
+			logger.Error("parse system DKIM key", "err", derr)
+			os.Exit(1)
+		}
+		sender = notify.NewSMTPSender(notify.SMTPConfig{
+			Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUser, Password: cfg.SMTPPass,
+			DKIM: dkimCfg, // nil ⇒ unsigned (the locked default when no DKIM key is configured)
+		}, notify.DBSuppression{DB: database})
+		logger.Info("outbound mail via SMTP relay", "host", cfg.SMTPHost, "dkim", dkimCfg != nil)
+	} else {
+		sender = notify.LogSender{Logger: logger, Suppression: notify.DBSuppression{DB: database}}
+		logger.Warn("MANYFORGE_SMTP_HOST unset; outbound replies are logged, not sent (dev LogSender)")
+	}
+	sendSub := notify.SendSubscriber{Sender: sender, Logger: logger}
+	eventBus.Subscribe(events.TopicTicketReplied, sendSub.Handle)
 
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
@@ -335,6 +366,39 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			})
 		})
 	})
+}
+
+// dkimConfigFromCfg builds the optional system-domain DKIM signer. It returns
+// (nil, nil) UNLESS all three of domain, selector, and a private key are configured
+// — the locked default is unsigned mail, which must always work. When a key IS
+// configured but cannot be parsed it returns an error so startup fails loudly rather
+// than silently sending unsigned (a deliverability/spoofing hazard). The PEM is
+// parsed as PKCS#8 (ed25519) first, then PKCS#1 (RSA) as a fallback.
+func dkimConfigFromCfg(cfg config.Config) (*notify.DKIMConfig, error) {
+	if cfg.SystemDKIMDomain == "" || cfg.SystemDKIMSelector == "" || cfg.SystemDKIMPrivateKeyPEM == "" {
+		return nil, nil
+	}
+	block, _ := pem.Decode([]byte(cfg.SystemDKIMPrivateKeyPEM))
+	if block == nil {
+		return nil, errors.New("DKIM private key: no PEM block found")
+	}
+	var signer crypto.Signer
+	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		s, ok := key.(crypto.Signer)
+		if !ok {
+			return nil, errors.New("DKIM private key: PKCS#8 key is not a crypto.Signer")
+		}
+		signer = s
+	} else if rsaKey, rerr := x509.ParsePKCS1PrivateKey(block.Bytes); rerr == nil {
+		signer = rsaKey
+	} else {
+		return nil, errors.New("DKIM private key: unsupported PEM (want PKCS#8 ed25519 or PKCS#1 RSA)")
+	}
+	return &notify.DKIMConfig{
+		Domain:     cfg.SystemDKIMDomain,
+		Selector:   cfg.SystemDKIMSelector,
+		PrivateKey: signer,
+	}, nil
 }
 
 // parseTrustedCIDRs parses a comma-separated CIDR list (MANYFORGE_TRUSTED_PROXY_CIDR)
