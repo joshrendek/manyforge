@@ -23,6 +23,7 @@ type Config struct {
 	// Support desk (spec 002).
 	SMTPAddr                string  // built-in inbound SMTP receiver listen address; empty disables it
 	InboundWebhookSecret    string  // HMAC-SHA256 secret for the provider webhook signature (constant-time verified)
+	InboundBounceSecret     string  // HMAC-SHA256 secret for the hard-bounce webhook signature; PURPOSE-SEPARATED from InboundWebhookSecret (a leak of one cannot forge the other)
 	InboundReplyTokenSecret []byte  // HMAC key minting/verifying the threading reply token; purpose-separated from the webhook + JWT secrets
 	InboundSystemAddrSecret []byte  // HMAC key deriving the unguessable system inbound-address localpart (FR-001); purpose-separated from the reply-token/webhook/JWT secrets
 	BlobURL                 string  // attachment object-storage backend (file:///… or s3://…); empty disables attachments
@@ -78,6 +79,10 @@ func Load() (Config, error) {
 	// Support desk (spec 002).
 	cfg.SMTPAddr = os.Getenv("MANYFORGE_SMTP_ADDR")
 	cfg.InboundWebhookSecret = os.Getenv("MANYFORGE_INBOUND_WEBHOOK_SECRET")
+	// Hard-bounce webhook HMAC secret. Purpose-separated from the inbound-webhook
+	// secret so a leak of one cannot forge the other; empty in dev fail-closes the
+	// bounce verify (every signature is rejected, and the no-oracle ack still 202s).
+	cfg.InboundBounceSecret = os.Getenv("MANYFORGE_INBOUND_BOUNCE_SECRET")
 	// Reply-token HMAC key: purpose-separated from the webhook + JWT secrets so a
 	// leak of one cannot forge the others. Decoded as raw bytes (the string is the
 	// key material); empty in dev is tolerated (threading falls back to headers).

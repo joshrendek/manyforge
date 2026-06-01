@@ -2,11 +2,7 @@ package inbox
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -71,31 +67,12 @@ func defaultDecoders() map[string]providerDecoder {
 	}
 }
 
-// verify checks the X-MF-Signature against an HMAC-SHA256 over the signed content,
-// in constant time. When X-MF-Timestamp is present it is bound into the signed
-// content ("<timestamp>.<body>") for replay defense; otherwise the body alone is
-// signed. The provided signature is accepted as bare lowercase hex or with a
-// "sha256=" prefix (some providers prefix it). An empty secret rejects everything
-// (fail closed). Returns true only on a valid signature.
+// verify checks the X-MF-Signature against the per-provider secret. It delegates to
+// the package-shared verifyHMAC (the single crypto source of truth, so this and the
+// bounce webhook can never drift apart in auth strength); the thin method survives to
+// carry the adapter's secret field and this finding's tag. security: MF-002-WEBHOOK-SIG.
 func (a *WebhookAdapter) verify(sig, timestamp string, body []byte) bool {
-	if len(a.secret) == 0 || sig == "" {
-		return false
-	}
-	sig = strings.TrimPrefix(strings.TrimSpace(sig), "sha256=")
-	provided, err := hex.DecodeString(sig)
-	if err != nil {
-		return false
-	}
-	mac := hmac.New(sha256.New, a.secret)
-	if timestamp != "" {
-		mac.Write([]byte(timestamp))
-		mac.Write([]byte("."))
-	}
-	mac.Write(body)
-	expected := mac.Sum(nil)
-	// Constant-time compare so a forged signature cannot be brute-forced byte by
-	// byte via response timing. security: MF-002-WEBHOOK-SIG.
-	return subtle.ConstantTimeCompare(provided, expected) == 1
+	return verifyHMAC(a.secret, sig, timestamp, body)
 }
 
 // decode resolves the provider's decoder and turns the (already signature-verified)
