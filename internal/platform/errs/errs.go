@@ -23,4 +23,8 @@ var (
 	// ErrConflict marks a state conflict: last-owner protection, hierarchy
 	// cycle, role-in-use, non-root ownership transfer, or a concurrent mutation.
 	ErrConflict = errors.New("conflict")
+
+	// ErrRateLimited marks an action refused because a rate/abuse limit was hit
+	// (e.g. outbound reply volume per business/recipient). Maps to HTTP 429.
+	ErrRateLimited = errors.New("rate limited")
 )
