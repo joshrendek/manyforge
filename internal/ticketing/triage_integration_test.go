@@ -104,6 +104,103 @@ func seedIneligiblePrincipal(ctx context.Context, t *testing.T, tdb *testdb.Test
 	return prin
 }
 
+// seedChildBusiness inserts a NEW business that is a DIRECT child of rt.master (the
+// parent P), within the same tenant. It writes the child's self closure (C→C depth 0)
+// AND the ancestor closure (P→C depth 1) — rt.master's own self-row (P→P depth 0) is
+// already seeded by seedReadTenant. Returns the child business id C. Used to build the
+// cross-level (parent/child) topology the ancestor-member eligibility test needs.
+func seedChildBusiness(ctx context.Context, t *testing.T, tdb *testdb.TestDB, rt readTenant) uuid.UUID {
+	t.Helper()
+	child := uuid.New()
+
+	tx, err := tdb.Super.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin seed child business: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at)
+		 VALUES ($1,$2,$3,'ChildCo','active',now(),now())`, child, rt.master, rt.tenantRootID); err != nil {
+		t.Fatalf("seed child business: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id)
+		 VALUES ($1,$1,0,$2), ($3,$1,1,$2)`, child, rt.tenantRootID, rt.master); err != nil {
+		t.Fatalf("seed child closure: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit seed child business: %v", err)
+	}
+	return child
+}
+
+// seedMemberOfBusiness inserts a NEW human principal that is a member of exactly the
+// given business (via the `member` preset → grants tickets.read/reply/write/assign),
+// and returns its principal id. Unlike seedEligibleAssignee (which always targets
+// rt.master) this lets a test place a member at an arbitrary business in the tenant —
+// the child, the parent, or an unrelated sibling — to exercise cross-level eligibility.
+func seedMemberOfBusiness(ctx context.Context, t *testing.T, tdb *testdb.TestDB, rt readTenant, businessID uuid.UUID) uuid.UUID {
+	t.Helper()
+	memberRole := presetRole(ctx, t, tdb, "member")
+	acct := uuid.New()
+	prin := uuid.New()
+	email := "memof-" + prin.String() + "@x.test"
+
+	tx, err := tdb.Super.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin seed member-of: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO account (id,email,display_name,status,created_at,updated_at,email_verified_at)
+		 VALUES ($1,$2,'MemOf','active',now(),now(),now())`, acct, email); err != nil {
+		t.Fatalf("seed member-of account: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO principal (id,kind,account_id,created_at) VALUES ($1,'human',$2,now())`, prin, acct); err != nil {
+		t.Fatalf("seed member-of principal: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		 VALUES ($1,$2,$3,$4,now())`, prin, businessID, rt.tenantRootID, memberRole); err != nil {
+		t.Fatalf("seed member-of membership: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit seed member-of: %v", err)
+	}
+	return prin
+}
+
+// seedRequesterInBusiness inserts a NEW requester in the given business and returns
+// its id — so a ticket can be seeded in a child business with a same-business requester.
+func seedRequesterInBusiness(ctx context.Context, t *testing.T, tdb *testdb.TestDB, rt readTenant, businessID uuid.UUID) uuid.UUID {
+	t.Helper()
+	rid := uuid.New()
+	email := "req-" + rid.String() + "@example.com"
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO requester (id,business_id,tenant_root_id,email,display_name,first_seen_at,last_seen_at,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,'Req',now(),now(),now(),now())`, rid, businessID, rt.tenantRootID, email); err != nil {
+		t.Fatalf("seed requester in business: %v", err)
+	}
+	return rid
+}
+
+// seedTicketInBusiness inserts a ticket in an arbitrary business (not just rt.master),
+// with a same-business requester — mirrors seedTicket but lets a test place a ticket in
+// a child business to exercise cross-level eligibility.
+func seedTicketInBusiness(ctx context.Context, t *testing.T, tdb *testdb.TestDB, rt readTenant, businessID, ticketID, requesterID uuid.UUID, status, priority, subject string) {
+	t.Helper()
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO ticket (id,business_id,tenant_root_id,requester_id,subject,status,priority,reply_token,last_message_at,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6::ticket_status,$7::ticket_priority,$8,$9,now(),now())`,
+		ticketID, businessID, rt.tenantRootID, requesterID, subject, status, priority,
+		"tok-"+ticketID.String(), time.Now().Add(-1*time.Hour)); err != nil {
+		t.Fatalf("seed ticket in business: %v", err)
+	}
+}
+
 // ticketTagSet reads the exact tag set persisted for a ticket via the Super pool,
 // sorted for deterministic comparison.
 func ticketTagSet(ctx context.Context, t *testing.T, tdb *testdb.TestDB, ticketID uuid.UUID) []string {
@@ -507,6 +604,84 @@ func TestTriageAssigneeEligibilityAndUnassign(t *testing.T) {
 	}
 	if _, _, got, _ := readTicketRow(ctx, t, tdb, unID); got != nil {
 		t.Errorf("unassign persisted assignee = %v, want NULL", got)
+	}
+}
+
+// TestTriageAssigneeAncestorMemberEligible — the cross-level pin for the
+// is_eligible_assignee SECURITY DEFINER (the very reason it isn't a plain RLS query).
+//
+// Topology: parent P (rt.master) ⊃ child C. The ACTING principal is a member of C
+// ONLY; under downward-only RLS its authorized subtree is {C} and the P→C closure, so
+// it CANNOT see memberships at the ancestor P. The ticket lives in C.
+//
+//   - Assignee A is a member of the ANCESTOR P only. A is a legitimately-eligible
+//     assignee (member of an authorized ancestor of C), but A's membership row at P is
+//     HIDDEN from the acting principal by RLS. A plain membership query run as the
+//     acting principal would therefore wrongly refuse A. The DEFINER (RLS-bypassing,
+//     ancestor-directional) must ALLOW it → persists assignee=A + writes the audit.
+//     THIS is the regression pin: replace the DEFINER with a plain query and it FAILS.
+//   - Assignee B is a member of a SIBLING S of C (also under P, but NOT an ancestor of
+//     C). B must be REFUSED (ErrConflict): eligibility is ancestor-directional, not
+//     "any business in the tenant / any related business".
+//   - Self-assert pin: an acting principal NOT authorized over C is refused even for the
+//     genuinely-eligible A. In the service the own-check (GetTicket under the acting
+//     principal's RLS) hides the ticket and returns ErrNotFound BEFORE the eligibility
+//     DEFINER runs; the DEFINER's first conjunct (acting authorized over the ticket's
+//     business) is the deeper backstop for that same property. Either way an unauthorized
+//     acting principal can't use assignment as a cross-tenant oracle.
+func TestTriageAssigneeAncestorMemberEligible(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb) // rt.master == parent P
+	svc := &Service{DB: tdb.App}
+
+	// Child C under P, and a sibling S under P (S is NOT an ancestor of C).
+	child := seedChildBusiness(ctx, t, tdb, rt)
+	sibling := seedChildBusiness(ctx, t, tdb, rt)
+
+	// Acting principal: member of C ONLY (member preset → tickets.write+assign). Under
+	// RLS it cannot see memberships at the ancestor P.
+	acting := seedMemberOfBusiness(ctx, t, tdb, rt, child)
+
+	// Ticket in C, with a requester in C.
+	req := seedRequesterInBusiness(ctx, t, tdb, rt, child)
+	tkID := uuid.New()
+	seedTicketInBusiness(ctx, t, tdb, rt, child, tkID, req, "open", "normal", "ancestor-assign")
+
+	// Assignee A: member of the ANCESTOR P only → eligible for a ticket in C.
+	ancestorAssignee := seedMemberOfBusiness(ctx, t, tdb, rt, rt.master)
+	tk, err := svc.Triage(ctx, acting, child, tkID, TriageInput{AssigneeSet: true, Assignee: &ancestorAssignee})
+	if err != nil {
+		t.Fatalf("ancestor-member assign: want success, got %v (a plain RLS query would wrongly refuse this)", err)
+	}
+	if tk.AssigneePrincipalID == nil || *tk.AssigneePrincipalID != ancestorAssignee {
+		t.Errorf("ancestor-member assign returned %v, want %v", tk.AssigneePrincipalID, ancestorAssignee)
+	}
+	if _, _, got, _ := readTicketRow(ctx, t, tdb, tkID); got == nil || *got != ancestorAssignee {
+		t.Errorf("ancestor-member assign persisted = %v, want %v", got, ancestorAssignee)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND target_type='ticket' AND action='ticket.assigned'
+		   AND new_value=$2::jsonb`, tkID, `{"assignee_principal_id":"`+ancestorAssignee.String()+`"}`); n != 1 {
+		t.Errorf("ancestor-member assign audit = %d, want 1 (pinned new_value)", n)
+	}
+
+	// Assignee B: member of the SIBLING S (under P, NOT an ancestor of C) → REFUSED.
+	siblingAssignee := seedMemberOfBusiness(ctx, t, tdb, rt, sibling)
+	if _, err := svc.Triage(ctx, acting, child, tkID, TriageInput{AssigneeSet: true, Assignee: &siblingAssignee}); !errors.Is(err, errs.ErrConflict) {
+		t.Errorf("sibling-business assignee: want ErrConflict (eligibility is ancestor-directional), got %v", err)
+	}
+	// The refused sibling assign must not have changed the assignee (still A).
+	if _, _, got, _ := readTicketRow(ctx, t, tdb, tkID); got == nil || *got != ancestorAssignee {
+		t.Errorf("refused sibling assign mutated assignee to %v, want preserved %v", got, ancestorAssignee)
+	}
+
+	// Self-assert pin: an acting principal authorized over the SIBLING (not C) is refused
+	// even for the genuinely-eligible ancestor assignee. The own-check (GetTicket under
+	// the outsider's RLS) hides C's ticket → ErrNotFound, shadowing the DEFINER's
+	// acting-authority conjunct; both refuse, so assignment is never a cross-tenant oracle.
+	outsider := seedMemberOfBusiness(ctx, t, tdb, rt, sibling)
+	if _, err := svc.Triage(ctx, outsider, child, tkID, TriageInput{AssigneeSet: true, Assignee: &ancestorAssignee}); !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("acting principal unauthorized over ticket business: want ErrNotFound (own-check shadows eligibility), got %v", err)
 	}
 }
 
