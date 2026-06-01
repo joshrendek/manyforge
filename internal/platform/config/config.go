@@ -21,17 +21,18 @@ type Config struct {
 	RateLimitBurst   float64       // per-IP burst allowance for abuse-sensitive routes
 
 	// Support desk (spec 002).
-	SMTPAddr             string  // built-in inbound SMTP receiver listen address; empty disables it
-	InboundWebhookSecret string  // HMAC-SHA256 secret for the provider webhook signature (constant-time verified)
-	BlobURL              string  // attachment object-storage backend (file:///… or s3://…); empty disables attachments
-	InboundSystemDomain  string  // platform-hosted domain that auto-provisioned system inbound addresses live on
-	DKIMKeyPath          string  // path to the default DKIM private key for verified custom sending identities
-	InboundMaxBytes      int64   // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
-	AttachmentMaxBytes   int64   // per-attachment size cap, FR-007
-	IngestRateRPS        float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
-	IngestRateBurst      float64 // per-recipient inbound ingestion burst allowance
-	OutboundRateRPS      float64 // per-business outbound send refill rate (FR-020)
-	OutboundRateBurst    float64 // per-business outbound send burst allowance
+	SMTPAddr                string  // built-in inbound SMTP receiver listen address; empty disables it
+	InboundWebhookSecret    string  // HMAC-SHA256 secret for the provider webhook signature (constant-time verified)
+	InboundReplyTokenSecret []byte  // HMAC key minting/verifying the threading reply token; purpose-separated from the webhook + JWT secrets
+	BlobURL                 string  // attachment object-storage backend (file:///… or s3://…); empty disables attachments
+	InboundSystemDomain     string  // platform-hosted domain that auto-provisioned system inbound addresses live on
+	DKIMKeyPath             string  // path to the default DKIM private key for verified custom sending identities
+	InboundMaxBytes         int64   // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
+	AttachmentMaxBytes      int64   // per-attachment size cap, FR-007
+	IngestRateRPS           float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
+	IngestRateBurst         float64 // per-recipient inbound ingestion burst allowance
+	OutboundRateRPS         float64 // per-business outbound send refill rate (FR-020)
+	OutboundRateBurst       float64 // per-business outbound send burst allowance
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -61,6 +62,10 @@ func Load() (Config, error) {
 	// Support desk (spec 002).
 	cfg.SMTPAddr = os.Getenv("MANYFORGE_SMTP_ADDR")
 	cfg.InboundWebhookSecret = os.Getenv("MANYFORGE_INBOUND_WEBHOOK_SECRET")
+	// Reply-token HMAC key: purpose-separated from the webhook + JWT secrets so a
+	// leak of one cannot forge the others. Decoded as raw bytes (the string is the
+	// key material); empty in dev is tolerated (threading falls back to headers).
+	cfg.InboundReplyTokenSecret = []byte(os.Getenv("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET"))
 	cfg.BlobURL = os.Getenv("MANYFORGE_BLOB_URL")
 	cfg.InboundSystemDomain = env("MANYFORGE_INBOUND_SYSTEM_DOMAIN", "inbound.localhost")
 	cfg.DKIMKeyPath = os.Getenv("MANYFORGE_DKIM_KEY_PATH")
