@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,5 +226,62 @@ func TestIngestRequesterDedup(t *testing.T) {
 	}
 	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM ticket WHERE business_id=$1", ten.master); n != 2 {
 		t.Errorf("ticket count = %d, want 2 (distinct subjects, no threading header)", n)
+	}
+}
+
+// TestIngestRepliesThreadViaReplyToken (manyforge-btv) — an inbound reply carrying
+// a ticket's HMAC reply token in the VERP plus-address (support+{token}@domain)
+// threads onto that SAME ticket even with NO In-Reply-To/References header. This is
+// the reply-token fallback (R4 step 2); it was dead because Ingest signed the token
+// over a throwaway uuid (≠ ticket.id) AND normalizeRecipient lowercased the
+// case-sensitive token. Both must be fixed for this to thread.
+func TestIngestRepliesThreadViaReplyToken(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	ten := seedIngestTenant(ctx, t, tdb)
+	svc := newIngestService(ctx, t, tdb)
+
+	// 1. A first inbound message opens a new ticket; the DEFINER persists its
+	//    reply_token (what an outbound reply's Reply-To/VERP address carries).
+	first, err := svc.Ingest(ctx, rawTo(ten.address, "Ada Lovelace <ada@example.com>", "login broken", "rt-1@example.com", "", "cannot sign in"))
+	if err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+	if !first.Created {
+		t.Fatalf("first ingest Created = false, want true (a new ticket should open)")
+	}
+
+	var token string
+	if err := tdb.Super.QueryRow(ctx, "SELECT reply_token FROM ticket WHERE id=$1", first.TicketID).Scan(&token); err != nil {
+		t.Fatalf("load reply_token: %v", err)
+	}
+
+	// 2. A reply lands on the VERP plus-address with NO threading header, so the
+	//    reply-token fallback is the ONLY signal that can thread it.
+	at := strings.LastIndexByte(ten.address, '@')
+	verp := ten.address[:at] + "+" + token + ten.address[at:]
+	second, err := svc.Ingest(ctx, rawTo(verp, "Ada Lovelace <ada@example.com>", "Re: login broken", "rt-2@example.com", "", "still cannot sign in"))
+	if err != nil {
+		t.Fatalf("reply ingest: %v", err)
+	}
+
+	// 3. The reply must thread onto the SAME ticket — not open a second one.
+	if second.Created {
+		t.Errorf("reply ingest Created = true, want false (must thread via reply token)")
+	}
+	if second.TicketID != first.TicketID {
+		t.Errorf("reply threaded to ticket %s, want %s (same ticket)", second.TicketID, first.TicketID)
+	}
+	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM ticket WHERE business_id=$1", ten.master); n != 1 {
+		t.Errorf("ticket count = %d, want 1 (reply must not open a new ticket)", n)
+	}
+	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM ticket_message WHERE ticket_id=$1 AND direction='inbound'", first.TicketID); n != 2 {
+		t.Errorf("inbound message count on ticket = %d, want 2 (original + reply)", n)
 	}
 }
