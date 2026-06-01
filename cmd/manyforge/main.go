@@ -19,8 +19,10 @@ import (
 
 	"github.com/manyforge/manyforge/internal/account"
 	"github.com/manyforge/manyforge/internal/authz"
+	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
+	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/config"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/events"
@@ -88,6 +90,35 @@ func main() {
 	eventBus := events.NewBus()
 	outboxWorker := &events.Worker{DB: database, Bus: eventBus, Logger: logger}
 
+	// Attachment object store (SL-E). A configured MANYFORGE_BLOB_URL opens the
+	// file://|s3:// bucket; empty (dev) leaves the store nil — NewService tolerates
+	// a nil store by emitting no attachment rows, so nothing references a blob that
+	// is never written.
+	var blobStore blob.Store
+	if cfg.BlobURL != "" {
+		b, err := blob.Open(ctx, cfg.BlobURL)
+		if err != nil {
+			logger.Error("open blob store", "err", err)
+			os.Exit(1)
+		}
+		defer func() { _ = b.Close() }()
+		blobStore = b
+	} else {
+		logger.Warn("MANYFORGE_BLOB_URL unset; inbound attachments disabled")
+	}
+
+	// US1 inbound ingestion. The reply-token key degrades gracefully when unset in
+	// dev (nil key ⇒ threading falls back to RFC822 headers; the webhook path does
+	// not verify reply tokens, so this never panics).
+	inboxSvc := inbox.NewService(database, blobStore, inbox.Config{
+		ReplyTokenKey:       cfg.InboundReplyTokenSecret,
+		AttachmentMaxBytes:  cfg.AttachmentMaxBytes,
+		InboundSystemDomain: cfg.InboundSystemDomain,
+	}, logger)
+	inboxWebhookH := inbox.NewWebhookHandler(inboxSvc, cfg.InboundWebhookSecret, cfg.InboundMaxBytes, inbox.Config{
+		InboundSystemDomain: cfg.InboundSystemDomain,
+	}, logger)
+
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +141,12 @@ func main() {
 		r.Group(func(pub chi.Router) {
 			pub.Use(httpx.RateLimit(authLimiter, ipKey))
 			acctH.PublicRoutes(pub)
+		})
+		// Inbound provider webhook (US1): public, authenticated by the per-provider
+		// HMAC signature, NOT by JWT and NOT the per-IP auth limiter. Mounted in its
+		// own public group so a per-recipient ingest rate limiter (T032) can wrap it.
+		r.Group(func(ingress chi.Router) {
+			inboxWebhookH.PublicRoutes(ingress)
 		})
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
