@@ -12,19 +12,26 @@
 
 -- get_send_context resolves everything the send subscriber needs for one queued
 -- outbound message, in one round-trip: its current delivery_state (for the
--- idempotency skip-if-'sent' guard) and the business's system (kind='system') inbound
--- address (the From / VERP Reply-To routing base). It self-asserts the message belongs
--- to (p_business_id, p_tenant_root_id) — mirroring ingest_inbound_message's single-
--- business re-assertion — so a payload-scope bug upstream cannot read another tenant's
--- row. A missing message OR a business with no system address yields zero rows (the
--- caller treats either as not-found; no oracle distinguishes them).
+-- idempotency skip-if-'sent' guard), the business's system (kind='system') inbound
+-- address (the From / VERP Reply-To routing base), and the reply body (body_text /
+-- body_html — kept authoritative in the message row, NOT duplicated into the outbox
+-- payload). It self-asserts the message belongs to (p_business_id, p_tenant_root_id)
+-- — mirroring ingest_inbound_message's single-business re-assertion — so a
+-- payload-scope bug upstream cannot read another tenant's row. A missing message OR a
+-- business with no system address yields zero rows (the caller treats either as
+-- not-found; no oracle distinguishes them).
 CREATE FUNCTION get_send_context(
     p_message_id     uuid,
     p_business_id    uuid,
     p_tenant_root_id uuid
-) RETURNS TABLE (delivery_state message_delivery_state, system_address citext)
+) RETURNS TABLE (
+    delivery_state message_delivery_state,
+    system_address citext,
+    body_text      text,
+    body_html      text
+)
 LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-    SELECT tm.delivery_state, ia.address
+    SELECT tm.delivery_state, ia.address, tm.body_text, tm.body_html
     FROM ticket_message tm
     JOIN inbound_address ia
       ON ia.business_id = tm.business_id

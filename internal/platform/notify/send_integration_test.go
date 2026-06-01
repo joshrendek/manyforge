@@ -38,13 +38,14 @@ func (c *captureSender) Send(_ context.Context, m Mail) error {
 // business with a system inbound address, a requester, a ticket, and a single
 // outbound ticket_message in the given delivery state.
 type sendTenant struct {
-	master        uuid.UUID // business id == tenant_root_id
-	tenantRootID  uuid.UUID
-	sysAddr       string // b-<id>@inbound.localhost (kind='system')
-	messageRowID  uuid.UUID
-	recipient     string
-	rfcMessageID  string
-	replyToken    string
+	master       uuid.UUID // business id == tenant_root_id
+	tenantRootID uuid.UUID
+	sysAddr      string // b-<id>@inbound.localhost (kind='system')
+	messageRowID uuid.UUID
+	recipient    string
+	rfcMessageID string
+	replyToken   string
+	replyBody    string // body_text seeded on the outbound message; must reach Mail.BodyText
 }
 
 // seedSendTenant seeds the full fixture via the RLS-exempt Super pool (mirrors the
@@ -59,6 +60,7 @@ func seedSendTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB, deliv
 		// A case-MIXED token: the subscriber must splice it into the VERP Reply-To
 		// with its case PRESERVED (the inbound normalizer preserves plus-token case).
 		replyToken: "AbC123xYz",
+		replyBody:  "we are on it — thanks for your patience",
 	}
 	st.tenantRootID = st.master
 	st.sysAddr = "b-" + st.master.String()[:8] + "@" + sendSystemDomain
@@ -85,13 +87,14 @@ func seedSendTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB, deliv
 		{`INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at) VALUES ($1,NULL,$1,'SendCo','active',now(),now())`, []any{st.master}},
 		{`INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id) VALUES ($1,$1,0,$1)`, []any{st.master}},
 		// System inbound address (kind='system', email_domain_id NULL) — the From /
-		// Reply-To routing base GetBusinessSystemInboundAddress resolves.
+		// Reply-To routing base get_send_context resolves (joined to the message).
 		{`INSERT INTO inbound_address (id,business_id,tenant_root_id,address,kind,email_domain_id,created_at,updated_at) VALUES ($1,$2,$2,$3,'system',NULL,now(),now())`, []any{uuid.New(), st.master, st.sysAddr}},
 		{`INSERT INTO requester (id,business_id,tenant_root_id,email,display_name,first_seen_at,last_seen_at,created_at,updated_at) VALUES ($1,$2,$2,$3,'Ada',now(),now(),now(),now())`, []any{requesterID, st.master, st.recipient}},
 		{`INSERT INTO ticket (id,business_id,tenant_root_id,requester_id,subject,status,priority,reply_token,last_message_at,created_at,updated_at) VALUES ($1,$2,$2,$3,'Need help','open','normal',$4,now(),now(),now())`, []any{ticketID, st.master, requesterID, st.replyToken}},
-		// The pending (or pre-'sent') outbound message the subscriber dispatches.
-		{`INSERT INTO ticket_message (id,ticket_id,business_id,tenant_root_id,direction,author_principal_id,message_id,in_reply_to,"references",body_text,auth_results,is_auto_reply,delivery_state,created_at) VALUES ($1,$2,$3,$3,'outbound',$8,$4,$5,$6,'we are on it','{}'::jsonb,false,$7::message_delivery_state,now())`,
-			[]any{st.messageRowID, ticketID, st.master, st.rfcMessageID, "parent-1@example.com", []string{"parent-1@example.com"}, deliveryState, authorID}},
+		// The pending (or pre-'sent') outbound message the subscriber dispatches. The
+		// body_text MUST flow through get_send_context into Mail.BodyText (regression).
+		{`INSERT INTO ticket_message (id,ticket_id,business_id,tenant_root_id,direction,author_principal_id,message_id,in_reply_to,"references",body_text,auth_results,is_auto_reply,delivery_state,created_at) VALUES ($1,$2,$3,$3,'outbound',$8,$4,$5,$6,$9,'{}'::jsonb,false,$7::message_delivery_state,now())`,
+			[]any{st.messageRowID, ticketID, st.master, st.rfcMessageID, "parent-1@example.com", []string{"parent-1@example.com"}, deliveryState, authorID, st.replyBody}},
 	}
 	for _, s := range stmts {
 		if _, err := tx.Exec(ctx, s.sql, s.args...); err != nil {
@@ -195,6 +198,11 @@ func TestSendHappyPath(t *testing.T) {
 	}
 	if len(cap.last.References) != 1 || cap.last.References[0] != "parent-1@example.com" {
 		t.Errorf("Mail.References = %v, want [parent-1@example.com]", cap.last.References)
+	}
+	// The reply body must reach the Mail (regression: it lives only in
+	// ticket_message.body_text and must flow through get_send_context).
+	if cap.last.BodyText != st.replyBody {
+		t.Errorf("Mail.BodyText = %q, want %q (reply body must be delivered)", cap.last.BodyText, st.replyBody)
 	}
 	if got := deliveryState(ctx, t, tdb, st.messageRowID); got != "sent" {
 		t.Errorf("delivery_state = %q, want sent", got)
