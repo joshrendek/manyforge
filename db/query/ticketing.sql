@@ -160,39 +160,22 @@ RETURNING *;
 UPDATE ticket SET last_message_at = now(), updated_at = now()
 WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
 
--- MarkMessageDelivered/MarkMessageFailed/GetMessageDeliveryState are scoped on
--- (id, tenant_root_id) WITHOUT business_id on purpose: they are driven by the
--- principal-less outbox-send / bounce worker, which holds the message id + tenant
--- but no business predicate. Do NOT "fix" this by adding business_id — the worker
--- has no business context to supply.
--- name: MarkMessageDelivered :exec
-UPDATE ticket_message SET delivery_state = 'sent', delivery_error = NULL
-WHERE id = $1 AND tenant_root_id = $2;
-
--- MarkMessageFailed records a delivery failure (see MarkMessageDelivered note on
--- the tenant-only scoping).
--- name: MarkMessageFailed :exec
-UPDATE ticket_message SET delivery_state = 'failed', delivery_error = $3
-WHERE id = $1 AND tenant_root_id = $2;
-
--- GetMessageDeliveryState reads the delivery lifecycle for a message (see
--- MarkMessageDelivered note on the tenant-only scoping).
--- name: GetMessageDeliveryState :one
-SELECT delivery_state FROM ticket_message
-WHERE id = $1 AND tenant_root_id = $2;
-
--- GetBusinessSystemInboundAddress loads the system (kind='system') inbound address
--- for a business — the From/Reply-To routing base for outbound. US2 sends from the
--- system identity only.
--- name: GetBusinessSystemInboundAddress :one
-SELECT address FROM inbound_address
-WHERE business_id = $1 AND tenant_root_id = $2 AND kind = 'system'
-ORDER BY created_at ASC
-LIMIT 1;
+-- NOTE: the outbound delivery-state path (delivery_state read, system inbound
+-- address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
+-- bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /
+-- inbound_address tables silently return/affect ZERO rows when run without a
+-- principal (authorized_businesses(NULL) is empty), so they have been REPLACED by
+-- the SECURITY DEFINER functions get_send_context + mark_message_delivery in
+-- migration 0019 (called via raw pgx from internal/platform/notify). Do NOT re-add
+-- GetMessageDeliveryState / GetBusinessSystemInboundAddress / MarkMessageDelivered /
+-- MarkMessageFailed here — they were traps (manyforge-0fq).
 
 -- GetOutboundMessageForBounce correlates a bounce to the most recent outbound
--- message to a recipient on a business, for surfacing the failure. Bounce intake
--- is principal-less.
+-- message to a recipient on a business, for surfacing the failure.
+-- WARNING: principal-less callers (the bounce worker) MUST go through a SECURITY
+-- DEFINER wrapper (see migration 0019) to actually read this RLS-protected table; do
+-- NOT call this plain-table query directly from the worker — under RLS with no
+-- principal it returns zero rows (manyforge-0fq).
 -- name: GetOutboundMessageForBounce :one
 SELECT tm.id, tm.tenant_root_id
 FROM ticket_message tm
