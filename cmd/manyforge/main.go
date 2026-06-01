@@ -174,15 +174,23 @@ func main() {
 	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,
 	// shared across the webhook AND SMTP paths so a given source/recipient cannot
 	// evade one transport by hopping to the other:
-	//   - ingestIPLimiter: per-IP. Wraps the webhook group via httpx.RateLimit with
-	//     the trusted-proxy-aware ClientIP (spoofed X-Forwarded-For can't evade it),
-	//     and gates inbound SMTP DATA keyed on the connection remote IP.
+	//   - ingestIPLimiter: per-IP. Wraps the webhook group via httpx.RateLimit and
+	//     gates inbound SMTP DATA from the connection remote IP. BOTH transports key
+	//     on inbox.IPRateLimitKey(<bare client IP>) — the webhook IP comes from the
+	//     trusted-proxy-aware ratelimit.ClientIP (spoofed X-Forwarded-For can't evade
+	//     it), the SMTP IP from the connection peer. Same IP ⇒ same key ⇒ same bucket,
+	//     so an IP at budget on one transport is also throttled on the other (no
+	//     transport-hopping evasion). The shared key shape lives in one function so it
+	//     cannot silently drift between the two call sites.
 	//   - ingestRecipientLimiter: per-DECODED-recipient on the webhook path. Enforced
 	//     inside the handler BEFORE recipient resolution so a known and an unknown
 	//     recipient throttle identically (no existence oracle).
 	ingestIPLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	inboxWebhookH.SetRecipientLimiter(ingestRecipientLimiter)
+	// ingestIPKey unifies the webhook per-IP key with the SMTP per-IP key: both run
+	// the bare client IP through inbox.IPRateLimitKey so the two share one bucket.
+	ingestIPKey := func(r *http.Request) string { return inbox.IPRateLimitKey(ratelimit.ClientIP(r, trusted)) }
 
 	mountAPIRoutes(mux, apiHandlers{
 		account:      acctH,
@@ -192,7 +200,7 @@ func main() {
 		ticketing:    ticketH,
 		inboxWebhook: inboxWebhookH,
 		authLimit:    httpx.RateLimit(authLimiter, ipKey),
-		ingestLimit:  httpx.RateLimit(ingestIPLimiter, ipKey),
+		ingestLimit:  httpx.RateLimit(ingestIPLimiter, ingestIPKey),
 		ticketsRead:  httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
 	})
 
