@@ -209,8 +209,12 @@ func synthesizeRFC822(env inboundEmailEnvelope) []byte {
 	return []byte(b.String())
 }
 
-// remoteIP returns the connecting client's IP (host portion of RemoteAddr). It is
-// recorded for abuse/rate context only; it is NOT trusted for routing or auth.
+// remoteIP returns the connecting client's IP (host portion of r.RemoteAddr ONLY).
+// X-Forwarded-For is INTENTIONALLY ignored here: this value is recorded for
+// abuse/diagnostic context and is NOT trusted for routing or auth. The per-IP rate
+// limit that actually gates abuse is keyed via the trusted-CIDR-aware
+// ratelimit.ClientIP (wired as middleware in main.go), so a spoofed X-Forwarded-For
+// cannot evade the limiter — and must not silently influence this recorded value.
 func remoteIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
