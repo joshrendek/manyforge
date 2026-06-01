@@ -393,6 +393,65 @@ func TestTriageTagsReplaceClearPreserve(t *testing.T) {
 	}
 }
 
+// TestTriageTagsCitextCaseFolding — ticket_tag.tag is citext with PK (ticket_id,tag),
+// so "Bug" and "bug" collide. The service must case-fold its dedup (so a mixed-case
+// submit persists exactly ONE row, no unique-violation 500) and case-fold its no-op
+// detection (a case-only-different submit equal to the stored set writes NO update
+// and NO ticket.tags_changed audit). First-seen ORIGINAL casing is what gets stored.
+func TestTriageTagsCitextCaseFolding(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	svc := &Service{DB: tdb.App}
+
+	// Mixed-case input collapses to one tag (citext-equal "Bug"/"bug"); the first-seen
+	// casing "Bug" is what persists — and exactly one row, no 500 from a PK collision.
+	dupID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, dupID, "open", "normal", "tags-casefold-dup", nil, nil, -1*time.Hour)
+	if _, err := svc.Triage(ctx, rt.reader, rt.master, dupID, TriageInput{Tags: &[]string{"Bug", "bug"}}); err != nil {
+		t.Fatalf("case-fold dedup triage: %v", err)
+	}
+	if got := ticketTagSet(ctx, t, tdb, dupID); len(got) != 1 || got[0] != "Bug" {
+		t.Errorf("case-fold dedup: tags = %v, want [Bug] (one row, first-seen casing)", got)
+	}
+
+	// No-op: stored set is {bug}; submitting {BUG} (citext-equal) must NOT delete+reinsert
+	// and must write NO ticket.tags_changed audit.
+	noopID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, noopID, "open", "normal", "tags-casefold-noop", nil, []string{"bug"}, -1*time.Hour)
+	if _, err := svc.Triage(ctx, rt.reader, rt.master, noopID, TriageInput{Tags: &[]string{"BUG"}}); err != nil {
+		t.Fatalf("case-fold no-op triage: %v", err)
+	}
+	if got := ticketTagSet(ctx, t, tdb, noopID); len(got) != 1 || got[0] != "bug" {
+		t.Errorf("case-fold no-op: tags = %v, want [bug] (unchanged — no delete+reinsert)", got)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND action='ticket.tags_changed'`, noopID); n != 0 {
+		t.Errorf("case-only-different submit wrote %d tags audit rows, want 0 (no-op)", n)
+	}
+}
+
+// TestTriageTagsEmptyOrWhitespaceIsValidation — an empty or whitespace-only tag is a
+// caller-input error (ErrValidation), never a persisted junk tag.
+func TestTriageTagsEmptyOrWhitespaceIsValidation(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	svc := &Service{DB: tdb.App}
+
+	id := uuid.New()
+	seedTicket(ctx, t, tdb, rt, id, "open", "normal", "tags-empty", nil, []string{"keep"}, -1*time.Hour)
+
+	if _, err := svc.Triage(ctx, rt.reader, rt.master, id, TriageInput{Tags: &[]string{""}}); !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("empty tag: want ErrValidation, got %v", err)
+	}
+	if _, err := svc.Triage(ctx, rt.reader, rt.master, id, TriageInput{Tags: &[]string{"   "}}); !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("whitespace tag: want ErrValidation, got %v", err)
+	}
+	// A rejected tag triage must not mutate the existing tag set.
+	if got := ticketTagSet(ctx, t, tdb, id); len(got) != 1 || got[0] != "keep" {
+		t.Errorf("rejected tag triage mutated tags to %v, want preserved [keep]", got)
+	}
+}
+
 // TestTriageAssigneeEligibilityAndUnassign — assigning to an eligible member
 // persists; assigning to an ineligible-but-existing principal AND to a random
 // nonexistent uuid BOTH return ErrConflict uniformly (no oracle); unassign

@@ -459,6 +459,16 @@ func (s *Service) Triage(ctx context.Context, principalID, businessID, ticketID 
 	if in.Priority != nil && !isValidPriority(*in.Priority) {
 		return Ticket{}, fmt.Errorf("ticketing: invalid priority %q: %w", *in.Priority, errs.ErrValidation)
 	}
+	// Tags content: reject empty/whitespace-only tags at the service boundary (the
+	// authoritative clamp — covers callers that bypass the handler). A rejected
+	// triage mutates nothing (validation runs before WithPrincipal).
+	if in.Tags != nil {
+		for _, tag := range *in.Tags {
+			if strings.TrimSpace(tag) == "" {
+				return Ticket{}, fmt.Errorf("ticketing: invalid tag: %w", errs.ErrValidation)
+			}
+		}
+	}
 
 	var out Ticket
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -533,7 +543,7 @@ func (s *Service) Triage(ctx context.Context, principalID, businessID, ticketID 
 					TargetType:       &targetType,
 					TargetID:         &ticketID,
 					OldValue:         map[string]any{"tags": sortedTags(cur)},
-					NewValue:         map[string]any{"tags": next},
+					NewValue:         map[string]any{"tags": sortedTags(next)},
 				}); aerr != nil {
 					return aerr
 				}
@@ -579,39 +589,45 @@ func isValidPriority(p string) bool {
 	return false
 }
 
-// dedupTags returns the input tags deduped, preserving first-seen order.
+// dedupTags returns the input tags CASE-FOLD deduped, preserving the first-seen
+// ORIGINAL casing for storage. ticket_tag.tag is citext with PK (ticket_id, tag), so
+// "Bug" and "bug" are the same key: folding here collapses them to one row (no
+// unique-violation 500) while still persisting the first-seen casing ("Bug").
 func dedupTags(tags []string) []string {
 	seen := make(map[string]struct{}, len(tags))
 	out := make([]string, 0, len(tags))
 	for _, t := range tags {
-		if _, ok := seen[t]; ok {
+		k := strings.ToLower(t)
+		if _, ok := seen[k]; ok {
 			continue
 		}
-		seen[t] = struct{}{}
+		seen[k] = struct{}{}
 		out = append(out, t)
 	}
 	return out
 }
 
-// sortedTags returns a sorted copy (for stable audit old_value).
+// sortedTags returns a sorted copy (for a stable audit trail).
 func sortedTags(tags []string) []string {
 	out := append([]string(nil), tags...)
 	sort.Strings(out)
 	return out
 }
 
-// sameTagSet reports whether two tag slices represent the same SET (order/dups
-// ignored) — used to detect a tags no-op so it writes no audit row.
+// sameTagSet reports whether two tag slices represent the same CASE-FOLDED set
+// (order/dups/casing ignored) — matching the citext column so a case-only-different
+// submit is detected as a no-op (no delete+reinsert, no spurious tags audit).
 func sameTagSet(a, b []string) bool {
-	if len(dedupTags(a)) != len(dedupTags(b)) {
+	da, dbb := dedupTags(a), dedupTags(b)
+	if len(da) != len(dbb) {
 		return false
 	}
-	set := make(map[string]struct{}, len(a))
-	for _, t := range a {
-		set[t] = struct{}{}
+	set := make(map[string]struct{}, len(da))
+	for _, t := range da {
+		set[strings.ToLower(t)] = struct{}{}
 	}
-	for _, t := range b {
-		if _, ok := set[t]; !ok {
+	for _, t := range dbb {
+		if _, ok := set[strings.ToLower(t)]; !ok {
 			return false
 		}
 	}
