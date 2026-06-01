@@ -182,7 +182,7 @@ paths:
       summary: >
         Add an internal note to a ticket (FR-009). Recorded and attributed as a `note`-direction
         TicketMessage; NEVER delivered to the requester. Audited in-transaction (FR-014). Requires
-        tickets.write. 404 if unknown/unauthorized.
+        tickets.reply. 404 if unknown/unauthorized.
       requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/NoteBody' } } } }
       responses:
         '201': { content: { application/json: { schema: { $ref: '#/components/schemas/TicketMessage' } } }, description: note recorded }
@@ -386,6 +386,7 @@ components:
         spf_result: { $ref: '#/components/schemas/DnsRecordState' }
         dkim_result: { $ref: '#/components/schemas/DnsRecordState' }
         dmarc_result: { $ref: '#/components/schemas/DnsRecordState' }
+        delivery_state: { type: [string, "null"], enum: [pending, sent, failed], description: outbound delivery lifecycle; null for inbound/note }
         created_at: { type: string, format: date-time }
     Requester:
       type: object

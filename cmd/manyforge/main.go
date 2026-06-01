@@ -29,6 +29,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/events"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/mailer"
+	"github.com/manyforge/manyforge/internal/platform/notify"
 	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/tenancy"
@@ -82,7 +83,18 @@ func main() {
 	tenSvc := &tenancy.Service{DB: database}
 	authzSvc := &authz.Service{DB: database}
 	invSvc := &invitations.Service{DB: database, Mailer: mailer.LogMailer{Logger: logger}}
-	ticketSvc := &ticketing.Service{DB: database}
+	// Outbound send rate limiter (FR-020): per-business AND per-recipient token
+	// buckets built from the SAME outbound knobs (MANYFORGE_OUTBOUND_RATE_*),
+	// mirroring how the ingest limiter is built from the ingest knobs. The
+	// ticketing.Service spends a token per Reply; a 429 carries no existence oracle.
+	outboundLimiter := ratelimit.NewTokenBucket(cfg.OutboundRateRPS, cfg.OutboundRateBurst)
+	ticketSvc := &ticketing.Service{
+		DB:              database,
+		ReplyTokenKey:   cfg.InboundReplyTokenSecret,
+		SystemDomain:    cfg.InboundSystemDomain,
+		OutboundLimiter: outboundLimiter,
+		Suppression:     notify.DBSuppression{DB: database},
+	}
 	acctH := account.NewHandler(acctSvc)
 	tenH := tenancy.NewHandler(tenSvc)
 	authzH := authz.NewHandler(authzSvc)
@@ -202,6 +214,7 @@ func main() {
 		authLimit:    httpx.RateLimit(authLimiter, ipKey),
 		ingestLimit:  httpx.RateLimit(ingestIPLimiter, ingestIPKey),
 		ticketsRead:  httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
+		ticketsReply: httpx.RequirePermission(database, permResolve, "tickets.reply", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -273,10 +286,12 @@ type apiHandlers struct {
 
 	// Group-level middleware. Each gates a route group exactly as main wires it:
 	// authLimit (per-IP auth abuse cap), ingestLimit (per-IP inbound ingest cap),
-	// ticketsRead (tickets.read permission gate for the US1 ticketing read slice).
-	authLimit   func(http.Handler) http.Handler
-	ingestLimit func(http.Handler) http.Handler
-	ticketsRead func(http.Handler) http.Handler
+	// ticketsRead (tickets.read permission gate for the US1 ticketing read slice),
+	// ticketsReply (tickets.reply gate for the US2 reply + note write slice).
+	authLimit    func(http.Handler) http.Handler
+	ingestLimit  func(http.Handler) http.Handler
+	ticketsRead  func(http.Handler) http.Handler
+	ticketsReply func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -310,6 +325,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(tk chi.Router) {
 				tk.Use(h.ticketsRead)
 				h.ticketing.ProtectedRoutes(tk)
+			})
+			// US2 ticketing write slice: reply + note, both gated on tickets.reply
+			// (the migration-0015 catalog: "Send replies AND internal notes on a
+			// ticket"). Same RLS-bound 404-on-lacking-perm semantics as the read group.
+			pr.Group(func(tw chi.Router) {
+				tw.Use(h.ticketsReply)
+				h.ticketing.WriteRoutes(tw)
 			})
 		})
 	})
