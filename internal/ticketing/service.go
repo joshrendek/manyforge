@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,6 +44,17 @@ type Service struct {
 type ReplyInput struct {
 	BodyText string
 	BodyHTML *string
+}
+
+// TriageInput is the partial-update payload for Triage. A nil field is preserved;
+// a non-nil field is applied. Tags non-nil is a FULL replacement (empty slice
+// clears all). AssigneeSet/Assignee are honored by T048; T047 accepts + ignores them.
+type TriageInput struct {
+	Status      *string    // nil=preserve; else one of new/open/pending/solved/closed
+	Priority    *string    // nil=preserve; else low/normal/high/urgent
+	Tags        *[]string  // nil=preserve; non-nil = FULL replacement (empty slice clears all)
+	AssigneeSet bool       // (T048 honors this; T047: accept + IGNORE)
+	Assignee    *uuid.UUID // (T048)
 }
 
 // TicketFilter is the optional facet set for ListTickets. A nil/zero field
@@ -219,6 +231,11 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 			return terr
 		}
 
+		// yqi: a reply on a `new` ticket advances it to `open` (same tx, audited).
+		if yerr := advanceNewToOpen(ctx, q, tx, tk, principalID, businessID); yerr != nil {
+			return yerr
+		}
+
 		// Recipient email: the ticket's requester (same business/tenant scope).
 		req, rerr := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: ticketID, BusinessID: businessID})
 		if rerr != nil {
@@ -348,6 +365,13 @@ func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID
 			return terr
 		}
 
+		// yqi: a note on a `new` ticket advances it to `open` (same tx, audited).
+		// A note never bumps last_message_at — the status UPDATE only touches
+		// status/updated_at, so that invariant is preserved.
+		if yerr := advanceNewToOpen(ctx, q, tx, tk, principalID, businessID); yerr != nil {
+			return yerr
+		}
+
 		msgID, gerr := uuid.NewV7()
 		if gerr != nil {
 			return gerr
@@ -384,6 +408,214 @@ func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID
 		return Message{}, mapErr(err)
 	}
 	return out, nil
+}
+
+// advanceNewToOpen implements the yqi lifecycle rule (data-model L438): the first
+// reply or note on a `new` ticket transitions it to `open`. It UPDATEs only
+// status/updated_at (never last_message_at) and writes the pinned
+// ticket.status_changed audit in the SAME tx, attributed to the acting principal.
+// A non-`new` ticket is a no-op (no update, no audit).
+func advanceNewToOpen(ctx context.Context, q *dbgen.Queries, tx pgx.Tx, tk dbgen.Ticket, principalID, businessID uuid.UUID) error {
+	if string(tk.Status) != "new" {
+		return nil
+	}
+	if err := q.UpdateTicketStatus(ctx, dbgen.UpdateTicketStatusParams{
+		ID: tk.ID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+		Status: dbgen.TicketStatus("open"),
+	}); err != nil {
+		return err
+	}
+	return writeStatusAudit(ctx, tx, businessID, tk.TenantRootID, principalID, tk.ID, "new", "open")
+}
+
+// writeStatusAudit writes a pinned ticket.status_changed audit row (old→new) in tx.
+func writeStatusAudit(ctx context.Context, tx pgx.Tx, businessID, tenantRootID, principalID, ticketID uuid.UUID, oldStatus, newStatus string) error {
+	targetType := "ticket"
+	return audit.Write(ctx, tx, audit.Entry{
+		BusinessID:       &businessID,
+		TenantRootID:     &tenantRootID,
+		ActorPrincipalID: &principalID,
+		Action:           "ticket.status_changed",
+		TargetType:       &targetType,
+		TargetID:         &ticketID,
+		OldValue:         map[string]any{"status": oldStatus},
+		NewValue:         map[string]any{"status": newStatus},
+	})
+}
+
+// Triage applies a partial status/priority/tags update to a ticket (US3, FR-010..012).
+// One transaction: own-check the ticket, validate enums, then for each CHANGED field
+// apply the update + write one pinned audit row (old→new) in the same tx. A field
+// equal to its current value is a no-op (no update, no audit). Tags non-nil is a full
+// set replacement (empty clears all). NEVER touches last_message_at. AssigneeSet/
+// Assignee are decoded and passed through but IGNORED here (honored by T048).
+// Dual-enforced (WithPrincipal RLS + business_id predicate); unknown/foreign ticket ⇒
+// ErrNotFound (no oracle); invalid status/priority ⇒ ErrValidation.
+func (s *Service) Triage(ctx context.Context, principalID, businessID, ticketID uuid.UUID, in TriageInput) (Ticket, error) {
+	// Validate enums up front so a rejected triage mutates nothing.
+	if in.Status != nil && !isValidStatus(*in.Status) {
+		return Ticket{}, fmt.Errorf("ticketing: invalid status %q: %w", *in.Status, errs.ErrValidation)
+	}
+	if in.Priority != nil && !isValidPriority(*in.Priority) {
+		return Ticket{}, fmt.Errorf("ticketing: invalid priority %q: %w", *in.Priority, errs.ErrValidation)
+	}
+
+	var out Ticket
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+
+		// Load + own-check the ticket (ErrNoRows ⇒ ErrNotFound, no oracle).
+		tk, terr := q.GetTicket(ctx, dbgen.GetTicketParams{ID: ticketID, BusinessID: businessID})
+		if terr != nil {
+			return terr
+		}
+
+		// --- status (changed only) ---
+		if in.Status != nil && *in.Status != string(tk.Status) {
+			if uerr := q.UpdateTicketStatus(ctx, dbgen.UpdateTicketStatusParams{
+				ID: ticketID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+				Status: dbgen.TicketStatus(*in.Status),
+			}); uerr != nil {
+				return uerr
+			}
+			if aerr := writeStatusAudit(ctx, tx, businessID, tk.TenantRootID, principalID, ticketID, string(tk.Status), *in.Status); aerr != nil {
+				return aerr
+			}
+		}
+
+		// --- priority (changed only) ---
+		if in.Priority != nil && *in.Priority != string(tk.Priority) {
+			if uerr := q.UpdateTicketPriority(ctx, dbgen.UpdateTicketPriorityParams{
+				ID: ticketID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+				Priority: dbgen.TicketPriority(*in.Priority),
+			}); uerr != nil {
+				return uerr
+			}
+			targetType := "ticket"
+			if aerr := audit.Write(ctx, tx, audit.Entry{
+				BusinessID:       &businessID,
+				TenantRootID:     &tk.TenantRootID,
+				ActorPrincipalID: &principalID,
+				Action:           "ticket.priority_changed",
+				TargetType:       &targetType,
+				TargetID:         &ticketID,
+				OldValue:         map[string]any{"priority": string(tk.Priority)},
+				NewValue:         map[string]any{"priority": *in.Priority},
+			}); aerr != nil {
+				return aerr
+			}
+		}
+
+		// --- tags (full replacement; changed only) ---
+		if in.Tags != nil {
+			cur, cerr := q.ListTicketTags(ctx, dbgen.ListTicketTagsParams{TicketID: ticketID, BusinessID: businessID})
+			if cerr != nil {
+				return cerr
+			}
+			next := dedupTags(*in.Tags)
+			if !sameTagSet(cur, next) {
+				if derr := q.DeleteTicketTags(ctx, dbgen.DeleteTicketTagsParams{TicketID: ticketID, BusinessID: businessID}); derr != nil {
+					return derr
+				}
+				for _, tag := range next {
+					if ierr := q.InsertTicketTag(ctx, dbgen.InsertTicketTagParams{
+						TicketID: ticketID, Tag: tag, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+					}); ierr != nil {
+						return ierr
+					}
+				}
+				targetType := "ticket"
+				if aerr := audit.Write(ctx, tx, audit.Entry{
+					BusinessID:       &businessID,
+					TenantRootID:     &tk.TenantRootID,
+					ActorPrincipalID: &principalID,
+					Action:           "ticket.tags_changed",
+					TargetType:       &targetType,
+					TargetID:         &ticketID,
+					OldValue:         map[string]any{"tags": sortedTags(cur)},
+					NewValue:         map[string]any{"tags": next},
+				}); aerr != nil {
+					return aerr
+				}
+			}
+		}
+
+		// Assignee (in.AssigneeSet / in.Assignee) is intentionally IGNORED here; T048
+		// implements eligibility + persistence.
+
+		// Re-assemble the updated ticket from the now-current row.
+		updated, gerr := q.GetTicket(ctx, dbgen.GetTicketParams{ID: ticketID, BusinessID: businessID})
+		if gerr != nil {
+			return gerr
+		}
+		tkOut, aerr := assembleTicket(ctx, q, updated)
+		if aerr != nil {
+			return aerr
+		}
+		out = tkOut
+		return nil
+	})
+	if err != nil {
+		return Ticket{}, mapErr(err)
+	}
+	return out, nil
+}
+
+// isValidStatus / isValidPriority pin the closed enum sets for triage validation
+// (mirrors the handler's validStatus/validPriority for the service boundary).
+func isValidStatus(s string) bool {
+	switch s {
+	case "new", "open", "pending", "solved", "closed":
+		return true
+	}
+	return false
+}
+
+func isValidPriority(p string) bool {
+	switch p {
+	case "low", "normal", "high", "urgent":
+		return true
+	}
+	return false
+}
+
+// dedupTags returns the input tags deduped, preserving first-seen order.
+func dedupTags(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+// sortedTags returns a sorted copy (for stable audit old_value).
+func sortedTags(tags []string) []string {
+	out := append([]string(nil), tags...)
+	sort.Strings(out)
+	return out
+}
+
+// sameTagSet reports whether two tag slices represent the same SET (order/dups
+// ignored) — used to detect a tags no-op so it writes no audit row.
+func sameTagSet(a, b []string) bool {
+	if len(dedupTags(a)) != len(dedupTags(b)) {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, t := range a {
+		set[t] = struct{}{}
+	}
+	for _, t := range b {
+		if _, ok := set[t]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // replySubject ensures a "Re: " prefix so the reply continues the customer thread.

@@ -47,6 +47,9 @@ type Querier interface {
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
+	// DeleteTicketTags removes every tag row for a ticket — the first half of a
+	// full-set tag replacement. Scoped to (ticket_id, business_id).
+	DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsParams) error
 	DepthFromRoot(ctx context.Context, arg DepthFromRootParams) (int32, error)
 	// Effective permissions for a principal at a business: the union of permissions
 	// from every grant the principal holds on the business or any non-archived
@@ -116,6 +119,9 @@ type Querier interface {
 	// InsertOutboundMessage persists an agent reply as a pending-delivery outbound row.
 	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
 	InsertSuppression(ctx context.Context, arg InsertSuppressionParams) error
+	// InsertTicketTag inserts one tag for a ticket (the second half of tag
+	// replacement). PK (ticket_id, tag); the service dedups before calling.
+	InsertTicketTag(ctx context.Context, arg InsertTicketTagParams) error
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
 	// True if candidate ($2) is the node ($1) itself or a descendant of it.
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
@@ -219,6 +225,14 @@ type Querier interface {
 	// ---- Auth flows (T078) ----
 	UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) error
 	UpdateRoleName(ctx context.Context, arg UpdateRoleNameParams) error
+	// UpdateTicketPriority sets a new priority (manual triage). Touches updated_at but
+	// NEVER last_message_at. Scoped to (id, business_id, tenant_root_id).
+	UpdateTicketPriority(ctx context.Context, arg UpdateTicketPriorityParams) error
+	// ---- US3 triage queries (T047) ----
+	// UpdateTicketStatus sets a new status (manual triage / yqi new→open). Touches
+	// updated_at but NEVER last_message_at — triage is not a message. Scoped to
+	// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
+	UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatusParams) error
 }
 
 var _ Querier = (*Queries)(nil)

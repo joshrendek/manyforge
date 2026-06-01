@@ -68,6 +68,83 @@ func TestReplyInsertsOutboundAndEnqueues(t *testing.T) {
 	}
 }
 
+// TestReplyAndNoteAdvanceNewToOpen — the yqi lifecycle rule (data-model L438): an
+// outbound reply AND an internal note both advance a `new` ticket to `open` (with a
+// pinned ticket.status_changed audit, actor = the acting member). A reply/note on a
+// non-new ticket leaves status untouched and writes NO status_changed audit. Note
+// still must NOT bump last_message_at; reply still does.
+func TestReplyAndNoteAdvanceNewToOpen(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	svc := &Service{DB: tdb.App, ReplyTokenKey: replyKey, SystemDomain: "inbound.localhost"}
+
+	// --- reply on a `new` ticket advances it to `open` + one status_changed audit ---
+	replyNewID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, replyNewID, "new", "normal", "reply-new", nil, nil, -1*time.Hour)
+	if _, err := svc.Reply(ctx, rt.reader, rt.master, replyNewID, ReplyInput{BodyText: "on it"}); err != nil {
+		t.Fatalf("reply on new: %v", err)
+	}
+	if got, _, _, _ := readTicketRow(ctx, t, tdb, replyNewID); got != "open" {
+		t.Errorf("reply on new: persisted status = %q, want open", got)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND target_type='ticket' AND action='ticket.status_changed'
+		   AND old_value=$2::jsonb AND new_value=$3::jsonb AND actor_principal_id=$4`,
+		replyNewID, `{"status":"new"}`, `{"status":"open"}`, rt.reader); n != 1 {
+		t.Errorf("reply on new: pinned status_changed audit (actor=replier) = %d, want 1", n)
+	}
+
+	// --- note on a `new` ticket advances it to `open` + one status_changed audit ---
+	noteNewID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, noteNewID, "new", "normal", "note-new", nil, nil, -1*time.Hour)
+	_, _, _, beforeNoteLMA := readTicketRow(ctx, t, tdb, noteNewID)
+	if _, err := svc.AddNote(ctx, rt.reader, rt.master, noteNewID, NoteInput{BodyText: "looking"}); err != nil {
+		t.Fatalf("note on new: %v", err)
+	}
+	gotNoteStatus, _, _, afterNoteLMA := readTicketRow(ctx, t, tdb, noteNewID)
+	if gotNoteStatus != "open" {
+		t.Errorf("note on new: persisted status = %q, want open", gotNoteStatus)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND target_type='ticket' AND action='ticket.status_changed'
+		   AND old_value=$2::jsonb AND new_value=$3::jsonb AND actor_principal_id=$4`,
+		noteNewID, `{"status":"new"}`, `{"status":"open"}`, rt.reader); n != 1 {
+		t.Errorf("note on new: pinned status_changed audit (actor=noter) = %d, want 1", n)
+	}
+	// A note must NOT bump last_message_at even when it advances status.
+	if !afterNoteLMA.Equal(beforeNoteLMA) {
+		t.Errorf("note bumped last_message_at: before=%v after=%v (note must not)", beforeNoteLMA, afterNoteLMA)
+	}
+
+	// --- reply on an `open` ticket leaves status untouched + NO status_changed ---
+	replyOpenID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, replyOpenID, "open", "normal", "reply-open", nil, nil, -1*time.Hour)
+	if _, err := svc.Reply(ctx, rt.reader, rt.master, replyOpenID, ReplyInput{BodyText: "still on it"}); err != nil {
+		t.Fatalf("reply on open: %v", err)
+	}
+	if got, _, _, _ := readTicketRow(ctx, t, tdb, replyOpenID); got != "open" {
+		t.Errorf("reply on open: persisted status = %q, want unchanged open", got)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND action='ticket.status_changed'`, replyOpenID); n != 0 {
+		t.Errorf("reply on open: status_changed audit = %d, want 0 (status not new)", n)
+	}
+
+	// --- note on an `open` ticket leaves status untouched + NO status_changed ---
+	noteOpenID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, noteOpenID, "open", "normal", "note-open", nil, nil, -1*time.Hour)
+	if _, err := svc.AddNote(ctx, rt.reader, rt.master, noteOpenID, NoteInput{BodyText: "fyi"}); err != nil {
+		t.Fatalf("note on open: %v", err)
+	}
+	if got, _, _, _ := readTicketRow(ctx, t, tdb, noteOpenID); got != "open" {
+		t.Errorf("note on open: persisted status = %q, want unchanged open", got)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND action='ticket.status_changed'`, noteOpenID); n != 0 {
+		t.Errorf("note on open: status_changed audit = %d, want 0 (status not new)", n)
+	}
+}
+
 // TestReplyUnknownTicketIsNotFound — a random ticket id collapses to ErrNotFound
 // (no oracle).
 func TestReplyUnknownTicketIsNotFound(t *testing.T) {

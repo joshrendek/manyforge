@@ -160,6 +160,32 @@ RETURNING *;
 UPDATE ticket SET last_message_at = now(), updated_at = now()
 WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
 
+-- ---- US3 triage queries (T047) ----
+
+-- UpdateTicketStatus sets a new status (manual triage / yqi new→open). Touches
+-- updated_at but NEVER last_message_at — triage is not a message. Scoped to
+-- (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
+-- name: UpdateTicketStatus :exec
+UPDATE ticket SET status = sqlc.arg('status')::ticket_status, updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
+
+-- UpdateTicketPriority sets a new priority (manual triage). Touches updated_at but
+-- NEVER last_message_at. Scoped to (id, business_id, tenant_root_id).
+-- name: UpdateTicketPriority :exec
+UPDATE ticket SET priority = sqlc.arg('priority')::ticket_priority, updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
+
+-- DeleteTicketTags removes every tag row for a ticket — the first half of a
+-- full-set tag replacement. Scoped to (ticket_id, business_id).
+-- name: DeleteTicketTags :exec
+DELETE FROM ticket_tag WHERE ticket_id = $1 AND business_id = $2;
+
+-- InsertTicketTag inserts one tag for a ticket (the second half of tag
+-- replacement). PK (ticket_id, tag); the service dedups before calling.
+-- name: InsertTicketTag :exec
+INSERT INTO ticket_tag (ticket_id, tag, business_id, tenant_root_id, created_at)
+VALUES ($1, $2, $3, $4, now());
+
 -- NOTE: the outbound delivery-state path (delivery_state read, system inbound
 -- address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
 -- bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /

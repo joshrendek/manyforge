@@ -15,8 +15,8 @@ import (
 
 const insertAuditEntry = `-- name: InsertAuditEntry :exec
 INSERT INTO audit_entry
-    (id, business_id, tenant_root_id, actor_principal_id, action, target_type, target_id, correlation_id, new_value, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+    (id, business_id, tenant_root_id, actor_principal_id, action, target_type, target_id, correlation_id, old_value, new_value, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 `
 
 type InsertAuditEntryParams struct {
@@ -28,6 +28,7 @@ type InsertAuditEntryParams struct {
 	TargetType       *string     `json:"target_type"`
 	TargetID         pgtype.UUID `json:"target_id"`
 	CorrelationID    *string     `json:"correlation_id"`
+	OldValue         []byte      `json:"old_value"`
 	NewValue         []byte      `json:"new_value"`
 }
 
@@ -41,6 +42,7 @@ func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryPara
 		arg.TargetType,
 		arg.TargetID,
 		arg.CorrelationID,
+		arg.OldValue,
 		arg.NewValue,
 	)
 	return err
