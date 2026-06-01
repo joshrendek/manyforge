@@ -36,12 +36,22 @@ func VerifyReplyToken(token string, serverKey []byte) (uuid.UUID, bool) {
 	if dot <= 0 || dot == len(token)-1 {
 		return uuid.Nil, false
 	}
-	id, err := enc.DecodeString(token[:dot])
+	idPart, sigPart := token[:dot], token[dot+1:]
+	id, err := enc.DecodeString(idPart)
 	if err != nil || len(id) != 16 {
 		return uuid.Nil, false
 	}
-	sig, err := enc.DecodeString(token[dot+1:])
+	sig, err := enc.DecodeString(sigPart)
 	if err != nil {
+		return uuid.Nil, false
+	}
+	// Reject non-canonical base64url: Go's RawURLEncoding decoder tolerates
+	// non-zero trailing bits in the final character, so a one-bit flip of the last
+	// char decodes to the SAME bytes — making the token malleable (the HMAC still
+	// matches). Require both segments to be in canonical encoded form by
+	// re-encoding the decoded bytes and rejecting any mismatch. security:
+	// MF-002-THREAD-IDEMPOTENCY (reply-token forgery via base64 malleability).
+	if enc.EncodeToString(id) != idPart || enc.EncodeToString(sig) != sigPart {
 		return uuid.Nil, false
 	}
 	if subtle.ConstantTimeCompare(sig, hmacSum(serverKey, id)) != 1 {
