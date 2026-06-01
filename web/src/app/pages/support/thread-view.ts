@@ -3,7 +3,15 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service';
+import {
+  PatchTicket,
+  Ticket,
+  TicketMessage,
+  TicketPriority,
+  TicketService,
+  TicketStatus,
+} from '../../core/ticket.service';
+import { AuthService, Profile } from '../../core/auth.service';
 
 // Thread view for a single ticket. Mirrors signup.ts's signal-driven view
 // switching and dashboard.ts's load/error pattern. Business id + ticket id come
@@ -43,6 +51,121 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
             <b>{{ t.requester.display_name || t.requester.email }}</b>
             <span class="muted">&lt;{{ t.requester.email }}&gt;</span>
           </p>
+
+          <!-- US3 triage controls. Each mutation PATCHes the ticket and reflects
+               the returned Ticket so the header above never goes stale. -->
+          <div class="triage" data-testid="triage">
+            <label class="triage-field">
+              <span class="triage-label">Status</span>
+              <select
+                data-testid="triage-status"
+                [disabled]="triaging()"
+                [ngModel]="t.status"
+                (ngModelChange)="changeStatus($event)"
+              >
+                @for (s of statuses; track s) {
+                  <option [value]="s">{{ s }}</option>
+                }
+              </select>
+            </label>
+
+            <label class="triage-field">
+              <span class="triage-label">Priority</span>
+              <select
+                data-testid="triage-priority"
+                [disabled]="triaging()"
+                [ngModel]="t.priority"
+                (ngModelChange)="changePriority($event)"
+              >
+                @for (p of priorities; track p) {
+                  <option [value]="p">{{ p }}</option>
+                }
+              </select>
+            </label>
+
+            <div class="triage-field triage-tags">
+              <span class="triage-label">Tags</span>
+              <div class="chips" data-testid="triage-tags">
+                @for (tag of t.tags; track tag) {
+                  <span class="chip" data-testid="triage-chip">
+                    {{ tag }}
+                    <button
+                      type="button"
+                      class="chip-x"
+                      data-testid="triage-chip-remove"
+                      [attr.aria-label]="'Remove tag ' + tag"
+                      [disabled]="triaging()"
+                      (click)="removeTag(tag)"
+                    >
+                      ×
+                    </button>
+                  </span>
+                }
+                <input
+                  type="text"
+                  class="chip-input"
+                  data-testid="triage-tag-input"
+                  placeholder="add tag…"
+                  [(ngModel)]="tagDraft"
+                  [disabled]="triaging()"
+                  (keyup.enter)="addTag()"
+                />
+              </div>
+            </div>
+
+            <div class="triage-field triage-assignee">
+              <span class="triage-label">Assignee</span>
+              <div class="assignee-row" data-testid="triage-assignee">
+                <button
+                  type="button"
+                  class="ghost compact"
+                  data-testid="assign-to-me"
+                  [disabled]="
+                    triaging() || !myPrincipalId() || t.assignee_principal_id === myPrincipalId()
+                  "
+                  (click)="assignToMe()"
+                >
+                  Assign to me
+                </button>
+                <button
+                  type="button"
+                  class="ghost compact"
+                  data-testid="unassign"
+                  [disabled]="triaging() || !t.assignee_principal_id"
+                  (click)="unassign()"
+                >
+                  Unassign
+                </button>
+              </div>
+              <!-- No "list assignable members" endpoint exists yet (see follow-up),
+                   so assigning anyone other than yourself is a manual principal-uuid
+                   entry. The backend validates eligibility + tickets.assign. -->
+              <div class="assignee-manual">
+                <input
+                  type="text"
+                  class="chip-input"
+                  data-testid="assign-uuid-input"
+                  placeholder="principal uuid…"
+                  [(ngModel)]="assigneeDraft"
+                  [disabled]="triaging()"
+                  (keyup.enter)="assignManual()"
+                />
+                <button
+                  type="button"
+                  class="ghost compact"
+                  data-testid="assign-uuid-submit"
+                  [disabled]="triaging() || !assigneeDraft.trim()"
+                  (click)="assignManual()"
+                >
+                  Assign
+                </button>
+              </div>
+            </div>
+
+            @if (triageError()) {
+              <p class="msg error" data-testid="triage-error">{{ triageError() }}</p>
+            }
+          </div>
         </header>
 
         <ul class="thread" data-testid="message-thread">
@@ -160,7 +283,7 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
               [disabled]="!composerText.trim() || sending()"
               (click)="submitComposer()"
             >
-              {{ sending() ? 'Sending…' : (noteMode() ? 'Add note' : 'Send reply') }}
+              {{ sending() ? 'Sending…' : noteMode() ? 'Add note' : 'Send reply' }}
             </button>
           </div>
         </div>
@@ -185,6 +308,93 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
       }
       .thread-head .requester b {
         color: var(--text);
+      }
+
+      .triage {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: flex-start;
+      }
+      .triage-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .triage-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+      .triage select {
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--panel);
+        color: var(--text);
+        font-size: 13px;
+        font-family: inherit;
+      }
+      .triage select:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 4px 2px 8px;
+        font-size: 12px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--panel-2);
+      }
+      .chip-x {
+        border: none;
+        background: none;
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1;
+        padding: 0 2px;
+      }
+      .chip-x:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      .chip-input {
+        min-width: 96px;
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--panel);
+        color: var(--text);
+        font-size: 13px;
+        font-family: inherit;
+      }
+      .assignee-row {
+        display: flex;
+        gap: 6px;
+      }
+      .assignee-manual {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .triage .msg.error {
+        flex-basis: 100%;
+        margin: 0;
       }
 
       .thread {
@@ -354,6 +564,7 @@ import { Ticket, TicketMessage, TicketService } from '../../core/ticket.service'
 export class ThreadViewComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private api = inject(TicketService);
+  private auth = inject(AuthService);
 
   private businessId = '';
   private ticketId = '';
@@ -372,9 +583,29 @@ export class ThreadViewComponent implements OnInit {
   sending = signal(false);
   sendError = signal('');
 
+  // Triage state (US3). The full enum lists drive the status/priority dropdowns.
+  readonly statuses: TicketStatus[] = ['new', 'open', 'pending', 'solved', 'closed'];
+  readonly priorities: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
+  triaging = signal(false);
+  triageError = signal('');
+  tagDraft = '';
+  assigneeDraft = '';
+
+  // The signed-in profile. Spec 001's identity model uses a single principal id
+  // per account: the JWT subject IS the principal id, and `/me` returns it as
+  // Profile.id — the SAME id used for ticket.assignee_principal_id. So
+  // Profile.id is the caller's own principal id, which makes "Assign to me" a
+  // real, correct operation (no faking). Permissions (e.g. tickets.assign) are
+  // NOT exposed to the client, so the assignee control is always shown and we
+  // rely on the backend (404 when the caller lacks tickets.assign).
+  profile = signal<Profile | null>(null);
+  readonly myPrincipalId = (): string | null => this.profile()?.id ?? null;
+
   ngOnInit(): void {
     this.businessId = this.route.snapshot.paramMap.get('businessId') ?? '';
     this.ticketId = this.route.snapshot.paramMap.get('tid') ?? '';
+    // Best-effort: drives "Assign to me". A failure just hides that button.
+    this.auth.me().subscribe({ next: (p) => this.profile.set(p), error: () => {} });
     this.reload();
   }
 
@@ -449,6 +680,96 @@ export class ThreadViewComponent implements OnInit {
         this.sending.set(false);
       },
     });
+  }
+
+  // ── Triage (US3) ──────────────────────────────────────────────────────────
+
+  changeStatus(status: TicketStatus): void {
+    const t = this.ticket();
+    if (!t || status === t.status) return;
+    this.patch({ status });
+  }
+
+  changePriority(priority: TicketPriority): void {
+    const t = this.ticket();
+    if (!t || priority === t.priority) return;
+    this.patch({ priority });
+  }
+
+  // Add a free-text tag. Sends the FULL resulting set (replacement semantics).
+  // Local dedupe is a nicety; the backend is the source of truth (citext-folds,
+  // rejects empty/whitespace with 400 — surfaced via patch()).
+  addTag(): void {
+    const t = this.ticket();
+    const tag = this.tagDraft.trim();
+    if (!t || !tag) return;
+    if (t.tags.some((x) => x.toLowerCase() === tag.toLowerCase())) {
+      this.tagDraft = '';
+      return;
+    }
+    this.patch({ tags: [...t.tags, tag] }, () => (this.tagDraft = ''));
+  }
+
+  removeTag(tag: string): void {
+    const t = this.ticket();
+    if (!t) return;
+    this.patch({ tags: t.tags.filter((x) => x !== tag) });
+  }
+
+  // Assignee tri-state. We only ever put `assignee_principal_id` in the body
+  // when actually changing it; `patch()` forwards the object verbatim so an
+  // omitted key stays omitted (status/priority/tag changes never touch it).
+  assignToMe(): void {
+    const me = this.myPrincipalId();
+    const t = this.ticket();
+    if (!me || !t || t.assignee_principal_id === me) return;
+    this.patch({ assignee_principal_id: me });
+  }
+
+  unassign(): void {
+    const t = this.ticket();
+    if (!t || !t.assignee_principal_id) return;
+    this.patch({ assignee_principal_id: null });
+  }
+
+  assignManual(): void {
+    const id = this.assigneeDraft.trim();
+    if (!id) return;
+    this.patch({ assignee_principal_id: id }, () => (this.assigneeDraft = ''));
+  }
+
+  // Central triage mutation: PATCH, then reflect the returned Ticket (no stale
+  // UI) and surface 400/404/409 gracefully without crashing.
+  private patch(body: PatchTicket, onOk?: () => void): void {
+    if (this.triaging()) return;
+    this.triaging.set(true);
+    this.triageError.set('');
+    this.api.patchTicket(this.businessId, this.ticketId, body).subscribe({
+      next: (updated) => {
+        this.ticket.set(updated);
+        this.triaging.set(false);
+        onOk?.();
+      },
+      error: (e: HttpErrorResponse) => {
+        this.triaging.set(false);
+        this.triageError.set(this.describeTriageError(e));
+      },
+    });
+  }
+
+  // Triage-specific error copy. 400 carries safe validation detail (e.g. an
+  // empty/whitespace tag); 404 covers unknown ticket AND missing tickets.assign
+  // (no oracle); 409 is an ineligible assignee / invalid status transition.
+  private describeTriageError(e: HttpErrorResponse): string {
+    if (e.status === 400) {
+      const msg = (e.error as { message?: string } | null)?.message;
+      return msg
+        ? `That change was rejected: ${msg}`
+        : 'That change was rejected. Check your input.';
+    }
+    if (e.status === 409) return "That change conflicts with the ticket's current state.";
+    if (e.status === 403 || e.status === 404) return "You don't have access to do that.";
+    return 'Could not update the ticket. Please try again.';
   }
 
   // No-oracle: 403/404 both map to a generic message (mirrors dashboard.ts).
