@@ -426,3 +426,169 @@ test('US2: submit is disabled when composer body is empty', async ({ page }) => 
   await page.getByTestId('composer-body').fill('');
   await expect(page.getByTestId('composer-submit')).toBeDisabled();
 });
+
+// ── US3 triage tests (T051) ───────────────────────────────────────────────────
+//
+// installTriageStack seeds auth + the read mocks AND a *stateful* ticket mock:
+// a mutable `currentTicket` object backs the GET /tickets/{tid} handler, and the
+// PATCH /tickets/{tid} handler merges the request body into it (then returns it,
+// mirroring the real PATCH that returns the updated Ticket). Because GET reads
+// the same object, page.reload() re-fetches the mutated ticket — proving the
+// change "persisted" exactly as a real backend would. The PATCH body the route
+// observed is captured per-test so we can assert the exact wire payload.
+//
+// Both GET and PATCH match the SAME url glob (`**/tickets/tkt-1`); the handler
+// branches on route.request().method(). Returns the captured-body getter so the
+// test can assert the last PATCH payload after a mutation settles.
+function installTriageStack(page: Page) {
+  // A deep-enough copy so mutations here don't bleed into the shared fixture.
+  const currentTicket: Record<string, unknown> = JSON.parse(JSON.stringify(ticket));
+  const state = { lastPatchBody: null as Record<string, unknown> | null };
+
+  return (async () => {
+    await page.addInitScript(() => {
+      localStorage.setItem('mf_access', 'test-access');
+      localStorage.setItem('mf_refresh', 'test-refresh');
+    });
+    await page.route('**/api/v1/me', (route) =>
+      route.fulfill({
+        json: {
+          id: 'u1',
+          email: 'owner@manyforge.test',
+          display_name: 'Owner',
+          email_verified: true,
+          status: 'active',
+        },
+      }),
+    );
+    await page.route('**/api/v1/businesses**', (route) =>
+      route.fulfill({ json: { items: [business], next_cursor: null } }),
+    );
+    await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/messages**`, (route) =>
+      route.fulfill({ json: { items: [inboundMessage], next_cursor: null } }),
+    );
+    // Stateful ticket handler: GET returns currentTicket; PATCH merges the body
+    // into currentTicket and returns it (200) — the same updated-Ticket contract
+    // the component reflects after each triage mutation.
+    await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}`, (route) => {
+      const req = route.request();
+      if (req.method() === 'PATCH') {
+        const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+        state.lastPatchBody = body;
+        Object.assign(currentTicket, body);
+        route.fulfill({ status: 200, json: currentTicket });
+        return;
+      }
+      route.fulfill({ json: currentTicket });
+    });
+    return state;
+  })();
+}
+
+// 1. Status change persists on reload.
+test('US3: changing status PATCHes {status} and persists across reload', async ({ page }) => {
+  const state = await installTriageStack(page);
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  // Seeded status is "new" (see fixture).
+  await expect(page.getByTestId('thread-status')).toHaveText('new');
+  await expect(page.getByTestId('triage-status')).toHaveValue('new');
+
+  // Select a new status → drives changeStatus($event) → PATCH {status:'pending'}.
+  await page.getByTestId('triage-status').selectOption('pending');
+
+  // The header reflects the returned Ticket immediately (no stale UI).
+  await expect(page.getByTestId('thread-status')).toHaveText('pending');
+  expect(state.lastPatchBody).toEqual({ status: 'pending' });
+
+  // Reload re-fetches the *mutated* ticket from the stateful GET → still pending.
+  await page.reload();
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  await expect(page.getByTestId('thread-status')).toHaveText('pending');
+  await expect(page.getByTestId('triage-status')).toHaveValue('pending');
+});
+
+// 2. Priority change persists on reload.
+test('US3: changing priority PATCHes {priority} and persists across reload', async ({ page }) => {
+  const state = await installTriageStack(page);
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  // Seeded priority is "normal".
+  await expect(page.getByTestId('thread-priority')).toHaveText('normal');
+  await expect(page.getByTestId('triage-priority')).toHaveValue('normal');
+
+  await page.getByTestId('triage-priority').selectOption('high');
+
+  await expect(page.getByTestId('thread-priority')).toHaveText('high');
+  expect(state.lastPatchBody).toEqual({ priority: 'high' });
+
+  await page.reload();
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  await expect(page.getByTestId('thread-priority')).toHaveText('high');
+  await expect(page.getByTestId('triage-priority')).toHaveValue('high');
+});
+
+// 3. Assign to me shows the assignee; reload keeps it; unassign reverses it.
+test('US3: assign-to-me PATCHes the assignee id, shows it, and persists; unassign reverses', async ({
+  page,
+}) => {
+  const state = await installTriageStack(page);
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  // Seeded unassigned → the "unassigned" badge is shown.
+  await expect(page.getByTestId('thread-unassigned')).toBeVisible();
+
+  // Assign to me → PATCH {assignee_principal_id:'u1'} (the /me principal id).
+  await page.getByTestId('assign-to-me').click();
+  await expect(page.getByTestId('thread-unassigned')).toHaveCount(0);
+  expect(state.lastPatchBody).toEqual({ assignee_principal_id: 'u1' });
+
+  // Reload re-fetches the mutated ticket → still assigned (no unassigned badge).
+  await page.reload();
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  await expect(page.getByTestId('thread-unassigned')).toHaveCount(0);
+  // Assign-to-me is now disabled (already assigned to me); unassign is enabled.
+  await expect(page.getByTestId('assign-to-me')).toBeDisabled();
+  await expect(page.getByTestId('unassign')).toBeEnabled();
+
+  // Unassign → PATCH {assignee_principal_id:null} → the unassigned badge returns.
+  await page.getByTestId('unassign').click();
+  await expect(page.getByTestId('thread-unassigned')).toBeVisible();
+  expect(state.lastPatchBody).toEqual({ assignee_principal_id: null });
+
+  // Persisted: reload still shows unassigned.
+  await page.reload();
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  await expect(page.getByTestId('thread-unassigned')).toBeVisible();
+});
+
+// 4. Tag add PATCHes the full tag set and renders a new chip; persists on reload.
+test('US3: adding a tag PATCHes the full tag set, renders a chip, and persists', async ({
+  page,
+}) => {
+  const state = await installTriageStack(page);
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  // Seeded with no tags.
+  await expect(page.getByTestId('triage-chip')).toHaveCount(0);
+
+  // Type a tag + Enter → addTag() sends the FULL resulting set (replacement).
+  await page.getByTestId('triage-tag-input').fill('billing');
+  await page.getByTestId('triage-tag-input').press('Enter');
+
+  // A chip renders for the new tag (triage controls) and the header badge too.
+  await expect(page.getByTestId('triage-chip')).toHaveCount(1);
+  await expect(page.getByTestId('triage-chip')).toContainText('billing');
+  await expect(page.getByTestId('thread-tag')).toHaveText('billing');
+  expect(state.lastPatchBody).toEqual({ tags: ['billing'] });
+
+  // Reload re-fetches the mutated ticket → the tag survives.
+  await page.reload();
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  await expect(page.getByTestId('triage-chip')).toHaveCount(1);
+  await expect(page.getByTestId('triage-chip')).toContainText('billing');
+});
