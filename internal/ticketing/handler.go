@@ -335,7 +335,7 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errValidation("body_text required"))
 		return
 	}
-	m, err := h.svc.Reply(r.Context(), pid, bid, tid, ReplyInput{BodyText: body.BodyText, BodyHTML: body.BodyHTML})
+	m, err := h.svc.Reply(r.Context(), pid, bid, tid, ReplyInput(body))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -367,7 +367,7 @@ func (h *Handler) addNote(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errValidation("body_text required"))
 		return
 	}
-	m, err := h.svc.AddNote(r.Context(), pid, bid, tid, NoteInput{BodyText: body.BodyText})
+	m, err := h.svc.AddNote(r.Context(), pid, bid, tid, NoteInput(body))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
