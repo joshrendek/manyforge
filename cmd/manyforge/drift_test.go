@@ -15,10 +15,12 @@ import (
 
 	"github.com/manyforge/manyforge/internal/account"
 	"github.com/manyforge/manyforge/internal/authz"
+	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/tenancy"
+	"github.com/manyforge/manyforge/internal/ticketing"
 )
 
 // normalizePath collapses every `{param}` segment to `{}` and trims a trailing
@@ -38,9 +40,18 @@ func normalizePath(p string) string {
 	return out
 }
 
-// apiRoutes walks the production /api/v1 router and returns the set of
-// "METHOD /normalized/path" it serves. Handlers are mounted with zero-value
-// services — route registration never invokes them.
+// noop is an identity middleware. The drift test mounts route groups with no-op
+// middleware in place of the production rate-limiters / permission gate: route
+// registration is structural and never invokes the chain, so the gates' real
+// behavior is irrelevant here (it is covered by the per-handler tests).
+func noop(next http.Handler) http.Handler { return next }
+
+// apiRoutes walks the FULL production /api/v1 router — every module, including the
+// 002 inbound webhook and ticketing read slice — and returns the set of
+// "METHOD /normalized/path" it serves. It mounts routes through the SAME
+// mountAPIRoutes seam main uses, so the test's view of the route table cannot
+// drift from production. Handlers are built with zero-value services and middleware
+// is replaced with no-ops; route registration never invokes either.
 func apiRoutes(t *testing.T) map[string]bool {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
@@ -48,17 +59,17 @@ func apiRoutes(t *testing.T) map[string]bool {
 	if err != nil {
 		t.Fatalf("keyring: %v", err)
 	}
-	acctH := account.NewHandler(&account.Service{})
 	mux := httpx.NewRouter(ring)
-	mux.Route("/api/v1", func(r chi.Router) {
-		r.Group(func(p chi.Router) { acctH.PublicRoutes(p) })
-		r.Group(func(pr chi.Router) {
-			pr.Use(httpx.RequireAuth)
-			acctH.ProtectedRoutes(pr)
-			tenancy.NewHandler(&tenancy.Service{}).ProtectedRoutes(pr)
-			authz.NewHandler(&authz.Service{}).ProtectedRoutes(pr)
-			invitations.NewHandler(&invitations.Service{}).ProtectedRoutes(pr)
-		})
+	mountAPIRoutes(mux, apiHandlers{
+		account:      account.NewHandler(&account.Service{}),
+		tenancy:      tenancy.NewHandler(&tenancy.Service{}),
+		authz:        authz.NewHandler(&authz.Service{}),
+		invitations:  invitations.NewHandler(&invitations.Service{}),
+		ticketing:    ticketing.NewHandler(&ticketing.Service{}),
+		inboxWebhook: inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),
+		authLimit:    noop,
+		ingestLimit:  noop,
+		ticketsRead:  noop,
 	})
 
 	routes := map[string]bool{}
@@ -76,50 +87,84 @@ func apiRoutes(t *testing.T) map[string]bool {
 	return routes
 }
 
-// specRoutes returns the set of "METHOD /normalized/path" declared in the OpenAPI
-// contract.
-func specRoutes(t *testing.T) map[string]bool {
-	t.Helper()
+// specPath resolves an OpenAPI contract file relative to the repo root.
+func specPath(parts ...string) string {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
-	specPath := filepath.Join(root, "specs", "001-tenant-foundation", "contracts", "openapi.yaml")
-	raw, err := os.ReadFile(specPath)
+	return filepath.Join(append([]string{root}, parts...)...)
+}
+
+// specRoutesFrom returns the set of "METHOD /normalized/path" declared in the
+// OpenAPI contract at path.
+func specRoutesFrom(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read openapi: %v", err)
+		t.Fatalf("read openapi %s: %v", path, err)
 	}
 	var doc struct {
 		Paths map[string]map[string]yaml.Node `yaml:"paths"`
 	}
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse openapi: %v", err)
+		t.Fatalf("parse openapi %s: %v", path, err)
 	}
 	verbs := map[string]bool{"get": true, "post": true, "put": true, "patch": true, "delete": true}
 	out := map[string]bool{}
-	for path, ops := range doc.Paths {
+	for p, ops := range doc.Paths {
 		for verb := range ops {
 			if verbs[verb] {
-				out[strings.ToUpper(verb)+" "+normalizePath(path)] = true
+				out[strings.ToUpper(verb)+" "+normalizePath(p)] = true
 			}
 		}
 	}
 	return out
 }
 
-// TestOpenAPIDrift fails if the router and the OpenAPI contract disagree on which
-// operations exist (T082): an operation specced but not served, or served but not
-// documented. Param-name and trailing-slash differences are normalized away.
+// spec001Routes returns the operations declared in the spec-001 contract.
+func spec001Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	return specRoutesFrom(t, specPath("specs", "001-tenant-foundation", "contracts", "openapi.yaml"))
+}
+
+// spec002Routes returns the operations declared in the spec-002 contract.
+func spec002Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	return specRoutesFrom(t, specPath("specs", "002-support-desk", "contracts", "openapi.yaml"))
+}
+
+// TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
+// operations exist (T082): an operation specced (in spec 001) but not served, or an
+// operation served but documented in NEITHER spec. Param-name and trailing-slash
+// differences are normalized away.
+//
+// Direction 1 (spec→router) is checked against spec 001 only here, because some
+// spec-002 operations (US2 reply/note/inbox-management) are documented ahead of
+// their handlers; the US1 in-scope 002 operations are pinned by TestOpenAPIDrift002
+// (cmd/manyforge/drift_002_test.go, contract build tag).
+//
+// Direction 2 (router→spec) is checked against the UNION of both contracts so a
+// registered 002 route is not falsely flagged as undocumented while still catching
+// any route served by the router but documented in no contract at all.
 func TestOpenAPIDrift(t *testing.T) {
 	routes := apiRoutes(t)
-	spec := specRoutes(t)
+	spec001 := spec001Routes(t)
+
+	documented := map[string]bool{}
+	for op := range spec001 {
+		documented[op] = true
+	}
+	for op := range spec002Routes(t) {
+		documented[op] = true
+	}
 
 	var missing, undocumented []string
-	for op := range spec {
+	for op := range spec001 {
 		if !routes[op] {
 			missing = append(missing, op)
 		}
 	}
 	for op := range routes {
-		if !spec[op] {
+		if !documented[op] {
 			undocumented = append(undocumented, op)
 		}
 	}
@@ -127,9 +172,9 @@ func TestOpenAPIDrift(t *testing.T) {
 	sort.Strings(undocumented)
 
 	for _, op := range missing {
-		t.Errorf("spec drift: %q is in openapi.yaml but not served by the router", op)
+		t.Errorf("spec drift: %q is in 001 openapi.yaml but not served by the router", op)
 	}
 	for _, op := range undocumented {
-		t.Errorf("spec drift: %q is served by the router but not in openapi.yaml", op)
+		t.Errorf("spec drift: %q is served by the router but not in any openapi.yaml", op)
 	}
 }

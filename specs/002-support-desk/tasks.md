@@ -75,7 +75,7 @@ SMTP; assert one ticket + one requester (deduped by sender email). Replay the sa
 duplicate. Send to an unrouted address: no data written, response identical to the routable case.
 
 ### Tests for User Story 1 (write FIRST, must FAIL) ⚠️
-- [ ] T017 [P] [US1] Contract test for `POST /inbound/email/{provider}` (202 uniform for routed/unknown/duplicate; 401 bad signature; 413 over cap) wired into the OpenAPI-drift suite in `cmd/drift_test.go`
+- [X] T017 [P] [US1] Contract test for `POST /inbound/email/{provider}` (202 uniform for routed/unknown/duplicate; 401 bad signature; 413 over cap) wired into the OpenAPI-drift suite in `cmd/drift_test.go`
 - [X] T018 [P] [US1] Integration test `internal/inbox/ingest_integration_test.go` (testcontainers): webhook ingest → ticket+requester; SMTP ingest → same ticket shape; requester dedup within tenant; auto-provisioned system address routes
 - [X] T019 [P] [US1] Security pin `internal/security_regression/threading_idempotency_test.go`: replay same `message_id` → zero dup (SC-002); header threading 100% / 0% mis-thread (SC-003); forged reply token rejected (constant-time)
 - [X] T020 [P] [US1] Security pin `internal/security_regression/ingestion_scope_test.go`: `ingest_inbound_message` aborts on address/business mismatch and touches only the resolved business's rows (FR-017) + source-level `strings.Contains` pin on the single-business re-verification
