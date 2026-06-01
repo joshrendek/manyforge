@@ -252,6 +252,7 @@ func main() {
 		ingestLimit:  httpx.RateLimit(ingestIPLimiter, ingestIPKey),
 		ticketsRead:  httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
 		ticketsReply: httpx.RequirePermission(database, permResolve, "tickets.reply", businessIDFromPath),
+		ticketsWrite: httpx.RequirePermission(database, permResolve, "tickets.write", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -325,11 +326,13 @@ type apiHandlers struct {
 	// Group-level middleware. Each gates a route group exactly as main wires it:
 	// authLimit (per-IP auth abuse cap), ingestLimit (per-IP inbound ingest cap),
 	// ticketsRead (tickets.read permission gate for the US1 ticketing read slice),
-	// ticketsReply (tickets.reply gate for the US2 reply + note write slice).
+	// ticketsReply (tickets.reply gate for the US2 reply + note write slice),
+	// ticketsWrite (tickets.write gate for the US3 triage PATCH slice).
 	authLimit    func(http.Handler) http.Handler
 	ingestLimit  func(http.Handler) http.Handler
 	ticketsRead  func(http.Handler) http.Handler
 	ticketsReply func(http.Handler) http.Handler
+	ticketsWrite func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -373,6 +376,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(tw chi.Router) {
 				tw.Use(h.ticketsReply)
 				h.ticketing.WriteRoutes(tw)
+			})
+			// US3 ticketing triage slice: PATCH status/priority/tags/assignee, gated on
+			// tickets.write (migration-0015 catalog). Same RLS-bound 404-on-lacking-perm
+			// semantics as the read/write groups.
+			pr.Group(func(tw2 chi.Router) {
+				tw2.Use(h.ticketsWrite)
+				h.ticketing.TriageRoutes(tw2)
 			})
 		})
 	})

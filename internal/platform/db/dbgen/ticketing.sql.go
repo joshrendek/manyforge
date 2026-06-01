@@ -49,6 +49,22 @@ func (q *Queries) CountTicketMessages(ctx context.Context, arg CountTicketMessag
 	return count, err
 }
 
+const deleteTicketTags = `-- name: DeleteTicketTags :exec
+DELETE FROM ticket_tag WHERE ticket_id = $1 AND business_id = $2
+`
+
+type DeleteTicketTagsParams struct {
+	TicketID   uuid.UUID `json:"ticket_id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// DeleteTicketTags removes every tag row for a ticket — the first half of a
+// full-set tag replacement. Scoped to (ticket_id, business_id).
+func (q *Queries) DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsParams) error {
+	_, err := q.db.Exec(ctx, deleteTicketTags, arg.TicketID, arg.BusinessID)
+	return err
+}
+
 const getRequester = `-- name: GetRequester :one
 SELECT id, business_id, tenant_root_id, email, display_name, contact_id, first_seen_at, last_seen_at, created_at, updated_at FROM requester
 WHERE id = $1 AND business_id = $2
@@ -284,6 +300,30 @@ func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundM
 		&i.DeliveryError,
 	)
 	return i, err
+}
+
+const insertTicketTag = `-- name: InsertTicketTag :exec
+INSERT INTO ticket_tag (ticket_id, tag, business_id, tenant_root_id, created_at)
+VALUES ($1, $2, $3, $4, now())
+`
+
+type InsertTicketTagParams struct {
+	TicketID     uuid.UUID `json:"ticket_id"`
+	Tag          string    `json:"tag"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// InsertTicketTag inserts one tag for a ticket (the second half of tag
+// replacement). PK (ticket_id, tag); the service dedups before calling.
+func (q *Queries) InsertTicketTag(ctx context.Context, arg InsertTicketTagParams) error {
+	_, err := q.db.Exec(ctx, insertTicketTag,
+		arg.TicketID,
+		arg.Tag,
+		arg.BusinessID,
+		arg.TenantRootID,
+	)
+	return err
 }
 
 const listAttachmentsForMessages = `-- name: ListAttachmentsForMessages :many
@@ -738,4 +778,55 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateTicketPriority = `-- name: UpdateTicketPriority :exec
+UPDATE ticket SET priority = $4::ticket_priority, updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3
+`
+
+type UpdateTicketPriorityParams struct {
+	ID           uuid.UUID      `json:"id"`
+	BusinessID   uuid.UUID      `json:"business_id"`
+	TenantRootID uuid.UUID      `json:"tenant_root_id"`
+	Priority     TicketPriority `json:"priority"`
+}
+
+// UpdateTicketPriority sets a new priority (manual triage). Touches updated_at but
+// NEVER last_message_at. Scoped to (id, business_id, tenant_root_id).
+func (q *Queries) UpdateTicketPriority(ctx context.Context, arg UpdateTicketPriorityParams) error {
+	_, err := q.db.Exec(ctx, updateTicketPriority,
+		arg.ID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.Priority,
+	)
+	return err
+}
+
+const updateTicketStatus = `-- name: UpdateTicketStatus :exec
+
+UPDATE ticket SET status = $4::ticket_status, updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3
+`
+
+type UpdateTicketStatusParams struct {
+	ID           uuid.UUID    `json:"id"`
+	BusinessID   uuid.UUID    `json:"business_id"`
+	TenantRootID uuid.UUID    `json:"tenant_root_id"`
+	Status       TicketStatus `json:"status"`
+}
+
+// ---- US3 triage queries (T047) ----
+// UpdateTicketStatus sets a new status (manual triage / yqi new→open). Touches
+// updated_at but NEVER last_message_at — triage is not a message. Scoped to
+// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
+func (q *Queries) UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatusParams) error {
+	_, err := q.db.Exec(ctx, updateTicketStatus,
+		arg.ID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.Status,
+	)
+	return err
 }
