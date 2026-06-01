@@ -125,3 +125,79 @@ LIMIT sqlc.arg('lim');
 -- name: GetRequester :one
 SELECT * FROM requester
 WHERE id = $1 AND business_id = $2;
+
+-- ---- US2 write / threading queries ----
+
+-- GetThreadingParent loads the latest message on a ticket (any direction) — its
+-- message_id becomes the new outbound In-Reply-To; its references chain (+ its own
+-- id) becomes References.
+-- name: GetThreadingParent :one
+SELECT message_id, "references"
+FROM ticket_message
+WHERE ticket_id = $1 AND business_id = $2 AND tenant_root_id = $3
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- InsertOutboundMessage persists an agent reply as a pending-delivery outbound row.
+-- name: InsertOutboundMessage :one
+INSERT INTO ticket_message (
+    id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
+    message_id, in_reply_to, "references", body_text, body_html, delivery_state)
+VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending')
+RETURNING *;
+
+-- InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
+-- name: InsertNoteMessage :one
+INSERT INTO ticket_message (
+    id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
+    message_id, body_text, body_html)
+VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8)
+RETURNING *;
+
+-- BumpTicketActivity touches the denormalized last_message_at/updated_at after a
+-- new message; runs in the same tx as the message insert.
+-- name: BumpTicketActivity :exec
+UPDATE ticket SET last_message_at = now(), updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
+
+-- MarkMessageDelivered/MarkMessageFailed/GetMessageDeliveryState are scoped on
+-- (id, tenant_root_id) WITHOUT business_id on purpose: they are driven by the
+-- principal-less outbox-send / bounce worker, which holds the message id + tenant
+-- but no business predicate. Do NOT "fix" this by adding business_id — the worker
+-- has no business context to supply.
+-- name: MarkMessageDelivered :exec
+UPDATE ticket_message SET delivery_state = 'sent', delivery_error = NULL
+WHERE id = $1 AND tenant_root_id = $2;
+
+-- MarkMessageFailed records a delivery failure (see MarkMessageDelivered note on
+-- the tenant-only scoping).
+-- name: MarkMessageFailed :exec
+UPDATE ticket_message SET delivery_state = 'failed', delivery_error = $3
+WHERE id = $1 AND tenant_root_id = $2;
+
+-- GetMessageDeliveryState reads the delivery lifecycle for a message (see
+-- MarkMessageDelivered note on the tenant-only scoping).
+-- name: GetMessageDeliveryState :one
+SELECT delivery_state FROM ticket_message
+WHERE id = $1 AND tenant_root_id = $2;
+
+-- GetBusinessSystemInboundAddress loads the system (kind='system') inbound address
+-- for a business — the From/Reply-To routing base for outbound. US2 sends from the
+-- system identity only.
+-- name: GetBusinessSystemInboundAddress :one
+SELECT address FROM inbound_address
+WHERE business_id = $1 AND tenant_root_id = $2 AND kind = 'system'
+ORDER BY created_at ASC
+LIMIT 1;
+
+-- GetOutboundMessageForBounce correlates a bounce to the most recent outbound
+-- message to a recipient on a business, for surfacing the failure. Bounce intake
+-- is principal-less.
+-- name: GetOutboundMessageForBounce :one
+SELECT tm.id, tm.tenant_root_id
+FROM ticket_message tm
+JOIN ticket t ON t.id = tm.ticket_id AND t.tenant_root_id = tm.tenant_root_id
+JOIN requester rq ON rq.id = t.requester_id AND rq.tenant_root_id = t.tenant_root_id
+WHERE tm.direction = 'outbound' AND rq.email = $1 AND tm.tenant_root_id = $2
+ORDER BY tm.created_at DESC
+LIMIT 1;
