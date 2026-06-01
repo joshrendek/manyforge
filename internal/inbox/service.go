@@ -2,13 +2,18 @@ package inbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/db"
+	"github.com/manyforge/manyforge/internal/platform/events"
+	"github.com/manyforge/manyforge/internal/ticketing"
 )
 
 // Config holds the ingestion service's runtime knobs. ReplyTokenKey is the HMAC
@@ -32,11 +37,22 @@ type IngestResult struct {
 	Duplicate bool      // replay of an already-ingested message_id
 }
 
+// errNoRoute is the uniform sentinel for an inbound recipient that resolves to no
+// business (FR-003/SC-006). The webhook/SMTP adapters (later tasks) map it to the
+// SAME 202/250 success an actually-routed message gets — an unknown recipient
+// writes ZERO rows and is byte-identical to a routable one, so the response is
+// never an existence oracle. It is unexported: only this package distinguishes it.
+var errNoRoute = errors.New("inbox: recipient does not resolve to a business")
+
+// IsNoRoute reports whether err is the no-route sentinel, so an adapter can map a
+// dropped (unroutable) message to the same uniform success ack as a routed one
+// without importing the sentinel directly.
+func IsNoRoute(err error) bool { return errors.Is(err, errNoRoute) }
+
 // Service ingests inbound messages: it resolves the recipient to exactly one
 // business, threads the message onto a ticket, upserts the requester, stores
 // attachments, and enqueues the outbound notification — all through the audited,
-// business-scoped SECURITY DEFINER path. The real implementation lands in the
-// GREEN task (T024-T027); this is the RED-baseline stub.
+// business-scoped SECURITY DEFINER path.
 type Service struct {
 	db     *db.DB
 	blob   blob.Store
@@ -46,14 +62,247 @@ type Service struct {
 
 // NewService constructs the ingestion Service.
 func NewService(database *db.DB, store blob.Store, cfg Config, logger *slog.Logger) *Service {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{db: database, blob: store, cfg: cfg, logger: logger}
+}
+
+// sniffedAttachment is one attachment that passed the MIME-sniff allowlist and is
+// staged for storage. content_type is the SNIFFED type (the declared header is
+// never trusted, FR-007); blobKey is the tenant-scoped object key, assigned after
+// the recipient resolves so an unknown recipient writes nothing.
+type sniffedAttachment struct {
+	id          uuid.UUID
+	filename    string
+	contentType string // sniffed, allowlisted
+	size        int64
+	content     []byte
+	blobKey     string
 }
 
 // Ingest resolves, threads, and persists one inbound message.
 //
-// RED stub: returns a not-implemented error. The GREEN task (T024-T027) wires the
-// resolve_inbound_address / ingest_inbound_message DEFINER calls, requester upsert,
-// attachment sniff+store, and outbox enqueue to turn the failing suite green.
+// Security ordering (intentional):
+//  1. Parse (degrades safely; soft errors ignored).
+//  2. Synthesize a deterministic Message-ID for header-less mail (idempotency).
+//  3. MIME-SNIFF every attachment BEFORE any DB/blob write; a single disallowed or
+//     lying part rejects the WHOLE message with ZERO rows/blobs (FR-007/SC-007).
+//  4. Verify the plus/VERP reply token → p_hint_ticket (HMAC, server-key only).
+//  5. In ONE principal-less tx: resolve recipient (no-oracle on miss) → store
+//     sniffed attachments → ingest_inbound_message (DEFINER: scope re-assertion,
+//     requester upsert, threading, idempotent insert, attachments, audit) →
+//     enqueue the outbox event(s) in the SAME tx.
+//
+// An unknown recipient returns errNoRoute (see IsNoRoute) after writing nothing.
 func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, error) {
-	return IngestResult{}, errors.New("inbox: Ingest not implemented")
+	parsed, perr := Parse(msg.Raw)
+	if perr != nil {
+		// Soft parse failure: enmime recovered a usable (possibly empty) view. We
+		// proceed (FR: degrade safely) but record it for diagnostics.
+		s.logger.WarnContext(ctx, "inbox: parse degraded", "err", perr, "provider", msg.Provider)
+	}
+
+	// MIME-sniff every attachment FIRST, before any DB or blob write. A disallowed
+	// or lying part rejects the whole message; nothing is persisted (FR-007/SC-007).
+	staged, err := s.sniffAttachments(parsed.Attachments)
+	if err != nil {
+		return IngestResult{}, err
+	}
+
+	// HMAC-verified reply-token hint (nil when absent/forged); the address token is
+	// stripped during resolution below.
+	normalizedAddr, plusToken := normalizeRecipient(msg.EnvelopeRecipient)
+	hint := hintTicket(plusToken, s.cfg.ReplyTokenKey)
+
+	// Sender identity for the requester upsert (done inside the DEFINER function).
+	senderEmail := parsed.From.Address
+	if senderEmail == "" {
+		senderEmail = msg.EnvelopeSender
+	}
+	senderName := nilIfEmpty(parsed.From.Name)
+
+	messageID := resolveMessageID(parsed, uuid.Nil, senderEmail) // tenant filled in after resolve
+
+	var result IngestResult
+	txErr := s.db.WithTx(ctx, func(tx pgx.Tx) error {
+		r, err := resolveRecipient(ctx, tx, normalizedAddr)
+		if err != nil {
+			return err // errNoRoute (no rows written) or a real DB error
+		}
+
+		// Now that we know the tenant, the synthetic id must be tenant-scoped so the
+		// same header-less message replayed into this tenant collides (idempotency).
+		if parsed.MessageID == "" {
+			messageID = resolveMessageID(parsed, r.tenantRootID, senderEmail)
+		}
+
+		// Store sniffed-OK attachment bytes AFTER resolve (unknown recipients write
+		// nothing) under tenant-scoped keys. The DB attachment rows are written by
+		// the DEFINER function from the metadata we pass.
+		attachmentsJSON, err := s.storeAttachments(ctx, r, staged)
+		if err != nil {
+			return err
+		}
+
+		authResults, err := json.Marshal(map[string]string{
+			"spf":   parsed.Auth.SPF,
+			"dkim":  parsed.Auth.DKIM,
+			"dmarc": parsed.Auth.DMARC,
+		})
+		if err != nil {
+			return fmt.Errorf("inbox: marshal auth_results: %w", err)
+		}
+
+		// A new ticket needs a reply token minted up front (the DEFINER persists it
+		// only when it actually creates a ticket). It signs the row's id, but we
+		// don't know that id yet; the function instead persists this token verbatim
+		// and the id is recoverable via VerifyReplyToken using the SAME key. We mint
+		// a token over a fresh ticket-ref so an outbound reply can carry it; on a
+		// brand-new ticket the function writes it to ticket.reply_token.
+		replyToken := ticketing.SignReplyToken(uuid.New(), s.cfg.ReplyTokenKey)
+
+		var hintArg *uuid.UUID
+		if hint != uuid.Nil {
+			h := hint
+			hintArg = &h
+		}
+
+		var out IngestResult
+		err = tx.QueryRow(ctx, `
+			SELECT out_ticket_id, out_message_id, out_created, out_duplicate
+			FROM ingest_inbound_message(
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+				$11, $12, $13, $14, $15, $16, $17)`,
+			r.businessID,                 // $1  p_business_id
+			r.tenantRootID,               // $2  p_tenant_root_id
+			normalizedAddr,               // $3  p_address
+			senderEmail,                  // $4  p_sender_email
+			senderName,                   // $5  p_sender_name
+			parsed.Subject,               // $6  p_subject
+			messageID,                    // $7  p_message_id
+			nilIfEmpty(parsed.InReplyTo), // $8  p_in_reply_to
+			parsed.References,            // $9  p_references (text[])
+			parsed.TextBody,              // $10 p_body_text
+			nilIfEmpty(parsed.HTMLBody),  // $11 p_body_html
+			authResults,                  // $12 p_auth_results (jsonb)
+			parsed.Auto.IsAutoReply,      // $13 p_is_auto_reply
+			hintArg,                      // $14 p_hint_ticket (nullable uuid)
+			replyToken,                   // $15 p_reply_token
+			attachmentsJSON,              // $16 p_attachments (jsonb)
+			"inbox:"+msg.Provider,        // $17 p_source
+		).Scan(&out.TicketID, &out.MessageID, &out.Created, &out.Duplicate)
+		if err != nil {
+			return fmt.Errorf("inbox: ingest_inbound_message: %w", err)
+		}
+
+		// A replay is an idempotent no-op: no new rows, no new outbox event.
+		if out.Duplicate {
+			result = out
+			return nil
+		}
+
+		// Enqueue the outbox event(s) in the SAME tx (the function does NOT touch the
+		// outbox). A brand-new ticket fans out ticket.created; every fresh inbound
+		// message fans out message.received so agents are notified.
+		if out.Created {
+			if err := events.Enqueue(ctx, tx, r.tenantRootID, "ticket.created", map[string]any{
+				"ticket_id":   out.TicketID,
+				"business_id": r.businessID,
+				"message_id":  out.MessageID,
+			}); err != nil {
+				return err
+			}
+		}
+		if err := events.Enqueue(ctx, tx, r.tenantRootID, "message.received", map[string]any{
+			"ticket_id":   out.TicketID,
+			"business_id": r.businessID,
+			"message_id":  out.MessageID,
+		}); err != nil {
+			return err
+		}
+
+		result = out
+		return nil
+	})
+	if txErr != nil {
+		return IngestResult{}, txErr
+	}
+	return result, nil
+}
+
+// sniffAttachments MIME-sniffs every parsed attachment against the blob allowlist
+// (FR-007) and enforces the per-attachment size cap, BEFORE any DB/blob write. A
+// single disallowed/lying part (declared type ignored) or over-cap part fails the
+// whole message so nothing is persisted (SC-007). Zero-byte parts are skipped (the
+// attachment table CHECK requires size > 0).
+func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachment, error) {
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	out := make([]sniffedAttachment, 0, len(parts))
+	for _, p := range parts {
+		if len(p.Content) == 0 {
+			continue // nothing to store; CHECK (size > 0) would reject anyway
+		}
+		if s.cfg.AttachmentMaxBytes > 0 && int64(len(p.Content)) > s.cfg.AttachmentMaxBytes {
+			return nil, fmt.Errorf("inbox: attachment %q exceeds size cap: %w", p.FileName, blob.ErrUnsupportedType)
+		}
+		ct, err := blob.Sniff(p.Content) // declared type ignored; bytes decide
+		if err != nil {
+			return nil, fmt.Errorf("inbox: attachment %q rejected: %w", p.FileName, err)
+		}
+		out = append(out, sniffedAttachment{
+			id:          uuid.New(),
+			filename:    p.FileName,
+			contentType: ct,
+			size:        int64(len(p.Content)),
+			content:     p.Content,
+		})
+	}
+	return out, nil
+}
+
+// storeAttachments writes each staged attachment's bytes to object storage under a
+// tenant-scoped key (so an object never crosses tenants) and returns the metadata
+// JSON array the DEFINER function inserts as attachment rows. Bytes are stored
+// only AFTER the recipient resolved, so an unknown recipient writes nothing. When
+// no blob store is configured (attachments disabled), staged parts are dropped.
+func (s *Service) storeAttachments(ctx context.Context, r route, staged []sniffedAttachment) ([]byte, error) {
+	if len(staged) == 0 {
+		return []byte("[]"), nil
+	}
+	if s.blob == nil {
+		return []byte("[]"), nil
+	}
+	meta := make([]map[string]any, 0, len(staged))
+	for i := range staged {
+		// ticketID is not yet known (the DEFINER may create it); key off the message
+		// scope instead — the attachment id keeps the key unique within the tenant.
+		key := blob.Key(r.tenantRootID, r.businessID, staged[i].id, staged[i].id)
+		if err := s.blob.Put(ctx, key, staged[i].content, staged[i].contentType); err != nil {
+			return nil, fmt.Errorf("inbox: store attachment: %w", err)
+		}
+		staged[i].blobKey = key
+		meta = append(meta, map[string]any{
+			"blob_key":     key,
+			"filename":     staged[i].filename,
+			"content_type": staged[i].contentType,
+			"size":         staged[i].size,
+		})
+	}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: marshal attachments: %w", err)
+	}
+	return raw, nil
+}
+
+// nilIfEmpty maps "" to a nil *string so an absent header is stored as SQL NULL
+// (not an empty string), matching the nullable columns' intent.
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
