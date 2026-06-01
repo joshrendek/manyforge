@@ -13,6 +13,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/events"
 )
 
 // MaxDepth bounds hierarchy nesting (FR-004; configurable later).
@@ -143,6 +144,15 @@ func (s *Service) CreateMasterBusiness(ctx context.Context, creatorPrincipalID u
 		}); err != nil {
 			return err
 		}
+		// Emit business.created in the SAME tx so inbox auto-provisions the zero-config
+		// system inbound address (FR-001). The outbox decouples the two modules —
+		// tenancy does NOT import inbox; inbox subscribes to this topic.
+		if err := events.Enqueue(ctx, tx, bizID, events.TopicBusinessCreated, map[string]any{
+			"business_id":    bizID,
+			"tenant_root_id": bizID,
+		}); err != nil {
+			return err
+		}
 		out = Business{ID: bizID, TenantRootID: bizID, Name: name, Status: "active"}
 		return nil
 	})
@@ -194,6 +204,14 @@ func (s *Service) CreateSubBusiness(ctx context.Context, principalID, parentID u
 			return err
 		}
 		if err := auditBusiness(ctx, tx, principalID, childID, parent.TenantRootID, "business.created", map[string]any{"name": name, "parent_id": parentID.String()}); err != nil {
+			return err
+		}
+		// Emit business.created in the SAME tx so inbox auto-provisions the sub-business's
+		// zero-config system inbound address (FR-001); tenant_root_id is the parent's root.
+		if err := events.Enqueue(ctx, tx, parent.TenantRootID, events.TopicBusinessCreated, map[string]any{
+			"business_id":    childID,
+			"tenant_root_id": parent.TenantRootID,
+		}); err != nil {
 			return err
 		}
 		p := parentID

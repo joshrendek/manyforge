@@ -120,6 +120,18 @@ func main() {
 		InboundSystemDomain: cfg.InboundSystemDomain,
 	}, logger)
 
+	// FR-001 zero-config inbound: every business gets a system inbound address on
+	// creation. tenancy emits business.created (in the create tx, via the outbox); the
+	// inbox Provisioner — subscribed here, BEFORE the worker starts — provisions the
+	// address inside the worker's tx. This avoids a tenancy→inbox import cycle. The
+	// handler is idempotent (deterministic keyed localpart + ON CONFLICT DO NOTHING),
+	// safe under at-least-once delivery.
+	inboxProvisioner := inbox.NewProvisioner(database, inbox.ProvisionConfig{
+		SystemDomain: cfg.InboundSystemDomain,
+		SystemKey:    cfg.InboundSystemAddrSecret,
+	}, logger)
+	eventBus.Subscribe(events.TopicBusinessCreated, inboxProvisioner.Handle)
+
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
