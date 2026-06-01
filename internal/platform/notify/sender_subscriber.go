@@ -59,18 +59,21 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 	}
 
 	// One round-trip via the principal-less DEFINER: current delivery_state (for the
-	// idempotency guard) + the business's system inbound address (From / VERP Reply-To
-	// base). The function self-asserts the message belongs to (business_id, tenant);
-	// zero rows ⇒ message or system address not found. A NULL delivery_state (column
-	// nullable for inbound/note rows) scans into a nil *string.
+	// idempotency guard), the business's system inbound address (From / VERP Reply-To
+	// base), and the reply body (authoritative in the message row, NOT the outbox
+	// payload). The function self-asserts the message belongs to (business_id, tenant);
+	// zero rows ⇒ message or system address not found. NULL delivery_state / body
+	// columns scan into nil *string.
 	var (
 		deliveryState *string
 		sysAddr       string
+		bodyText      *string
+		bodyHTML      *string
 	)
 	row := tx.QueryRow(ctx,
-		"SELECT delivery_state, system_address FROM get_send_context($1, $2, $3)",
+		"SELECT delivery_state, system_address, body_text, body_html FROM get_send_context($1, $2, $3)",
 		p.MessageRowID, p.BusinessID, e.TenantRootID)
-	if err := row.Scan(&deliveryState, &sysAddr); err != nil {
+	if err := row.Scan(&deliveryState, &sysAddr, &bodyText, &bodyHTML); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No such outbound message for this business/tenant, or the business has no
 			// system inbound address. Either is non-retryable (a replay would behave
@@ -98,9 +101,21 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 		ReplyTo:      replyTo,
 		EnvelopeFrom: replyTo, // VERP return-path so DSNs/bounces are correlatable
 	}
+	if bodyText != nil {
+		mail.BodyText = *bodyText
+	}
+	if bodyHTML != nil {
+		mail.BodyHTML = *bodyHTML
+	}
 	if p.InReplyTo != nil {
 		mail.InReplyTo = *p.InReplyTo
 	}
+	// Auto-Submitted is intentionally NOT set. Per RFC 3834 the header marks
+	// machine-generated mail; a US2 reply is human-authored (an agent composed it), so
+	// stamping "auto-submitted" would be incorrect and could cause well-behaved
+	// recipients to suppress their own auto-responses. Loop cooperation instead rides
+	// our stable Reply-To token (threads a reply back rather than spawning a new
+	// ticket), and the inbound side's is_auto_reply guard bounds machine loops.
 
 	if serr := s.Sender.Send(ctx, mail); serr != nil {
 		if errors.Is(serr, ErrSuppressed) {
