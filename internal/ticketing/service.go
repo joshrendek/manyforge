@@ -9,15 +9,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/events"
+	"github.com/manyforge/manyforge/internal/platform/mailer"
+	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 )
 
 // Service implements the ticketing read slice (US1, T031). Every method takes the
@@ -27,7 +32,17 @@ import (
 // neither RLS nor the predicate alone is load-bearing. Unknown / other-business /
 // unauthorized all collapse to ErrNotFound (→ 404, no existence oracle).
 type Service struct {
-	DB *db.DB
+	DB              *db.DB
+	ReplyTokenKey   []byte                    // signs the VERP Reply-To token
+	SystemDomain    string                    // outbound mail domain for minted Message-IDs
+	OutboundLimiter ratelimit.Limiter         // nil ⇒ no limit (tests/dev)
+	Suppression     mailer.SuppressionChecker // nil ⇒ no pre-check (worker still gates)
+}
+
+// ReplyInput is the validated reply payload for Reply.
+type ReplyInput struct {
+	BodyText string
+	BodyHTML *string
 }
 
 // TicketFilter is the optional facet set for ListTickets. A nil/zero field
@@ -90,7 +105,10 @@ type Message struct {
 	SPFResult         string
 	DKIMResult        string
 	DMARCResult       string
-	CreatedAt         time.Time
+	// DeliveryState is the outbound lifecycle (pending|sent|failed); nil for
+	// inbound messages and notes. delivery_error is intentionally NEVER exposed.
+	DeliveryState *string
+	CreatedAt     time.Time
 }
 
 // ListTickets returns a keyset page of the business's tickets, newest activity
@@ -177,6 +195,142 @@ func (s *Service) GetTicket(ctx context.Context, principalID, businessID, ticket
 		return Ticket{}, mapErr(err)
 	}
 	return out, nil
+}
+
+// Reply sends an outbound reply on a ticket (FR-008). One transaction: own-check
+// the ticket, pre-check recipient suppression, apply the outbound rate limit,
+// insert the outbound message (delivery_state='pending') threaded to the latest
+// message, bump last_message_at, write an in-tx audit entry (FR-014), and enqueue
+// the 'ticket.replied' outbox event the notify worker drains to actually send mail.
+// Dual-enforced (WithPrincipal RLS + business_id predicate); unknown/foreign/
+// unauthorized ticket ⇒ ErrNotFound (no oracle). Suppressed recipient ⇒ ErrConflict;
+// rate-limited ⇒ ErrRateLimited; empty body ⇒ ErrValidation.
+func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID uuid.UUID, in ReplyInput) (Message, error) {
+	if len(in.BodyText) == 0 {
+		return Message{}, fmt.Errorf("ticketing: empty reply: %w", errs.ErrValidation)
+	}
+	var out Message
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+
+		// Load + own-check the ticket (ErrNoRows ⇒ ErrNotFound, no oracle).
+		tk, terr := q.GetTicket(ctx, dbgen.GetTicketParams{ID: ticketID, BusinessID: businessID})
+		if terr != nil {
+			return terr
+		}
+
+		// Recipient email: the ticket's requester (same business/tenant scope).
+		req, rerr := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: ticketID, BusinessID: businessID})
+		if rerr != nil {
+			return rerr
+		}
+		recipient := req.Email
+
+		// Recipient suppression pre-check (the worker re-checks at send time).
+		if s.Suppression != nil {
+			suppressed, serr := s.Suppression.IsSuppressed(ctx, recipient)
+			if serr != nil {
+				return serr
+			}
+			if suppressed {
+				return fmt.Errorf("ticketing: recipient suppressed: %w", errs.ErrConflict)
+			}
+		}
+
+		// Outbound rate limit (FR-020/T041): per-business AND per-recipient. The
+		// recipient key is tenant-scoped so the same email on two tenants is independent.
+		if s.OutboundLimiter != nil {
+			// Note: with ||, the biz token is spent even if the rcpt check then denies —
+			// a benign, intentional over-count (we don't pre-peek to avoid a second code
+			// path); both denials return the same 429 (no oracle).
+			if !s.OutboundLimiter.Allow("ob:biz:"+businessID.String()) ||
+				!s.OutboundLimiter.Allow("ob:rcpt:"+tk.TenantRootID.String()+":"+recipient) {
+				return fmt.Errorf("ticketing: outbound rate limit: %w", errs.ErrRateLimited)
+			}
+		}
+
+		// Threading headers from the latest message on the ticket.
+		parent, perr := q.GetThreadingParent(ctx, dbgen.GetThreadingParentParams{
+			TicketID: ticketID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+		})
+		if perr != nil && !errors.Is(perr, pgx.ErrNoRows) {
+			return perr
+		}
+		var inReplyTo *string
+		refs := []string{}
+		if perr == nil {
+			pid := parent.MessageID
+			inReplyTo = &pid
+			refs = append(append([]string{}, parent.References...), parent.MessageID)
+		}
+
+		msgID, gerr := uuid.NewV7()
+		if gerr != nil {
+			return gerr
+		}
+		rfcMessageID := msgID.String() + "@" + s.SystemDomain
+
+		row, ierr := q.InsertOutboundMessage(ctx, dbgen.InsertOutboundMessageParams{
+			ID: msgID, TicketID: ticketID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+			AuthorPrincipalID: db.PGUUID(principalID), MessageID: rfcMessageID,
+			InReplyTo: inReplyTo, References: refs,
+			BodyText: &in.BodyText, BodyHtml: in.BodyHTML,
+		})
+		if ierr != nil {
+			return ierr
+		}
+		if berr := q.BumpTicketActivity(ctx, dbgen.BumpTicketActivityParams{
+			ID: ticketID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+		}); berr != nil {
+			return berr
+		}
+
+		// Audit-in-tx (FR-014) via the shared helper.
+		targetType := "ticket_message"
+		if aerr := audit.Write(ctx, tx, audit.Entry{
+			BusinessID:       &businessID,
+			TenantRootID:     &tk.TenantRootID,
+			ActorPrincipalID: &principalID,
+			Action:           "ticket.replied",
+			TargetType:       &targetType,
+			TargetID:         &msgID,
+			NewValue:         map[string]any{"ticket_id": ticketID, "direction": "outbound"},
+		}); aerr != nil {
+			return aerr
+		}
+
+		// Outbox event — the worker builds the threaded Mail and dispatches it. The
+		// reply_token signs the TICKET id so an inbound reply threads back (R4).
+		replyToken := SignReplyToken(ticketID, s.ReplyTokenKey)
+		if eerr := events.Enqueue(ctx, tx, tk.TenantRootID, events.TopicTicketReplied, map[string]any{
+			"message_row_id": msgID,
+			"ticket_id":      ticketID,
+			"business_id":    businessID,
+			"recipient":      recipient,
+			"subject":        replySubject(tk.Subject),
+			"rfc_message_id": rfcMessageID,
+			"in_reply_to":    inReplyTo,
+			"references":     refs,
+			"reply_token":    replyToken,
+		}); eerr != nil {
+			return eerr
+		}
+
+		out = toMessage(row, nil)
+		return nil
+	})
+	if err != nil {
+		return Message{}, mapErr(err)
+	}
+	return out, nil
+}
+
+// replySubject ensures a "Re: " prefix so the reply continues the customer thread.
+func replySubject(s string) string {
+	if !strings.HasPrefix(strings.ToLower(s), "re:") {
+		return "Re: " + s
+	}
+	return s
 }
 
 // ListMessages returns a keyset page of a ticket's thread, oldest first, with
@@ -403,8 +557,19 @@ func toMessage(m dbgen.TicketMessage, atts []Attachment) Message {
 		SPFResult:         spf,
 		DKIMResult:        dkim,
 		DMARCResult:       dmarc,
+		DeliveryState:     deliveryStatePtr(m.DeliveryState),
 		CreatedAt:         m.CreatedAt,
 	}
+}
+
+// deliveryStatePtr maps the nullable delivery_state enum onto an optional string
+// for the API view (NULL ⇒ nil). delivery_error is never surfaced.
+func deliveryStatePtr(s dbgen.NullMessageDeliveryState) *string {
+	if !s.Valid {
+		return nil
+	}
+	v := string(s.MessageDeliveryState)
+	return &v
 }
 
 // projectAuthResults maps the stored {spf,dkim,dmarc} verdict triple onto the
@@ -507,7 +672,8 @@ func mapErr(err error) error {
 		return nil
 	case errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("ticketing: not found: %w", errs.ErrNotFound)
-	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrNotFound):
+	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrNotFound),
+		errors.Is(err, errs.ErrConflict), errors.Is(err, errs.ErrRateLimited):
 		return err
 	default:
 		return fmt.Errorf("ticketing: query: %w", err)

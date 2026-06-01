@@ -44,6 +44,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		WriteJSON(w, http.StatusConflict, ErrorBody{Code: "CONFLICT", Message: "conflict"})
 	case errors.Is(err, errs.ErrNotFound), errors.Is(err, errs.ErrForbidden):
 		WriteJSON(w, http.StatusNotFound, ErrorBody{Code: "NOT_FOUND", Message: "not found"})
+	case errors.Is(err, errs.ErrRateLimited):
+		WriteJSON(w, http.StatusTooManyRequests, ErrorBody{Code: "RATE_LIMITED", Message: "rate limited"})
 	default:
 		slog.ErrorContext(r.Context(), "unhandled error", "err", err, "path", r.URL.Path)
 		WriteJSON(w, http.StatusInternalServerError, ErrorBody{Code: "INTERNAL", Message: "internal error"})

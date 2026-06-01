@@ -18,6 +18,11 @@ const (
 	// inbox can auto-provision its zero-config system inbound address (FR-001). The
 	// payload carries {business_id, tenant_root_id}.
 	TopicBusinessCreated = "business.created"
+
+	// TopicTicketReplied is emitted in the reply tx; the notify worker drains it to
+	// dispatch the threaded outbound email. Payload carries the message row id,
+	// recipient, subject, and threading headers.
+	TopicTicketReplied = "ticket.replied"
 )
 
 // Event is a drained outbox row handed to subscribers.
