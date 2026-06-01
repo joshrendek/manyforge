@@ -156,13 +156,19 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			return fmt.Errorf("inbox: marshal auth_results: %w", err)
 		}
 
-		// A new ticket needs a reply token minted up front (the DEFINER persists it
-		// only when it actually creates a ticket). It signs the row's id, but we
-		// don't know that id yet; the function instead persists this token verbatim
-		// and the id is recoverable via VerifyReplyToken using the SAME key. We mint
-		// a token over a fresh ticket-ref so an outbound reply can carry it; on a
-		// brand-new ticket the function writes it to ticket.reply_token.
-		replyToken := ticketing.SignReplyToken(uuid.New(), s.cfg.ReplyTokenKey)
+		// A new ticket needs both its id and a reply token minted up front. We
+		// generate the id here (uuid v7, so tickets stay time-ordered) and the
+		// DEFINER inserts the new ticket with exactly this id — so the reply token
+		// we sign over it is coherent with the row's id, and a later inbound reply
+		// carrying that token recovers the SAME id via VerifyReplyToken. The token
+		// is persisted only when the function actually opens a new ticket.
+		// (manyforge-btv: previously a throwaway uuid.New() was signed, never the
+		// row id, so the reply-token/VERP threading fallback matched no ticket.)
+		ticketID, err := uuid.NewV7()
+		if err != nil {
+			return fmt.Errorf("inbox: mint ticket id: %w", err)
+		}
+		replyToken := ticketing.SignReplyToken(ticketID, s.cfg.ReplyTokenKey)
 
 		var hintArg *uuid.UUID
 		if hint != uuid.Nil {
@@ -175,7 +181,7 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			SELECT out_ticket_id, out_message_id, out_created, out_duplicate
 			FROM ingest_inbound_message(
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-				$11, $12, $13, $14, $15, $16, $17)`,
+				$11, $12, $13, $14, $15, $16, $17, $18)`,
 			r.businessID,                 // $1  p_business_id
 			r.tenantRootID,               // $2  p_tenant_root_id
 			normalizedAddr,               // $3  p_address
@@ -190,9 +196,10 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			authResults,                  // $12 p_auth_results (jsonb)
 			parsed.Auto.IsAutoReply,      // $13 p_is_auto_reply
 			hintArg,                      // $14 p_hint_ticket (nullable uuid)
-			replyToken,                   // $15 p_reply_token
-			attachmentsJSON,              // $16 p_attachments (jsonb)
-			"inbox:"+msg.Provider,        // $17 p_source
+			ticketID,                     // $15 p_ticket_id (id for a new ticket)
+			replyToken,                   // $16 p_reply_token
+			attachmentsJSON,              // $17 p_attachments (jsonb)
+			"inbox:"+msg.Provider,        // $18 p_source
 		).Scan(&out.TicketID, &out.MessageID, &out.Created, &out.Duplicate)
 		if err != nil {
 			return fmt.Errorf("inbox: ingest_inbound_message: %w", err)
