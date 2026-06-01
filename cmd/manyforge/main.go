@@ -102,7 +102,6 @@ func main() {
 	tenH := tenancy.NewHandler(tenSvc)
 	authzH := authz.NewHandler(authzSvc)
 	invH := invitations.NewHandler(invSvc)
-	ticketH := ticketing.NewHandler(ticketSvc)
 
 	// PermissionResolver adapter over authz.Resolve. RequirePermission is the first
 	// consumer (US1 ticketing): it resolves the caller's effective perms at the
@@ -112,6 +111,10 @@ func main() {
 	permResolve := func(ctx context.Context, tx pgx.Tx, pid, bid uuid.UUID) (httpx.Permissions, error) {
 		return authz.Resolve(ctx, tx, pid, bid)
 	}
+	// The ticketing handler also takes the resolver + db for the CONDITIONAL
+	// tickets.assign gate on triage (the route is tickets.write; an assignee change
+	// additionally requires tickets.assign per the OpenAPI), resolved no-oracle (404).
+	ticketH := ticketing.NewHandler(ticketSvc, database, permResolve)
 	// businessIDFromPath reads the {id} path param. A malformed id is treated as a
 	// 404 by RequirePermission (no oracle), consistent with the read handlers.
 	businessIDFromPath := func(r *http.Request) (uuid.UUID, error) {
