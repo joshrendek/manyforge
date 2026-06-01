@@ -19,8 +19,11 @@ sec-test:
 	$(GO) test -tags integration -timeout 600s ./internal/security_regression/...
 
 # All integration tests (testcontainers; Docker required). Superset of sec-test.
+# -p 1 serializes package test binaries: each spins up its own ephemeral Postgres
+# container, and running many concurrently saturates the Docker daemon (intermittent
+# "connection refused" on container startup). Sequential is slower but deterministic.
 int-test:
-	$(GO) test -tags integration -timeout 600s ./...
+	$(GO) test -tags integration -timeout 600s -p 1 ./...
 
 # Shared-layer interface contracts (InboundSource, Blob, Notifier, event bus)
 # plus the support OpenAPI-drift checks. Tag-gated so it can grow independently

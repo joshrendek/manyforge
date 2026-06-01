@@ -124,7 +124,7 @@ func main() {
 	// creation. tenancy emits business.created (in the create tx, via the outbox); the
 	// inbox Provisioner — subscribed here, BEFORE the worker starts — provisions the
 	// address inside the worker's tx. This avoids a tenancy→inbox import cycle. The
-	// handler is idempotent (deterministic keyed localpart + ON CONFLICT DO NOTHING),
+	// handler is idempotent (deterministic keyed localpart + savepoint-guarded INSERT),
 	// safe under at-least-once delivery.
 	inboxProvisioner := inbox.NewProvisioner(database, inbox.ProvisionConfig{
 		SystemDomain: cfg.InboundSystemDomain,
