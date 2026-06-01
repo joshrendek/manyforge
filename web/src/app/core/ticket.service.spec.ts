@@ -83,4 +83,65 @@ describe('TicketService', () => {
     expect(req.request.method).toBe('GET');
     req.flush({} as Requester);
   });
+
+  it('reply() POSTs to .../reply with body_text and returns the TicketMessage', () => {
+    let out: TicketMessage | undefined;
+    svc.reply(biz, 't1', { body_text: 'Hello' }).subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1/reply`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ body_text: 'Hello' });
+    const msg: TicketMessage = {
+      id: 'm1',
+      ticket_id: 't1',
+      direction: 'outbound',
+      message_id: null,
+      in_reply_to: null,
+      references: [],
+      author_principal_id: 'p1',
+      body_text: 'Hello',
+      body_html: null,
+      attachments: [],
+      spf_result: 'unknown',
+      dkim_result: 'unknown',
+      dmarc_result: 'unknown',
+      delivery_state: 'pending',
+      created_at: '2024-01-01T00:00:00Z',
+    };
+    req.flush(msg);
+    expect(out).toEqual(msg);
+  });
+
+  it('reply() includes optional body_html when provided', () => {
+    svc.reply(biz, 't1', { body_text: 'Hi', body_html: '<p>Hi</p>' }).subscribe();
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1/reply`);
+    expect(req.request.body).toEqual({ body_text: 'Hi', body_html: '<p>Hi</p>' });
+    req.flush({} as TicketMessage);
+  });
+
+  it('addNote() POSTs to .../note with body_text and returns the TicketMessage', () => {
+    let out: TicketMessage | undefined;
+    svc.addNote(biz, 't1', { body_text: 'Internal note content' }).subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1/note`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ body_text: 'Internal note content' });
+    const msg: TicketMessage = {
+      id: 'm2',
+      ticket_id: 't1',
+      direction: 'note',
+      message_id: null,
+      in_reply_to: null,
+      references: [],
+      author_principal_id: 'p1',
+      body_text: 'Internal note content',
+      body_html: null,
+      attachments: [],
+      spf_result: 'unknown',
+      dkim_result: 'unknown',
+      dmarc_result: 'unknown',
+      delivery_state: null,
+      created_at: '2024-01-01T00:00:00Z',
+    };
+    req.flush(msg);
+    expect(out).toEqual(msg);
+  });
 });
