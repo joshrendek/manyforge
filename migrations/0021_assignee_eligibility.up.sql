@@ -25,7 +25,7 @@ CREATE FUNCTION is_eligible_assignee(
     p_business_id      uuid,
     p_assignee         uuid
 ) RETURNS boolean
-LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
     SELECT
         -- (1) acting principal must be authorized over the ticket's business …
         EXISTS (SELECT 1 FROM authorized_businesses(p_acting_principal) ab
