@@ -30,6 +30,15 @@ func TestOracleDefensesPinned(t *testing.T) {
 		{"smtp rcpt single reject", "../inbox/smtp.go", "var errGenericReject = &smtp.SMTPError{"},
 		{"smtp rcpt no-oracle return", "../inbox/smtp.go", "return errGenericReject"},
 		{"smtp canroute swallows detail", "../inbox/smtp.go", "func (s *Service) CanRoute("},
+		// Ingest rate limiting (FR-020) must NOT become a recipient-existence oracle.
+		// The webhook per-recipient cap is keyed on the NORMALIZED recipient and run
+		// BEFORE Ingest (which resolves the recipient), so known/unknown throttle
+		// identically. The SMTP per-IP cap is keyed on the connection IP and returns
+		// the generic temp-failure errRateLimited — never varied by recipient.
+		// MF-002-INGEST-SCOPE / FR-020.
+		{"webhook per-recipient key normalized", "../inbox/handler.go", `h.recipientLimiter.Allow("rcpt:" + key)`},
+		{"smtp per-ip key, not recipient", "../inbox/smtp.go", `s.limiter.Allow("ip:"+s.remoteIP)`},
+		{"smtp rate-limit generic temp", "../inbox/smtp.go", "return errRateLimited"},
 	}
 	for _, c := range cases {
 		if !strings.Contains(mustRead(t, c.path), c.fragment) {

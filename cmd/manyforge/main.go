@@ -170,15 +170,32 @@ func main() {
 	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
 
+	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public
+	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,
+	// shared across the webhook AND SMTP paths so a given source/recipient cannot
+	// evade one transport by hopping to the other:
+	//   - ingestIPLimiter: per-IP. Wraps the webhook group via httpx.RateLimit with
+	//     the trusted-proxy-aware ClientIP (spoofed X-Forwarded-For can't evade it),
+	//     and gates inbound SMTP DATA keyed on the connection remote IP.
+	//   - ingestRecipientLimiter: per-DECODED-recipient on the webhook path. Enforced
+	//     inside the handler BEFORE recipient resolution so a known and an unknown
+	//     recipient throttle identically (no existence oracle).
+	ingestIPLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
+	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
+	inboxWebhookH.SetRecipientLimiter(ingestRecipientLimiter)
+
 	mux.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(pub chi.Router) {
 			pub.Use(httpx.RateLimit(authLimiter, ipKey))
 			acctH.PublicRoutes(pub)
 		})
 		// Inbound provider webhook (US1): public, authenticated by the per-provider
-		// HMAC signature, NOT by JWT and NOT the per-IP auth limiter. Mounted in its
-		// own public group so a per-recipient ingest rate limiter (T032) can wrap it.
+		// HMAC signature, NOT by JWT and NOT the per-IP auth limiter. Its own public
+		// group carries the per-IP INGEST limiter (trusted-proxy-aware client IP, so a
+		// spoofed X-Forwarded-For can't evade it); the per-recipient cap is enforced
+		// inside the handler before resolution (no existence oracle). T032/FR-020.
 		r.Group(func(ingress chi.Router) {
+			ingress.Use(httpx.RateLimit(ingestIPLimiter, ipKey))
 			inboxWebhookH.PublicRoutes(ingress)
 		})
 		r.Group(func(pr chi.Router) {
@@ -216,7 +233,7 @@ func main() {
 	// path does, so SMTP and webhook deliveries produce identical ticket shapes.
 	var smtpAdapter *inbox.SMTPAdapter
 	if cfg.SMTPAddr != "" {
-		smtpAdapter = inbox.NewSMTPAdapter(cfg.SMTPAddr, inboxSvc, inboxSvc, cfg.InboundMaxBytes, nil, logger)
+		smtpAdapter = inbox.NewSMTPAdapter(cfg.SMTPAddr, inboxSvc, inboxSvc, cfg.InboundMaxBytes, ingestIPLimiter, nil, logger)
 		go func() {
 			logger.Info("starting inbound SMTP receiver", "addr", cfg.SMTPAddr)
 			if err := smtpAdapter.ListenAndServe(); err != nil && !errors.Is(err, smtp.ErrServerClosed) {
