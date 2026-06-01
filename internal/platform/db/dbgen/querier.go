@@ -78,22 +78,6 @@ type Querier interface {
 	// caller's authorized subtree, so an admin can read members of a business they
 	// administer while a bare member sees only their own row.
 	GetMembershipAt(ctx context.Context, arg GetMembershipAtParams) (GetMembershipAtRow, error)
-	// NOTE: the outbound delivery-state path (delivery_state read, system inbound
-	// address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
-	// bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /
-	// inbound_address tables silently return/affect ZERO rows when run without a
-	// principal (authorized_businesses(NULL) is empty), so they have been REPLACED by
-	// the SECURITY DEFINER functions get_send_context + mark_message_delivery in
-	// migration 0019 (called via raw pgx from internal/platform/notify). Do NOT re-add
-	// GetMessageDeliveryState / GetBusinessSystemInboundAddress / MarkMessageDelivered /
-	// MarkMessageFailed here — they were traps (manyforge-0fq).
-	// GetOutboundMessageForBounce correlates a bounce to the most recent outbound
-	// message to a recipient on a business, for surfacing the failure.
-	// WARNING: principal-less callers (the bounce worker) MUST go through a SECURITY
-	// DEFINER wrapper (see migration 0019) to actually read this RLS-protected table; do
-	// NOT call this plain-table query directly from the worker — under RLS with no
-	// principal it returns zero rows (manyforge-0fq).
-	GetOutboundMessageForBounce(ctx context.Context, arg GetOutboundMessageForBounceParams) (GetOutboundMessageForBounceRow, error)
 	GetPendingInvitation(ctx context.Context, arg GetPendingInvitationParams) (GetPendingInvitationRow, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	// The kind ('human'|'agent') of a principal; ownership may pass only to a human.

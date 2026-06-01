@@ -85,6 +85,50 @@ paths:
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /inbound/bounce:
+    post:
+      tags: [Ingress]
+      summary: >
+        Intake one provider hard-bounce notification (FR-013). Authenticated by a
+        per-deployment HMAC signature header over the raw body (constant-time compare),
+        against a secret PURPOSE-SEPARATED from the inbound-email webhook secret; NOT by
+        Bearer JWT. An absent/invalid signature ⇒ 401 (auth, not a recipient oracle),
+        exactly like the inbound-email webhook. Body size is capped in the handler. A hard
+        bounce suppresses the recipient (global email_suppression) and, correlated by the
+        globally-unique outbound Message-ID, marks the outbound message failed. Carries no
+        end-user principal. UNIFORM no-oracle ack for AUTHENTICATED requests: every
+        authenticated outcome — valid hard bounce, soft bounce, malformed payload, unknown
+        recipient/message — returns the SAME 202, disclosing nothing about whether the
+        recipient is a real customer or the Message-ID exists (no existence oracle).
+      security: []
+      parameters:
+        - name: X-MF-Signature
+          in: header
+          required: true
+          description: >
+            HMAC-SHA256 signature over the raw request body (optionally timestamp-bound via
+            X-MF-Timestamp), verified in constant time against the purpose-separated bounce
+            secret. Invalid/absent ⇒ 401 (mirrors the inbound-email webhook).
+          schema: { type: string }
+        - name: X-MF-Timestamp
+          in: header
+          required: false
+          description: When present it is bound into the HMAC signed content ("<timestamp>.<body>").
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: Normalized hard-bounce notification. Capped at the server's inbound body limit.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BounceBody' }
+      responses:
+        '202':
+          description: >
+            Accepted. Returned uniformly for EVERY AUTHENTICATED outcome (valid hard bounce,
+            soft bounce, malformed payload, unknown recipient/message) so the response never
+            distinguishes them (no recipient/message existence oracle).
+        '401': { $ref: '#/components/responses/Error401' }
+
   # ---------- Tickets ----------
   /businesses/{id}/tickets:
     parameters: [ { $ref: '#/components/parameters/id' } ]
@@ -458,6 +502,18 @@ components:
         body_html: { type: [string, "null"] }
         headers: { type: object, additionalProperties: { type: string } }
         raw_mime: { type: [string, "null"], description: base64 raw MIME if the provider supplies it }
+
+    BounceBody:
+      type: object
+      description: >
+        Normalized provider hard-bounce notification (FR-013). Only type=="hard" with a
+        non-empty recipient triggers suppression; the optional message_id (our minted,
+        globally-unique outbound Message-ID) correlates the failed outbound message.
+      required: [recipient, type]
+      properties:
+        recipient: { type: string, format: email, description: the bounced recipient address (suppressed globally on a hard bounce) }
+        type: { type: string, description: bounce class; "hard" triggers suppression, any other value is a no-op }
+        message_id: { type: string, description: the globally-unique outbound Message-ID (rfc_message_id) to correlate + mark failed; optional }
 
     # ----- request bodies (inline schemas) -----
     CreateTicket:

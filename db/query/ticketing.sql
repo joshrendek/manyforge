@@ -169,18 +169,10 @@ WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
 -- migration 0019 (called via raw pgx from internal/platform/notify). Do NOT re-add
 -- GetMessageDeliveryState / GetBusinessSystemInboundAddress / MarkMessageDelivered /
 -- MarkMessageFailed here — they were traps (manyforge-0fq).
-
--- GetOutboundMessageForBounce correlates a bounce to the most recent outbound
--- message to a recipient on a business, for surfacing the failure.
--- WARNING: principal-less callers (the bounce worker) MUST go through a SECURITY
--- DEFINER wrapper (see migration 0019) to actually read this RLS-protected table; do
--- NOT call this plain-table query directly from the worker — under RLS with no
--- principal it returns zero rows (manyforge-0fq).
--- name: GetOutboundMessageForBounce :one
-SELECT tm.id, tm.tenant_root_id
-FROM ticket_message tm
-JOIN ticket t ON t.id = tm.ticket_id AND t.tenant_root_id = tm.tenant_root_id
-JOIN requester rq ON rq.id = t.requester_id AND rq.tenant_root_id = t.tenant_root_id
-WHERE tm.direction = 'outbound' AND rq.email = $1 AND tm.tenant_root_id = $2
-ORDER BY tm.created_at DESC
-LIMIT 1;
+--
+-- The hard-bounce path (T040) correlates a bounce to its outbound message by the
+-- globally-unique Message-ID we minted (rfc_message_id) and marks it failed via the
+-- SECURITY DEFINER mark_bounced_message (migration 0020), called raw from
+-- internal/inbox. The earlier GetOutboundMessageForBounce plain-table query was
+-- superseded by that DEFINER and removed — it was the same principal-less RLS trap as
+-- the queries above (under RLS with no principal it returned zero rows).
