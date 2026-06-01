@@ -57,6 +57,10 @@ type Mail struct {
 	InReplyTo  string   // the message being replied to
 	References []string // the thread chain
 	ReplyTo    string   // support+<reply_token>@<domain> (VERP threading fallback)
+
+	EnvelopeFrom  string            // SMTP MAIL FROM (VERP/return-path); falls back to From if empty
+	AutoSubmitted string            // RFC 3834 value, e.g. "auto-replied"; empty ⇒ header omitted (human reply)
+	ExtraHeaders  map[string]string // optional additional headers; may be nil
 }
 
 // ErrSuppressed is returned when the recipient is hard-bounced/suppressed (FR-013).
