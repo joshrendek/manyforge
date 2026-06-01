@@ -72,6 +72,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		ingestLimit:  noop,
 		ticketsRead:  noop,
 		ticketsReply: noop,
+		ticketsWrite: noop,
 	})
 
 	routes := map[string]bool{}

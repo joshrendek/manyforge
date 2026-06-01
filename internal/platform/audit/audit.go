@@ -24,11 +24,20 @@ type Entry struct {
 	TargetType       *string
 	TargetID         *uuid.UUID
 	CorrelationID    *string
+	OldValue         any
 	NewValue         any
 }
 
 // Write inserts the entry using tx (so it commits or rolls back with the change).
 func Write(ctx context.Context, tx pgx.Tx, e Entry) error {
+	var oldValue []byte
+	if e.OldValue != nil {
+		b, err := json.Marshal(e.OldValue)
+		if err != nil {
+			return err
+		}
+		oldValue = b
+	}
 	var newValue []byte
 	if e.NewValue != nil {
 		b, err := json.Marshal(e.NewValue)
@@ -46,6 +55,7 @@ func Write(ctx context.Context, tx pgx.Tx, e Entry) error {
 		TargetType:       e.TargetType,
 		TargetID:         db.PGUUIDPtr(e.TargetID),
 		CorrelationID:    e.CorrelationID,
+		OldValue:         oldValue,
 		NewValue:         newValue,
 	})
 }

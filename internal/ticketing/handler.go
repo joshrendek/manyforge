@@ -1,6 +1,7 @@
 package ticketing
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,6 +42,13 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Post("/businesses/{id}/tickets/{tid}/note", h.addNote)
 }
 
+// TriageRoutes mounts the authenticated triage endpoint (US3: PATCH status/priority/
+// tags/assignee). The caller wraps it with httpx.RequirePermission("tickets.write", …),
+// same RLS-bound 404-on-lacking-perm semantics as the read/write groups.
+func (h *Handler) TriageRoutes(r chi.Router) {
+	r.Patch("/businesses/{id}/tickets/{tid}", h.triage)
+}
+
 // --- request DTOs: exact OpenAPI component schemas ---
 
 type replyBody struct {
@@ -50,6 +58,17 @@ type replyBody struct {
 
 type noteBody struct {
 	BodyText string `json:"body_text"`
+}
+
+// patchBody is the triage (PATCH ticket) DTO. Status/Priority/Tags are tri-state via
+// pointers (nil = absent → preserve). Assignee is decoded as a raw message so the
+// handler can distinguish three cases the pointer types cannot: absent (nil → no
+// change), explicit JSON null ("null" → unassign), and a quoted uuid ("\"…\"" → assign).
+type patchBody struct {
+	Status   *string         `json:"status"`
+	Priority *string         `json:"priority"`
+	Tags     *[]string       `json:"tags"`
+	Assignee json.RawMessage `json:"assignee_principal_id"`
 }
 
 // --- response DTOs: exact OpenAPI component schemas ---
@@ -373,6 +392,65 @@ func (h *Handler) addNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, toMessageResp(m))
+}
+
+func (h *Handler) triage(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	tid, err := pathUUID(r, "tid")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	var body patchBody
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	// Validate enums at the boundary (house pattern: 400 with a safe message).
+	if body.Status != nil && !validStatus(*body.Status) {
+		httpx.WriteError(w, r, errValidation("invalid status"))
+		return
+	}
+	if body.Priority != nil && !validPriority(*body.Priority) {
+		httpx.WriteError(w, r, errValidation("invalid priority"))
+		return
+	}
+
+	in := TriageInput{Status: body.Status, Priority: body.Priority, Tags: body.Tags}
+	// Tri-state assignee: absent (nil) → no change; explicit null → unassign; quoted
+	// uuid → assign. (T048 honors AssigneeSet/Assignee; T047 passes them through.)
+	if body.Assignee != nil {
+		in.AssigneeSet = true
+		if string(body.Assignee) != "null" {
+			var s string
+			if jerr := json.Unmarshal(body.Assignee, &s); jerr != nil {
+				httpx.WriteError(w, r, errValidation("invalid assignee_principal_id"))
+				return
+			}
+			aid, perr := uuid.Parse(s)
+			if perr != nil {
+				httpx.WriteError(w, r, errValidation("invalid assignee_principal_id"))
+				return
+			}
+			in.Assignee = &aid
+		}
+	}
+
+	t, err := h.svc.Triage(r.Context(), pid, bid, tid, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toTicketResp(t))
 }
 
 // --- input parsing ---
