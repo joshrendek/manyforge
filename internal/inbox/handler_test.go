@@ -27,11 +27,15 @@ type fakeIngester struct {
 	calls  int
 	result IngestResult
 	err    error
+	// got captures every RawMessage handed to Ingest so handler-level decode
+	// behavior (e.g. envelope-recipient extraction) can be asserted.
+	got []RawMessage
 }
 
-func (f *fakeIngester) Ingest(_ context.Context, _ RawMessage) (IngestResult, error) {
+func (f *fakeIngester) Ingest(_ context.Context, msg RawMessage) (IngestResult, error) {
 	f.called = true
 	f.calls++
+	f.got = append(f.got, msg)
 	return f.result, f.err
 }
 
@@ -208,3 +212,72 @@ func TestWebhookInternalError500Generic(t *testing.T) {
 type leakyError struct{ msg string }
 
 func (e *leakyError) Error() string { return e.msg }
+
+// doRFC822Request issues a signed POST with a bare message/rfc822 body (no JSON
+// envelope), exercising the raw-MIME decode path.
+func doRFC822Request(handler http.Handler, provider string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/inbound/email/"+provider, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "message/rfc822")
+	req.Header.Set("X-MF-Signature", signBody(testWebhookSecret, body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestWebhookRFC822EnvelopeRecipientFromTo asserts that a bare message/rfc822
+// webhook delivery (no JSON envelope to carry routing) has its EnvelopeRecipient
+// populated best-effort from the message's To header. Without this, Service.Ingest
+// — which routes ONLY on EnvelopeRecipient — would no-route and silently drop a
+// delivery the OpenAPI advertises as supported (message/rfc822). security:
+// MF-002-INGEST-SCOPE — no-oracle is preserved: resolve_inbound_address still gates
+// on the business's actual address, so an unknown/unresolving To still yields 202.
+func TestWebhookRFC822EnvelopeRecipientFromTo(t *testing.T) {
+	const wantRcpt = "support@inbound.localhost"
+	raw := []byte("From: alice@example.com\r\n" +
+		"To: " + wantRcpt + "\r\n" +
+		"Subject: bare mime\r\n" +
+		"Message-ID: <bare-1@example.com>\r\n" +
+		"\r\n" +
+		"hello from raw mime\r\n")
+
+	ing := &fakeIngester{result: IngestResult{TicketID: uuid.New(), MessageID: uuid.New(), Created: true}}
+	rec := doRFC822Request(newTestHandler(t, ing), "smtp", raw)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d (body %q)", rec.Code, rec.Body.String())
+	}
+	if len(ing.got) != 1 {
+		t.Fatalf("Ingest called %d times, want 1", len(ing.got))
+	}
+	if got := ing.got[0].EnvelopeRecipient; got != wantRcpt {
+		t.Errorf("EnvelopeRecipient = %q, want %q (extracted from To header)", got, wantRcpt)
+	}
+	// The raw bytes must still flow through untouched for downstream parsing.
+	if !bytes.Equal(ing.got[0].Raw, raw) {
+		t.Errorf("Raw bytes were altered; want the original message body verbatim")
+	}
+}
+
+// TestWebhookRFC822EnvelopeRecipientCcFallback asserts the best-effort extraction
+// falls back to the first Cc address when To is absent — so a Cc-only raw delivery
+// still routes rather than dropping.
+func TestWebhookRFC822EnvelopeRecipientCcFallback(t *testing.T) {
+	const wantRcpt = "cc-support@inbound.localhost"
+	raw := []byte("From: alice@example.com\r\n" +
+		"Cc: " + wantRcpt + "\r\n" +
+		"Subject: cc only\r\n" +
+		"Message-ID: <bare-2@example.com>\r\n" +
+		"\r\n" +
+		"cc-only body\r\n")
+
+	ing := &fakeIngester{result: IngestResult{TicketID: uuid.New(), MessageID: uuid.New(), Created: true}}
+	rec := doRFC822Request(newTestHandler(t, ing), "smtp", raw)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d (body %q)", rec.Code, rec.Body.String())
+	}
+	if len(ing.got) != 1 {
+		t.Fatalf("Ingest called %d times, want 1", len(ing.got))
+	}
+	if got := ing.got[0].EnvelopeRecipient; got != wantRcpt {
+		t.Errorf("EnvelopeRecipient = %q, want %q (Cc fallback when To absent)", got, wantRcpt)
+	}
+}
