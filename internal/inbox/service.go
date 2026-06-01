@@ -137,10 +137,12 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			messageID = resolveMessageID(parsed, r.tenantRootID, senderEmail)
 		}
 
-		// Store sniffed-OK attachment bytes AFTER resolve (unknown recipients write
-		// nothing) under tenant-scoped keys. The DB attachment rows are written by
-		// the DEFINER function from the metadata we pass.
-		attachmentsJSON, err := s.storeAttachments(ctx, r, staged)
+		// Assign each sniffed-OK attachment a tenant-scoped blob key and build the
+		// metadata the DEFINER function inserts as attachment rows. We do NOT write
+		// the bytes yet: a replay returns out_duplicate with no attachment rows, so
+		// writing blobs here would orphan them on every (attacker-replayable) replay.
+		// The bytes are Put only after a NON-duplicate result, below.
+		attachmentsJSON, err := s.buildAttachmentMeta(r, staged)
 		if err != nil {
 			return err
 		}
@@ -196,10 +198,20 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			return fmt.Errorf("inbox: ingest_inbound_message: %w", err)
 		}
 
-		// A replay is an idempotent no-op: no new rows, no new outbox event.
+		// A replay is an idempotent no-op: no new rows, no new outbox event, and —
+		// critically — no blobs written (the DEFINER inserted no attachment rows, so
+		// any blob would be orphaned). Return before storing anything.
 		if out.Duplicate {
 			result = out
 			return nil
+		}
+
+		// Non-duplicate: NOW write the staged attachment bytes to object storage.
+		// This runs inside the tx so a Put failure still rolls back the DB rows the
+		// DEFINER just inserted, minimizing the dangling-reference window. The keys
+		// were already fixed at metadata-build time, so the rows and blobs agree.
+		if err := s.putAttachments(ctx, staged); err != nil {
+			return err
 		}
 
 		// Enqueue the outbox event(s) in the SAME tx (the function does NOT touch the
@@ -263,26 +275,25 @@ func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachmen
 	return out, nil
 }
 
-// storeAttachments writes each staged attachment's bytes to object storage under a
-// tenant-scoped key (so an object never crosses tenants) and returns the metadata
-// JSON array the DEFINER function inserts as attachment rows. Bytes are stored
-// only AFTER the recipient resolved, so an unknown recipient writes nothing. When
-// no blob store is configured (attachments disabled), staged parts are dropped.
-func (s *Service) storeAttachments(ctx context.Context, r route, staged []sniffedAttachment) ([]byte, error) {
-	if len(staged) == 0 {
-		return []byte("[]"), nil
-	}
-	if s.blob == nil {
+// buildAttachmentMeta assigns each staged attachment its tenant-scoped blob key
+// (so an object never crosses tenants) and returns the metadata JSON array the
+// DEFINER function inserts as attachment rows — WITHOUT writing any bytes. Keys are
+// fixed here, before ingest_inbound_message runs, so the rows it inserts and the
+// blobs putAttachments later writes agree exactly. When no blob store is configured
+// (attachments disabled) it returns an empty array so no attachment rows — and
+// hence no orphaned blobs — are created.
+func (s *Service) buildAttachmentMeta(r route, staged []sniffedAttachment) ([]byte, error) {
+	if len(staged) == 0 || s.blob == nil {
+		// No store ⇒ attachments disabled: emit no rows so nothing references a blob
+		// that will never be written.
 		return []byte("[]"), nil
 	}
 	meta := make([]map[string]any, 0, len(staged))
 	for i := range staged {
-		// ticketID is not yet known (the DEFINER may create it); key off the message
-		// scope instead — the attachment id keeps the key unique within the tenant.
+		// The attachment id makes the key unique within the tenant; the ticket id is
+		// not yet known (the DEFINER may create it), and the key must be fixed before
+		// the call so the inserted rows reference exactly what we Put afterward.
 		key := blob.Key(r.tenantRootID, r.businessID, staged[i].id, staged[i].id)
-		if err := s.blob.Put(ctx, key, staged[i].content, staged[i].contentType); err != nil {
-			return nil, fmt.Errorf("inbox: store attachment: %w", err)
-		}
 		staged[i].blobKey = key
 		meta = append(meta, map[string]any{
 			"blob_key":     key,
@@ -296,6 +307,24 @@ func (s *Service) storeAttachments(ctx context.Context, r route, staged []sniffe
 		return nil, fmt.Errorf("inbox: marshal attachments: %w", err)
 	}
 	return raw, nil
+}
+
+// putAttachments writes each staged attachment's bytes to object storage under the
+// key buildAttachmentMeta already assigned. It is called ONLY after a non-duplicate
+// ingest_inbound_message result, so a replay (out_duplicate) writes zero blobs and
+// nothing is orphaned. It runs inside the ingestion tx: a Put failure propagates so
+// the DB rows roll back, keeping rows and blobs consistent. With no blob store the
+// staged parts were never put into the attachment metadata, so this is a no-op.
+func (s *Service) putAttachments(ctx context.Context, staged []sniffedAttachment) error {
+	if s.blob == nil {
+		return nil
+	}
+	for i := range staged {
+		if err := s.blob.Put(ctx, staged[i].blobKey, staged[i].content, staged[i].contentType); err != nil {
+			return fmt.Errorf("inbox: store attachment: %w", err)
+		}
+	}
+	return nil
 }
 
 // nilIfEmpty maps "" to a nil *string so an absent header is stored as SQL NULL
