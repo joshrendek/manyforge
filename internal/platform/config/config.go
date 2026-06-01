@@ -34,6 +34,21 @@ type Config struct {
 	IngestRateBurst         float64 // per-recipient inbound ingestion burst allowance
 	OutboundRateRPS         float64 // per-business outbound send refill rate (FR-020)
 	OutboundRateBurst       float64 // per-business outbound send burst allowance
+
+	// Outbound SMTP relay (US2/T039). SMTPHost empty ⇒ the notify worker uses the
+	// dev LogSender (logs the threaded reply, honors suppression) instead of a real
+	// MTA, so reply flows are completable without an outbound relay configured.
+	SMTPHost string // outbound relay host; empty ⇒ LogSender
+	SMTPPort int    // outbound relay port (default 587)
+	SMTPUser string // SMTP AUTH username; empty ⇒ no auth
+	SMTPPass string // SMTP AUTH password
+
+	// Optional system-domain DKIM signing (FR-013 deliverability). All THREE must be
+	// set to sign; otherwise outbound is sent unsigned (the locked default — DKIM is
+	// not required for the system domain in dev / un-provisioned envs).
+	SystemDKIMDomain        string // d= domain, e.g. the InboundSystemDomain
+	SystemDKIMSelector      string // s= selector
+	SystemDKIMPrivateKeyPEM string // PEM-encoded private key (ed25519 PKCS#8 or RSA); inline or via *_PATH
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -95,7 +110,39 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_RATE_BURST: %w", err)
 	}
 
+	// Outbound SMTP relay (US2). Host empty ⇒ LogSender; port defaults to submission.
+	cfg.SMTPHost = os.Getenv("MANYFORGE_SMTP_HOST")
+	if cfg.SMTPPort, err = envInt("MANYFORGE_SMTP_PORT", 587); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_SMTP_PORT: %w", err)
+	}
+	cfg.SMTPUser = os.Getenv("MANYFORGE_SMTP_USER")
+	cfg.SMTPPass = os.Getenv("MANYFORGE_SMTP_PASS")
+
+	// Optional system DKIM. The private key can be supplied inline (…_PEM) or via a
+	// file path (…_PEM_PATH); a malformed path is a hard config error so a configured
+	// key never silently degrades to unsigned (the no-DKIM default is the empty case).
+	cfg.SystemDKIMDomain = os.Getenv("MANYFORGE_SYSTEM_DKIM_DOMAIN")
+	cfg.SystemDKIMSelector = os.Getenv("MANYFORGE_SYSTEM_DKIM_SELECTOR")
+	cfg.SystemDKIMPrivateKeyPEM = os.Getenv("MANYFORGE_SYSTEM_DKIM_PRIVATE_KEY_PEM")
+	if cfg.SystemDKIMPrivateKeyPEM == "" {
+		if p := os.Getenv("MANYFORGE_SYSTEM_DKIM_PRIVATE_KEY_PEM_PATH"); p != "" {
+			b, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return Config{}, fmt.Errorf("MANYFORGE_SYSTEM_DKIM_PRIVATE_KEY_PEM_PATH: %w", rerr)
+			}
+			cfg.SystemDKIMPrivateKeyPEM = string(b)
+		}
+	}
+
 	return cfg, nil
+}
+
+func envInt(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	return strconv.Atoi(v)
 }
 
 func env(key, def string) string {
