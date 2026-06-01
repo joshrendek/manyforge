@@ -18,6 +18,7 @@ import (
 // are intentionally NOT asserted as served yet — add them here as their tasks land.
 var inScope002Ops = []string{
 	"POST /inbound/email/{}",
+	"POST /inbound/bounce",
 	"GET /businesses/{}/tickets",
 	"GET /businesses/{}/tickets/{}",
 	"GET /businesses/{}/tickets/{}/messages",

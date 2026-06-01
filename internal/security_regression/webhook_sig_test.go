@@ -113,12 +113,16 @@ func TestWebhookSignatureRejectsForgery(t *testing.T) {
 }
 
 // TestWebhookConstantTimeComparePinned is the source-level half: the constant-time
-// compare must remain in the webhook adapter so a refactor to `==` (timing oracle)
-// fails CI loudly. Finding ID: FindingWebhookSig.
+// compare must remain in the SHARED inbound-webhook HMAC verifier so a refactor to
+// `==` (timing oracle) fails CI loudly. The verify body was extracted into the
+// package-shared inbox.verifyHMAC (internal/inbox/signature.go) — the single source
+// of truth that BOTH the inbound-email webhook (WebhookAdapter.verify) and the
+// hard-bounce webhook (BounceHandler.verify) delegate to, so neither can drift to a
+// variable-time compare independently. Finding ID: FindingWebhookSig.
 func TestWebhookConstantTimeComparePinned(t *testing.T) {
-	src := mustRead(t, "../inbox/webhook.go")
+	src := mustRead(t, "../inbox/signature.go")
 	if !strings.Contains(src, "subtle.ConstantTimeCompare") {
-		t.Errorf("%s: constant-time compare pin missing from internal/inbox/webhook.go — "+
-			"was the HMAC verify weakened to a variable-time `==`?", FindingWebhookSig)
+		t.Errorf("%s: constant-time compare pin missing from internal/inbox/signature.go "+
+			"(shared verifyHMAC) — was the HMAC verify weakened to a variable-time `==`?", FindingWebhookSig)
 	}
 }

@@ -154,6 +154,11 @@ func main() {
 	inboxWebhookH := inbox.NewWebhookHandler(inboxSvc, cfg.InboundWebhookSecret, cfg.InboundMaxBytes, inbox.Config{
 		InboundSystemDomain: cfg.InboundSystemDomain,
 	}, logger)
+	// US2 hard-bounce intake (T040): a provider-signed (separate InboundBounceSecret)
+	// webhook that suppresses the bounced recipient (global email_suppression) and
+	// marks the correlated outbound message failed via a DEFINER. Mounted next to the
+	// inbound webhook in the same per-IP ingest-rate-limited public group; no JWT.
+	bounceH := inbox.NewBounceHandler(inbox.NewDBBounceSuppressor(database), cfg.InboundBounceSecret, cfg.InboundMaxBytes, logger)
 
 	// FR-001 zero-config inbound: every business gets a system inbound address on
 	// creation. tenancy emits business.created (in the create tx, via the outbox); the
@@ -242,6 +247,7 @@ func main() {
 		invitations:  invH,
 		ticketing:    ticketH,
 		inboxWebhook: inboxWebhookH,
+		bounce:       bounceH,
 		authLimit:    httpx.RateLimit(authLimiter, ipKey),
 		ingestLimit:  httpx.RateLimit(ingestIPLimiter, ingestIPKey),
 		ticketsRead:  httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
@@ -314,6 +320,7 @@ type apiHandlers struct {
 	invitations  *invitations.Handler
 	ticketing    *ticketing.Handler
 	inboxWebhook *inbox.Handler
+	bounce       *inbox.BounceHandler
 
 	// Group-level middleware. Each gates a route group exactly as main wires it:
 	// authLimit (per-IP auth abuse cap), ingestLimit (per-IP inbound ingest cap),
@@ -342,6 +349,9 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 		r.Group(func(ingress chi.Router) {
 			ingress.Use(h.ingestLimit)
 			h.inboxWebhook.PublicRoutes(ingress)
+			// Hard-bounce intake (T040): same public, HMAC-authed, per-IP ingest-rate-
+			// limited group. Its own purpose-separated secret + uniform no-oracle 202.
+			h.bounce.PublicRoutes(ingress)
 		})
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
