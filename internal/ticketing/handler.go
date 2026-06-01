@@ -424,6 +424,15 @@ func (h *Handler) triage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errValidation("invalid priority"))
 		return
 	}
+	// Reject empty/whitespace-only tags here so junk never reaches the service.
+	if body.Tags != nil {
+		for _, tag := range *body.Tags {
+			if strings.TrimSpace(tag) == "" {
+				httpx.WriteError(w, r, errValidation("invalid tag"))
+				return
+			}
+		}
+	}
 
 	in := TriageInput{Status: body.Status, Priority: body.Priority, Tags: body.Tags}
 	// Tri-state assignee: absent (nil) → no change; explicit null → unassign; quoted
