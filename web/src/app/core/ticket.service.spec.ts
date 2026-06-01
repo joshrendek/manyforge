@@ -2,7 +2,14 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Page, Requester, Ticket, TicketMessage, TicketService } from './ticket.service';
+import {
+  Page,
+  PatchTicket,
+  Requester,
+  Ticket,
+  TicketMessage,
+  TicketService,
+} from './ticket.service';
 
 // Exercised against a mock backend so we pin the actual URLs and keyset/filter
 // query-param construction rather than mocking the service itself.
@@ -143,5 +150,69 @@ describe('TicketService', () => {
     };
     req.flush(msg);
     expect(out).toEqual(msg);
+  });
+
+  // ── patchTicket (US3 triage) ──────────────────────────────────────────────
+  it('patchTicket() PATCHes to .../tickets/{tid} and returns the updated Ticket', () => {
+    let out: Ticket | undefined;
+    const updated = { id: 't1', status: 'open' } as Ticket;
+    svc.patchTicket(biz, 't1', { status: 'open' }).subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect(req.request.method).toBe('PATCH');
+    req.flush(updated);
+    expect(out).toEqual(updated);
+  });
+
+  it('patchTicket() sends ONLY the status field when changing status', () => {
+    svc.patchTicket(biz, 't1', { status: 'solved' }).subscribe();
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect(req.request.body).toEqual({ status: 'solved' });
+    expect('assignee_principal_id' in (req.request.body as object)).toBe(false);
+    req.flush({} as Ticket);
+  });
+
+  it('patchTicket() sends ONLY the priority field when changing priority', () => {
+    svc.patchTicket(biz, 't1', { priority: 'urgent' }).subscribe();
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect(req.request.body).toEqual({ priority: 'urgent' });
+    req.flush({} as Ticket);
+  });
+
+  it('patchTicket() sends the FULL tag set (replacement) and can clear with []', () => {
+    svc.patchTicket(biz, 't1', { tags: ['billing', 'vip'] }).subscribe();
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect(req.request.body).toEqual({ tags: ['billing', 'vip'] });
+    req.flush({} as Ticket);
+
+    svc.patchTicket(biz, 't1', { tags: [] }).subscribe();
+    const req2 = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect(req2.request.body).toEqual({ tags: [] });
+    req2.flush({} as Ticket);
+  });
+
+  it('patchTicket() OMITS assignee_principal_id entirely when it is not in the patch', () => {
+    // Tri-state: a status-only change must not touch the assignee on the wire.
+    svc.patchTicket(biz, 't1', { status: 'pending' }).subscribe();
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect('assignee_principal_id' in (req.request.body as object)).toBe(false);
+    req.flush({} as Ticket);
+  });
+
+  it('patchTicket() sends literal null to unassign', () => {
+    const patch: PatchTicket = { assignee_principal_id: null };
+    svc.patchTicket(biz, 't1', patch).subscribe();
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect(req.request.body).toEqual({ assignee_principal_id: null });
+    // Distinguish null (unassign) from absent (no change): the key is present.
+    expect('assignee_principal_id' in (req.request.body as object)).toBe(true);
+    expect((req.request.body as PatchTicket).assignee_principal_id).toBeNull();
+    req.flush({} as Ticket);
+  });
+
+  it('patchTicket() sends the principal uuid to assign', () => {
+    svc.patchTicket(biz, 't1', { assignee_principal_id: 'p-self' }).subscribe();
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
+    expect(req.request.body).toEqual({ assignee_principal_id: 'p-self' });
+    req.flush({} as Ticket);
   });
 });
