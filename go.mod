@@ -3,6 +3,7 @@ module github.com/manyforge/manyforge
 go 1.25.5
 
 require (
+	github.com/emersion/go-msgauth v0.7.0
 	github.com/emersion/go-smtp v0.24.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
