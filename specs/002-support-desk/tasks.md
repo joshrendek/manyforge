@@ -138,16 +138,16 @@ principal → refused (same not-found shape). Deliver an inbound reply to a `sol
 `open` and appends. A member without triage permission → refused.
 
 ### Tests for User Story 3 (write FIRST, must FAIL) ⚠️
-- [ ] T044 [P] [US3] Contract test for `PATCH …/tickets/{tid}` (partial update; omitted fields preserved; `assignee_principal_id:null` unassigns; 409 ineligible/invalid transition) in `cmd/drift_test.go`
-- [ ] T045 [P] [US3] Integration test `internal/ticketing/triage_integration_test.go`: each triage field persists + writes an `audit_entry`; ineligible assignee refused; lifecycle transitions per the data-model.md state table
-- [ ] T046 [P] [US3] Integration test `internal/inbox/reopen_integration_test.go`: inbound reply on `pending`/`solved`/`closed` → status `open` in the SAME tx as the message insert (FR-010)
+- [x] T044 [P] [US3] Contract test for `PATCH …/tickets/{tid}` (partial update; omitted fields preserved; `assignee_principal_id:null` unassigns; 409 ineligible/invalid transition) in `cmd/drift_test.go`
+- [x] T045 [P] [US3] Integration test `internal/ticketing/triage_integration_test.go`: each triage field persists + writes an `audit_entry`; ineligible assignee refused; lifecycle transitions per the data-model.md state table
+- [x] T046 [P] [US3] Integration test `internal/inbox/reopen_integration_test.go`: inbound reply on `pending`/`solved`/`closed` → status `open` in the SAME tx as the message insert (FR-010)
 
 ### Implementation for User Story 3
-- [ ] T047 [US3] `internal/ticketing/service.go` triage path: `PATCH …/tickets/{tid}` (`tickets.write`) — partial update (pointer/COALESCE semantics, omitted fields preserved), tag full-replacement when `tags` present, lifecycle-transition validation, `last_message_at` untouched; audit old→new in-tx per changed field
-- [ ] T048 [US3] Assignee eligibility (`tickets.assign`): SQL predicate verifying the principal is a member of the ticket's business or an authorized ancestor BEFORE persist (caller-supplied-UUID check); ineligible → refused with the no-oracle shape (FR-011)
-- [ ] T049 [US3] Reopen-on-reply: in `internal/inbox/service.go` ingest tx, set `status='open'` when an inbound message lands on `pending`/`solved`/`closed`, audited in the same tx (FR-010)
-- [ ] T050 [P] [US3] Frontend: triage controls (status/priority/tags/assignee pickers) in `web/src/app/pages/support/` thread view; `tickets.assign`-gated assignee control
-- [ ] T051 [US3] Playwright `web/e2e/support.spec.ts` (US3 portion): change status + priority + assignee in the UI → persists on reload; assign + verify it shows
+- [x] T047 [US3] `internal/ticketing/service.go` triage path: `PATCH …/tickets/{tid}` (`tickets.write`) — partial update (pointer/COALESCE semantics, omitted fields preserved), tag full-replacement when `tags` present, lifecycle-transition validation, `last_message_at` untouched; audit old→new in-tx per changed field
+- [x] T048 [US3] Assignee eligibility (`tickets.assign`): SQL predicate verifying the principal is a member of the ticket's business or an authorized ancestor BEFORE persist (caller-supplied-UUID check); ineligible → refused with the no-oracle shape (FR-011)
+- [x] T049 [US3] Reopen-on-reply: in `internal/inbox/service.go` ingest tx, set `status='open'` when an inbound message lands on `pending`/`solved`/`closed`, audited in the same tx (FR-010)
+- [x] T050 [P] [US3] Frontend: triage controls (status/priority/tags/assignee pickers) in `web/src/app/pages/support/` thread view; `tickets.assign`-gated assignee control
+- [x] T051 [US3] Playwright `web/e2e/support.spec.ts` (US3 portion): change status + priority + assignee in the UI → persists on reload; assign + verify it shows
 
 **Checkpoint**: Tickets are managed work — triaged, assigned, reopened on reply, fully audited.
 
