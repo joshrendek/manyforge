@@ -97,6 +97,20 @@ export interface TicketListFilters {
   limit?: number;
 }
 
+// Partial triage update (openapi.yaml:531-540). Every field is optional; only
+// fields PRESENT in the body change, omitted fields keep their current value
+// (constitution partial-update rule). Tri-state on the assignee:
+//   - key absent  → leave the assignee unchanged
+//   - key === null → unassign
+//   - key === uuid → assign (backend validates eligibility / tickets.assign)
+// `tags`, when present, is a FULL replacement of the tag set ([] clears it).
+export interface PatchTicket {
+  status?: TicketStatus;
+  priority?: TicketPriority;
+  tags?: string[];
+  assignee_principal_id?: string | null;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TicketService {
   private http = inject(HttpClient);
@@ -117,6 +131,16 @@ export class TicketService {
   // GET /businesses/{id}/tickets/{tid} — single ticket (requires tickets.read).
   getTicket(businessId: string, ticketId: string): Observable<Ticket> {
     return this.http.get<Ticket>(`/api/v1/businesses/${businessId}/tickets/${ticketId}`);
+  }
+
+  // PATCH /businesses/{id}/tickets/{tid} — partial triage update (US3). Returns
+  // the updated Ticket (200). Requires tickets.write; assignment additionally
+  // requires tickets.assign. The caller is responsible for the assignee
+  // tri-state: omit `assignee_principal_id` to leave it unchanged, pass literal
+  // `null` to unassign, or a uuid to assign. We forward `patch` verbatim so an
+  // omitted key stays omitted on the wire.
+  patchTicket(businessId: string, ticketId: string, patch: PatchTicket): Observable<Ticket> {
+    return this.http.patch<Ticket>(`/api/v1/businesses/${businessId}/tickets/${ticketId}`, patch);
   }
 
   // GET /businesses/{id}/tickets/{tid}/messages — keyset-paginated thread of
