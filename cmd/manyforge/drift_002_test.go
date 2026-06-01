@@ -13,14 +13,18 @@ import (
 
 // inScope002Ops is the set of 002 operations whose handlers are implemented so far:
 // the US1 slice (T028 inbound webhook + T031 ticketing/requester read routes) plus
-// the US2 reply + note write routes (T035). The remaining spec-002 operations
-// (POST/PATCH tickets, inbox-management) are documented ahead of their handlers and
-// are intentionally NOT asserted as served yet — add them here as their tasks land.
+// the US2 reply + note write routes (T035), and the US3 PATCH triage route (T044).
+// The PATCH triage op is added here ahead of its handler as a TDD red-gate: it is
+// already documented in openapi.yaml, so this entry makes the presence check fail
+// until the handler/route lands. The remaining spec-002 operations (POST tickets,
+// inbox-management) are documented ahead of their handlers and are intentionally
+// NOT asserted as served yet — add them here as their tasks land.
 var inScope002Ops = []string{
 	"POST /inbound/email/{}",
 	"POST /inbound/bounce",
 	"GET /businesses/{}/tickets",
 	"GET /businesses/{}/tickets/{}",
+	"PATCH /businesses/{}/tickets/{}",
 	"GET /businesses/{}/tickets/{}/messages",
 	"GET /businesses/{}/requesters",
 	"GET /businesses/{}/requesters/{}",
