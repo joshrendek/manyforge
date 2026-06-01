@@ -48,13 +48,14 @@ type ReplyInput struct {
 
 // TriageInput is the partial-update payload for Triage. A nil field is preserved;
 // a non-nil field is applied. Tags non-nil is a FULL replacement (empty slice
-// clears all). AssigneeSet/Assignee are honored by T048; T047 accepts + ignores them.
+// clears all). AssigneeSet=false preserves the assignee; AssigneeSet=true with a
+// non-nil Assignee assigns (eligibility-gated, T048) and with a nil Assignee unassigns.
 type TriageInput struct {
 	Status      *string    // nil=preserve; else one of new/open/pending/solved/closed
 	Priority    *string    // nil=preserve; else low/normal/high/urgent
 	Tags        *[]string  // nil=preserve; non-nil = FULL replacement (empty slice clears all)
-	AssigneeSet bool       // (T048 honors this; T047: accept + IGNORE)
-	Assignee    *uuid.UUID // (T048)
+	AssigneeSet bool       // false=preserve; true=apply Assignee (assign if non-nil, else unassign)
+	Assignee    *uuid.UUID // when AssigneeSet: non-nil assigns (eligibility-gated), nil unassigns
 }
 
 // TicketFilter is the optional facet set for ListTickets. A nil/zero field
@@ -443,12 +444,15 @@ func writeStatusAudit(ctx context.Context, tx pgx.Tx, businessID, tenantRootID, 
 	})
 }
 
-// Triage applies a partial status/priority/tags update to a ticket (US3, FR-010..012).
-// One transaction: own-check the ticket, validate enums, then for each CHANGED field
-// apply the update + write one pinned audit row (old→new) in the same tx. A field
-// equal to its current value is a no-op (no update, no audit). Tags non-nil is a full
-// set replacement (empty clears all). NEVER touches last_message_at. AssigneeSet/
-// Assignee are decoded and passed through but IGNORED here (honored by T048).
+// Triage applies a partial status/priority/tags/assignee update to a ticket (US3,
+// FR-010..012). One transaction: own-check the ticket, validate enums, then for each
+// CHANGED field apply the update + write one pinned audit row (old→new) in the same tx.
+// A field equal to its current value is a no-op (no update, no audit). Tags non-nil is
+// a full set replacement (empty clears all). Assignee is eligibility-gated (the
+// assignee must be a member of the ticket's business or an authorized non-archived
+// ancestor — verified in-tx via the is_eligible_assignee DEFINER, no TOCTOU); an
+// ineligible-but-existing principal and a nonexistent uuid both ⇒ the same ErrConflict
+// (no oracle); unassign is always allowed. NEVER touches last_message_at.
 // Dual-enforced (WithPrincipal RLS + business_id predicate); unknown/foreign ticket ⇒
 // ErrNotFound (no oracle); invalid status/priority ⇒ ErrValidation.
 func (s *Service) Triage(ctx context.Context, principalID, businessID, ticketID uuid.UUID, in TriageInput) (Ticket, error) {
@@ -550,8 +554,47 @@ func (s *Service) Triage(ctx context.Context, principalID, businessID, ticketID 
 			}
 		}
 
-		// Assignee (in.AssigneeSet / in.Assignee) is intentionally IGNORED here; T048
-		// implements eligibility + persistence.
+		// --- assignee (changed only; eligibility-gated) ---
+		// AssigneeSet means the PATCH carried the field. Assign (non-nil) requires the
+		// principal be a member of the ticket's business or an authorized non-archived
+		// ancestor — verified inside this same tx (no TOCTOU) via the is_eligible_assignee
+		// SECURITY DEFINER (the acting principal's RLS would HIDE an eligible
+		// ancestor-member's membership, so a plain query can't evaluate it). An
+		// ineligible-but-existing principal AND a nonexistent uuid both fail the predicate
+		// → the SAME ErrConflict (no existence oracle). Unassign (nil) is always allowed.
+		if in.AssigneeSet {
+			cur := pgUUIDPtr(tk.AssigneePrincipalID)
+			if !sameAssignee(cur, in.Assignee) {
+				if in.Assignee != nil {
+					eligible, eerr := isEligibleAssignee(ctx, tx, principalID, businessID, *in.Assignee)
+					if eerr != nil {
+						return eerr
+					}
+					if !eligible {
+						return fmt.Errorf("ticketing: ineligible assignee: %w", errs.ErrConflict)
+					}
+				}
+				if uerr := q.UpdateTicketAssignee(ctx, dbgen.UpdateTicketAssigneeParams{
+					ID: ticketID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+					AssigneePrincipalID: db.PGUUIDPtr(in.Assignee),
+				}); uerr != nil {
+					return uerr
+				}
+				targetType := "ticket"
+				if aerr := audit.Write(ctx, tx, audit.Entry{
+					BusinessID:       &businessID,
+					TenantRootID:     &tk.TenantRootID,
+					ActorPrincipalID: &principalID,
+					Action:           "ticket.assigned",
+					TargetType:       &targetType,
+					TargetID:         &ticketID,
+					OldValue:         map[string]any{"assignee_principal_id": uuidJSON(cur)},
+					NewValue:         map[string]any{"assignee_principal_id": uuidJSON(in.Assignee)},
+				}); aerr != nil {
+					return aerr
+				}
+			}
+		}
 
 		// Re-assemble the updated ticket from the now-current row.
 		updated, gerr := q.GetTicket(ctx, dbgen.GetTicketParams{ID: ticketID, BusinessID: businessID})
@@ -632,6 +675,43 @@ func sameTagSet(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// isEligibleAssignee asks the is_eligible_assignee SECURITY DEFINER (migration 0021)
+// whether p_assignee may be assigned a ticket in businessID, evaluated as the acting
+// principal. The DEFINER bypasses RLS (so an eligible ANCESTOR-member's membership —
+// which the acting principal's RLS view would hide — is still seen) AND self-asserts
+// the acting principal's authority over the business. It is called via raw pgx because
+// sqlc cannot resolve DEFINER functions (same pattern as resolve_inbound_address /
+// mark_bounced_message). An ineligible-but-existing principal and a nonexistent uuid
+// both return false (no oracle); the caller maps false → ErrConflict.
+func isEligibleAssignee(ctx context.Context, tx pgx.Tx, actingPrincipal, businessID, assignee uuid.UUID) (bool, error) {
+	var ok bool
+	if err := tx.QueryRow(ctx,
+		"SELECT is_eligible_assignee($1, $2, $3)",
+		actingPrincipal, businessID, assignee,
+	).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+// sameAssignee reports whether two optional assignee ids are equal (both nil, or the
+// same uuid) — the no-op guard so an unchanged assignee writes no update and no audit.
+func sameAssignee(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// uuidJSON renders an optional uuid for an audit value: the string, or nil so the
+// JSON serializes as a literal null (matching the NULL assignee column).
+func uuidJSON(u *uuid.UUID) any {
+	if u == nil {
+		return nil
+	}
+	return u.String()
 }
 
 // replySubject ensures a "Re: " prefix so the reply continues the customer thread.
