@@ -186,6 +186,15 @@ DELETE FROM ticket_tag WHERE ticket_id = $1 AND business_id = $2;
 INSERT INTO ticket_tag (ticket_id, tag, business_id, tenant_root_id, created_at)
 VALUES ($1, $2, $3, $4, now());
 
+-- UpdateTicketAssignee sets (or NULLs, for unassign) the assignee. The nullable
+-- arg carries NULL for unassign and a principal id for assign — the service has
+-- already verified eligibility via the is_eligible_assignee DEFINER (T048). Touches
+-- updated_at but NEVER last_message_at (triage is not a message). Scoped to
+-- (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
+-- name: UpdateTicketAssignee :exec
+UPDATE ticket SET assignee_principal_id = sqlc.narg('assignee_principal_id')::uuid, updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
+
 -- NOTE: the outbound delivery-state path (delivery_state read, system inbound
 -- address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
 -- bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /

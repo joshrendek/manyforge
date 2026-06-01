@@ -225,6 +225,12 @@ type Querier interface {
 	// ---- Auth flows (T078) ----
 	UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) error
 	UpdateRoleName(ctx context.Context, arg UpdateRoleNameParams) error
+	// UpdateTicketAssignee sets (or NULLs, for unassign) the assignee. The nullable
+	// arg carries NULL for unassign and a principal id for assign — the service has
+	// already verified eligibility via the is_eligible_assignee DEFINER (T048). Touches
+	// updated_at but NEVER last_message_at (triage is not a message). Scoped to
+	// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
+	UpdateTicketAssignee(ctx context.Context, arg UpdateTicketAssigneeParams) error
 	// UpdateTicketPriority sets a new priority (manual triage). Touches updated_at but
 	// NEVER last_message_at. Scoped to (id, business_id, tenant_root_id).
 	UpdateTicketPriority(ctx context.Context, arg UpdateTicketPriorityParams) error

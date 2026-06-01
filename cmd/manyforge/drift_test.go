@@ -65,7 +65,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		tenancy:      tenancy.NewHandler(&tenancy.Service{}),
 		authz:        authz.NewHandler(&authz.Service{}),
 		invitations:  invitations.NewHandler(&invitations.Service{}),
-		ticketing:    ticketing.NewHandler(&ticketing.Service{}),
+		ticketing:    ticketing.NewHandler(&ticketing.Service{}, nil, nil),
 		inboxWebhook: inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),
 		bounce:       inbox.NewBounceHandler(nil, "", 0, nil),
 		authLimit:    noop,

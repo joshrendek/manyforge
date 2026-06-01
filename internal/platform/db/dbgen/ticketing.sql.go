@@ -780,6 +780,33 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 	return items, nil
 }
 
+const updateTicketAssignee = `-- name: UpdateTicketAssignee :exec
+UPDATE ticket SET assignee_principal_id = $4::uuid, updated_at = now()
+WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3
+`
+
+type UpdateTicketAssigneeParams struct {
+	ID                  uuid.UUID   `json:"id"`
+	BusinessID          uuid.UUID   `json:"business_id"`
+	TenantRootID        uuid.UUID   `json:"tenant_root_id"`
+	AssigneePrincipalID pgtype.UUID `json:"assignee_principal_id"`
+}
+
+// UpdateTicketAssignee sets (or NULLs, for unassign) the assignee. The nullable
+// arg carries NULL for unassign and a principal id for assign — the service has
+// already verified eligibility via the is_eligible_assignee DEFINER (T048). Touches
+// updated_at but NEVER last_message_at (triage is not a message). Scoped to
+// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
+func (q *Queries) UpdateTicketAssignee(ctx context.Context, arg UpdateTicketAssigneeParams) error {
+	_, err := q.db.Exec(ctx, updateTicketAssignee,
+		arg.ID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.AssigneePrincipalID,
+	)
+	return err
+}
+
 const updateTicketPriority = `-- name: UpdateTicketPriority :exec
 UPDATE ticket SET priority = $4::ticket_priority, updated_at = now()
 WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3

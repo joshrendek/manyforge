@@ -8,20 +8,32 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
 
 // Handler exposes the ticketing read slice over HTTP. Routes are thin: parse +
-// validate input, call the service, project the OpenAPI schema, write JSON. All
-// authorization (tickets.read) is enforced by RequirePermission middleware mounted
-// in cmd/manyforge, plus the service-layer ownership predicate — the handler never
-// makes an authz decision itself.
-type Handler struct{ svc *Service }
+// validate input, call the service, project the OpenAPI schema, write JSON. Most
+// authorization (tickets.read/reply/write) is enforced by RequirePermission middleware
+// mounted in cmd/manyforge, plus the service-layer ownership predicate. The ONE
+// handler-side authz decision is the CONDITIONAL tickets.assign gate on triage: the
+// route is gated tickets.write, but an assignee CHANGE additionally requires
+// tickets.assign (OpenAPI), so the handler resolves it via the injected resolver and
+// renders a no-oracle 404 when absent (mirroring RequirePermission).
+type Handler struct {
+	svc     *Service
+	db      *db.DB                   // for the conditional tickets.assign resolution tx
+	resolve httpx.PermissionResolver // resolves the caller's perms at a business (RLS-scoped)
+}
 
-// NewHandler builds a ticketing HTTP handler.
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+// NewHandler builds a ticketing HTTP handler. database+resolve back the conditional
+// tickets.assign gate on triage; both may be nil in contexts that never mount triage.
+func NewHandler(svc *Service, database *db.DB, resolve httpx.PermissionResolver) *Handler {
+	return &Handler{svc: svc, db: database, resolve: resolve}
+}
 
 // ProtectedRoutes mounts the authenticated read endpoints. The caller wraps these
 // with httpx.RequirePermission("tickets.read", …) so each is gated identically.
@@ -436,7 +448,7 @@ func (h *Handler) triage(w http.ResponseWriter, r *http.Request) {
 
 	in := TriageInput{Status: body.Status, Priority: body.Priority, Tags: body.Tags}
 	// Tri-state assignee: absent (nil) → no change; explicit null → unassign; quoted
-	// uuid → assign. (T048 honors AssigneeSet/Assignee; T047 passes them through.)
+	// uuid → assign. The handler honors AssigneeSet/Assignee; the service eligibility-gates.
 	if body.Assignee != nil {
 		in.AssigneeSet = true
 		if string(body.Assignee) != "null" {
@@ -451,6 +463,36 @@ func (h *Handler) triage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			in.Assignee = &aid
+		}
+	}
+
+	// Conditional permission (OpenAPI): the route is gated tickets.write, but
+	// CHANGING the assignee additionally requires tickets.assign. When the body sets
+	// the assignee, resolve the caller's perms at the business (RLS-scoped) and refuse
+	// with a no-oracle 404 if tickets.assign is absent — same shape RequirePermission
+	// renders. We gate on the field being PRESENT (not on it being a net change): a
+	// caller without tickets.assign must not even probe assignment. (A nil resolver/db
+	// means triage was mounted without the gate wired — fail closed.)
+	if in.AssigneeSet {
+		if h.db == nil || h.resolve == nil {
+			httpx.WriteError(w, r, errs.ErrNotFound)
+			return
+		}
+		var allowed bool
+		if derr := h.db.WithPrincipal(r.Context(), pid, func(tx pgx.Tx) error {
+			perms, rerr := h.resolve(r.Context(), tx, pid, bid)
+			if rerr != nil {
+				return rerr
+			}
+			allowed = perms.Has("tickets.assign")
+			return nil
+		}); derr != nil {
+			httpx.WriteError(w, r, derr)
+			return
+		}
+		if !allowed {
+			httpx.WriteError(w, r, errs.ErrNotFound)
+			return
 		}
 	}
 
