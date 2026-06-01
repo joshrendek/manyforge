@@ -11,11 +11,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// inScope002Ops is the set of 002 operations whose handlers are implemented in the
-// US1 slice (T028 inbound webhook + T031 ticketing/requester read routes). The
-// remaining spec-002 operations (POST/PATCH tickets, reply, note, inbox-management)
-// are documented ahead of their US2 handlers and are intentionally NOT asserted as
-// served yet — add them here as their tasks land.
+// inScope002Ops is the set of 002 operations whose handlers are implemented so far:
+// the US1 slice (T028 inbound webhook + T031 ticketing/requester read routes) plus
+// the US2 reply + note write routes (T035). The remaining spec-002 operations
+// (POST/PATCH tickets, inbox-management) are documented ahead of their handlers and
+// are intentionally NOT asserted as served yet — add them here as their tasks land.
 var inScope002Ops = []string{
 	"POST /inbound/email/{}",
 	"GET /businesses/{}/tickets",
@@ -23,6 +23,8 @@ var inScope002Ops = []string{
 	"GET /businesses/{}/tickets/{}/messages",
 	"GET /businesses/{}/requesters",
 	"GET /businesses/{}/requesters/{}",
+	"POST /businesses/{}/tickets/{}/reply",
+	"POST /businesses/{}/tickets/{}/note",
 }
 
 // is002Op reports whether a normalized "METHOD /path" operation belongs to the
