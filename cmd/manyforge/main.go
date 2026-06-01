@@ -32,6 +32,10 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/tenancy"
+	"github.com/manyforge/manyforge/internal/ticketing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func main() {
@@ -78,10 +82,26 @@ func main() {
 	tenSvc := &tenancy.Service{DB: database}
 	authzSvc := &authz.Service{DB: database}
 	invSvc := &invitations.Service{DB: database, Mailer: mailer.LogMailer{Logger: logger}}
+	ticketSvc := &ticketing.Service{DB: database}
 	acctH := account.NewHandler(acctSvc)
 	tenH := tenancy.NewHandler(tenSvc)
 	authzH := authz.NewHandler(authzSvc)
 	invH := invitations.NewHandler(invSvc)
+	ticketH := ticketing.NewHandler(ticketSvc)
+
+	// PermissionResolver adapter over authz.Resolve. RequirePermission is the first
+	// consumer (US1 ticketing): it resolves the caller's effective perms at the
+	// target business INSIDE the caller's RLS principal context and renders an
+	// IDENTICAL 404 (never 403) for a missing principal, an invisible/foreign
+	// business, OR a lacking permission — matching the 002 no-oracle contract.
+	permResolve := func(ctx context.Context, tx pgx.Tx, pid, bid uuid.UUID) (httpx.Permissions, error) {
+		return authz.Resolve(ctx, tx, pid, bid)
+	}
+	// businessIDFromPath reads the {id} path param. A malformed id is treated as a
+	// 404 by RequirePermission (no oracle), consistent with the read handlers.
+	businessIDFromPath := func(r *http.Request) (uuid.UUID, error) {
+		return uuid.Parse(chi.URLParam(r, "id"))
+	}
 
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,
@@ -167,6 +187,14 @@ func main() {
 			tenH.ProtectedRoutes(pr)
 			authzH.ProtectedRoutes(pr)
 			invH.ProtectedRoutes(pr)
+			// US1 ticketing read slice: every endpoint gated on tickets.read at the
+			// {id} business. RequirePermission resolves under the caller's RLS
+			// principal and 404s (never 403) on a lacking perm — so an outsider sees
+			// the same not-found as for a business that does not exist.
+			pr.Group(func(tk chi.Router) {
+				tk.Use(httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath))
+				ticketH.ProtectedRoutes(tk)
+			})
 		})
 	})
 
