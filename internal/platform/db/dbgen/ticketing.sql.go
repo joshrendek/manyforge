@@ -49,48 +49,8 @@ func (q *Queries) CountTicketMessages(ctx context.Context, arg CountTicketMessag
 	return count, err
 }
 
-const getBusinessSystemInboundAddress = `-- name: GetBusinessSystemInboundAddress :one
-SELECT address FROM inbound_address
-WHERE business_id = $1 AND tenant_root_id = $2 AND kind = 'system'
-ORDER BY created_at ASC
-LIMIT 1
-`
-
-type GetBusinessSystemInboundAddressParams struct {
-	BusinessID   uuid.UUID `json:"business_id"`
-	TenantRootID uuid.UUID `json:"tenant_root_id"`
-}
-
-// GetBusinessSystemInboundAddress loads the system (kind='system') inbound address
-// for a business — the From/Reply-To routing base for outbound. US2 sends from the
-// system identity only.
-func (q *Queries) GetBusinessSystemInboundAddress(ctx context.Context, arg GetBusinessSystemInboundAddressParams) (string, error) {
-	row := q.db.QueryRow(ctx, getBusinessSystemInboundAddress, arg.BusinessID, arg.TenantRootID)
-	var address string
-	err := row.Scan(&address)
-	return address, err
-}
-
-const getMessageDeliveryState = `-- name: GetMessageDeliveryState :one
-SELECT delivery_state FROM ticket_message
-WHERE id = $1 AND tenant_root_id = $2
-`
-
-type GetMessageDeliveryStateParams struct {
-	ID           uuid.UUID `json:"id"`
-	TenantRootID uuid.UUID `json:"tenant_root_id"`
-}
-
-// GetMessageDeliveryState reads the delivery lifecycle for a message (see
-// MarkMessageDelivered note on the tenant-only scoping).
-func (q *Queries) GetMessageDeliveryState(ctx context.Context, arg GetMessageDeliveryStateParams) (NullMessageDeliveryState, error) {
-	row := q.db.QueryRow(ctx, getMessageDeliveryState, arg.ID, arg.TenantRootID)
-	var delivery_state NullMessageDeliveryState
-	err := row.Scan(&delivery_state)
-	return delivery_state, err
-}
-
 const getOutboundMessageForBounce = `-- name: GetOutboundMessageForBounce :one
+
 SELECT tm.id, tm.tenant_root_id
 FROM ticket_message tm
 JOIN ticket t ON t.id = tm.ticket_id AND t.tenant_root_id = tm.tenant_root_id
@@ -110,9 +70,21 @@ type GetOutboundMessageForBounceRow struct {
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 }
 
+// NOTE: the outbound delivery-state path (delivery_state read, system inbound
+// address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
+// bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /
+// inbound_address tables silently return/affect ZERO rows when run without a
+// principal (authorized_businesses(NULL) is empty), so they have been REPLACED by
+// the SECURITY DEFINER functions get_send_context + mark_message_delivery in
+// migration 0019 (called via raw pgx from internal/platform/notify). Do NOT re-add
+// GetMessageDeliveryState / GetBusinessSystemInboundAddress / MarkMessageDelivered /
+// MarkMessageFailed here — they were traps (manyforge-0fq).
 // GetOutboundMessageForBounce correlates a bounce to the most recent outbound
-// message to a recipient on a business, for surfacing the failure. Bounce intake
-// is principal-less.
+// message to a recipient on a business, for surfacing the failure.
+// WARNING: principal-less callers (the bounce worker) MUST go through a SECURITY
+// DEFINER wrapper (see migration 0019) to actually read this RLS-protected table; do
+// NOT call this plain-table query directly from the worker — under RLS with no
+// principal it returns zero rows (manyforge-0fq).
 func (q *Queries) GetOutboundMessageForBounce(ctx context.Context, arg GetOutboundMessageForBounceParams) (GetOutboundMessageForBounceRow, error) {
 	row := q.db.QueryRow(ctx, getOutboundMessageForBounce, arg.Email, arg.TenantRootID)
 	var i GetOutboundMessageForBounceRow
@@ -809,42 +781,4 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 		return nil, err
 	}
 	return items, nil
-}
-
-const markMessageDelivered = `-- name: MarkMessageDelivered :exec
-UPDATE ticket_message SET delivery_state = 'sent', delivery_error = NULL
-WHERE id = $1 AND tenant_root_id = $2
-`
-
-type MarkMessageDeliveredParams struct {
-	ID           uuid.UUID `json:"id"`
-	TenantRootID uuid.UUID `json:"tenant_root_id"`
-}
-
-// MarkMessageDelivered/MarkMessageFailed/GetMessageDeliveryState are scoped on
-// (id, tenant_root_id) WITHOUT business_id on purpose: they are driven by the
-// principal-less outbox-send / bounce worker, which holds the message id + tenant
-// but no business predicate. Do NOT "fix" this by adding business_id — the worker
-// has no business context to supply.
-func (q *Queries) MarkMessageDelivered(ctx context.Context, arg MarkMessageDeliveredParams) error {
-	_, err := q.db.Exec(ctx, markMessageDelivered, arg.ID, arg.TenantRootID)
-	return err
-}
-
-const markMessageFailed = `-- name: MarkMessageFailed :exec
-UPDATE ticket_message SET delivery_state = 'failed', delivery_error = $3
-WHERE id = $1 AND tenant_root_id = $2
-`
-
-type MarkMessageFailedParams struct {
-	ID            uuid.UUID `json:"id"`
-	TenantRootID  uuid.UUID `json:"tenant_root_id"`
-	DeliveryError *string   `json:"delivery_error"`
-}
-
-// MarkMessageFailed records a delivery failure (see MarkMessageDelivered note on
-// the tenant-only scoping).
-func (q *Queries) MarkMessageFailed(ctx context.Context, arg MarkMessageFailedParams) error {
-	_, err := q.db.Exec(ctx, markMessageFailed, arg.ID, arg.TenantRootID, arg.DeliveryError)
-	return err
 }
