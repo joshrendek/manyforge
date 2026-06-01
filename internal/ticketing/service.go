@@ -325,6 +325,67 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 	return out, nil
 }
 
+// NoteInput is an internal note's payload (plain text per the NoteBody contract).
+type NoteInput struct {
+	BodyText string
+}
+
+// AddNote records an internal note on a ticket (FR-009): a note-direction message,
+// attributed to the acting member and audited in the same tx. It is NEVER delivered
+// to the requester and NEVER enqueues outbound mail. Dual-enforced (WithPrincipal +
+// business_id predicate); unknown/foreign ticket ⇒ ErrNotFound (no oracle).
+func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID uuid.UUID, in NoteInput) (Message, error) {
+	if len(in.BodyText) == 0 {
+		return Message{}, fmt.Errorf("ticketing: empty note: %w", errs.ErrValidation)
+	}
+	var out Message
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+
+		// Load + own-check the ticket (ErrNoRows ⇒ ErrNotFound, no oracle).
+		tk, terr := q.GetTicket(ctx, dbgen.GetTicketParams{ID: ticketID, BusinessID: businessID})
+		if terr != nil {
+			return terr
+		}
+
+		msgID, gerr := uuid.NewV7()
+		if gerr != nil {
+			return gerr
+		}
+
+		row, ierr := q.InsertNoteMessage(ctx, dbgen.InsertNoteMessageParams{
+			ID: msgID, TicketID: ticketID, BusinessID: businessID, TenantRootID: tk.TenantRootID,
+			AuthorPrincipalID: db.PGUUID(principalID),
+			MessageID:         msgID.String() + "@note." + s.SystemDomain, // internal id; never sent
+			BodyText:          &in.BodyText, BodyHtml: nil,
+		})
+		if ierr != nil {
+			return ierr
+		}
+
+		// Audit-in-tx (FR-014) via the shared helper.
+		targetType := "ticket_message"
+		if aerr := audit.Write(ctx, tx, audit.Entry{
+			BusinessID:       &businessID,
+			TenantRootID:     &tk.TenantRootID,
+			ActorPrincipalID: &principalID,
+			Action:           "ticket.noted",
+			TargetType:       &targetType,
+			TargetID:         &msgID,
+			NewValue:         map[string]any{"ticket_id": ticketID, "direction": "note"},
+		}); aerr != nil {
+			return aerr
+		}
+
+		out = toMessage(row, nil)
+		return nil
+	})
+	if err != nil {
+		return Message{}, mapErr(err)
+	}
+	return out, nil
+}
+
 // replySubject ensures a "Re: " prefix so the reply continues the customer thread.
 func replySubject(s string) string {
 	if !strings.HasPrefix(strings.ToLower(s), "re:") {
