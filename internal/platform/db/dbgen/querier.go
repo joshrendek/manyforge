@@ -23,6 +23,8 @@ type Querier interface {
 	// root this is the last-Owner count guarded by FR-014/FR-024.
 	CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error)
 	CountRoleMemberships(ctx context.Context, roleID uuid.UUID) (int64, error)
+	// CountTicketMessages is the message_count facet of the Ticket schema.
+	CountTicketMessages(ctx context.Context, arg CountTicketMessagesParams) (int64, error)
 	CountUnreadNotifications(ctx context.Context, principalID uuid.UUID) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
@@ -78,10 +80,21 @@ type Querier interface {
 	// The kind ('human'|'agent') of a principal; ownership may pass only to a human.
 	GetPrincipalKind(ctx context.Context, id uuid.UUID) (string, error)
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
+	// GetRequester loads a single requester scoped to (id, business_id) — the
+	// ownership predicate. pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
+	GetRequester(ctx context.Context, arg GetRequesterParams) (Requester, error)
+	// GetRequesterForTicket loads the embedded Requester for a ticket via its
+	// requester_id, scoped to the same business. Returned inline in the Ticket schema.
+	GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (Requester, error)
 	// A role assignable within the tenant (a preset, or one the tenant owns), with
 	// the bits the assignment guard needs (is_locked marks the full-access Owner role).
 	GetRoleInTenant(ctx context.Context, arg GetRoleInTenantParams) (GetRoleInTenantRow, error)
 	GetRolePermissions(ctx context.Context, roleID uuid.UUID) ([]string, error)
+	// GetTicket loads a single ticket scoped to (id, business_id) — the service-layer
+	// ownership predicate. RLS already scopes rows to the caller's authorized
+	// businesses; the explicit business_id is defense in depth. pgx.ErrNoRows ⇒ the
+	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
+	GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
 	// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
@@ -93,6 +106,9 @@ type Querier interface {
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
 	// True if candidate ($2) is the node ($1) itself or a descendant of it.
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
+	// ListAttachmentsForMessages fetches every attachment for a page of messages in
+	// one round trip (avoids N+1). The service groups by ticket_message_id.
+	ListAttachmentsForMessages(ctx context.Context, arg ListAttachmentsForMessagesParams) ([]Attachment, error)
 	// A business's audit trail, newest first, keyset-paginated on (created_at, id).
 	// The first page passes a far-future sentinel cursor so the predicate is uniform.
 	// RLS scopes audit_entry to the caller's authorized businesses; the service
@@ -101,6 +117,14 @@ type Querier interface {
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
 	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
+	// ---- ticket messages ----
+	// ListMessages is the first page of a ticket's thread, oldest first, matching the
+	// SC-010 ticket_message(ticket_id, created_at) index. Scoped to (ticket_id,
+	// business_id) so a ticket id from another business yields zero rows (no leak).
+	// lim is the clamped limit + 1.
+	ListMessages(ctx context.Context, arg ListMessagesParams) ([]TicketMessage, error)
+	// ListMessagesAfter is the keyset continuation: rows strictly after (created_at, id).
+	ListMessagesAfter(ctx context.Context, arg ListMessagesAfterParams) ([]TicketMessage, error)
 	ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]Notification, error)
 	// Tenant roots where this principal directly holds the locked Owner role. RLS
 	// always exposes the caller's own membership rows, so this is reliable under
@@ -109,9 +133,39 @@ type Querier interface {
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
+	// ---- requesters ----
+	// ListRequesters is the first page of a business's requesters, ordered by
+	// first_seen_at for a stable keyset. The optional email facet is an exact
+	// (case-insensitive citext) match for lookup/dedup. lim is the clamped limit + 1.
+	ListRequesters(ctx context.Context, arg ListRequestersParams) ([]Requester, error)
+	// ListRequestersAfter is the keyset continuation: rows strictly after (first_seen_at, id).
+	ListRequestersAfter(ctx context.Context, arg ListRequestersAfterParams) ([]Requester, error)
 	// Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
 	// this to roles the caller may see; the predicate narrows to one tenant.
 	ListTenantRoles(ctx context.Context, tenantRootID pgtype.UUID) ([]ListTenantRolesRow, error)
+	// ListTicketTags returns the tags for one ticket (already business-scoped by the
+	// caller having loaded the ticket under the same predicate), ordered for stable output.
+	ListTicketTags(ctx context.Context, arg ListTicketTagsParams) ([]string, error)
+	// Ticketing read-slice queries (spec 002, T031). Plain-table keyset reads only —
+	// every query runs inside the caller's RLS principal context (db.WithPrincipal)
+	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement).
+	// Keyset pagination uses limit+1 to detect a next page; the service trims the
+	// extra row and mints an opaque cursor from the last kept row's keyset tuple.
+	// The SECURITY DEFINER ingest/threading functions stay raw-pgx in internal/inbox;
+	// nothing here writes — this is the authenticated read surface for US1.
+	// ---- tickets ----
+	// ListTickets is the first (unkeyed) page of a business's tickets, newest activity
+	// first. Ordering + index match SC-010's ticket(business_id, status, last_message_at DESC).
+	// All filters are optional: a NULL/empty arg disables that facet. The `assignee`
+	// facet is tri-state — assignee_unassigned = TRUE lists only NULL assignees;
+	// otherwise a non-NULL assignee_principal_id filters to that principal; both off =
+	// no assignee filter. The tag facet is an exact (case-insensitive citext) match via
+	// ticket_tag. lim is the clamped limit + 1 so the service can detect a further page.
+	ListTickets(ctx context.Context, arg ListTicketsParams) ([]Ticket, error)
+	// ListTicketsAfter is the keyset continuation of ListTickets: the same filters,
+	// but only rows strictly after the cursor tuple (last_message_at, id) in the
+	// (DESC, DESC) order. The row-value comparison rides the same composite index.
+	ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]Ticket, error)
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
