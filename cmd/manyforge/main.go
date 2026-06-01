@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	smtp "github.com/emersion/go-smtp"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/manyforge/manyforge/internal/account"
@@ -168,6 +169,24 @@ func main() {
 	defer workerCancel()
 	go outboxWorker.Run(workerCtx)
 
+	// In-process inbound SMTP receiver (US1). Started ONLY when MANYFORGE_SMTP_ADDR
+	// is set; in dev it is empty and the receiver is disabled. STARTTLS is
+	// opportunistic — no cert is configured here, so the listener runs plaintext
+	// (inbound MX is best-effort TLS). It reuses the same inbox.Service the webhook
+	// path does, so SMTP and webhook deliveries produce identical ticket shapes.
+	var smtpAdapter *inbox.SMTPAdapter
+	if cfg.SMTPAddr != "" {
+		smtpAdapter = inbox.NewSMTPAdapter(cfg.SMTPAddr, inboxSvc, inboxSvc, cfg.InboundMaxBytes, nil, logger)
+		go func() {
+			logger.Info("starting inbound SMTP receiver", "addr", cfg.SMTPAddr)
+			if err := smtpAdapter.ListenAndServe(); err != nil && !errors.Is(err, smtp.ErrServerClosed) {
+				// Do not crash the process on an SMTP bind/serve failure: the HTTP and
+				// webhook ingestion paths stay up. Log and continue.
+				logger.Error("inbound SMTP receiver stopped", "err", err)
+			}
+		}()
+	}
+
 	go func() {
 		logger.Info("starting server", "addr", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -183,6 +202,11 @@ func main() {
 	workerCancel() // stop draining the outbox before closing the DB pool
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if smtpAdapter != nil {
+		if err := smtpAdapter.Shutdown(shutdownCtx); err != nil && !errors.Is(err, smtp.ErrServerClosed) {
+			logger.Error("inbound SMTP graceful shutdown failed", "err", err)
+		}
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "err", err)
 	}

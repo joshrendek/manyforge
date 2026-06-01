@@ -23,6 +23,13 @@ func TestOracleDefensesPinned(t *testing.T) {
 		{"invite-accept gone", "../invitations/handler.go", "http.StatusGone"},
 		// Duplicate signup returns the same 202 as a fresh signup (no existence oracle).
 		{"signup uniform 202", "../account/handler.go", "no existence oracle"},
+		// SMTP RCPT rejects every unrouted recipient with ONE shared 550 error value,
+		// so unknown-address / not-handled / not-yours are indistinguishable
+		// (MF-002-INGEST-SCOPE, FR-003/SC-006). Pin the single shared error and that
+		// the RCPT handler returns it (not a per-reason reply).
+		{"smtp rcpt single reject", "../inbox/smtp.go", "var errGenericReject = &smtp.SMTPError{"},
+		{"smtp rcpt no-oracle return", "../inbox/smtp.go", "return errGenericReject"},
+		{"smtp canroute swallows detail", "../inbox/smtp.go", "func (s *Service) CanRoute("},
 	}
 	for _, c := range cases {
 		if !strings.Contains(mustRead(t, c.path), c.fragment) {
