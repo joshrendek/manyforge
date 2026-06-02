@@ -198,7 +198,7 @@ cannot view tickets. Each support mutation produced an `audit_entry`.
 - [ ] T064 [P] [US5] Integration test `internal/ticketing/audit_integration_test.go`: every support mutation (ingestion, reply, note, status/priority/tag/assignee change, address/domain config, redact) writes an in-tx `audit_entry` with actor/source + before/after (SC-005)
 
 ### Implementation for User Story 5
-- [ ] T065 [US5] Audit any mutation paths still missing an in-tx `audit_entry` (sweep US1–US4 service methods); ensure the ingestion source (`actor_kind='system'`, `actor_label='inbox:<source>'`) is recorded for principal-less ingest (FR-014)
+- [X] T065 [US5] Audit any mutation paths still missing an in-tx `audit_entry` (sweep US1–US4 service methods); ensure the ingestion source is recorded for principal-less ingest (FR-014). Sweep found no gaps (every mutation already audits); pinned Docker-free in `internal/security_regression/audit_source_pin_test.go`. As-built: ingest uses `actor_principal_id = NULL` + source in `inputs->>'source'` (the audit_entry schema has no `actor_kind`/`actor_label` columns).
 - [ ] T066 [US5] `tickets.delete` soft-delete/redact: `internal/ticketing/service.go` redact-in-place (`ticket.redacted_at`, blank PII-bearing columns via 001's erasure proc, schedule attachment-blob deletion via outbox), excluded from lists/gets (`WHERE redacted_at IS NULL` → 404 to non-privileged); audited in-tx (research R7, data-model decision)
 - [ ] T067 [US5] Verify every list/get query in `inbox`/`ticketing` carries both the app `business_id`/`tenant_root_id` predicate and relies on RLS; confirm no 403-vs-404 distinction anywhere (no-oracle audit of handlers)
 
