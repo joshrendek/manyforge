@@ -752,6 +752,33 @@ function installInboxStack(page: Page) {
   })();
 }
 
+// T062 regression: the dashboard had no link to /support. This test pins that the
+// nav-support link is present on the dashboard and navigates to /support.
+test('US4: Support nav link on dashboard is visible and navigates to /support', async ({ page }) => {
+  await installInboxStack(page);
+  // Broad businesses** catch-all registered inside installInboxStack first;
+  // the more-specific tickets glob registered after wins (last-registered wins).
+  await page.route(`**/api/v1/businesses/*/tickets**`, (route) =>
+    route.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+
+  await page.goto('/dashboard');
+
+  // The dashboard renders: the "Your businesses" heading and the biz-row for Acme.
+  await expect(page.getByRole('heading', { name: 'Your businesses' })).toBeVisible();
+  await expect(page.getByTestId('biz-row')).toHaveCount(1);
+
+  // The nav-support link must be visible.
+  await expect(page.getByTestId('nav-support')).toBeVisible();
+
+  // Click it → navigate to /support.
+  await page.getByTestId('nav-support').click();
+
+  // URL lands on /support and the ticket-list renders its business-select.
+  await expect(page).toHaveURL(/\/support$/);
+  await expect(page.getByTestId('business-select')).toBeVisible();
+});
+
 // T060 regression: the inbox-settings page existed but no nav link pointed to it from
 // the ticket-list. This test pins that the link is present and navigates correctly.
 test('US4: inbox-settings link is visible on /support and navigates to the inbox-settings page', async ({
