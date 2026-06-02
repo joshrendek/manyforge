@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/smtp"
 	"strings"
@@ -125,16 +127,58 @@ func buildMIME(m Mail) ([]byte, error) {
 		h(k, v)
 	}
 	h("MIME-Version", "1.0")
-	h("Content-Type", "text/plain; charset=utf-8")
+
+	// Single-part text/plain is the common case (US2's composer is text-only, so
+	// BodyHTML is usually empty). Only emit multipart when an HTML alternative is
+	// actually present — manyforge-7c0: BodyHTML is plumbed end-to-end but was
+	// previously dropped here, so an API-supplied body_html never reached the wire.
+	if m.BodyHTML == "" {
+		h("Content-Type", "text/plain; charset=utf-8")
+		if headerErr != nil {
+			return nil, headerErr
+		}
+		b.WriteString("\r\n")
+		writeBodyCRLF(&b, m.BodyText)
+		return b.Bytes(), nil
+	}
+
+	// multipart/alternative: text/plain first, text/html last (RFC 2046 §5.1.4 —
+	// parts ascend in preference, so a client renders the richest it supports).
+	boundary := mimeBoundary(m)
+	h("Content-Type", "multipart/alternative; boundary=\""+boundary+"\"")
 	if headerErr != nil {
 		return nil, headerErr
 	}
 	b.WriteString("\r\n")
-	b.WriteString(m.BodyText)
-	if !strings.HasSuffix(m.BodyText, "\r\n") {
+	writeMIMEPart(&b, boundary, "text/plain; charset=utf-8", m.BodyText)
+	writeMIMEPart(&b, boundary, "text/html; charset=utf-8", m.BodyHTML)
+	fmt.Fprintf(&b, "--%s--\r\n", boundary)
+	return b.Bytes(), nil
+}
+
+// writeBodyCRLF writes body and guarantees a trailing CRLF.
+func writeBodyCRLF(b *bytes.Buffer, body string) {
+	b.WriteString(body)
+	if !strings.HasSuffix(body, "\r\n") {
 		b.WriteString("\r\n")
 	}
-	return b.Bytes(), nil
+}
+
+// writeMIMEPart writes one multipart/alternative part: the boundary delimiter, the
+// part's Content-Type, a blank line, and the body (CRLF-terminated).
+func writeMIMEPart(b *bytes.Buffer, boundary, contentType, body string) {
+	fmt.Fprintf(b, "--%s\r\n", boundary)
+	fmt.Fprintf(b, "Content-Type: %s\r\n\r\n", contentType)
+	writeBodyCRLF(b, body)
+}
+
+// mimeBoundary derives a deterministic, collision-safe multipart boundary from the
+// message content. Deterministic (not random) so the same Mail yields byte-identical
+// output — stable for DKIM signing and unit assertions. The boundary is a hash of the
+// bodies + Message-ID, so it cannot appear within the bodies it delimits.
+func mimeBoundary(m Mail) string {
+	sum := sha256.Sum256([]byte(m.BodyText + "\x00" + m.BodyHTML + "\x00" + m.MessageID))
+	return "==_mf_" + hex.EncodeToString(sum[:12]) + "_=="
 }
 
 // signDKIM signs raw (RFC 822 message bytes) with the given DKIM config.
