@@ -215,7 +215,7 @@ cannot view tickets. Each support mutation produced an `audit_entry`.
 - [X] T072 [P] Structured logging + metrics for ingestion/outbound/outbox (extend `internal/platform/observability`); redact credential-bearing values (webhook secrets, DKIM refs) in all logs
 - [X] T073 [P] Run the quickstart.md validation walkthrough end-to-end against a fresh DB; fix any drift between docs and behavior
 - [X] T074 [P] Update `ARCHITECTURE.md` (support-desk module map, SL-C/SL-D/SL-E layers, ingestion `SECURITY DEFINER` exception) and `README.md` (run the SMTP receiver + webhook)
-- [ ] T075 Final merge-gate run: `make test && make int-test && make contract-test && make lint` + `cd web && npm run e2e` all green; resolve any failures (no "pre-existing" exceptions)
+- [X] T075 Final merge-gate run: `make test && make int-test && make contract-test && make lint` + `cd web && npm run e2e` all green; resolve any failures (no "pre-existing" exceptions)
 
 ---
 
