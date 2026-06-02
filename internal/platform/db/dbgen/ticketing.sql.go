@@ -326,6 +326,70 @@ func (q *Queries) InsertTicketTag(ctx context.Context, arg InsertTicketTagParams
 	return err
 }
 
+const listAssignableMembers = `-- name: ListAssignableMembers :many
+
+
+SELECT p.id, a.email, a.display_name
+FROM membership m
+JOIN principal p ON p.id = m.principal_id AND p.kind = 'human'
+JOIN account a ON a.id = p.account_id AND a.status = 'active'
+WHERE m.business_id = $1
+ORDER BY a.display_name, p.id
+LIMIT $2
+`
+
+type ListAssignableMembersParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	Lim        int32     `json:"lim"`
+}
+
+type ListAssignableMembersRow struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+}
+
+// NOTE: the outbound delivery-state path (delivery_state read, system inbound
+// address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
+// bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /
+// inbound_address tables silently return/affect ZERO rows when run without a
+// principal (authorized_businesses(NULL) is empty), so they have been REPLACED by
+// the SECURITY DEFINER functions get_send_context + mark_message_delivery in
+// migration 0019 (called via raw pgx from internal/platform/notify). Do NOT re-add
+// GetMessageDeliveryState / GetBusinessSystemInboundAddress / MarkMessageDelivered /
+// MarkMessageFailed here — they were traps (manyforge-0fq).
+//
+// The hard-bounce path (T040) correlates a bounce to its outbound message by the
+// globally-unique Message-ID we minted (rfc_message_id) and marks it failed via the
+// SECURITY DEFINER mark_bounced_message (migration 0020), called raw from
+// internal/inbox. The earlier GetOutboundMessageForBounce plain-table query was
+// superseded by that DEFINER and removed — it was the same principal-less RLS trap as
+// the queries above (under RLS with no principal it returned zero rows).
+// ---- assignable members (assignee picker, FR-011) ----
+// ListAssignableMembers returns a business's human, active members ordered by display
+// name — the candidate ticket assignees for the picker. Single server-capped page.
+// Runs in the caller's RLS context, so membership is already scoped to a business the
+// caller is authorized over (the route is additionally gated on tickets.assign).
+func (q *Queries) ListAssignableMembers(ctx context.Context, arg ListAssignableMembersParams) ([]ListAssignableMembersRow, error) {
+	rows, err := q.db.Query(ctx, listAssignableMembers, arg.BusinessID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssignableMembersRow
+	for rows.Next() {
+		var i ListAssignableMembersRow
+		if err := rows.Scan(&i.ID, &i.Email, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAttachmentsForMessages = `-- name: ListAttachmentsForMessages :many
 SELECT id, ticket_message_id, business_id, tenant_root_id, blob_key, filename, content_type, size, created_at FROM attachment
 WHERE business_id = $1 AND ticket_message_id = ANY($2::uuid[])

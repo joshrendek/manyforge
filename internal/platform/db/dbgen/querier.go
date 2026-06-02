@@ -159,6 +159,28 @@ type Querier interface {
 	// Email suppression queries (spec 001 email_suppression table, US2 outbound safety).
 	// Table: email_suppression (email citext PK, reason text, created_at timestamptz).
 	IsSuppressed(ctx context.Context, email string) (bool, error)
+	// NOTE: the outbound delivery-state path (delivery_state read, system inbound
+	// address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
+	// bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /
+	// inbound_address tables silently return/affect ZERO rows when run without a
+	// principal (authorized_businesses(NULL) is empty), so they have been REPLACED by
+	// the SECURITY DEFINER functions get_send_context + mark_message_delivery in
+	// migration 0019 (called via raw pgx from internal/platform/notify). Do NOT re-add
+	// GetMessageDeliveryState / GetBusinessSystemInboundAddress / MarkMessageDelivered /
+	// MarkMessageFailed here — they were traps (manyforge-0fq).
+	//
+	// The hard-bounce path (T040) correlates a bounce to its outbound message by the
+	// globally-unique Message-ID we minted (rfc_message_id) and marks it failed via the
+	// SECURITY DEFINER mark_bounced_message (migration 0020), called raw from
+	// internal/inbox. The earlier GetOutboundMessageForBounce plain-table query was
+	// superseded by that DEFINER and removed — it was the same principal-less RLS trap as
+	// the queries above (under RLS with no principal it returned zero rows).
+	// ---- assignable members (assignee picker, FR-011) ----
+	// ListAssignableMembers returns a business's human, active members ordered by display
+	// name — the candidate ticket assignees for the picker. Single server-capped page.
+	// Runs in the caller's RLS context, so membership is already scoped to a business the
+	// caller is authorized over (the route is additionally gated on tickets.assign).
+	ListAssignableMembers(ctx context.Context, arg ListAssignableMembersParams) ([]ListAssignableMembersRow, error)
 	// ListAttachmentsForMessages fetches every attachment for a page of messages in
 	// one round trip (avoids N+1). The service groups by ticket_message_id.
 	ListAttachmentsForMessages(ctx context.Context, arg ListAttachmentsForMessagesParams) ([]Attachment, error)

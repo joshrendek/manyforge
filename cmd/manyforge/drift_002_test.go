@@ -32,6 +32,7 @@ var inScope002Ops = []string{
 	"GET /businesses/{}/tickets/{}/messages",
 	"GET /businesses/{}/requesters",
 	"GET /businesses/{}/requesters/{}",
+	"GET /businesses/{}/assignable-members",
 	"POST /businesses/{}/tickets/{}/reply",
 	"POST /businesses/{}/tickets/{}/note",
 	// US4 inbox-management (T052 red-gate — handlers not yet registered)

@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  AssignableMember,
   EmailDomain,
   InboundAddress,
   Page,
@@ -256,6 +257,20 @@ describe('TicketService', () => {
     const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
     expect(req.request.body).toEqual({ assignee_principal_id: 'p-self' });
     req.flush({} as Ticket);
+  });
+
+  it('listAssignableMembers() GETs the assignable-members path (no query params)', () => {
+    let out: Page<AssignableMember> | undefined;
+    svc.listAssignableMembers(biz).subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/assignable-members`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.keys()).toEqual([]);
+    const page: Page<AssignableMember> = {
+      items: [{ id: 'p-bob', email: 'bob@x.test', display_name: 'Bob' }],
+      next_cursor: null,
+    };
+    req.flush(page);
+    expect(out).toEqual(page);
   });
 
   // ── US4 inbox management ──────────────────────────────────────────────────

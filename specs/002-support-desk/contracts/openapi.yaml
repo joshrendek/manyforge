@@ -274,6 +274,19 @@ paths:
         '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Requester' } } }, description: ok }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /businesses/{id}/assignable-members:
+    parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/limit' } ]
+    get:
+      tags: [Tickets]
+      summary: >
+        List the business's assignable members — human, active member principals eligible to be a ticket
+        assignee (FR-011), to power the assignee picker. Single server-capped page (next_cursor is always
+        null); overflow or ancestor members remain assignable by principal id via the eligibility-checked
+        triage PATCH. Requires tickets.assign. 404 if the business is unknown/unauthorized (no oracle).
+      responses:
+        '200': { $ref: '#/components/responses/AssignableMemberPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ---------- Inbox: addresses + domains ----------
   /businesses/{id}/inbound-addresses:
     parameters: [ { $ref: '#/components/parameters/id' } ]
@@ -443,6 +456,13 @@ components:
         contact_id: { type: [string, "null"], format: uuid, description: reserved CRM-contact seam (spec 005); always null in this slice }
         first_seen_at: { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time }
+    AssignableMember:
+      type: object
+      description: a human, active member principal eligible to be a ticket assignee (FR-011); id is the principal id used for assignee_principal_id.
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
     Attachment:
       type: object
       description: a file on a ticket message; bytes live in object storage (SL-E), content_type is sniffed not declared (FR-007).
@@ -579,6 +599,9 @@ components:
     RequesterPage:
       description: paginated requesters
       content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Requester' } } } } ] } } }
+    AssignableMemberPage:
+      description: assignable members (single server-capped page; next_cursor always null)
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/AssignableMember' } } } } ] } } }
     InboundAddressPage:
       description: paginated inbound addresses
       content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/Page' }, { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/InboundAddress' } } } } ] } } }

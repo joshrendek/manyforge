@@ -89,7 +89,13 @@ async function installStack(page: Page) {
   });
   await page.route('**/api/v1/me', (route) =>
     route.fulfill({
-      json: { id: 'u1', email: 'owner@manyforge.test', display_name: 'Owner', email_verified: true, status: 'active' },
+      json: {
+        id: 'u1',
+        email: 'owner@manyforge.test',
+        display_name: 'Owner',
+        email_verified: true,
+        status: 'active',
+      },
     }),
   );
 
@@ -98,6 +104,10 @@ async function installStack(page: Page) {
   // ticket/message routes AFTER, so the specific ones win.
   await page.route('**/api/v1/businesses**', (route) =>
     route.fulfill({ json: { items: [business], next_cursor: null } }),
+  );
+  // Specific routes registered AFTER the catch-all win. Empty members → picker hidden.
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/assignable-members`, (route) =>
+    route.fulfill({ json: { items: [], next_cursor: null } }),
   );
   await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets**`, (route) =>
     route.fulfill({ json: { items: [ticket], next_cursor: null } }),
@@ -110,7 +120,9 @@ async function installStack(page: Page) {
   );
 }
 
-test('an ingested ticket renders in the support list with its subject and requester', async ({ page }) => {
+test('an ingested ticket renders in the support list with its subject and requester', async ({
+  page,
+}) => {
   await installStack(page);
   await page.goto('/support');
 
@@ -127,7 +139,9 @@ test('an ingested ticket renders in the support list with its subject and reques
   await expect(row.getByTestId('ticket-message-count')).toContainText('1 msg');
 });
 
-test('opening the ticket shows the inbound message body and the requester in the thread', async ({ page }) => {
+test('opening the ticket shows the inbound message body and the requester in the thread', async ({
+  page,
+}) => {
   await installStack(page);
   await page.goto('/support');
 
@@ -227,7 +241,9 @@ test('US2: reply submit POSTs to /reply and renders an outbound message', async 
   await expect(page.getByTestId('toggle-note')).toHaveAttribute('aria-pressed', 'false');
 
   // Type a reply and submit.
-  await page.getByTestId('composer-body').fill('Thanks for reaching out! We will look into this right away.');
+  await page
+    .getByTestId('composer-body')
+    .fill('Thanks for reaching out! We will look into this right away.');
   await page.getByTestId('composer-submit').click();
 
   // The new outbound message must appear in the thread.
@@ -282,7 +298,10 @@ test('US2: note submit POSTs to /note and renders a note-direction message', asy
   await expect(page.getByTestId('toggle-reply')).toHaveAttribute('aria-pressed', 'false');
 
   // Placeholder text changes to reflect note mode.
-  await expect(page.getByTestId('composer-body')).toHaveAttribute('placeholder', 'Add an internal note…');
+  await expect(page.getByTestId('composer-body')).toHaveAttribute(
+    'placeholder',
+    'Add an internal note…',
+  );
 
   await page.getByTestId('composer-body').fill('Internal: escalate to tier-2.');
   await page.getByTestId('composer-submit').click();
@@ -464,6 +483,18 @@ function installTriageStack(page: Page) {
     await page.route('**/api/v1/businesses**', (route) =>
       route.fulfill({ json: { items: [business], next_cursor: null } }),
     );
+    // Assignable members for the picker (specific route wins over the catch-all).
+    await page.route(`**/api/v1/businesses/${BIZ_ID}/assignable-members`, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            { id: 'p-alice', email: 'alice@manyforge.test', display_name: 'Alice' },
+            { id: 'u1', email: 'owner@manyforge.test', display_name: 'Owner' },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
     await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/messages**`, (route) =>
       route.fulfill({ json: { items: [inboundMessage], next_cursor: null } }),
     );
@@ -563,6 +594,33 @@ test('US3: assign-to-me PATCHes the assignee id, shows it, and persists; unassig
   await page.reload();
   await expect(page.getByTestId('thread-header')).toBeVisible();
   await expect(page.getByTestId('thread-unassigned')).toBeVisible();
+});
+
+// 3b. The assignee picker (manyforge-64s) lists assignable members and selecting one
+// PATCHes its principal id; selecting (unassigned) clears it.
+test('US3: assignee picker lists members; selecting one assigns, (unassigned) clears', async ({
+  page,
+}) => {
+  const state = await installTriageStack(page);
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+  await expect(page.getByTestId('thread-unassigned')).toBeVisible();
+
+  const picker = page.getByTestId('assignee-picker');
+  await expect(picker).toBeVisible();
+  // "Unassigned" + the two seeded members.
+  await expect(picker.locator('option')).toHaveCount(3);
+
+  // Pick a member → PATCH {assignee_principal_id:'p-alice'}; the unassigned badge clears.
+  await picker.selectOption('p-alice');
+  await expect(page.getByTestId('thread-unassigned')).toHaveCount(0);
+  expect(state.lastPatchBody).toEqual({ assignee_principal_id: 'p-alice' });
+
+  // Pick (unassigned) → PATCH null; the unassigned badge returns.
+  await picker.selectOption('');
+  await expect(page.getByTestId('thread-unassigned')).toBeVisible();
+  expect(state.lastPatchBody).toEqual({ assignee_principal_id: null });
 });
 
 // 4. Tag add PATCHes the full tag set and renders a new chip; persists on reload.
@@ -706,14 +764,11 @@ function installInboxStack(page: Page) {
     // EmailDomain in place. Verifying does NOT itself create an address; the
     // operator adds the custom address next (now that the domain is verified the
     // add-address <select> offers it).
-    await page.route(
-      `**/api/v1/businesses/${BIZ_ID}/email-domains/*/verify`,
-      (route) => {
-        const idx = domains.findIndex((d) => d['id'] === ACME_DOMAIN_ID);
-        if (idx >= 0) domains[idx] = { ...verifiedDomain };
-        route.fulfill({ status: 200, json: verifiedDomain });
-      },
-    );
+    await page.route(`**/api/v1/businesses/${BIZ_ID}/email-domains/*/verify`, (route) => {
+      const idx = domains.findIndex((d) => d['id'] === ACME_DOMAIN_ID);
+      if (idx >= 0) domains[idx] = { ...verifiedDomain };
+      route.fulfill({ status: 200, json: verifiedDomain });
+    });
 
     // email-domains list (GET) + create (POST) share this glob → branch on method.
     // POST appends the unverified domain to the stored list and returns it (201);
@@ -754,7 +809,9 @@ function installInboxStack(page: Page) {
 
 // T062 regression: the dashboard had no link to /support. This test pins that the
 // nav-support link is present on the dashboard and navigates to /support.
-test('US4: Support nav link on dashboard is visible and navigates to /support', async ({ page }) => {
+test('US4: Support nav link on dashboard is visible and navigates to /support', async ({
+  page,
+}) => {
   await installInboxStack(page);
   // Broad businesses** catch-all registered inside installInboxStack first;
   // the more-specific tickets glob registered after wins (last-registered wins).

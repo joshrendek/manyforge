@@ -4,6 +4,7 @@ import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import {
+  AssignableMember,
   PatchTicket,
   Ticket,
   TicketMessage,
@@ -137,9 +138,29 @@ import { AuthService, Profile } from '../../core/auth.service';
                   Unassign
                 </button>
               </div>
-              <!-- No "list assignable members" endpoint exists yet (see follow-up),
-                   so assigning anyone other than yourself is a manual principal-uuid
-                   entry. The backend validates eligibility + tickets.assign. -->
+              <!-- The picker lists the business's assignable members (FR-011); shown
+                   only when the list loads (the caller has tickets.assign and members
+                   exist). Selecting (unassigned) clears the assignee. -->
+              @if (members().length > 0) {
+                <div class="assignee-picker-row">
+                  <select
+                    class="assignee-picker"
+                    data-testid="assignee-picker"
+                    aria-label="Assign to a member"
+                    [disabled]="triaging()"
+                    [ngModel]="t.assignee_principal_id ?? ''"
+                    (ngModelChange)="assignPicked($event)"
+                  >
+                    <option value="">Unassigned</option>
+                    @for (m of members(); track m.id) {
+                      <option [value]="m.id">{{ m.display_name }} ({{ m.email }})</option>
+                    }
+                  </select>
+                </div>
+              }
+              <!-- Manual principal-uuid fallback for an ancestor member or one beyond
+                   the picker's capped page. The backend validates eligibility +
+                   tickets.assign. -->
               <div class="assignee-manual">
                 <input
                   type="text"
@@ -601,11 +622,24 @@ export class ThreadViewComponent implements OnInit {
   profile = signal<Profile | null>(null);
   readonly myPrincipalId = (): string | null => this.profile()?.id ?? null;
 
+  // The business's assignable members (FR-011), loaded best-effort to populate the
+  // assignee picker. Stays empty (picker hidden) when the caller lacks tickets.assign
+  // (404) or the load fails — the manual-uuid fallback still works.
+  members = signal<AssignableMember[]>([]);
+
   ngOnInit(): void {
     this.businessId = this.route.snapshot.paramMap.get('businessId') ?? '';
     this.ticketId = this.route.snapshot.paramMap.get('tid') ?? '';
     // Best-effort: drives "Assign to me". A failure just hides that button.
     this.auth.me().subscribe({ next: (p) => this.profile.set(p), error: () => {} });
+    // Best-effort: populates the assignee picker. A 404 (no tickets.assign) or any
+    // failure just leaves the picker hidden.
+    if (this.businessId) {
+      this.api.listAssignableMembers(this.businessId).subscribe({
+        next: (p) => this.members.set(p.items ?? []),
+        error: () => {},
+      });
+    }
     this.reload();
   }
 
@@ -736,6 +770,17 @@ export class ThreadViewComponent implements OnInit {
     const id = this.assigneeDraft.trim();
     if (!id) return;
     this.patch({ assignee_principal_id: id }, () => (this.assigneeDraft = ''));
+  }
+
+  // Picker selection: an empty value clears the assignee (null); otherwise assign the
+  // chosen member. No-op when it already matches the current assignee, so reselecting
+  // the same option fires no redundant PATCH.
+  assignPicked(id: string): void {
+    const t = this.ticket();
+    if (!t) return;
+    const next = id === '' ? null : id;
+    if (next === (t.assignee_principal_id ?? null)) return;
+    this.patch({ assignee_principal_id: next });
   }
 
   // Central triage mutation: PATCH, then reflect the returned Ticket (no stale

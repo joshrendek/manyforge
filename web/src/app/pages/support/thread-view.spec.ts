@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Page, Ticket, TicketMessage } from '../../core/ticket.service';
+import { AssignableMember, Page, Ticket, TicketMessage } from '../../core/ticket.service';
 import { ThreadViewComponent } from './thread-view';
 
 // Component-level coverage for the US3 triage controls. We drive the real
@@ -51,10 +51,10 @@ describe('ThreadViewComponent triage (US3)', () => {
 
   // Bring the component to a loaded state: flush /me, the ticket, and its
   // (empty) message thread, leaving the triage controls live.
-  function loadWith(t: Ticket): void {
+  function loadWith(t: Ticket, members: AssignableMember[] = []): void {
     fixture = TestBed.createComponent(ThreadViewComponent);
     cmp = fixture.componentInstance;
-    fixture.detectChanges(); // ngOnInit fires /me + getTicket
+    fixture.detectChanges(); // ngOnInit fires /me + assignable-members + getTicket
 
     mock.expectOne('/api/v1/me').flush({
       id: myPid,
@@ -63,6 +63,9 @@ describe('ThreadViewComponent triage (US3)', () => {
       email_verified: true,
       status: 'active',
     });
+    mock
+      .expectOne(`/api/v1/businesses/${biz}/assignable-members`)
+      .flush({ items: members, next_cursor: null });
     mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`).flush(t);
     mock
       .expectOne((r) => r.url === `/api/v1/businesses/${biz}/tickets/${tid}/messages`)
@@ -192,6 +195,54 @@ describe('ThreadViewComponent triage (US3)', () => {
     req.flush({ code: 'CONFLICT', message: 'ineligible' }, { status: 409, statusText: 'Conflict' });
     expect(cmp.triageError()).toContain('conflicts');
     expect(cmp.ticket()!.assignee_principal_id).toBeNull(); // unchanged
+  });
+
+  it('renders the assignee picker from listAssignableMembers (Unassigned + members)', () => {
+    const members: AssignableMember[] = [
+      { id: 'p-alice', email: 'alice@x.test', display_name: 'Alice' },
+      { id: 'p-bob', email: 'bob@x.test', display_name: 'Bob' },
+    ];
+    loadWith(makeTicket({ assignee_principal_id: null }), members);
+    expect(cmp.members().length).toBe(2);
+    const picker = fixture.nativeElement.querySelector(
+      '[data-testid="assignee-picker"]',
+    ) as HTMLSelectElement;
+    expect(picker).toBeTruthy();
+    // One "Unassigned" option plus one per member.
+    expect(picker.querySelectorAll('option').length).toBe(3);
+  });
+
+  it('picking a member PATCHes its principal id; reselecting the current is a no-op', () => {
+    const members: AssignableMember[] = [{ id: 'p-bob', email: 'bob@x.test', display_name: 'Bob' }];
+    loadWith(makeTicket({ assignee_principal_id: null }), members);
+
+    cmp.assignPicked('p-bob');
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`);
+    expect(req.request.body).toEqual({ assignee_principal_id: 'p-bob' });
+    req.flush(makeTicket({ assignee_principal_id: 'p-bob' }));
+    expect(cmp.ticket()!.assignee_principal_id).toBe('p-bob');
+
+    // Reselecting the now-current assignee fires no redundant PATCH.
+    cmp.assignPicked('p-bob');
+    mock.expectNone(`/api/v1/businesses/${biz}/tickets/${tid}`);
+  });
+
+  it('picking (unassigned) PATCHes literal null', () => {
+    const members: AssignableMember[] = [{ id: 'p-bob', email: 'bob@x.test', display_name: 'Bob' }];
+    loadWith(makeTicket({ assignee_principal_id: 'p-bob' }), members);
+
+    cmp.assignPicked('');
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`);
+    expect(req.request.body).toEqual({ assignee_principal_id: null });
+    expect('assignee_principal_id' in (req.request.body as object)).toBe(true);
+    req.flush(makeTicket({ assignee_principal_id: null }));
+    expect(cmp.ticket()!.assignee_principal_id).toBeNull();
+  });
+
+  it('hides the picker when no assignable members load (404/empty)', () => {
+    loadWith(makeTicket({ assignee_principal_id: null })); // members default to []
+    const picker = fixture.nativeElement.querySelector('[data-testid="assignee-picker"]');
+    expect(picker).toBeNull();
   });
 
   it('surfaces a 400 validation message (empty/whitespace tag) gracefully', () => {
