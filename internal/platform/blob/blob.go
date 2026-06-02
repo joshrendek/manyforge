@@ -11,6 +11,7 @@ import (
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/fileblob" // registers the file:// scheme (self-host default)
 	_ "gocloud.dev/blob/s3blob"   // registers the s3:// scheme (S3-compatible, optional)
+	"gocloud.dev/gcerrors"
 )
 
 // Store is the attachment object-storage abstraction (SL-E). Bytes live here;
@@ -50,9 +51,14 @@ func (s *Bucket) Get(ctx context.Context, key string) ([]byte, error) {
 	return s.b.ReadAll(ctx, key)
 }
 
-// Delete removes the object at key (idempotent for redaction/erasure via the outbox).
+// Delete removes the object at key. It is idempotent — a key that is already gone is
+// success — so the redaction/erasure purge path (at-least-once outbox delivery) never
+// fails on a re-delivered or double-purged blob.
 func (s *Bucket) Delete(ctx context.Context, key string) error {
-	return s.b.Delete(ctx, key)
+	if err := s.b.Delete(ctx, key); err != nil && gcerrors.Code(err) != gcerrors.NotFound {
+		return err
+	}
+	return nil
 }
 
 // Close releases the bucket.
