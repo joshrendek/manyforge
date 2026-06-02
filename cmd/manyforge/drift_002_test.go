@@ -11,18 +11,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// inScope002Ops is the set of 002 operations whose handlers are implemented so far:
-// the US1 slice (T028 inbound webhook + T031 ticketing/requester read routes) plus
-// the US2 reply + note write routes (T035), and the US3 PATCH triage route (T044).
-// The PATCH triage op is added here ahead of its handler as a TDD red-gate: it is
-// already documented in openapi.yaml, so this entry makes the presence check fail
-// until the handler/route lands. The remaining spec-002 operations (POST tickets,
-// inbox-management) are documented ahead of their handlers and are intentionally
-// NOT asserted as served yet — add them here as their tasks land.
-//
-// T052 red-gate (US4 inbox-management): the five email-domain and inbound-address
-// ops below are documented in openapi.yaml but their handlers are not yet registered;
-// they will remain red until tasks T055–T058 land the routes.
+// inScope002Ops is the COMPLETE set of 002 operations served by the router, now
+// that US1–US5 have all landed: inbound ingress (T028 webhook + bounce), the US1
+// ticketing/requester read slice (T031), the US2 reply + note write routes (T035),
+// the US3 PATCH triage route (T044), the US4 inbox-management email-domain +
+// inbound-address routes (T055–T058), and the US5 DELETE/redact route (T066). Every
+// entry below is asserted both ways by TestOpenAPIDrift002 — present in the router
+// AND documented in openapi.yaml. Add a new entry only when its handler is
+// registered (a documented-but-unserved op is allowed and simply not listed here;
+// a served-but-undocumented op is caught by the no-drift half of the test).
 var inScope002Ops = []string{
 	"POST /inbound/email/{}",
 	"POST /inbound/bounce",
@@ -36,7 +33,7 @@ var inScope002Ops = []string{
 	"DELETE /businesses/{}/tickets/{}",
 	"POST /businesses/{}/tickets/{}/reply",
 	"POST /businesses/{}/tickets/{}/note",
-	// US4 inbox-management (T052 red-gate — handlers not yet registered)
+	// US4 inbox-management (T055–T058)
 	"GET /businesses/{}/email-domains",
 	"POST /businesses/{}/email-domains",
 	"POST /businesses/{}/email-domains/{}/verify",
@@ -54,8 +51,8 @@ func is002Op(op string, spec002 map[string]bool) bool {
 // TestOpenAPIDrift002 (T017) pins the 002 support-desk contract against the FULL
 // production router (built via mountAPIRoutes, the same seam main uses):
 //
-//  1. Presence: every in-scope US1 002 operation (inbound webhook + ticketing read
-//     slice) is REGISTERED — no missing handler.
+//  1. Presence: every in-scope 002 operation (inbound ingress through the US5
+//     redact route) is REGISTERED — no missing handler.
 //  2. No drift: every registered route that belongs to the 002 surface is PRESENT
 //     in specs/002-support-desk/contracts/openapi.yaml — no undocumented 002 route.
 //
