@@ -12,6 +12,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // Enqueue writes an outbox row in the SAME transaction as the source mutation
@@ -39,6 +40,8 @@ type Worker struct {
 	BatchSize   int
 	PollEvery   time.Duration
 	MaxAttempts int32
+	// Metrics counts drain outcomes (drained/retried/dropped). nil ⇒ no-op.
+	Metrics *observability.Metrics
 }
 
 func (w *Worker) withDefaults() {
@@ -100,11 +103,13 @@ func (w *Worker) drainOnce(ctx context.Context) (int, error) {
 				if _, err := tx.Exec(ctx, "SELECT mark_outbox_processed($1)", e.ID); err != nil {
 					return err
 				}
+				w.Metrics.Inc(observability.MetricOutboxDrained)
 				continue
 			}
 			if e.Attempts+1 >= w.MaxAttempts {
 				w.Logger.ErrorContext(ctx, "dropping poison event after max attempts",
 					"id", e.ID, "topic", e.Topic, "attempts", e.Attempts, "err", derr)
+				w.Metrics.Inc(observability.MetricOutboxDropped)
 				if _, err := tx.Exec(ctx, "SELECT mark_outbox_processed($1)", e.ID); err != nil {
 					return err
 				}
@@ -112,6 +117,7 @@ func (w *Worker) drainOnce(ctx context.Context) (int, error) {
 			}
 			w.Logger.WarnContext(ctx, "event handler failed; rescheduling",
 				"id", e.ID, "topic", e.Topic, "attempts", e.Attempts, "err", derr)
+			w.Metrics.Inc(observability.MetricOutboxRetried)
 			if _, err := tx.Exec(ctx,
 				"SELECT reschedule_outbox($1, make_interval(secs => $2::int))",
 				e.ID, backoffSeconds(e.Attempts)); err != nil {
