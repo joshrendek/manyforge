@@ -3,6 +3,8 @@
 package config
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -50,6 +52,13 @@ type Config struct {
 	SystemDKIMDomain        string // d= domain, e.g. the InboundSystemDomain
 	SystemDKIMSelector      string // s= selector
 	SystemDKIMPrivateKeyPEM string // PEM-encoded private key (ed25519 PKCS#8 or RSA); inline or via *_PATH
+
+	// At-rest master key for sealing per-domain DKIM private keys (US4 custom
+	// sending identities). Supplied via MANYFORGE_DKIM_MASTER_KEY as base64 or
+	// hex; the decoded value MUST be 32 bytes (AES-256). Nil/empty when unset —
+	// custom-domain signing then degrades to system-only and the server still
+	// boots; only an explicitly-set-but-invalid key is a hard config error.
+	DKIMMasterKey []byte
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -139,6 +148,13 @@ func Load() (Config, error) {
 		}
 	}
 
+	// DKIM master key (US4): unset ⇒ nil (no error, signing degrades to system);
+	// set-but-not-32-bytes-after-decode ⇒ hard error so a misconfigured key never
+	// silently disables custom-domain signing.
+	if cfg.DKIMMasterKey, err = envKey32("MANYFORGE_DKIM_MASTER_KEY"); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_DKIM_MASTER_KEY: %w", err)
+	}
+
 	return cfg, nil
 }
 
@@ -179,4 +195,40 @@ func envInt64(key string, def int64) (int64, error) {
 		return def, nil
 	}
 	return strconv.ParseInt(v, 10, 64)
+}
+
+// envKey32 decodes a 32-byte key from base64 (std then url) or hex. An unset/empty
+// var returns (nil, nil): the feature degrades rather than blocking boot. A value
+// that fails to decode, or decodes to a non-32-byte length, is a hard error.
+//
+// Each encoding is tried in turn, preferring the first that yields exactly 32
+// bytes. A 64-char hex key is also valid base64 (decoding to 48 bytes), so we
+// must not commit to the first successful decode regardless of length.
+func envKey32(key string) ([]byte, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil, nil
+	}
+	decoders := []func(string) ([]byte, error){
+		base64.StdEncoding.DecodeString,
+		base64.URLEncoding.DecodeString,
+		hex.DecodeString,
+	}
+	var decoded bool
+	var last []byte
+	for _, dec := range decoders {
+		b, err := dec(v)
+		if err != nil {
+			continue
+		}
+		decoded = true
+		last = b
+		if len(b) == 32 {
+			return b, nil
+		}
+	}
+	if !decoded {
+		return nil, fmt.Errorf("not valid base64 or hex")
+	}
+	return nil, fmt.Errorf("decoded key must be 32 bytes, got %d", len(last))
 }
