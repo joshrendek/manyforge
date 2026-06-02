@@ -13,6 +13,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/events"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // sendSystemDomain is the platform-hosted domain the seeded system inbound address
@@ -247,5 +248,33 @@ func TestSendIdempotent(t *testing.T) {
 	}
 	if got := deliveryState(ctx, t, tdb, st.messageRowID); got != "sent" {
 		t.Errorf("delivery_state = %q, want sent (unchanged)", got)
+	}
+}
+
+// TestSendIncrementsSentMetric — a successful send increments MetricOutboundSent by
+// exactly 1. Mirrors the TestSendHappyPath harness: same seed, same captureSender,
+// same run-in-tx pattern, but with Metrics wired so the counter change is observable.
+func TestSendIncrementsSentMetric(t *testing.T) {
+	ctx, tdb := startSendDB(t)
+	st := seedSendTenant(ctx, t, tdb, "pending")
+
+	m := observability.NewMetrics()
+	before := m.Get(observability.MetricOutboundSent)
+
+	cap := &captureSender{}
+	sub := SendSubscriber{Sender: cap, Metrics: m}
+
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, repliedEvent(t, st))
+	}); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	if cap.last == nil {
+		t.Fatalf("sender not called")
+	}
+	got := m.Get(observability.MetricOutboundSent) - before
+	if got != 1 {
+		t.Errorf("MetricOutboundSent delta = %d, want 1", got)
 	}
 }
