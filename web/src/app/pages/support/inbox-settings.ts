@@ -58,7 +58,7 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             autocomplete="off"
             [(ngModel)]="domainDraft"
             name="domain"
-            [disabled]="saving()"
+            [disabled]="addingDomain()"
           />
           <label for="mode-select">Mode</label>
           <select
@@ -66,7 +66,7 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             data-testid="mode-select"
             [(ngModel)]="modeDraft"
             name="mode"
-            [disabled]="saving()"
+            [disabled]="addingDomain()"
           >
             @for (m of modes; track m) {
               <option [value]="m">{{ m }}</option>
@@ -76,9 +76,9 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             type="submit"
             class="primary compact"
             data-testid="add-domain-submit"
-            [disabled]="saving() || !domainDraft.trim()"
+            [disabled]="addingDomain() || !domainDraft.trim()"
           >
-            {{ saving() ? 'Adding…' : 'Add domain' }}
+            {{ addingDomain() ? 'Adding…' : 'Add domain' }}
           </button>
         </form>
 
@@ -141,7 +141,7 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
                       type="button"
                       class="ghost compact"
                       data-testid="verify-domain"
-                      [disabled]="saving()"
+                      [disabled]="verifyingId() !== null"
                       (click)="verify(d)"
                     >
                       {{ verifyingId() === d.id ? 'Checking DNS…' : 'Verify' }}
@@ -173,7 +173,7 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             autocomplete="off"
             [(ngModel)]="addressDraft"
             name="address"
-            [disabled]="saving()"
+            [disabled]="addingAddress()"
           />
           <label for="address-domain-select">Domain</label>
           <select
@@ -181,7 +181,7 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             data-testid="address-domain-select"
             [(ngModel)]="selectedDomainId"
             name="email_domain_id"
-            [disabled]="saving() || !verifiedDomains().length"
+            [disabled]="addingAddress() || !verifiedDomains().length"
           >
             <option value="" disabled>
               {{
@@ -196,9 +196,9 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             type="submit"
             class="primary compact"
             data-testid="add-address-submit"
-            [disabled]="saving() || !addressDraft.trim() || !selectedDomainId"
+            [disabled]="addingAddress() || !addressDraft.trim() || !selectedDomainId"
           >
-            {{ saving() ? 'Adding…' : 'Add address' }}
+            {{ addingAddress() ? 'Adding…' : 'Add address' }}
           </button>
         </form>
 
@@ -317,7 +317,12 @@ export class InboxSettingsComponent implements OnInit {
   addresses = signal<InboundAddress[]>([]);
   loading = signal(true);
   loadFailed = signal(false);
-  saving = signal(false);
+  // Per-action in-flight signals so independent mutations don't block one another
+  // (manyforge-mu7): a slow per-domain Verify must NOT disable the add-domain or
+  // add-address forms. addingDomain/addingAddress each gate only their own form;
+  // the per-row Verify buttons gate on verifyingId (below).
+  addingDomain = signal(false);
+  addingAddress = signal(false);
   error = signal('');
 
   // Tracks which domain a verify call is in-flight / surfaced a pending hint for,
@@ -383,18 +388,18 @@ export class InboxSettingsComponent implements OnInit {
   // a full reload would also work but loses scroll/ordering nicety.
   addDomain(): void {
     const domain = this.domainDraft.trim();
-    if (!domain || this.saving()) return;
-    this.saving.set(true);
+    if (!domain || this.addingDomain()) return;
+    this.addingDomain.set(true);
     this.error.set('');
     this.api.createEmailDomain(this.businessId, { domain, mode: this.modeDraft }).subscribe({
       next: (created) => {
         this.domains.update((cur) => [...cur, created]);
         this.domainDraft = '';
         this.modeDraft = 'forward_in';
-        this.saving.set(false);
+        this.addingDomain.set(false);
       },
       error: (e: HttpErrorResponse) => {
-        this.saving.set(false);
+        this.addingDomain.set(false);
         this.error.set(this.describeDomainError(e));
       },
     });
@@ -404,22 +409,21 @@ export class InboxSettingsComponent implements OnInit {
   // a domain still unverified is a pending poll (NO error) — we surface a "re-check
   // DNS" hint rather than an error banner. Reflect the returned domain in place.
   verify(d: EmailDomain): void {
-    if (this.saving()) return;
-    this.saving.set(true);
+    // Gate only on an in-flight verify (its own signal), so the add-domain and
+    // add-address forms stay usable while DNS is being checked (manyforge-mu7).
+    if (this.verifyingId() !== null) return;
     this.verifyingId.set(d.id);
     this.verifyHintId.set(null);
     this.error.set('');
     this.api.verifyEmailDomain(this.businessId, d.id).subscribe({
       next: (updated) => {
         this.domains.update((cur) => cur.map((x) => (x.id === updated.id ? updated : x)));
-        this.saving.set(false);
         this.verifyingId.set(null);
         if (updated.verification !== 'verified') {
           this.verifyHintId.set(updated.id);
         }
       },
       error: (e: HttpErrorResponse) => {
-        this.saving.set(false);
         this.verifyingId.set(null);
         this.error.set(this.describeVerifyError(e));
       },
@@ -431,8 +435,8 @@ export class InboxSettingsComponent implements OnInit {
   addAddress(): void {
     const address = this.addressDraft.trim();
     const domainId = this.selectedDomainId;
-    if (!address || !domainId || this.saving()) return;
-    this.saving.set(true);
+    if (!address || !domainId || this.addingAddress()) return;
+    this.addingAddress.set(true);
     this.error.set('');
     this.api
       .createInboundAddress(this.businessId, { address, email_domain_id: domainId })
@@ -441,10 +445,10 @@ export class InboxSettingsComponent implements OnInit {
           this.addresses.update((cur) => [...cur, created]);
           this.addressDraft = '';
           this.selectedDomainId = '';
-          this.saving.set(false);
+          this.addingAddress.set(false);
         },
         error: (e: HttpErrorResponse) => {
-          this.saving.set(false);
+          this.addingAddress.set(false);
           this.error.set(this.describeAddressError(e));
         },
       });
