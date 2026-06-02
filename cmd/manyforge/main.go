@@ -226,7 +226,12 @@ func main() {
 		sender = notify.LogSender{Logger: logger, Suppression: notify.DBSuppression{DB: database}}
 		logger.Warn("MANYFORGE_SMTP_HOST unset; outbound replies are logged, not sent (dev LogSender)")
 	}
-	sendSub := notify.SendSubscriber{Sender: sender, Logger: logger}
+	// US4 outbound identity selection (T059/FR-013): the send subscriber shares the
+	// SAME DKIM sealer the IdentityService uses, so it can unseal a verified custom
+	// domain's private key and sign the reply as that domain. When the sealer is nil
+	// (no MANYFORGE_DKIM_MASTER_KEY), the send path simply never selects a custom
+	// identity and every reply goes out from the system address — the correct degrade.
+	sendSub := notify.SendSubscriber{Sender: sender, Logger: logger, Sealer: dkimSealer}
 	eventBus.Subscribe(events.TopicTicketReplied, sendSub.Handle)
 
 	mux := httpx.NewRouter(ring)
