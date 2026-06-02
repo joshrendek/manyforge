@@ -592,3 +592,248 @@ test('US3: adding a tag PATCHes the full tag set, renders a chip, and persists',
   await expect(page.getByTestId('triage-chip')).toHaveCount(1);
   await expect(page.getByTestId('triage-chip')).toContainText('billing');
 });
+
+// ── US4 inbox-settings tests (T061) ───────────────────────────────────────────
+//
+// The inbox-settings page (/support/:businessId/settings/inbox) manages a
+// business's custom email domains and inbound addresses (FR-012/FR-013). The
+// backend (domain CRUD, DNS-challenge generation, DEFINER verify, RLS) is covered
+// by the Go integration/security tests; this spec pins the *SPA* flow against a
+// mocked /api/v1 surface: add a forward_in domain → the DNS challenge renders →
+// (stub-verified) the domain flips to verified → a custom inbound address can then
+// be added on it and appears in the addresses list.
+//
+// installInboxStack is the US4 analogue of installTriageStack: a *stateful* mock
+// where local `domains`/`addresses` arrays back the GET handlers, and the POST
+// handlers (add-domain, add-address) plus the verify handler mutate those arrays
+// so a subsequent GET — or the in-place signal update the component does —
+// reflects the new state exactly as a real backend would. The email-domains GET
+// and POST share one url glob, as do the inbound-addresses GET and POST, so each
+// handler branches on route.request().method() (mirrors the US3 PATCH handler).
+// Returns getters for the last add-domain / add-address POST bodies so the test
+// can assert the wire payloads.
+const ACME_DOMAIN = 'acme.example';
+const ACME_DOMAIN_ID = 'dom-acme-1';
+
+function installInboxStack(page: Page) {
+  // System inbound address always present; the custom one is added post-verify.
+  const systemAddress = {
+    id: 'addr-sys-1',
+    business_id: BIZ_ID,
+    tenant_root_id: 'root-1',
+    address: 'biz-1@inbound.manyforge.test',
+    kind: 'system',
+    email_domain_id: null,
+    active: true,
+    created_at: '2026-05-01T00:00:00Z',
+  };
+  const customAddress = {
+    id: 'addr-custom-1',
+    business_id: BIZ_ID,
+    tenant_root_id: 'root-1',
+    address: 'support@acme.example',
+    kind: 'custom',
+    email_domain_id: ACME_DOMAIN_ID,
+    active: true,
+    created_at: '2026-06-01T00:00:00Z',
+  };
+
+  // The forward_in domain as returned by POST: unverified, with a FULL DNS
+  // challenge (ownership TXT + DKIM TXT + SPF hint; no MX for forward_in).
+  const unverifiedDomain = {
+    id: ACME_DOMAIN_ID,
+    business_id: BIZ_ID,
+    tenant_root_id: 'root-1',
+    domain: ACME_DOMAIN,
+    mode: 'forward_in',
+    verification: 'unverified',
+    verified_at: null,
+    dkim_state: 'pending',
+    spf_state: 'unknown',
+    dns_challenge: {
+      verification_txt: {
+        name: '_manyforge.acme.example',
+        value: 'mf-verify=TESTTOKEN',
+      },
+      dkim_record: {
+        name: 'mf1._domainkey.acme.example',
+        value: 'v=DKIM1; k=ed25519; p=AAAA',
+      },
+      spf_hint: 'v=spf1 include:mx.manyforge.test ~all',
+      mx_hint: null,
+    },
+    created_at: '2026-06-01T00:00:00Z',
+  };
+  // Same domain after a successful verify: verified, verified_at set, DKIM pass.
+  const verifiedDomain = {
+    ...unverifiedDomain,
+    verification: 'verified',
+    verified_at: '2026-06-01T00:05:00Z',
+    dkim_state: 'pass',
+    spf_state: 'pass',
+  };
+
+  // Mutable state the GET handlers read from.
+  const domains: Record<string, unknown>[] = [];
+  const addresses: Record<string, unknown>[] = [systemAddress];
+  const state = {
+    lastCreateBody: null as Record<string, unknown> | null,
+    lastAddressBody: null as Record<string, unknown> | null,
+  };
+
+  return (async () => {
+    await page.addInitScript(() => {
+      localStorage.setItem('mf_access', 'test-access');
+      localStorage.setItem('mf_refresh', 'test-refresh');
+    });
+    await page.route('**/api/v1/me', (route) =>
+      route.fulfill({
+        json: {
+          id: 'u1',
+          email: 'owner@manyforge.test',
+          display_name: 'Owner',
+          email_verified: true,
+          status: 'active',
+        },
+      }),
+    );
+    await page.route('**/api/v1/businesses**', (route) =>
+      route.fulfill({ json: { items: [business], next_cursor: null } }),
+    );
+
+    // Verify endpoint (distinct path: .../email-domains/{id}/verify). Flip the
+    // stored domain to verified — the component reflects the returned verified
+    // EmailDomain in place. Verifying does NOT itself create an address; the
+    // operator adds the custom address next (now that the domain is verified the
+    // add-address <select> offers it).
+    await page.route(
+      `**/api/v1/businesses/${BIZ_ID}/email-domains/*/verify`,
+      (route) => {
+        const idx = domains.findIndex((d) => d['id'] === ACME_DOMAIN_ID);
+        if (idx >= 0) domains[idx] = { ...verifiedDomain };
+        route.fulfill({ status: 200, json: verifiedDomain });
+      },
+    );
+
+    // email-domains list (GET) + create (POST) share this glob → branch on method.
+    // POST appends the unverified domain to the stored list and returns it (201);
+    // GET returns the current list. Registered AFTER the /verify route but the
+    // /verify path is more specific (extra segments) so this never shadows it.
+    await page.route(`**/api/v1/businesses/${BIZ_ID}/email-domains`, (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        state.lastCreateBody = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+        if (!domains.some((d) => d['id'] === ACME_DOMAIN_ID)) {
+          domains.push({ ...unverifiedDomain });
+        }
+        route.fulfill({ status: 201, json: unverifiedDomain });
+        return;
+      }
+      route.fulfill({ json: { items: domains, next_cursor: null } });
+    });
+
+    // inbound-addresses list (GET) + create (POST) share this glob → branch on
+    // method. GET returns the current list (starts with the system address);
+    // POST appends the custom address bound to the verified domain and returns
+    // it (201), exactly the created InboundAddress the component prepends.
+    await page.route(`**/api/v1/businesses/${BIZ_ID}/inbound-addresses`, (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        state.lastAddressBody = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+        if (!addresses.some((a) => a['id'] === customAddress.id)) {
+          addresses.push({ ...customAddress });
+        }
+        route.fulfill({ status: 201, json: customAddress });
+        return;
+      }
+      route.fulfill({ json: { items: addresses, next_cursor: null } });
+    });
+    return state;
+  })();
+}
+
+// Add a forward_in domain → challenge shown → (stub) verify → domain verified
+// and its custom inbound address listed. This is the T061 acceptance flow.
+test('US4: add forward_in domain → DNS challenge shown → verify → domain verified + address listed', async ({
+  page,
+}) => {
+  const state = await installInboxStack(page);
+
+  await page.goto(`/support/${BIZ_ID}/settings/inbox`);
+
+  // The page renders: heading + add-domain form + (empty) domain list + the
+  // system inbound address.
+  await expect(page.getByRole('heading', { name: 'Inbox settings' })).toBeVisible();
+  await expect(page.getByTestId('add-domain-form')).toBeVisible();
+  await expect(page.getByTestId('email-domain-list')).toBeVisible();
+  await expect(page.getByTestId('domain-row')).toHaveCount(0);
+  await expect(page.getByTestId('domain-empty')).toBeVisible();
+  // The system inbound address is present from the start.
+  await expect(page.getByTestId('address-row')).toHaveCount(1);
+  await expect(page.getByTestId('address-value')).toHaveText('biz-1@inbound.manyforge.test');
+
+  // Fill the add-domain form: domain + forward_in mode, then submit.
+  await page.getByTestId('domain-input').fill(ACME_DOMAIN);
+  await page.getByTestId('mode-select').selectOption('forward_in');
+  await page.getByTestId('add-domain-submit').click();
+
+  // The new domain row appears, unverified, with its mode + DKIM/SPF state.
+  const domainRow = page.getByTestId('domain-row');
+  await expect(domainRow).toHaveCount(1);
+  await expect(domainRow).toHaveAttribute('data-domain-id', ACME_DOMAIN_ID);
+  await expect(domainRow.getByTestId('domain-name')).toHaveText(ACME_DOMAIN);
+  await expect(domainRow.getByTestId('domain-mode')).toHaveText('forward_in');
+  await expect(domainRow.getByTestId('domain-status')).toHaveText('unverified');
+  await expect(domainRow.getByTestId('dkim-state')).toContainText('pending');
+  await expect(domainRow.getByTestId('spf-state')).toContainText('unknown');
+  // The POST wire payload carried the domain + mode.
+  expect(state.lastCreateBody).toEqual({ domain: ACME_DOMAIN, mode: 'forward_in' });
+
+  // The DNS challenge for an unverified domain renders all records to publish.
+  const challenge = domainRow.getByTestId('dns-challenge');
+  await expect(challenge).toBeVisible();
+  await expect(challenge.getByTestId('challenge-txt-name')).toHaveText('_manyforge.acme.example');
+  await expect(challenge.getByTestId('challenge-txt-value')).toHaveText('mf-verify=TESTTOKEN');
+  await expect(challenge.getByTestId('challenge-dkim-name')).toHaveText(
+    'mf1._domainkey.acme.example',
+  );
+  await expect(challenge.getByTestId('challenge-dkim-value')).toHaveText(
+    'v=DKIM1; k=ed25519; p=AAAA',
+  );
+
+  // Visual artifact for the controller: the rendered page with the challenge shown.
+  await page.screenshot({ path: 'e2e/.artifacts/us4-inbox-settings.png', fullPage: true });
+
+  // Click Verify → the stub returns the verified domain → status flips to verified
+  // and the challenge panel (unverified-only) disappears.
+  await domainRow.getByTestId('verify-domain').click();
+  await expect(domainRow.getByTestId('domain-status')).toHaveText('verified');
+  await expect(domainRow.getByTestId('dkim-state')).toContainText('pass');
+  await expect(domainRow.getByTestId('dns-challenge')).toHaveCount(0);
+
+  // Now that the domain is verified, the add-address <select> offers it (the
+  // form only lists verified domains). Add a custom address on that domain.
+  await page.getByTestId('address-input').fill('support@acme.example');
+  await page.getByTestId('address-domain-select').selectOption(ACME_DOMAIN_ID);
+  await page.getByTestId('add-address-submit').click();
+
+  // The custom inbound address on the verified domain is now listed alongside
+  // the system address. The wire payload bound it to the verified domain.
+  await expect(page.getByTestId('address-row')).toHaveCount(2);
+  expect(state.lastAddressBody).toEqual({
+    address: 'support@acme.example',
+    email_domain_id: ACME_DOMAIN_ID,
+  });
+  await expect(page.getByTestId('inbound-address-list')).toContainText('support@acme.example');
+  const customRow = page.locator('[data-testid="address-row"][data-address-id="addr-custom-1"]');
+  await expect(customRow.getByTestId('address-value')).toHaveText('support@acme.example');
+  await expect(customRow.getByTestId('address-kind')).toHaveText('custom');
+
+  // Reload re-fetches the stateful GETs → the verified domain + custom address
+  // persist exactly as a real backend would return them.
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Inbox settings' })).toBeVisible();
+  await expect(page.getByTestId('domain-row').getByTestId('domain-status')).toHaveText('verified');
+  await expect(page.getByTestId('address-row')).toHaveCount(2);
+  await expect(page.getByTestId('inbound-address-list')).toContainText('support@acme.example');
+});
