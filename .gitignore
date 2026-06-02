@@ -27,3 +27,5 @@ vendor/
 # Playwright MCP + demo screenshots
 .playwright-mcp/
 /us1-*.png
+tmp/
+.air.env

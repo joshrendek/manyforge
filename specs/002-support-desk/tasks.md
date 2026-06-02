@@ -166,18 +166,18 @@ identity (DKIM-signed). Unverified custom → inbound doesn't route, outbound fa
 Confirm the domain's primary (whole-domain) mail flow is never required to change.
 
 ### Tests for User Story 4 (write FIRST, must FAIL) ⚠️
-- [ ] T052 [P] [US4] Contract tests for `POST/GET …/email-domains`, `POST …/email-domains/{did}/verify`, `POST/GET …/inbound-addresses` (201/200 shapes, `dns_challenge`, 404 no-oracle, 409 unverified-domain reference) in `cmd/drift_test.go`
-- [ ] T053 [P] [US4] Integration test `internal/ticketing/identity_integration_test.go`: create domain (all three modes) → unverified + challenge; verify (stub resolver) → verified; custom `inbound_address` requires a verified domain (409 otherwise); inbound routes to the custom address; outbound selects custom identity when verified, else system fallback
-- [ ] T054 [P] [US4] Integration test for DKIM signing: a reply from a verified domain is DKIM-signed with the per-domain selector/key (verify with `go-msgauth`)
+- [X] T052 [P] [US4] Contract tests for `POST/GET …/email-domains`, `POST …/email-domains/{did}/verify`, `POST/GET …/inbound-addresses` (201/200 shapes, `dns_challenge`, 404 no-oracle, 409 unverified-domain reference) in `cmd/drift_test.go`
+- [X] T053 [P] [US4] Integration test `internal/ticketing/identity_integration_test.go`: create domain (all three modes) → unverified + challenge; verify (stub resolver) → verified; custom `inbound_address` requires a verified domain (409 otherwise); inbound routes to the custom address; outbound selects custom identity when verified, else system fallback
+- [X] T054 [P] [US4] Integration test for DKIM signing: a reply from a verified domain is DKIM-signed with the per-domain selector/key (verify with `go-msgauth`)
 
 ### Implementation for User Story 4
-- [ ] T055 [US4] `internal/ticketing/identity.go` — email-domain create/list: generate `verify_token` (`mf-verify=<base64url(32B)>`), return `dns_challenge` (TXT `_manyforge.<domain>` + DKIM record + SPF/MX hints) per mode; `inbox.manage`-gated, audited in-tx
-- [ ] T056 [US4] DNS TXT verification: `POST …/email-domains/{did}/verify` — resolve the TXT via the SSRF-guarded `internal/platform/netsafe` resolver, set `verified_at` on match (idempotent re-verify); independent receive/send verification state
-- [ ] T057 [US4] DKIM keygen + signing: generate per-domain Ed25519 (RSA-2048 fallback) keypair at runtime, store the private key as an encrypted `dkim_private_key_ref` (NEVER logged/committed), publish selector+public key in the challenge; sign verified-outbound with `emersion/go-msgauth/dkim` (research R3)
-- [ ] T058 [US4] Custom inbound addresses: `POST/GET …/inbound-addresses` (`inbox.manage`) — create a `custom` address bound to a VERIFIED `email_domain` (ownership re-checked in SQL; unverified → 409); extend T024 resolution to route custom addresses
+- [X] T055 [US4] `internal/ticketing/identity.go` — email-domain create/list: generate `verify_token` (`mf-verify=<base64url(32B)>`), return `dns_challenge` (TXT `_manyforge.<domain>` + DKIM record + SPF/MX hints) per mode; `inbox.manage`-gated, audited in-tx
+- [X] T056 [US4] DNS TXT verification: `POST …/email-domains/{did}/verify` — resolve the TXT via the SSRF-guarded `internal/platform/netsafe` resolver, set `verified_at` on match (idempotent re-verify); independent receive/send verification state
+- [X] T057 [US4] DKIM keygen + signing: generate per-domain Ed25519 (RSA-2048 fallback) keypair at runtime, store the private key as an encrypted `dkim_private_key_ref` (NEVER logged/committed), publish selector+public key in the challenge; sign verified-outbound with `emersion/go-msgauth/dkim` (research R3)  <!-- RSA-2048 fallback DEFERRED (Ed25519 only this slice) -->`
+- [X] T058 [US4] Custom inbound addresses: `POST/GET …/inbound-addresses` (`inbox.manage`) — create a `custom` address bound to a VERIFIED `email_domain` (ownership re-checked in SQL; unverified → 409); extend T024 resolution to route custom addresses
 - [ ] T059 [US4] Outbound identity selection in the send path (T039): verified custom identity → send + DKIM-sign as that domain; unverified/absent → fall back to the always-available system address (FR-013)
-- [ ] T060 [P] [US4] Frontend: `web/src/app/pages/support/` inbox-settings page — add domain (mode picker), show DNS challenge records, trigger verify, list addresses/domains with verification + DKIM/SPF state
-- [ ] T061 [US4] Playwright `web/e2e/support.spec.ts` (US4 portion): add a `forward_in` domain → challenge shown → (stub-verified) → domain shows verified and its address listed
+- [X] T060 [P] [US4] Frontend: `web/src/app/pages/support/` inbox-settings page — add domain (mode picker), show DNS challenge records, trigger verify, list addresses/domains with verification + DKIM/SPF state
+- [X] T061 [US4] Playwright `web/e2e/support.spec.ts` (US4 portion): add a `forward_in` domain → challenge shown → (stub-verified) → domain shows verified and its address listed
 
 **Checkpoint**: Businesses can receive/send under their own brand in three modes; the desk still works on the system address out of the box.
 
