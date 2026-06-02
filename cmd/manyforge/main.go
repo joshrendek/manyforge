@@ -46,6 +46,7 @@ import (
 func main() {
 	logger := observability.NewLogger(os.Getenv("LOG_LEVEL"))
 	slog.SetDefault(logger)
+	metrics := observability.NewMetrics()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -153,7 +154,7 @@ func main() {
 	// (cfg.SMTPAddr) and the inbox/ticketing routes are wired with their adapters
 	// and handlers in US1.
 	eventBus := events.NewBus()
-	outboxWorker := &events.Worker{DB: database, Bus: eventBus, Logger: logger}
+	outboxWorker := &events.Worker{DB: database, Bus: eventBus, Logger: logger, Metrics: metrics}
 
 	// Attachment object store (SL-E). A configured MANYFORGE_BLOB_URL opens the
 	// file://|s3:// bucket; empty (dev) leaves the store nil — NewService tolerates
@@ -183,11 +184,13 @@ func main() {
 	inboxWebhookH := inbox.NewWebhookHandler(inboxSvc, cfg.InboundWebhookSecret, cfg.InboundMaxBytes, inbox.Config{
 		InboundSystemDomain: cfg.InboundSystemDomain,
 	}, logger)
+	inboxWebhookH.Metrics = metrics
 	// US2 hard-bounce intake (T040): a provider-signed (separate InboundBounceSecret)
 	// webhook that suppresses the bounced recipient (global email_suppression) and
 	// marks the correlated outbound message failed via a DEFINER. Mounted next to the
 	// inbound webhook in the same per-IP ingest-rate-limited public group; no JWT.
 	bounceH := inbox.NewBounceHandler(inbox.NewDBBounceSuppressor(database), cfg.InboundBounceSecret, cfg.InboundMaxBytes, logger)
+	bounceH.Metrics = metrics
 
 	// FR-001 zero-config inbound: every business gets a system inbound address on
 	// creation. tenancy emits business.created (in the create tx, via the outbox); the
@@ -231,7 +234,7 @@ func main() {
 	// domain's private key and sign the reply as that domain. When the sealer is nil
 	// (no MANYFORGE_DKIM_MASTER_KEY), the send path simply never selects a custom
 	// identity and every reply goes out from the system address — the correct degrade.
-	sendSub := notify.SendSubscriber{Sender: sender, Logger: logger, Sealer: dkimSealer}
+	sendSub := notify.SendSubscriber{Sender: sender, Logger: logger, Sealer: dkimSealer, Metrics: metrics}
 	eventBus.Subscribe(events.TopicTicketReplied, sendSub.Handle)
 
 	// US5 redact: the attachment.purge worker deletes redacted attachment blobs out-of-
