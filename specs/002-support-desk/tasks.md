@@ -193,7 +193,7 @@ other's tickets/messages/requesters/addresses by any id (identical 404). A membe
 cannot view tickets. Each support mutation produced an `audit_entry`.
 
 ### Tests for User Story 5 (write FIRST, must FAIL) ⚠️
-- [ ] T062 [P] [US5] Security pin `internal/security_regression/support_isolation_test.go`: RLS matrix across all seven new tables for absent/malformed/sideways/cross-root `principal_id`; app predicate AND RLS each deny independently; cross-tenant GET → identical 404 (SC-004/SC-006)
+- [X] T062 [P] [US5] Security pin `internal/security_regression/support_isolation_test.go`: RLS matrix across all seven new tables for absent/malformed/sideways/cross-root `principal_id` — read AND write isolation at the DB boundary (Super sanity-guarded). (The service/HTTP-layer "cross-tenant GET → identical 404" half is T067.) (SC-004/SC-006)
 - [ ] T063 [P] [US5] Integration test `internal/ticketing/permissions_integration_test.go`: the six-permission enforcement matrix — each grants exactly its action set and denies the rest (SC-009), uniformly for human and agent principals
 - [ ] T064 [P] [US5] Integration test `internal/ticketing/audit_integration_test.go`: every support mutation (ingestion, reply, note, status/priority/tag/assignee change, address/domain config, redact) writes an in-tx `audit_entry` with actor/source + before/after (SC-005)
 
