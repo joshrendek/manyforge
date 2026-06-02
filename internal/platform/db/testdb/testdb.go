@@ -32,6 +32,7 @@ const appPassword = "apppw"
 type TestDB struct {
 	Super     *pgxpool.Pool // superuser; RLS-exempt; for seeding
 	App       *appdb.DB     // manyforge_app; RLS-subject; what production uses
+	AppDSN    string        // manyforge_app DSN; open a second handle (e.g. tracer) against the same DB
 	terminate func(context.Context) error
 }
 
@@ -92,6 +93,7 @@ func Start(ctx context.Context) (*TestDB, error) {
 	return &TestDB{
 		Super:     super,
 		App:       app,
+		AppDSN:    appDSN,
 		terminate: func(c context.Context) error { return ctr.Terminate(c) },
 	}, nil
 }

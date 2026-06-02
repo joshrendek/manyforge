@@ -133,10 +133,13 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 
-		var rows []dbgen.Ticket
-		var qerr error
+		// The list query folds requester (JOIN), tags (array_agg), and
+		// message_count (subquery) into a single round-trip per page — no per-row
+		// assembleTicket fan-out (manyforge-iiq). Both keyset branches return the
+		// same {Ticket, Requester, Tags, MessageCount} shape, mapped via buildTicket.
+		var items []Ticket
 		if cursor == "" {
-			rows, qerr = q.ListTickets(ctx, dbgen.ListTicketsParams{
+			rows, qerr := q.ListTickets(ctx, dbgen.ListTicketsParams{
 				BusinessID:          businessID,
 				Status:              nullStatus(f.Status),
 				Priority:            nullPriority(f.Priority),
@@ -145,12 +148,19 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 				Tag:                 f.Tag,
 				Lim:                 int32(lim + 1),
 			})
+			if qerr != nil {
+				return qerr
+			}
+			items = make([]Ticket, 0, len(rows))
+			for _, r := range rows {
+				items = append(items, buildTicket(r.Ticket, r.Requester, r.Tags, r.MessageCount))
+			}
 		} else {
 			k, perr := decodeTicketCursor(cursor)
 			if perr != nil {
 				return perr
 			}
-			rows, qerr = q.ListTicketsAfter(ctx, dbgen.ListTicketsAfterParams{
+			rows, qerr := q.ListTicketsAfter(ctx, dbgen.ListTicketsAfterParams{
 				BusinessID:          businessID,
 				Status:              nullStatus(f.Status),
 				Priority:            nullPriority(f.Priority),
@@ -161,24 +171,24 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 				CurID:               k.id,
 				Lim:                 int32(lim + 1),
 			})
-		}
-		if qerr != nil {
-			return qerr
+			if qerr != nil {
+				return qerr
+			}
+			items = make([]Ticket, 0, len(rows))
+			for _, r := range rows {
+				items = append(items, buildTicket(r.Ticket, r.Requester, r.Tags, r.MessageCount))
+			}
 		}
 
-		rows, next := trim(rows, lim)
-		items := make([]Ticket, 0, len(rows))
-		for _, r := range rows {
-			tk, terr := assembleTicket(ctx, q, r)
-			if terr != nil {
-				return terr
+		page, next := trim(items, lim)
+		out.Items = page
+		if next && len(page) > 0 {
+			last := page[len(page)-1]
+			ts := time.Time{}
+			if last.LastMessageAt != nil {
+				ts = *last.LastMessageAt
 			}
-			items = append(items, tk)
-		}
-		out.Items = items
-		if next {
-			last := rows[len(rows)-1]
-			out.NextCursor = ptr(encodeTicketCursor(keyset{ts: last.LastMessageAt, id: last.ID}))
+			out.NextCursor = ptr(encodeTicketCursor(keyset{ts: ts, id: last.ID}))
 		}
 		return nil
 	})
@@ -838,24 +848,13 @@ func (s *Service) GetRequester(ctx context.Context, principalID, businessID, req
 
 // --- assembly helpers ---
 
-// assembleTicket fills the embedded requester, tags, and message_count for a
-// ticket row. All sub-queries are scoped to the same business_id (predicate) and
-// run in the same RLS-bound tx — defense in depth on every projection.
-func assembleTicket(ctx context.Context, q *dbgen.Queries, r dbgen.Ticket) (Ticket, error) {
-	req, err := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: r.ID, BusinessID: r.BusinessID})
-	if err != nil {
-		return Ticket{}, err
-	}
-	tags, err := q.ListTicketTags(ctx, dbgen.ListTicketTagsParams{TicketID: r.ID, BusinessID: r.BusinessID})
-	if err != nil {
-		return Ticket{}, err
-	}
+// buildTicket assembles a domain Ticket from an already-joined row: the requester,
+// tags, and message_count are supplied by the caller (folded into the list query),
+// so it does no I/O. assembleTicket is the single-row equivalent that fetches those
+// pieces itself.
+func buildTicket(r dbgen.Ticket, req dbgen.Requester, tags []string, msgCount int64) Ticket {
 	if tags == nil {
 		tags = []string{}
-	}
-	count, err := q.CountTicketMessages(ctx, dbgen.CountTicketMessagesParams{TicketID: r.ID, BusinessID: r.BusinessID})
-	if err != nil {
-		return Ticket{}, err
 	}
 	var lastMsg *time.Time
 	if !r.LastMessageAt.IsZero() {
@@ -872,11 +871,31 @@ func assembleTicket(ctx context.Context, q *dbgen.Queries, r dbgen.Ticket) (Tick
 		AssigneePrincipalID: pgUUIDPtr(r.AssigneePrincipalID),
 		Requester:           toRequester(req),
 		Tags:                tags,
-		MessageCount:        int(count),
+		MessageCount:        int(msgCount),
 		LastMessageAt:       lastMsg,
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
-	}, nil
+	}
+}
+
+// assembleTicket fills the requester, tags, and message_count for a single ticket
+// row via three scoped sub-queries — used by the single-row read/update paths. The
+// list path folds these into one query instead (see ListTickets / buildTicket). All
+// sub-queries are scoped to the same business_id and run in the same RLS-bound tx.
+func assembleTicket(ctx context.Context, q *dbgen.Queries, r dbgen.Ticket) (Ticket, error) {
+	req, err := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: r.ID, BusinessID: r.BusinessID})
+	if err != nil {
+		return Ticket{}, err
+	}
+	tags, err := q.ListTicketTags(ctx, dbgen.ListTicketTagsParams{TicketID: r.ID, BusinessID: r.BusinessID})
+	if err != nil {
+		return Ticket{}, err
+	}
+	count, err := q.CountTicketMessages(ctx, dbgen.CountTicketMessagesParams{TicketID: r.ID, BusinessID: r.BusinessID})
+	if err != nil {
+		return Ticket{}, err
+	}
+	return buildTicket(r, req, tags, count), nil
 }
 
 // loadAttachments fetches all attachments for a page of messages in one query and

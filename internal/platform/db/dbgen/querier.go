@@ -226,11 +226,11 @@ type Querier interface {
 	// otherwise a non-NULL assignee_principal_id filters to that principal; both off =
 	// no assignee filter. The tag facet is an exact (case-insensitive citext) match via
 	// ticket_tag. lim is the clamped limit + 1 so the service can detect a further page.
-	ListTickets(ctx context.Context, arg ListTicketsParams) ([]Ticket, error)
+	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
 	// ListTicketsAfter is the keyset continuation of ListTickets: the same filters,
 	// but only rows strictly after the cursor tuple (last_message_at, id) in the
 	// (DESC, DESC) order. The row-value comparison rides the same composite index.
-	ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]Ticket, error)
+	ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]ListTicketsAfterRow, error)
 	// MarkEmailDomainVerified sets verified_at = now() ONLY when it is currently NULL —
 	// idempotent (a re-verify of an already-verified domain is a no-op, leaving the
 	// original timestamp untouched). Scoped to (id, business_id, tenant_root_id) for
