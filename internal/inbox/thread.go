@@ -19,9 +19,10 @@ import (
 // (Nil,false) here and yields uuid.Nil, so the function treats it as "no hint" and
 // falls through to header threading or a new ticket (never mis-threads, SC-003).
 //
-// The header match (In-Reply-To/References) and the [#ref] subject match are done
-// INSIDE ingest_inbound_message (the reads are RLS-sensitive), so they are NOT
-// duplicated here; this function contributes only the HMAC-verified hint.
+// The header match (In-Reply-To/References) is done INSIDE ingest_inbound_message
+// (the reads are RLS-sensitive), so it is NOT duplicated here; this function
+// contributes only the HMAC-verified plus-token hint. (A [#ref] subject match was
+// specced in R4 but is deferred — not built; threading rides headers + this hint.)
 func hintTicket(plusToken string, serverKey []byte) uuid.UUID {
 	if plusToken == "" {
 		return uuid.Nil
