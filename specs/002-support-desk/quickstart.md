@@ -31,8 +31,18 @@ cp .env.example .env            # DB DSN, JWT keypair, outbound mailer (spec 001
 MANYFORGE_SMTP_ADDR=:2525
 
 # Inbound provider webhook adapter. HMAC-SHA256 signing secret used to verify
-# the X-Manyforge-Signature header (constant-time). Required to accept webhooks.
+# the X-MF-Signature header (constant-time). Required to accept webhooks.
 MANYFORGE_INBOUND_WEBHOOK_SECRET=dev-inbound-secret-change-me
+
+# Reply-token HMAC key. Mints/verifies the unforgeable threading reply token
+# carried in the outbound Reply-To (support+{token}@domain). Purpose-separated
+# from the webhook + JWT secrets. Empty in dev falls back to header-only threading.
+MANYFORGE_INBOUND_REPLY_TOKEN_SECRET=dev-reply-token-secret-change-me
+
+# HMAC key that derives the unguessable system inbound-address localpart (FR-001).
+# Purpose-separated from the reply-token + webhook + JWT secrets. Empty in dev is
+# tolerated (address is deterministic but not enumeration-protected).
+MANYFORGE_INBOUND_SYSTEM_ADDRESS_SECRET=dev-system-address-secret-change-me
 
 # Attachment blob backend (SL-E). Local filesystem for self-host, or an
 # S3-compatible URL. The directory is created if missing.
@@ -40,9 +50,12 @@ MANYFORGE_BLOB_URL=file:///tmp/manyforge-blobs
 #   S3-compatible alternative:
 #   MANYFORGE_BLOB_URL=s3://manyforge-attachments?region=us-east-1&endpoint=http://localhost:9000
 
-# Outbound mailer — reuse spec 001's. Unset logs sent mail to stdout (dev),
+# Outbound SMTP relay. Unset ⇒ dev LogSender (logs sent mail to stdout),
 # which is what lets you read reply/notification email without a real MTA.
-MANYFORGE_SMTP_URL=
+MANYFORGE_SMTP_HOST=
+# MANYFORGE_SMTP_PORT=587   # default submission port
+# MANYFORGE_SMTP_USER=
+# MANYFORGE_SMTP_PASS=
 
 # Platform-hosted domain that auto-provisioned system inbound addresses live on.
 MANYFORGE_INBOUND_SYSTEM_DOMAIN=inbound.localhost
@@ -51,6 +64,13 @@ MANYFORGE_INBOUND_SYSTEM_DOMAIN=inbound.localhost
 # dev — unset/absent means verified-outbound is unsigned locally; a real key is
 # required for deliverable, domain-authenticated brand mail.
 MANYFORGE_DKIM_KEY_PATH=./secrets/dkim/default.private
+
+# At-rest master key for sealing per-domain DKIM private keys (US4 custom
+# sending identities). Supplied as base64 or hex; decoded value MUST be 32 bytes
+# (AES-256). Unset ⇒ custom-domain signing disabled; system identity only. The
+# server still boots with this unset — only an explicitly-set-but-invalid key
+# is a hard config error.
+# MANYFORGE_DKIM_MASTER_KEY=<32-byte key as base64 or hex>
 ```
 
 > The application DB role must stay non-superuser / non-BYPASSRLS — the six new
@@ -110,8 +130,8 @@ the moment it is created.
 
 ```bash
 curl -s $API/businesses/$BIZ/inbound-addresses -H "Authorization: Bearer $ACCESS" | jq
-# → [{ "address": "acme-support-7f3a@inbound.localhost", "kind": "system",
-#      "verified": true }]
+# → [{ "id":"...", "address": "acme-support-7f3a@inbound.localhost", "kind": "system",
+#      "active": true }]
 ADDR=acme-support-7f3a@inbound.localhost     # ← use yours from the response
 ```
 
@@ -122,19 +142,22 @@ ADDR=acme-support-7f3a@inbound.localhost     # ← use yours from the response
 Both adapters route by recipient address through the one ingestion path
 (FR-002). Pick either; both land the same ticket.
 
-**(a) Provider webhook** — POST the message and sign the body with
-`MANYFORGE_INBOUND_WEBHOOK_SECRET` (HMAC-SHA256, hex; verified constant-time).
+**(a) Provider webhook** — POST the message as a JSON envelope and sign the body
+with `MANYFORGE_INBOUND_WEBHOOK_SECRET` (HMAC-SHA256 over the raw body bytes,
+hex-encoded; verified constant-time). The header is `X-MF-Signature`. When a
+timestamp is present in `X-MF-Timestamp`, the HMAC is computed over
+`<timestamp>.<body>` for replay defence; without a timestamp the body alone is
+signed.
 
 ```bash
 SECRET=dev-inbound-secret-change-me
 BODY=$(cat <<JSON
 {
   "from": "Dana Customer <dana@example.com>",
-  "to": "$ADDR",
+  "to": ["$ADDR"],
   "subject": "Cannot reset my password",
   "message_id": "<msg-001@example.com>",
-  "text": "Hi — the reset link 404s. Help?",
-  "spf": "pass", "dkim": "pass", "dmarc": "pass"
+  "body_text": "Hi — the reset link 404s. Help?"
 }
 JSON
 )
@@ -142,7 +165,7 @@ SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^
 
 curl -s $API/inbound/email/webhook \
   -H "Content-Type: application/json" \
-  -H "X-Manyforge-Signature: sha256=$SIG" \
+  -H "X-MF-Signature: sha256=$SIG" \
   --data-binary "$BODY"
 # → 202 Accepted (the body is captured; the response never reveals routing)
 ```
@@ -180,7 +203,7 @@ duplicate ticket or message** (FR-005, SC-002).
 ```bash
 TICKET=$(curl -s "$API/businesses/$BIZ/tickets" -H "Authorization: Bearer $ACCESS" \
           | jq -r '.items[0].id')
-curl -s $API/tickets/$TICKET -H "Authorization: Bearer $ACCESS" | jq
+curl -s $API/businesses/$BIZ/tickets/$TICKET -H "Authorization: Bearer $ACCESS" | jq
 # → { status:"new", priority:"normal", requester:{email:"dana@example.com"},
 #     messages:[{ direction:"inbound", subject:"Cannot reset my password", ... }],
 #     auth_results:{ spf:"pass", dkim:"pass", dmarc:"pass" } }
@@ -193,8 +216,8 @@ refused (SC-004, SC-009).
 ### 5. POST a reply → outbound message (FR-008)
 
 ```bash
-curl -s $API/tickets/$TICKET/reply -H "Authorization: Bearer $ACCESS" \
-  -d '{"body":"Hi Dana — fixed the link, try again and let us know."}'
+curl -s $API/businesses/$BIZ/tickets/$TICKET/reply -H "Authorization: Bearer $ACCESS" \
+  -d '{"body_text":"Hi Dana — fixed the link, try again and let us know."}'
 # → 201; ticket now carries an outbound message.
 ```
 
@@ -212,8 +235,8 @@ Reply-To: acme-support-7f3a+tkt_<token>@inbound.localhost   # unforgeable reply 
 
 ✅ Expect: the outbound message is recorded on the ticket and audited; the
 threading headers + the HMAC reply token continue the conversation. An
-**internal note** (`POST /tickets/$TICKET/notes`) is recorded but never
-mailed (FR-009).
+**internal note** (`POST /businesses/$BIZ/tickets/$TICKET/note`) is recorded
+but never mailed (FR-009).
 
 ### 6. Simulate a customer reply that threads back (FR-008, US2)
 
@@ -229,7 +252,7 @@ swaks --server localhost --port 2525 \
       --h-In-Reply-To "<reply-af12@inbound.localhost>" \
       --body "That worked, thank you!"
 
-curl -s $API/tickets/$TICKET -H "Authorization: Bearer $ACCESS" | jq '.messages | length'
+curl -s $API/businesses/$BIZ/tickets/$TICKET -H "Authorization: Bearer $ACCESS" | jq '.messages | length'
 # → 3   (inbound, outbound, inbound) — still ONE ticket
 ```
 
@@ -246,11 +269,15 @@ challenge.
 
 ```bash
 DOMAIN=$(curl -s $API/businesses/$BIZ/email-domains -H "Authorization: Bearer $ACCESS" \
-  -d '{"domain":"acme.com","mode":"forward_in","sending_address":"support@acme.com"}')
+  -d '{"domain":"acme.com","mode":"forward_in"}')
 echo "$DOMAIN" | jq
-# → { id:"...", mode:"forward_in", verified:false,
-#     verification:{ type:"TXT", host:"_manyforge.acme.com",
-#                    value:"manyforge-verify=ab12cd34..." } }
+# → { "id":"...", "mode":"forward_in", "verification":"pending",
+#     "verified_at":null,
+#     "dns_challenge":{
+#       "verification_txt":{ "name":"_manyforge.acme.com",
+#                            "value":"manyforge-verify=ab12cd34..." },
+#       "dkim_record":{ "name":"manyforge._domainkey.acme.com", "value":"v=DKIM1;..." },
+#       "spf_hint":"v=spf1 include:..." } }
 DOMAIN_ID=$(echo "$DOMAIN" | jq -r .id)
 ```
 
@@ -263,12 +290,13 @@ _manyforge.acme.com.   IN   TXT   "manyforge-verify=ab12cd34..."
 ```bash
 # Locally you can point the resolver at a stub, or rely on the verification
 # job's poll. Kick it manually:
-curl -s $API/email-domains/$DOMAIN_ID/verify -H "Authorization: Bearer $ACCESS" | jq
-# → { verified:true }   once the TXT resolves
+curl -s -X POST $API/businesses/$BIZ/email-domains/$DOMAIN_ID/verify \
+  -H "Authorization: Bearer $ACCESS" | jq
+# → { "verification":"verified", "verified_at":"2026-..." }   once the TXT resolves
 ```
 
 ✅ Expect: once verified, inbound to `support@acme.com` routes to `$BIZ` and
-replies send from the custom identity (DKIM-signed when `MANYFORGE_DKIM_KEY_PATH`
+replies send from the custom identity (DKIM-signed when `MANYFORGE_DKIM_MASTER_KEY`
 is set). While **unverified**, inbound does not route and outbound falls back to
 the always-available system address (FR-013, SC-008). The domain's primary
 (whole-domain) mail flow is never touched.
@@ -300,10 +328,12 @@ ticket-load p95 < 200 ms (RLS enabled).
   **silently dropped** by design — no ticket, no requester, and the response is
   indistinguishable from a routable address (FR-003, SC-006). This is expected;
   double-check `$ADDR` matches the system address from step 2.
-- **Webhook returns 401/403.** The HMAC didn't verify. Confirm the curl is
+- **Webhook returns 401.** The HMAC didn't verify. Confirm the curl is
   signing the **exact bytes** sent (use `--data-binary`, not `-d`, which can
-  reformat), that `SECRET` matches `MANYFORGE_INBOUND_WEBHOOK_SECRET`, and that
-  the header is `sha256=<hex>`.
+  reformat), that `SECRET` matches `MANYFORGE_INBOUND_WEBHOOK_SECRET`, that the
+  header name is `X-MF-Signature` (not `X-Manyforge-Signature`), and that the
+  value is `sha256=<hex>`. If you include `X-MF-Timestamp`, the HMAC must cover
+  `<timestamp>.<body>` — omit the timestamp header when signing body-only.
 - **SMTP connection refused / permission denied on bind.** Ports below 1024
   need root or `CAP_NET_BIND_SERVICE`; use `MANYFORGE_SMTP_ADDR=:2525` locally.
   If the listener didn't start, `MANYFORGE_SMTP_ADDR` is probably empty (the
@@ -317,3 +347,6 @@ ticket-load p95 < 200 ms (RLS enabled).
   new ticket — that's the anti-mis-threading guard, not a bug.
 - **Blob errors.** For `file:///…` ensure the path is writable; for `s3://…`
   ensure the endpoint/region/credentials are reachable from the process.
+- **Custom-domain signing disabled.** `MANYFORGE_DKIM_MASTER_KEY` must be set
+  to a 32-byte key (base64 or hex) for custom-domain DKIM signing. Unset means
+  custom-domain signing is disabled; system identity is always available.
