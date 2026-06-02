@@ -86,6 +86,15 @@ export interface Page<T> {
   next_cursor: string | null;
 }
 
+// A human, active member principal eligible to be a ticket assignee (FR-011),
+// returned by GET /businesses/{id}/assignable-members to power the picker. `id` is
+// the principal id used for ticket.assignee_principal_id.
+export interface AssignableMember {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
 // Optional list filters for GET /businesses/{id}/tickets. `assignee` accepts the
 // literal `unassigned` to list tickets with no assignee.
 export interface TicketListFilters {
@@ -195,6 +204,15 @@ export class TicketService {
   // omitted key stays omitted on the wire.
   patchTicket(businessId: string, ticketId: string, patch: PatchTicket): Observable<Ticket> {
     return this.http.patch<Ticket>(`/api/v1/businesses/${businessId}/tickets/${ticketId}`, patch);
+  }
+
+  // GET /businesses/{id}/assignable-members — the business's human members eligible
+  // to be a ticket assignee (FR-011), for the assignee picker. Single server-capped
+  // page; requires tickets.assign (404 when the caller cannot assign).
+  listAssignableMembers(businessId: string): Observable<Page<AssignableMember>> {
+    return this.http.get<Page<AssignableMember>>(
+      `/api/v1/businesses/${businessId}/assignable-members`,
+    );
   }
 
   // GET /businesses/{id}/tickets/{tid}/messages — keyset-paginated thread of

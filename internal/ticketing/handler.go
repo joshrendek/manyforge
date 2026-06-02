@@ -61,6 +61,13 @@ func (h *Handler) TriageRoutes(r chi.Router) {
 	r.Patch("/businesses/{id}/tickets/{tid}", h.triage)
 }
 
+// AssignableRoutes mounts the assignee-picker endpoint (FR-011). The caller wraps it
+// with httpx.RequirePermission("tickets.assign", …): only a caller who can assign
+// sees the candidate list; a lacking-perm or invisible business is a no-oracle 404.
+func (h *Handler) AssignableRoutes(r chi.Router) {
+	r.Get("/businesses/{id}/assignable-members", h.listAssignableMembers)
+}
+
 // --- request DTOs: exact OpenAPI component schemas ---
 
 type replyBody struct {
@@ -93,6 +100,20 @@ type requesterResp struct {
 	ContactID    *string `json:"contact_id"`
 	FirstSeenAt  string  `json:"first_seen_at"`
 	LastSeenAt   string  `json:"last_seen_at"`
+}
+
+type assignableMemberResp struct {
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+}
+
+func toAssignableMemberResp(m AssignableMember) assignableMemberResp {
+	return assignableMemberResp{
+		ID:          m.ID.String(),
+		Email:       m.Email,
+		DisplayName: m.DisplayName,
+	}
 }
 
 type ticketResp struct {
@@ -316,6 +337,33 @@ func (h *Handler) listRequesters(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toRequesterResp(rq))
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": page.NextCursor})
+}
+
+// listAssignableMembers returns the business's candidate ticket assignees (FR-011) —
+// a single server-capped page, gated on tickets.assign by the route middleware.
+func (h *Handler) listAssignableMembers(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	members, err := h.svc.ListAssignableMembers(r.Context(), pid, bid, parseLimit(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items := make([]assignableMemberResp, 0, len(members))
+	for _, m := range members {
+		items = append(items, toAssignableMemberResp(m))
+	}
+	// Single capped page: next_cursor is always null (overflow members remain
+	// assignable by principal id via the eligibility-checked triage PATCH).
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }
 
 func (h *Handler) getRequester(w http.ResponseWriter, r *http.Request) {
