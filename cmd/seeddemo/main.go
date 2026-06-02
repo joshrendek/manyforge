@@ -107,7 +107,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open blob store: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	inboxSvc := inbox.NewService(database, store, inbox.Config{
 		ReplyTokenKey:       cfg.InboundReplyTokenSecret,
 		AttachmentMaxBytes:  cfg.AttachmentMaxBytes,
