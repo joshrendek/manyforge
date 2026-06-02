@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/events"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // KeySealer is the send path's minimal point-of-use view of the at-rest secret
@@ -64,6 +65,9 @@ type SendSubscriber struct {
 	// disabled and every reply falls back to the system address (no per-message
 	// DKIM). The send NEVER fails because signing was unavailable.
 	Sealer KeySealer
+
+	// Metrics counts outbound outcomes (sent/failed/suppressed). nil ⇒ no-op.
+	Metrics *observability.Metrics
 }
 
 // Handle is the events.Handler for the ticket.replied topic.
@@ -145,6 +149,7 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 		if errors.Is(serr, ErrSuppressed) {
 			// Terminal: the recipient is hard-bounced/suppressed. Record the failure
 			// and return nil so the worker does NOT retry (a retry would never succeed).
+			s.Metrics.Inc(observability.MetricOutboundSuppressed)
 			if merr := s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "failed", "recipient suppressed"); merr != nil {
 				return merr
 			}
@@ -152,9 +157,12 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 		}
 		// Transient (relay down, timeout, …): return the error so the worker
 		// reschedules with backoff. delivery_state stays 'pending'.
+		s.Metrics.Inc(observability.MetricOutboundFailed)
 		return fmt.Errorf("notify: send: dispatch: %w", serr)
 	}
 
+	s.Metrics.Inc(observability.MetricOutboundSent)
+	s.logger().InfoContext(ctx, "notify: reply sent", "message_id", p.RFCMessageID)
 	return s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "sent", "")
 }
 
