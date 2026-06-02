@@ -1,8 +1,8 @@
 # Architecture
 
-A map of the manyforge Tenant Foundation: how a request flows, where
-authorization lives, and what each module owns. For the *why*, see
-`specs/001-tenant-foundation/{spec,plan,research,data-model}.md` and
+A map of manyforge — the Tenant Foundation (spec 001) and the Native Support
+Desk (spec 002) — covering request flow, authorization, and what each module
+owns. For the *why*, see the spec directories under `specs/` and
 `.specify/memory/constitution.md`.
 
 ## Request flow
@@ -49,6 +49,31 @@ Some cross-RLS reads (inherited access lists, subtree moves, invitation accept)
 go through table-owner **SECURITY DEFINER functions** defined in migrations and
 gated by the service first — RLS-exempt by design, never app-widenable.
 
+**Ingestion SECURITY DEFINER exception (spec 002).** Inbound email carries no
+end-user principal — there is no JWT at the SMTP or webhook ingestion edge. The
+ingestion path therefore cannot set `manyforge.principal_id`, and the normal
+`db.WithPrincipal` RLS path is unavailable. Instead, two controlled
+SECURITY DEFINER functions (both owned by the table owner, audited, defined in
+`migrations/0014_support_rls.up.sql`) handle the principal-less surface:
+
+- `resolve_inbound_address(p_address citext)` — maps a recipient to at most one
+  business; returns zero rows for unknown addresses (no existence oracle). Used
+  as a read-only routing step before any write.
+- `ingest_inbound_message(…)` — the only path that writes support rows
+  without a `principal_id` GUC. It **re-asserts** inside the function that the
+  recipient maps to exactly the `(business_id, tenant_root_id)` the caller
+  resolved, raising `'ingest scope violation'` otherwise; a bug upstream cannot
+  be amplified into a cross-tenant write. Requester upsert, ticket
+  find/create + reopen, idempotent message insert, attachments, and the audit
+  entry all run in the caller's transaction; the caller emits the outbox event
+  in that same transaction.
+
+Both functions are `REVOKE`d from `PUBLIC` and explicitly `GRANT`ed to the
+`manyforge_app` role only. This is the **single controlled exception** to the
+"every query runs as a principal under RLS" wall; no other path bypasses RLS.
+Credential-bearing values (secrets, tokens) are redacted before reaching
+structured log output (slog hook, spec-002 T072).
+
 ## Modules
 
 ### Domain (`internal/`)
@@ -70,6 +95,21 @@ gated by the service first — RLS-exempt by design, never app-widenable.
   whole permission catalog. Also role CRUD with no-escalation guards.
 - **invitations** — invite creation (role bounded at create time) and accept
   (single-use, via a SECURITY DEFINER consume function).
+- **inbox** — inbound ingestion for the support desk (spec 002). Defines a
+  pluggable `InboundSource` interface with two implementations: a provider
+  webhook adapter (`POST /inbound/email/{provider}`, HMAC-SHA256 constant-time
+  verified via `X-MF-Signature`) and an in-process SMTP receiver (started when
+  `MANYFORGE_SMTP_ADDR` is set). Both adapters resolve the recipient to exactly
+  one business (no existence oracle on unknown addresses), parse/MIME-sniff the
+  message, dedupe by `Message-ID`, thread onto an existing ticket or open a new
+  one, and persist via the audited `ingest_inbound_message` SECURITY DEFINER
+  path. Also handles bounce intake.
+- **ticketing** — tickets, messages, requesters, tags, replies, internal notes,
+  triage, assignment, and the custom sending-identity (`email_domain`) lifecycle
+  (spec 002). All reads and mutations are dual-enforced (self-deriving RLS +
+  app-level business/tenant predicate), audited in the same transaction as the
+  change, and return an identical not-found shape for unknown and cross-tenant
+  resources (no oracle). Inherits the spec-001 two-wall foundation.
 
 ### Platform (`internal/platform/`)
 
@@ -86,7 +126,34 @@ gated by the service first — RLS-exempt by design, never app-widenable.
 - **errs** — typed sentinels (`ErrNotFound`/`ErrValidation`/`ErrConflict`/
   `ErrForbidden`) that handlers branch on via `errors.Is`.
 - **config**, **mailer**, **ratelimit**, **netsafe** (SSRF-safe dialing),
-  **observability** — cross-cutting support.
+  **observability** — cross-cutting support. `observability` now also exposes
+  spec-002 pipeline counters at `GET /metrics` under the `"support"` expvar map
+  (keys: `ingest.received/accepted/rejected/duplicate`,
+  `outbound.sent/failed/suppressed`, `outbox.drained/retried/dropped`).
+- **events** (SL-C) — in-process topic bus (`Bus`) and transactional outbox
+  (`Enqueue` + `Worker`). `Enqueue` writes an outbox row in the **same
+  transaction** as the source mutation (Principle VI — no fire-and-forget);
+  the `Worker` drains at-least-once via three SECURITY DEFINER SQL functions
+  (`claim_outbox_batch`, `mark_outbox_processed`, `reschedule_outbox`) using
+  `FOR UPDATE SKIP LOCKED`. Handlers run inside a savepoint so a handler failure
+  rolls back only that event's DB writes. Cross-module topics are declared here
+  (`TopicBusinessCreated`, `TopicTicketReplied`, `TopicAttachmentPurge`) to
+  avoid import cycles between producers and consumers.
+- **notify** (SL-D) — `Sender` interface for outbound threaded mail with full
+  RFC 822 threading headers (`In-Reply-To`, `References`, `Reply-To` with VERP
+  reply token) and per-message DKIM selection (`DKIMConfig`). `LogSender` is the
+  dev default (logs to stdout, honors suppression). `InApp` writes in-app
+  notifications atomically with the outbox row that triggered them. Production
+  wires a real SMTP+DKIM sender behind the same `Sender` interface.
+- **blob** (SL-E) — `Store` interface (and `Bucket` implementation) over
+  `gocloud.dev/blob`, supporting `file://` (local FS, self-host default) and
+  `s3://` (S3-compatible). All content types are decided by `Sniff`, which uses
+  `http.DetectContentType` on the first 512 bytes and validates against an
+  explicit allowlist (`image/jpeg`, `image/png`, `image/gif`, `image/webp`,
+  `application/pdf`, `text/plain`, `application/zip`); the declared
+  `Content-Type` header is never consulted. Keys are tenant-scoped
+  (`tenantRootID/businessID/ticketID/attachmentID`). Deletion is idempotent so
+  the at-least-once outbox purge path never fails on a re-delivered blob.
 
 ### Data (`migrations/`, `db/`)
 
@@ -99,6 +166,15 @@ Key invariants enforced in SQL (migration 0004): a tenant always retains ≥1
 Owner (deferred constraint trigger), and an agent principal is contained to one
 membership on its home business with no admin permissions (FR-027).
 
+Spec 002 adds migrations 0013–0024: `0013_support_desk` (7 support tables:
+`email_domain`, `inbound_address`, `requester`, `ticket`, `ticket_tag`,
+`ticket_message`, `attachment`); `0014_support_rls` (RLS policies for all 7
+tables + the `resolve_inbound_address` and `ingest_inbound_message` SECURITY
+DEFINER functions); `0015_support_permissions` (support permission catalog
+rows); `0016_events_notify` (outbox and notification tables); and 0017–0024
+(incremental support schema additions: delivery tracking, bounce handling,
+assignee eligibility, reopen audit, send identity, loop guard).
+
 ## Testing model
 
 - **Unit** (`make test`): fast, no DB — includes the source-level security pins
@@ -106,5 +182,12 @@ membership on its home business with no admin permissions (FR-027).
 - **Integration** (`make int-test`): every domain through the real RLS-subject
   role against an ephemeral Postgres (testcontainers). `make sec-test` is the
   security-regression subset and the merge gate.
+- **Contract** (`make contract-test`): spec-002 shared-layer interface contracts
+  (`InboundSource`, `Store`, `Sender`, event bus) + the support OpenAPI contract
+  (`specs/002-support-desk/contracts/openapi.yaml`). Fails CI if the router and
+  contract drift apart.
 - Behavioral security tests are paired with **no-build-tag source pins** so a
   dropped guard fails both `make test` and `make sec-test`.
+- The merge gate is `make test && make int-test && make contract-test && make lint`
+  (`int-test` ⊇ `sec-test`). A Playwright e2e suite in `web/e2e/` covers the
+  support flow (inbound email → ticket → reply → outbound).
