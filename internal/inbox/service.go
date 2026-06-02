@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/db"
@@ -24,6 +25,10 @@ type Config struct {
 	ReplyTokenKey       []byte
 	AttachmentMaxBytes  int64
 	InboundSystemDomain string
+	// LoopGuardMaxAutoReplies bounds auto-responder amplification (FR-018/SC-011):
+	// the maximum auto-generated inbound messages one requester may produce within
+	// the loop window before further ones are suppressed. <= 0 uses the default.
+	LoopGuardMaxAutoReplies int
 }
 
 // IngestResult reports the outcome of ingesting one inbound message. TicketID and
@@ -31,10 +36,11 @@ type Config struct {
 // true when a brand-new ticket was opened; Duplicate is true when the message was
 // a replay of an already-ingested Message-ID (idempotent no-op, SC-002/FR-005).
 type IngestResult struct {
-	TicketID  uuid.UUID
-	MessageID uuid.UUID // DB id of the ticket_message row
-	Created   bool      // a new ticket was created
-	Duplicate bool      // replay of an already-ingested message_id
+	TicketID   uuid.UUID
+	MessageID  uuid.UUID // DB id of the ticket_message row
+	Created    bool      // a new ticket was created
+	Duplicate  bool      // replay of an already-ingested message_id
+	Suppressed bool      // dropped as a bounded mail-loop auto-reply (FR-018/SC-011)
 }
 
 // errNoRoute is the uniform sentinel for an inbound recipient that resolves to no
@@ -66,6 +72,21 @@ func NewService(database *db.DB, store blob.Store, cfg Config, logger *slog.Logg
 		logger = slog.Default()
 	}
 	return &Service{db: database, blob: store, cfg: cfg, logger: logger}
+}
+
+// defaultLoopGuardMaxAutoReplies is the FR-018/SC-011 per-requester auto-reply cap
+// used when Config.LoopGuardMaxAutoReplies is unset (<= 0). Small enough to bound a
+// runaway loop quickly, generous enough that an ordinary vacation responder never
+// trips it.
+const defaultLoopGuardMaxAutoReplies = 10
+
+// loopGuardMax is the effective per-requester auto-reply cap (the configured value,
+// or the default when unset). Passed to ingest_inbound_message as the loop bound.
+func (s *Service) loopGuardMax() int {
+	if s.cfg.LoopGuardMaxAutoReplies > 0 {
+		return s.cfg.LoopGuardMaxAutoReplies
+	}
+	return defaultLoopGuardMaxAutoReplies
 }
 
 // sniffedAttachment is one attachment that passed the MIME-sniff allowlist and is
@@ -177,11 +198,13 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 		}
 
 		var out IngestResult
+		// Nullable holders: a suppressed auto-reply (FR-018) returns NULL ticket/message.
+		var scTicket, scMessage pgtype.UUID
 		err = tx.QueryRow(ctx, `
-			SELECT out_ticket_id, out_message_id, out_created, out_duplicate
+			SELECT out_ticket_id, out_message_id, out_created, out_duplicate, out_suppressed
 			FROM ingest_inbound_message(
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-				$11, $12, $13, $14, $15, $16, $17, $18)`,
+				$11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 			r.businessID,                 // $1  p_business_id
 			r.tenantRootID,               // $2  p_tenant_root_id
 			normalizedAddr,               // $3  p_address
@@ -200,9 +223,24 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			replyToken,                   // $16 p_reply_token
 			attachmentsJSON,              // $17 p_attachments (jsonb)
 			"inbox:"+msg.Provider,        // $18 p_source
-		).Scan(&out.TicketID, &out.MessageID, &out.Created, &out.Duplicate)
+			s.loopGuardMax(),             // $19 p_loop_max_auto_replies (FR-018/SC-011)
+		).Scan(&scTicket, &scMessage, &out.Created, &out.Duplicate, &out.Suppressed)
 		if err != nil {
 			return fmt.Errorf("inbox: ingest_inbound_message: %w", err)
+		}
+		if scTicket.Valid {
+			out.TicketID = uuid.UUID(scTicket.Bytes)
+		}
+		if scMessage.Valid {
+			out.MessageID = uuid.UUID(scMessage.Bytes)
+		}
+
+		// FR-018/SC-011: a suppressed mail-loop auto-reply is an accepted no-op — the
+		// DEFINER wrote the loop_suppressed audit and inserted no ticket/message, so
+		// (like a replay) we store nothing further and skip the outbox fan-out.
+		if out.Suppressed {
+			result = out
+			return nil
 		}
 
 		// A replay is an idempotent no-op: no new rows, no new outbox event, and —
