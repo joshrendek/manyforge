@@ -23,6 +23,13 @@ make dev                             # API on :8080  (MANYFORGE_ADDR to override
 cd web && npm install && npm run start
 ```
 
+### Seed demo data
+
+With the dev DB up, `make seed-demo` idempotently creates the `live-demo@manyforge.test`
+user (password `DevPassw0rd!`), the Acme Holdings business tree, each business's system
+inbound address, and a few threaded support conversations ingested through the real inbox
+pipeline. Safe to re-run (Message-ID idempotency means a second run adds nothing).
+
 Health `GET /healthz` · readiness `GET /readyz` · metrics `GET /metrics`. The
 HTTP API is versioned under `/api/v1`; the contract is
 `specs/001-tenant-foundation/contracts/openapi.yaml` (a unit test fails CI if the
