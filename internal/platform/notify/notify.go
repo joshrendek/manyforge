@@ -61,6 +61,14 @@ type Mail struct {
 	EnvelopeFrom  string            // SMTP MAIL FROM (VERP/return-path); falls back to From if empty
 	AutoSubmitted string            // RFC 3834 value, e.g. "auto-replied"; empty ⇒ header omitted (human reply)
 	ExtraHeaders  map[string]string // optional additional headers; may be nil
+
+	// DKIM is the per-message signing identity — the selection→sign seam (FR-013).
+	// SendSubscriber.Handle sets it to the business's verified custom domain
+	// (From + this DKIMConfig) when one exists, leaving it nil for the system
+	// fallback. nil ⇒ no per-message custom signing; the Sender then signs with its
+	// static process-wide SystemDKIM (if configured) or sends unsigned. When set, it
+	// takes PRECEDENCE over that static key.
+	DKIM *DKIMConfig
 }
 
 // ErrSuppressed is returned when the recipient is hard-bounced/suppressed (FR-013).
