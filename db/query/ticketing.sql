@@ -16,7 +16,16 @@
 -- no assignee filter. The tag facet is an exact (case-insensitive citext) match via
 -- ticket_tag. lim is the clamped limit + 1 so the service can detect a further page.
 -- name: ListTickets :many
-SELECT t.* FROM ticket t
+SELECT
+  sqlc.embed(t),
+  sqlc.embed(r),
+  COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
+            FROM ticket_tag tt
+            WHERE tt.ticket_id = t.id AND tt.business_id = t.business_id), '{}')::text[] AS tags,
+  (SELECT count(*) FROM ticket_message tm
+    WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
+FROM ticket t
+JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND (sqlc.narg('status')::ticket_status IS NULL OR t.status = sqlc.narg('status'))
@@ -32,7 +41,16 @@ LIMIT sqlc.arg('lim');
 -- but only rows strictly after the cursor tuple (last_message_at, id) in the
 -- (DESC, DESC) order. The row-value comparison rides the same composite index.
 -- name: ListTicketsAfter :many
-SELECT t.* FROM ticket t
+SELECT
+  sqlc.embed(t),
+  sqlc.embed(r),
+  COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
+            FROM ticket_tag tt
+            WHERE tt.ticket_id = t.id AND tt.business_id = t.business_id), '{}')::text[] AS tags,
+  (SELECT count(*) FROM ticket_message tm
+    WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
+FROM ticket t
+JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND (sqlc.narg('status')::ticket_status IS NULL OR t.status = sqlc.narg('status'))
