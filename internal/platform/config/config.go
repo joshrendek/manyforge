@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -204,31 +206,60 @@ func envInt64(key string, def int64) (int64, error) {
 // Each encoding is tried in turn, preferring the first that yields exactly 32
 // bytes. A 64-char hex key is also valid base64 (decoding to 48 bytes), so we
 // must not commit to the first successful decode regardless of length.
+// hexKey32Re anchors the bare-form hex auto-detect: exactly 64 hex chars (a 32-byte
+// key). Anything else in bare form is treated as base64. This makes the hex-vs-base64
+// choice deterministic instead of "first decoder that happens to yield 32 bytes".
+var hexKey32Re = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+
+// envKey32 loads a 32-byte secret from the named env var (manyforge-no9). The value
+// is parsed unambiguously:
+//   - "hex:<v>"    — v is hex (authoritative; no auto-detect)
+//   - "base64:<v>" — v is base64, std or URL alphabet, padded or raw (authoritative)
+//   - bare <v>     — auto-detected: a 64-char [0-9a-fA-F] string is hex; anything
+//     else is base64. Back-compatible with the two canonical encodings of a 32-byte
+//     key (44-char base64, 64-char hex); the explicit prefixes remove all doubt.
+//
+// Empty/unset ⇒ (nil, nil). A value that decodes but isn't 32 bytes, or doesn't
+// decode at all, is a config error.
 func envKey32(key string) ([]byte, error) {
 	v := os.Getenv(key)
 	if v == "" {
 		return nil, nil
 	}
-	decoders := []func(string) ([]byte, error){
-		base64.StdEncoding.DecodeString,
-		base64.URLEncoding.DecodeString,
-		hex.DecodeString,
+
+	var (
+		b   []byte
+		err error
+	)
+	switch {
+	case strings.HasPrefix(v, "hex:"):
+		b, err = hex.DecodeString(strings.TrimPrefix(v, "hex:"))
+	case strings.HasPrefix(v, "base64:"):
+		b, err = decodeBase64(strings.TrimPrefix(v, "base64:"))
+	case hexKey32Re.MatchString(v):
+		b, err = hex.DecodeString(v)
+	default:
+		b, err = decodeBase64(v)
 	}
-	var decoded bool
-	var last []byte
-	for _, dec := range decoders {
-		b, err := dec(v)
-		if err != nil {
-			continue
-		}
-		decoded = true
-		last = b
-		if len(b) == 32 {
+	if err != nil {
+		return nil, fmt.Errorf("not valid base64 or hex")
+	}
+	if len(b) != 32 {
+		return nil, fmt.Errorf("decoded key must be 32 bytes, got %d", len(b))
+	}
+	return b, nil
+}
+
+// decodeBase64 accepts a base64 string in either the standard or URL-safe alphabet,
+// padded or raw (unpadded) — the four forms a 32-byte key can take.
+func decodeBase64(s string) ([]byte, error) {
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding, base64.URLEncoding,
+		base64.RawStdEncoding, base64.RawURLEncoding,
+	} {
+		if b, derr := enc.DecodeString(s); derr == nil {
 			return b, nil
 		}
 	}
-	if !decoded {
-		return nil, fmt.Errorf("not valid base64 or hex")
-	}
-	return nil, fmt.Errorf("decoded key must be 32 bytes, got %d", len(last))
+	return nil, fmt.Errorf("invalid base64")
 }

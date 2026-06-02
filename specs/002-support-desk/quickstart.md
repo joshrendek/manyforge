@@ -70,7 +70,7 @@ MANYFORGE_DKIM_KEY_PATH=./secrets/dkim/default.private
 # (AES-256). Unset ⇒ custom-domain signing disabled; system identity only. The
 # server still boots with this unset — only an explicitly-set-but-invalid key
 # is a hard config error.
-# MANYFORGE_DKIM_MASTER_KEY=<32-byte key as base64 or hex>
+# MANYFORGE_DKIM_MASTER_KEY=<32-byte key: base64 or hex; prefix hex:/base64: to be explicit>
 ```
 
 > The application DB role must stay non-superuser / non-BYPASSRLS — the six new
