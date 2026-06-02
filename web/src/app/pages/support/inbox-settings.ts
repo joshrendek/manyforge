@@ -49,8 +49,10 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
         <h2 class="section-head">Email domains</h2>
 
         <form class="add-form" data-testid="add-domain-form" (ngSubmit)="addDomain()">
+          <label for="domain-input">Domain</label>
           <input
             type="text"
+            id="domain-input"
             data-testid="domain-input"
             placeholder="support.acme.com"
             autocomplete="off"
@@ -58,7 +60,9 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             name="domain"
             [disabled]="saving()"
           />
+          <label for="mode-select">Mode</label>
           <select
+            id="mode-select"
             data-testid="mode-select"
             [(ngModel)]="modeDraft"
             name="mode"
@@ -160,8 +164,10 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
         <h2 class="section-head">Inbound addresses</h2>
 
         <form class="add-form" data-testid="add-address-form" (ngSubmit)="addAddress()">
+          <label for="address-input">Address</label>
           <input
             type="text"
+            id="address-input"
             data-testid="address-input"
             placeholder="hello@support.acme.com"
             autocomplete="off"
@@ -169,7 +175,9 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
             name="address"
             [disabled]="saving()"
           />
+          <label for="address-domain-select">Domain</label>
           <select
+            id="address-domain-select"
             data-testid="address-domain-select"
             [(ngModel)]="selectedDomainId"
             name="email_domain_id"
