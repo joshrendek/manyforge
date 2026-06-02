@@ -94,9 +94,12 @@ func newIdentityService(tdb *testdb.TestDB, resolver *stubResolver) *IdentitySer
 	return &IdentityService{DB: tdb.App, Resolver: resolver, Sealer: b64Sealer{}}
 }
 
-// uniqueDomain returns a fresh, RFC-ish lowercase domain so tests don't collide on
-// the UNIQUE (tenant_root_id, domain) constraint across cases.
+// uniqueDomain returns a fresh, RFC-valid lowercase domain so tests don't collide on
+// the UNIQUE (tenant_root_id, domain) constraint across cases. Underscores in the
+// label (e.g. from mode strings like "forward_in"/"subdomain_mx") are replaced with
+// hyphens so the generated domain passes the production domainRe validator.
 func uniqueDomain(label string) string {
+	label = strings.ReplaceAll(label, "_", "-")
 	return label + "-" + strings.ReplaceAll(uuid.NewString(), "-", "") + ".example.com"
 }
 
