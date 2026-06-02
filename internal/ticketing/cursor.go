@@ -24,9 +24,11 @@ type keyset struct {
 // whole-table skip), and decoding is defensive — a malformed token is a
 // validation error (→ 400), never a 500 or an injection vector.
 const (
-	cursorTickets    = "t"
-	cursorMessages   = "m"
-	cursorRequesters = "r"
+	cursorTickets        = "t"
+	cursorMessages       = "m"
+	cursorRequesters     = "r"
+	cursorEmailDomains   = "d"
+	cursorInboundAddress = "i"
 )
 
 // sep is a separator absent from both RFC3339 timestamps (which contain ':',
@@ -70,4 +72,14 @@ func decodeTicketCursor(token string) (keyset, error)  { return decodeCursor(cur
 func decodeMessageCursor(token string) (keyset, error) { return decodeCursor(cursorMessages, token) }
 func decodeRequesterCursor(token string) (keyset, error) {
 	return decodeCursor(cursorRequesters, token)
+}
+
+func encodeEmailDomainCursor(k keyset) string         { return encodeCursor(cursorEmailDomains, k) }
+func decodeEmailDomainCursor(token string) (keyset, error) {
+	return decodeCursor(cursorEmailDomains, token)
+}
+
+func encodeInboundAddressCursor(k keyset) string { return encodeCursor(cursorInboundAddress, k) }
+func decodeInboundAddressCursor(token string) (keyset, error) {
+	return decodeCursor(cursorInboundAddress, token)
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/config"
+	mfcrypto "github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/events"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
@@ -120,6 +121,31 @@ func main() {
 	businessIDFromPath := func(r *http.Request) (uuid.UUID, error) {
 		return uuid.Parse(chi.URLParam(r, "id"))
 	}
+
+	// US4 inbox-management identity surface (custom email domains + verification +
+	// custom inbound addresses). The DKIM master key seals per-domain Ed25519 private
+	// keys at rest; when MANYFORGE_DKIM_MASTER_KEY is unset the sealer is nil and
+	// CreateEmailDomain refuses (custom sending degrades to system-only) — the server
+	// still boots. An explicitly-set-but-wrong-length key is a hard config error
+	// caught at Load(), so NewSealer here only fails on an internal cipher error.
+	var dkimSealer ticketing.KeySealer
+	if len(cfg.DKIMMasterKey) > 0 {
+		sealer, serr := mfcrypto.NewSealer(cfg.DKIMMasterKey)
+		if serr != nil {
+			logger.Error("init DKIM sealer", "err", serr)
+			os.Exit(1)
+		}
+		dkimSealer = sealer
+	} else {
+		logger.Warn("MANYFORGE_DKIM_MASTER_KEY unset; custom email-domain signing disabled (system identity only)")
+	}
+	identitySvc := &ticketing.IdentityService{
+		DB:             database,
+		Resolver:       ticketing.NetTXTResolver{},
+		Sealer:         dkimSealer,
+		SystemMailHost: cfg.InboundSystemDomain,
+	}
+	identityH := ticketing.NewIdentityHandler(identitySvc)
 
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,
@@ -249,6 +275,7 @@ func main() {
 		authz:        authzH,
 		invitations:  invH,
 		ticketing:    ticketH,
+		identity:     identityH,
 		inboxWebhook: inboxWebhookH,
 		bounce:       bounceH,
 		authLimit:    httpx.RateLimit(authLimiter, ipKey),
@@ -256,6 +283,7 @@ func main() {
 		ticketsRead:  httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
 		ticketsReply: httpx.RequirePermission(database, permResolve, "tickets.reply", businessIDFromPath),
 		ticketsWrite: httpx.RequirePermission(database, permResolve, "tickets.write", businessIDFromPath),
+		inboxManage:  httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -323,6 +351,7 @@ type apiHandlers struct {
 	authz        *authz.Handler
 	invitations  *invitations.Handler
 	ticketing    *ticketing.Handler
+	identity     *ticketing.IdentityHandler
 	inboxWebhook *inbox.Handler
 	bounce       *inbox.BounceHandler
 
@@ -336,6 +365,9 @@ type apiHandlers struct {
 	ticketsRead  func(http.Handler) http.Handler
 	ticketsReply func(http.Handler) http.Handler
 	ticketsWrite func(http.Handler) http.Handler
+	// inboxManage gates the US4 inbox-management slice (email-domain + inbound-address
+	// CRUD) on the inbox.manage permission, same RLS-bound 404-on-lacking-perm shape.
+	inboxManage func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -386,6 +418,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(tw2 chi.Router) {
 				tw2.Use(h.ticketsWrite)
 				h.ticketing.TriageRoutes(tw2)
+			})
+			// US4 inbox-management slice: custom email-domain create/list/verify +
+			// custom inbound-address create/list, all gated on inbox.manage (migration-0015
+			// catalog). Same RLS-bound 404-on-lacking-perm semantics as the other groups.
+			pr.Group(func(im chi.Router) {
+				im.Use(h.inboxManage)
+				h.identity.Routes(im)
 			})
 		})
 	})
