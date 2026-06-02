@@ -229,3 +229,18 @@ WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
 -- internal/inbox. The earlier GetOutboundMessageForBounce plain-table query was
 -- superseded by that DEFINER and removed — it was the same principal-less RLS trap as
 -- the queries above (under RLS with no principal it returned zero rows).
+
+-- ---- assignable members (assignee picker, FR-011) ----
+
+-- ListAssignableMembers returns a business's human, active members ordered by display
+-- name — the candidate ticket assignees for the picker. Single server-capped page.
+-- Runs in the caller's RLS context, so membership is already scoped to a business the
+-- caller is authorized over (the route is additionally gated on tickets.assign).
+-- name: ListAssignableMembers :many
+SELECT p.id, a.email, a.display_name
+FROM membership m
+JOIN principal p ON p.id = m.principal_id AND p.kind = 'human'
+JOIN account a ON a.id = p.account_id AND a.status = 'active'
+WHERE m.business_id = $1
+ORDER BY a.display_name, p.id
+LIMIT sqlc.arg('lim');

@@ -275,20 +275,21 @@ func main() {
 	ingestIPKey := func(r *http.Request) string { return inbox.IPRateLimitKey(ratelimit.ClientIP(r, trusted)) }
 
 	mountAPIRoutes(mux, apiHandlers{
-		account:      acctH,
-		tenancy:      tenH,
-		authz:        authzH,
-		invitations:  invH,
-		ticketing:    ticketH,
-		identity:     identityH,
-		inboxWebhook: inboxWebhookH,
-		bounce:       bounceH,
-		authLimit:    httpx.RateLimit(authLimiter, ipKey),
-		ingestLimit:  httpx.RateLimit(ingestIPLimiter, ingestIPKey),
-		ticketsRead:  httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
-		ticketsReply: httpx.RequirePermission(database, permResolve, "tickets.reply", businessIDFromPath),
-		ticketsWrite: httpx.RequirePermission(database, permResolve, "tickets.write", businessIDFromPath),
-		inboxManage:  httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
+		account:       acctH,
+		tenancy:       tenH,
+		authz:         authzH,
+		invitations:   invH,
+		ticketing:     ticketH,
+		identity:      identityH,
+		inboxWebhook:  inboxWebhookH,
+		bounce:        bounceH,
+		authLimit:     httpx.RateLimit(authLimiter, ipKey),
+		ingestLimit:   httpx.RateLimit(ingestIPLimiter, ingestIPKey),
+		ticketsRead:   httpx.RequirePermission(database, permResolve, "tickets.read", businessIDFromPath),
+		ticketsReply:  httpx.RequirePermission(database, permResolve, "tickets.reply", businessIDFromPath),
+		ticketsWrite:  httpx.RequirePermission(database, permResolve, "tickets.write", businessIDFromPath),
+		ticketsAssign: httpx.RequirePermission(database, permResolve, "tickets.assign", businessIDFromPath),
+		inboxManage:   httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -364,12 +365,14 @@ type apiHandlers struct {
 	// authLimit (per-IP auth abuse cap), ingestLimit (per-IP inbound ingest cap),
 	// ticketsRead (tickets.read permission gate for the US1 ticketing read slice),
 	// ticketsReply (tickets.reply gate for the US2 reply + note write slice),
-	// ticketsWrite (tickets.write gate for the US3 triage PATCH slice).
-	authLimit    func(http.Handler) http.Handler
-	ingestLimit  func(http.Handler) http.Handler
-	ticketsRead  func(http.Handler) http.Handler
-	ticketsReply func(http.Handler) http.Handler
-	ticketsWrite func(http.Handler) http.Handler
+	// ticketsWrite (tickets.write gate for the US3 triage PATCH slice),
+	// ticketsAssign (tickets.assign gate for the assignee-picker list endpoint).
+	authLimit     func(http.Handler) http.Handler
+	ingestLimit   func(http.Handler) http.Handler
+	ticketsRead   func(http.Handler) http.Handler
+	ticketsReply  func(http.Handler) http.Handler
+	ticketsWrite  func(http.Handler) http.Handler
+	ticketsAssign func(http.Handler) http.Handler
 	// inboxManage gates the US4 inbox-management slice (email-domain + inbound-address
 	// CRUD) on the inbox.manage permission, same RLS-bound 404-on-lacking-perm shape.
 	inboxManage func(http.Handler) http.Handler
@@ -423,6 +426,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(tw2 chi.Router) {
 				tw2.Use(h.ticketsWrite)
 				h.ticketing.TriageRoutes(tw2)
+			})
+			// Assignee-picker slice: list a business's assignable members, gated on
+			// tickets.assign (the same permission the triage assignee write checks).
+			// Same RLS-bound 404-on-lacking-perm semantics as the other groups.
+			pr.Group(func(ta chi.Router) {
+				ta.Use(h.ticketsAssign)
+				h.ticketing.AssignableRoutes(ta)
 			})
 			// US4 inbox-management slice: custom email-domain create/list/verify +
 			// custom inbound-address create/list, all gated on inbox.manage (migration-0015
