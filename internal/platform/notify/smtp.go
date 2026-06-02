@@ -58,8 +58,16 @@ func (s *SMTPSender) Send(ctx context.Context, m Mail) error {
 	if err != nil {
 		return err
 	}
-	if s.cfg.DKIM != nil {
-		signed, serr := signDKIM(raw, *s.cfg.DKIM)
+	// Single signing chokepoint: the per-message identity (m.DKIM, selected per
+	// reply by SendSubscriber.Handle) takes PRECEDENCE over the static process-wide
+	// SystemDKIM. nil m.DKIM falls back to s.cfg.DKIM (system domain) when set; nil
+	// both ⇒ unsigned.
+	dkimCfg := m.DKIM
+	if dkimCfg == nil {
+		dkimCfg = s.cfg.DKIM
+	}
+	if dkimCfg != nil {
+		signed, serr := signDKIM(raw, *dkimCfg)
 		if serr != nil {
 			return fmt.Errorf("dkim sign: %w", serr)
 		}
