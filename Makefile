@@ -1,13 +1,20 @@
 GO ?= go
 PKG := ./...
 
-.PHONY: build dev test sec-test int-test contract-test lint vet generate migrate db-smoke tidy
+.PHONY: build dev seed-demo test sec-test int-test contract-test lint vet generate migrate db-smoke tidy
 
 build:
 	$(GO) build $(PKG)
 
 dev:
 	$(GO) run ./cmd/manyforge
+
+# Idempotently seed a usable demo support desk (live-demo user + Acme tree +
+# system inbound addresses + threaded conversations through the real inbox
+# pipeline). Sources .air.env so the seed derives the SAME system addresses the
+# server does. Safe to re-run.
+seed-demo:
+	set -a; . ./.air.env; set +a; $(GO) run ./cmd/seeddemo
 
 test:
 	$(GO) test $(PKG)
