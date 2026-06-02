@@ -23,8 +23,9 @@ func startSMTPAdapter(ctx context.Context, t *testing.T, svc *Service) string {
 	t.Helper()
 
 	// Reserve an ephemeral port, then hand the resolved address to the adapter. We
-	// close our probe listener first so the adapter can bind it (tiny race, fine for
-	// a test) — simpler than threading a net.Listener into the adapter.
+	// close our probe listener first so the adapter can bind it. Close-then-rebind is
+	// inherently racy — another process could grab the freed port in the gap — but is
+	// fine for this loopback test; simpler than threading a net.Listener into the adapter.
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
