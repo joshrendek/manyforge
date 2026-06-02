@@ -11,10 +11,11 @@ import (
 )
 
 // ReplyToken is the unforgeable thread-routing token (research R4). It is carried
-// in the outbound Reply-To as a VERP/plus-address (support+<token>@domain) and in
-// the [#<token>] subject tag, and lets an inbound reply that lost its threading
-// headers still attach to the right ticket — without a guessable ticket id leaking
-// into mail headers (Constitution: never use a raw resource id as an auth token).
+// in the outbound Reply-To as a VERP/plus-address (support+<token>@domain), and
+// lets an inbound reply that lost its threading headers still attach to the right
+// ticket — without a guessable ticket id leaking into mail headers (Constitution:
+// never use a raw resource id as an auth token). A [#<token>] subject tag was also
+// specced (R4) but is NOT built; threading rides the Reply-To VERP token only.
 //
 // Format: base64url(ticketID[16]) "." base64url(HMAC_SHA256(serverKey, ticketID[16])).
 // The id is recoverable from the token, but only a holder of serverKey can forge a

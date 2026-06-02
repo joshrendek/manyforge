@@ -50,7 +50,7 @@ func InApp(ctx context.Context, tx pgx.Tx, n Notification) error {
 type Mail struct {
 	From       string   // verified custom identity, else the system address (FR-013)
 	To         string   // the requester
-	Subject    string   // carries the [#<reply_token>] tag
+	Subject    string   // the reply subject ("Re: …"); the reply token rides ReplyTo, NOT the subject
 	BodyText   string
 	BodyHTML   string
 	MessageID  string   // RFC822 Message-ID we mint for this outbound message
