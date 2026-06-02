@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // TestOutboxDrainAtLeastOnce proves the SL-C contract: events enqueued in a tx are
@@ -130,5 +131,44 @@ func TestOutboxRescheduleOnHandlerError(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("expected attempts=1 after one failure, got %d", attempts)
+	}
+}
+
+// TestOutboxIncrementsDrainedMetric proves that a successful drain increments
+// MetricOutboxDrained exactly once per event processed.
+func TestOutboxIncrementsDrainedMetric(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	bus := NewBus()
+	bus.Subscribe("metric.test", func(_ context.Context, _ pgx.Tx, _ Event) error {
+		return nil
+	})
+
+	tenant := uuid.New()
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return Enqueue(ctx, tx, tenant, "metric.test", map[string]any{})
+	}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	m := observability.NewMetrics()
+	before := m.Get(observability.MetricOutboxDrained)
+
+	w := &Worker{DB: tdb.App, Bus: bus, BatchSize: 10, Metrics: m}
+	w.withDefaults()
+
+	if _, err := w.drainOnce(ctx); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	after := m.Get(observability.MetricOutboxDrained)
+	if delta := after - before; delta != 1 {
+		t.Fatalf("MetricOutboxDrained delta = %d, want 1", delta)
 	}
 }
