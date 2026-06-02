@@ -75,6 +75,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		ticketsReply:  noop,
 		ticketsWrite:  noop,
 		ticketsAssign: noop,
+		ticketsDelete: noop,
 		inboxManage:   noop,
 	})
 

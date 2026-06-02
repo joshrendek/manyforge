@@ -16,6 +16,13 @@ type Querier interface {
 	AcquireTenantLock(ctx context.Context, hashtext string) error
 	AddRolePermission(ctx context.Context, arg AddRolePermissionParams) error
 	AllPermissionKeys(ctx context.Context) ([]string, error)
+	// BlankTicketAttachments blanks attachment filenames on a ticket (the blob bytes are
+	// purged out-of-band via attachment.purge). Returns the count blanked — the audit
+	// scope count. Joined through ticket_message so it stays scoped to one ticket.
+	BlankTicketAttachments(ctx context.Context, arg BlankTicketAttachmentsParams) (int64, error)
+	// BlankTicketMessages blanks every message body on a ticket (FR-014). Returns the
+	// number of messages blanked — the audit scope count. Scoped to (ticket_id, business_id).
+	BlankTicketMessages(ctx context.Context, arg BlankTicketMessagesParams) (int64, error)
 	// BumpTicketActivity touches the denormalized last_message_at/updated_at after a
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
@@ -230,6 +237,10 @@ type Querier interface {
 	// Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
 	// this to roles the caller may see; the predicate narrows to one tenant.
 	ListTenantRoles(ctx context.Context, tenantRootID pgtype.UUID) ([]ListTenantRolesRow, error)
+	// ListTicketAttachmentBlobs returns the blob key of every attachment on a ticket
+	// (joined through its messages) so redact can enqueue one attachment.purge per blob.
+	// The shared requester row is deliberately untouched (deduped across tickets).
+	ListTicketAttachmentBlobs(ctx context.Context, arg ListTicketAttachmentBlobsParams) ([]string, error)
 	// ListTicketTags returns the tags for one ticket (already business-scoped by the
 	// caller having loaded the ticket under the same predicate), ordered for stable output.
 	ListTicketTags(ctx context.Context, arg ListTicketTagsParams) ([]string, error)
@@ -266,6 +277,14 @@ type Querier interface {
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).
 	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
+	// ---- US5 redact / soft-delete (T066) ----
+	// RedactTicket soft-deletes a ticket in place: blanks its subject and stamps
+	// redacted_at, scoped to (id, business_id) under the caller's RLS context. Idempotent —
+	// a row already redacted (redacted_at IS NOT NULL) matches zero rows, so the service
+	// maps pgx.ErrNoRows ⇒ ErrNotFound (already-gone / unknown / foreign: one no-oracle
+	// shape). NEVER a hard DELETE (Principle VI / FR-014). Returns tenant_root_id +
+	// redacted_at for the in-tx audit and the per-blob purge enqueue.
+	RedactTicket(ctx context.Context, arg RedactTicketParams) (RedactTicketRow, error)
 	// Subtree move is performed by the SECURITY DEFINER move_business() function
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).

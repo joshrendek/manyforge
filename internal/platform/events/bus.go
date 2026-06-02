@@ -23,6 +23,11 @@ const (
 	// dispatch the threaded outbound email. Payload carries the message row id,
 	// recipient, subject, and threading headers.
 	TopicTicketReplied = "ticket.replied"
+
+	// TopicAttachmentPurge is emitted (one per blob) in the redact tx; the purge
+	// worker drains it to delete the attachment object from blob storage out-of-band
+	// (T066/FR-014). Payload carries {blob_key}. The handler is idempotent.
+	TopicAttachmentPurge = "attachment.purge"
 )
 
 // Event is a drained outbox row handed to subscribers.

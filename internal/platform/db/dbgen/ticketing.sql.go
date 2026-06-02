@@ -13,6 +13,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const blankTicketAttachments = `-- name: BlankTicketAttachments :execrows
+UPDATE attachment a
+SET filename = ''
+FROM ticket_message tm
+WHERE a.ticket_message_id = tm.id
+  AND tm.ticket_id = $1 AND a.business_id = $2
+`
+
+type BlankTicketAttachmentsParams struct {
+	TicketID   uuid.UUID `json:"ticket_id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// BlankTicketAttachments blanks attachment filenames on a ticket (the blob bytes are
+// purged out-of-band via attachment.purge). Returns the count blanked — the audit
+// scope count. Joined through ticket_message so it stays scoped to one ticket.
+func (q *Queries) BlankTicketAttachments(ctx context.Context, arg BlankTicketAttachmentsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, blankTicketAttachments, arg.TicketID, arg.BusinessID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const blankTicketMessages = `-- name: BlankTicketMessages :execrows
+UPDATE ticket_message
+SET body_text = '', body_html = NULL
+WHERE ticket_id = $1 AND business_id = $2
+`
+
+type BlankTicketMessagesParams struct {
+	TicketID   uuid.UUID `json:"ticket_id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// BlankTicketMessages blanks every message body on a ticket (FR-014). Returns the
+// number of messages blanked — the audit scope count. Scoped to (ticket_id, business_id).
+func (q *Queries) BlankTicketMessages(ctx context.Context, arg BlankTicketMessagesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, blankTicketMessages, arg.TicketID, arg.BusinessID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bumpTicketActivity = `-- name: BumpTicketActivity :exec
 UPDATE ticket SET last_message_at = now(), updated_at = now()
 WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3
@@ -436,7 +481,8 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, arg ListAttach
 const listMessages = `-- name: ListMessages :many
 
 SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error FROM ticket_message
-WHERE ticket_id = $1 AND business_id = $2
+WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
+  AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
 ORDER BY created_at ASC, id ASC
 LIMIT $3
 `
@@ -491,8 +537,9 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 
 const listMessagesAfter = `-- name: ListMessagesAfter :many
 SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error FROM ticket_message
-WHERE ticket_id = $1 AND business_id = $2
-  AND (created_at, id) > ($3::timestamptz, $4::uuid)
+WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
+  AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
+  AND (ticket_message.created_at, ticket_message.id) > ($3::timestamptz, $4::uuid)
 ORDER BY created_at ASC, id ASC
 LIMIT $5
 `
@@ -647,6 +694,41 @@ func (q *Queries) ListRequestersAfter(ctx context.Context, arg ListRequestersAft
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTicketAttachmentBlobs = `-- name: ListTicketAttachmentBlobs :many
+SELECT a.blob_key
+FROM attachment a
+JOIN ticket_message tm ON tm.id = a.ticket_message_id
+WHERE tm.ticket_id = $1 AND a.business_id = $2
+`
+
+type ListTicketAttachmentBlobsParams struct {
+	TicketID   uuid.UUID `json:"ticket_id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// ListTicketAttachmentBlobs returns the blob key of every attachment on a ticket
+// (joined through its messages) so redact can enqueue one attachment.purge per blob.
+// The shared requester row is deliberately untouched (deduped across tickets).
+func (q *Queries) ListTicketAttachmentBlobs(ctx context.Context, arg ListTicketAttachmentBlobsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listTicketAttachmentBlobs, arg.TicketID, arg.BusinessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var blob_key string
+		if err := rows.Scan(&blob_key); err != nil {
+			return nil, err
+		}
+		items = append(items, blob_key)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -898,6 +980,38 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const redactTicket = `-- name: RedactTicket :one
+
+UPDATE ticket
+SET subject = '', redacted_at = now(), updated_at = now()
+WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL
+RETURNING tenant_root_id, redacted_at
+`
+
+type RedactTicketParams struct {
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+type RedactTicketRow struct {
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	RedactedAt   pgtype.Timestamptz `json:"redacted_at"`
+}
+
+// ---- US5 redact / soft-delete (T066) ----
+// RedactTicket soft-deletes a ticket in place: blanks its subject and stamps
+// redacted_at, scoped to (id, business_id) under the caller's RLS context. Idempotent —
+// a row already redacted (redacted_at IS NOT NULL) matches zero rows, so the service
+// maps pgx.ErrNoRows ⇒ ErrNotFound (already-gone / unknown / foreign: one no-oracle
+// shape). NEVER a hard DELETE (Principle VI / FR-014). Returns tenant_root_id +
+// redacted_at for the in-tx audit and the per-blob purge enqueue.
+func (q *Queries) RedactTicket(ctx context.Context, arg RedactTicketParams) (RedactTicketRow, error) {
+	row := q.db.QueryRow(ctx, redactTicket, arg.ID, arg.BusinessID)
+	var i RedactTicketRow
+	err := row.Scan(&i.TenantRootID, &i.RedactedAt)
+	return i, err
 }
 
 const updateTicketAssignee = `-- name: UpdateTicketAssignee :exec

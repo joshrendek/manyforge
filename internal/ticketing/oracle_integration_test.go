@@ -100,6 +100,13 @@ func TestNoOracleHTTP404Parity(t *testing.T) {
 	seedTicket(ctx, t, tdb, t1, t1Ticket, "open", "normal", "t1-real", nil, nil, -time.Hour)
 	t2Ticket := uuid.New()
 	seedTicket(ctx, t, tdb, t2, t2Ticket, "open", "normal", "t2-secret", nil, nil, -time.Hour)
+	// A ticket that EXISTED in t1 but was redacted (soft-deleted): it must 404 to a
+	// reader, identical to never-existed/forbidden — redaction is not an oracle either.
+	redactedTicket := uuid.New()
+	seedTicket(ctx, t, tdb, t1, redactedTicket, "open", "normal", "t1-redacted", nil, nil, -time.Hour)
+	if err := (&Service{DB: tdb.App}).RedactTicket(ctx, t1.owner, t1.master, redactedTicket); err != nil {
+		t.Fatalf("seed redact: %v", err)
+	}
 
 	srv, ring := newTicketReadRouter(t, tdb)
 	readerTok := mintBearer(t, ring, t1.reader)     // t1 member WITH tickets.read
@@ -121,6 +128,9 @@ func TestNoOracleHTTP404Parity(t *testing.T) {
 	statusCross, bodyCross := getRaw(t, srv, readerTok, path(t1.master, t2Ticket))
 	// (c) forbidden: t1's real ticket, caller lacks tickets.read → RequirePermission → 404.
 	statusForbidden, bodyForbidden := getRaw(t, srv, noReaderTok, path(t1.master, t1Ticket))
+	// (d) redacted: a ticket that existed in t1 but was soft-deleted → handler GetTicket
+	// (redacted_at IS NULL filter) → ErrNotFound → 404.
+	statusRedacted, bodyRedacted := getRaw(t, srv, readerTok, path(t1.master, redactedTicket))
 
 	for _, c := range []struct {
 		name   string
@@ -129,16 +139,17 @@ func TestNoOracleHTTP404Parity(t *testing.T) {
 		{"unknown", statusUnknown},
 		{"cross-tenant", statusCross},
 		{"forbidden", statusForbidden},
+		{"redacted", statusRedacted},
 	} {
 		if c.status != http.StatusNotFound {
 			t.Errorf("%s: status = %d, want 404", c.name, c.status)
 		}
 	}
 
-	// The core no-oracle property: the three 404 bodies are byte-identical.
-	if bodyUnknown != bodyCross || bodyUnknown != bodyForbidden {
-		t.Errorf("oracle leak: 404 bodies differ\n unknown=%q\n cross=%q\n forbidden=%q",
-			bodyUnknown, bodyCross, bodyForbidden)
+	// The core no-oracle property: all four 404 bodies are byte-identical.
+	if bodyUnknown != bodyCross || bodyUnknown != bodyForbidden || bodyUnknown != bodyRedacted {
+		t.Errorf("oracle leak: 404 bodies differ\n unknown=%q\n cross=%q\n forbidden=%q\n redacted=%q",
+			bodyUnknown, bodyCross, bodyForbidden, bodyRedacted)
 	}
 	// And it is the generic NOT_FOUND envelope (never a 403 / forbidden shape).
 	if got := strings.TrimSpace(bodyUnknown); got != `{"code":"NOT_FOUND","message":"not found"}` {

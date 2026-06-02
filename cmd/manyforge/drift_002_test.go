@@ -33,6 +33,7 @@ var inScope002Ops = []string{
 	"GET /businesses/{}/requesters",
 	"GET /businesses/{}/requesters/{}",
 	"GET /businesses/{}/assignable-members",
+	"DELETE /businesses/{}/tickets/{}",
 	"POST /businesses/{}/tickets/{}/reply",
 	"POST /businesses/{}/tickets/{}/note",
 	// US4 inbox-management (T052 red-gate — handlers not yet registered)
@@ -248,6 +249,23 @@ func TestEmailDomainEndpointContract(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestRedactTicketEndpointContract (T066) pins the response-code shape for the US5
+// delete/redact endpoint in the 002 openapi contract: 204 on success and 404 for the
+// no-oracle unknown/unauthorized/already-redacted case.
+func TestRedactTicketEndpointContract(t *testing.T) {
+	doc := load002Spec(t)
+	opNode, ok := doc.Paths["/businesses/{id}/tickets/{tid}"]["delete"]
+	if !ok {
+		t.Fatalf("002 openapi: missing DELETE /businesses/{id}/tickets/{tid}")
+	}
+	codes := responseCodesFor(t, opNode, "DELETE /businesses/{id}/tickets/{tid}")
+	for _, code := range []string{"204", "404"} {
+		if _, ok := codes[code]; !ok {
+			t.Errorf("002 openapi: DELETE /businesses/{id}/tickets/{tid} must document response %s", code)
+		}
+	}
 }
 
 // TestInboundAddressEndpointContract (T052) pins the response-code shape for the

@@ -98,15 +98,17 @@ WHERE t.id = $1 AND t.business_id = $2;
 -- lim is the clamped limit + 1.
 -- name: ListMessages :many
 SELECT * FROM ticket_message
-WHERE ticket_id = $1 AND business_id = $2
+WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
+  AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
 ORDER BY created_at ASC, id ASC
 LIMIT $3;
 
 -- ListMessagesAfter is the keyset continuation: rows strictly after (created_at, id).
 -- name: ListMessagesAfter :many
 SELECT * FROM ticket_message
-WHERE ticket_id = $1 AND business_id = $2
-  AND (created_at, id) > (sqlc.arg('cur_created_at')::timestamptz, sqlc.arg('cur_id')::uuid)
+WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
+  AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
+  AND (ticket_message.created_at, ticket_message.id) > (sqlc.arg('cur_created_at')::timestamptz, sqlc.arg('cur_id')::uuid)
 ORDER BY created_at ASC, id ASC
 LIMIT sqlc.arg('lim');
 
@@ -212,6 +214,46 @@ VALUES ($1, $2, $3, $4, now());
 -- name: UpdateTicketAssignee :exec
 UPDATE ticket SET assignee_principal_id = sqlc.narg('assignee_principal_id')::uuid, updated_at = now()
 WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3;
+
+-- ---- US5 redact / soft-delete (T066) ----
+
+-- RedactTicket soft-deletes a ticket in place: blanks its subject and stamps
+-- redacted_at, scoped to (id, business_id) under the caller's RLS context. Idempotent —
+-- a row already redacted (redacted_at IS NOT NULL) matches zero rows, so the service
+-- maps pgx.ErrNoRows ⇒ ErrNotFound (already-gone / unknown / foreign: one no-oracle
+-- shape). NEVER a hard DELETE (Principle VI / FR-014). Returns tenant_root_id +
+-- redacted_at for the in-tx audit and the per-blob purge enqueue.
+-- name: RedactTicket :one
+UPDATE ticket
+SET subject = '', redacted_at = now(), updated_at = now()
+WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL
+RETURNING tenant_root_id, redacted_at;
+
+-- BlankTicketMessages blanks every message body on a ticket (FR-014). Returns the
+-- number of messages blanked — the audit scope count. Scoped to (ticket_id, business_id).
+-- name: BlankTicketMessages :execrows
+UPDATE ticket_message
+SET body_text = '', body_html = NULL
+WHERE ticket_id = $1 AND business_id = $2;
+
+-- ListTicketAttachmentBlobs returns the blob key of every attachment on a ticket
+-- (joined through its messages) so redact can enqueue one attachment.purge per blob.
+-- The shared requester row is deliberately untouched (deduped across tickets).
+-- name: ListTicketAttachmentBlobs :many
+SELECT a.blob_key
+FROM attachment a
+JOIN ticket_message tm ON tm.id = a.ticket_message_id
+WHERE tm.ticket_id = $1 AND a.business_id = $2;
+
+-- BlankTicketAttachments blanks attachment filenames on a ticket (the blob bytes are
+-- purged out-of-band via attachment.purge). Returns the count blanked — the audit
+-- scope count. Joined through ticket_message so it stays scoped to one ticket.
+-- name: BlankTicketAttachments :execrows
+UPDATE attachment a
+SET filename = ''
+FROM ticket_message tm
+WHERE a.ticket_message_id = tm.id
+  AND tm.ticket_id = $1 AND a.business_id = $2;
 
 -- NOTE: the outbound delivery-state path (delivery_state read, system inbound
 -- address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /

@@ -264,4 +264,18 @@ func TestSupportAuditMatrix(t *testing.T) {
 		got := countAuditAction(ctx, t, tdb, "inbound_address.created")
 		expect(t, "inbound_address.created", "inbound_address", rt.owner, false, true, got-before, 1)
 	})
+
+	// --- ticket.redacted (T066 soft-delete/redact) ----------------------------
+	// Actor = the redacting owner (owner preset → tickets.delete); target_type = ticket;
+	// old_value = scope counts, new_value = {redacted_at}. Closes the SC-005 matrix.
+	t.Run("ticket.redacted", func(t *testing.T) {
+		tid := uuid.New()
+		seedTicket(ctx, t, tdb, rt, tid, "open", "normal", "to-redact", nil, nil, -1*time.Hour)
+		before := countAuditAction(ctx, t, tdb, "ticket.redacted")
+		if err := svc.RedactTicket(ctx, rt.owner, rt.master, tid); err != nil {
+			t.Fatalf("RedactTicket: %v", err)
+		}
+		got := countAuditAction(ctx, t, tdb, "ticket.redacted")
+		expect(t, "ticket.redacted", "ticket", rt.owner, true, true, got-before, 1)
+	})
 }

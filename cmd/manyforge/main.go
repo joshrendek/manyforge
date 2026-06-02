@@ -234,6 +234,12 @@ func main() {
 	sendSub := notify.SendSubscriber{Sender: sender, Logger: logger, Sealer: dkimSealer}
 	eventBus.Subscribe(events.TopicTicketReplied, sendSub.Handle)
 
+	// US5 redact: the attachment.purge worker deletes redacted attachment blobs out-of-
+	// band (the redact tx enqueues one event per blob). The handler is idempotent and
+	// touches no RLS tables, so the worker's principal-less tx is fine.
+	purgeSub := ticketing.AttachmentPurgeSubscriber{Blob: blobStore}
+	eventBus.Subscribe(events.TopicAttachmentPurge, purgeSub.Handle)
+
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +295,7 @@ func main() {
 		ticketsReply:  httpx.RequirePermission(database, permResolve, "tickets.reply", businessIDFromPath),
 		ticketsWrite:  httpx.RequirePermission(database, permResolve, "tickets.write", businessIDFromPath),
 		ticketsAssign: httpx.RequirePermission(database, permResolve, "tickets.assign", businessIDFromPath),
+		ticketsDelete: httpx.RequirePermission(database, permResolve, "tickets.delete", businessIDFromPath),
 		inboxManage:   httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
 	})
 
@@ -373,6 +380,9 @@ type apiHandlers struct {
 	ticketsReply  func(http.Handler) http.Handler
 	ticketsWrite  func(http.Handler) http.Handler
 	ticketsAssign func(http.Handler) http.Handler
+	// ticketsDelete gates the US5 delete/redact slice (DELETE a ticket → soft-delete/
+	// redact-in-place) on the tickets.delete permission, same RLS-bound 404 shape.
+	ticketsDelete func(http.Handler) http.Handler
 	// inboxManage gates the US4 inbox-management slice (email-domain + inbound-address
 	// CRUD) on the inbox.manage permission, same RLS-bound 404-on-lacking-perm shape.
 	inboxManage func(http.Handler) http.Handler
@@ -433,6 +443,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(ta chi.Router) {
 				ta.Use(h.ticketsAssign)
 				h.ticketing.AssignableRoutes(ta)
+			})
+			// US5 delete/redact slice: DELETE a ticket → soft-delete/redact-in-place,
+			// gated on tickets.delete (migration-0015 catalog). Same RLS-bound
+			// 404-on-lacking-perm semantics as the other groups.
+			pr.Group(func(td chi.Router) {
+				td.Use(h.ticketsDelete)
+				h.ticketing.DeleteRoutes(td)
 			})
 			// US4 inbox-management slice: custom email-domain create/list/verify +
 			// custom inbound-address create/list, all gated on inbox.manage (migration-0015
