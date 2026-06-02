@@ -2,8 +2,8 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Router, RouterLink } from '@angular/router';
-import { AuthService, Profile } from '../core/auth.service';
+import { Router } from '@angular/router';
+import { AuthService } from '../core/auth.service';
 import { BusinessService } from '../core/business.service';
 import { Business, Row, buildTree, flatten } from '../core/tree';
 
@@ -11,19 +11,12 @@ type PanelKind = 'add' | 'rename' | 'move';
 
 @Component({
   selector: 'app-dashboard',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule],
   template: `
     <section class="card">
       <div class="spread">
         <div>
           <h1>Your businesses</h1>
-          @if (profile(); as p) {
-            <p class="profile">Signed in as <b>{{ p.display_name }}</b> ({{ p.email }})</p>
-          }
-        </div>
-        <div class="row">
-          <a class="linklike" routerLink="/support" data-testid="nav-support">Support</a>
-          <button class="ghost compact" (click)="logout()">Sign out</button>
         </div>
       </div>
 
@@ -155,7 +148,6 @@ export class DashboardComponent implements OnInit {
   private api = inject(BusinessService);
   private router = inject(Router);
 
-  profile = signal<Profile | null>(null);
   businesses = signal<Business[]>([]);
   collapsed = signal<ReadonlySet<string>>(new Set());
   loading = signal(true);
@@ -172,7 +164,7 @@ export class DashboardComponent implements OnInit {
   readonly rows = computed<Row[]>(() => flatten(buildTree(this.businesses()), this.collapsed()));
 
   ngOnInit(): void {
-    this.auth.me().subscribe({ next: (p) => this.profile.set(p), error: () => this.forceLogin() });
+    this.auth.me().subscribe({ next: () => {}, error: () => this.forceLogin() });
     this.loadBusinesses();
   }
 
@@ -311,10 +303,6 @@ export class DashboardComponent implements OnInit {
     if (e.status === 400 || e.status === 422) return 'That input was rejected. Check the name and try again.';
     if (e.status === 403 || e.status === 404) return "You don't have access to do that.";
     return `Could not ${action} the business. Please try again.`;
-  }
-
-  logout(): void {
-    this.auth.logout().subscribe({ next: () => this.forceLogin(), error: () => this.forceLogin() });
   }
 
   private forceLogin(): void {
