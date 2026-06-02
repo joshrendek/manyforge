@@ -16,6 +16,12 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/support/ticket-list').then((m) => m.TicketListComponent),
   },
   {
+    path: 'support/:businessId/settings/inbox',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/support/inbox-settings').then((m) => m.InboxSettingsComponent),
+  },
+  {
     path: 'support/:businessId/:tid',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/support/thread-view').then((m) => m.ThreadViewComponent),
