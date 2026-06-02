@@ -953,3 +953,67 @@ test('US4: add forward_in domain → DNS challenge shown → verify → domain v
   await expect(page.getByTestId('address-row')).toHaveCount(2);
   await expect(page.getByTestId('inbound-address-list')).toContainText('support@acme.example');
 });
+
+// manyforge-mu7 regression: a slow per-domain Verify must NOT disable the unrelated
+// add-domain / add-address forms. Previously a single saving() signal gated all
+// three; per-action signals (addingDomain/addingAddress + verifyingId) decouple them.
+// We hold the verify response open so the in-flight state is observable, then assert
+// the Verify button reflects its own loading state while the add forms stay usable.
+test('US4: an in-flight Verify leaves the add-domain / add-address forms usable (manyforge-mu7)', async ({
+  page,
+}) => {
+  await installInboxStack(page);
+  // Override the verify route with one that holds the response open (~3s), so the
+  // verify stays in-flight long enough to observe the decoupled state. Registered
+  // AFTER installInboxStack, so this handler wins (last-registered wins).
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/email-domains/*/verify`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    route.fulfill({
+      status: 200,
+      json: {
+        id: ACME_DOMAIN_ID,
+        business_id: BIZ_ID,
+        tenant_root_id: 'root-1',
+        domain: ACME_DOMAIN,
+        mode: 'forward_in',
+        verification: 'unverified',
+        verified_at: null,
+        dkim_state: 'pending',
+        spf_state: 'unknown',
+        dns_challenge: {
+          verification_txt: { name: '_manyforge.acme.example', value: 'mf-verify=TESTTOKEN' },
+          dkim_record: { name: 'mf1._domainkey.acme.example', value: 'v=DKIM1; k=ed25519; p=AAAA' },
+          spf_hint: 'v=spf1 include:mx.manyforge.test ~all',
+          mx_hint: null,
+        },
+        created_at: '2026-06-01T00:00:00Z',
+      },
+    });
+  });
+
+  await page.goto(`/support/${BIZ_ID}/settings/inbox`);
+
+  // Add an unverified domain so a Verify button exists.
+  await page.getByTestId('domain-input').fill(ACME_DOMAIN);
+  await page.getByTestId('mode-select').selectOption('forward_in');
+  await page.getByTestId('add-domain-submit').click();
+  const domainRow = page.getByTestId('domain-row');
+  await expect(domainRow).toHaveCount(1);
+
+  // Kick off Verify — its response is held open, so it is now in-flight.
+  await domainRow.getByTestId('verify-domain').click();
+
+  // The Verify button reflects its OWN in-flight state and is disabled…
+  await expect(domainRow.getByTestId('verify-domain')).toBeDisabled();
+  await expect(domainRow.getByTestId('verify-domain')).toHaveText(/Checking DNS/);
+
+  // …but the unrelated add-domain + add-address controls stay ENABLED (the mu7 fix).
+  await expect(page.getByTestId('domain-input')).toBeEnabled();
+  await expect(page.getByTestId('mode-select')).toBeEnabled();
+  await expect(page.getByTestId('address-input')).toBeEnabled();
+
+  // And the add-domain form is genuinely usable mid-verify: typing a new domain
+  // enables its submit (it would be disabled if a shared saving() signal still gated it).
+  await page.getByTestId('domain-input').fill('another.example');
+  await expect(page.getByTestId('add-domain-submit')).toBeEnabled();
+});

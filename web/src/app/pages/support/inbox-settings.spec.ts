@@ -290,6 +290,51 @@ describe('InboxSettingsComponent (US4)', () => {
     expect(cmp.error()).not.toContain('not found — do not leak this');
   });
 
+  // manyforge-mu7: an in-flight per-domain Verify must NOT disable the unrelated
+  // add-domain / add-address forms. Previously a single saving() signal gated all
+  // three; per-action signals decouple them. We leave the verify request in-flight
+  // (don't flush) and assert both add-submit buttons remain enabled.
+  it('an in-flight Verify does not disable the add-domain / add-address forms', () => {
+    loadWith(
+      [
+        mockEmailDomain({
+          id: 'ed-v',
+          domain: 'verified.example',
+          verification: 'verified',
+          verified_at: 'x',
+        }),
+        mockEmailDomain({ id: 'ed-u', domain: 'unverified.example', verification: 'unverified' }),
+      ],
+      [],
+    );
+
+    // Fill both add forms so the only thing that could disable their submits is an
+    // in-flight mutation signal.
+    cmp.domainDraft = 'new.example';
+    cmp.addressDraft = 'hello@verified.example';
+    cmp.selectedDomainId = 'ed-v';
+
+    // Kick off a verify on the unverified domain and leave it in-flight.
+    cmp.verify(cmp.domains().find((d) => d.id === 'ed-u')!);
+    fixture.detectChanges();
+
+    const btn = (testid: string) =>
+      fixture.nativeElement.querySelector(`[data-testid="${testid}"]`) as HTMLButtonElement;
+
+    expect(cmp.verifyingId()).toBe('ed-u'); // verify is in-flight
+    expect(cmp.addingDomain()).toBe(false);
+    expect(cmp.addingAddress()).toBe(false);
+    expect(btn('add-domain-submit').disabled).toBe(false); // still usable
+    expect(btn('add-address-submit').disabled).toBe(false); // still usable
+    // The Verify button itself IS disabled while its own check runs.
+    expect(btn('verify-domain').disabled).toBe(true);
+
+    // Clean up the in-flight request so afterEach mock.verify() passes.
+    mock
+      .expectOne(`${domainsUrl}/ed-u/verify`)
+      .flush(mockEmailDomain({ id: 'ed-u', verification: 'unverified' }));
+  });
+
   it('a 404 on load shows the generic no-oracle error state', () => {
     fixture = TestBed.createComponent(InboxSettingsComponent);
     cmp = fixture.componentInstance;
