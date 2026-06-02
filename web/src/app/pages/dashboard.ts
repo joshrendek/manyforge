@@ -2,7 +2,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { AuthService, Profile } from '../core/auth.service';
 import { BusinessService } from '../core/business.service';
 import { Business, Row, buildTree, flatten } from '../core/tree';
@@ -11,7 +11,7 @@ type PanelKind = 'add' | 'rename' | 'move';
 
 @Component({
   selector: 'app-dashboard',
-  imports: [FormsModule],
+  imports: [FormsModule, RouterLink],
   template: `
     <section class="card">
       <div class="spread">
@@ -21,7 +21,10 @@ type PanelKind = 'add' | 'rename' | 'move';
             <p class="profile">Signed in as <b>{{ p.display_name }}</b> ({{ p.email }})</p>
           }
         </div>
-        <button class="ghost compact" (click)="logout()">Sign out</button>
+        <div class="row">
+          <a class="linklike" routerLink="/support" data-testid="nav-support">Support</a>
+          <button class="ghost compact" (click)="logout()">Sign out</button>
+        </div>
       </div>
 
       @if (loading()) {
