@@ -66,6 +66,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		authz:        authz.NewHandler(&authz.Service{}),
 		invitations:  invitations.NewHandler(&invitations.Service{}),
 		ticketing:    ticketing.NewHandler(&ticketing.Service{}, nil, nil),
+		identity:     ticketing.NewIdentityHandler(&ticketing.IdentityService{}),
 		inboxWebhook: inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),
 		bounce:       inbox.NewBounceHandler(nil, "", 0, nil),
 		authLimit:    noop,
@@ -73,6 +74,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		ticketsRead:  noop,
 		ticketsReply: noop,
 		ticketsWrite: noop,
+		inboxManage:  noop,
 	})
 
 	routes := map[string]bool{}
