@@ -626,7 +626,16 @@ func (q *Queries) ListTicketTags(ctx context.Context, arg ListTicketTagsParams) 
 const listTickets = `-- name: ListTickets :many
 
 
-SELECT t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at FROM ticket t
+SELECT
+  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at,
+  r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
+  COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
+            FROM ticket_tag tt
+            WHERE tt.ticket_id = t.id AND tt.business_id = t.business_id), '{}')::text[] AS tags,
+  (SELECT count(*) FROM ticket_message tm
+    WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
+FROM ticket t
+JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND ($2::ticket_status IS NULL OR t.status = $2)
@@ -649,6 +658,13 @@ type ListTicketsParams struct {
 	Lim                 int32              `json:"lim"`
 }
 
+type ListTicketsRow struct {
+	Ticket       Ticket    `json:"ticket"`
+	Requester    Requester `json:"requester"`
+	Tags         []string  `json:"tags"`
+	MessageCount int64     `json:"message_count"`
+}
+
 // Ticketing read-slice queries (spec 002, T031). Plain-table keyset reads only —
 // every query runs inside the caller's RLS principal context (db.WithPrincipal)
 // AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement).
@@ -664,7 +680,7 @@ type ListTicketsParams struct {
 // otherwise a non-NULL assignee_principal_id filters to that principal; both off =
 // no assignee filter. The tag facet is an exact (case-insensitive citext) match via
 // ticket_tag. lim is the clamped limit + 1 so the service can detect a further page.
-func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Ticket, error) {
+func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error) {
 	rows, err := q.db.Query(ctx, listTickets,
 		arg.BusinessID,
 		arg.Status,
@@ -678,23 +694,35 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Tic
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Ticket
+	var items []ListTicketsRow
 	for rows.Next() {
-		var i Ticket
+		var i ListTicketsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.BusinessID,
-			&i.TenantRootID,
-			&i.RequesterID,
-			&i.Subject,
-			&i.Status,
-			&i.Priority,
-			&i.AssigneePrincipalID,
-			&i.ReplyToken,
-			&i.LastMessageAt,
-			&i.RedactedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.Ticket.ID,
+			&i.Ticket.BusinessID,
+			&i.Ticket.TenantRootID,
+			&i.Ticket.RequesterID,
+			&i.Ticket.Subject,
+			&i.Ticket.Status,
+			&i.Ticket.Priority,
+			&i.Ticket.AssigneePrincipalID,
+			&i.Ticket.ReplyToken,
+			&i.Ticket.LastMessageAt,
+			&i.Ticket.RedactedAt,
+			&i.Ticket.CreatedAt,
+			&i.Ticket.UpdatedAt,
+			&i.Requester.ID,
+			&i.Requester.BusinessID,
+			&i.Requester.TenantRootID,
+			&i.Requester.Email,
+			&i.Requester.DisplayName,
+			&i.Requester.ContactID,
+			&i.Requester.FirstSeenAt,
+			&i.Requester.LastSeenAt,
+			&i.Requester.CreatedAt,
+			&i.Requester.UpdatedAt,
+			&i.Tags,
+			&i.MessageCount,
 		); err != nil {
 			return nil, err
 		}
@@ -707,7 +735,16 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Tic
 }
 
 const listTicketsAfter = `-- name: ListTicketsAfter :many
-SELECT t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at FROM ticket t
+SELECT
+  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at,
+  r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
+  COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
+            FROM ticket_tag tt
+            WHERE tt.ticket_id = t.id AND tt.business_id = t.business_id), '{}')::text[] AS tags,
+  (SELECT count(*) FROM ticket_message tm
+    WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
+FROM ticket t
+JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND ($2::ticket_status IS NULL OR t.status = $2)
@@ -733,10 +770,17 @@ type ListTicketsAfterParams struct {
 	Lim                 int32              `json:"lim"`
 }
 
+type ListTicketsAfterRow struct {
+	Ticket       Ticket    `json:"ticket"`
+	Requester    Requester `json:"requester"`
+	Tags         []string  `json:"tags"`
+	MessageCount int64     `json:"message_count"`
+}
+
 // ListTicketsAfter is the keyset continuation of ListTickets: the same filters,
 // but only rows strictly after the cursor tuple (last_message_at, id) in the
 // (DESC, DESC) order. The row-value comparison rides the same composite index.
-func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]Ticket, error) {
+func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]ListTicketsAfterRow, error) {
 	rows, err := q.db.Query(ctx, listTicketsAfter,
 		arg.BusinessID,
 		arg.Status,
@@ -752,23 +796,35 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Ticket
+	var items []ListTicketsAfterRow
 	for rows.Next() {
-		var i Ticket
+		var i ListTicketsAfterRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.BusinessID,
-			&i.TenantRootID,
-			&i.RequesterID,
-			&i.Subject,
-			&i.Status,
-			&i.Priority,
-			&i.AssigneePrincipalID,
-			&i.ReplyToken,
-			&i.LastMessageAt,
-			&i.RedactedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.Ticket.ID,
+			&i.Ticket.BusinessID,
+			&i.Ticket.TenantRootID,
+			&i.Ticket.RequesterID,
+			&i.Ticket.Subject,
+			&i.Ticket.Status,
+			&i.Ticket.Priority,
+			&i.Ticket.AssigneePrincipalID,
+			&i.Ticket.ReplyToken,
+			&i.Ticket.LastMessageAt,
+			&i.Ticket.RedactedAt,
+			&i.Ticket.CreatedAt,
+			&i.Ticket.UpdatedAt,
+			&i.Requester.ID,
+			&i.Requester.BusinessID,
+			&i.Requester.TenantRootID,
+			&i.Requester.Email,
+			&i.Requester.DisplayName,
+			&i.Requester.ContactID,
+			&i.Requester.FirstSeenAt,
+			&i.Requester.LastSeenAt,
+			&i.Requester.CreatedAt,
+			&i.Requester.UpdatedAt,
+			&i.Tags,
+			&i.MessageCount,
 		); err != nil {
 			return nil, err
 		}

@@ -15,8 +15,17 @@ import (
 
 type DB struct{ pool *pgxpool.Pool }
 
+// Option customizes the pool config at Open time (e.g. attaching a query tracer
+// for observability or for asserting query counts in tests).
+type Option func(*pgxpool.Config)
+
+// WithTracer attaches a pgx.QueryTracer to every connection in the pool.
+func WithTracer(tr pgx.QueryTracer) Option {
+	return func(cfg *pgxpool.Config) { cfg.ConnConfig.Tracer = tr }
+}
+
 // Open connects a pool using dsn (which should authenticate as manyforge_app).
-func Open(ctx context.Context, dsn string) (*DB, error) {
+func Open(ctx context.Context, dsn string, opts ...Option) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
@@ -31,6 +40,9 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 			return false
 		}
 		return v == ""
+	}
+	for _, o := range opts {
+		o(cfg)
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
