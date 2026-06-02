@@ -257,6 +257,39 @@ describe('InboxSettingsComponent (US4)', () => {
     expect(cmp.verifiedDomains().map((d) => d.id)).toEqual(['ed-v']);
   });
 
+  // Security: no existence oracle on mutations — a 403 and a 404 from the verify
+  // endpoint must both yield the identical generic message so callers cannot
+  // distinguish "not yours" from "doesn't exist". Backend detail must not leak.
+  it('verify 403 and 404 both show the same generic no-oracle message', () => {
+    const genericMsg = "You don't have access to do that.";
+
+    // Case 1: 403 → generic message
+    loadWith([mockEmailDomain()], []);
+    cmp.verify(cmp.domains()[0]);
+    mock
+      .expectOne(`${domainsUrl}/ed1/verify`)
+      .flush(
+        { code: 'FORBIDDEN', message: 'forbidden — do not leak this' },
+        { status: 403, statusText: 'Forbidden' },
+      );
+    fixture.detectChanges();
+    expect(cmp.error()).toBe(genericMsg);
+    expect(cmp.error()).not.toContain('forbidden — do not leak this');
+
+    // Case 2: 404 → same generic message (no oracle distinguishing existence)
+    cmp.error.set('');
+    cmp.verify(cmp.domains()[0]);
+    mock
+      .expectOne(`${domainsUrl}/ed1/verify`)
+      .flush(
+        { code: 'NOT_FOUND', message: 'not found — do not leak this' },
+        { status: 404, statusText: 'Not Found' },
+      );
+    fixture.detectChanges();
+    expect(cmp.error()).toBe(genericMsg);
+    expect(cmp.error()).not.toContain('not found — do not leak this');
+  });
+
   it('a 404 on load shows the generic no-oracle error state', () => {
     fixture = TestBed.createComponent(InboxSettingsComponent);
     cmp = fixture.componentInstance;

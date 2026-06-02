@@ -59,10 +59,9 @@ type IdentityService struct {
 	// and never machine-read, so a default is safe.
 	SystemMailHost string
 
-	// Optional determinism hooks; both default to the real implementations when nil
-	// (the integration tests construct the service WITHOUT setting them).
-	Now  func() time.Time // default time.Now
-	Rand io.Reader        // default crypto/rand.Reader (verify token + DKIM keygen)
+	// Optional determinism hook; defaults to the real implementation when nil
+	// (the integration tests construct the service WITHOUT setting it).
+	Rand io.Reader // default crypto/rand.Reader (verify token + DKIM keygen)
 }
 
 // CreateEmailDomainInput is the validated POST email-domains payload.
