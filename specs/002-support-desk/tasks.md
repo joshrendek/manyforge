@@ -213,7 +213,7 @@ cannot view tickets. Each support mutation produced an `audit_entry`.
 - [X] T070 SC-011 loop-guard test `internal/inbox/loopguard_integration_test.go`: a mail loop between two automated systems is bounded (per-requester auto-reply cap in migration 0024's ingest_inbound_message + `is_auto_reply` detection) before exceeding the bound; suppression is audited (`ticket.loop_suppressed`). Pinned in `security_regression/loop_guard_pin_test.go`.
 - [X] T071 [P] Verify pagination max-page-size caps (silent cap to 100) on all five support list endpoints (FR-020)
 - [X] T072 [P] Structured logging + metrics for ingestion/outbound/outbox (extend `internal/platform/observability`); redact credential-bearing values (webhook secrets, DKIM refs) in all logs
-- [ ] T073 [P] Run the quickstart.md validation walkthrough end-to-end against a fresh DB; fix any drift between docs and behavior
+- [X] T073 [P] Run the quickstart.md validation walkthrough end-to-end against a fresh DB; fix any drift between docs and behavior
 - [ ] T074 [P] Update `ARCHITECTURE.md` (support-desk module map, SL-C/SL-D/SL-E layers, ingestion `SECURITY DEFINER` exception) and `README.md` (run the SMTP receiver + webhook)
 - [ ] T075 Final merge-gate run: `make test && make int-test && make contract-test && make lint` + `cd web && npm run e2e` all green; resolve any failures (no "pre-existing" exceptions)
 
