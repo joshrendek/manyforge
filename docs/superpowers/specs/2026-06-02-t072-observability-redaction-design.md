@@ -31,9 +31,10 @@ values redacted in logs").
 2. **Redaction: a slog `ReplaceAttr` hook** in `NewLogger` (structural, fires for
    every attr incl. nested groups). Not just discipline + helpers.
 3. **Correlation: domain keys, no new middleware** — ingest by
-   `message_id`+`business_id`, outbound by `message_id`, outbox by event
-   `id`+`topic`. No HTTP request-id middleware (platform-wide; belongs to the 001
-   foundation, out of scope for this polish task).
+   `ticket_id`+`message_id` (the handler has no business id; routing is internal to
+   Ingest), outbound by `message_id`, outbox by event `id`+`topic`. No HTTP
+   request-id middleware (platform-wide; belongs to the 001 foundation, out of
+   scope for this polish task).
 4. **Wiring: nil-safe injected `*Metrics`** as an exported field on the pipeline
    structs/handlers, set by `main`. `nil` ⇒ no-op. Mirrors the project's existing
    "optional injected dependency" convention (e.g. `SendSubscriber.Suppression`),
@@ -81,7 +82,7 @@ func (m *Metrics) Get(key string) int64 // for tests
 ### (B) Logging consistency
 
 - Add the two missing lifecycle `Info` events:
-  - ingest success → `inbox: message ingested` with `business_id`, `message_id`.
+  - ingest success → `inbox: message ingested` with `ticket_id`, `message_id`, `created`.
   - outbound success → `notify: reply sent` with `message_id`.
 - Ensure existing log calls in the three paths carry the consistent domain keys
   above. Never log request/message bodies; never `err.Error()` to clients (already
