@@ -14,6 +14,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // BounceSuppressor is the boundary the bounce handler depends on: it suppresses a
@@ -47,6 +48,10 @@ type BounceHandler struct {
 	sup      BounceSuppressor
 	maxBytes int64
 	logger   *slog.Logger
+
+	// Metrics counts ingest outcomes (received/accepted/rejected). Set by main
+	// after construction; nil ⇒ no-op (existing callers/tests unaffected).
+	Metrics *observability.Metrics
 }
 
 // NewBounceHandler builds the hard-bounce webhook handler. secret is the
@@ -97,6 +102,9 @@ type bouncePayload struct {
 // suppression error is logged server-side and still answered 202 (a provider retry is
 // harmless: SuppressBounce is idempotent). security: MF-002-BOUNCE-NO-ORACLE.
 func (h *BounceHandler) ingest(w http.ResponseWriter, r *http.Request) {
+	// Count every call (received), regardless of outcome.
+	h.Metrics.Inc(observability.MetricIngestReceived)
+
 	// 1. Body cap. A body over the cap reads as an error; we DON'T leak that as 413
 	//    (which would be an oracle on the cap) — we fall through to the uniform 202
 	//    without doing any work.
@@ -116,6 +124,7 @@ func (h *BounceHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	//    secret already knows they cannot forge), and returning 202 to an unauthenticated
 	//    request is wrong semantics. The no-oracle ack applies to AUTHENTICATED outcomes.
 	if !h.verify(r.Header.Get("X-MF-Signature"), r.Header.Get("X-MF-Timestamp"), body) {
+		h.Metrics.Inc(observability.MetricIngestRejected)
 		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorBody{Code: "UNAUTHORIZED", Message: "unauthorized"})
 		return
 	}
@@ -138,6 +147,7 @@ func (h *BounceHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.Metrics.Inc(observability.MetricIngestAccepted)
 	h.writeAccepted(w)
 }
 
