@@ -111,6 +111,60 @@ export interface PatchTicket {
   assignee_principal_id?: string | null;
 }
 
+// ── US4 inbox-management views (openapi.yaml EmailDomain/InboundAddress) ────
+// Field names match internal/ticketing/identity.go json tags EXACTLY (snake_case).
+
+// EmailDomainMode: how inbound mail reaches us; none reroutes the domain's
+// primary mail. EmailDomainVerification: the derived ownership-proof state.
+export type EmailDomainMode = 'forward_in' | 'subdomain_mx' | 'provider_route';
+export type EmailDomainVerification = 'unverified' | 'pending' | 'verified' | 'failed';
+
+// A single publishable DNS record {name, value}.
+export interface DnsTxtRecord {
+  name: string;
+  value: string;
+}
+
+// The records an operator publishes to prove ownership and enable outbound auth
+// (FR-012/FR-013). mx_hint is only set for mode=subdomain_mx; null otherwise.
+export interface DnsChallenge {
+  verification_txt: DnsTxtRecord;
+  dkim_record: DnsTxtRecord;
+  spf_hint: string;
+  mx_hint: string | null;
+}
+
+// EmailDomain is the API view of a custom domain / sending identity. verified_at
+// is null until verified; dns_challenge is recomposed on every read so the
+// operator can re-fetch the records to publish.
+export interface EmailDomain {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  domain: string;
+  mode: EmailDomainMode;
+  verification: EmailDomainVerification;
+  verified_at: string | null;
+  dkim_state: DnsRecordState;
+  spf_state: DnsRecordState;
+  dns_challenge: DnsChallenge;
+  created_at: string;
+}
+
+// InboundAddress is a routing entry: the auto-provisioned system address plus any
+// custom addresses bound to a verified email domain. email_domain_id is null for
+// kind=system.
+export interface InboundAddress {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  address: string;
+  kind: 'system' | 'custom';
+  email_domain_id: string | null;
+  active: boolean;
+  created_at: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TicketService {
   private http = inject(HttpClient);
@@ -204,6 +258,62 @@ export class TicketService {
   ): Observable<TicketMessage> {
     return this.http.post<TicketMessage>(
       `/api/v1/businesses/${businessId}/tickets/${ticketId}/note`,
+      body,
+    );
+  }
+
+  // ── US4 inbox management (requires inbox.manage; 404 for unknown/unauthorized) ──
+
+  // GET /businesses/{id}/email-domains — keyset-paginated list of the business's
+  // custom email domains with verification + DKIM/SPF state and their DNS challenge.
+  listEmailDomains(businessId: string, cursor?: string): Observable<Page<EmailDomain>> {
+    let params = new HttpParams();
+    if (cursor) params = params.set('cursor', cursor);
+    return this.http.get<Page<EmailDomain>>(`/api/v1/businesses/${businessId}/email-domains`, {
+      params,
+    });
+  }
+
+  // POST /businesses/{id}/email-domains — add a custom domain in one of three modes.
+  // Returns the created EmailDomain (201) in `unverified` state with the DNS
+  // challenge to publish before verifying. 400 invalid domain/mode; 409 duplicate.
+  createEmailDomain(
+    businessId: string,
+    body: { domain: string; mode: EmailDomainMode },
+  ): Observable<EmailDomain> {
+    return this.http.post<EmailDomain>(`/api/v1/businesses/${businessId}/email-domains`, body);
+  }
+
+  // POST /businesses/{id}/email-domains/{did}/verify — trigger DNS verification.
+  // Idempotent: returns the current EmailDomain (200) — verified, or still
+  // unverified when the challenge isn't observed yet (a pending poll, NOT an error).
+  verifyEmailDomain(businessId: string, domainId: string): Observable<EmailDomain> {
+    return this.http.post<EmailDomain>(
+      `/api/v1/businesses/${businessId}/email-domains/${domainId}/verify`,
+      {},
+    );
+  }
+
+  // GET /businesses/{id}/inbound-addresses — keyset-paginated list of the system
+  // address plus any custom addresses.
+  listInboundAddresses(businessId: string, cursor?: string): Observable<Page<InboundAddress>> {
+    let params = new HttpParams();
+    if (cursor) params = params.set('cursor', cursor);
+    return this.http.get<Page<InboundAddress>>(
+      `/api/v1/businesses/${businessId}/inbound-addresses`,
+      { params },
+    );
+  }
+
+  // POST /businesses/{id}/inbound-addresses — add a custom address on a verified,
+  // owned domain. Returns the created InboundAddress (201). 400 invalid/off-domain
+  // address; 404 unknown/unauthorized domain; 409 domain not verified yet OR duplicate.
+  createInboundAddress(
+    businessId: string,
+    body: { address: string; email_domain_id: string },
+  ): Observable<InboundAddress> {
+    return this.http.post<InboundAddress>(
+      `/api/v1/businesses/${businessId}/inbound-addresses`,
       body,
     );
   }
