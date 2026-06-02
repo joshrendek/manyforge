@@ -22,7 +22,10 @@ func NewLogger(level string) *slog.Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       lvl,
+		ReplaceAttr: redactSensitive,
+	}))
 }
 
 // RegisterHealth mounts liveness, readiness, and metrics endpoints on mux.
