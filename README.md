@@ -1,10 +1,13 @@
-# manyforge — Tenant Foundation
+# manyforge
 
-A multi-tenant SaaS foundation: human/agent identity, a nestable business
-hierarchy with inherited access, RBAC, invitations, ownership transfer, an
-append-only audit trail, and GDPR-aware account lifecycle — built so that
-authorization is enforced by **two independent walls** (PostgreSQL Row-Level
-Security *and* service-layer ownership predicates), neither trusting the other.
+A multi-tenant SaaS platform: spec 001 delivers human/agent identity, a
+nestable business hierarchy with inherited access, RBAC, invitations, ownership
+transfer, an append-only audit trail, and GDPR-aware account lifecycle. Spec 002
+adds a native support desk — inbound email (SMTP receiver + provider webhook),
+threaded tickets, replies, attachments, custom sending identities with DKIM, and
+a transactional outbox. Authorization is enforced by **two independent walls**
+(PostgreSQL Row-Level Security *and* service-layer ownership predicates), neither
+trusting the other.
 
 Go backend (`internal/` layout, `sqlc`, PostgreSQL 16 with RLS) + an Angular
 dashboard in `web/`.
@@ -25,17 +28,67 @@ HTTP API is versioned under `/api/v1`; the contract is
 `specs/001-tenant-foundation/contracts/openapi.yaml` (a unit test fails CI if the
 router and that contract drift apart).
 
+### Support desk (spec 002)
+
+Key additional env vars (add to `.env` after the spec-001 block):
+
+```bash
+MANYFORGE_SMTP_ADDR=:2525                              # built-in SMTP receiver (in-process; empty disables)
+MANYFORGE_INBOUND_WEBHOOK_SECRET=<secret>              # HMAC-SHA256 key for X-MF-Signature verification
+MANYFORGE_INBOUND_REPLY_TOKEN_SECRET=<secret>          # HMAC key for Reply-To threading tokens
+MANYFORGE_INBOUND_SYSTEM_ADDRESS_SECRET=<secret>       # HMAC key for system inbound-address localparts
+MANYFORGE_BLOB_URL=file:///tmp/manyforge-blobs         # attachment storage (or s3://bucket?region=…)
+MANYFORGE_INBOUND_SYSTEM_DOMAIN=inbound.localhost      # platform-hosted domain for auto-provisioned addresses
+```
+
+`make dev` starts the API on `:8080`, the SMTP listener on `MANYFORGE_SMTP_ADDR`,
+and the outbox worker in the same process. On boot you should see:
+
+```text
+msg="http listening" addr=:8080
+msg="smtp receiver listening" addr=:2525
+msg="outbox worker started"
+```
+
+**Built-in SMTP receiver** — deliver directly to the in-process listener:
+
+```bash
+swaks --server localhost --port 2525 \
+      --from sender@example.com --to <inbound-address> \
+      --h-Subject "My subject" --body "body text"
+```
+
+**Provider webhook** — POST a JSON envelope signed with `MANYFORGE_INBOUND_WEBHOOK_SECRET`
+(HMAC-SHA256 over the raw body bytes, hex-encoded; prepend `<timestamp>.` when
+`X-MF-Timestamp` is included):
+
+```bash
+curl -s http://localhost:8080/api/v1/inbound/email/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-MF-Signature: sha256=<hmac-hex>" \
+  --data-binary '{"from":"...","to":["<inbound-address>"],"subject":"...","message_id":"...","body_text":"..."}'
+# → 202 Accepted (response never reveals routing)
+```
+
+See `specs/002-support-desk/quickstart.md` for the full end-to-end walkthrough
+(inbound email → ticket → reply → customer threads back → custom domain + DKIM).
+
 Requires: Go 1.23+, PostgreSQL 16, Docker (for integration tests), and
 `make`, `sqlc`, `golang-migrate`, `node`.
 
 ## Test
 
 ```bash
-make test        # unit tests (fast, no DB) — includes source-level security pins + OpenAPI drift
-make int-test    # ALL integration tests (ephemeral Postgres via testcontainers; Docker required)
-make sec-test    # security-regression suite only (the merge gate for Principles I/II/IV)
-make lint        # go vet (+ golangci-lint if installed)
+make test           # unit tests (fast, no DB) — includes source-level security pins + OpenAPI drift
+make int-test       # ALL integration tests (ephemeral Postgres via testcontainers; Docker required)
+make sec-test       # security-regression suite only (the merge gate for Principles I/II/IV)
+make contract-test  # shared-layer interface contracts + spec-002 OpenAPI contract (fails CI on drift)
+make lint           # go vet (+ golangci-lint if installed)
+# Angular Playwright e2e (separate terminal):
+cd web && npm run e2e
 ```
+
+Merge gate: `make test && make int-test && make contract-test && make lint` (`int-test` ⊇ `sec-test`).
 
 Integration tests spin their own ephemeral Postgres per run (testcontainers), so
 they need Docker but no local database. Run a single package/test:
@@ -53,7 +106,9 @@ go test -tags integration ./internal/tenancy/ -run TestTransferOwnership -count=
 | `internal/tenancy` | Business hierarchy, membership, ownership transfer, audit read |
 | `internal/authz` | RBAC permission resolution (roles, inherited grants) |
 | `internal/invitations` | Invite / accept flows |
-| `internal/platform/*` | Cross-cutting: `db`, `auth`, `audit`, `httpx`, `errs`, `config`, `mailer`, `ratelimit`, `netsafe`, `observability` |
+| `internal/inbox` | Inbound ingestion: SMTP receiver + webhook adapter, recipient resolve, thread/dedupe, bounce intake |
+| `internal/ticketing` | Tickets, messages, requesters, tags, replies, internal notes, triage, custom email-domain identity |
+| `internal/platform/*` | Cross-cutting: `db`, `auth`, `audit`, `httpx`, `errs`, `config`, `mailer`, `ratelimit`, `netsafe`, `observability`, `events` (SL-C), `notify` (SL-D), `blob` (SL-E) |
 | `migrations/` | Forward-only SQL migrations (source of truth for the live DB) |
 | `db/schema.sql`, `db/query/` | sqlc inputs (tables-only schema mirror + queries) |
 | `web/` | Angular 21 dashboard (+ Playwright e2e in `web/e2e/`) |
