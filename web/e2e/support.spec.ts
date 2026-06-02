@@ -752,6 +752,38 @@ function installInboxStack(page: Page) {
   })();
 }
 
+// T060 regression: the inbox-settings page existed but no nav link pointed to it from
+// the ticket-list. This test pins that the link is present and navigates correctly.
+test('US4: inbox-settings link is visible on /support and navigates to the inbox-settings page', async ({
+  page,
+}) => {
+  await installInboxStack(page);
+  // Also mock the tickets list so ticket-list renders without error.
+  // Broad businesses** catch-all is registered inside installInboxStack first;
+  // this specific tickets glob is registered after, so it wins (last-registered wins).
+  await page.route(`**/api/v1/businesses/*/tickets**`, (route) =>
+    route.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+
+  await page.goto('/support');
+
+  // The business auto-selects biz-1 → the select shows its value.
+  await expect(page.getByTestId('business-select')).toBeVisible();
+  await expect(page.getByTestId('business-select')).toHaveValue(BIZ_ID);
+
+  // The inbox-settings-link must be visible once a business is selected.
+  await expect(page.getByTestId('inbox-settings-link')).toBeVisible();
+
+  // Click the link → navigate to the inbox-settings page.
+  await page.getByTestId('inbox-settings-link').click();
+
+  // URL must land on /support/biz-1/settings/inbox.
+  await expect(page).toHaveURL(/\/support\/biz-1\/settings\/inbox/);
+
+  // The page renders its key element — confirming we arrived at inbox-settings.
+  await expect(page.getByTestId('add-domain-form')).toBeVisible();
+});
+
 // Add a forward_in domain → challenge shown → (stub) verify → domain verified
 // and its custom inbound address listed. This is the T061 acceptance flow.
 test('US4: add forward_in domain → DNS challenge shown → verify → domain verified + address listed', async ({
