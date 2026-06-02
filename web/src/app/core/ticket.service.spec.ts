@@ -3,6 +3,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  EmailDomain,
+  InboundAddress,
   Page,
   PatchTicket,
   Requester,
@@ -10,6 +12,46 @@ import {
   TicketMessage,
   TicketService,
 } from './ticket.service';
+
+// Realistic US4 mock payloads (full shapes, matching identity.go json tags).
+function mockEmailDomain(over: Partial<EmailDomain> = {}): EmailDomain {
+  return {
+    id: 'ed1',
+    business_id: 'b1',
+    tenant_root_id: 'root',
+    domain: 'support.acme.com',
+    mode: 'forward_in',
+    verification: 'unverified',
+    verified_at: null,
+    dkim_state: 'pending',
+    spf_state: 'unknown',
+    dns_challenge: {
+      verification_txt: { name: '_manyforge.support.acme.com', value: 'mf-verify=abc123' },
+      dkim_record: {
+        name: 'mfdeadbeef._domainkey.support.acme.com',
+        value: 'v=DKIM1; k=ed25519; p=base64pub',
+      },
+      spf_hint: 'v=spf1 include:mail.manyforge.example ~all',
+      mx_hint: null,
+    },
+    created_at: '2024-01-01T00:00:00Z',
+    ...over,
+  };
+}
+
+function mockInboundAddress(over: Partial<InboundAddress> = {}): InboundAddress {
+  return {
+    id: 'ia1',
+    business_id: 'b1',
+    tenant_root_id: 'root',
+    address: 'hello@support.acme.com',
+    kind: 'custom',
+    email_domain_id: 'ed1',
+    active: true,
+    created_at: '2024-01-01T00:00:00Z',
+    ...over,
+  };
+}
 
 // Exercised against a mock backend so we pin the actual URLs and keyset/filter
 // query-param construction rather than mocking the service itself.
@@ -214,5 +256,81 @@ describe('TicketService', () => {
     const req = mock.expectOne(`/api/v1/businesses/${biz}/tickets/t1`);
     expect(req.request.body).toEqual({ assignee_principal_id: 'p-self' });
     req.flush({} as Ticket);
+  });
+
+  // ── US4 inbox management ──────────────────────────────────────────────────
+  it('listEmailDomains() GETs the email-domains path and returns the page', () => {
+    let out: Page<EmailDomain> | undefined;
+    svc.listEmailDomains(biz).subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/email-domains`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.keys()).toEqual([]);
+    const page: Page<EmailDomain> = { items: [mockEmailDomain()], next_cursor: null };
+    req.flush(page);
+    expect(out).toEqual(page);
+  });
+
+  it('listEmailDomains() forwards the keyset cursor', () => {
+    svc.listEmailDomains(biz, 'cur-2').subscribe();
+    const req = mock.expectOne((r) => r.url === `/api/v1/businesses/${biz}/email-domains`);
+    expect(req.request.params.get('cursor')).toBe('cur-2');
+    req.flush({ items: [], next_cursor: null });
+  });
+
+  it('createEmailDomain() POSTs {domain, mode} and returns the created EmailDomain', () => {
+    let out: EmailDomain | undefined;
+    svc
+      .createEmailDomain(biz, { domain: 'support.acme.com', mode: 'subdomain_mx' })
+      .subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/email-domains`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ domain: 'support.acme.com', mode: 'subdomain_mx' });
+    const created = mockEmailDomain({ mode: 'subdomain_mx' });
+    req.flush(created);
+    expect(out).toEqual(created);
+  });
+
+  it('verifyEmailDomain() POSTs an empty body to .../verify and returns the EmailDomain', () => {
+    let out: EmailDomain | undefined;
+    svc.verifyEmailDomain(biz, 'ed1').subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/email-domains/ed1/verify`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({});
+    const verified = mockEmailDomain({
+      verification: 'verified',
+      verified_at: '2024-02-02T00:00:00Z',
+      dkim_state: 'pass',
+    });
+    req.flush(verified);
+    expect(out!.verification).toBe('verified');
+  });
+
+  it('listInboundAddresses() GETs the inbound-addresses path and returns the page', () => {
+    let out: Page<InboundAddress> | undefined;
+    svc.listInboundAddresses(biz).subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/inbound-addresses`);
+    expect(req.request.method).toBe('GET');
+    const page: Page<InboundAddress> = {
+      items: [mockInboundAddress({ kind: 'system', email_domain_id: null })],
+      next_cursor: null,
+    };
+    req.flush(page);
+    expect(out).toEqual(page);
+  });
+
+  it('createInboundAddress() POSTs {address, email_domain_id} and returns the InboundAddress', () => {
+    let out: InboundAddress | undefined;
+    svc
+      .createInboundAddress(biz, { address: 'hello@support.acme.com', email_domain_id: 'ed1' })
+      .subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/inbound-addresses`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({
+      address: 'hello@support.acme.com',
+      email_domain_id: 'ed1',
+    });
+    const created = mockInboundAddress();
+    req.flush(created);
+    expect(out).toEqual(created);
   });
 });
