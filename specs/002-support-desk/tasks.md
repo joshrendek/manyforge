@@ -209,7 +209,7 @@ cannot view tickets. Each support mutation produced an `audit_entry`.
 ## Phase 8: Polish & Cross-Cutting Concerns
 
 - [ ] T068 [P] Contract suite (`make contract-test`): assert the shared-layer interfaces (`InboundSource`, `Blob`, `Notifier`, event-bus) and the ~15 new endpoints against `contracts/openapi.yaml`; extend the OpenAPI-drift gate in `cmd/drift_test.go`
-- [ ] T069 SC-010 performance test `internal/ticketing/perf_test.go` (build tag `integration`, `TestSC010`): seed 10,000 tickets/business at realistic thread depth; assert ticket-list and ticket-load p95 < 200 ms with RLS ENABLED
+- [X] T069 SC-010 performance test `internal/ticketing/perf_test.go` (build tag `integration`, `TestSC010`): seed 10,000 tickets/business at realistic thread depth; assert ticket-list and ticket-load p95 < 200 ms with RLS ENABLED
 - [X] T070 SC-011 loop-guard test `internal/inbox/loopguard_integration_test.go`: a mail loop between two automated systems is bounded (per-requester auto-reply cap in migration 0024's ingest_inbound_message + `is_auto_reply` detection) before exceeding the bound; suppression is audited (`ticket.loop_suppressed`). Pinned in `security_regression/loop_guard_pin_test.go`.
 - [ ] T071 [P] Verify pagination max-page-size caps (silent cap to 100) on all five support list endpoints (FR-020)
 - [ ] T072 [P] Structured logging + metrics for ingestion/outbound/outbox (extend `internal/platform/observability`); redact credential-bearing values (webhook secrets, DKIM refs) in all logs
