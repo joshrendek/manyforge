@@ -200,6 +200,17 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/RateLimited' }
+    delete:
+      tags: [Tickets]
+      summary: >
+        Redact (soft-delete in place) a ticket (FR-014, research R7). Blanks the subject, every message
+        body, and every attachment filename; stamps redacted_at (excluding the ticket from get/list/
+        messages); purges attachment blobs out-of-band via the outbox; audited in-transaction with scope
+        metadata only (counts, no PII). NEVER a hard delete (Principle VI). Idempotent — a second redact,
+        an unknown id, or a foreign-tenant id all return the same no-oracle 404. Requires tickets.delete.
+      responses:
+        '204': { description: "Redacted (soft-deleted in place); no content." }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /businesses/{id}/tickets/{tid}/reply:
     parameters: [ { $ref: '#/components/parameters/id' }, { $ref: '#/components/parameters/tid' } ]

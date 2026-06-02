@@ -68,6 +68,13 @@ func (h *Handler) AssignableRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/assignable-members", h.listAssignableMembers)
 }
 
+// DeleteRoutes mounts the authenticated delete/redact endpoint (US5: tickets.delete).
+// The caller wraps it with httpx.RequirePermission("tickets.delete", …): a lacking-perm
+// or invisible business is a no-oracle 404, identical to every other group.
+func (h *Handler) DeleteRoutes(r chi.Router) {
+	r.Delete("/businesses/{id}/tickets/{tid}", h.deleteTicket)
+}
+
 // --- request DTOs: exact OpenAPI component schemas ---
 
 type replyBody struct {
@@ -282,6 +289,33 @@ func (h *Handler) getTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toTicketResp(t))
+}
+
+// deleteTicket redacts (soft-deletes in place) a ticket the caller holds tickets.delete
+// for, returning 204. Unknown / foreign-tenant / already-redacted all surface as a
+// no-oracle 404 (RedactTicket maps them to ErrNotFound). The blob bytes are purged
+// out-of-band via the attachment.purge outbox.
+func (h *Handler) deleteTicket(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	tid, err := pathUUID(r, "tid")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if rerr := h.svc.RedactTicket(r.Context(), pid, bid, tid); rerr != nil {
+		httpx.WriteError(w, r, rerr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
