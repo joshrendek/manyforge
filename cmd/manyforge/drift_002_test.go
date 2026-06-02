@@ -19,6 +19,10 @@ import (
 // until the handler/route lands. The remaining spec-002 operations (POST tickets,
 // inbox-management) are documented ahead of their handlers and are intentionally
 // NOT asserted as served yet — add them here as their tasks land.
+//
+// T052 red-gate (US4 inbox-management): the five email-domain and inbound-address
+// ops below are documented in openapi.yaml but their handlers are not yet registered;
+// they will remain red until tasks T055–T058 land the routes.
 var inScope002Ops = []string{
 	"POST /inbound/email/{}",
 	"POST /inbound/bounce",
@@ -30,6 +34,12 @@ var inScope002Ops = []string{
 	"GET /businesses/{}/requesters/{}",
 	"POST /businesses/{}/tickets/{}/reply",
 	"POST /businesses/{}/tickets/{}/note",
+	// US4 inbox-management (T052 red-gate — handlers not yet registered)
+	"GET /businesses/{}/email-domains",
+	"POST /businesses/{}/email-domains",
+	"POST /businesses/{}/email-domains/{}/verify",
+	"GET /businesses/{}/inbound-addresses",
+	"POST /businesses/{}/inbound-addresses",
 }
 
 // is002Op reports whether a normalized "METHOD /path" operation belongs to the
@@ -119,4 +129,155 @@ func TestInboundEndpointResponseCodes(t *testing.T) {
 			t.Errorf("002 openapi: POST /inbound/email/{provider} must document response %s", code)
 		}
 	}
+}
+
+// load002Spec is a helper that reads and parses the 002 openapi.yaml into a raw
+// document, returning it for further inspection by schema-pin tests.
+func load002Spec(t *testing.T) struct {
+	Paths      map[string]map[string]yaml.Node `yaml:"paths"`
+	Components struct {
+		Schemas map[string]yaml.Node `yaml:"schemas"`
+	} `yaml:"components"`
+} {
+	t.Helper()
+	raw, err := os.ReadFile(specPath("specs", "002-support-desk", "contracts", "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("read 002 openapi: %v", err)
+	}
+	var doc struct {
+		Paths      map[string]map[string]yaml.Node `yaml:"paths"`
+		Components struct {
+			Schemas map[string]yaml.Node `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse 002 openapi: %v", err)
+	}
+	return doc
+}
+
+// responseCodesFor decodes the Responses map from a raw operation node.
+func responseCodesFor(t *testing.T, opNode yaml.Node, label string) map[string]yaml.Node {
+	t.Helper()
+	var op struct {
+		Responses map[string]yaml.Node `yaml:"responses"`
+	}
+	if err := opNode.Decode(&op); err != nil {
+		t.Fatalf("decode %s: %v", label, err)
+	}
+	return op.Responses
+}
+
+// TestEmailDomainEndpointContract (T052) pins the response-code and schema shape
+// for the US4 email-domain endpoints in the 002 openapi contract. It is a pure
+// spec-file assertion — no DB, no router — so it runs fast and is independent of
+// handler implementation. The test will remain green as long as the contract is
+// consistent; removing a documented response code or the dns_challenge shape will
+// fail CI.
+func TestEmailDomainEndpointContract(t *testing.T) {
+	doc := load002Spec(t)
+
+	t.Run("GET /businesses/{id}/email-domains response codes", func(t *testing.T) {
+		opNode, ok := doc.Paths["/businesses/{id}/email-domains"]["get"]
+		if !ok {
+			t.Fatalf("002 openapi: missing GET /businesses/{id}/email-domains")
+		}
+		codes := responseCodesFor(t, opNode, "GET /businesses/{id}/email-domains")
+		for _, code := range []string{"200", "404"} {
+			if _, ok := codes[code]; !ok {
+				t.Errorf("002 openapi: GET /businesses/{id}/email-domains must document response %s", code)
+			}
+		}
+	})
+
+	t.Run("POST /businesses/{id}/email-domains response codes", func(t *testing.T) {
+		opNode, ok := doc.Paths["/businesses/{id}/email-domains"]["post"]
+		if !ok {
+			t.Fatalf("002 openapi: missing POST /businesses/{id}/email-domains")
+		}
+		codes := responseCodesFor(t, opNode, "POST /businesses/{id}/email-domains")
+		for _, code := range []string{"201", "400", "404", "409", "429"} {
+			if _, ok := codes[code]; !ok {
+				t.Errorf("002 openapi: POST /businesses/{id}/email-domains must document response %s", code)
+			}
+		}
+	})
+
+	t.Run("POST /businesses/{id}/email-domains/{did}/verify response codes", func(t *testing.T) {
+		opNode, ok := doc.Paths["/businesses/{id}/email-domains/{did}/verify"]["post"]
+		if !ok {
+			t.Fatalf("002 openapi: missing POST /businesses/{id}/email-domains/{did}/verify")
+		}
+		codes := responseCodesFor(t, opNode, "POST /businesses/{id}/email-domains/{did}/verify")
+		for _, code := range []string{"200", "404", "409", "429"} {
+			if _, ok := codes[code]; !ok {
+				t.Errorf("002 openapi: POST /businesses/{id}/email-domains/{did}/verify must document response %s", code)
+			}
+		}
+	})
+
+	t.Run("EmailDomain schema documents dns_challenge with verification_txt and dkim_record", func(t *testing.T) {
+		schemaNode, ok := doc.Components.Schemas["EmailDomain"]
+		if !ok {
+			t.Fatalf("002 openapi: components/schemas/EmailDomain not found")
+		}
+		// Decode the EmailDomain schema to a generic map so we can walk it without
+		// needing a full JSON-Schema struct. dns_challenge is an inline object under
+		// properties, so we decode two levels deep.
+		var schema struct {
+			Properties map[string]yaml.Node `yaml:"properties"`
+		}
+		if err := schemaNode.Decode(&schema); err != nil {
+			t.Fatalf("decode EmailDomain schema: %v", err)
+		}
+		challengeNode, ok := schema.Properties["dns_challenge"]
+		if !ok {
+			t.Errorf("002 openapi: EmailDomain schema must document dns_challenge property")
+			return
+		}
+		var challenge struct {
+			Properties map[string]yaml.Node `yaml:"properties"`
+		}
+		if err := challengeNode.Decode(&challenge); err != nil {
+			t.Fatalf("decode EmailDomain.dns_challenge schema: %v", err)
+		}
+		for _, sub := range []string{"verification_txt", "dkim_record"} {
+			if _, ok := challenge.Properties[sub]; !ok {
+				t.Errorf("002 openapi: EmailDomain.dns_challenge must document %q property", sub)
+			}
+		}
+	})
+}
+
+// TestInboundAddressEndpointContract (T052) pins the response-code shape for the
+// US4 inbound-address endpoints in the 002 openapi contract. Same pure-spec approach
+// as TestEmailDomainEndpointContract.
+func TestInboundAddressEndpointContract(t *testing.T) {
+	doc := load002Spec(t)
+
+	t.Run("GET /businesses/{id}/inbound-addresses response codes", func(t *testing.T) {
+		opNode, ok := doc.Paths["/businesses/{id}/inbound-addresses"]["get"]
+		if !ok {
+			t.Fatalf("002 openapi: missing GET /businesses/{id}/inbound-addresses")
+		}
+		codes := responseCodesFor(t, opNode, "GET /businesses/{id}/inbound-addresses")
+		for _, code := range []string{"200", "404"} {
+			if _, ok := codes[code]; !ok {
+				t.Errorf("002 openapi: GET /businesses/{id}/inbound-addresses must document response %s", code)
+			}
+		}
+	})
+
+	t.Run("POST /businesses/{id}/inbound-addresses response codes", func(t *testing.T) {
+		opNode, ok := doc.Paths["/businesses/{id}/inbound-addresses"]["post"]
+		if !ok {
+			t.Fatalf("002 openapi: missing POST /businesses/{id}/inbound-addresses")
+		}
+		codes := responseCodesFor(t, opNode, "POST /businesses/{id}/inbound-addresses")
+		for _, code := range []string{"201", "400", "404", "409", "429"} {
+			if _, ok := codes[code]; !ok {
+				t.Errorf("002 openapi: POST /businesses/{id}/inbound-addresses must document response %s", code)
+			}
+		}
+	})
 }
