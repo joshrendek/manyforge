@@ -31,9 +31,19 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
           <h1>Support</h1>
           <p class="sub">Inbound conversations for the selected business.</p>
         </div>
-        <a class="linklike" routerLink="/dashboard" data-testid="back-to-dashboard"
-          >Back to dashboard</a
-        >
+        <div class="row">
+          @if (businessId()) {
+            <a
+              class="linklike"
+              [routerLink]="['/support', businessId(), 'settings', 'inbox']"
+              data-testid="inbox-settings-link"
+              >Inbox settings</a
+            >
+          }
+          <a class="linklike" routerLink="/dashboard" data-testid="back-to-dashboard"
+            >Back to dashboard</a
+          >
+        </div>
       </div>
 
       <div class="row" style="margin-top:6px">
