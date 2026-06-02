@@ -1,0 +1,21 @@
+# air (https://github.com/air-verse/air) — live-reload for the Go backend.
+#
+# Usage:
+#   set -a; . ./.air.env; set +a; air      # loads dev env (DB URL, ADDR, DKIM key) then runs air
+#
+# .air.env is gitignored (holds the dev DB URL + MANYFORGE_DKIM_MASTER_KEY). air builds
+# ./cmd/manyforge into ./tmp and re-runs it on any .go change, inheriting that env.
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/manyforge ./cmd/manyforge"
+  bin = "./tmp/manyforge"
+  include_ext = ["go"]
+  exclude_dir = ["web", "tmp", "specs", "docs", "secrets", ".git", ".beads"]
+  exclude_regex = ["_test\\.go"]
+  stop_on_error = true
+  delay = 500
+
+[misc]
+  clean_on_exit = true
