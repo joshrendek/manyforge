@@ -48,3 +48,4 @@ Thumbs.db
 /playwright-report
 /playwright/.cache
 .playwright-mcp/
+/e2e/.artifacts
