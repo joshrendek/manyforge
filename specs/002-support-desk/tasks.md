@@ -175,7 +175,7 @@ Confirm the domain's primary (whole-domain) mail flow is never required to chang
 - [X] T056 [US4] DNS TXT verification: `POST …/email-domains/{did}/verify` — resolve the TXT via the SSRF-guarded `internal/platform/netsafe` resolver, set `verified_at` on match (idempotent re-verify); independent receive/send verification state
 - [X] T057 [US4] DKIM keygen + signing: generate per-domain Ed25519 (RSA-2048 fallback) keypair at runtime, store the private key as an encrypted `dkim_private_key_ref` (NEVER logged/committed), publish selector+public key in the challenge; sign verified-outbound with `emersion/go-msgauth/dkim` (research R3)  <!-- RSA-2048 fallback DEFERRED (Ed25519 only this slice) -->`
 - [X] T058 [US4] Custom inbound addresses: `POST/GET …/inbound-addresses` (`inbox.manage`) — create a `custom` address bound to a VERIFIED `email_domain` (ownership re-checked in SQL; unverified → 409); extend T024 resolution to route custom addresses
-- [ ] T059 [US4] Outbound identity selection in the send path (T039): verified custom identity → send + DKIM-sign as that domain; unverified/absent → fall back to the always-available system address (FR-013)
+- [X] T059 [US4] Outbound identity selection in the send path (T039): verified custom identity → send + DKIM-sign as that domain; unverified/absent → fall back to the always-available system address (FR-013)
 - [X] T060 [P] [US4] Frontend: `web/src/app/pages/support/` inbox-settings page — add domain (mode picker), show DNS challenge records, trigger verify, list addresses/domains with verification + DKIM/SPF state
 - [X] T061 [US4] Playwright `web/e2e/support.spec.ts` (US4 portion): add a `forward_in` domain → challenge shown → (stub-verified) → domain shows verified and its address listed
 
@@ -211,7 +211,7 @@ cannot view tickets. Each support mutation produced an `audit_entry`.
 - [ ] T068 [P] Contract suite (`make contract-test`): assert the shared-layer interfaces (`InboundSource`, `Blob`, `Notifier`, event-bus) and the ~15 new endpoints against `contracts/openapi.yaml`; extend the OpenAPI-drift gate in `cmd/drift_test.go`
 - [X] T069 SC-010 performance test `internal/ticketing/perf_test.go` (build tag `integration`, `TestSC010`): seed 10,000 tickets/business at realistic thread depth; assert ticket-list and ticket-load p95 < 200 ms with RLS ENABLED
 - [X] T070 SC-011 loop-guard test `internal/inbox/loopguard_integration_test.go`: a mail loop between two automated systems is bounded (per-requester auto-reply cap in migration 0024's ingest_inbound_message + `is_auto_reply` detection) before exceeding the bound; suppression is audited (`ticket.loop_suppressed`). Pinned in `security_regression/loop_guard_pin_test.go`.
-- [ ] T071 [P] Verify pagination max-page-size caps (silent cap to 100) on all five support list endpoints (FR-020)
+- [X] T071 [P] Verify pagination max-page-size caps (silent cap to 100) on all five support list endpoints (FR-020)
 - [ ] T072 [P] Structured logging + metrics for ingestion/outbound/outbox (extend `internal/platform/observability`); redact credential-bearing values (webhook secrets, DKIM refs) in all logs
 - [ ] T073 [P] Run the quickstart.md validation walkthrough end-to-end against a fresh DB; fix any drift between docs and behavior
 - [ ] T074 [P] Update `ARCHITECTURE.md` (support-desk module map, SL-C/SL-D/SL-E layers, ingestion `SECURITY DEFINER` exception) and `README.md` (run the SMTP receiver + webhook)
