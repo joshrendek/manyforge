@@ -127,11 +127,11 @@ type InboundAddress struct {
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
-// domainRe is the RFC-ish lowercase domain shape accepted at create time. Labels
-// are lowercase letters/digits/hyphens/underscores (underscores appear in some
-// support-subdomain and provider conventions), dot-separated, with a 2+ letter TLD.
+// domainRe is the RFC-valid lowercase domain shape accepted at create time. Labels
+// are lowercase letters/digits/hyphens only (underscores are NOT valid in DNS host
+// labels per RFC 952/1123), dot-separated, with a 2+ letter TLD.
 // Junk with a space ("not a domain") or no dot is a clean 400, never an insert.
-var domainRe = regexp.MustCompile(`^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*\.[a-z]{2,}$`)
+var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$`)
 
 const defaultSystemMailHost = "mail.manyforge.example"
 
