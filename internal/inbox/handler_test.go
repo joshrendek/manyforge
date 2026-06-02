@@ -16,6 +16,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // fakeIngester is a test double for the Ingester boundary: the handler-level
@@ -254,6 +256,50 @@ func TestWebhookRFC822EnvelopeRecipientFromTo(t *testing.T) {
 	// The raw bytes must still flow through untouched for downstream parsing.
 	if !bytes.Equal(ing.got[0].Raw, raw) {
 		t.Errorf("Raw bytes were altered; want the original message body verbatim")
+	}
+}
+
+// TestWebhookIncrementsMetrics verifies that the Handler increments the
+// observability counters correctly: received on every call, rejected on auth
+// failure, accepted on a routed ingest.
+func TestWebhookIncrementsMetrics(t *testing.T) {
+	cfg := Config{InboundSystemDomain: "inbound.localhost"}
+	m := observability.NewMetrics()
+	base := m.Get(observability.MetricIngestReceived)
+	baseAcc := m.Get(observability.MetricIngestAccepted)
+	baseRej := m.Get(observability.MetricIngestRejected)
+	baseDup := m.Get(observability.MetricIngestDuplicate)
+
+	h := NewWebhookHandler(
+		&fakeIngester{result: IngestResult{TicketID: uuid.New(), MessageID: uuid.New(), Created: true}},
+		testWebhookSecret, 1<<20, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.Metrics = m
+	r := chi.NewRouter()
+	h.PublicRoutes(r)
+
+	body := envelopeBody(t)
+	sig := signBody(testWebhookSecret, body)
+	rec := doRequest(r, "postmark", body, sig)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("signed request: status = %d, want 202", rec.Code)
+	}
+
+	rec2 := doRequest(r, "postmark", body, "") // no signature → 401
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned request: status = %d, want 401", rec2.Code)
+	}
+
+	if got := m.Get(observability.MetricIngestReceived) - base; got != 2 {
+		t.Errorf("received delta = %d, want 2", got)
+	}
+	if got := m.Get(observability.MetricIngestAccepted) - baseAcc; got != 1 {
+		t.Errorf("accepted delta = %d, want 1", got)
+	}
+	if got := m.Get(observability.MetricIngestRejected) - baseRej; got != 1 {
+		t.Errorf("rejected delta = %d, want 1", got)
+	}
+	if got := m.Get(observability.MetricIngestDuplicate) - baseDup; got != 0 {
+		t.Errorf("duplicate delta = %d, want 0", got)
 	}
 }
 
