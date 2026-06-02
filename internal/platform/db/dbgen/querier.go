@@ -75,6 +75,11 @@ type Querier interface {
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
+	// GetEmailDomain loads a single email domain scoped to (id, business_id) — the
+	// ownership predicate. RLS already scopes rows to the caller's authorized
+	// businesses; the explicit business_id is defense in depth. pgx.ErrNoRows ⇒ the
+	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
+	GetEmailDomain(ctx context.Context, arg GetEmailDomainParams) (EmailDomain, error)
 	GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error)
 	// ---- Member role management (T063) ----
 	// The target principal's direct membership at a business. RLS scopes this to the
@@ -112,6 +117,32 @@ type Querier interface {
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	// ---- inbound_address ----
+	// InsertCustomInboundAddress creates a kind='custom' inbound address bound to an
+	// email_domain that MUST be owned by the business AND verified — both enforced in
+	// this single statement: the SELECT joins the email_domain row scoped to
+	// (id, business_id) with verified_at IS NOT NULL, so an unowned/unknown domain
+	// yields zero rows (service → 404) and an owned-but-unverified domain also yields
+	// zero rows (the service distinguishes the two with a prior GetEmailDomain to map
+	// unverified → 409). tenant_root_id comes from the domain row (same tenant). A
+	// duplicate (tenant_root_id, address) raises a unique violation → 409.
+	InsertCustomInboundAddress(ctx context.Context, arg InsertCustomInboundAddressParams) (InboundAddress, error)
+	// US4 inbox-management identity queries (spec 002, T055/T056/T058): custom email
+	// domains, their DNS-verification lifecycle, and custom inbound addresses. Plain-table
+	// CRUD only — every query runs inside the caller's RLS principal context
+	// (db.WithPrincipal) AND pushes the (business_id, …) ownership predicate into SQL
+	// (dual enforcement, mirroring ticketing.sql). The principal-less inbound routing /
+	// send-identity primitives are SECURITY DEFINER functions (resolve_inbound_address /
+	// get_send_identity) invoked via raw pgx — sqlc cannot type a function's RETURNS, so
+	// they are NOT here. Keyset pagination uses limit+1 so the service detects a next page.
+	// ---- email_domain ----
+	// InsertEmailDomain creates a custom email domain for a business. tenant_root_id is
+	// derived from the business row (RLS-scoped: the subselect returns no row for a
+	// business the caller cannot see, so the NOT NULL column rejects the insert → the
+	// service maps it to a no-oracle not-found). dkim_* are populated at create time
+	// (the challenge shows both TXT records at once); verified_at stays NULL until the
+	// TXT challenge passes. Duplicate (tenant_root_id, domain) → unique violation → 409.
+	InsertEmailDomain(ctx context.Context, arg InsertEmailDomainParams) (EmailDomain, error)
 	// InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
 	InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error)
 	// ---- notification (SL-D) ----
@@ -138,6 +169,18 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// ListEmailDomains is the first (unkeyed) page of a business's email domains, oldest
+	// first for a stable keyset. lim is the clamped limit + 1 so the service detects a
+	// further page.
+	ListEmailDomains(ctx context.Context, arg ListEmailDomainsParams) ([]EmailDomain, error)
+	// ListEmailDomainsAfter is the keyset continuation: rows strictly after (created_at, id).
+	ListEmailDomainsAfter(ctx context.Context, arg ListEmailDomainsAfterParams) ([]EmailDomain, error)
+	// ListInboundAddresses is the first (unkeyed) page of a business's inbound addresses
+	// (both system and custom), oldest first for a stable keyset. lim is the clamped
+	// limit + 1.
+	ListInboundAddresses(ctx context.Context, arg ListInboundAddressesParams) ([]InboundAddress, error)
+	// ListInboundAddressesAfter is the keyset continuation: rows strictly after (created_at, id).
+	ListInboundAddressesAfter(ctx context.Context, arg ListInboundAddressesAfterParams) ([]InboundAddress, error)
 	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
 	// ---- ticket messages ----
 	// ListMessages is the first page of a ticket's thread, oldest first, matching the
@@ -188,6 +231,13 @@ type Querier interface {
 	// but only rows strictly after the cursor tuple (last_message_at, id) in the
 	// (DESC, DESC) order. The row-value comparison rides the same composite index.
 	ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]Ticket, error)
+	// MarkEmailDomainVerified sets verified_at = now() ONLY when it is currently NULL —
+	// idempotent (a re-verify of an already-verified domain is a no-op, leaving the
+	// original timestamp untouched). Scoped to (id, business_id, tenant_root_id) for
+	// dual enforcement; runs in the caller's tx. RETURNING the row lets the service
+	// report the (possibly unchanged) state, but the audit/transition decision is made
+	// by the service from the pre-update verified_at, not from rows-affected.
+	MarkEmailDomainVerified(ctx context.Context, arg MarkEmailDomainVerifiedParams) error
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
