@@ -145,6 +145,46 @@ func TestReplyAndNoteAdvanceNewToOpen(t *testing.T) {
 	}
 }
 
+// TestReply_IdempotentByApprovalKey — replying twice with the SAME IdempotencyKey
+// (the approvals-executor path, US4) produces exactly one outbound message: the second
+// call short-circuits to the prior message (same id), inserts no second ticket_message,
+// and enqueues no second send. Proves the at-least-once outbox redelivery sends once.
+func TestReply_IdempotentByApprovalKey(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	ticketID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, ticketID, "open", "normal", "Need help", nil, nil, -1*time.Hour)
+
+	svc := &Service{DB: tdb.App, ReplyTokenKey: replyKey, SystemDomain: "inbound.localhost"}
+
+	key := uuid.New()
+	m1, err := svc.Reply(ctx, rt.reader, rt.master, ticketID, ReplyInput{BodyText: "hello", IdempotencyKey: &key})
+	if err != nil {
+		t.Fatalf("reply 1: %v", err)
+	}
+	m2, err := svc.Reply(ctx, rt.reader, rt.master, ticketID, ReplyInput{BodyText: "hello", IdempotencyKey: &key})
+	if err != nil {
+		t.Fatalf("reply 2: %v", err)
+	}
+	if m1.ID != m2.ID {
+		t.Fatalf("dedup failed: two distinct messages %s vs %s", m1.ID, m2.ID)
+	}
+	// Exactly one ticket_message carries this approval key — the redelivery inserted none.
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM ticket_message WHERE source_approval_item_id=$1", key); n != 1 {
+		t.Errorf("ticket_message with source_approval_item_id = %d, want 1", n)
+	}
+	// And exactly one outbound message total on the ticket (no second send enqueued).
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM ticket_message WHERE ticket_id=$1 AND direction='outbound'", ticketID); n != 1 {
+		t.Errorf("outbound count = %d, want 1 (replay must not insert a second)", n)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM outbox WHERE tenant_root_id=$1 AND topic='ticket.replied'", rt.tenantRootID); n != 1 {
+		t.Errorf("outbox ticket.replied = %d, want 1 (replay must enqueue nothing)", n)
+	}
+}
+
 // TestReplyUnknownTicketIsNotFound — a random ticket id collapses to ErrNotFound
 // (no oracle).
 func TestReplyUnknownTicketIsNotFound(t *testing.T) {
