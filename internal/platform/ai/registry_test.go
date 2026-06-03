@@ -20,8 +20,12 @@ func TestRegistryLookupAndCost(t *testing.T) {
 	if c := m.CostCents(Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}); c != 1800 {
 		t.Errorf("CostCents = %d, want 1800", c)
 	}
-	// Rounds up a partial: 500k in @ 300/Mtok = 150 cents.
+	// Exact (no rounding): 500k in @ 300/Mtok = 150_000_000/1e6 = 150 cents exactly.
 	if c := m.CostCents(Usage{InputTokens: 500_000}); c != 150 {
 		t.Errorf("CostCents(500k in) = %d, want 150", c)
+	}
+	// 333,333 × 300 = 99,999,900 → ceil to 100 cents (not 99).
+	if c := m.CostCents(Usage{InputTokens: 333_333}); c != 100 {
+		t.Errorf("CostCents(333333 in) = %d, want 100", c)
 	}
 }

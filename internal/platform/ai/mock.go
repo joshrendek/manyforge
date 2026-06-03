@@ -8,6 +8,7 @@ import (
 
 // ErrMockExhausted is returned when a MockProvider runs out of scripted
 // responses — surfacing an unexpected extra model call in a test loudly.
+// Intended for tests only.
 var ErrMockExhausted = errors.New("ai: mock provider exhausted")
 
 // MockProvider returns pre-scripted Responses in order and records every Request
@@ -38,9 +39,9 @@ func (m *MockProvider) Complete(_ context.Context, req Request) (Response, error
 }
 
 // Name identifies the provider.
-func (m *MockProvider) Name() string { return "mock" }
+func (m *MockProvider) Name() string { return "mock" } // no lock needed — returns a constant
 
-// Requests returns a copy of every Request handed to Complete, in order.
+// Requests returns a SHALLOW copy of every Request handed to Complete, in order.
 func (m *MockProvider) Requests() []Request {
 	m.mu.Lock()
 	defer m.mu.Unlock()
