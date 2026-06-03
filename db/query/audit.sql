@@ -1,7 +1,7 @@
 -- name: InsertAuditEntry :exec
 INSERT INTO audit_entry
-    (id, business_id, tenant_root_id, actor_principal_id, action, target_type, target_id, correlation_id, old_value, new_value, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now());
+    (id, business_id, tenant_root_id, actor_principal_id, action, target_type, target_id, correlation_id, old_value, new_value, inputs, outputs, decision, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, sqlc.narg('inputs')::jsonb, sqlc.narg('outputs')::jsonb, sqlc.narg('decision')::text, now());
 
 -- name: ListAuditEntries :many
 -- A business's audit trail, newest first, keyset-paginated on (created_at, id).
