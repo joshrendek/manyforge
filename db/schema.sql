@@ -325,3 +325,24 @@ CREATE TABLE agent (
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (principal_id) REFERENCES principal (id)
 );
+
+CREATE TABLE agent_run (
+    id             uuid PRIMARY KEY,
+    agent_id       uuid NOT NULL,
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    trigger        text NOT NULL,
+    target_type    text,
+    target_id      uuid,
+    status         text NOT NULL,
+    tokens_in      integer NOT NULL,
+    tokens_out     integer NOT NULL,
+    cost_cents     bigint NOT NULL,
+    correlation_id text NOT NULL,
+    error          text,
+    created_at     timestamptz NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (agent_id, tenant_root_id) REFERENCES agent (id, tenant_root_id)
+);
