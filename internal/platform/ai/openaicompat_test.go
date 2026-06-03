@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -241,5 +242,25 @@ func TestOpenAIComplete_ErrorMapping(t *testing.T) {
 func TestOpenAIName(t *testing.T) {
 	if NewOpenAICompatProvider("k", "http://x/v1", "m", http.DefaultClient).Name() != "openai-compat" {
 		t.Fatal("Name() != openai-compat")
+	}
+}
+
+// Security pin (CLAUDE.md): raw upstream body must NEVER reach the caller's error.
+func TestOpenAIComplete_DoesNotLeakUpstreamBody(t *testing.T) {
+	const secret = "SUPER_SECRET_UPSTREAM_DETAIL_db_constraint_xyz"
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadRequest} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, `{"error":{"message":"`+secret+`","type":"x"}}`)
+		}))
+		p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", srv.Client())
+		_, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}})
+		srv.Close()
+		if err == nil {
+			t.Fatalf("status %d: expected error", status)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("status %d: error leaks upstream body: %q", status, err.Error())
+		}
 	}
 }

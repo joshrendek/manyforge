@@ -21,8 +21,8 @@ const (
 
 type anthropicReq struct {
 	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	Temperature float64            `json:"temperature"`
+	MaxTokens   int                `json:"max_tokens"` // Anthropic REQUIRES this; 0 yields a 400 -> ErrBadRequest
+	Temperature float64            `json:"temperature"` // sent as-is; unset (0) => deterministic. US3 sets per agent. manyforge-4po
 	System      string             `json:"system,omitempty"`
 	Messages    []anthropicMessage `json:"messages"`
 	Tools       []anthropicTool    `json:"tools,omitempty"`
@@ -168,6 +168,10 @@ func NewAnthropicProvider(apiKey, baseURL, model string, hc *http.Client) *Anthr
 	return &AnthropicProvider{apiKey: apiKey, baseURL: baseURL, model: model, httpClient: hc}
 }
 
+// Name returns the transport family ("anthropic"). NOTE: this is the TRANSPORT
+// name, distinct from the credential provider name and from registry
+// Model.Provider — US3 cost lookup keys on the model ID (Registry.Lookup(req.Model)),
+// not on Name(). See manyforge-uc2.
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
 func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response, error) {

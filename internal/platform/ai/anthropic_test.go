@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -208,5 +209,27 @@ func TestAnthropicComplete_ErrorMapping(t *testing.T) {
 func TestAnthropicName(t *testing.T) {
 	if NewAnthropicProvider("k", "", "m", http.DefaultClient).Name() != "anthropic" {
 		t.Fatal("Name() != anthropic")
+	}
+}
+
+// Security pin (CLAUDE.md): the raw upstream error body must NEVER appear in the
+// error returned to the caller — only a typed sentinel + status. Leaking it would
+// turn a partial SSRF / upstream into a read primitive.
+func TestAnthropicComplete_DoesNotLeakUpstreamBody(t *testing.T) {
+	const secret = "SUPER_SECRET_UPSTREAM_DETAIL_db_constraint_xyz"
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadRequest} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, `{"error":{"type":"x","message":"`+secret+`"}}`)
+		}))
+		p := NewAnthropicProvider("sk-test", srv.URL, "claude-sonnet-4-5", srv.Client())
+		_, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}})
+		srv.Close()
+		if err == nil {
+			t.Fatalf("status %d: expected error", status)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("status %d: error leaks upstream body: %q", status, err.Error())
+		}
 	}
 }
