@@ -190,7 +190,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response
 	if err != nil {
 		return Response{}, fmt.Errorf("ai/anthropic: new request: %w", ErrProviderUnavailable)
 	}
-	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	if p.apiKey != "" {
 		httpReq.Header.Set("x-api-key", p.apiKey)
@@ -201,7 +201,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response
 		// Network failure, timeout, or SSRF dial-refusal (netsafe) all land here.
 		return Response{}, fmt.Errorf("ai/anthropic: transport: %w", ErrProviderUnavailable)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }() // errcheck: close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20)) // cap at 8 MiB
 
 	if res.StatusCode != http.StatusOK {
@@ -238,8 +238,8 @@ func anthropicHTTPError(status int, body []byte) error {
 // provider error message (both vendors phrase it differently).
 func isContextLengthMessage(msg string) bool {
 	m := strings.ToLower(msg)
-	return strings.Contains(m, "too long") ||
+	return strings.Contains(m, "prompt is too long") ||
 		strings.Contains(m, "context length") ||
-		strings.Contains(m, "context_length") ||
+		strings.Contains(m, "context_length_exceeded") ||
 		strings.Contains(m, "maximum context")
 }
