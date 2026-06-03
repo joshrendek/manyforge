@@ -13,6 +13,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AiProvider string
+
+const (
+	AiProviderAnthropic AiProvider = "anthropic"
+	AiProviderOpenai    AiProvider = "openai"
+	AiProviderOllama    AiProvider = "ollama"
+	AiProviderVllm      AiProvider = "vllm"
+)
+
+func (e *AiProvider) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AiProvider(s)
+	case string:
+		*e = AiProvider(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AiProvider: %T", src)
+	}
+	return nil
+}
+
+type NullAiProvider struct {
+	AiProvider AiProvider `json:"ai_provider"`
+	Valid      bool       `json:"valid"` // Valid is true if AiProvider is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAiProvider) Scan(value interface{}) error {
+	if value == nil {
+		ns.AiProvider, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AiProvider.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAiProvider) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AiProvider), nil
+}
+
 type EmailDomainMode string
 
 const (
@@ -335,6 +379,18 @@ type AccountErasure struct {
 	PurgeAfter  time.Time          `json:"purge_after"`
 	PurgedAt    pgtype.Timestamptz `json:"purged_at"`
 	CreatedAt   time.Time          `json:"created_at"`
+}
+
+type AiProviderCredential struct {
+	ID           uuid.UUID  `json:"id"`
+	BusinessID   uuid.UUID  `json:"business_id"`
+	TenantRootID uuid.UUID  `json:"tenant_root_id"`
+	Provider     AiProvider `json:"provider"`
+	SealedKeyRef *string    `json:"sealed_key_ref"`
+	BaseUrl      *string    `json:"base_url"`
+	DefaultModel string     `json:"default_model"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type Attachment struct {
