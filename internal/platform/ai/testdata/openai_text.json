@@ -1,0 +1,13 @@
+{
+  "id": "chatcmpl-textexample",
+  "object": "chat.completion",
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Hello! How can I help with your ticket?" },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 11, "completion_tokens": 9, "total_tokens": 20 }
+}
