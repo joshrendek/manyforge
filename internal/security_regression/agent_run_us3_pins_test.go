@@ -65,19 +65,21 @@ func TestPin_TypedArgValidation(t *testing.T) {
 	}
 }
 
-// TestPin_FailClosedExecutor pins the fail-closed seam in the run loop: a tool call is
-// executed only if it is in the per-run allowlist AND its effect is Safe; anything else
-// is proposed-only (queued for approval), never executed. Dropping either half opens
-// the executor to non-allowlisted or non-Safe (mutating) auto-execution.
+// TestPin_FailClosedExecutor pins the fail-closed seam: (1) the run loop still rejects
+// non-allowlisted calls, and (2) the autonomy gate defaults UNKNOWN effect/mode to
+// approval (never auto-exec). Dropping either reopens auto-execution of unsafe calls.
 func TestPin_FailClosedExecutor(t *testing.T) {
-	src := mustRead(t, "../agents/runner.go")
-	for _, frag := range []string{
-		"!allow[call.Name]",      // allowlist enforcement: non-allowlisted call rejected
-		"tool.Effect != EffectSafe", // non-Safe effect → proposed-only, not executed
-	} {
-		if !strings.Contains(src, frag) {
-			t.Errorf("agents/runner.go: fail-closed fragment %q missing — executor allowlist/Safe-only seam dropped?", frag)
-		}
+	runner := mustRead(t, "../agents/runner.go")
+	if !strings.Contains(runner, "!allow[call.Name]") {
+		t.Error("runner.go: allowlist enforcement (!allow[call.Name]) dropped?")
+	}
+	if !strings.Contains(runner, "gate(tool.Effect, mode) == decideApproval") {
+		t.Error("runner.go: execTool must consult the autonomy gate before executing — gate seam dropped?")
+	}
+	g := mustRead(t, "../agents/gate.go")
+	// The gate's default branch must fail closed to approval.
+	if !strings.Contains(g, "default:") || !strings.Contains(g, "// FAIL-CLOSED") {
+		t.Error("gate.go: missing fail-closed default — unknown effect must default to approval")
 	}
 }
 

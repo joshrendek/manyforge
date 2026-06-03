@@ -69,12 +69,20 @@ type runAuditor interface {
 // providerFactory resolves the agent's BYO credential into a Provider + resolved model id.
 type providerFactory func(ctx context.Context, principalID, businessID uuid.UUID, provider string) (ai.Provider, string, error)
 
+// approvalWriter persists a pending approval_item for a gated tool-call (US4). The
+// engine calls it under the agent principal's context; the row is RLS-scoped to the
+// run's business and ties back to the run via agentRunID.
+type approvalWriter interface {
+	CreatePending(ctx context.Context, principalID, businessID, agentRunID uuid.UUID, tool string, args json.RawMessage, effect int) (uuid.UUID, error)
+}
+
 // Engine executes the bounded agentic loop for one agent.
 type Engine struct {
 	Runs        runStore
 	Tools       *ToolRegistry
 	Auditor     runAuditor
 	Resolver    permChecker
+	Approvals   approvalWriter
 	NewProvider providerFactory
 	Cost        func(model string, u ai.Usage) int64
 	Limits      RunLimits
@@ -214,7 +222,7 @@ func (e *Engine) run(ctx context.Context, agentPrincipalID uuid.UUID, ag Agent, 
 		msgs = append(msgs, ai.Message{Role: ai.RoleAssistant, Text: resp.Text, ToolCalls: resp.ToolCalls})
 		var results []ai.ToolResult
 		for _, call := range resp.ToolCalls {
-			content, isErr, prop := e.execTool(loopCtx, agentPrincipalID, businessID, allow, run, call)
+			content, isErr, prop := e.execTool(loopCtx, agentPrincipalID, businessID, ag.AutonomyMode, allow, run, call)
 			proposed = proposed || prop
 			results = append(results, ai.ToolResult{CallID: call.ID, Content: content, IsError: isErr})
 		}
@@ -222,9 +230,11 @@ func (e *Engine) run(ctx context.Context, agentPrincipalID uuid.UUID, ag Agent, 
 	}
 }
 
-// execTool runs the US3 fail-closed seam for one tool call. Returns the tool-result
-// content, whether it is an error result, and whether it was proposed-only (non-Safe).
-func (e *Engine) execTool(ctx context.Context, principalID, businessID uuid.UUID, allow map[string]bool, run AgentRun, call ai.ToolCall) (string, bool, bool) {
+// execTool runs the US4 fail-closed gate for one tool call. Order: allowlist → RBAC
+// (Resolver.Has) → gate(effect, mode) → execute-or-queue. Returns the tool-result
+// content, whether it is an error result, and whether it was queued for approval
+// (which drives the run's terminal awaiting_approval status).
+func (e *Engine) execTool(ctx context.Context, principalID, businessID uuid.UUID, mode int, allow map[string]bool, run AgentRun, call ai.ToolCall) (string, bool, bool) {
 	audit := func(decision, detail string, inputs any) {
 		_ = e.Auditor.Run(ctx, principalID, run, "agent.tool."+decision, inputs, map[string]any{"tool": call.Name, "detail": detail}, decision)
 	}
@@ -233,6 +243,7 @@ func (e *Engine) execTool(ctx context.Context, principalID, businessID uuid.UUID
 		audit("denied", "tool not allowed", map[string]any{"tool": call.Name})
 		return "tool not permitted", true, false
 	}
+	// RBAC FIRST: the agent must hold the tool's permission (same authz as a human).
 	if tool.RequiredPerm != "" {
 		has, err := e.Resolver.Has(ctx, principalID, businessID, tool.RequiredPerm)
 		if err != nil || !has {
@@ -240,9 +251,15 @@ func (e *Engine) execTool(ctx context.Context, principalID, businessID uuid.UUID
 			return "permission denied", true, false
 		}
 	}
-	if tool.Effect != EffectSafe {
-		audit("proposed", "non-safe effect deferred to approval", map[string]any{"tool": call.Name, "args": json.RawMessage(call.Args)})
-		return "action proposed; awaiting approval", false, true
+	// GATE SECOND (after RBAC, before exec): decide auto-exec vs. queue for approval.
+	if gate(tool.Effect, mode) == decideApproval {
+		apID, err := e.Approvals.CreatePending(ctx, principalID, businessID, run.ID, call.Name, json.RawMessage(call.Args), int(tool.Effect))
+		if err != nil {
+			audit("error", safeMsg(err), map[string]any{"tool": call.Name, "args": json.RawMessage(call.Args)})
+			return "tool error: " + safeMsg(err), true, false
+		}
+		audit("proposed", "queued for human approval", map[string]any{"tool": call.Name, "args": json.RawMessage(call.Args), "approval_item_id": apID})
+		return "action queued for approval (id " + apID.String() + ")", false, true
 	}
 	out, err := tool.Invoke(ctx, principalID, businessID, call.Args)
 	if err != nil {
