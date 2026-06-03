@@ -12,14 +12,17 @@ import (
 )
 
 // inScope003Ops is the COMPLETE set of spec-003 operations served by the router so
-// far (US2 agent-definition CRUD). Each entry is asserted both ways by
-// TestOpenAPIDrift003 — present in the router AND documented in the 003 contract.
+// far (US2 agent-definition CRUD + US3 run trigger/status). Each entry is asserted
+// both ways by TestOpenAPIDrift003 — present in the router AND documented in the 003
+// contract.
 var inScope003Ops = []string{
 	"GET /businesses/{}/agents",
 	"POST /businesses/{}/agents",
 	"GET /businesses/{}/agents/{}",
 	"PATCH /businesses/{}/agents/{}",
 	"DELETE /businesses/{}/agents/{}",
+	"POST /businesses/{}/agents/{}/runs",
+	"GET /businesses/{}/agents/{}/runs/{}",
 }
 
 // is003Op reports whether a normalized "METHOD /path" belongs to the 003 surface

@@ -79,6 +79,51 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/agents/{agentID}/runs:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: agentID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: triggerAgentRun
+      summary: Trigger an agent run (executes the bounded run loop as the agent principal)
+      description: >
+        Requires the agents.run permission at {id}; a lacking permission or an
+        invisible business/agent returns the same 404 as an unknown id (no oracle).
+        The body is optional — an empty body defaults to a "manual" trigger.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TriggerRunRequest" }
+      responses:
+        "202":
+          description: Run accepted (returns the terminal run record)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/agents/{agentID}/runs/{runID}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: agentID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: runID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getAgentRun
+      summary: Get an agent run's status
+      description: >
+        Requires the agents.run permission at {id}; a run in another business/tenant
+        returns the same 404 as an unknown id (no oracle).
+      responses:
+        "200":
+          description: Run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 components:
   securitySchemes:
     bearerAuth:
@@ -97,7 +142,14 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Conflict:
-      description: Conflict (duplicate agent name in the business)
+      description: >
+        Conflict (duplicate agent name in the business; or for a run trigger: the
+        agent is disabled or its monthly budget is exceeded)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid bearer token
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -155,3 +207,23 @@ components:
         autonomy_mode: { type: integer, enum: [1, 2, 3] }
         enabled: { type: boolean }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647 }
+    TriggerRunRequest:
+      type: object
+      description: Optional run trigger. An empty body defaults to a manual trigger.
+      properties:
+        trigger: { type: string, enum: [manual, event], default: manual }
+        target_type: { type: string }
+        target_id: { type: string, format: uuid }
+    Run:
+      type: object
+      required: [id, agent_id, trigger, status, tokens_in, tokens_out, cost_cents, correlation_id]
+      properties:
+        id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [manual, event] }
+        status: { type: string, enum: [queued, running, awaiting_approval, succeeded, failed] }
+        tokens_in: { type: integer, minimum: 0 }
+        tokens_out: { type: integer, minimum: 0 }
+        cost_cents: { type: integer, minimum: 0 }
+        correlation_id: { type: string }
+        error: { type: string, nullable: true }
