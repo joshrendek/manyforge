@@ -86,16 +86,19 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 }
 
 const getAgentRun = `-- name: GetAgentRun :one
-SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, created_at, updated_at FROM agent_run WHERE id = $1 AND business_id = $2
+SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, created_at, updated_at FROM agent_run WHERE id = $1 AND business_id = $2 AND agent_id = $3
 `
 
 type GetAgentRunParams struct {
 	ID         uuid.UUID `json:"id"`
 	BusinessID uuid.UUID `json:"business_id"`
+	AgentID    uuid.UUID `json:"agent_id"`
 }
 
+// Scope the read by agent_id too (not just business_id): a same-business request for
+// run R via a DIFFERENT agent's path yields no row -> pgx.ErrNoRows -> no-oracle 404.
 func (q *Queries) GetAgentRun(ctx context.Context, arg GetAgentRunParams) (AgentRun, error) {
-	row := q.db.QueryRow(ctx, getAgentRun, arg.ID, arg.BusinessID)
+	row := q.db.QueryRow(ctx, getAgentRun, arg.ID, arg.BusinessID, arg.AgentID)
 	var i AgentRun
 	err := row.Scan(
 		&i.ID,

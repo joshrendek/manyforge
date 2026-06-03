@@ -114,8 +114,10 @@ paths:
       operationId: getAgentRun
       summary: Get an agent run's status
       description: >
-        Requires the agents.run permission at {id}; a run in another business/tenant
-        returns the same 404 as an unknown id (no oracle).
+        Requires the agents.run permission at {id}. The run is scoped by {agentID}:
+        a run in another business/tenant, OR a run that does not belong to {agentID}
+        (even within the same business), returns the same 404 as an unknown id (no
+        existence oracle).
       responses:
         "200":
           description: Run
