@@ -37,6 +37,18 @@ type Querier interface {
 	CountTicketMessages(ctx context.Context, arg CountTicketMessagesParams) (int64, error)
 	CountUnreadNotifications(ctx context.Context, principalID uuid.UUID) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
+	// CreateAgent inserts an agent definition. tenant_root_id is derived from the
+	// business row (RLS-gated). Duplicate (business_id, name) → 23505 → 409.
+	CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error)
+	// Agent runtime (spec 003 US2) — agent definition queries. Every query runs inside
+	// the caller's RLS principal context (db.WithPrincipal) AND pushes the
+	// (business_id, …) ownership predicate into SQL (dual enforcement, mirroring ai.sql).
+	// tenant_root_id is derived from the business row on insert.
+	// CreateAgentPrincipal creates the kind='agent' principal for a new agent, homed at
+	// and tenant-scoped to the business. INSERT…SELECT FROM business gates on RLS
+	// visibility: an invisible business yields no row → ErrNoRows → 404 (no oracle).
+	// principal is not RLS-scoped, so the gate lives in the business SELECT.
+	CreateAgentPrincipal(ctx context.Context, arg CreateAgentPrincipalParams) (uuid.UUID, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
 	// yet see (no membership at insert time). The caller builds the result from inputs.
@@ -53,6 +65,10 @@ type Querier interface {
 	// DeleteAIProviderCredential deletes a credential by (id, business_id).
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteAIProviderCredential(ctx context.Context, arg DeleteAIProviderCredentialParams) (int64, error)
+	// DeleteAgent atomically deletes the agent and its kind='agent' principal. The agent
+	// row is deleted first (it FKs the principal), then the principal. rows-affected (the
+	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
+	DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error)
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
@@ -89,6 +105,10 @@ type Querier interface {
 	GetAccountByEmail(ctx context.Context, email string) (Account, error)
 	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
 	GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error)
+	// GetAgent loads an agent by (id, business_id) — the ownership predicate. RLS
+	// scopes rows to the caller's authorized businesses; the explicit business_id is
+	// defense in depth. pgx.ErrNoRows => ErrNotFound.
+	GetAgent(ctx context.Context, arg GetAgentParams) (Agent, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
@@ -189,6 +209,8 @@ type Querier interface {
 	// ListAIProviderCredentials lists all credentials for a business, ordered
 	// by provider name for a stable, deterministic result.
 	ListAIProviderCredentials(ctx context.Context, businessID uuid.UUID) ([]AiProviderCredential, error)
+	// ListAgents lists all agents for a business, ordered by name for a stable result.
+	ListAgents(ctx context.Context, businessID uuid.UUID) ([]Agent, error)
 	// NOTE: the outbound delivery-state path (delivery_state read, system inbound
 	// address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
 	// bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /
@@ -330,6 +352,10 @@ type Querier interface {
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
+	// UpdateAgent partially updates an agent (PATCH): COALESCE(narg, col) preserves any
+	// field the caller omitted (narg NULL = absent). provider is immutable (not settable
+	// here). No match → ErrNoRows → 404.
+	UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
 	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error

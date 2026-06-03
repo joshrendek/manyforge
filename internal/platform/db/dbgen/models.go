@@ -381,6 +381,23 @@ type AccountErasure struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type Agent struct {
+	ID                 uuid.UUID  `json:"id"`
+	BusinessID         uuid.UUID  `json:"business_id"`
+	TenantRootID       uuid.UUID  `json:"tenant_root_id"`
+	PrincipalID        uuid.UUID  `json:"principal_id"`
+	Name               string     `json:"name"`
+	Provider           AiProvider `json:"provider"`
+	Model              string     `json:"model"`
+	SystemPrompt       string     `json:"system_prompt"`
+	AllowedTools       []string   `json:"allowed_tools"`
+	AutonomyMode       int16      `json:"autonomy_mode"`
+	Enabled            bool       `json:"enabled"`
+	MonthlyBudgetCents int32      `json:"monthly_budget_cents"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
 type AiProviderCredential struct {
 	ID           uuid.UUID  `json:"id"`
 	BusinessID   uuid.UUID  `json:"business_id"`
