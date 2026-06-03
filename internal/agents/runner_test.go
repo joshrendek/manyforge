@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -48,6 +49,18 @@ func (f *fakeAuditor) Run(_ context.Context, _ uuid.UUID, _ AgentRun, action str
 	return nil
 }
 
+type fakeApprovals struct {
+	created []string // "tool:effect"
+	ids     []uuid.UUID
+}
+
+func (f *fakeApprovals) CreatePending(_ context.Context, _, _, _ uuid.UUID, tool string, _ json.RawMessage, effect int) (uuid.UUID, error) {
+	id := uuid.New()
+	f.created = append(f.created, fmt.Sprintf("%s:%d", tool, effect))
+	f.ids = append(f.ids, id)
+	return id, nil
+}
+
 func toolUse(id, name, args string) ai.Response {
 	return ai.Response{FinishReason: ai.FinishToolUse, ToolCalls: []ai.ToolCall{{ID: id, Name: name, Args: json.RawMessage(args)}}, Usage: ai.Usage{InputTokens: 10, OutputTokens: 5}}
 }
@@ -55,24 +68,26 @@ func finalText(s string) ai.Response {
 	return ai.Response{FinishReason: ai.FinishStop, Text: s, Usage: ai.Usage{InputTokens: 4, OutputTokens: 2}}
 }
 
-func newTestEngine(prov ai.Provider, store runStore, perms map[string]bool, reg *ToolRegistry) (*Engine, *fakeAuditor) {
+func newTestEngine(prov ai.Provider, store runStore, perms map[string]bool, reg *ToolRegistry) (*Engine, *fakeAuditor, *fakeApprovals) {
 	aud := &fakeAuditor{}
+	ap := &fakeApprovals{}
 	eng := &Engine{
-		Runs:     store,
-		Tools:    reg,
-		Auditor:  aud,
-		Resolver: fakeResolver{perms: perms},
+		Runs:      store,
+		Tools:     reg,
+		Auditor:   aud,
+		Resolver:  fakeResolver{perms: perms},
+		Approvals: ap,
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return prov, "claude-sonnet-4-5", nil
 		},
 		Cost:   func(_ string, u ai.Usage) int64 { return int64(u.Total()) },
 		Limits: RunLimits{MaxIterations: 4, MaxTokensPerRun: 1000, MaxOutputTokens: 256, WallClock: defaultWallClock},
 	}
-	return eng, aud
+	return eng, aud, ap
 }
 
 func loadedAgent(tools ...string) Agent {
-	return Agent{ID: uuid.New(), BusinessID: uuid.New(), PrincipalID: uuid.New(), Provider: "anthropic", Model: "claude-sonnet-4-5", SystemPrompt: "be helpful", AllowedTools: tools, Enabled: true, MonthlyBudgetCents: 0}
+	return Agent{ID: uuid.New(), BusinessID: uuid.New(), PrincipalID: uuid.New(), Provider: "anthropic", Model: "claude-sonnet-4-5", SystemPrompt: "be helpful", AllowedTools: tools, AutonomyMode: ModeAssist, Enabled: true, MonthlyBudgetCents: 0}
 }
 
 func containsDecision(actions []string, suffix string) bool {
@@ -92,7 +107,7 @@ func TestRun_SafeToolThenFinish(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
 
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if err != nil {
@@ -113,7 +128,7 @@ func TestRun_SafeToolThenFinish(t *testing.T) {
 func TestRun_BudgetRefusesStart(t *testing.T) {
 	prov := ai.NewMockProvider(finalText("never"))
 	store := &fakeRunStore{mtd: 500}
-	eng, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
 	ag := loadedAgent()
 	ag.MonthlyBudgetCents = 500
 	run, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
@@ -136,7 +151,7 @@ func TestRun_AllowlistDenied(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, aud := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, aud, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
 	_, _ = eng.run(context.Background(), uuid.New(), loadedAgent("read_ticket"), "manual", nil, nil)
 	if fts.triageIn.Status != nil {
 		t.Fatal("disallowed tool must NOT execute")
@@ -146,7 +161,7 @@ func TestRun_AllowlistDenied(t *testing.T) {
 	}
 }
 
-func TestRun_NonSafeToolProposedOnly(t *testing.T) {
+func TestRun_Mode1ExternalQueuesApproval(t *testing.T) {
 	tid := uuid.New()
 	prov := ai.NewMockProvider(
 		toolUse("c1", "draft_reply", `{"ticket_id":"`+tid.String()+`","body_text":"hi"}`),
@@ -154,16 +169,63 @@ func TestRun_NonSafeToolProposedOnly(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, aud := newTestEngine(prov, store, map[string]bool{"tickets.reply": true}, NewToolRegistry(fts))
+	eng, aud, ap := newTestEngine(prov, store, map[string]bool{"tickets.reply": true}, NewToolRegistry(fts))
 	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("draft_reply"), "manual", nil, nil)
 	if fts.gotTicket != (uuid.UUID{}) {
-		t.Fatal("External-effect tool must be proposed-only (no execution) in US3")
+		t.Fatal("Mode-1 external tool must be queued (no execution)")
+	}
+	if len(ap.created) != 1 || ap.created[0] != "draft_reply:2" { // 2 == EffectExternal
+		t.Fatalf("expected one queued draft_reply approval; got %v", ap.created)
 	}
 	if run.Status != RunAwaitingApproval {
 		t.Fatalf("status=%s want awaiting_approval", run.Status)
 	}
 	if !containsDecision(aud.actions, "proposed") {
-		t.Fatalf("proposed action must be audited; actions=%v", aud.actions)
+		t.Fatalf("queued action must be audited; actions=%v", aud.actions)
+	}
+}
+
+func TestRun_Mode2QueuesReversibleWrite(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "set_status", `{"ticket_id":"`+tid.String()+`","status":"open"}`),
+		finalText("done"),
+	)
+	fts := &fakeTicketSvc{}
+	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	ag := loadedAgent("set_status")
+	ag.AutonomyMode = ModeQueueWrites
+	run, _ := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
+	if fts.triageIn.Status != nil {
+		t.Fatal("Mode-2 must queue reversible writes, not execute them")
+	}
+	if len(ap.created) != 1 || ap.created[0] != "set_status:1" { // 1 == EffectReversible
+		t.Fatalf("expected one queued set_status approval; got %v", ap.created)
+	}
+	if run.Status != RunAwaitingApproval {
+		t.Fatalf("status=%s want awaiting_approval", run.Status)
+	}
+}
+
+func TestRun_Mode3AutoRunsExternal(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "draft_reply", `{"ticket_id":"`+tid.String()+`","body_text":"hi"}`),
+		finalText("ok"),
+	)
+	fts := &fakeTicketSvc{}
+	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"tickets.reply": true}, NewToolRegistry(fts))
+	ag := loadedAgent("draft_reply")
+	ag.AutonomyMode = ModeAutonomous
+	run, _ := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
+	if fts.gotTicket != tid {
+		t.Fatal("Mode-3 must auto-run external tools inline")
+	}
+	if len(ap.created) != 0 {
+		t.Fatalf("Mode-3 must not queue; got %v", ap.created)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("status=%s want succeeded", run.Status)
 	}
 }
 
@@ -175,7 +237,7 @@ func TestRun_MaxIterationsBound(t *testing.T) {
 	}
 	prov := ai.NewMockProvider(resps...)
 	store := &fakeRunStore{}
-	eng, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}))
 	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if run.Status != RunFailed || run.Error == nil {
 		t.Fatalf("bound-hit run must fail with an error reason; got %+v", run)
@@ -187,7 +249,7 @@ func TestRun_MaxIterationsBound(t *testing.T) {
 
 func TestRun_DisabledAgentRefused(t *testing.T) {
 	prov := ai.NewMockProvider(finalText("never"))
-	eng, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
 	ag := loadedAgent()
 	ag.Enabled = false
 	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err == nil {
@@ -206,7 +268,7 @@ func TestRun_MaxTokensBound(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
 	eng.Limits.MaxTokensPerRun = 10
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if err != nil {
@@ -233,7 +295,7 @@ func (blockingProvider) Name() string { return "blocking" }
 
 func TestRun_WallClockTimeout(t *testing.T) {
 	store := &fakeRunStore{}
-	eng, _ := newTestEngine(blockingProvider{}, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(blockingProvider{}, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
 	eng.Limits.WallClock = 10 * time.Millisecond
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent(), "manual", nil, nil)
 	if err != nil {
@@ -251,7 +313,7 @@ func TestRun_CostAndTokensAccumulated(t *testing.T) {
 		finalText("done"), // 4/2
 	)
 	store := &fakeRunStore{}
-	eng, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}))
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if err != nil || run.Status != RunSucceeded {
 		t.Fatalf("want clean success; got run=%+v err=%v", run, err)
@@ -265,7 +327,7 @@ func TestRun_CostAndTokensAccumulated(t *testing.T) {
 func TestRun_ProviderErrorFailsRun(t *testing.T) {
 	prov := ai.NewMockProvider() // empty queue → exhausted on first Complete
 	store := &fakeRunStore{}
-	eng, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent(), "manual", nil, nil)
 	// Per-turn provider failure is NOT a Go error: Status is authoritative.
 	if err != nil {
@@ -292,10 +354,11 @@ func TestRun_ResolverErrorDeniesTool(t *testing.T) {
 	fts := &fakeTicketSvc{}
 	aud := &fakeAuditor{}
 	eng := &Engine{
-		Runs:     &fakeRunStore{},
-		Tools:    NewToolRegistry(fts),
-		Auditor:  aud,
-		Resolver: errResolver{},
+		Runs:      &fakeRunStore{},
+		Tools:     NewToolRegistry(fts),
+		Auditor:   aud,
+		Resolver:  errResolver{},
+		Approvals: &fakeApprovals{},
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return prov, "claude-sonnet-4-5", nil
 		},

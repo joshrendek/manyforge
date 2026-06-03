@@ -40,8 +40,8 @@ func TestSetStatusToolValidatesArgs(t *testing.T) {
 	if !ok {
 		t.Fatal("set_status missing")
 	}
-	if tool.Effect != EffectSafe {
-		t.Fatalf("set_status must be Safe, got %v", tool.Effect)
+	if tool.Effect != EffectReversible {
+		t.Fatalf("set_status must be Reversible, got %v", tool.Effect)
 	}
 	_, err := tool.Invoke(context.Background(), uuid.New(), uuid.New(), []byte(`{"ticket_id":"`+uuid.New().String()+`","status":"banana"}`))
 	if err == nil || !strings.Contains(err.Error(), "status") {
@@ -85,15 +85,24 @@ func TestUnknownToolNotFound(t *testing.T) {
 	}
 }
 
-func TestSafeToolsCoverExpectedSet(t *testing.T) {
+func TestEffectClasses(t *testing.T) {
 	reg := NewToolRegistry(&fakeTicketSvc{})
-	for _, n := range []string{"read_ticket", "read_thread", "set_status", "set_priority", "set_tags", "set_assignee"} {
-		tool, ok := reg.Get(n)
+	want := map[string]EffectClass{
+		"read_ticket":  EffectRead,
+		"read_thread":  EffectRead,
+		"set_status":   EffectReversible,
+		"set_priority": EffectReversible,
+		"set_tags":     EffectReversible,
+		"set_assignee": EffectReversible,
+		"draft_reply":  EffectExternal,
+	}
+	for name, eff := range want {
+		tl, ok := reg.Get(name)
 		if !ok {
-			t.Fatalf("%s missing", n)
+			t.Fatalf("tool %q missing from registry", name)
 		}
-		if tool.Effect != EffectSafe {
-			t.Fatalf("%s must be Safe", n)
+		if tl.Effect != eff {
+			t.Errorf("%s effect = %d, want %d", name, tl.Effect, eff)
 		}
 	}
 }
