@@ -99,6 +99,23 @@ func TestParseOpenAIResponse_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestParseOpenAIResponse_MultipleToolCalls(t *testing.T) {
+	body := []byte(`{
+		"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
+			{"id":"call_1","type":"function","function":{"name":"get_ticket","arguments":"{\"id\":\"t-1\"}"}},
+			{"id":"call_2","type":"function","function":{"name":"set_priority","arguments":"{\"p\":\"high\"}"}}
+		]},"finish_reason":"tool_calls"}],
+		"usage":{"prompt_tokens":5,"completion_tokens":5}
+	}`)
+	resp, err := parseOpenAIResponse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(resp.ToolCalls) != 2 || resp.ToolCalls[0].Name != "get_ticket" || resp.ToolCalls[1].Name != "set_priority" {
+		t.Fatalf("want 2 tool calls get_ticket+set_priority, got %+v", resp.ToolCalls)
+	}
+}
+
 func TestParseOpenAIResponse_FinishReasons(t *testing.T) {
 	cases := map[string]FinishReason{
 		"stop":       FinishStop,
@@ -145,6 +162,11 @@ func TestOpenAIComplete_GoldenRoundTrip(t *testing.T) {
 				if r.Header.Get("Authorization") != "Bearer sk-test" {
 					t.Errorf("Authorization = %q, want Bearer sk-test", r.Header.Get("Authorization"))
 				}
+				body, _ := io.ReadAll(r.Body)
+				var sent openAIReq
+				if err := json.Unmarshal(body, &sent); err != nil || sent.Model == "" || sent.MaxTokens == 0 {
+					t.Errorf("unexpected request shape: %s", body)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(golden)
 			}))
@@ -189,18 +211,19 @@ func TestOpenAIComplete_NoKeyOmitsAuth(t *testing.T) {
 
 func TestOpenAIComplete_ErrorMapping(t *testing.T) {
 	cases := []struct {
+		name   string
 		status int
 		body   string
 		want   error
 	}{
-		{http.StatusInternalServerError, `{"error":{"message":"boom","type":"server_error"}}`, ErrProviderUnavailable},
-		{http.StatusTooManyRequests, `{"error":{"message":"rate limited","type":"rate_limit"}}`, ErrProviderUnavailable},
-		{http.StatusUnauthorized, `{"error":{"message":"bad key","type":"invalid_request_error"}}`, ErrBadRequest},
-		{http.StatusBadRequest, `{"error":{"message":"too many tokens","type":"invalid_request_error","code":"context_length_exceeded"}}`, ErrContextLength},
-		{http.StatusBadRequest, `{"error":{"message":"missing field","type":"invalid_request_error"}}`, ErrBadRequest},
+		{"500_server_error", http.StatusInternalServerError, `{"error":{"message":"boom","type":"server_error"}}`, ErrProviderUnavailable},
+		{"429_rate_limit", http.StatusTooManyRequests, `{"error":{"message":"rate limited","type":"rate_limit"}}`, ErrProviderUnavailable},
+		{"401_bad_key", http.StatusUnauthorized, `{"error":{"message":"bad key","type":"invalid_request_error"}}`, ErrBadRequest},
+		{"400_context_length", http.StatusBadRequest, `{"error":{"message":"too many tokens","type":"invalid_request_error","code":"context_length_exceeded"}}`, ErrContextLength},
+		{"400_missing_field", http.StatusBadRequest, `{"error":{"message":"missing field","type":"invalid_request_error"}}`, ErrBadRequest},
 	}
 	for _, tc := range cases {
-		t.Run(tc.want.Error(), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = io.WriteString(w, tc.body)
@@ -209,7 +232,7 @@ func TestOpenAIComplete_ErrorMapping(t *testing.T) {
 			p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", srv.Client())
 			_, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}})
 			if !errors.Is(err, tc.want) {
-				t.Fatalf("status %d body %q -> err %v, want Is(%v)", tc.status, tc.body, err, tc.want)
+				t.Fatalf("%s: status %d -> err %v, want Is(%v)", tc.name, tc.status, err, tc.want)
 			}
 		})
 	}
