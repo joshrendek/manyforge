@@ -22,6 +22,9 @@ type agentCRUD interface {
 	Delete(ctx context.Context, principalID, businessID, agentID uuid.UUID) error
 }
 
+// Compile-time check: *AgentService must satisfy agentCRUD.
+var _ agentCRUD = (*AgentService)(nil)
+
 // Handler exposes agent-definition CRUD over HTTP. Mounted behind the
 // agents.configure RequirePermission gate (so a lacking perm / invisible business
 // is a no-oracle 404).
