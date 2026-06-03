@@ -196,6 +196,10 @@ func TestOpenAPIDrift(t *testing.T) {
 			// When the spec-003 contract file does not yet exist, skip routes that
 			// belong to the 003 surface (identified by /agents in the path) — they
 			// will be pinned by TestOpenAPIDrift003 once the file is committed.
+			// INERT post-commit: specs/003-agent-runtime/contracts/openapi.yaml now
+			// exists, so spec003Available is always true and this branch never fires.
+			// It remains only as a guard if that contract file is ever removed;
+			// TestOpenAPIDrift003 enforces the strict spec-003 two-way check.
 			if !spec003Available && strings.Contains(op, "/agents") {
 				continue
 			}
