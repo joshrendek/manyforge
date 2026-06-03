@@ -104,11 +104,14 @@ func (s *AgentRunStore) Progress(ctx context.Context, principalID, businessID, r
 	return toAgentRun(row), nil
 }
 
-// Get returns a run by id within the business.
-func (s *AgentRunStore) Get(ctx context.Context, principalID, businessID, runID uuid.UUID) (AgentRun, error) {
+// Get returns a run by id within the business AND under the given agent. Scoping by
+// agent_id (in SQL) closes a same-business IDOR: run R for agent A is NOT fetchable via
+// a different agent B's path. A foreign/unknown agentID yields pgx.ErrNoRows ->
+// ErrNotFound -> 404 (no existence oracle).
+func (s *AgentRunStore) Get(ctx context.Context, principalID, businessID, agentID, runID uuid.UUID) (AgentRun, error) {
 	var row dbgen.AgentRun
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		r, e := dbgen.New(tx).GetAgentRun(ctx, dbgen.GetAgentRunParams{ID: runID, BusinessID: businessID})
+		r, e := dbgen.New(tx).GetAgentRun(ctx, dbgen.GetAgentRunParams{ID: runID, BusinessID: businessID, AgentID: agentID})
 		row = r
 		return e
 	})

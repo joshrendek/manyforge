@@ -25,9 +25,10 @@ type fakeRunOps struct {
 	getErr     error
 
 	// recorded inputs
-	called     bool
-	gotTrigger string
-	gotAgentID uuid.UUID
+	called        bool
+	gotTrigger    string
+	gotAgentID    uuid.UUID
+	gotGetAgentID uuid.UUID
 }
 
 func (f *fakeRunOps) Trigger(_ context.Context, _, _, agentID uuid.UUID, trigger string, _ *string, _ *uuid.UUID) (AgentRun, error) {
@@ -37,8 +38,9 @@ func (f *fakeRunOps) Trigger(_ context.Context, _, _, agentID uuid.UUID, trigger
 	return f.triggered, f.triggerErr
 }
 
-func (f *fakeRunOps) GetRun(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (AgentRun, error) {
+func (f *fakeRunOps) GetRun(_ context.Context, _, _, agentID, _ uuid.UUID) (AgentRun, error) {
 	f.called = true
+	f.gotGetAgentID = agentID
 	return f.gotRun, f.getErr
 }
 
@@ -121,6 +123,48 @@ func TestGetRunHandler_NotFound(t *testing.T) {
 	rec := serveRun(h, ring, http.MethodGet, "/businesses/"+bid.String()+"/agents/"+aid.String()+"/runs/"+uuid.New().String(), mintBearer(t, ring, uuid.New()), nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestGetRun_WrongAgentReturns404 pins the IDOR fix at the handler boundary: the
+// handler MUST forward the URL's {agentID} to the service (so the SQL agent-scope
+// predicate applies), and a service ErrNotFound (run not under that agent) renders 404
+// — never a distinguishable response from a run that simply doesn't exist.
+func TestGetRun_WrongAgentReturns404(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	aid := uuid.New()
+	runID := uuid.New()
+	// The store would return ErrNotFound for a run not owned by this agent; the fake
+	// simulates that, and we also assert the handler forwarded the URL's agentID.
+	svc := &fakeRunOps{getErr: errs.ErrNotFound}
+	h := NewRunHandler(svc)
+	rec := serveRun(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/agents/"+aid.String()+"/runs/"+runID.String(),
+		mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (run not under this agent → no oracle)", rec.Code)
+	}
+	if svc.gotGetAgentID != aid {
+		t.Fatalf("handler forwarded agentID %v, want the URL's %v (must drive the SQL agent-scope predicate)", svc.gotGetAgentID, aid)
+	}
+}
+
+// TestGetRunHandler_BadAgentID — a malformed {agentID} on the GET path is a 404 (no
+// oracle), and the service is never reached.
+func TestGetRunHandler_BadAgentID(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	svc := &fakeRunOps{gotRun: AgentRun{ID: uuid.New(), Status: RunSucceeded}}
+	h := NewRunHandler(svc)
+	rec := serveRun(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/agents/not-a-uuid/runs/"+uuid.New().String(),
+		mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (no oracle on malformed agentID)", rec.Code)
+	}
+	if svc.called {
+		t.Fatalf("svc should not be called on malformed agentID")
 	}
 }
 

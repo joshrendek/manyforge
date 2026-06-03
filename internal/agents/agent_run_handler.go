@@ -14,7 +14,7 @@ import (
 // runOps is the narrow surface the run HTTP handler needs (fakeable in tests).
 type runOps interface {
 	Trigger(ctx context.Context, principalID, businessID, agentID uuid.UUID, trigger string, targetType *string, targetID *uuid.UUID) (AgentRun, error)
-	GetRun(ctx context.Context, principalID, businessID, runID uuid.UUID) (AgentRun, error)
+	GetRun(ctx context.Context, principalID, businessID, agentID, runID uuid.UUID) (AgentRun, error)
 }
 
 // RunService triggers agent runs (as the agent principal) and reads run status.
@@ -42,9 +42,11 @@ func (s *RunService) Trigger(ctx context.Context, principalID, businessID, agent
 	return s.engine.Run(ctx, ag.PrincipalID, ag, trigger, targetType, targetID)
 }
 
-// GetRun reads a run within the caller's business.
-func (s *RunService) GetRun(ctx context.Context, principalID, businessID, runID uuid.UUID) (AgentRun, error) {
-	return s.runs.Get(ctx, principalID, businessID, runID)
+// GetRun reads a run within the caller's business AND under the given agent. The
+// agentID is threaded into the SQL predicate so a run is only visible via its own
+// agent's path (no same-business cross-agent IDOR).
+func (s *RunService) GetRun(ctx context.Context, principalID, businessID, agentID, runID uuid.UUID) (AgentRun, error) {
+	return s.runs.Get(ctx, principalID, businessID, agentID, runID)
 }
 
 // RunHandler is the thin HTTP layer over runOps.
@@ -139,12 +141,19 @@ func (h *RunHandler) getRun(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
+	// Parse {agentID} too: the run read is scoped by agent_id in SQL, so a malformed
+	// agentID is a not-found (no oracle), same as a malformed business/run id.
+	aid, err := runAgentID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
 	rid, err := runPathID(r)
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
-	run, err := h.svc.GetRun(r.Context(), pid, bid, rid)
+	run, err := h.svc.GetRun(r.Context(), pid, bid, aid, rid)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
