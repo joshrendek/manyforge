@@ -44,6 +44,10 @@ type Service struct {
 type ReplyInput struct {
 	BodyText string
 	BodyHTML *string
+	// IdempotencyKey, when non-nil, dedups the produced outbound message: a second
+	// Reply with the same key inserts no new message and enqueues no second send
+	// (used by the approvals executor so an at-least-once outbox redelivery sends once).
+	IdempotencyKey *uuid.UUID
 }
 
 // TriageInput is the partial-update payload for Triage. A nil field is preserved;
@@ -236,10 +240,28 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 
-		// Load + own-check the ticket (ErrNoRows ⇒ ErrNotFound, no oracle).
+		// Load + own-check the ticket (ErrNoRows ⇒ ErrNotFound, no oracle). This stays
+		// BEFORE the dedup short-circuit so a foreign/redacted ticket still 404s on replay.
 		tk, terr := q.GetTicket(ctx, dbgen.GetTicketParams{ID: ticketID, BusinessID: businessID})
 		if terr != nil {
 			return terr
+		}
+
+		// Idempotent re-execution (US4): if this approval already produced a message,
+		// return it and do nothing else — no second insert, no second send enqueue, no
+		// suppression/rate-limit spend. Only triggers when an idempotency key is supplied
+		// (the approvals executor); ordinary human replies (nil key) are unaffected.
+		if in.IdempotencyKey != nil {
+			prior, perr := q.GetOutboundMessageByApproval(ctx, dbgen.GetOutboundMessageByApprovalParams{
+				SourceApprovalItemID: db.PGUUID(*in.IdempotencyKey), BusinessID: businessID,
+			})
+			if perr == nil {
+				out = toMessage(prior, nil)
+				return nil
+			}
+			if !errors.Is(perr, pgx.ErrNoRows) {
+				return perr
+			}
 		}
 
 		// yqi: a reply on a `new` ticket advances it to `open` (same tx, audited).
@@ -303,6 +325,7 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 			AuthorPrincipalID: db.PGUUID(principalID), MessageID: rfcMessageID,
 			InReplyTo: inReplyTo, References: refs,
 			BodyText: &in.BodyText, BodyHtml: in.BodyHTML,
+			SourceApprovalItemID: db.PGUUIDPtr(in.IdempotencyKey),
 		})
 		if ierr != nil {
 			return ierr
