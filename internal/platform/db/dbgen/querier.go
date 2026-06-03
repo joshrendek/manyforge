@@ -50,6 +50,9 @@ type Querier interface {
 	// ---- Account lifecycle (T077, FR-028) ----
 	// Reversible deactivation; Login already denies any non-active account (FR-026).
 	DeactivateAccount(ctx context.Context, id uuid.UUID) error
+	// DeleteAIProviderCredential deletes a credential by (id, business_id).
+	// Returns rows-affected so the service can map 0 => ErrNotFound.
+	DeleteAIProviderCredential(ctx context.Context, arg DeleteAIProviderCredentialParams) (int64, error)
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
@@ -76,6 +79,13 @@ type Querier interface {
 	// The caller's own grants (data portability). RLS scopes business/role joins to
 	// what the caller may already see; their own memberships are always visible.
 	ExportMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ExportMembershipsForPrincipalRow, error)
+	// GetAIProviderCredential loads a credential by (business_id, provider) — the
+	// ownership predicate. RLS scopes rows to the caller's authorized businesses;
+	// the explicit business_id is defense in depth. pgx.ErrNoRows => ErrNotFound.
+	GetAIProviderCredential(ctx context.Context, arg GetAIProviderCredentialParams) (AiProviderCredential, error)
+	// GetAIProviderCredentialByID loads a credential by (id, business_id) — the
+	// ownership predicate. Used when the caller holds the UUID directly.
+	GetAIProviderCredentialByID(ctx context.Context, arg GetAIProviderCredentialByIDParams) (AiProviderCredential, error)
 	GetAccountByEmail(ctx context.Context, email string) (Account, error)
 	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
 	GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error)
@@ -119,6 +129,16 @@ type Querier interface {
 	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
 	GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
+	// Agent runtime (spec 003 US1a) — per-business BYO provider credential queries.
+	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
+	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement,
+	// mirroring identity.sql). tenant_root_id is derived from the business row on
+	// insert so the FK + tenant scope come from the parent row.
+	// InsertAIProviderCredential creates a BYO credential for a business. tenant_root_id
+	// is derived from the business row (RLS-scoped: a business the caller cannot see
+	// returns no row, so the NOT NULL column rejects the insert → service maps to 404).
+	// Duplicate (business_id, provider) → unique violation → 409.
+	InsertAIProviderCredential(ctx context.Context, arg InsertAIProviderCredentialParams) (AiProviderCredential, error)
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
 	// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
@@ -166,6 +186,9 @@ type Querier interface {
 	// Email suppression queries (spec 001 email_suppression table, US2 outbound safety).
 	// Table: email_suppression (email citext PK, reason text, created_at timestamptz).
 	IsSuppressed(ctx context.Context, email string) (bool, error)
+	// ListAIProviderCredentials lists all credentials for a business, ordered
+	// by provider name for a stable, deterministic result.
+	ListAIProviderCredentials(ctx context.Context, businessID uuid.UUID) ([]AiProviderCredential, error)
 	// NOTE: the outbound delivery-state path (delivery_state read, system inbound
 	// address lookup, mark sent/failed) is driven by the PRINCIPAL-LESS outbox-send /
 	// bounce worker. Plain-table sqlc queries against the RLS-protected ticket_message /
