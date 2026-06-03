@@ -90,6 +90,8 @@ func buildOpenAIRequest(req Request, model string) openAIReq {
 	return out
 }
 
+// openAIResp is the top-level chat/completions response envelope. Only the
+// fields we read are modeled; unknown fields are silently ignored.
 type openAIResp struct {
 	Choices []struct {
 		Message struct {
