@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,8 +81,8 @@ func validateCreateAgent(in CreateAgentInput) error {
 	if in.AutonomyMode < 1 || in.AutonomyMode > 3 {
 		return fmt.Errorf("agents: autonomy_mode must be 1, 2, or 3: %w", errs.ErrValidation)
 	}
-	if in.MonthlyBudgetCents < 0 {
-		return fmt.Errorf("agents: monthly_budget_cents must be >= 0: %w", errs.ErrValidation)
+	if in.MonthlyBudgetCents < 0 || in.MonthlyBudgetCents > math.MaxInt32 {
+		return fmt.Errorf("agents: monthly_budget_cents out of range [0, 2147483647]: %w", errs.ErrValidation)
 	}
 	return nil
 }
@@ -96,8 +97,8 @@ func validateUpdateAgent(in UpdateAgentInput) error {
 	if in.AutonomyMode != nil && (*in.AutonomyMode < 1 || *in.AutonomyMode > 3) {
 		return fmt.Errorf("agents: autonomy_mode must be 1, 2, or 3: %w", errs.ErrValidation)
 	}
-	if in.MonthlyBudgetCents != nil && *in.MonthlyBudgetCents < 0 {
-		return fmt.Errorf("agents: monthly_budget_cents must be >= 0: %w", errs.ErrValidation)
+	if in.MonthlyBudgetCents != nil && (*in.MonthlyBudgetCents < 0 || *in.MonthlyBudgetCents > math.MaxInt32) {
+		return fmt.Errorf("agents: monthly_budget_cents out of range [0, 2147483647]: %w", errs.ErrValidation)
 	}
 	return nil
 }
