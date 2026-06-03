@@ -27,6 +27,21 @@ const (
 	EffectIrreversible                    // destructive (delete/merge/billing)
 )
 
+// idemKeyCtx is the context key under which an approval id rides into a tool's Invoke
+// so a write tool (draft_reply) can dedup its external side effect on execution.
+type idemKeyCtx struct{}
+
+// withApprovalKey tags ctx with the approval id so the reply tool dedups on execution.
+func withApprovalKey(ctx context.Context, id uuid.UUID) context.Context {
+	return context.WithValue(ctx, idemKeyCtx{}, id)
+}
+
+// approvalKeyFrom returns the approval idempotency key set by withApprovalKey, if any.
+func approvalKeyFrom(ctx context.Context) (uuid.UUID, bool) {
+	id, ok := ctx.Value(idemKeyCtx{}).(uuid.UUID)
+	return id, ok
+}
+
 // ticketSvc is the subset of *ticketing.Service the tools call (lets unit tests fake it).
 type ticketSvc interface {
 	GetTicket(ctx context.Context, pid, bid, ticketID uuid.UUID) (ticketing.Ticket, error)
@@ -306,7 +321,13 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 			if strings.TrimSpace(a.BodyText) == "" {
 				return "", fmt.Errorf("agents: empty reply body: %w", errs.ErrValidation)
 			}
-			if _, err := svc.Reply(ctx, pid, bid, a.TicketID, ticketing.ReplyInput{BodyText: a.BodyText}); err != nil {
+			in := ticketing.ReplyInput{BodyText: a.BodyText}
+			// When this reply runs as an approved action, carry the approval id as the
+			// idempotency key so an at-least-once outbox redelivery sends at most once.
+			if k, ok := approvalKeyFrom(ctx); ok {
+				in.IdempotencyKey = &k
+			}
+			if _, err := svc.Reply(ctx, pid, bid, a.TicketID, in); err != nil {
 				return "", err
 			}
 			return "reply sent", nil
