@@ -17,7 +17,7 @@ import (
 type openAIReq struct {
 	Model       string          `json:"model"`
 	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature float64         `json:"temperature"`
+	Temperature float64         `json:"temperature"` // sent as-is; unset (0) => deterministic. US3 sets per agent. manyforge-4po
 	Messages    []openAIMessage `json:"messages"`
 	Tools       []openAITool    `json:"tools,omitempty"`
 }
@@ -162,6 +162,10 @@ func NewOpenAICompatProvider(apiKey, baseURL, model string, hc *http.Client) *Op
 	return &OpenAICompatProvider{apiKey: apiKey, baseURL: baseURL, model: model, httpClient: hc}
 }
 
+// Name returns the transport family ("openai-compat") shared by OpenAI/Ollama/vLLM.
+// NOTE: this is the TRANSPORT name, distinct from the credential provider name
+// ("openai"/"ollama"/"vllm") and from registry Model.Provider. US3 cost lookup
+// keys on the model ID (Registry.Lookup(req.Model)), not on Name(). See manyforge-uc2.
 func (p *OpenAICompatProvider) Name() string { return "openai-compat" }
 
 func (p *OpenAICompatProvider) Complete(ctx context.Context, req Request) (Response, error) {
