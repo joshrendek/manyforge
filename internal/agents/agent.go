@@ -283,6 +283,8 @@ func mapAgentErr(err error) error {
 		return fmt.Errorf("agents: not found: %w", errs.ErrNotFound)
 	case errors.As(err, &pgErr) && pgErr.Code == "23505":
 		return fmt.Errorf("agents: duplicate agent: %w", errs.ErrConflict)
+	case errors.As(err, &pgErr) && pgErr.Code == "23503":
+		return fmt.Errorf("agents: agent has acted and cannot be deleted; disable it instead: %w", errs.ErrConflict)
 	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrNotFound),
 		errors.Is(err, errs.ErrConflict), errors.Is(err, errs.ErrRateLimited):
 		return err
