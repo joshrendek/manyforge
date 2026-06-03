@@ -14,12 +14,15 @@ import (
 )
 
 // EffectClass is each tool's static side-effect classification (design §2.4). The
-// US3 executor runs Safe inline and proposes (does not execute) non-Safe; US4's
-// gate combines this with the agent's autonomy mode. Unknown ⇒ treated as non-Safe.
+// run loop's gate (gate.go) combines this with the agent's autonomy mode to decide
+// auto-exec vs. approval. Ordered low→high risk; an UNKNOWN class is fail-closed to
+// approval by the gate. Splitting Read from Reversible lets Mode 2 ("queue every
+// write, reads inline") be expressed.
 type EffectClass int
 
 const (
-	EffectSafe         EffectClass = iota // reads + reversible internal writes (status/priority/tags/assignee)
+	EffectRead         EffectClass = iota // pure reads — never mutate (read_ticket/read_thread)
+	EffectReversible                      // reversible internal writes (status/priority/tags/assignee)
 	EffectExternal                        // leaves the tenant boundary (send email)
 	EffectIrreversible                    // destructive (delete/merge/billing)
 )
@@ -170,7 +173,7 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 	add := func(t Tool) { reg.tools[t.Name] = t }
 
 	add(Tool{
-		Name: "read_ticket", Effect: EffectSafe, RequiredPerm: "tickets.read",
+		Name: "read_ticket", Effect: EffectRead, RequiredPerm: "tickets.read",
 		Description: "Read a support ticket's fields (subject, status, priority, requester).",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -189,7 +192,7 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "read_thread", Effect: EffectSafe, RequiredPerm: "tickets.read",
+		Name: "read_thread", Effect: EffectRead, RequiredPerm: "tickets.read",
 		Description: "Read the message thread (conversation) of a ticket.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -216,7 +219,7 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_status", Effect: EffectSafe, RequiredPerm: "tickets.write",
+		Name: "set_status", Effect: EffectReversible, RequiredPerm: "tickets.write",
 		Description: "Set a ticket's status. One of: new, open, pending, solved, closed.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"status":{"type":"string","enum":["new","open","pending","solved","closed"]}},"required":["ticket_id","status"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -236,7 +239,7 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_priority", Effect: EffectSafe, RequiredPerm: "tickets.write",
+		Name: "set_priority", Effect: EffectReversible, RequiredPerm: "tickets.write",
 		Description: "Set a ticket's priority. One of: low, normal, high, urgent.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"priority":{"type":"string","enum":["low","normal","high","urgent"]}},"required":["ticket_id","priority"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -256,7 +259,7 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_tags", Effect: EffectSafe, RequiredPerm: "tickets.write",
+		Name: "set_tags", Effect: EffectReversible, RequiredPerm: "tickets.write",
 		Description: "Replace a ticket's tags with the given list (empty list clears all tags).",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"tags":{"type":"array","items":{"type":"string"}}},"required":["ticket_id","tags"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -273,7 +276,7 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_assignee", Effect: EffectSafe, RequiredPerm: "tickets.assign",
+		Name: "set_assignee", Effect: EffectReversible, RequiredPerm: "tickets.assign",
 		Description: "Assign the ticket to a member (by principal id), or unassign with null.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"assignee":{"type":["string","null"],"format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
