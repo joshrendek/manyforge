@@ -398,6 +398,24 @@ type Agent struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
+type AgentRun struct {
+	ID            uuid.UUID   `json:"id"`
+	AgentID       uuid.UUID   `json:"agent_id"`
+	BusinessID    uuid.UUID   `json:"business_id"`
+	TenantRootID  uuid.UUID   `json:"tenant_root_id"`
+	Trigger       string      `json:"trigger"`
+	TargetType    *string     `json:"target_type"`
+	TargetID      pgtype.UUID `json:"target_id"`
+	Status        string      `json:"status"`
+	TokensIn      int32       `json:"tokens_in"`
+	TokensOut     int32       `json:"tokens_out"`
+	CostCents     int64       `json:"cost_cents"`
+	CorrelationID string      `json:"correlation_id"`
+	Error         *string     `json:"error"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+}
+
 type AiProviderCredential struct {
 	ID           uuid.UUID  `json:"id"`
 	BusinessID   uuid.UUID  `json:"business_id"`
