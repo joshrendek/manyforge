@@ -144,3 +144,53 @@ func TestGetAgentHandler_BadBusinessID(t *testing.T) {
 		t.Fatalf("status = %d, want 404 (no oracle on malformed id)", rec.Code)
 	}
 }
+
+func TestGetAgentHandler_BadAgentID(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	h := NewHandler(&fakeAgentSvc{})
+	rec := serveAgent(h, ring, http.MethodGet, "/businesses/"+bid.String()+"/agents/not-a-uuid", mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (no oracle on malformed agentID)", rec.Code)
+	}
+}
+
+func TestListAgentsHandler_OK(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	h := NewHandler(&fakeAgentSvc{got: Agent{ID: uuid.New(), BusinessID: bid, Name: "Bot", Provider: "anthropic", Model: "m", AllowedTools: []string{}, AutonomyMode: 1, Enabled: true}})
+	rec := serveAgent(h, ring, http.MethodGet, "/businesses/"+bid.String()+"/agents", mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var out struct {
+		Items []agentResp `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Items) != 1 || out.Items[0].Name != "Bot" {
+		t.Fatalf("list envelope = %+v", out)
+	}
+}
+
+func TestUpdateAgentHandler_OK(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	h := NewHandler(&fakeAgentSvc{got: Agent{ID: uuid.New(), BusinessID: bid, Name: "Bot", Provider: "anthropic", Model: "m", AllowedTools: []string{}, AutonomyMode: 2, Enabled: false}})
+	body, _ := json.Marshal(map[string]any{"enabled": false})
+	rec := serveAgent(h, ring, http.MethodPatch, "/businesses/"+bid.String()+"/agents/"+uuid.New().String(), mintBearer(t, ring, uuid.New()), bytes.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestDeleteAgentHandler_NoContent(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	h := NewHandler(&fakeAgentSvc{})
+	rec := serveAgent(h, ring, http.MethodDelete, "/businesses/"+bid.String()+"/agents/"+uuid.New().String(), mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+}
