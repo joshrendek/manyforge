@@ -140,7 +140,7 @@ A CI job runs `make test` + `make int-test` + `make contract-test` + `make sec-t
 ---
 
 ## 8. Open questions for the plan phase
-- Exact `max_iterations` / `max_tokens` / wall-clock defaults (config keys + sane defaults).
-- Approval-item `expires_at` TTL default and the sweep cadence.
-- Model-registry seed list + pricing source-of-truth (static table vs config).
-- Whether US7's accounting surfaces in the existing support UI or a new settings panel.
+- ~~Exact `max_iterations` / `max_tokens` / wall-clock defaults~~ — **RESOLVED in US3** (see `../plans/2026-06-03-us3-run-loop.md`): `agents.RunLimits` defaults `max_iterations=8`, `max_tokens_per_run=100_000`, `max_output_tokens=4096` (per provider call), wall-clock `120s`, injected into the `Engine`. AI `Request.temperature` defaults to `0.0` (deterministic — makes mock/golden replay stable; resolves `manyforge-4po`). Config-key promotion of these defaults is a filed follow-up.
+- Approval-item `expires_at` TTL default and the sweep cadence. _(deferred to US4 — gate + approvals)_
+- Model-registry seed list + pricing source-of-truth (static table vs config). _(US7 — accounting)_
+- Whether US7's accounting surfaces in the existing support UI or a new settings panel. _(US7)_
