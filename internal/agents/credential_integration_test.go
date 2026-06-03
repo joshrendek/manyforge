@@ -4,11 +4,13 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 func TestCredentialCRUDRoundTrip(t *testing.T) {
@@ -51,6 +53,14 @@ func TestCredentialCRUDRoundTrip(t *testing.T) {
 	}
 	if stored == nil || *stored == "sk-live" {
 		t.Fatalf("api key stored unsealed: %v", stored)
+	}
+
+	// A second Create for the same (business, provider) violates UNIQUE(business_id,
+	// provider) → SQLSTATE 23505, which the service maps to ErrConflict (→ 409).
+	if _, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+		Provider: "anthropic", APIKey: "sk-dup", DefaultModel: "claude-sonnet-4-6",
+	}); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("duplicate credential: want ErrConflict, got %v", err)
 	}
 
 	other := seedAgentTenant(ctx, t, tdb)
