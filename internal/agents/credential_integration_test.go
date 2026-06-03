@@ -53,9 +53,16 @@ func TestCredentialCRUDRoundTrip(t *testing.T) {
 		t.Fatalf("api key stored unsealed: %v", stored)
 	}
 
-	// A different tenant cannot resolve it (RLS / no-oracle not-found).
 	other := seedAgentTenant(ctx, t, tdb)
+	// Adversarial: tenant B's principal asks for tenant A's business_id (the row that
+	// actually exists). RLS on the business table (authorized_businesses(current_principal))
+	// must exclude ten.businessID for other.principalID, so the INSERT…SELECT/GET yields
+	// no row → not-found. This is the real isolation boundary.
+	if _, err := svc.Resolve(ctx, other.principalID, ten.businessID, "anthropic"); err == nil {
+		t.Fatal("cross-tenant Resolve of tenant A's credential by tenant B must fail (RLS)")
+	}
+	// Sanity: tenant B asking for its own (empty) business is also not-found.
 	if _, err := svc.Resolve(ctx, other.principalID, other.businessID, "anthropic"); err == nil {
-		t.Fatal("cross-tenant Resolve must fail (not found)")
+		t.Fatal("tenant B has no credential; must be not-found")
 	}
 }
