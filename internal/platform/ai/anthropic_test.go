@@ -145,8 +145,9 @@ func TestAnthropicComplete_GoldenRoundTrip(t *testing.T) {
 					t.Errorf("missing anthropic-version header")
 				}
 				body, _ := io.ReadAll(r.Body)
-				if !json.Valid(body) {
-					t.Errorf("request body is not valid JSON")
+				var sent anthropicReq
+				if err := json.Unmarshal(body, &sent); err != nil || sent.Model == "" || sent.MaxTokens == 0 {
+					t.Errorf("unexpected request shape: %s", body)
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(golden)
@@ -176,18 +177,20 @@ func TestAnthropicComplete_GoldenRoundTrip(t *testing.T) {
 
 func TestAnthropicComplete_ErrorMapping(t *testing.T) {
 	cases := []struct {
+		name   string
 		status int
 		body   string
 		want   error
 	}{
-		{http.StatusInternalServerError, `{"error":{"type":"api_error","message":"boom"}}`, ErrProviderUnavailable},
-		{http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","message":"slow down"}}`, ErrProviderUnavailable},
-		{http.StatusUnauthorized, `{"error":{"type":"authentication_error","message":"bad key"}}`, ErrBadRequest},
-		{http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000"}}`, ErrContextLength},
-		{http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"messages: at least one required"}}`, ErrBadRequest},
+		{"500_server_error", http.StatusInternalServerError, `{"error":{"type":"api_error","message":"boom"}}`, ErrProviderUnavailable},
+		{"429_rate_limit", http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","message":"slow down"}}`, ErrProviderUnavailable},
+		{"401_auth", http.StatusUnauthorized, `{"error":{"type":"authentication_error","message":"bad key"}}`, ErrBadRequest},
+		{"400_prompt_too_long", http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000"}}`, ErrContextLength},
+		{"400_missing_field", http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"messages: at least one required"}}`, ErrBadRequest},
+		{"400_tool_name_too_long", http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"tool name is too long"}}`, ErrBadRequest},
 	}
 	for _, tc := range cases {
-		t.Run(tc.want.Error(), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = io.WriteString(w, tc.body)
@@ -196,7 +199,7 @@ func TestAnthropicComplete_ErrorMapping(t *testing.T) {
 			p := NewAnthropicProvider("sk-test", srv.URL, "claude-sonnet-4-5", srv.Client())
 			_, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}})
 			if !errors.Is(err, tc.want) {
-				t.Fatalf("status %d body %q -> err %v, want Is(%v)", tc.status, tc.body, err, tc.want)
+				t.Fatalf("%s: status %d body %q -> err %v, want Is(%v)", tc.name, tc.status, tc.body, err, tc.want)
 			}
 		})
 	}
