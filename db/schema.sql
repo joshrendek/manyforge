@@ -304,3 +304,24 @@ CREATE TABLE ai_provider_credential (
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
+
+CREATE TABLE agent (
+    id                   uuid PRIMARY KEY,
+    business_id          uuid NOT NULL,
+    tenant_root_id       uuid NOT NULL,
+    principal_id         uuid NOT NULL,
+    name                 text NOT NULL,
+    provider             ai_provider NOT NULL,
+    model                text NOT NULL,
+    system_prompt        text NOT NULL,
+    allowed_tools        text[] NOT NULL,
+    autonomy_mode        smallint NOT NULL,
+    enabled              boolean NOT NULL,
+    monthly_budget_cents integer NOT NULL,
+    created_at           timestamptz NOT NULL,
+    updated_at           timestamptz NOT NULL,
+    UNIQUE (business_id, name),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (principal_id) REFERENCES principal (id)
+);
