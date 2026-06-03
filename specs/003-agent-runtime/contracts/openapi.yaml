@@ -1,0 +1,157 @@
+openapi: 3.1.0
+info:
+  title: manyforge Agent Runtime API
+  version: 0.1.0
+  description: >
+    Spec 003 — Agent Runtime & AI Gateway. US2 surface: business-bound agent
+    definition CRUD, gated by the agents.configure permission. Authorization and
+    existence are indistinguishable — a lacking permission or an invisible business
+    returns the same 404 as an unknown id (no existence oracle).
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /businesses/{id}/agents:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listAgents
+      summary: List agent definitions for a business
+      responses:
+        "200":
+          description: Agent list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createAgent
+      summary: Create an agent definition (creates its agent principal)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAgentRequest" }
+      responses:
+        "201":
+          description: Created agent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/agents/{agentID}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: agentID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getAgent
+      summary: Get one agent definition
+      responses:
+        "200":
+          description: Agent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateAgent
+      summary: Partially update an agent definition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAgentRequest" }
+      responses:
+        "200":
+          description: Updated agent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteAgent
+      summary: Delete an agent definition and its agent principal
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    NotFound:
+      description: Not found (also returned for lacking permission / invisible business — no oracle)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Invalid request body
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Conflict (duplicate agent name in the business)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    Agent:
+      type: object
+      required: [id, business_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        principal_id: { type: string, format: uuid }
+        name: { type: string }
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm] }
+        model: { type: string }
+        system_prompt: { type: string }
+        allowed_tools: { type: array, items: { type: string } }
+        autonomy_mode: { type: integer, enum: [1, 2, 3] }
+        enabled: { type: boolean }
+        monthly_budget_cents: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AgentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Agent" }
+    CreateAgentRequest:
+      type: object
+      required: [name, provider, model]
+      properties:
+        name: { type: string, minLength: 1 }
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm] }
+        model: { type: string, minLength: 1 }
+        system_prompt: { type: string }
+        allowed_tools: { type: array, items: { type: string } }
+        autonomy_mode: { type: integer, enum: [1, 2, 3], default: 1 }
+        enabled: { type: boolean, default: true }
+        monthly_budget_cents: { type: integer, minimum: 0, default: 0 }
+    UpdateAgentRequest:
+      type: object
+      description: Partial update — omit a field to leave it unchanged. provider is immutable.
+      properties:
+        name: { type: string, minLength: 1 }
+        model: { type: string, minLength: 1 }
+        system_prompt: { type: string }
+        allowed_tools: { type: array, items: { type: string } }
+        autonomy_mode: { type: integer, enum: [1, 2, 3] }
+        enabled: { type: boolean }
+        monthly_budget_cents: { type: integer, minimum: 0 }
