@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-toolexample",
+  "object": "chat.completion",
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_01abc",
+            "type": "function",
+            "function": { "name": "get_ticket", "arguments": "{\"id\":\"t-42\"}" }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 28, "completion_tokens": 14, "total_tokens": 42 }
+}
