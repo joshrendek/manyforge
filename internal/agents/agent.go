@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
@@ -155,8 +156,29 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 			MonthlyBudgetCents: int32(in.MonthlyBudgetCents),
 			BusinessID:         businessID,
 		})
+		if aerr != nil {
+			return aerr
+		}
 		row = r
-		return aerr
+		// US3: bind the agent's acting membership (home business + agent_runtime preset
+		// role) so authorized_businesses() is non-empty and the agent can pass RLS/RBAC to
+		// act. membership_rls is WITH CHECK(true) so the creator's context may insert;
+		// membership_agent_guard validates home-business/single-membership/no-admin-perms.
+		roleID, rErr := q.PresetRoleID(ctx, "agent_runtime")
+		if rErr != nil {
+			return rErr
+		}
+		if mErr := q.CreateMembership(ctx, dbgen.CreateMembershipParams{
+			ID:           uuid.New(),
+			PrincipalID:  agentPrincipalID,
+			BusinessID:   businessID,
+			TenantRootID: row.TenantRootID,
+			RoleID:       roleID,
+			GrantedBy:    db.PGUUID(principalID),
+		}); mErr != nil {
+			return mErr
+		}
+		return nil
 	})
 	if err != nil {
 		return Agent{}, mapAgentErr(err)
