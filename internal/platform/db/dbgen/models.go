@@ -428,6 +428,24 @@ type AiProviderCredential struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
+type ApprovalItem struct {
+	ID                   uuid.UUID          `json:"id"`
+	AgentRunID           uuid.UUID          `json:"agent_run_id"`
+	BusinessID           uuid.UUID          `json:"business_id"`
+	TenantRootID         uuid.UUID          `json:"tenant_root_id"`
+	Tool                 string             `json:"tool"`
+	Args                 []byte             `json:"args"`
+	EffectClass          int16              `json:"effect_class"`
+	State                string             `json:"state"`
+	DecidedByPrincipalID pgtype.UUID        `json:"decided_by_principal_id"`
+	DecidedAt            pgtype.Timestamptz `json:"decided_at"`
+	ExecutedAt           pgtype.Timestamptz `json:"executed_at"`
+	ExpiresAt            time.Time          `json:"expires_at"`
+	Error                *string            `json:"error"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+}
+
 type Attachment struct {
 	ID              uuid.UUID `json:"id"`
 	TicketMessageID uuid.UUID `json:"ticket_message_id"`
@@ -636,22 +654,23 @@ type Ticket struct {
 }
 
 type TicketMessage struct {
-	ID                uuid.UUID                `json:"id"`
-	TicketID          uuid.UUID                `json:"ticket_id"`
-	BusinessID        uuid.UUID                `json:"business_id"`
-	TenantRootID      uuid.UUID                `json:"tenant_root_id"`
-	Direction         TicketMessageDirection   `json:"direction"`
-	AuthorPrincipalID pgtype.UUID              `json:"author_principal_id"`
-	MessageID         string                   `json:"message_id"`
-	InReplyTo         *string                  `json:"in_reply_to"`
-	References        []string                 `json:"references"`
-	BodyText          *string                  `json:"body_text"`
-	BodyHtml          *string                  `json:"body_html"`
-	AuthResults       []byte                   `json:"auth_results"`
-	IsAutoReply       bool                     `json:"is_auto_reply"`
-	CreatedAt         time.Time                `json:"created_at"`
-	DeliveryState     NullMessageDeliveryState `json:"delivery_state"`
-	DeliveryError     *string                  `json:"delivery_error"`
+	ID                   uuid.UUID                `json:"id"`
+	TicketID             uuid.UUID                `json:"ticket_id"`
+	BusinessID           uuid.UUID                `json:"business_id"`
+	TenantRootID         uuid.UUID                `json:"tenant_root_id"`
+	Direction            TicketMessageDirection   `json:"direction"`
+	AuthorPrincipalID    pgtype.UUID              `json:"author_principal_id"`
+	MessageID            string                   `json:"message_id"`
+	InReplyTo            *string                  `json:"in_reply_to"`
+	References           []string                 `json:"references"`
+	BodyText             *string                  `json:"body_text"`
+	BodyHtml             *string                  `json:"body_html"`
+	AuthResults          []byte                   `json:"auth_results"`
+	IsAutoReply          bool                     `json:"is_auto_reply"`
+	CreatedAt            time.Time                `json:"created_at"`
+	DeliveryState        NullMessageDeliveryState `json:"delivery_state"`
+	DeliveryError        *string                  `json:"delivery_error"`
+	SourceApprovalItemID pgtype.UUID              `json:"source_approval_item_id"`
 }
 
 type TicketTag struct {

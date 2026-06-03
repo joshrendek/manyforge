@@ -54,6 +54,10 @@ type Querier interface {
 	// Insert a run, deriving tenant_root_id from the (RLS-visible) agent. An invisible
 	// or foreign agent yields no row -> pgx.ErrNoRows -> no-oracle 404.
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
+	// Insert a pending item, deriving tenant_root_id from the (RLS-visible) parent run.
+	// An invisible/foreign run yields no row -> pgx.ErrNoRows -> no-oracle not-found.
+	// TTL is passed in seconds (make_interval avoids a pgtype.Interval param).
+	CreateApprovalItem(ctx context.Context, arg CreateApprovalItemParams) (ApprovalItem, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
 	// yet see (no membership at insert time). The caller builds the result from inputs.
@@ -67,6 +71,9 @@ type Querier interface {
 	// ---- Account lifecycle (T077, FR-028) ----
 	// Reversible deactivation; Login already denies any non-active account (FR-026).
 	DeactivateAccount(ctx context.Context, id uuid.UUID) error
+	// Transition pending -> approved|denied iff still pending AND not past expiry. A row
+	// that is already decided/expired returns no row (caller maps to 409 conflict).
+	DecideApprovalItem(ctx context.Context, arg DecideApprovalItemParams) (ApprovalItem, error)
 	// DeleteAIProviderCredential deletes a credential by (id, business_id).
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteAIProviderCredential(ctx context.Context, arg DeleteAIProviderCredentialParams) (int64, error)
@@ -97,6 +104,8 @@ type Querier interface {
 	// Enqueue a side-effect in the SAME transaction as the source mutation. Rides
 	// the WITH CHECK (true) policy, so it works with or without a principal context.
 	EnqueueOutbox(ctx context.Context, arg EnqueueOutboxParams) error
+	// Sweep: mark every past-expiry pending item expired. Returns the count swept.
+	ExpireStaleApprovals(ctx context.Context) (int64, error)
 	// The caller's own grants (data portability). RLS scopes business/role joins to
 	// what the caller may already see; their own memberships are always visible.
 	ExportMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ExportMembershipsForPrincipalRow, error)
@@ -117,6 +126,8 @@ type Querier interface {
 	// Scope the read by agent_id too (not just business_id): a same-business request for
 	// run R via a DIFFERENT agent's path yields no row -> pgx.ErrNoRows -> no-oracle 404.
 	GetAgentRun(ctx context.Context, arg GetAgentRunParams) (AgentRun, error)
+	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
+	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
@@ -131,6 +142,9 @@ type Querier interface {
 	// caller's authorized subtree, so an admin can read members of a business they
 	// administer while a bare member sees only their own row.
 	GetMembershipAt(ctx context.Context, arg GetMembershipAtParams) (GetMembershipAtRow, error)
+	// GetOutboundMessageByApproval looks up the (single) message a given approval produced,
+	// for the dedup short-circuit. Business-scoped; pgx.ErrNoRows ⇒ none yet.
+	GetOutboundMessageByApproval(ctx context.Context, arg GetOutboundMessageByApprovalParams) (TicketMessage, error)
 	GetPendingInvitation(ctx context.Context, arg GetPendingInvitationParams) (GetPendingInvitationRow, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	// The kind ('human'|'agent') of a principal; ownership may pass only to a human.
@@ -203,6 +217,9 @@ type Querier interface {
 	// ---- notification (SL-D) ----
 	InsertNotification(ctx context.Context, arg InsertNotificationParams) error
 	// InsertOutboundMessage persists an agent reply as a pending-delivery outbound row.
+	// source_approval_item_id (nullable) is the approval-driven dedup key: a redelivered
+	// approval execution conflicts on the partial UNIQUE index and inserts no second row
+	// (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
 	InsertSuppression(ctx context.Context, arg InsertSuppressionParams) error
 	// InsertTicketTag inserts one tag for a ticket (the second half of tag
@@ -278,6 +295,7 @@ type Querier interface {
 	// always exposes the caller's own membership rows, so this is reliable under
 	// WithPrincipal even before any cross-member visibility is established.
 	ListOwnerRootMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]uuid.UUID, error)
+	ListPendingApprovals(ctx context.Context, arg ListPendingApprovalsParams) ([]ApprovalItem, error)
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
@@ -318,6 +336,9 @@ type Querier interface {
 	// but only rows strictly after the cursor tuple (last_message_at, id) in the
 	// (DESC, DESC) order. The row-value comparison rides the same composite index.
 	ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]ListTicketsAfterRow, error)
+	// Idempotency claim: flip approved -> executed iff still approved. Zero rows means a
+	// prior delivery already executed it (or it was denied) -> the executor skips.
+	MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExecutedParams) (ApprovalItem, error)
 	// MarkEmailDomainVerified sets verified_at = now() ONLY when it is currently NULL —
 	// idempotent (a re-verify of an already-verified domain is a no-op, leaving the
 	// original timestamp untouched). Scoped to (id, business_id, tenant_root_id) for
