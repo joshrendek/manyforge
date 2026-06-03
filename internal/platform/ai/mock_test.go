@@ -25,7 +25,8 @@ func TestMockProviderScriptsAndRecords(t *testing.T) {
 		t.Fatalf("want ErrMockExhausted, got %v", err)
 	}
 	// It recorded every request it received.
-	if len(m.Requests()) != 3 || m.Requests()[0].Messages[0].Text != "hi" {
-		t.Fatalf("recorded = %+v", m.Requests())
+	reqs := m.Requests()
+	if len(reqs) != 3 || reqs[0].Messages[0].Text != "hi" {
+		t.Fatalf("recorded = %+v", reqs)
 	}
 }

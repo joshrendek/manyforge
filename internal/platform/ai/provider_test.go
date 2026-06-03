@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -18,7 +19,11 @@ func TestProviderInterfaceSatisfied(t *testing.T) {
 	if err != nil || got.Text != "ok" {
 		t.Fatalf("Complete = (%+v, %v)", got, err)
 	}
-	if !errors.Is(ErrBadRequest, ErrBadRequest) {
-		t.Fatal("sentinel identity broken")
+	wrapped := fmt.Errorf("provider 400: bad model: %w", ErrBadRequest)
+	if !errors.Is(wrapped, ErrBadRequest) {
+		t.Fatal("wrapped ErrBadRequest must unwrap via errors.Is")
+	}
+	if errors.Is(ErrBadRequest, ErrProviderUnavailable) {
+		t.Fatal("sentinels must not alias")
 	}
 }

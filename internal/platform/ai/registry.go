@@ -23,7 +23,8 @@ func (m Model) CostCents(u Usage) int64 {
 }
 
 func ceilDiv(a, b int64) int64 {
-	if a == 0 {
+	// Negative token counts clamp to 0 (defensive — tokens are never negative here).
+	if a <= 0 {
 		return 0
 	}
 	return (a + b - 1) / b
