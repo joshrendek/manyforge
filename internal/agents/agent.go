@@ -163,6 +163,91 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 	return toAgent(row), nil
 }
 
+// Get loads one agent by (id, business_id). RLS + the explicit business_id predicate
+// make a foreign/unknown id indistinguishable (no oracle). pgx.ErrNoRows → 404.
+func (s *AgentService) Get(ctx context.Context, principalID, businessID, agentID uuid.UUID) (Agent, error) {
+	var row dbgen.Agent
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, qerr := dbgen.New(tx).GetAgent(ctx, dbgen.GetAgentParams{ID: agentID, BusinessID: businessID})
+		row = r
+		return qerr
+	})
+	if err != nil {
+		return Agent{}, mapAgentErr(err)
+	}
+	return toAgent(row), nil
+}
+
+// List returns all agents for a business, ordered by name.
+func (s *AgentService) List(ctx context.Context, principalID, businessID uuid.UUID) ([]Agent, error) {
+	var rows []dbgen.Agent
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, qerr := dbgen.New(tx).ListAgents(ctx, businessID)
+		rows = r
+		return qerr
+	})
+	if err != nil {
+		return nil, mapAgentErr(err)
+	}
+	out := make([]Agent, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toAgent(r))
+	}
+	return out, nil
+}
+
+// Update applies a partial change. Omitted (nil) fields are preserved via COALESCE
+// in SQL. No matching (id, business_id) → ErrNoRows → 404 (no oracle).
+func (s *AgentService) Update(ctx context.Context, principalID, businessID, agentID uuid.UUID, in UpdateAgentInput) (Agent, error) {
+	if err := validateUpdateAgent(in); err != nil {
+		return Agent{}, err
+	}
+	params := dbgen.UpdateAgentParams{ID: agentID, BusinessID: businessID}
+	params.Name = in.Name
+	params.Model = in.Model
+	params.SystemPrompt = in.SystemPrompt
+	if in.AllowedTools != nil {
+		params.AllowedTools = *in.AllowedTools
+	}
+	if in.AutonomyMode != nil {
+		m := int16(*in.AutonomyMode)
+		params.AutonomyMode = &m
+	}
+	params.Enabled = in.Enabled
+	if in.MonthlyBudgetCents != nil {
+		c := int32(*in.MonthlyBudgetCents)
+		params.MonthlyBudgetCents = &c
+	}
+	var row dbgen.Agent
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, qerr := dbgen.New(tx).UpdateAgent(ctx, params)
+		row = r
+		return qerr
+	})
+	if err != nil {
+		return Agent{}, mapAgentErr(err)
+	}
+	return toAgent(row), nil
+}
+
+// Delete removes an agent and its agent principal atomically. rows-affected 0 (the
+// agent didn't exist / wasn't visible) → ErrNotFound (no oracle).
+func (s *AgentService) Delete(ctx context.Context, principalID, businessID, agentID uuid.UUID) error {
+	var affected int64
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		n, qerr := dbgen.New(tx).DeleteAgent(ctx, dbgen.DeleteAgentParams{ID: agentID, BusinessID: businessID})
+		affected = n
+		return qerr
+	})
+	if err != nil {
+		return mapAgentErr(err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("agents: not found: %w", errs.ErrNotFound)
+	}
+	return nil
+}
+
 // mapAgentErr converts a query/closure error into a stable service-layer sentinel.
 // pgx.ErrNoRows → ErrNotFound (no oracle); 23505 (duplicate (business, name)) →
 // ErrConflict; typed sentinels pass through; everything else wraps for a 500.
