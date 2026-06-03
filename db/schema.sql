@@ -283,3 +283,23 @@ CREATE TABLE notification (
     read_at        timestamptz,
     created_at     timestamptz NOT NULL
 );
+
+-- ============================================================================
+-- Agent runtime (spec 003) — mirrors migrations/0025.
+-- ============================================================================
+
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'ollama', 'vllm');
+
+CREATE TABLE ai_provider_credential (
+    id              uuid PRIMARY KEY,
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    provider        ai_provider NOT NULL,
+    sealed_key_ref  text,
+    base_url        text,
+    default_model   text NOT NULL,
+    created_at      timestamptz NOT NULL,
+    updated_at      timestamptz NOT NULL,
+    UNIQUE (business_id, provider),
+    UNIQUE (id, tenant_root_id)
+);
