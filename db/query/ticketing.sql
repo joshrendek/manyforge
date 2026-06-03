@@ -159,12 +159,24 @@ ORDER BY created_at DESC
 LIMIT 1;
 
 -- InsertOutboundMessage persists an agent reply as a pending-delivery outbound row.
+-- source_approval_item_id (nullable) is the approval-driven dedup key: a redelivered
+-- approval execution conflicts on the partial UNIQUE index and inserts no second row
+-- (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 -- name: InsertOutboundMessage :one
 INSERT INTO ticket_message (
     id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
-    message_id, in_reply_to, "references", body_text, body_html, delivery_state)
-VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending')
+    message_id, in_reply_to, "references", body_text, body_html, delivery_state,
+    source_approval_item_id)
+VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending',
+    sqlc.narg('source_approval_item_id'))
+ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
 RETURNING *;
+
+-- GetOutboundMessageByApproval looks up the (single) message a given approval produced,
+-- for the dedup short-circuit. Business-scoped; pgx.ErrNoRows ⇒ none yet.
+-- name: GetOutboundMessageByApproval :one
+SELECT * FROM ticket_message
+WHERE source_approval_item_id = $1 AND business_id = $2;
 
 -- InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
 -- name: InsertNoteMessage :one
