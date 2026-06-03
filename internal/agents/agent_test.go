@@ -5,8 +5,17 @@ import (
 	"math"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
+
+func TestMapAgentErr_FKViolationIsConflict(t *testing.T) {
+	pgErr := &pgconn.PgError{Code: "23503"}
+	if got := mapAgentErr(pgErr); !errors.Is(got, errs.ErrConflict) {
+		t.Fatalf("23503 → %v, want ErrConflict", got)
+	}
+}
 
 func TestValidateCreateAgent(t *testing.T) {
 	base := CreateAgentInput{Name: "Triage Bot", Provider: "anthropic", Model: "claude-sonnet-4-5", AutonomyMode: 1, MonthlyBudgetCents: 0}
