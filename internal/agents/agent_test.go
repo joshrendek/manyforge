@@ -2,6 +2,7 @@ package agents
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -22,6 +23,7 @@ func TestValidateCreateAgent(t *testing.T) {
 		{"mode 0", func(in *CreateAgentInput) { in.AutonomyMode = 0 }},
 		{"mode 4", func(in *CreateAgentInput) { in.AutonomyMode = 4 }},
 		{"negative budget", func(in *CreateAgentInput) { in.MonthlyBudgetCents = -1 }},
+		{"budget overflow", func(in *CreateAgentInput) { in.MonthlyBudgetCents = math.MaxInt32 + 1 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,6 +48,7 @@ func TestValidateUpdateAgent(t *testing.T) {
 		{AutonomyMode: mode(0)},
 		{AutonomyMode: mode(9)},
 		{MonthlyBudgetCents: func(i int) *int { return &i }(-5)},
+		{MonthlyBudgetCents: func(i int) *int { return &i }(math.MaxInt32 + 1)},
 	}
 	for i, in := range bad {
 		if err := validateUpdateAgent(in); !errors.Is(err, errs.ErrValidation) {
