@@ -11,6 +11,15 @@ import (
 // configurable when it constructs the gateway at startup; US1b uses a constant.
 const defaultRequestTimeout = 60 * time.Second
 
+// Provider name constants — mirror agents.knownProviders and the ai_provider PG
+// enum (migration 0025). Keep in lockstep; see manyforge-uc2.
+const (
+	ProviderAnthropic = "anthropic"
+	ProviderOpenAI    = "openai"
+	ProviderOllama    = "ollama"
+	ProviderVLLM      = "vllm"
+)
+
 // Credential is the minimal resolved credential the factory needs to build a
 // Provider. It deliberately mirrors agents.ResolvedCredential by VALUE (not by
 // import) so internal/platform/ai stays free of any internal/agents dependency
@@ -34,11 +43,11 @@ type Credential struct {
 func New(cred Credential) (Provider, error) {
 	hc := netsafe.NewClient(defaultRequestTimeout)
 	switch cred.Provider {
-	case "anthropic":
+	case ProviderAnthropic:
 		return NewAnthropicProvider(cred.APIKey, cred.BaseURL, cred.Model, hc), nil
-	case "openai", "ollama", "vllm":
+	case ProviderOpenAI, ProviderOllama, ProviderVLLM:
 		if cred.BaseURL == "" {
-			return nil, fmt.Errorf("ai: openai-compat provider %q requires a base_url: %w", cred.Provider, ErrBadRequest)
+			return nil, fmt.Errorf("ai: provider %q requires a base_url: %w", cred.Provider, ErrBadRequest)
 		}
 		return NewOpenAICompatProvider(cred.APIKey, cred.BaseURL, cred.Model, hc), nil
 	default:
