@@ -51,6 +51,48 @@ type anthropicBlock struct {
 	IsError   bool   `json:"is_error,omitempty"`
 }
 
+type anthropicResp struct {
+	Content    []anthropicBlock `json:"content"`
+	StopReason string           `json:"stop_reason"`
+	Usage      struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+// parseAnthropicResponse maps a 200 Messages body onto the common Response.
+func parseAnthropicResponse(body []byte) (Response, error) {
+	var ar anthropicResp
+	if err := json.Unmarshal(body, &ar); err != nil {
+		return Response{}, err
+	}
+	var out Response
+	for _, b := range ar.Content {
+		switch b.Type {
+		case "text":
+			out.Text += b.Text
+		case "tool_use":
+			out.ToolCalls = append(out.ToolCalls, ToolCall{ID: b.ID, Name: b.Name, Args: b.Input})
+		}
+	}
+	out.FinishReason = anthropicFinish(ar.StopReason)
+	out.Usage = Usage{InputTokens: ar.Usage.InputTokens, OutputTokens: ar.Usage.OutputTokens}
+	return out, nil
+}
+
+func anthropicFinish(raw string) FinishReason {
+	switch raw {
+	case "end_turn", "stop_sequence":
+		return FinishStop
+	case "tool_use":
+		return FinishToolUse
+	case "max_tokens":
+		return FinishLength
+	default:
+		return FinishOther
+	}
+}
+
 // buildAnthropicRequest maps the common Request onto Anthropic's Messages wire
 // format. model overrides req.Model when req.Model is empty (transport default).
 func buildAnthropicRequest(req Request, model string) anthropicReq {
