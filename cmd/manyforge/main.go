@@ -26,6 +26,7 @@ import (
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
+	"github.com/manyforge/manyforge/internal/platform/ai"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/config"
@@ -129,6 +130,32 @@ func main() {
 	// (migration-0027 catalog), same RLS-bound 404-on-lacking-perm shape as other groups.
 	agentSvc := &agents.AgentService{DB: database}
 	agentH := agents.NewHandler(agentSvc)
+
+	// US3 agent-runtime: the run loop. The engine acts AS the agent principal; manual
+	// trigger + run status are gated by agents.run. Cost uses the AI model registry,
+	// keyed on the resolved model id. The credential service resolves the agent's BYO
+	// provider key into an SSRF-guarded transport at run start.
+	credSvc := &agents.CredentialService{DB: database}
+	aiReg := ai.NewRegistry()
+	ai.RegisterDefaults(aiReg)
+	agentRunStore := &agents.AgentRunStore{DB: database}
+	agentEngine := &agents.Engine{
+		Runs:        agentRunStore,
+		Tools:       agents.NewToolRegistry(ticketSvc),
+		Auditor:     agents.NewDBAuditor(database),
+		Resolver:    agents.NewAuthzChecker(database),
+		NewProvider: agents.NewCredentialProviderFactory(credSvc),
+		Cost: func(model string, u ai.Usage) int64 {
+			m, ok := aiReg.Lookup(model)
+			if !ok {
+				return 0
+			}
+			return m.CostCents(u)
+		},
+		Limits: agents.RunLimits{}, // defaults (8 iters / 100k tokens / 4096 out / 120s)
+	}
+	agentRunSvc := agents.NewRunService(agentSvc, agentEngine, agentRunStore)
+	agentRunH := agents.NewRunHandler(agentRunSvc)
 
 	// US4 inbox-management identity surface (custom email domains + verification +
 	// custom inbound addresses). The DKIM master key seals per-domain Ed25519 private
@@ -309,6 +336,8 @@ func main() {
 		inboxManage:     httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
 		agents:          agentH,
 		agentsConfigure: httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
+		agentRuns:       agentRunH,
+		agentsRun:       httpx.RequirePermission(database, permResolve, "agents.run", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -405,6 +434,13 @@ type apiHandlers struct {
 	// agents.configure permission, same RLS-bound 404-on-lacking-perm shape as the
 	// other groups.
 	agentsConfigure func(http.Handler) http.Handler
+
+	// agentRuns is the US3 run trigger/status handler (Spec 003): POST a manual run
+	// (202) and GET its status (200) under a business's agent.
+	agentRuns *agents.RunHandler
+	// agentsRun gates the US3 run slice on the agents.run permission, same RLS-bound
+	// 404-on-lacking-perm shape as the other groups.
+	agentsRun func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -483,6 +519,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(ag chi.Router) {
 				ag.Use(h.agentsConfigure)
 				h.agents.ProtectedRoutes(ag)
+			})
+			// US3 agent-run slice: manual trigger + run status under a business's agent,
+			// gated on agents.run (migration-0029 catalog). The engine runs AS the agent
+			// principal; same RLS-bound 404-on-lacking-perm semantics as the other groups.
+			pr.Group(func(ag chi.Router) {
+				ag.Use(h.agentsRun)
+				h.agentRuns.ProtectedRoutes(ag)
 			})
 		})
 	})
