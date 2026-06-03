@@ -1,7 +1,12 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -113,5 +118,92 @@ func TestBuildAnthropicRequest(t *testing.T) {
 	// tool result -> user message with tool_result block
 	if out.Messages[2].Role != "user" || out.Messages[2].Content[0].Type != "tool_result" || out.Messages[2].Content[0].ToolUseID != "toolu_1" || out.Messages[2].Content[0].Content != "open" || out.Messages[2].Content[0].IsError {
 		t.Fatalf("tool_result block wrong: %+v", out.Messages[2].Content[0])
+	}
+}
+
+func TestAnthropicComplete_GoldenRoundTrip(t *testing.T) {
+	cases := []struct {
+		fixture  string
+		wantText string
+		wantTool string // tool name expected, "" for none
+		wantFin  FinishReason
+	}{
+		{"anthropic_text.json", "Hello! How can I help with your ticket?", "", FinishStop},
+		{"anthropic_tool_use.json", "Let me look that up.", "get_ticket", FinishToolUse},
+	}
+	for _, tc := range cases {
+		t.Run(tc.fixture, func(t *testing.T) {
+			golden := loadGolden(t, tc.fixture)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/messages" {
+					t.Errorf("path = %q, want /v1/messages", r.URL.Path)
+				}
+				if r.Header.Get("x-api-key") != "sk-test" {
+					t.Errorf("missing x-api-key header")
+				}
+				if r.Header.Get("anthropic-version") == "" {
+					t.Errorf("missing anthropic-version header")
+				}
+				body, _ := io.ReadAll(r.Body)
+				if !json.Valid(body) {
+					t.Errorf("request body is not valid JSON")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(golden)
+			}))
+			defer srv.Close()
+
+			p := NewAnthropicProvider("sk-test", srv.URL, "claude-sonnet-4-5", srv.Client())
+			resp, err := p.Complete(context.Background(), Request{
+				Model: "claude-sonnet-4-5", MaxTokens: 256,
+				Messages: []Message{{Role: RoleUser, Text: "hi"}},
+			})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if resp.Text != tc.wantText || resp.FinishReason != tc.wantFin {
+				t.Fatalf("resp = %+v", resp)
+			}
+			if tc.wantTool == "" && len(resp.ToolCalls) != 0 {
+				t.Fatalf("want no tool calls, got %+v", resp.ToolCalls)
+			}
+			if tc.wantTool != "" && (len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != tc.wantTool) {
+				t.Fatalf("want tool %q, got %+v", tc.wantTool, resp.ToolCalls)
+			}
+		})
+	}
+}
+
+func TestAnthropicComplete_ErrorMapping(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   error
+	}{
+		{http.StatusInternalServerError, `{"error":{"type":"api_error","message":"boom"}}`, ErrProviderUnavailable},
+		{http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","message":"slow down"}}`, ErrProviderUnavailable},
+		{http.StatusUnauthorized, `{"error":{"type":"authentication_error","message":"bad key"}}`, ErrBadRequest},
+		{http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000"}}`, ErrContextLength},
+		{http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"messages: at least one required"}}`, ErrBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.want.Error(), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			p := NewAnthropicProvider("sk-test", srv.URL, "claude-sonnet-4-5", srv.Client())
+			_, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("status %d body %q -> err %v, want Is(%v)", tc.status, tc.body, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnthropicName(t *testing.T) {
+	if NewAnthropicProvider("k", "", "m", http.DefaultClient).Name() != "anthropic" {
+		t.Fatal("Name() != anthropic")
 	}
 }
