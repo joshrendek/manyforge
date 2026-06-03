@@ -22,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/manyforge/manyforge/internal/account"
+	"github.com/manyforge/manyforge/internal/agents"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
@@ -122,6 +123,12 @@ func main() {
 	businessIDFromPath := func(r *http.Request) (uuid.UUID, error) {
 		return uuid.Parse(chi.URLParam(r, "id"))
 	}
+
+	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
+	// kind='agent' principal (its acting identity). Gated by agents.configure
+	// (migration-0027 catalog), same RLS-bound 404-on-lacking-perm shape as other groups.
+	agentSvc := &agents.AgentService{DB: database}
+	agentH := agents.NewHandler(agentSvc)
 
 	// US4 inbox-management identity surface (custom email domains + verification +
 	// custom inbound addresses). The DKIM master key seals per-domain Ed25519 private
@@ -298,8 +305,10 @@ func main() {
 		ticketsReply:  httpx.RequirePermission(database, permResolve, "tickets.reply", businessIDFromPath),
 		ticketsWrite:  httpx.RequirePermission(database, permResolve, "tickets.write", businessIDFromPath),
 		ticketsAssign: httpx.RequirePermission(database, permResolve, "tickets.assign", businessIDFromPath),
-		ticketsDelete: httpx.RequirePermission(database, permResolve, "tickets.delete", businessIDFromPath),
-		inboxManage:   httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
+		ticketsDelete:   httpx.RequirePermission(database, permResolve, "tickets.delete", businessIDFromPath),
+		inboxManage:     httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
+		agents:          agentH,
+		agentsConfigure: httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -389,6 +398,13 @@ type apiHandlers struct {
 	// inboxManage gates the US4 inbox-management slice (email-domain + inbound-address
 	// CRUD) on the inbox.manage permission, same RLS-bound 404-on-lacking-perm shape.
 	inboxManage func(http.Handler) http.Handler
+
+	// agents is the US2 agent-definition CRUD handler (Spec 003).
+	agents *agents.Handler
+	// agentsConfigure gates the US2 agent-definition CRUD slice on the
+	// agents.configure permission, same RLS-bound 404-on-lacking-perm shape as the
+	// other groups.
+	agentsConfigure func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -460,6 +476,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(im chi.Router) {
 				im.Use(h.inboxManage)
 				h.identity.Routes(im)
+			})
+			// US2 agent-definition slice: CRUD agents under a business, gated on
+			// agents.configure (migration-0027 catalog). Same RLS-bound
+			// 404-on-lacking-perm semantics as the other groups.
+			pr.Group(func(ag chi.Router) {
+				ag.Use(h.agentsConfigure)
+				h.agents.ProtectedRoutes(ag)
 			})
 		})
 	})
