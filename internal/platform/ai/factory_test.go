@@ -40,8 +40,27 @@ func TestFactoryUnknownProvider(t *testing.T) {
 }
 
 func TestFactoryOpenAICompatRequiresBaseURL(t *testing.T) {
-	_, err := New(Credential{Provider: "openai", APIKey: "k", BaseURL: ""})
-	if !errors.Is(err, ErrBadRequest) {
-		t.Fatalf("missing base_url err = %v, want Is(ErrBadRequest)", err)
+	for _, name := range []string{ProviderOpenAI, ProviderOllama, ProviderVLLM} {
+		_, err := New(Credential{Provider: name, APIKey: "k", BaseURL: ""})
+		if !errors.Is(err, ErrBadRequest) {
+			t.Fatalf("%s missing base_url err = %v, want Is(ErrBadRequest)", name, err)
+		}
+	}
+}
+
+func TestFactoryWiresNonNilClient(t *testing.T) {
+	anth, err := New(Credential{Provider: ProviderAnthropic, APIKey: "k", Model: "m"})
+	if err != nil {
+		t.Fatalf("New anthropic: %v", err)
+	}
+	if ap, ok := anth.(*AnthropicProvider); !ok || ap.httpClient == nil {
+		t.Fatal("anthropic provider has nil httpClient — netsafe client not wired")
+	}
+	oai, err := New(Credential{Provider: ProviderOpenAI, APIKey: "k", BaseURL: "https://api.example.com/v1", Model: "m"})
+	if err != nil {
+		t.Fatalf("New openai: %v", err)
+	}
+	if op, ok := oai.(*OpenAICompatProvider); !ok || op.httpClient == nil {
+		t.Fatal("openai-compat provider has nil httpClient — netsafe client not wired")
 	}
 }
