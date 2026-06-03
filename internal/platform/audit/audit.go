@@ -26,25 +26,39 @@ type Entry struct {
 	CorrelationID    *string
 	OldValue         any
 	NewValue         any
+	// Inputs/Outputs/Decision support agent-run auditing (Spec 003 US3): the
+	// tool-call args, the tool result, and the gate/exec decision. Marshalled to
+	// the inputs/outputs jsonb + decision text columns. nil ⇒ SQL NULL.
+	Inputs   any
+	Outputs  any
+	Decision *string
+}
+
+// marshalJSON returns nil bytes for a nil value (→ SQL NULL), else the JSON encoding.
+func marshalJSON(v any) ([]byte, error) {
+	if v == nil {
+		return nil, nil
+	}
+	return json.Marshal(v)
 }
 
 // Write inserts the entry using tx (so it commits or rolls back with the change).
 func Write(ctx context.Context, tx pgx.Tx, e Entry) error {
-	var oldValue []byte
-	if e.OldValue != nil {
-		b, err := json.Marshal(e.OldValue)
-		if err != nil {
-			return err
-		}
-		oldValue = b
+	oldValue, err := marshalJSON(e.OldValue)
+	if err != nil {
+		return err
 	}
-	var newValue []byte
-	if e.NewValue != nil {
-		b, err := json.Marshal(e.NewValue)
-		if err != nil {
-			return err
-		}
-		newValue = b
+	newValue, err := marshalJSON(e.NewValue)
+	if err != nil {
+		return err
+	}
+	inputs, err := marshalJSON(e.Inputs)
+	if err != nil {
+		return err
+	}
+	outputs, err := marshalJSON(e.Outputs)
+	if err != nil {
+		return err
 	}
 	return dbgen.New(tx).InsertAuditEntry(ctx, dbgen.InsertAuditEntryParams{
 		ID:               uuid.New(),
@@ -57,5 +71,8 @@ func Write(ctx context.Context, tx pgx.Tx, e Entry) error {
 		CorrelationID:    e.CorrelationID,
 		OldValue:         oldValue,
 		NewValue:         newValue,
+		Inputs:           inputs,
+		Outputs:          outputs,
+		Decision:         e.Decision,
 	})
 }
