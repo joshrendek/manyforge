@@ -281,13 +281,71 @@ func TestRunGetCrossTenantNoOracle(t *testing.T) {
 	}
 
 	// Tenant B's owner cannot see tenant A's run → ErrNotFound (no oracle).
-	if _, err := runStore.Get(ctx, tenantB.ownerID, tenantB.businessID, runA.ID); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := runStore.Get(ctx, tenantB.ownerID, tenantB.businessID, agentA.ID, runA.ID); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("cross-tenant Get: want ErrNotFound, got %v", err)
 	}
 
 	// Sanity: tenant A's owner CAN see it (so the not-found above is real isolation,
 	// not a universally-broken read).
-	if _, err := runStore.Get(ctx, tenantA.ownerID, tenantA.businessID, runA.ID); err != nil {
+	if _, err := runStore.Get(ctx, tenantA.ownerID, tenantA.businessID, agentA.ID, runA.ID); err != nil {
 		t.Fatalf("same-tenant Get: want success, got %v", err)
+	}
+}
+
+// TestRunGetWrongAgentNoOracle pins the same-business IDOR fix behaviorally: a run
+// created for agent A is NOT readable via a DIFFERENT agent B's path within the SAME
+// business — the agent-scoped SQL predicate collapses it to ErrNotFound (→ 404), so a
+// caller cannot use another agent's id to enumerate runs that aren't its own.
+func TestRunGetWrongAgentNoOracle(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	seed := seedRunTenant(ctx, t, tdb)
+	agentSvc := &AgentService{DB: tdb.App}
+	runStore := &AgentRunStore{DB: tdb.App}
+
+	// Two agents in the SAME business.
+	agentA, err := agentSvc.Create(ctx, seed.ownerID, seed.businessID, CreateAgentInput{
+		Name: "Agent A", Provider: "anthropic", Model: "claude-sonnet-4-5",
+		SystemPrompt: "x", AllowedTools: []string{"read_ticket"},
+		AutonomyMode: 1, Enabled: true, MonthlyBudgetCents: 0,
+	})
+	if err != nil {
+		t.Fatalf("Create agent A: %v", err)
+	}
+	agentB, err := agentSvc.Create(ctx, seed.ownerID, seed.businessID, CreateAgentInput{
+		Name: "Agent B", Provider: "anthropic", Model: "claude-sonnet-4-5",
+		SystemPrompt: "x", AllowedTools: []string{"read_ticket"},
+		AutonomyMode: 1, Enabled: true, MonthlyBudgetCents: 0,
+	})
+	if err != nil {
+		t.Fatalf("Create agent B: %v", err)
+	}
+
+	// A run for agent A.
+	runA, err := runStore.CreateRun(ctx, agentA.PrincipalID, seed.businessID, agentA.ID,
+		"manual", uuid.NewString(), nil, nil)
+	if err != nil {
+		t.Fatalf("CreateRun for agent A: %v", err)
+	}
+
+	// Same business, but addressed via agent B's id → ErrNotFound (the IDOR is closed).
+	if _, err := runStore.Get(ctx, seed.ownerID, seed.businessID, agentB.ID, runA.ID); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("wrong-agent Get: want ErrNotFound (same-business IDOR closed), got %v", err)
+	}
+
+	// Sanity: via agent A's OWN id it IS readable (the not-found above is real
+	// agent-scoping, not a universally-broken read).
+	got, err := runStore.Get(ctx, seed.ownerID, seed.businessID, agentA.ID, runA.ID)
+	if err != nil {
+		t.Fatalf("correct-agent Get: want success, got %v", err)
+	}
+	if got.ID != runA.ID {
+		t.Fatalf("correct-agent Get returned run %v, want %v", got.ID, runA.ID)
 	}
 }

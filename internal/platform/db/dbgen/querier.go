@@ -114,6 +114,8 @@ type Querier interface {
 	// scopes rows to the caller's authorized businesses; the explicit business_id is
 	// defense in depth. pgx.ErrNoRows => ErrNotFound.
 	GetAgent(ctx context.Context, arg GetAgentParams) (Agent, error)
+	// Scope the read by agent_id too (not just business_id): a same-business request for
+	// run R via a DIFFERENT agent's path yields no row -> pgx.ErrNoRows -> no-oracle 404.
 	GetAgentRun(ctx context.Context, arg GetAgentRunParams) (AgentRun, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
