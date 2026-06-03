@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -153,15 +154,19 @@ func (s *CredentialService) Resolve(ctx context.Context, principalID, businessID
 }
 
 // mapCredErr converts a query/closure error into a stable service-layer sentinel.
-// pgx.ErrNoRows (single-row lookups) → ErrNotFound (no oracle). ErrValidation
-// and other typed sentinels are preserved. Everything else is returned wrapped so
-// the HTTP layer logs it server-side and surfaces a generic 500.
+// pgx.ErrNoRows (single-row lookups) → ErrNotFound (no oracle). A unique-constraint
+// violation (SQLSTATE 23505 — a duplicate (business_id, provider)) → ErrConflict.
+// ErrValidation and other typed sentinels are preserved. Everything else is
+// returned wrapped so the HTTP layer logs it server-side and surfaces a generic 500.
 func mapCredErr(err error) error {
+	var pgErr *pgconn.PgError
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("agents: not found: %w", errs.ErrNotFound)
+	case errors.As(err, &pgErr) && pgErr.Code == "23505":
+		return fmt.Errorf("agents: duplicate credential: %w", errs.ErrConflict)
 	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrNotFound),
 		errors.Is(err, errs.ErrConflict), errors.Is(err, errs.ErrRateLimited):
 		return err
