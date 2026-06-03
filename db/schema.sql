@@ -301,5 +301,6 @@ CREATE TABLE ai_provider_credential (
     created_at      timestamptz NOT NULL,
     updated_at      timestamptz NOT NULL,
     UNIQUE (business_id, provider),
-    UNIQUE (id, tenant_root_id)
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
