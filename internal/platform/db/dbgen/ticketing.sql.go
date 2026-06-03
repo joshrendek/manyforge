@@ -110,6 +110,43 @@ func (q *Queries) DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsPara
 	return err
 }
 
+const getOutboundMessageByApproval = `-- name: GetOutboundMessageByApproval :one
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id FROM ticket_message
+WHERE source_approval_item_id = $1 AND business_id = $2
+`
+
+type GetOutboundMessageByApprovalParams struct {
+	SourceApprovalItemID pgtype.UUID `json:"source_approval_item_id"`
+	BusinessID           uuid.UUID   `json:"business_id"`
+}
+
+// GetOutboundMessageByApproval looks up the (single) message a given approval produced,
+// for the dedup short-circuit. Business-scoped; pgx.ErrNoRows ⇒ none yet.
+func (q *Queries) GetOutboundMessageByApproval(ctx context.Context, arg GetOutboundMessageByApprovalParams) (TicketMessage, error) {
+	row := q.db.QueryRow(ctx, getOutboundMessageByApproval, arg.SourceApprovalItemID, arg.BusinessID)
+	var i TicketMessage
+	err := row.Scan(
+		&i.ID,
+		&i.TicketID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Direction,
+		&i.AuthorPrincipalID,
+		&i.MessageID,
+		&i.InReplyTo,
+		&i.References,
+		&i.BodyText,
+		&i.BodyHtml,
+		&i.AuthResults,
+		&i.IsAutoReply,
+		&i.CreatedAt,
+		&i.DeliveryState,
+		&i.DeliveryError,
+		&i.SourceApprovalItemID,
+	)
+	return i, err
+}
+
 const getRequester = `-- name: GetRequester :one
 SELECT id, business_id, tenant_root_id, email, display_name, contact_id, first_seen_at, last_seen_at, created_at, updated_at FROM requester
 WHERE id = $1 AND business_id = $2
@@ -242,7 +279,7 @@ INSERT INTO ticket_message (
     id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
     message_id, body_text, body_html)
 VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8)
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id
 `
 
 type InsertNoteMessageParams struct {
@@ -286,6 +323,7 @@ func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessagePa
 		&i.CreatedAt,
 		&i.DeliveryState,
 		&i.DeliveryError,
+		&i.SourceApprovalItemID,
 	)
 	return i, err
 }
@@ -293,25 +331,32 @@ func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessagePa
 const insertOutboundMessage = `-- name: InsertOutboundMessage :one
 INSERT INTO ticket_message (
     id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
-    message_id, in_reply_to, "references", body_text, body_html, delivery_state)
-VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending')
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error
+    message_id, in_reply_to, "references", body_text, body_html, delivery_state,
+    source_approval_item_id)
+VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending',
+    $11)
+ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id
 `
 
 type InsertOutboundMessageParams struct {
-	ID                uuid.UUID   `json:"id"`
-	TicketID          uuid.UUID   `json:"ticket_id"`
-	BusinessID        uuid.UUID   `json:"business_id"`
-	TenantRootID      uuid.UUID   `json:"tenant_root_id"`
-	AuthorPrincipalID pgtype.UUID `json:"author_principal_id"`
-	MessageID         string      `json:"message_id"`
-	InReplyTo         *string     `json:"in_reply_to"`
-	References        []string    `json:"references"`
-	BodyText          *string     `json:"body_text"`
-	BodyHtml          *string     `json:"body_html"`
+	ID                   uuid.UUID   `json:"id"`
+	TicketID             uuid.UUID   `json:"ticket_id"`
+	BusinessID           uuid.UUID   `json:"business_id"`
+	TenantRootID         uuid.UUID   `json:"tenant_root_id"`
+	AuthorPrincipalID    pgtype.UUID `json:"author_principal_id"`
+	MessageID            string      `json:"message_id"`
+	InReplyTo            *string     `json:"in_reply_to"`
+	References           []string    `json:"references"`
+	BodyText             *string     `json:"body_text"`
+	BodyHtml             *string     `json:"body_html"`
+	SourceApprovalItemID pgtype.UUID `json:"source_approval_item_id"`
 }
 
 // InsertOutboundMessage persists an agent reply as a pending-delivery outbound row.
+// source_approval_item_id (nullable) is the approval-driven dedup key: a redelivered
+// approval execution conflicts on the partial UNIQUE index and inserts no second row
+// (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error) {
 	row := q.db.QueryRow(ctx, insertOutboundMessage,
 		arg.ID,
@@ -324,6 +369,7 @@ func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundM
 		arg.References,
 		arg.BodyText,
 		arg.BodyHtml,
+		arg.SourceApprovalItemID,
 	)
 	var i TicketMessage
 	err := row.Scan(
@@ -343,6 +389,7 @@ func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundM
 		&i.CreatedAt,
 		&i.DeliveryState,
 		&i.DeliveryError,
+		&i.SourceApprovalItemID,
 	)
 	return i, err
 }
@@ -480,7 +527,7 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, arg ListAttach
 
 const listMessages = `-- name: ListMessages :many
 
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
 ORDER BY created_at ASC, id ASC
@@ -524,6 +571,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 			&i.CreatedAt,
 			&i.DeliveryState,
 			&i.DeliveryError,
+			&i.SourceApprovalItemID,
 		); err != nil {
 			return nil, err
 		}
@@ -536,7 +584,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 }
 
 const listMessagesAfter = `-- name: ListMessagesAfter :many
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
   AND (ticket_message.created_at, ticket_message.id) > ($3::timestamptz, $4::uuid)
@@ -585,6 +633,7 @@ func (q *Queries) ListMessagesAfter(ctx context.Context, arg ListMessagesAfterPa
 			&i.CreatedAt,
 			&i.DeliveryState,
 			&i.DeliveryError,
+			&i.SourceApprovalItemID,
 		); err != nil {
 			return nil, err
 		}

@@ -246,6 +246,7 @@ CREATE TABLE ticket_message (
     created_at          timestamptz NOT NULL,
     delivery_state      message_delivery_state,
     delivery_error      text,
+    source_approval_item_id uuid,
     UNIQUE (tenant_root_id, message_id),
     UNIQUE (id, tenant_root_id)
 );
@@ -345,4 +346,25 @@ CREATE TABLE agent_run (
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (agent_id, tenant_root_id) REFERENCES agent (id, tenant_root_id)
+);
+
+CREATE TABLE approval_item (
+    id                      uuid PRIMARY KEY,
+    agent_run_id            uuid NOT NULL,
+    business_id             uuid NOT NULL,
+    tenant_root_id          uuid NOT NULL,
+    tool                    text NOT NULL,
+    args                    jsonb NOT NULL,
+    effect_class            smallint NOT NULL,
+    state                   text NOT NULL,
+    decided_by_principal_id uuid,
+    decided_at              timestamptz,
+    executed_at             timestamptz,
+    expires_at              timestamptz NOT NULL,
+    error                   text,
+    created_at              timestamptz NOT NULL,
+    updated_at              timestamptz NOT NULL,
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (agent_run_id, tenant_root_id) REFERENCES agent_run (id, tenant_root_id)
 );
