@@ -15,6 +15,8 @@ type Querier interface {
 	// Serializes structural mutations within a tenant (research R5).
 	AcquireTenantLock(ctx context.Context, hashtext string) error
 	AddRolePermission(ctx context.Context, arg AddRolePermissionParams) error
+	// Sum of cost across this agent's runs in the current calendar month (UTC).
+	AgentMonthToDateCostCents(ctx context.Context, arg AgentMonthToDateCostCentsParams) (int64, error)
 	AllPermissionKeys(ctx context.Context) ([]string, error)
 	// BlankTicketAttachments blanks attachment filenames on a ticket (the blob bytes are
 	// purged out-of-band via attachment.purge). Returns the count blanked — the audit
@@ -49,6 +51,9 @@ type Querier interface {
 	// visibility: an invisible business yields no row → ErrNoRows → 404 (no oracle).
 	// principal is not RLS-scoped, so the gate lives in the business SELECT.
 	CreateAgentPrincipal(ctx context.Context, arg CreateAgentPrincipalParams) (uuid.UUID, error)
+	// Insert a run, deriving tenant_root_id from the (RLS-visible) agent. An invisible
+	// or foreign agent yields no row -> pgx.ErrNoRows -> no-oracle 404.
+	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
 	// CreateBusiness uses :exec (no RETURNING): under RLS, INSERT ... RETURNING
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
 	// yet see (no membership at insert time). The caller builds the result from inputs.
@@ -109,6 +114,7 @@ type Querier interface {
 	// scopes rows to the caller's authorized businesses; the explicit business_id is
 	// defense in depth. pgx.ErrNoRows => ErrNotFound.
 	GetAgent(ctx context.Context, arg GetAgentParams) (Agent, error)
+	GetAgentRun(ctx context.Context, arg GetAgentRunParams) (AgentRun, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
@@ -209,6 +215,7 @@ type Querier interface {
 	// ListAIProviderCredentials lists all credentials for a business, ordered
 	// by provider name for a stable, deterministic result.
 	ListAIProviderCredentials(ctx context.Context, businessID uuid.UUID) ([]AiProviderCredential, error)
+	ListAgentRunsByAgent(ctx context.Context, arg ListAgentRunsByAgentParams) ([]AgentRun, error)
 	// ListAgents lists all agents for a business, ordered by name for a stable result.
 	ListAgents(ctx context.Context, businessID uuid.UUID) ([]Agent, error)
 	// NOTE: the outbound delivery-state path (delivery_state read, system inbound
@@ -356,6 +363,8 @@ type Querier interface {
 	// field the caller omitted (narg NULL = absent). provider is immutable (not settable
 	// here). No match → ErrNoRows → 404.
 	UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error)
+	// Final/intermediate state write. status + token/cost totals + optional error.
+	UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRunProgressParams) (AgentRun, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
 	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error
