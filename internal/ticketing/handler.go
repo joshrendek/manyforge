@@ -448,7 +448,9 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errValidation("body_text required"))
 		return
 	}
-	m, err := h.svc.Reply(r.Context(), pid, bid, tid, ReplyInput(body))
+	// Field-by-field (not a struct conversion): IdempotencyKey is internal-only — the
+	// approvals executor sets it, the public HTTP body must never carry one.
+	m, err := h.svc.Reply(r.Context(), pid, bid, tid, ReplyInput{BodyText: body.BodyText, BodyHTML: body.BodyHTML})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
