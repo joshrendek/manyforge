@@ -125,6 +125,35 @@ func TestRun_SafeToolThenFinish(t *testing.T) {
 	}
 }
 
+// TestExecute_OnPreCreatedRun pins the l29 drain path: Execute runs the loop on an
+// already-created run (no second CreateRun), applying the tool and finishing succeeded.
+func TestExecute_OnPreCreatedRun(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "set_status", `{"ticket_id":"`+tid.String()+`","status":"open"}`),
+		finalText("done"),
+	)
+	fts := &fakeTicketSvc{}
+	store := &fakeRunStore{}
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+
+	ttype := "ticket"
+	pre := AgentRun{ID: uuid.New(), AgentID: uuid.New(), BusinessID: uuid.New(), Trigger: "event", TargetType: &ttype, TargetID: &tid, Status: RunRunning, CorrelationID: uuid.NewString()}
+	run, err := eng.Execute(context.Background(), uuid.New(), loadedAgent("set_status"), pre)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("status = %s, want succeeded; transitions=%v", run.Status, store.progress)
+	}
+	if store.created.ID != uuid.Nil {
+		t.Fatalf("Execute called CreateRun (created.ID=%s), want none (run pre-exists)", store.created.ID)
+	}
+	if fts.triageIn.Status == nil || *fts.triageIn.Status != "open" {
+		t.Fatalf("tool did not execute set_status; got %+v", fts.triageIn)
+	}
+}
+
 func TestRun_BudgetRefusesStart(t *testing.T) {
 	prov := ai.NewMockProvider(finalText("never"))
 	store := &fakeRunStore{mtd: 500}
