@@ -30,9 +30,10 @@ type ClientLike interface {
 // Compile-time interface assertions (see mock.go for MockClient assertion).
 var _ ClientLike = (*Client)(nil)
 
-// ClientFactory builds a *Client with a guarded transport; inject at the
-// host/executor level so production callers use the netsafe client.
-type ClientFactory func(serverURL, authHeader string) *Client
+// ClientFactory builds a ClientLike from a server URL and auth header; inject at
+// the host/executor level so production callers use the netsafe client and tests
+// can inject a *MockClient without depending on the concrete *Client type.
+type ClientFactory func(serverURL, authHeader string) ClientLike
 
 // Client is a minimal MCP client over Streamable-HTTP (tools only). httpClient
 // is injected: prod passes an SSRF-guarded netsafe client; tests pass an
