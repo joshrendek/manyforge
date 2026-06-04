@@ -341,12 +341,16 @@ CREATE TABLE agent_run (
     cost_cents     bigint NOT NULL,
     correlation_id text NOT NULL,
     error          text,
+    trigger_dedup_key text,
     created_at     timestamptz NOT NULL,
     updated_at     timestamptz NOT NULL,
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (agent_id, tenant_root_id) REFERENCES agent (id, tenant_root_id)
 );
+CREATE UNIQUE INDEX agent_run_trigger_dedup_idx
+    ON agent_run (agent_id, trigger_dedup_key)
+    WHERE trigger_dedup_key IS NOT NULL;
 
 CREATE TABLE approval_item (
     id                      uuid PRIMARY KEY,
