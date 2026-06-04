@@ -67,6 +67,16 @@ func TestPin_AgentsApproveHumanOnly(t *testing.T) {
 	}
 }
 
+// TestPin_AgentGuardForbidsApprove: the DB membership guard (not just preset-role omission)
+// forbids binding agents.approve to an agent principal — so the no-self-approval invariant
+// is enforced at the database, matching 0031's stated contract.
+func TestPin_AgentGuardForbidsApprove(t *testing.T) {
+	mig := mustRead(t, "../../migrations/0033_agent_guard_forbid_approve.up.sql")
+	if !strings.Contains(mig, "membership_agent_guard") || !strings.Contains(mig, "agents.approve") {
+		t.Error("0033: membership_agent_guard must forbid agents.approve for agent principals")
+	}
+}
+
 // TestPin_ApprovalIdempotency pins the exactly-once approval-driven reply: ticket_message
 // carries a source_approval_item_id dedup key with a partial UNIQUE index, so an
 // at-least-once outbox redelivery of an approved reply inserts at most one outbound message.
