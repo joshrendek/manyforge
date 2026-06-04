@@ -100,6 +100,7 @@ func TestPin_AgentRuntimeRoleGuardSafe(t *testing.T) {
 		"hierarchy.manage",
 		"business.delete",
 		"ownership.transfer",
+		"agents.approve", // an agent must NOT self-approve its gated actions
 	} {
 		if strings.Contains(mig, forbidden) {
 			t.Errorf("0029_agent_runtime_role.up.sql: forbidden admin perm %q present — agent_runtime role must stay guard-safe (no admin escalation)", forbidden)
