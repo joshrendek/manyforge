@@ -35,6 +35,8 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/events"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/mailer"
+	"github.com/manyforge/manyforge/internal/platform/mcp"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 	"github.com/manyforge/manyforge/internal/platform/notify"
 	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
@@ -237,6 +239,23 @@ func main() {
 	}
 	mcpServerSvc := &agents.MCPServerService{DB: database, Sealer: mcpSealer}
 	mcpH := agents.NewMCPServerHandler(mcpServerSvc)
+
+	// US6 MCP host wiring. The guarded HTTP client honours MCPAllowLoopback so that
+	// dev environments may point at localhost MCP servers while production keeps the
+	// default SSRF posture (loopback blocked). The ClientFactory wraps mcp.NewClient so
+	// the host and executor receive an interface value, keeping them transport-agnostic.
+	// agentSvc.MCPServers is assigned AFTER agentSvc is constructed because mcpServerSvc
+	// is built after agentSvc; this is the single safe wiring point for the validator.
+	mcpHTTP := netsafe.NewClientWithOptions(60*time.Second, netsafe.Options{AllowLoopback: cfg.MCPAllowLoopback})
+	mcpConnect := mcp.ClientFactory(func(serverURL, authHeader string) mcp.ClientLike {
+		return mcp.NewClient(serverURL, authHeader, mcpHTTP)
+	})
+	mcpHost := &agents.MCPHost{Servers: mcpServerSvc, Connect: mcpConnect, Logger: logger}
+	agentEngine.MCP = mcpHost
+	approvalExec.MCP = mcpHost
+	// security carry-forward (Task 7): wire the validator so allowed_mcp_servers ids are
+	// validated on agent create/update in production (cross-tenant/foreign ids rejected).
+	agentSvc.MCPServers = mcpServerSvc
 
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,
