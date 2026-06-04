@@ -219,6 +219,25 @@ func main() {
 	}
 	identityH := ticketing.NewIdentityHandler(identitySvc)
 
+	// US6 MCP server sealer: seals per-server bearer tokens at rest using a dedicated
+	// master key (MANYFORGE_MCP_MASTER_KEY), mirroring EXACTLY the DKIM sealer pattern.
+	// When unset, mcpSealer is nil and creating an MCP server WITH an auth token returns
+	// a clean ErrValidation (the service already handles nil-sealer + token); servers
+	// without auth can still be created and the binary still boots.
+	var mcpSealer *mfcrypto.Sealer
+	if len(cfg.MCPMasterKey) > 0 {
+		s, serr := mfcrypto.NewSealer(cfg.MCPMasterKey)
+		if serr != nil {
+			logger.Error("init MCP sealer", "err", serr)
+			os.Exit(1)
+		}
+		mcpSealer = s
+	} else {
+		logger.Warn("MANYFORGE_MCP_MASTER_KEY unset; MCP server bearer-token sealing disabled (auth-token creation will fail)")
+	}
+	mcpServerSvc := &agents.MCPServerService{DB: database, Sealer: mcpSealer}
+	mcpH := agents.NewMCPServerHandler(mcpServerSvc)
+
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,
 	// so no event is drained without a handler. The in-process SMTP receiver
@@ -388,6 +407,8 @@ func main() {
 		agentsRun:       httpx.RequirePermission(database, permResolve, "agents.run", businessIDFromPath),
 		approvals:       approvalH,
 		agentsApprove:   httpx.RequirePermission(database, permResolve, "agents.approve", businessIDFromPath),
+		mcp:             mcpH,
+		mcpConfigure:    httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -549,6 +570,13 @@ type apiHandlers struct {
 	// agentsApprove gates the US4 approvals slice on the agents.approve permission, same
 	// RLS-bound 404-on-lacking-perm shape as the other groups.
 	agentsApprove func(http.Handler) http.Handler
+
+	// mcp is the US6 MCP server CRUD handler (Spec 003): create/list/get/patch/delete
+	// MCP server connection records for a business, gated by agents.configure.
+	mcp *agents.MCPServerHandler
+	// mcpConfigure gates the US6 MCP server slice on the agents.configure permission
+	// (same gate as the agent-definition CRUD — no new permission needed).
+	mcpConfigure func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -642,6 +670,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(ap chi.Router) {
 				ap.Use(h.agentsApprove)
 				h.approvals.ProtectedRoutes(ap)
+			})
+			// US6 MCP server slice: CRUD MCP server connection records under a business,
+			// gated on agents.configure (same permission as agent-definition CRUD —
+			// configuring MCP servers is part of configuring the agent runtime).
+			pr.Group(func(mc chi.Router) {
+				mc.Use(h.mcpConfigure)
+				h.mcp.ProtectedRoutes(mc)
 			})
 		})
 	})
