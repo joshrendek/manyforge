@@ -263,7 +263,7 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 		// outbox). A brand-new ticket fans out ticket.created; every fresh inbound
 		// message fans out message.received so agents are notified.
 		if out.Created {
-			if err := events.Enqueue(ctx, tx, r.tenantRootID, "ticket.created", map[string]any{
+			if err := events.Enqueue(ctx, tx, r.tenantRootID, events.TopicTicketCreated, map[string]any{
 				"ticket_id":   out.TicketID,
 				"business_id": r.businessID,
 				"message_id":  out.MessageID,
