@@ -62,6 +62,12 @@ type Querier interface {
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
 	// yet see (no membership at insert time). The caller builds the result from inputs.
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) error
+	// Idempotent event-triggered run. Dedups on (agent_id, trigger_dedup_key) -- the conflict
+	// target matches the partial unique index -- so an at-least-once redelivery of
+	// ticket.created creates at most one run per agent. ON CONFLICT DO NOTHING => 0 rows =>
+	// pgx.ErrNoRows in the caller, which maps it to "already enqueued" (created=false).
+	// tenant_root_id is derived from the (agent-principal-visible) agent row, never supplied.
+	CreateEventAgentRun(ctx context.Context, arg CreateEventAgentRunParams) (AgentRun, error)
 	CreateHumanPrincipal(ctx context.Context, arg CreateHumanPrincipalParams) (Principal, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) error
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) error

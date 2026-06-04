@@ -39,7 +39,7 @@ SELECT $1::uuid, a.id, a.business_id, a.tenant_root_id,
        'queued', $5::text
 FROM agent a
 WHERE a.id = $6::uuid AND a.business_id = $7::uuid
-RETURNING id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, created_at, updated_at
+RETURNING id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, trigger_dedup_key, created_at, updated_at
 `
 
 type CreateAgentRunParams struct {
@@ -79,6 +79,65 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 		&i.CostCents,
 		&i.CorrelationID,
 		&i.Error,
+		&i.TriggerDedupKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createEventAgentRun = `-- name: CreateEventAgentRun :one
+INSERT INTO agent_run (id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, correlation_id, trigger_dedup_key)
+SELECT $1::uuid, a.id, a.business_id, a.tenant_root_id,
+       'event', $2::text, $3::uuid,
+       'queued', $4::text, $5::text
+FROM agent a
+WHERE a.id = $6::uuid AND a.business_id = $7::uuid
+ON CONFLICT (agent_id, trigger_dedup_key) WHERE trigger_dedup_key IS NOT NULL DO NOTHING
+RETURNING id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, trigger_dedup_key, created_at, updated_at
+`
+
+type CreateEventAgentRunParams struct {
+	ID              uuid.UUID   `json:"id"`
+	TargetType      *string     `json:"target_type"`
+	TargetID        pgtype.UUID `json:"target_id"`
+	CorrelationID   string      `json:"correlation_id"`
+	TriggerDedupKey string      `json:"trigger_dedup_key"`
+	AgentID         uuid.UUID   `json:"agent_id"`
+	BusinessID      uuid.UUID   `json:"business_id"`
+}
+
+// Idempotent event-triggered run. Dedups on (agent_id, trigger_dedup_key) -- the conflict
+// target matches the partial unique index -- so an at-least-once redelivery of
+// ticket.created creates at most one run per agent. ON CONFLICT DO NOTHING => 0 rows =>
+// pgx.ErrNoRows in the caller, which maps it to "already enqueued" (created=false).
+// tenant_root_id is derived from the (agent-principal-visible) agent row, never supplied.
+func (q *Queries) CreateEventAgentRun(ctx context.Context, arg CreateEventAgentRunParams) (AgentRun, error) {
+	row := q.db.QueryRow(ctx, createEventAgentRun,
+		arg.ID,
+		arg.TargetType,
+		arg.TargetID,
+		arg.CorrelationID,
+		arg.TriggerDedupKey,
+		arg.AgentID,
+		arg.BusinessID,
+	)
+	var i AgentRun
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Trigger,
+		&i.TargetType,
+		&i.TargetID,
+		&i.Status,
+		&i.TokensIn,
+		&i.TokensOut,
+		&i.CostCents,
+		&i.CorrelationID,
+		&i.Error,
+		&i.TriggerDedupKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -86,7 +145,7 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 }
 
 const getAgentRun = `-- name: GetAgentRun :one
-SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, created_at, updated_at FROM agent_run WHERE id = $1 AND business_id = $2 AND agent_id = $3
+SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, trigger_dedup_key, created_at, updated_at FROM agent_run WHERE id = $1 AND business_id = $2 AND agent_id = $3
 `
 
 type GetAgentRunParams struct {
@@ -114,6 +173,7 @@ func (q *Queries) GetAgentRun(ctx context.Context, arg GetAgentRunParams) (Agent
 		&i.CostCents,
 		&i.CorrelationID,
 		&i.Error,
+		&i.TriggerDedupKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -121,7 +181,7 @@ func (q *Queries) GetAgentRun(ctx context.Context, arg GetAgentRunParams) (Agent
 }
 
 const listAgentRunsByAgent = `-- name: ListAgentRunsByAgent :many
-SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, created_at, updated_at FROM agent_run WHERE agent_id = $1 AND business_id = $2 ORDER BY created_at DESC LIMIT $3
+SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, trigger_dedup_key, created_at, updated_at FROM agent_run WHERE agent_id = $1 AND business_id = $2 ORDER BY created_at DESC LIMIT $3
 `
 
 type ListAgentRunsByAgentParams struct {
@@ -153,6 +213,7 @@ func (q *Queries) ListAgentRunsByAgent(ctx context.Context, arg ListAgentRunsByA
 			&i.CostCents,
 			&i.CorrelationID,
 			&i.Error,
+			&i.TriggerDedupKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -175,7 +236,7 @@ SET status = $1::text,
     error = $5::text,
     updated_at = now()
 WHERE id = $6::uuid AND business_id = $7::uuid
-RETURNING id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, created_at, updated_at
+RETURNING id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, trigger_dedup_key, created_at, updated_at
 `
 
 type UpdateAgentRunProgressParams struct {
@@ -214,6 +275,7 @@ func (q *Queries) UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRun
 		&i.CostCents,
 		&i.CorrelationID,
 		&i.Error,
+		&i.TriggerDedupKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

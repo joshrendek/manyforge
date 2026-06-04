@@ -9,6 +9,21 @@ FROM agent a
 WHERE a.id = sqlc.arg('agent_id')::uuid AND a.business_id = sqlc.arg('business_id')::uuid
 RETURNING *;
 
+-- name: CreateEventAgentRun :one
+-- Idempotent event-triggered run. Dedups on (agent_id, trigger_dedup_key) -- the conflict
+-- target matches the partial unique index -- so an at-least-once redelivery of
+-- ticket.created creates at most one run per agent. ON CONFLICT DO NOTHING => 0 rows =>
+-- pgx.ErrNoRows in the caller, which maps it to "already enqueued" (created=false).
+-- tenant_root_id is derived from the (agent-principal-visible) agent row, never supplied.
+INSERT INTO agent_run (id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, correlation_id, trigger_dedup_key)
+SELECT sqlc.arg('id')::uuid, a.id, a.business_id, a.tenant_root_id,
+       'event', sqlc.narg('target_type')::text, sqlc.narg('target_id')::uuid,
+       'queued', sqlc.arg('correlation_id')::text, sqlc.arg('trigger_dedup_key')::text
+FROM agent a
+WHERE a.id = sqlc.arg('agent_id')::uuid AND a.business_id = sqlc.arg('business_id')::uuid
+ON CONFLICT (agent_id, trigger_dedup_key) WHERE trigger_dedup_key IS NOT NULL DO NOTHING
+RETURNING *;
+
 -- name: GetAgentRun :one
 -- Scope the read by agent_id too (not just business_id): a same-business request for
 -- run R via a DIFFERENT agent's path yields no row -> pgx.ErrNoRows -> no-oracle 404.
