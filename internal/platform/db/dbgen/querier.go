@@ -160,6 +160,9 @@ type Querier interface {
 	// the bits the assignment guard needs (is_locked marks the full-access Owner role).
 	GetRoleInTenant(ctx context.Context, arg GetRoleInTenantParams) (GetRoleInTenantRow, error)
 	GetRolePermissions(ctx context.Context, roleID uuid.UUID) ([]string, error)
+	// The acting agent principal + the run's correlation id, so an approval executes as
+	// the agent and its audit rows join to the originating run by correlation.
+	GetRunActorForApproval(ctx context.Context, arg GetRunActorForApprovalParams) (GetRunActorForApprovalRow, error)
 	// ---- US2 write / threading queries ----
 	// GetThreadingParent loads the latest message on a ticket (any direction) — its
 	// message_id becomes the new outbound In-Reply-To; its references chain (+ its own
