@@ -15,7 +15,7 @@ const createAgent = `-- name: CreateAgent :one
 INSERT INTO agent (
     id, business_id, tenant_root_id, principal_id, name, provider, model,
     system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents,
-    created_at, updated_at)
+    allowed_mcp_servers, created_at, updated_at)
 SELECT
     $1::uuid,
     b.id,
@@ -29,24 +29,26 @@ SELECT
     $8::smallint,
     $9,
     $10::integer,
+    $11::uuid[],
     now(), now()
 FROM business b
-WHERE b.id = $11::uuid
+WHERE b.id = $12::uuid
 RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers
 `
 
 type CreateAgentParams struct {
-	ID                 uuid.UUID  `json:"id"`
-	PrincipalID        uuid.UUID  `json:"principal_id"`
-	Name               string     `json:"name"`
-	Provider           AiProvider `json:"provider"`
-	Model              string     `json:"model"`
-	SystemPrompt       string     `json:"system_prompt"`
-	AllowedTools       []string   `json:"allowed_tools"`
-	AutonomyMode       int16      `json:"autonomy_mode"`
-	Enabled            bool       `json:"enabled"`
-	MonthlyBudgetCents int32      `json:"monthly_budget_cents"`
-	BusinessID         uuid.UUID  `json:"business_id"`
+	ID                 uuid.UUID   `json:"id"`
+	PrincipalID        uuid.UUID   `json:"principal_id"`
+	Name               string      `json:"name"`
+	Provider           AiProvider  `json:"provider"`
+	Model              string      `json:"model"`
+	SystemPrompt       string      `json:"system_prompt"`
+	AllowedTools       []string    `json:"allowed_tools"`
+	AutonomyMode       int16       `json:"autonomy_mode"`
+	Enabled            bool        `json:"enabled"`
+	MonthlyBudgetCents int32       `json:"monthly_budget_cents"`
+	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
+	BusinessID         uuid.UUID   `json:"business_id"`
 }
 
 // CreateAgent inserts an agent definition. tenant_root_id is derived from the
@@ -63,6 +65,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.AutonomyMode,
 		arg.Enabled,
 		arg.MonthlyBudgetCents,
+		arg.AllowedMcpServers,
 		arg.BusinessID,
 	)
 	var i Agent
@@ -226,21 +229,23 @@ UPDATE agent SET
     autonomy_mode        = COALESCE($5::smallint, autonomy_mode),
     enabled              = COALESCE($6, enabled),
     monthly_budget_cents = COALESCE($7::integer, monthly_budget_cents),
+    allowed_mcp_servers  = COALESCE($8::uuid[], allowed_mcp_servers),
     updated_at           = now()
-WHERE id = $8::uuid AND business_id = $9::uuid
+WHERE id = $9::uuid AND business_id = $10::uuid
 RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers
 `
 
 type UpdateAgentParams struct {
-	Name               *string   `json:"name"`
-	Model              *string   `json:"model"`
-	SystemPrompt       *string   `json:"system_prompt"`
-	AllowedTools       []string  `json:"allowed_tools"`
-	AutonomyMode       *int16    `json:"autonomy_mode"`
-	Enabled            *bool     `json:"enabled"`
-	MonthlyBudgetCents *int32    `json:"monthly_budget_cents"`
-	ID                 uuid.UUID `json:"id"`
-	BusinessID         uuid.UUID `json:"business_id"`
+	Name               *string     `json:"name"`
+	Model              *string     `json:"model"`
+	SystemPrompt       *string     `json:"system_prompt"`
+	AllowedTools       []string    `json:"allowed_tools"`
+	AutonomyMode       *int16      `json:"autonomy_mode"`
+	Enabled            *bool       `json:"enabled"`
+	MonthlyBudgetCents *int32      `json:"monthly_budget_cents"`
+	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
+	ID                 uuid.UUID   `json:"id"`
+	BusinessID         uuid.UUID   `json:"business_id"`
 }
 
 // UpdateAgent partially updates an agent (PATCH): COALESCE(narg, col) preserves any
@@ -255,6 +260,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.AutonomyMode,
 		arg.Enabled,
 		arg.MonthlyBudgetCents,
+		arg.AllowedMcpServers,
 		arg.ID,
 		arg.BusinessID,
 	)

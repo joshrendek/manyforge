@@ -49,19 +49,20 @@ func agentPathID(r *http.Request) (uuid.UUID, error)     { return uuid.Parse(chi
 
 // agentResp is the OpenAPI Agent response shape.
 type agentResp struct {
-	ID                 string    `json:"id"`
-	BusinessID         string    `json:"business_id"`
-	PrincipalID        string    `json:"principal_id"`
-	Name               string    `json:"name"`
-	Provider           string    `json:"provider"`
-	Model              string    `json:"model"`
-	SystemPrompt       string    `json:"system_prompt"`
-	AllowedTools       []string  `json:"allowed_tools"`
-	AutonomyMode       int       `json:"autonomy_mode"`
-	Enabled            bool      `json:"enabled"`
-	MonthlyBudgetCents int       `json:"monthly_budget_cents"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                 string      `json:"id"`
+	BusinessID         string      `json:"business_id"`
+	PrincipalID        string      `json:"principal_id"`
+	Name               string      `json:"name"`
+	Provider           string      `json:"provider"`
+	Model              string      `json:"model"`
+	SystemPrompt       string      `json:"system_prompt"`
+	AllowedTools       []string    `json:"allowed_tools"`
+	AutonomyMode       int         `json:"autonomy_mode"`
+	Enabled            bool        `json:"enabled"`
+	MonthlyBudgetCents int         `json:"monthly_budget_cents"`
+	AllowedMCPServers  []uuid.UUID `json:"allowed_mcp_servers"`
+	CreatedAt          time.Time   `json:"created_at"`
+	UpdatedAt          time.Time   `json:"updated_at"`
 }
 
 func toAgentResp(a Agent) agentResp {
@@ -69,11 +70,16 @@ func toAgentResp(a Agent) agentResp {
 	if tools == nil {
 		tools = []string{}
 	}
+	mcpServers := a.AllowedMCPServers
+	if mcpServers == nil {
+		mcpServers = []uuid.UUID{}
+	}
 	return agentResp{
 		ID: a.ID.String(), BusinessID: a.BusinessID.String(), PrincipalID: a.PrincipalID.String(),
 		Name: a.Name, Provider: a.Provider, Model: a.Model, SystemPrompt: a.SystemPrompt,
 		AllowedTools: tools, AutonomyMode: a.AutonomyMode, Enabled: a.Enabled,
-		MonthlyBudgetCents: a.MonthlyBudgetCents, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
+		MonthlyBudgetCents: a.MonthlyBudgetCents, AllowedMCPServers: mcpServers,
+		CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
 	}
 }
 
@@ -114,14 +120,15 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	// autonomy_mode and enabled default (1 / true) when omitted, matching the DB
 	// defaults — pointer fields distinguish "omitted" from an explicit value.
 	var in struct {
-		Name               string   `json:"name"`
-		Provider           string   `json:"provider"`
-		Model              string   `json:"model"`
-		SystemPrompt       string   `json:"system_prompt"`
-		AllowedTools       []string `json:"allowed_tools"`
-		AutonomyMode       *int     `json:"autonomy_mode"`
-		Enabled            *bool    `json:"enabled"`
-		MonthlyBudgetCents int      `json:"monthly_budget_cents"`
+		Name               string      `json:"name"`
+		Provider           string      `json:"provider"`
+		Model              string      `json:"model"`
+		SystemPrompt       string      `json:"system_prompt"`
+		AllowedTools       []string    `json:"allowed_tools"`
+		AutonomyMode       *int        `json:"autonomy_mode"`
+		Enabled            *bool       `json:"enabled"`
+		MonthlyBudgetCents int         `json:"monthly_budget_cents"`
+		AllowedMCPServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -137,7 +144,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	created, err := h.svc.Create(r.Context(), pid, bid, CreateAgentInput{
 		Name: in.Name, Provider: in.Provider, Model: in.Model, SystemPrompt: in.SystemPrompt,
 		AllowedTools: in.AllowedTools, AutonomyMode: mode, Enabled: enabled,
-		MonthlyBudgetCents: in.MonthlyBudgetCents,
+		MonthlyBudgetCents: in.MonthlyBudgetCents, AllowedMCPServers: in.AllowedMCPServers,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -188,13 +195,14 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Pointer fields distinguish "absent" from "set" for PATCH semantics.
 	var in struct {
-		Name               *string   `json:"name"`
-		Model              *string   `json:"model"`
-		SystemPrompt       *string   `json:"system_prompt"`
-		AllowedTools       *[]string `json:"allowed_tools"`
-		AutonomyMode       *int      `json:"autonomy_mode"`
-		Enabled            *bool     `json:"enabled"`
-		MonthlyBudgetCents *int      `json:"monthly_budget_cents"`
+		Name               *string      `json:"name"`
+		Model              *string      `json:"model"`
+		SystemPrompt       *string      `json:"system_prompt"`
+		AllowedTools       *[]string    `json:"allowed_tools"`
+		AutonomyMode       *int         `json:"autonomy_mode"`
+		Enabled            *bool        `json:"enabled"`
+		MonthlyBudgetCents *int         `json:"monthly_budget_cents"`
+		AllowedMCPServers  *[]uuid.UUID `json:"allowed_mcp_servers"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -203,6 +211,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Name: in.Name, Model: in.Model, SystemPrompt: in.SystemPrompt,
 		AllowedTools: in.AllowedTools, AutonomyMode: in.AutonomyMode,
 		Enabled: in.Enabled, MonthlyBudgetCents: in.MonthlyBudgetCents,
+		AllowedMCPServers: in.AllowedMCPServers,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)

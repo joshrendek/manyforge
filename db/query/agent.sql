@@ -20,7 +20,7 @@ RETURNING id;
 INSERT INTO agent (
     id, business_id, tenant_root_id, principal_id, name, provider, model,
     system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents,
-    created_at, updated_at)
+    allowed_mcp_servers, created_at, updated_at)
 SELECT
     sqlc.arg('id')::uuid,
     b.id,
@@ -34,6 +34,7 @@ SELECT
     sqlc.arg('autonomy_mode')::smallint,
     sqlc.arg('enabled'),
     sqlc.arg('monthly_budget_cents')::integer,
+    sqlc.arg('allowed_mcp_servers')::uuid[],
     now(), now()
 FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid
@@ -64,6 +65,7 @@ UPDATE agent SET
     autonomy_mode        = COALESCE(sqlc.narg('autonomy_mode')::smallint, autonomy_mode),
     enabled              = COALESCE(sqlc.narg('enabled'), enabled),
     monthly_budget_cents = COALESCE(sqlc.narg('monthly_budget_cents')::integer, monthly_budget_cents),
+    allowed_mcp_servers  = COALESCE(sqlc.narg('allowed_mcp_servers')::uuid[], allowed_mcp_servers),
     updated_at           = now()
 WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid
 RETURNING *;

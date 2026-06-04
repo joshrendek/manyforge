@@ -22,27 +22,37 @@ type agentDB interface {
 	WithPrincipal(ctx context.Context, principalID uuid.UUID, fn func(pgx.Tx) error) error
 }
 
+// mcpValidator is the subset of MCPServerService AgentService needs to validate
+// allowed_mcp_servers ids. Declared as an interface so unit tests can inject a
+// fake without a real DB. MCPServerService satisfies this interface.
+type mcpValidator interface {
+	ValidateServerIDs(ctx context.Context, principalID, businessID uuid.UUID, ids []uuid.UUID) error
+}
+
 // AgentService manages business-bound agent definitions over the RLS DB. Each
 // Create also mints the agent's kind='agent' principal (its acting identity).
+// MCPServers may be nil (safe for unit tests that don't supply mcp_server ids).
 type AgentService struct {
-	DB agentDB
+	DB         agentDB
+	MCPServers mcpValidator
 }
 
 // Agent is an agent definition as returned to callers.
 type Agent struct {
-	ID                 uuid.UUID
-	BusinessID         uuid.UUID
-	PrincipalID        uuid.UUID
-	Name               string
-	Provider           string
-	Model              string
-	SystemPrompt       string
-	AllowedTools       []string
-	AutonomyMode       int
-	Enabled            bool
-	MonthlyBudgetCents int
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                  uuid.UUID
+	BusinessID          uuid.UUID
+	PrincipalID         uuid.UUID
+	Name                string
+	Provider            string
+	Model               string
+	SystemPrompt        string
+	AllowedTools        []string
+	AutonomyMode        int
+	Enabled             bool
+	MonthlyBudgetCents  int
+	AllowedMCPServers   []uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // CreateAgentInput is the caller-supplied agent to create.
@@ -55,10 +65,13 @@ type CreateAgentInput struct {
 	AutonomyMode       int
 	Enabled            bool
 	MonthlyBudgetCents int
+	AllowedMCPServers  []uuid.UUID
 }
 
 // UpdateAgentInput is a partial (PATCH) update — nil fields are left unchanged.
 // Provider is intentionally absent: it is immutable after creation.
+// AllowedMCPServers nil = absent (preserve current value); non-nil = replace
+// (empty non-nil slice clears to {}).
 type UpdateAgentInput struct {
 	Name               *string
 	Model              *string
@@ -67,6 +80,7 @@ type UpdateAgentInput struct {
 	AutonomyMode       *int
 	Enabled            *bool
 	MonthlyBudgetCents *int
+	AllowedMCPServers  *[]uuid.UUID
 }
 
 func validateCreateAgent(in CreateAgentInput) error {
@@ -110,12 +124,17 @@ func toAgent(r dbgen.Agent) Agent {
 	if tools == nil {
 		tools = []string{}
 	}
+	mcpServers := r.AllowedMcpServers
+	if mcpServers == nil {
+		mcpServers = []uuid.UUID{}
+	}
 	return Agent{
 		ID: r.ID, BusinessID: r.BusinessID, PrincipalID: r.PrincipalID,
 		Name: r.Name, Provider: string(r.Provider), Model: r.Model,
 		SystemPrompt: r.SystemPrompt, AllowedTools: tools,
 		AutonomyMode: int(r.AutonomyMode), Enabled: r.Enabled,
 		MonthlyBudgetCents: int(r.MonthlyBudgetCents),
+		AllowedMCPServers:  mcpServers,
 		CreatedAt:          r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -127,9 +146,20 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 	if err := validateCreateAgent(in); err != nil {
 		return Agent{}, err
 	}
+	// Validate allowed_mcp_servers before touching the DB. Nil-safe: only call
+	// when the validator is wired AND the slice is non-empty.
+	if s.MCPServers != nil && len(in.AllowedMCPServers) > 0 {
+		if err := s.MCPServers.ValidateServerIDs(ctx, principalID, businessID, in.AllowedMCPServers); err != nil {
+			return Agent{}, err
+		}
+	}
 	tools := in.AllowedTools
 	if tools == nil {
 		tools = []string{}
+	}
+	mcpServers := in.AllowedMCPServers
+	if mcpServers == nil {
+		mcpServers = []uuid.UUID{}
 	}
 	agentID := uuid.New()
 	agentPrincipalID := uuid.New()
@@ -154,6 +184,7 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 			AutonomyMode:       int16(in.AutonomyMode),
 			Enabled:            in.Enabled,
 			MonthlyBudgetCents: int32(in.MonthlyBudgetCents),
+			AllowedMcpServers:  mcpServers,
 			BusinessID:         businessID,
 		})
 		if aerr != nil {
@@ -225,6 +256,14 @@ func (s *AgentService) Update(ctx context.Context, principalID, businessID, agen
 	if err := validateUpdateAgent(in); err != nil {
 		return Agent{}, err
 	}
+	// Validate allowed_mcp_servers before touching the DB. Only validate when
+	// the slice is non-nil (nil = absent = PATCH preserve) AND non-empty.
+	// Nil-safe: only call when the validator is wired.
+	if s.MCPServers != nil && in.AllowedMCPServers != nil && len(*in.AllowedMCPServers) > 0 {
+		if err := s.MCPServers.ValidateServerIDs(ctx, principalID, businessID, *in.AllowedMCPServers); err != nil {
+			return Agent{}, err
+		}
+	}
 	params := dbgen.UpdateAgentParams{ID: agentID, BusinessID: businessID}
 	params.Name = in.Name
 	params.Model = in.Model
@@ -240,6 +279,11 @@ func (s *AgentService) Update(ctx context.Context, principalID, businessID, agen
 	if in.MonthlyBudgetCents != nil {
 		c := int32(*in.MonthlyBudgetCents)
 		params.MonthlyBudgetCents = &c
+	}
+	// AllowedMCPServers: nil pointer = absent (COALESCE in SQL preserves current
+	// value); non-nil pointer = replace (empty non-nil slice clears to {}).
+	if in.AllowedMCPServers != nil {
+		params.AllowedMcpServers = *in.AllowedMCPServers
 	}
 	var row dbgen.Agent
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
