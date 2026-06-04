@@ -79,6 +79,73 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/mcp_servers:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listMCPServers
+      summary: List MCP servers for a business
+      responses:
+        "200":
+          description: MCP server list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServerList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createMCPServer
+      summary: Create an MCP server connection record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateMCPServerRequest" }
+      responses:
+        "201":
+          description: Created MCP server
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServer" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/mcp_servers/{serverID}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: serverID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getMCPServer
+      summary: Get one MCP server connection record
+      responses:
+        "200":
+          description: MCP server
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServer" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateMCPServer
+      summary: Partially update an MCP server connection record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateMCPServerRequest" }
+      responses:
+        "200":
+          description: Updated MCP server
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServer" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteMCPServer
+      summary: Delete an MCP server connection record
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/agents/{agentID}/runs:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -271,6 +338,54 @@ components:
         autonomy_mode: { type: integer, enum: [1, 2, 3] }
         enabled: { type: boolean }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647 }
+    MCPServer:
+      type: object
+      description: >
+        An MCP server connection record. Auth credentials (bearer token) are
+        write-only and are never returned in any response — only the presence of
+        auth is not exposed in this schema.
+      required: [id, business_id, name, url, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        name: { type: string }
+        url: { type: string, format: uri }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MCPServerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MCPServer" }
+    CreateMCPServerRequest:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string, minLength: 1 }
+        url: { type: string, format: uri }
+        auth_token:
+          type: string
+          writeOnly: true
+          description: >
+            Optional bearer token sealed at rest. Write-only — never returned in
+            any response.
+        enabled: { type: boolean, default: true }
+    UpdateMCPServerRequest:
+      type: object
+      description: Partial update — omit a field to leave it unchanged.
+      properties:
+        name: { type: string, minLength: 1 }
+        url: { type: string, format: uri }
+        auth_token:
+          type: string
+          writeOnly: true
+          description: >
+            Replace the sealed bearer token. Empty string clears auth. Write-only
+            — never returned in any response.
+        enabled: { type: boolean }
     TriggerRunRequest:
       type: object
       description: Optional run trigger. An empty body defaults to a manual trigger.

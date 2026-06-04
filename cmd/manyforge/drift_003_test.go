@@ -12,7 +12,8 @@ import (
 )
 
 // inScope003Ops is the COMPLETE set of spec-003 operations served by the router so
-// far (US2 agent-definition CRUD + US3 run trigger/status + US4 approvals queue).
+// far (US2 agent-definition CRUD + US3 run trigger/status + US4 approvals queue +
+// US6 MCP server CRUD).
 // Each entry is asserted both ways by TestOpenAPIDrift003 — present in the router AND
 // documented in the 003 contract.
 var inScope003Ops = []string{
@@ -26,13 +27,18 @@ var inScope003Ops = []string{
 	"GET /businesses/{}/approvals",
 	"POST /businesses/{}/approvals/{}/approve",
 	"POST /businesses/{}/approvals/{}/deny",
+	"GET /businesses/{}/mcp_servers",
+	"POST /businesses/{}/mcp_servers",
+	"GET /businesses/{}/mcp_servers/{}",
+	"PATCH /businesses/{}/mcp_servers/{}",
+	"DELETE /businesses/{}/mcp_servers/{}",
 }
 
 // is003Op reports whether a normalized "METHOD /path" belongs to the 003 surface
-// (the business-nested /agents routes + the US4 /approvals queue), as opposed to the
-// 001/002 routes that share the /businesses prefix.
+// (the business-nested /agents routes + the US4 /approvals queue + US6 /mcp_servers),
+// as opposed to the 001/002 routes that share the /businesses prefix.
 func is003Op(op string) bool {
-	return strings.Contains(op, "/agents") || strings.Contains(op, "/approvals")
+	return strings.Contains(op, "/agents") || strings.Contains(op, "/approvals") || strings.Contains(op, "/mcp_servers")
 }
 
 // TestOpenAPIDrift003 pins the spec-003 agent-runtime contract against the FULL
@@ -104,6 +110,15 @@ func TestAgentEndpointContract(t *testing.T) {
 			"post": {"201", "400", "404", "409"},
 		},
 		"/businesses/{id}/agents/{agentID}": {
+			"get":    {"200", "404"},
+			"patch":  {"200", "400", "404", "409"},
+			"delete": {"204", "404"},
+		},
+		"/businesses/{id}/mcp_servers": {
+			"get":  {"200", "404"},
+			"post": {"201", "400", "404", "409"},
+		},
+		"/businesses/{id}/mcp_servers/{serverID}": {
 			"get":    {"200", "404"},
 			"patch":  {"200", "400", "404", "409"},
 			"delete": {"204", "404"},
