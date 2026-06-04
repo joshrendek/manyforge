@@ -31,3 +31,22 @@ func TestBlocked(t *testing.T) {
 		t.Error("Blocked(nil) should be true (fail closed)")
 	}
 }
+
+func TestBlockedWithLoopbackAllowed(t *testing.T) {
+	// loopback permitted; everything else still blocked.
+	if blockedWith(net.ParseIP("127.0.0.1"), true) {
+		t.Error("127.0.0.1 should be allowed when allowLoopback=true")
+	}
+	if blockedWith(net.ParseIP("::1"), true) {
+		t.Error("::1 should be allowed when allowLoopback=true")
+	}
+	for _, bad := range []string{"10.0.0.1", "169.254.169.254", "192.168.1.1", "172.16.0.1"} {
+		if !blockedWith(net.ParseIP(bad), true) {
+			t.Errorf("%s must stay blocked even with allowLoopback=true", bad)
+		}
+	}
+	// default (allowLoopback=false) still blocks loopback.
+	if !blockedWith(net.ParseIP("127.0.0.1"), false) {
+		t.Error("127.0.0.1 must be blocked when allowLoopback=false")
+	}
+}
