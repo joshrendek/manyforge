@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -46,10 +47,17 @@ var _ approvalReader = (*ApprovalStore)(nil)
 // It does NOT re-check RBAC at execution time: the human approval (itself gated by the
 // agents.approve permission) IS the authorization, and the tool runs under the agent
 // principal's RLS.
+//
+// MCP tools (tool name prefixed "mcp:") are dispatched through MCP (if set). When MCP
+// is nil, mcp: tools are treated as unknown and marked failed. Internal tools use the
+// Tools registry as before.
 type ApprovalExecutor struct {
 	Approvals approvalReader
 	Tools     *ToolRegistry
 	Auditor   runAuditor
+	// MCP is optional. When set, approved tool calls whose name starts with "mcp:"
+	// are dispatched through it instead of the internal ToolRegistry.
+	MCP mcpInvoker
 }
 
 // Handle implements events.Handler. It ignores the worker tx (uses its own principal
@@ -73,19 +81,36 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		return nil // idempotent skip
 	}
 
-	tool, ok := e.Tools.Get(p.Tool)
-	if !ok {
-		// A tool removed since proposal: do not execute; mark executed-with-error so it
-		// leaves the queue. (Fail-closed: never guess an action.)
-		_, _ = e.Approvals.MarkExecuted(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID)
-		_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": "unknown tool"}, "error")
-		return nil
-	}
-
 	// Execute as the agent, keyed by the approval id (the reply tool dedups on it). The
 	// args come from the (trusted) event payload, mirroring what was gated at proposal.
 	execCtx := withApprovalKey(ctx, p.ApprovalID)
-	out, ierr := tool.Invoke(execCtx, p.AgentPrincipalID, p.BusinessID, p.Args)
+	var out string
+	var ierr error
+
+	if strings.HasPrefix(p.Tool, "mcp:") {
+		// MCP tool path: resolve and invoke via the MCPHost. The approval id is passed
+		// as idemHint so the remote server can (optionally) deduplicate on it.
+		// At-least-once caveat (design §3.6): see InvokeMCPTool for the full note.
+		if e.MCP == nil {
+			// No MCP host wired — treat as unknown tool (fail-closed).
+			_, _ = e.Approvals.MarkExecuted(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID)
+			_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": "no MCP host configured"}, "error")
+			return nil
+		}
+		out, ierr = e.MCP.InvokeMCPTool(execCtx, p.AgentPrincipalID, p.BusinessID, p.Tool, p.Args, p.ApprovalID.String())
+	} else {
+		// Internal tool path: look up in the registry and invoke.
+		tool, ok := e.Tools.Get(p.Tool)
+		if !ok {
+			// A tool removed since proposal: do not execute; mark executed-with-error so it
+			// leaves the queue. (Fail-closed: never guess an action.)
+			_, _ = e.Approvals.MarkExecuted(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID)
+			_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": "unknown tool"}, "error")
+			return nil
+		}
+		out, ierr = tool.Invoke(execCtx, p.AgentPrincipalID, p.BusinessID, p.Args)
+	}
+
 	if ierr != nil {
 		_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": safeMsg(ierr)}, "error")
 		return fmt.Errorf("approval execute %s: %w", p.Tool, ierr) // reschedule

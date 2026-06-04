@@ -39,20 +39,20 @@ type AgentService struct {
 
 // Agent is an agent definition as returned to callers.
 type Agent struct {
-	ID                  uuid.UUID
-	BusinessID          uuid.UUID
-	PrincipalID         uuid.UUID
-	Name                string
-	Provider            string
-	Model               string
-	SystemPrompt        string
-	AllowedTools        []string
-	AutonomyMode        int
-	Enabled             bool
-	MonthlyBudgetCents  int
-	AllowedMCPServers   []uuid.UUID
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                 uuid.UUID
+	BusinessID         uuid.UUID
+	PrincipalID        uuid.UUID
+	Name               string
+	Provider           string
+	Model              string
+	SystemPrompt       string
+	AllowedTools       []string
+	AutonomyMode       int
+	Enabled            bool
+	MonthlyBudgetCents int
+	AllowedMCPServers  []uuid.UUID
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // CreateAgentInput is the caller-supplied agent to create.
