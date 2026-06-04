@@ -102,17 +102,33 @@ func (e *Engine) Run(ctx context.Context, agentPrincipalID uuid.UUID, ag Agent, 
 }
 
 func (e *Engine) run(ctx context.Context, agentPrincipalID uuid.UUID, ag Agent, trigger string, targetType *string, targetID *uuid.UUID) (AgentRun, error) {
+	// Disabled agents never create a run on the synchronous (manual) path: the caller
+	// gets a clean conflict with no row. (The async drain path guards again in execute,
+	// marking an already-created run failed if the agent was disabled after enqueue.)
 	if !ag.Enabled {
 		return AgentRun{}, fmt.Errorf("agents: agent is disabled: %w", errs.ErrConflict)
 	}
-	limits := e.Limits.withDefaults()
-	businessID := ag.BusinessID
-
-	run, err := e.Runs.CreateRun(ctx, agentPrincipalID, businessID, ag.ID, trigger, uuid.NewString(), targetType, targetID)
+	run, err := e.Runs.CreateRun(ctx, agentPrincipalID, ag.BusinessID, ag.ID, trigger, uuid.NewString(), targetType, targetID)
 	if err != nil {
 		return AgentRun{}, err
 	}
-	_ = e.Auditor.Run(ctx, agentPrincipalID, run, "agent.run.started", map[string]any{"agent_id": ag.ID, "trigger": trigger}, nil, "started")
+	return e.execute(ctx, agentPrincipalID, ag, run)
+}
+
+// Execute runs the bounded loop on an ALREADY-CREATED run. The Stage-2 RunDrainer calls
+// it after claiming a queued run (queued→running); Run calls it right after CreateRun.
+// The run carries Trigger/TargetType/TargetID/CorrelationID. It is safe to call on a run
+// already marked 'running' (the in-flight Progress write is an idempotent UPDATE).
+func (e *Engine) Execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Agent, run AgentRun) (AgentRun, error) {
+	return e.execute(ctx, agentPrincipalID, ag, run)
+}
+
+func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Agent, run AgentRun) (AgentRun, error) {
+	limits := e.Limits.withDefaults()
+	businessID := ag.BusinessID
+	targetType, targetID := run.TargetType, run.TargetID
+
+	_ = e.Auditor.Run(ctx, agentPrincipalID, run, "agent.run.started", map[string]any{"agent_id": ag.ID, "trigger": run.Trigger}, nil, "started")
 
 	// finish writes the terminal state + a completion/failure audit, and returns a
 	// best-effort AgentRun (falling back to the created run if the fake store omits
@@ -138,6 +154,13 @@ func (e *Engine) run(ctx context.Context, agentPrincipalID uuid.UUID, ag Agent, 
 		r.Status = status
 		r.Error = rp
 		return r, perr
+	}
+
+	// Async-path defense: a run created while the agent was enabled, then drained after a
+	// disable, must terminate cleanly rather than execute. (Never hit on the manual path —
+	// run() already returned for a disabled agent before CreateRun.)
+	if !ag.Enabled {
+		return finish(RunFailed, "agent disabled", 0, 0, 0)
 	}
 
 	// Budget guard (run-start). 0 ⇒ no cap. mtdStart is read ONCE here and reused for
