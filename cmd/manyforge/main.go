@@ -40,6 +40,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
+	"github.com/manyforge/manyforge/migrations"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -73,6 +74,19 @@ func main() {
 		os.Exit(1)
 	}
 	defer database.Close()
+
+	// Fail fast on schema drift: refuse to serve a database that is behind the code. The
+	// expected version is the highest embedded migration; a behind/dirty DB would otherwise
+	// 500 opaquely at query time on a column/table a pending migration adds (run migrate).
+	expectedSchema, err := migrations.LatestVersion()
+	if err != nil {
+		logger.Error("startup: determine expected schema version", "err", err)
+		os.Exit(1)
+	}
+	if err := database.VerifySchemaCurrent(ctx, expectedSchema); err != nil {
+		logger.Error("startup: refusing to serve (database schema drift)", "err", err, "expected_version", expectedSchema)
+		os.Exit(1)
+	}
 
 	// Dev key ring: ephemeral EdDSA keys. Tokens do not survive a restart;
 	// configure persistent keys for production (see research R4).
