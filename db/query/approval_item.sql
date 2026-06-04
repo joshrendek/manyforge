@@ -43,3 +43,10 @@ RETURNING *;
 -- Sweep: mark every past-expiry pending item expired. Returns the count swept.
 UPDATE approval_item SET state = 'expired', updated_at = now()
 WHERE state = 'pending' AND expires_at <= now();
+
+-- name: GetRunActorForApproval :one
+-- The acting agent principal + the run's correlation id, so an approval executes as
+-- the agent and its audit rows join to the originating run by correlation.
+SELECT a.principal_id, ar.correlation_id FROM agent_run ar
+JOIN agent a ON a.id = ar.agent_id AND a.tenant_root_id = ar.tenant_root_id
+WHERE ar.id = $1 AND ar.business_id = $2;

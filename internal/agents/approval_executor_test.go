@@ -66,3 +66,77 @@ func TestExecutor_SkipsNonApproved(t *testing.T) {
 		t.Fatal("a non-approved item must NOT execute (idempotent skip)")
 	}
 }
+
+// corrAuditor captures the AgentRun + action so we can pin (a) no double-execute audit on
+// an idempotent replay and (b) the originating run's correlation id on executor audits.
+type corrAuditor struct {
+	actions []string
+	corrs   []string
+}
+
+func (a *corrAuditor) Run(_ context.Context, _ uuid.UUID, run AgentRun, action string, _, _ any, decision string) error {
+	a.actions = append(a.actions, action+":"+decision)
+	a.corrs = append(a.corrs, run.CorrelationID)
+	return nil
+}
+
+// EX-5 fix #1: a redelivery whose MarkExecuted claim loses (ok==false — a prior delivery
+// already executed the item) must NOT write a second "executed" audit row.
+func TestExecutor_NoDoubleAuditOnReplay(t *testing.T) {
+	tid := uuid.New()
+	args := json.RawMessage(`{"ticket_id":"` + tid.String() + `","status":"open"}`)
+	pl := approvalEventPayload{ApprovalID: uuid.New(), AgentPrincipalID: uuid.New(), BusinessID: uuid.New(), Tool: "set_status", Args: args}
+
+	// Winner: claim succeeds (ok==true) → exactly one executed audit.
+	win := &corrAuditor{}
+	exWin := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: true}, Tools: NewToolRegistry(&fakeTicketSvc{}), Auditor: win}
+	if err := exWin.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("handle (winner): %v", err)
+	}
+	if got := countSuffix(win.actions, "agent.approval.executed:executed"); got != 1 {
+		t.Fatalf("winner executed-audit count = %d, want 1; actions=%v", got, win.actions)
+	}
+
+	// Replay: claim loses (ok==false) → zero executed audit rows (no second "executed").
+	replay := &corrAuditor{}
+	exReplay := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: false}, Tools: NewToolRegistry(&fakeTicketSvc{}), Auditor: replay}
+	if err := exReplay.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("handle (replay): %v", err)
+	}
+	if got := countSuffix(replay.actions, "agent.approval.executed:executed"); got != 0 {
+		t.Fatalf("replay executed-audit count = %d, want 0 (no double-audit); actions=%v", got, replay.actions)
+	}
+}
+
+// EX-5 fix #2: executor-emitted audit rows carry the originating run's correlation id.
+func TestExecutor_AuditCarriesCorrelationID(t *testing.T) {
+	tid := uuid.New()
+	corr := uuid.NewString()
+	pl := approvalEventPayload{
+		ApprovalID: uuid.New(), AgentRunID: uuid.New(), AgentPrincipalID: uuid.New(), BusinessID: uuid.New(),
+		Tool: "set_status", Args: json.RawMessage(`{"ticket_id":"` + tid.String() + `","status":"open"}`), CorrelationID: corr,
+	}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: true}, Tools: NewToolRegistry(&fakeTicketSvc{}), Auditor: aud}
+	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(aud.corrs) == 0 {
+		t.Fatal("expected at least one audit row")
+	}
+	for i, c := range aud.corrs {
+		if c != corr {
+			t.Fatalf("audit[%d] correlation = %q, want %q", i, c, corr)
+		}
+	}
+}
+
+func countSuffix(actions []string, want string) int {
+	n := 0
+	for _, a := range actions {
+		if a == want {
+			n++
+		}
+	}
+	return n
+}

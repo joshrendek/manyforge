@@ -160,6 +160,31 @@ func (q *Queries) GetApprovalItem(ctx context.Context, arg GetApprovalItemParams
 	return i, err
 }
 
+const getRunActorForApproval = `-- name: GetRunActorForApproval :one
+SELECT a.principal_id, ar.correlation_id FROM agent_run ar
+JOIN agent a ON a.id = ar.agent_id AND a.tenant_root_id = ar.tenant_root_id
+WHERE ar.id = $1 AND ar.business_id = $2
+`
+
+type GetRunActorForApprovalParams struct {
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+type GetRunActorForApprovalRow struct {
+	PrincipalID   uuid.UUID `json:"principal_id"`
+	CorrelationID string    `json:"correlation_id"`
+}
+
+// The acting agent principal + the run's correlation id, so an approval executes as
+// the agent and its audit rows join to the originating run by correlation.
+func (q *Queries) GetRunActorForApproval(ctx context.Context, arg GetRunActorForApprovalParams) (GetRunActorForApprovalRow, error) {
+	row := q.db.QueryRow(ctx, getRunActorForApproval, arg.ID, arg.BusinessID)
+	var i GetRunActorForApprovalRow
+	err := row.Scan(&i.PrincipalID, &i.CorrelationID)
+	return i, err
+}
+
 const listPendingApprovals = `-- name: ListPendingApprovals :many
 SELECT id, agent_run_id, business_id, tenant_root_id, tool, args, effect_class, state, decided_by_principal_id, decided_at, executed_at, expires_at, error, created_at, updated_at FROM approval_item
 WHERE business_id = $1 AND state = $3::text

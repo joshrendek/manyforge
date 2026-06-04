@@ -23,6 +23,9 @@ type approvalEventPayload struct {
 	TenantRootID     uuid.UUID       `json:"tenant_root_id"`
 	Tool             string          `json:"tool"`
 	Args             json.RawMessage `json:"args"`
+	// CorrelationID is the originating run's correlation id, so executor-emitted audit
+	// rows join back to the run that proposed the action.
+	CorrelationID string `json:"correlation_id"`
 }
 
 // approvalReader is the executor's view of the store (pre-check + idempotency claim).
@@ -59,7 +62,7 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		slog.ErrorContext(ctx, "approval executor: bad payload", "err", err)
 		return nil
 	}
-	run := AgentRun{ID: p.AgentRunID, BusinessID: p.BusinessID}
+	run := AgentRun{ID: p.AgentRunID, BusinessID: p.BusinessID, CorrelationID: p.CorrelationID}
 
 	// Pre-check: only an 'approved' item executes (skip denied/expired/already-executed).
 	item, err := e.Approvals.Get(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID)
@@ -88,11 +91,16 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		return fmt.Errorf("approval execute %s: %w", p.Tool, ierr) // reschedule
 	}
 
-	// Claim: approved → executed. Already-executed (ok=false) is fine (a prior delivery
-	// ran the tool; the dedup key ensured the side effect happened at most once).
-	if _, merr := e.Approvals.MarkExecuted(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID); merr != nil {
+	// Claim: approved → executed. ok=false means a prior delivery already executed this
+	// item (an idempotent replay); the dedup key ensured the side effect happened at most
+	// once, so we must NOT write a second "executed" audit row. Only the delivery that
+	// wins the claim (ok=true) records the executed audit.
+	okMarked, merr := e.Approvals.MarkExecuted(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID)
+	if merr != nil {
 		return merr // reschedule; re-execution is dedup-safe
 	}
-	_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.executed", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "result": out}, "executed")
+	if okMarked {
+		_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.executed", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "result": out}, "executed")
+	}
 	return nil
 }

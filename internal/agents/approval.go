@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/events"
 )
 
 // Approval-item states (mirror the approval_item CHECK constraint).
@@ -144,6 +145,51 @@ func (s *ApprovalStore) Decide(ctx context.Context, principalID, businessID, id 
 		return ApprovalItem{}, mapAgentRunErr(err)
 	}
 	return toApprovalItem(row), nil
+}
+
+// Approve transitions pending→approved AND enqueues the execution event in ONE tx, so a
+// committed approval always has its outbox event (no lost action — the existing outbox
+// Worker dispatches it to the ApprovalExecutor). Returns ErrConflict (409) if the item is
+// not pending/expired and ErrNotFound (404) if it doesn't exist (same no-oracle
+// disambiguation as Decide). The enqueued payload carries everything the executor needs to
+// run the tool AS the agent and to join its audit rows to the originating run by
+// correlation id.
+func (s *ApprovalStore) Approve(ctx context.Context, principalID, businessID, id, decidedBy uuid.UUID) (ApprovalItem, error) {
+	var item ApprovalItem
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		row, e := q.DecideApprovalItem(ctx, dbgen.DecideApprovalItemParams{
+			ID: id, BusinessID: businessID, State: ApprovalApproved, DecidedBy: decidedBy,
+		})
+		if e != nil {
+			return e // ErrNoRows handled below (mapped to 409 if the row exists, else 404)
+		}
+		item = toApprovalItem(row)
+		// Derive the acting agent principal AND the run's correlation id: the approval must
+		// execute as the agent, and executor-emitted audit rows join back to the run.
+		actor, ae := q.GetRunActorForApproval(ctx, dbgen.GetRunActorForApprovalParams{ID: item.AgentRunID, BusinessID: businessID})
+		if ae != nil {
+			return ae
+		}
+		return events.Enqueue(ctx, tx, item.TenantRootID, TopicAgentApproved, approvalEventPayload{
+			ApprovalID: item.ID, AgentRunID: item.AgentRunID, AgentPrincipalID: actor.PrincipalID,
+			BusinessID: businessID, TenantRootID: item.TenantRootID, Tool: item.Tool, Args: item.Args,
+			CorrelationID: actor.CorrelationID,
+		})
+	})
+	if err != nil {
+		// ErrNoRows from the UPDATE means "not pending anymore" (already decided/expired) OR
+		// the row is unknown/foreign. Disambiguate with a follow-up read (same as Decide):
+		// existing+RLS-visible → 409 conflict, otherwise → 404 not-found (no oracle).
+		if errors.Is(err, pgx.ErrNoRows) {
+			if _, gerr := s.Get(ctx, principalID, businessID, id); gerr == nil {
+				return ApprovalItem{}, fmt.Errorf("agents: approval already decided/expired: %w", errs.ErrConflict)
+			}
+			return ApprovalItem{}, fmt.Errorf("agents: approval not found: %w", errs.ErrNotFound)
+		}
+		return ApprovalItem{}, mapAgentRunErr(err)
+	}
+	return item, nil
 }
 
 // MarkExecuted is the executor's idempotency claim: approved → executed iff still
