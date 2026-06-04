@@ -172,6 +172,14 @@ func main() {
 	}
 	// approvalExec subscribes to TopicAgentApproved below, once eventBus is constructed.
 
+	// US5 triage trigger + run drainer (l29 async path). The trigger subscribes to
+	// ticket.created (below) and enqueues a queued run per enabled agent — fast +
+	// idempotent, it does NOT run the loop. The drainer poller (started after the worker)
+	// claims queued runs and runs the loop as the agent, decoupled from the outbox worker
+	// so a long run never stalls event delivery.
+	triageTrigger := &agents.TriageTrigger{Runs: agentRunStore, Logger: logger}
+	runDrainer := &agents.RunDrainer{Runs: agentRunStore, Engine: agentEngine, Logger: logger}
+
 	// US4 inbox-management identity surface (custom email domains + verification +
 	// custom inbound addresses). The DKIM master key seals per-domain Ed25519 private
 	// keys at rest; when MANYFORGE_DKIM_MASTER_KEY is unset the sealer is nil and
@@ -298,6 +306,11 @@ func main() {
 	// state claim + the draft_reply idempotency key).
 	eventBus.Subscribe(agents.TopicAgentApproved, approvalExec.Handle)
 
+	// US5: an enabled agent auto-runs on a brand-new ticket. ONLY ticket.created is
+	// subscribed (never message.received) — the structural loop-guard: an agent's own
+	// reply emits ticket.replied, not ticket.created, so it can never re-trigger triage.
+	eventBus.Subscribe(events.TopicTicketCreated, triageTrigger.Handle)
+
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -395,6 +408,32 @@ func main() {
 					logger.WarnContext(workerCtx, "approval expire sweep", "err", err)
 				} else if n > 0 {
 					logger.InfoContext(workerCtx, "approval items expired", "count", n)
+				}
+			}
+		}
+	}()
+
+	// US5 run drainer: every 2s, drain all queued agent_runs (claim queued→running via the
+	// SKIP-LOCKED definer fn, then run the loop as the agent). Serial per tick for v1; the
+	// SKIP-LOCKED claim already supports horizontal scaling if we add workers later. The
+	// loop is decoupled from the outbox worker so a long run never stalls event delivery.
+	go func() {
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-t.C:
+				for {
+					ran, err := runDrainer.DrainOnce(workerCtx)
+					if err != nil {
+						logger.WarnContext(workerCtx, "agent run drain", "err", err)
+						break
+					}
+					if !ran {
+						break
+					}
 				}
 			}
 		}
