@@ -41,6 +41,7 @@ type AgentRun struct {
 
 type agentRunDB interface {
 	WithPrincipal(ctx context.Context, principalID uuid.UUID, fn func(pgx.Tx) error) error
+	WithTx(ctx context.Context, fn func(pgx.Tx) error) error
 }
 
 // AgentRunStore persists agent_run rows over the RLS DB.
@@ -75,6 +76,30 @@ func (s *AgentRunStore) CreateRun(ctx context.Context, principalID, businessID, 
 		return AgentRun{}, mapAgentRunErr(err)
 	}
 	return toAgentRun(row), nil
+}
+
+// CreateEventRun idempotently inserts a queued, event-triggered run for the agent under
+// the AGENT's own principal (so the insert passes RLS as the acting identity), deduped on
+// dedupKey (the triggering ticket_message id). created=false means a prior at-least-once
+// delivery already enqueued this (agent, dedupKey) — a benign replay; the caller skips it.
+func (s *AgentRunStore) CreateEventRun(ctx context.Context, agentPrincipalID, businessID, agentID uuid.UUID, dedupKey string, targetType *string, targetID *uuid.UUID) (created bool, err error) {
+	e := s.DB.WithPrincipal(ctx, agentPrincipalID, func(tx pgx.Tx) error {
+		_, ie := dbgen.New(tx).CreateEventAgentRun(ctx, dbgen.CreateEventAgentRunParams{
+			ID: uuid.New(), AgentID: agentID, BusinessID: businessID,
+			CorrelationID: uuid.NewString(), TriggerDedupKey: dedupKey,
+			TargetType: targetType, TargetID: db.PGUUIDPtr(targetID),
+		})
+		return ie
+	})
+	if e != nil {
+		// ErrNoRows ⇒ ON CONFLICT DO NOTHING (deduped) — under the agent's own principal the
+		// agent row is always visible, so the only zero-row cause is the dedup conflict.
+		if errors.Is(e, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, mapAgentRunErr(e)
+	}
+	return true, nil
 }
 
 // Progress writes status + token/cost totals + optional error.
