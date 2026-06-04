@@ -143,6 +143,11 @@ type Querier interface {
 	// businesses; the explicit business_id is defense in depth. pgx.ErrNoRows ⇒ the
 	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
 	GetEmailDomain(ctx context.Context, arg GetEmailDomainParams) (EmailDomain, error)
+	// GetEnabledMCPServerByName fetches a single enabled MCP server by (business_id, name).
+	// Used by ApprovalExecutor to resolve the server for an approved mcp: tool call.
+	// RLS scopes rows to the caller's authorized businesses; the explicit business_id is
+	// defense in depth. pgx.ErrNoRows => ErrNotFound (cross-tenant names are invisible).
+	GetEnabledMCPServerByName(ctx context.Context, arg GetEnabledMCPServerByNameParams) (McpServer, error)
 	GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error)
 	// GetMCPServerByID loads an MCP server by (id, business_id) — the ownership
 	// predicate. RLS scopes rows to the caller's authorized businesses; the explicit

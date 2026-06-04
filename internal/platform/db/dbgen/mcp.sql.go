@@ -31,6 +31,37 @@ func (q *Queries) DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams
 	return result.RowsAffected(), nil
 }
 
+const getEnabledMCPServerByName = `-- name: GetEnabledMCPServerByName :one
+SELECT id, business_id, tenant_root_id, name, url, sealed_auth_ref, enabled, created_at, updated_at FROM mcp_server
+WHERE business_id = $1 AND name = $2 AND enabled
+`
+
+type GetEnabledMCPServerByNameParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	Name       string    `json:"name"`
+}
+
+// GetEnabledMCPServerByName fetches a single enabled MCP server by (business_id, name).
+// Used by ApprovalExecutor to resolve the server for an approved mcp: tool call.
+// RLS scopes rows to the caller's authorized businesses; the explicit business_id is
+// defense in depth. pgx.ErrNoRows => ErrNotFound (cross-tenant names are invisible).
+func (q *Queries) GetEnabledMCPServerByName(ctx context.Context, arg GetEnabledMCPServerByNameParams) (McpServer, error) {
+	row := q.db.QueryRow(ctx, getEnabledMCPServerByName, arg.BusinessID, arg.Name)
+	var i McpServer
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Name,
+		&i.Url,
+		&i.SealedAuthRef,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getMCPServerByID = `-- name: GetMCPServerByID :one
 SELECT id, business_id, tenant_root_id, name, url, sealed_auth_ref, enabled, created_at, updated_at FROM mcp_server
 WHERE id = $1 AND business_id = $2

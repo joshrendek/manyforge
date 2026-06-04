@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/manyforge/manyforge/internal/platform/mcp"
@@ -12,9 +13,12 @@ import (
 
 // mcpServerResolver is the subset of MCPServerService the MCPHost needs. It is
 // a separate interface (not mcpValidator) so unit tests can inject a lightweight
-// fake that only implements ListEnabledForAgent without a DB.
+// fake that only implements the required methods without a DB.
 type mcpServerResolver interface {
 	ListEnabledForAgent(ctx context.Context, principalID, businessID uuid.UUID, ids []uuid.UUID) ([]ResolvedMCPServer, error)
+	// ResolveEnabledByName fetches a single enabled server by name under RLS.
+	// Used by InvokeMCPTool to resolve the server for an approved mcp: tool call.
+	ResolveEnabledByName(ctx context.Context, principalID, businessID uuid.UUID, name string) (ResolvedMCPServer, error)
 }
 
 // MCPHost discovers tools from the agent's allowed MCP servers at run start,
@@ -61,6 +65,51 @@ func (h *MCPHost) DiscoverTools(ctx context.Context, principalID, businessID uui
 		tools = append(tools, discovered...)
 	}
 	return tools, nil
+}
+
+// mcpInvoker is the narrow interface the ApprovalExecutor uses to invoke an MCP
+// tool. It is satisfied by *MCPHost but can also be faked in unit tests.
+type mcpInvoker interface {
+	InvokeMCPTool(ctx context.Context, principalID, businessID uuid.UUID, namespacedTool string, args json.RawMessage, idemHint string) (string, error)
+}
+
+// InvokeMCPTool executes an approved mcp: tool call, resolving the server by name
+// under RLS (tenant-scoped to principalID / businessID), connecting, and invoking
+// the tool. namespacedTool must be of the form "mcp:<server>:<tool>" where server
+// names must not contain ':' (enforced at server-creation time).
+//
+// At-least-once caveat (design §3.6): if the process crashes after CallTool returns
+// but before the caller's MarkExecuted commits, the foreign side effect has already
+// occurred and will be re-invoked on redelivery. Exactly-once for a foreign side
+// effect requires the remote server to honour the idemHint as an idempotency key;
+// this implementation passes the approval id as idemHint as a best-effort hint.
+// Mark-first (at-most-once) is deliberately avoided — silently dropping an approved
+// action is worse than a rare double-fire on a crash path.
+func (h *MCPHost) InvokeMCPTool(ctx context.Context, principalID, businessID uuid.UUID, namespacedTool string, args json.RawMessage, idemHint string) (string, error) {
+	parts := strings.SplitN(namespacedTool, ":", 3)
+	if len(parts) != 3 || parts[0] != "mcp" || parts[1] == "" || parts[2] == "" {
+		return "", fmt.Errorf("agents: mcp_host: malformed tool name %q (want mcp:<server>:<tool>)", namespacedTool)
+	}
+	serverName, toolName := parts[1], parts[2]
+
+	server, err := h.Servers.ResolveEnabledByName(ctx, principalID, businessID, serverName)
+	if err != nil {
+		return "", fmt.Errorf("agents: mcp_host: resolve server %q: %w", serverName, err)
+	}
+
+	client := h.Connect(server.URL, server.AuthHeader)
+	if err := client.Initialize(ctx); err != nil {
+		return "", fmt.Errorf("agents: mcp_host: initialize %q: %w", serverName, err)
+	}
+
+	res, err := client.CallTool(ctx, toolName, args, idemHint)
+	if err != nil {
+		return "", fmt.Errorf("agents: mcp_host: call tool %s/%s: %w", serverName, toolName, err)
+	}
+	if res.IsError {
+		return "", fmt.Errorf("agents: mcp_host: tool %s/%s returned error: %s", serverName, toolName, res.Content)
+	}
+	return res.Content, nil
 }
 
 // discoverServerTools connects to a single server and lists its tools. Any error

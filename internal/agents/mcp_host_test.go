@@ -22,6 +22,20 @@ func (f *fakeMCPServerResolver) ListEnabledForAgent(_ context.Context, _, _ uuid
 	return f.servers, f.err
 }
 
+// ResolveEnabledByName returns the first server in the list whose Name matches,
+// mirroring how the production MCPServerService would do an indexed lookup.
+func (f *fakeMCPServerResolver) ResolveEnabledByName(_ context.Context, _, _ uuid.UUID, name string) (ResolvedMCPServer, error) {
+	if f.err != nil {
+		return ResolvedMCPServer{}, f.err
+	}
+	for _, s := range f.servers {
+		if s.Name == name {
+			return s, nil
+		}
+	}
+	return ResolvedMCPServer{}, errors.New("mcp server not found: " + name)
+}
+
 // buildMCPHost constructs an MCPHost whose Connect factory maps serverURL →
 // the provided MockClient. Servers not in the map get a nil return (callers
 // must only request servers present in the map).
@@ -93,7 +107,7 @@ func TestMCPHost_DiscoverTools_Namespacing(t *testing.T) {
 func TestMCPHost_DiscoverTools_InvokeCallsTool(t *testing.T) {
 	serverID := uuid.New()
 	server := ResolvedMCPServer{
-		ID:  serverID,
+		ID:   serverID,
 		Name: "erp",
 		URL:  "http://erp.local",
 	}
@@ -395,5 +409,93 @@ func TestMCPHost_DiscoverTools_MultipleServers_InvokeBindsDistinctClient(t *test
 	callsB := clientB.Calls()
 	if len(callsB) != 1 || callsB[0].Name != "beta_tool" {
 		t.Errorf("clientB calls = %+v, want exactly one call to beta_tool", callsB)
+	}
+}
+
+// TestMCPHost_InvokeMCPTool_Success verifies the happy path: parsing the
+// namespace, resolving by name, connecting, calling the tool, and returning
+// the content. The approval id is passed as idemHint.
+func TestMCPHost_InvokeMCPTool_Success(t *testing.T) {
+	serverID := uuid.New()
+	server := ResolvedMCPServer{
+		ID:   serverID,
+		Name: "erp",
+		URL:  "http://erp.local",
+	}
+	toolDefs := []mcp.ToolDef{{Name: "get_order", InputSchema: json.RawMessage(`{}`)}}
+	mockClient := mcp.NewMockClient(toolDefs, map[string][]mcp.Result{
+		"get_order": {{Content: `{"order":"42"}`, IsError: false}},
+	})
+	host := buildMCPHost(
+		map[string]*mcp.MockClient{"http://erp.local": mockClient},
+		&fakeMCPServerResolver{servers: []ResolvedMCPServer{server}},
+	)
+
+	idemHint := uuid.New().String()
+	out, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:erp:get_order", json.RawMessage(`{}`), idemHint)
+	if err != nil {
+		t.Fatalf("InvokeMCPTool: %v", err)
+	}
+	if out != `{"order":"42"}` {
+		t.Errorf("InvokeMCPTool content=%q, want {\"order\":\"42\"}", out)
+	}
+
+	calls := mockClient.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 CallTool call, got %d", len(calls))
+	}
+	if calls[0].Name != "get_order" {
+		t.Errorf("CallTool name=%q, want get_order", calls[0].Name)
+	}
+	if calls[0].IdemHint != idemHint {
+		t.Errorf("CallTool IdemHint=%q, want %q", calls[0].IdemHint, idemHint)
+	}
+}
+
+// TestMCPHost_InvokeMCPTool_MalformedName verifies that a malformed tool name
+// (missing server or tool segment) returns an error without touching the server.
+func TestMCPHost_InvokeMCPTool_MalformedName(t *testing.T) {
+	host := buildMCPHost(nil, &fakeMCPServerResolver{})
+
+	cases := []string{
+		"mcp:",         // no server or tool
+		"mcp::",        // empty server
+		"mcp:srv:",     // empty tool
+		"notmcp:s:t",   // wrong prefix
+		"mcp:only-one", // only one colon
+	}
+	for _, tc := range cases {
+		_, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), tc, nil, "")
+		if err == nil {
+			t.Errorf("InvokeMCPTool(%q): want error for malformed name, got nil", tc)
+		}
+	}
+}
+
+// TestMCPHost_InvokeMCPTool_UnknownServer verifies that an unknown server name
+// (not visible under RLS) returns an error.
+func TestMCPHost_InvokeMCPTool_UnknownServer(t *testing.T) {
+	host := buildMCPHost(nil, &fakeMCPServerResolver{servers: []ResolvedMCPServer{}})
+	_, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:nonexistent:some_tool", nil, "")
+	if err == nil {
+		t.Fatal("InvokeMCPTool with unknown server: want error, got nil")
+	}
+}
+
+// TestMCPHost_InvokeMCPTool_IsError verifies that a tool call where IsError=true
+// is surfaced as an error from InvokeMCPTool.
+func TestMCPHost_InvokeMCPTool_IsError(t *testing.T) {
+	server := ResolvedMCPServer{ID: uuid.New(), Name: "svc", URL: "http://svc.local"}
+	toolDefs := []mcp.ToolDef{{Name: "fail_tool", InputSchema: json.RawMessage(`{}`)}}
+	mockClient := mcp.NewMockClient(toolDefs, map[string][]mcp.Result{
+		"fail_tool": {{Content: "something went wrong", IsError: true}},
+	})
+	host := buildMCPHost(
+		map[string]*mcp.MockClient{"http://svc.local": mockClient},
+		&fakeMCPServerResolver{servers: []ResolvedMCPServer{server}},
+	)
+	_, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:svc:fail_tool", json.RawMessage(`{}`), "")
+	if err == nil {
+		t.Fatal("InvokeMCPTool with IsError tool result: want error, got nil")
 	}
 }
