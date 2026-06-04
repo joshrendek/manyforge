@@ -72,3 +72,11 @@ WHERE id = $1 AND business_id = $2;
 -- name: ValidateMCPServerIDs :many
 SELECT id FROM mcp_server
 WHERE business_id = $1 AND id = ANY($2::uuid[]);
+
+-- GetEnabledMCPServerByName fetches a single enabled MCP server by (business_id, name).
+-- Used by ApprovalExecutor to resolve the server for an approved mcp: tool call.
+-- RLS scopes rows to the caller's authorized businesses; the explicit business_id is
+-- defense in depth. pgx.ErrNoRows => ErrNotFound (cross-tenant names are invisible).
+-- name: GetEnabledMCPServerByName :one
+SELECT * FROM mcp_server
+WHERE business_id = $1 AND name = $2 AND enabled;

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -68,6 +69,13 @@ type authBlob struct {
 func (s *MCPServerService) validate(in CreateMCPServerInput) error {
 	if in.Name == "" {
 		return fmt.Errorf("agents: mcp_server name required: %w", errs.ErrValidation)
+	}
+	// Colon guard: the tool namespace "mcp:<server>:<tool>" uses SplitN(...,3) to
+	// parse the server name. A colon in the server name would create an ambiguous
+	// split — e.g. "mcp:srv:x:tool" cannot be reliably split into (srv:x, tool).
+	// Rejecting colons in names at creation time keeps the namespace unambiguous.
+	if strings.Contains(in.Name, ":") {
+		return fmt.Errorf("agents: mcp_server name must not contain ':'  (reserved namespace separator): %w", errs.ErrValidation)
 	}
 	if in.URL == "" {
 		return fmt.Errorf("agents: mcp_server url required: %w", errs.ErrValidation)
@@ -265,6 +273,35 @@ func (s *MCPServerService) ListEnabledForAgent(ctx context.Context, principalID,
 		})
 	}
 	return out, nil
+}
+
+// ResolveEnabledByName fetches a single enabled MCP server by (businessID, name)
+// under RLS scoped to principalID, then unseals its auth header. An unknown or
+// foreign server name (invisible under RLS) → ErrNotFound. Used by ApprovalExecutor
+// to resolve the server for an approved mcp: tool call.
+func (s *MCPServerService) ResolveEnabledByName(ctx context.Context, principalID, businessID uuid.UUID, name string) (ResolvedMCPServer, error) {
+	var row dbgen.McpServer
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, qerr := dbgen.New(tx).GetEnabledMCPServerByName(ctx, dbgen.GetEnabledMCPServerByNameParams{
+			BusinessID: businessID,
+			Name:       name,
+		})
+		row = r
+		return qerr
+	})
+	if err != nil {
+		return ResolvedMCPServer{}, mapMCPErr(err)
+	}
+	header, err := s.resolveAuthHeader(row.SealedAuthRef)
+	if err != nil {
+		return ResolvedMCPServer{}, fmt.Errorf("agents: resolve auth for %s: %w", row.ID, err)
+	}
+	return ResolvedMCPServer{
+		ID:         row.ID,
+		Name:       row.Name,
+		URL:        row.Url,
+		AuthHeader: header,
+	}, nil
 }
 
 // ValidateServerIDs checks that every id in ids belongs to businessID.

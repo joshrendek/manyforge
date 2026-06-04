@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -139,4 +140,156 @@ func countSuffix(actions []string, want string) int {
 		}
 	}
 	return n
+}
+
+// fakeMCPInvoker is a controllable mcpInvoker for executor unit tests.
+type fakeMCPInvoker struct {
+	calls    int
+	err      error
+	result   string
+	lastHint string
+	lastTool string
+}
+
+func (f *fakeMCPInvoker) InvokeMCPTool(_ context.Context, _, _ uuid.UUID, tool string, _ json.RawMessage, idemHint string) (string, error) {
+	f.calls++
+	f.lastTool = tool
+	f.lastHint = idemHint
+	return f.result, f.err
+}
+
+// TestExecutor_MCP_ExecutesApprovedOnce verifies that an approved mcp: tool is
+// dispatched through the mcpInvoker exactly once: CallTool fires once, MarkExecuted
+// fires once, and the audit records "executed".
+func TestExecutor_MCP_ExecutesApprovedOnce(t *testing.T) {
+	invoker := &fakeMCPInvoker{result: `{"ok":true}`}
+	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{
+		Approvals: st,
+		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Auditor:   aud,
+		MCP:       invoker,
+	}
+	approvalID := uuid.New()
+	pl := approvalEventPayload{
+		ApprovalID:       approvalID,
+		AgentPrincipalID: uuid.New(),
+		BusinessID:       uuid.New(),
+		Tool:             "mcp:crm:get_contact",
+		Args:             json.RawMessage(`{"id":"123"}`),
+	}
+	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// CallTool must have been invoked exactly once.
+	if invoker.calls != 1 {
+		t.Fatalf("InvokeMCPTool calls=%d, want 1", invoker.calls)
+	}
+	// The approval id is passed as the idempotency hint.
+	if invoker.lastHint != approvalID.String() {
+		t.Errorf("IdemHint=%q, want %q", invoker.lastHint, approvalID.String())
+	}
+	// MarkExecuted must fire once.
+	if st.markCalls != 1 {
+		t.Fatalf("MarkExecuted calls=%d, want 1", st.markCalls)
+	}
+	// Exactly one "executed" audit row.
+	if got := countSuffix(aud.actions, "agent.approval.executed:executed"); got != 1 {
+		t.Errorf("executed-audit count=%d, want 1; actions=%v", got, aud.actions)
+	}
+}
+
+// TestExecutor_MCP_SecondDeliverySkips verifies the exactly-once dedup: a second
+// delivery where state is already "executed" (pre-check returns non-approved) must
+// NOT call InvokeMCPTool again.
+func TestExecutor_MCP_SecondDeliverySkips(t *testing.T) {
+	invoker := &fakeMCPInvoker{result: `{"ok":true}`}
+	// Second delivery: state is already executed — pre-check returns non-approved.
+	st := &fakeApprovalState{state: ApprovalExecuted}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{
+		Approvals: st,
+		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Auditor:   aud,
+		MCP:       invoker,
+	}
+	pl := approvalEventPayload{
+		ApprovalID: uuid.New(),
+		Tool:       "mcp:crm:get_contact",
+		Args:       json.RawMessage(`{"id":"123"}`),
+	}
+	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("Handle (second delivery): %v", err)
+	}
+
+	// InvokeMCPTool must NOT be called on the second delivery.
+	if invoker.calls != 0 {
+		t.Fatalf("InvokeMCPTool calls=%d on second delivery, want 0 (pre-check must gate)", invoker.calls)
+	}
+}
+
+// TestExecutor_MCP_UnknownServerMarkedFailed verifies that when InvokeMCPTool
+// returns an error (e.g. unknown/foreign server), the executor returns that error
+// (triggering reschedule), does NOT call MarkExecuted, and records an error audit.
+func TestExecutor_MCP_UnknownServerMarkedFailed(t *testing.T) {
+	invoker := &fakeMCPInvoker{err: fmt.Errorf("agents: not found: server unknown")}
+	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{
+		Approvals: st,
+		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Auditor:   aud,
+		MCP:       invoker,
+	}
+	pl := approvalEventPayload{
+		ApprovalID:       uuid.New(),
+		AgentPrincipalID: uuid.New(),
+		BusinessID:       uuid.New(),
+		Tool:             "mcp:foreign:some_tool",
+		Args:             json.RawMessage(`{}`),
+	}
+	err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)})
+	if err == nil {
+		t.Fatal("Handle with unknown server: want error (reschedule), got nil")
+	}
+	// MarkExecuted must NOT fire — the failure is returned for reschedule.
+	if st.markCalls != 0 {
+		t.Errorf("MarkExecuted calls=%d, want 0 on tool invocation error", st.markCalls)
+	}
+	// An error audit row must be recorded.
+	if got := countSuffix(aud.actions, "agent.approval.error:error"); got != 1 {
+		t.Errorf("error-audit count=%d, want 1; actions=%v", got, aud.actions)
+	}
+}
+
+// TestExecutor_MCP_NoMCPHostConfigured verifies that when MCP is nil, an mcp: tool
+// is treated as unknown: MarkExecuted fires (to drain the queue) and an error audit
+// row is recorded, with no panic.
+func TestExecutor_MCP_NoMCPHostConfigured(t *testing.T) {
+	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{
+		Approvals: st,
+		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Auditor:   aud,
+		MCP:       nil, // intentionally nil
+	}
+	pl := approvalEventPayload{
+		ApprovalID:       uuid.New(),
+		AgentPrincipalID: uuid.New(),
+		BusinessID:       uuid.New(),
+		Tool:             "mcp:crm:some_tool",
+		Args:             json.RawMessage(`{}`),
+	}
+	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("Handle (nil MCP): %v", err)
+	}
+	if st.markCalls != 1 {
+		t.Errorf("MarkExecuted calls=%d, want 1 (drain the queue)", st.markCalls)
+	}
+	if got := countSuffix(aud.actions, "agent.approval.error:error"); got != 1 {
+		t.Errorf("error-audit count=%d, want 1; actions=%v", got, aud.actions)
+	}
 }

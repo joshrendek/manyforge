@@ -74,6 +74,27 @@ func TestMCPServerValidate_ValidInput(t *testing.T) {
 	}
 }
 
+// TestMCPServerValidate_NameMustNotContainColon verifies the colon guard.
+// A colon in a server name would make the "mcp:<server>:<tool>" namespace
+// parse ambiguously, so it is rejected at creation time.
+func TestMCPServerValidate_NameMustNotContainColon(t *testing.T) {
+	svc := &MCPServerService{Sealer: newTestSealer(t)}
+	bad := []string{"srv:name", "a:b", "crm:v2", "x:"}
+	for _, name := range bad {
+		err := svc.validate(CreateMCPServerInput{Name: name, URL: "https://mcp.example.com"})
+		if err == nil {
+			t.Errorf("name %q with colon must be a validation error", name)
+		}
+		if !isValidationErr(err) {
+			t.Errorf("name %q: expected ErrValidation, got %v", name, err)
+		}
+	}
+	// Names without colons must still be accepted.
+	if err := svc.validate(CreateMCPServerInput{Name: "crm-v2", URL: "https://mcp.example.com"}); err != nil {
+		t.Fatalf("name without colon rejected: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // sealAuth / resolveAuthHeader round-trip
 // ---------------------------------------------------------------------------
