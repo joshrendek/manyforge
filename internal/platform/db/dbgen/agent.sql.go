@@ -32,7 +32,7 @@ SELECT
     now(), now()
 FROM business b
 WHERE b.id = $11::uuid
-RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers
 `
 
 type CreateAgentParams struct {
@@ -81,6 +81,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.MonthlyBudgetCents,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AllowedMcpServers,
 	)
 	return i, err
 }
@@ -138,7 +139,7 @@ func (q *Queries) DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at FROM agent
+SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers FROM agent
 WHERE id = $1 AND business_id = $2
 `
 
@@ -168,12 +169,13 @@ func (q *Queries) GetAgent(ctx context.Context, arg GetAgentParams) (Agent, erro
 		&i.MonthlyBudgetCents,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AllowedMcpServers,
 	)
 	return i, err
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at FROM agent
+SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers FROM agent
 WHERE business_id = $1
 ORDER BY name
 `
@@ -203,6 +205,7 @@ func (q *Queries) ListAgents(ctx context.Context, businessID uuid.UUID) ([]Agent
 			&i.MonthlyBudgetCents,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AllowedMcpServers,
 		); err != nil {
 			return nil, err
 		}
@@ -225,7 +228,7 @@ UPDATE agent SET
     monthly_budget_cents = COALESCE($7::integer, monthly_budget_cents),
     updated_at           = now()
 WHERE id = $8::uuid AND business_id = $9::uuid
-RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers
 `
 
 type UpdateAgentParams struct {
@@ -271,6 +274,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.MonthlyBudgetCents,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AllowedMcpServers,
 	)
 	return i, err
 }

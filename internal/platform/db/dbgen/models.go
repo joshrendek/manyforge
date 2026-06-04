@@ -382,20 +382,21 @@ type AccountErasure struct {
 }
 
 type Agent struct {
-	ID                 uuid.UUID  `json:"id"`
-	BusinessID         uuid.UUID  `json:"business_id"`
-	TenantRootID       uuid.UUID  `json:"tenant_root_id"`
-	PrincipalID        uuid.UUID  `json:"principal_id"`
-	Name               string     `json:"name"`
-	Provider           AiProvider `json:"provider"`
-	Model              string     `json:"model"`
-	SystemPrompt       string     `json:"system_prompt"`
-	AllowedTools       []string   `json:"allowed_tools"`
-	AutonomyMode       int16      `json:"autonomy_mode"`
-	Enabled            bool       `json:"enabled"`
-	MonthlyBudgetCents int32      `json:"monthly_budget_cents"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 uuid.UUID   `json:"id"`
+	BusinessID         uuid.UUID   `json:"business_id"`
+	TenantRootID       uuid.UUID   `json:"tenant_root_id"`
+	PrincipalID        uuid.UUID   `json:"principal_id"`
+	Name               string      `json:"name"`
+	Provider           AiProvider  `json:"provider"`
+	Model              string      `json:"model"`
+	SystemPrompt       string      `json:"system_prompt"`
+	AllowedTools       []string    `json:"allowed_tools"`
+	AutonomyMode       int16       `json:"autonomy_mode"`
+	Enabled            bool        `json:"enabled"`
+	MonthlyBudgetCents int32       `json:"monthly_budget_cents"`
+	CreatedAt          time.Time   `json:"created_at"`
+	UpdatedAt          time.Time   `json:"updated_at"`
+	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
 }
 
 type AgentRun struct {
@@ -539,6 +540,18 @@ type Invitation struct {
 	ExpiresAt    time.Time          `json:"expires_at"`
 	AcceptedAt   pgtype.Timestamptz `json:"accepted_at"`
 	CreatedAt    time.Time          `json:"created_at"`
+}
+
+type McpServer struct {
+	ID            uuid.UUID `json:"id"`
+	BusinessID    uuid.UUID `json:"business_id"`
+	TenantRootID  uuid.UUID `json:"tenant_root_id"`
+	Name          string    `json:"name"`
+	Url           string    `json:"url"`
+	SealedAuthRef *string   `json:"sealed_auth_ref"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type Membership struct {

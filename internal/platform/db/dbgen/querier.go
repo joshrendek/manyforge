@@ -87,6 +87,9 @@ type Querier interface {
 	// row is deleted first (it FKs the principal), then the principal. rows-affected (the
 	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
 	DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error)
+	// DeleteMCPServer deletes an MCP server by (id, business_id).
+	// Returns rows-affected so the service can map 0 => ErrNotFound.
+	DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams) (int64, error)
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
@@ -141,6 +144,10 @@ type Querier interface {
 	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
 	GetEmailDomain(ctx context.Context, arg GetEmailDomainParams) (EmailDomain, error)
 	GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error)
+	// GetMCPServerByID loads an MCP server by (id, business_id) — the ownership
+	// predicate. RLS scopes rows to the caller's authorized businesses; the explicit
+	// business_id is defense in depth. pgx.ErrNoRows => ErrNotFound.
+	GetMCPServerByID(ctx context.Context, arg GetMCPServerByIDParams) (McpServer, error)
 	// ---- Member role management (T063) ----
 	// The target principal's direct membership at a business. RLS scopes this to the
 	// caller's authorized subtree, so an admin can read members of a business they
@@ -219,6 +226,16 @@ type Querier interface {
 	// (the challenge shows both TXT records at once); verified_at stays NULL until the
 	// TXT challenge passes. Duplicate (tenant_root_id, domain) → unique violation → 409.
 	InsertEmailDomain(ctx context.Context, arg InsertEmailDomainParams) (EmailDomain, error)
+	// Agent runtime (spec 003 US6) — per-business MCP server registry queries.
+	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
+	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement,
+	// mirroring identity.sql). tenant_root_id is derived from the business row on
+	// insert so the FK + tenant scope come from the parent row.
+	// InsertMCPServer creates an MCP server record for a business. tenant_root_id
+	// is derived from the business row (RLS-scoped: a business the caller cannot see
+	// returns no row, so the NOT NULL column rejects the insert → service maps to 404).
+	// Duplicate (business_id, name) → unique violation → 409.
+	InsertMCPServer(ctx context.Context, arg InsertMCPServerParams) (McpServer, error)
 	// InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
 	InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error)
 	// ---- notification (SL-D) ----
@@ -282,6 +299,10 @@ type Querier interface {
 	ListEmailDomains(ctx context.Context, arg ListEmailDomainsParams) ([]EmailDomain, error)
 	// ListEmailDomainsAfter is the keyset continuation: rows strictly after (created_at, id).
 	ListEmailDomainsAfter(ctx context.Context, arg ListEmailDomainsAfterParams) ([]EmailDomain, error)
+	// ListEnabledMCPServersByIDs returns the enabled MCP servers for a business
+	// filtered to a specific set of IDs. Used at run-start to discover servers
+	// the agent is allowed to use.
+	ListEnabledMCPServersByIDs(ctx context.Context, arg ListEnabledMCPServersByIDsParams) ([]McpServer, error)
 	// ListInboundAddresses is the first (unkeyed) page of a business's inbound addresses
 	// (both system and custom), oldest first for a stable keyset. lim is the clamped
 	// limit + 1.
@@ -289,6 +310,9 @@ type Querier interface {
 	// ListInboundAddressesAfter is the keyset continuation: rows strictly after (created_at, id).
 	ListInboundAddressesAfter(ctx context.Context, arg ListInboundAddressesAfterParams) ([]InboundAddress, error)
 	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
+	// ListMCPServers lists all MCP servers for a business, ordered by name for a
+	// stable, deterministic result.
+	ListMCPServers(ctx context.Context, businessID uuid.UUID) ([]McpServer, error)
 	// ---- ticket messages ----
 	// ListMessages is the first page of a ticket's thread, oldest first, matching the
 	// SC-010 ticket_message(ticket_id, created_at) index. Scoped to (ticket_id,
@@ -398,6 +422,10 @@ type Querier interface {
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
 	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error
+	// UpdateMCPServer partially updates an MCP server (PATCH): COALESCE(narg, col)
+	// preserves any field the caller omitted (narg NULL = absent).
+	// No match → ErrNoRows → 404.
+	UpdateMCPServer(ctx context.Context, arg UpdateMCPServerParams) (McpServer, error)
 	// Reassigns a member's role at a business, recording who made the change. :exec
 	// (no RETURNING): RLS can hide the just-updated row from the caller (42501).
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error
@@ -418,6 +446,10 @@ type Querier interface {
 	// updated_at but NEVER last_message_at — triage is not a message. Scoped to
 	// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
 	UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatusParams) error
+	// ValidateMCPServerIDs returns the subset of the given UUIDs that exist and
+	// are owned by the given business. Used by the agent service to validate
+	// allowed_mcp_servers before persisting an agent.
+	ValidateMCPServerIDs(ctx context.Context, arg ValidateMCPServerIDsParams) ([]uuid.UUID, error)
 }
 
 var _ Querier = (*Queries)(nil)
