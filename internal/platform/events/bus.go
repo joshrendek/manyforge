@@ -24,6 +24,12 @@ const (
 	// recipient, subject, and threading headers.
 	TopicTicketReplied = "ticket.replied"
 
+	// TopicTicketCreated fires once per brand-new ticket (inbox ingest tx). The
+	// agent-runtime TriageTrigger subscribes to it — and ONLY it, never message.received —
+	// so an agent's own outbound reply (which emits ticket.replied) can never re-trigger
+	// triage. Payload carries {ticket_id, business_id, message_id}.
+	TopicTicketCreated = "ticket.created"
+
 	// TopicAttachmentPurge is emitted (one per blob) in the redact tx; the purge
 	// worker drains it to delete the attachment object from blob storage out-of-band
 	// (T066/FR-014). Payload carries {blob_key}. The handler is idempotent.
