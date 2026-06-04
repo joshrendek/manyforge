@@ -61,6 +61,11 @@ type Config struct {
 	// custom-domain signing then degrades to system-only and the server still
 	// boots; only an explicitly-set-but-invalid key is a hard config error.
 	DKIMMasterKey []byte
+
+	// Agent runtime (US6 MCP host).
+	// MCPAllowLoopback permits the outbound MCP HTTP client to dial loopback
+	// addresses. Default false (locked-secure); set true only for local dev MCP servers.
+	MCPAllowLoopback bool
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -157,6 +162,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_DKIM_MASTER_KEY: %w", err)
 	}
 
+	// Agent runtime (US6): permit loopback MCP servers in dev; default false (locked-secure).
+	if cfg.MCPAllowLoopback, err = envBool("MANYFORGE_MCP_ALLOW_LOOPBACK", false); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_MCP_ALLOW_LOOPBACK: %w", err)
+	}
+
 	return cfg, nil
 }
 
@@ -189,6 +199,14 @@ func envFloat(key string, def float64) (float64, error) {
 		return def, nil
 	}
 	return strconv.ParseFloat(v, 64)
+}
+
+func envBool(key string, def bool) (bool, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	return strconv.ParseBool(v)
 }
 
 func envInt64(key string, def int64) (int64, error) {
