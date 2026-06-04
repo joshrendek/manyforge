@@ -4,11 +4,14 @@ package agents
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 )
@@ -108,5 +111,93 @@ func TestCreateAgentBindsMembership(t *testing.T) {
 	}
 	if len(authorized) != 1 || authorized[0] != seed.businessID {
 		t.Fatalf("authorized_businesses(agent) = %v, want exactly [%v]", authorized, seed.businessID)
+	}
+}
+
+// TestMembershipAgentGuardForbidsApprove proves the US4 defense-in-depth hardening
+// (migration 0033): the membership_agent_guard DB trigger — not merely preset-role
+// omission — rejects binding an agent principal to ANY role granting agents.approve.
+// An admin minting a CUSTOM tenant role with agents.approve and binding an agent to it
+// would otherwise let the agent self-approve its own gated actions, collapsing the
+// autonomy gate (separation of duties). The trigger fires regardless of pool, so we
+// drive the raw INSERT through the RLS-exempt Super pool.
+//
+// Positive control: binding the agent_runtime preset role (which lacks agents.approve)
+// still SUCCEEDS, confirming the hardening did not break normal agent creation.
+func TestMembershipAgentGuardForbidsApprove(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	// Seed a tenant with an Owner. We do NOT reuse seed.principalID (the seed agent
+	// already holds a membership; we want a fresh, unbound agent to isolate the guard's
+	// perm-denylist branch from its one-membership branch).
+	seed := seedAgentTenant(ctx, t, tdb)
+
+	// A fresh agent principal, homed at the seeded business, holding NO membership yet.
+	freshAgent := uuid.New()
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO principal (id,kind,home_business_id,tenant_root_id,created_at)
+		 VALUES ($1,'agent',$2,$2,now())`, freshAgent, seed.businessID); err != nil {
+		t.Fatalf("insert fresh agent principal: %v", err)
+	}
+
+	// A custom tenant role that grants agents.approve (the human-only approval perm).
+	approveRole := uuid.New()
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO role (id,tenant_root_id,key,name,is_locked,created_at)
+		 VALUES ($1,$2,'agent-approver','AgentApprover',false,now())`, approveRole, seed.businessID); err != nil {
+		t.Fatalf("insert custom approve role: %v", err)
+	}
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO role_permission (role_id,permission_key) VALUES ($1,'agents.approve')`, approveRole); err != nil {
+		t.Fatalf("grant agents.approve to custom role: %v", err)
+	}
+
+	// Attempt to bind the agent to the agents.approve-bearing role. The
+	// membership_agent_guard trigger must reject this with a raised exception
+	// (RAISE EXCEPTION → SQLSTATE P0001).
+	_, err = tdb.Super.Exec(ctx,
+		`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		 VALUES ($1,$2,$2,$3,now())`, freshAgent, seed.businessID, approveRole)
+	if err == nil {
+		t.Fatal("guard did NOT reject binding agents.approve to an agent principal — no-self-approval invariant not DB-enforced")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("expected a *pgconn.PgError from the guard, got %T: %v", err, err)
+	}
+	if pgErr.Code != "P0001" {
+		t.Fatalf("expected SQLSTATE P0001 (raised exception), got %q: %s", pgErr.Code, pgErr.Message)
+	}
+	if !strings.Contains(pgErr.Message, "agent principal may not hold") {
+		t.Fatalf("guard rejected with unexpected message %q — expected the agent-perm-denylist exception", pgErr.Message)
+	}
+
+	// Confirm the rejection left no membership row for the fresh agent.
+	var bound int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM membership WHERE principal_id = $1`, freshAgent).Scan(&bound); err != nil {
+		t.Fatalf("count fresh-agent memberships: %v", err)
+	}
+	if bound != 0 {
+		t.Fatalf("fresh agent holds %d memberships after rejected insert, want 0", bound)
+	}
+
+	// Positive control: binding the agent_runtime preset role (no agents.approve) SUCCEEDS,
+	// so the hardening did not break agent creation.
+	var runtimeRole uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id FROM role WHERE tenant_root_id IS NULL AND key='agent_runtime'`).Scan(&runtimeRole); err != nil {
+		t.Fatalf("lookup agent_runtime preset role: %v", err)
+	}
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		 VALUES ($1,$2,$2,$3,now())`, freshAgent, seed.businessID, runtimeRole); err != nil {
+		t.Fatalf("positive control: binding agent_runtime (no agents.approve) must succeed, got: %v", err)
 	}
 }
