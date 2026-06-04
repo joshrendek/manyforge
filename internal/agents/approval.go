@@ -208,21 +208,10 @@ func (s *ApprovalStore) MarkExecuted(ctx context.Context, principalID, businessI
 	return true, nil
 }
 
-// ExpireStale marks past-expiry pending items expired (the sweep). It runs under the
-// supplied principal's RLS context; a system-wide sweep variant is wired separately
-// (Task 11). Returns the count swept.
-func (s *ApprovalStore) ExpireStale(ctx context.Context, principalID uuid.UUID) (int64, error) {
-	var n int64
-	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		c, e := dbgen.New(tx).ExpireStaleApprovals(ctx)
-		n = c
-		return e
-	})
-	if err != nil {
-		return 0, mapAgentRunErr(err)
-	}
-	return n, nil
-}
+// Note: the periodic expiry sweep is NOT a store method — a system-wide sweep has no
+// per-tenant principal, so it runs the SECURITY DEFINER expire_stale_approvals()
+// function (migration 0032) on the principal-less tx directly in main, mirroring the
+// outbox worker's definer-function pattern.
 
 func toApprovalItem(r dbgen.ApprovalItem) ApprovalItem {
 	out := ApprovalItem{

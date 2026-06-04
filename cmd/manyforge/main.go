@@ -157,6 +157,21 @@ func main() {
 	agentRunSvc := agents.NewRunService(agentSvc, agentEngine, agentRunStore)
 	agentRunH := agents.NewRunHandler(agentRunSvc)
 
+	// US4 approvals queue: the gate writes pending approval_items via this store, a human
+	// with agents.approve decides them, and an approved action is dispatched (via the
+	// existing outbox/bus) to the ApprovalExecutor, which re-invokes the approved tool
+	// through the SAME ticketing-backed tool registry as the Engine, as the agent principal.
+	approvalStore := &agents.ApprovalStore{DB: database}
+	agentEngine.Approvals = approvalStore // wire the gate's approval writer
+	approvalSvc := agents.NewApprovalService(approvalStore)
+	approvalH := agents.NewApprovalHandler(approvalSvc)
+	approvalExec := &agents.ApprovalExecutor{
+		Approvals: approvalStore,
+		Tools:     agents.NewToolRegistry(ticketSvc), // reuse the same ticketing service as the Engine
+		Auditor:   agents.NewDBAuditor(database),
+	}
+	// approvalExec subscribes to TopicAgentApproved below, once eventBus is constructed.
+
 	// US4 inbox-management identity surface (custom email domains + verification +
 	// custom inbound addresses). The DKIM master key seals per-domain Ed25519 private
 	// keys at rest; when MANYFORGE_DKIM_MASTER_KEY is unset the sealer is nil and
@@ -277,6 +292,12 @@ func main() {
 	purgeSub := ticketing.AttachmentPurgeSubscriber{Blob: blobStore}
 	eventBus.Subscribe(events.TopicAttachmentPurge, purgeSub.Handle)
 
+	// US4 approvals: an approved gated action is enqueued on TopicAgentApproved (in the
+	// approve tx) and dispatched by the outbox worker to the ApprovalExecutor, which
+	// re-invokes the approved tool as the agent principal (exactly-once via the approval
+	// state claim + the draft_reply idempotency key).
+	eventBus.Subscribe(agents.TopicAgentApproved, approvalExec.Handle)
+
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -338,6 +359,8 @@ func main() {
 		agentsConfigure: httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
 		agentRuns:       agentRunH,
 		agentsRun:       httpx.RequirePermission(database, permResolve, "agents.run", businessIDFromPath),
+		approvals:       approvalH,
+		agentsApprove:   httpx.RequirePermission(database, permResolve, "agents.approve", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -350,6 +373,32 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	go outboxWorker.Run(workerCtx)
+
+	// US4 approvals expire sweep: every 60s, expire stale pending approval_items across
+	// ALL tenants via the SECURITY DEFINER expire_stale_approvals() function (migration
+	// 0032). Runs on the principal-less WithTx tx — the same tx the outbox worker uses —
+	// because the sweep is system-wide and has no per-tenant principal; the definer
+	// function (owner-defined, RLS-exempt) is what makes the cross-tenant UPDATE possible.
+	go func() {
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-t.C:
+				var n int64
+				err := database.WithTx(workerCtx, func(tx pgx.Tx) error {
+					return tx.QueryRow(workerCtx, "SELECT expire_stale_approvals()").Scan(&n)
+				})
+				if err != nil {
+					logger.WarnContext(workerCtx, "approval expire sweep", "err", err)
+				} else if n > 0 {
+					logger.InfoContext(workerCtx, "approval items expired", "count", n)
+				}
+			}
+		}
+	}()
 
 	// In-process inbound SMTP receiver (US1). Started ONLY when MANYFORGE_SMTP_ADDR
 	// is set; in dev it is empty and the receiver is disabled. STARTTLS is
@@ -441,6 +490,12 @@ type apiHandlers struct {
 	// agentsRun gates the US3 run slice on the agents.run permission, same RLS-bound
 	// 404-on-lacking-perm shape as the other groups.
 	agentsRun func(http.Handler) http.Handler
+
+	// approvals is the US4 approvals-queue handler (Spec 003): list/approve/deny.
+	approvals *agents.ApprovalHandler
+	// agentsApprove gates the US4 approvals slice on the agents.approve permission, same
+	// RLS-bound 404-on-lacking-perm shape as the other groups.
+	agentsApprove func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -526,6 +581,14 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(ag chi.Router) {
 				ag.Use(h.agentsRun)
 				h.agentRuns.ProtectedRoutes(ag)
+			})
+			// US4 approvals slice: a human works a business's flat approvals queue
+			// (list/approve/deny), gated on agents.approve (migration-0031 catalog;
+			// human-only, never granted to agent_runtime). Same RLS-bound
+			// 404-on-lacking-perm semantics as the other groups.
+			pr.Group(func(ap chi.Router) {
+				ap.Use(h.agentsApprove)
+				h.approvals.ProtectedRoutes(ap)
 			})
 		})
 	})

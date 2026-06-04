@@ -104,8 +104,6 @@ type Querier interface {
 	// Enqueue a side-effect in the SAME transaction as the source mutation. Rides
 	// the WITH CHECK (true) policy, so it works with or without a principal context.
 	EnqueueOutbox(ctx context.Context, arg EnqueueOutboxParams) error
-	// Sweep: mark every past-expiry pending item expired. Returns the count swept.
-	ExpireStaleApprovals(ctx context.Context) (int64, error)
 	// The caller's own grants (data portability). RLS scopes business/role joins to
 	// what the caller may already see; their own memberships are always visible.
 	ExportMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ExportMembershipsForPrincipalRow, error)
