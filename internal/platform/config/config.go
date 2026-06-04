@@ -63,6 +63,13 @@ type Config struct {
 	DKIMMasterKey []byte
 
 	// Agent runtime (US6 MCP host).
+	// MCPMasterKey is the at-rest master key for sealing MCP server bearer tokens.
+	// Supplied via MANYFORGE_MCP_MASTER_KEY as base64 or hex; the decoded value MUST
+	// be 32 bytes (AES-256). Nil/empty when unset — auth-token creation then degrades
+	// gracefully (the service returns ErrValidation on attempt); the server still boots
+	// and MCP servers without auth can still be created. An explicitly-set-but-wrong-
+	// length key is a hard config error caught here.
+	MCPMasterKey []byte
 	// MCPAllowLoopback permits the outbound MCP HTTP client to dial loopback
 	// addresses. Default false (locked-secure); set true only for local dev MCP servers.
 	MCPAllowLoopback bool
@@ -160,6 +167,13 @@ func Load() (Config, error) {
 	// silently disables custom-domain signing.
 	if cfg.DKIMMasterKey, err = envKey32("MANYFORGE_DKIM_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_DKIM_MASTER_KEY: %w", err)
+	}
+
+	// MCP master key (US6): unset ⇒ nil (no error, auth-token sealing degrades);
+	// set-but-not-32-bytes-after-decode ⇒ hard error so a misconfigured key never
+	// silently disables MCP bearer-token protection.
+	if cfg.MCPMasterKey, err = envKey32("MANYFORGE_MCP_MASTER_KEY"); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_MCP_MASTER_KEY: %w", err)
 	}
 
 	// Agent runtime (US6): permit loopback MCP servers in dev; default false (locked-secure).
