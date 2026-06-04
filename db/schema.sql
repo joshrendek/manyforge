@@ -321,6 +321,7 @@ CREATE TABLE agent (
     monthly_budget_cents integer NOT NULL,
     created_at           timestamptz NOT NULL,
     updated_at           timestamptz NOT NULL,
+    allowed_mcp_servers  uuid[] NOT NULL,
     UNIQUE (business_id, name),
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
@@ -372,3 +373,19 @@ CREATE TABLE approval_item (
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (agent_run_id, tenant_root_id) REFERENCES agent_run (id, tenant_root_id)
 );
+
+CREATE TABLE mcp_server (
+    id              uuid PRIMARY KEY,
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    name            text NOT NULL,
+    url             text NOT NULL,
+    sealed_auth_ref text,
+    enabled         boolean NOT NULL,
+    created_at      timestamptz NOT NULL,
+    updated_at      timestamptz NOT NULL,
+    UNIQUE (business_id, name),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
+);
+CREATE INDEX mcp_server_business_idx ON mcp_server (business_id, tenant_root_id);
