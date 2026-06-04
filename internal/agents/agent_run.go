@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -159,6 +160,104 @@ func (s *AgentRunStore) MonthToDateCostCents(ctx context.Context, principalID, b
 		return 0, mapAgentRunErr(err)
 	}
 	return cents, nil
+}
+
+// AgentRef identifies an agent and its acting principal (the SECURITY DEFINER lister
+// returns these for a business; the trigger creates one queued run per ref).
+type AgentRef struct {
+	AgentID     uuid.UUID
+	PrincipalID uuid.UUID
+}
+
+// ClaimedRun is one run atomically claimed (queued→running) for execution, carrying the
+// full agent config so the drainer needs no second (RLS) lookup.
+type ClaimedRun struct {
+	RunID         uuid.UUID
+	CorrelationID string
+	TargetType    *string
+	TargetID      *uuid.UUID
+	Agent         Agent
+}
+
+// EnabledAgentsForBusiness lists the enabled agents for a business via the system-wide
+// SECURITY DEFINER fn. The caller (a ticket.created subscriber) runs principal-less, so
+// it cannot use an RLS-scoped query; the fn is scoped by business_id AND tenant_root_id.
+func (s *AgentRunStore) EnabledAgentsForBusiness(ctx context.Context, businessID, tenantRootID uuid.UUID) ([]AgentRef, error) {
+	var refs []AgentRef
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		rows, e := tx.Query(ctx,
+			"SELECT agent_id, principal_id FROM enabled_agents_for_business($1, $2)",
+			businessID, tenantRootID)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r AgentRef
+			if se := rows.Scan(&r.AgentID, &r.PrincipalID); se != nil {
+				return se
+			}
+			refs = append(refs, r)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agents: list enabled agents: %w", err)
+	}
+	return refs, nil
+}
+
+// ClaimNextQueuedRun atomically claims the oldest queued run (queued→running) across all
+// tenants via the SECURITY DEFINER fn (SKIP LOCKED ⇒ concurrent drainers never
+// double-claim). Returns (nil, nil) when nothing is queued.
+func (s *AgentRunStore) ClaimNextQueuedRun(ctx context.Context) (*ClaimedRun, error) {
+	var (
+		c        ClaimedRun
+		ag       Agent
+		tt       *string
+		tid      pgtype.UUID
+		provider string
+		mode     int16
+		budget   int32
+		found    bool
+	)
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx, `SELECT run_id, business_id, tenant_root_id, correlation_id,
+			target_type, target_id, agent_id, agent_principal_id, provider, model,
+			system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents
+			FROM claim_next_queued_agent_run()`)
+		var tenantRootID uuid.UUID
+		e := row.Scan(&c.RunID, &ag.BusinessID, &tenantRootID, &c.CorrelationID,
+			&tt, &tid, &ag.ID, &ag.PrincipalID, &provider, &ag.Model,
+			&ag.SystemPrompt, &ag.AllowedTools, &mode, &ag.Enabled, &budget)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return nil // nothing queued
+		}
+		if e != nil {
+			return e
+		}
+		found = true
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agents: claim queued run: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+	ag.Provider = provider
+	ag.AutonomyMode = int(mode)
+	ag.MonthlyBudgetCents = int(budget)
+	if ag.AllowedTools == nil {
+		ag.AllowedTools = []string{}
+	}
+	c.Agent = ag
+	c.TargetType = tt
+	if tid.Valid {
+		v := uuid.UUID(tid.Bytes)
+		c.TargetID = &v
+	}
+	return &c, nil
 }
 
 func mapAgentRunErr(err error) error {
