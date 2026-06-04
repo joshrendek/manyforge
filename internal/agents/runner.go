@@ -80,6 +80,7 @@ type approvalWriter interface {
 type Engine struct {
 	Runs        runStore
 	Tools       *ToolRegistry
+	MCP         *MCPHost // nil-safe: MCP discovery is skipped when nil
 	Auditor     runAuditor
 	Resolver    permChecker
 	Approvals   approvalWriter
@@ -195,6 +196,25 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 		}
 	}
 
+	// Per-run tool map for MCP-discovered tools. These are kept out of the global
+	// ToolRegistry (which is process-wide/shared) to ensure per-tenant isolation.
+	runTools := map[string]Tool{}
+
+	// MCP tool discovery: connect to each allowed server, list tools, and merge
+	// them into the per-run allow-map and tool defs. Fail-open: a discovery error
+	// is audited and the run proceeds with whatever tools succeeded.
+	if e.MCP != nil && len(ag.AllowedMCPServers) > 0 {
+		mcpTools, discErr := e.MCP.DiscoverTools(ctx, agentPrincipalID, businessID, ag.AllowedMCPServers)
+		if discErr != nil {
+			_ = e.Auditor.Run(ctx, agentPrincipalID, run, "agent.mcp.discovery_failed", map[string]any{"err": discErr.Error()}, nil, "failed")
+		}
+		for _, t := range mcpTools {
+			allow[t.Name] = true
+			toolDefs = append(toolDefs, ai.ToolDef{Name: t.Name, Description: t.Description, Schema: json.RawMessage(t.SchemaJSON)})
+			runTools[t.Name] = t
+		}
+	}
+
 	loopCtx, cancel := context.WithTimeout(ctx, limits.WallClock)
 	defer cancel()
 
@@ -245,7 +265,7 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 		msgs = append(msgs, ai.Message{Role: ai.RoleAssistant, Text: resp.Text, ToolCalls: resp.ToolCalls})
 		var results []ai.ToolResult
 		for _, call := range resp.ToolCalls {
-			content, isErr, prop := e.execTool(loopCtx, agentPrincipalID, businessID, ag.AutonomyMode, allow, run, call)
+			content, isErr, prop := e.execTool(loopCtx, agentPrincipalID, businessID, ag.AutonomyMode, allow, runTools, run, call)
 			proposed = proposed || prop
 			results = append(results, ai.ToolResult{CallID: call.ID, Content: content, IsError: isErr})
 		}
@@ -257,11 +277,19 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 // (Resolver.Has) → gate(effect, mode) → execute-or-queue. Returns the tool-result
 // content, whether it is an error result, and whether it was queued for approval
 // (which drives the run's terminal awaiting_approval status).
-func (e *Engine) execTool(ctx context.Context, principalID, businessID uuid.UUID, mode int, allow map[string]bool, run AgentRun, call ai.ToolCall) (string, bool, bool) {
+//
+// runTools is the per-run map of MCP-discovered tools. It is consulted first so
+// discovered tools resolve without polluting the global ToolRegistry.
+func (e *Engine) execTool(ctx context.Context, principalID, businessID uuid.UUID, mode int, allow map[string]bool, runTools map[string]Tool, run AgentRun, call ai.ToolCall) (string, bool, bool) {
 	audit := func(decision, detail string, inputs any) {
 		_ = e.Auditor.Run(ctx, principalID, run, "agent.tool."+decision, inputs, map[string]any{"tool": call.Name, "detail": detail}, decision)
 	}
-	tool, ok := e.Tools.Get(call.Name)
+	// Resolve the tool: per-run MCP tools take precedence over the global registry.
+	var tool Tool
+	var ok bool
+	if tool, ok = runTools[call.Name]; !ok {
+		tool, ok = e.Tools.Get(call.Name)
+	}
 	if !ok || !allow[call.Name] {
 		audit("denied", "tool not allowed", map[string]any{"tool": call.Name})
 		return "tool not permitted", true, false
