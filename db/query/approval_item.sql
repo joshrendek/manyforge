@@ -39,11 +39,6 @@ SET state = 'executed', executed_at = now(), updated_at = now()
 WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid AND state = 'approved'
 RETURNING *;
 
--- name: ExpireStaleApprovals :execrows
--- Sweep: mark every past-expiry pending item expired. Returns the count swept.
-UPDATE approval_item SET state = 'expired', updated_at = now()
-WHERE state = 'pending' AND expires_at <= now();
-
 -- name: GetRunActorForApproval :one
 -- The acting agent principal + the run's correlation id, so an approval executes as
 -- the agent and its audit rows join to the originating run by correlation.

@@ -113,20 +113,6 @@ func (q *Queries) DecideApprovalItem(ctx context.Context, arg DecideApprovalItem
 	return i, err
 }
 
-const expireStaleApprovals = `-- name: ExpireStaleApprovals :execrows
-UPDATE approval_item SET state = 'expired', updated_at = now()
-WHERE state = 'pending' AND expires_at <= now()
-`
-
-// Sweep: mark every past-expiry pending item expired. Returns the count swept.
-func (q *Queries) ExpireStaleApprovals(ctx context.Context) (int64, error) {
-	result, err := q.db.Exec(ctx, expireStaleApprovals)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const getApprovalItem = `-- name: GetApprovalItem :one
 SELECT id, agent_run_id, business_id, tenant_root_id, tool, args, effect_class, state, decided_by_principal_id, decided_at, executed_at, expires_at, error, created_at, updated_at FROM approval_item WHERE id = $1 AND business_id = $2
 `

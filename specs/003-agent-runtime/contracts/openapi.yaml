@@ -126,6 +126,68 @@ paths:
               schema: { $ref: "#/components/schemas/Run" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/approvals:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listApprovals
+      summary: List the business's pending approval queue (US4)
+      description: >
+        Requires the agents.approve permission at {id} (human-only; never granted to
+        the agent_runtime role — an agent must not self-approve). A lacking permission
+        or an invisible business returns the same 404 as an unknown id (no oracle).
+        The queue is flat (one human works one business's queue), most recent first.
+      responses:
+        "200":
+          description: Pending approval items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/approvals/{approvalID}/approve:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: approvalID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: approveApprovalItem
+      summary: Approve a queued agent action (US4)
+      description: >
+        Requires the agents.approve permission at {id}. Transitions a pending item to
+        approved and enqueues its execution on the transactional outbox in one tx; the
+        approved tool is then re-invoked exactly-once as the agent principal. An item
+        that is already decided or expired returns 409; an unknown/foreign id returns
+        the same 404 as an unknown id (no oracle).
+      responses:
+        "200":
+          description: The approved item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/approvals/{approvalID}/deny:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: approvalID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: denyApprovalItem
+      summary: Deny a queued agent action (US4)
+      description: >
+        Requires the agents.approve permission at {id}. Transitions a pending item to
+        denied; the action never executes. An item that is already decided or expired
+        returns 409; an unknown/foreign id returns the same 404 as an unknown id (no
+        oracle).
+      responses:
+        "200":
+          description: The denied item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 components:
   securitySchemes:
     bearerAuth:
@@ -229,3 +291,25 @@ components:
         cost_cents: { type: integer, minimum: 0 }
         correlation_id: { type: string }
         error: { type: string, nullable: true }
+    ApprovalItem:
+      type: object
+      description: >
+        A gated agent action awaiting (or past) a human decision. The tool args,
+        tenant_root_id, and deciding principal are deliberately omitted from the wire
+        shape — they are internal and would leak the planned action payload / tenant
+        internals to the queue UI.
+      required: [id, agent_run_id, tool, effect_class, state, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        agent_run_id: { type: string, format: uuid }
+        tool: { type: string }
+        effect_class: { type: integer, description: "0=read, 1=reversible, 2=external, 3=irreversible" }
+        state: { type: string, enum: [pending, approved, denied, executed, expired] }
+        expires_at: { type: string, format: date-time }
+    ApprovalList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ApprovalItem" }

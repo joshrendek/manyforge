@@ -82,6 +82,8 @@ func apiRoutes(t *testing.T) map[string]bool {
 		agentsConfigure: noop,
 		agentRuns:       agents.NewRunHandler(nil),
 		agentsRun:       noop,
+		approvals:       agents.NewApprovalHandler(nil),
+		agentsApprove:   noop,
 	})
 
 	routes := map[string]bool{}

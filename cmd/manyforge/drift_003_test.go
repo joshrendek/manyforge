@@ -12,9 +12,9 @@ import (
 )
 
 // inScope003Ops is the COMPLETE set of spec-003 operations served by the router so
-// far (US2 agent-definition CRUD + US3 run trigger/status). Each entry is asserted
-// both ways by TestOpenAPIDrift003 — present in the router AND documented in the 003
-// contract.
+// far (US2 agent-definition CRUD + US3 run trigger/status + US4 approvals queue).
+// Each entry is asserted both ways by TestOpenAPIDrift003 — present in the router AND
+// documented in the 003 contract.
 var inScope003Ops = []string{
 	"GET /businesses/{}/agents",
 	"POST /businesses/{}/agents",
@@ -23,13 +23,16 @@ var inScope003Ops = []string{
 	"DELETE /businesses/{}/agents/{}",
 	"POST /businesses/{}/agents/{}/runs",
 	"GET /businesses/{}/agents/{}/runs/{}",
+	"GET /businesses/{}/approvals",
+	"POST /businesses/{}/approvals/{}/approve",
+	"POST /businesses/{}/approvals/{}/deny",
 }
 
 // is003Op reports whether a normalized "METHOD /path" belongs to the 003 surface
-// (the business-nested /agents routes), as opposed to the 001/002 routes that share
-// the /businesses prefix.
+// (the business-nested /agents routes + the US4 /approvals queue), as opposed to the
+// 001/002 routes that share the /businesses prefix.
 func is003Op(op string) bool {
-	return strings.Contains(op, "/agents")
+	return strings.Contains(op, "/agents") || strings.Contains(op, "/approvals")
 }
 
 // TestOpenAPIDrift003 pins the spec-003 agent-runtime contract against the FULL
