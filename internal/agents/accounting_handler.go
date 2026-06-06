@@ -11,6 +11,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
 
+// summaryOps is the narrow read surface the accounting handler needs (fakeable in tests).
 type summaryOps interface {
 	SummaryForWindow(ctx context.Context, principalID, businessID uuid.UUID, w Window) (Summary, error)
 }

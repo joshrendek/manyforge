@@ -249,8 +249,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountingSummary" }
-        "400": { description: Invalid window }
-        "404": { description: Not found / not permitted }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/approvals/{approvalID}/deny:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
