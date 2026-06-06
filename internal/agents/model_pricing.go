@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/manyforge/manyforge/internal/platform/ai"
@@ -23,6 +24,23 @@ func modelRowToAIModel(r dbgen.ListModelPricingRow) ai.Model {
 		InputCentsPerMTok:  r.InputCentsPerMtok,
 		OutputCentsPerMTok: r.OutputCentsPerMtok,
 		SupportsTools:      r.SupportsTools,
+	}
+}
+
+// NewRegistryCostFn returns the Engine's per-call cost function. A model absent from
+// the pricing catalog (e.g. a self-hosted Ollama/vLLM tag, whose ids are user-defined
+// and unbounded) costs 0 — self-hosting has no marginal token cost — and the miss is
+// debug-logged so a missing-but-paid model is still noticeable. logger may be nil.
+func NewRegistryCostFn(reg *ai.Registry, logger *slog.Logger) func(model string, u ai.Usage) int64 {
+	return func(model string, u ai.Usage) int64 {
+		m, ok := reg.Lookup(model)
+		if !ok {
+			if logger != nil {
+				logger.Debug("model not in pricing catalog; cost=0", "model", model)
+			}
+			return 0
+		}
+		return m.CostCents(u)
 	}
 }
 
