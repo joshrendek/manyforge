@@ -26,5 +26,10 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/support/thread-view').then((m) => m.ThreadViewComponent),
   },
+  {
+    path: 'accounting',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/accounting/summary').then((m) => m.AccountingSummaryComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
