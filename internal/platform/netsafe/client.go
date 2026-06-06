@@ -18,33 +18,49 @@ var metadataIPs = []net.IP{
 	net.ParseIP("fd00:ec2::254"),   // AWS IMDS IPv6
 }
 
-// blockedWith reports whether ip must be refused. allowLoopback permits 127/8 + ::1
-// ONLY (for dev MCP servers); all other private/link-local/metadata stay blocked.
-func blockedWith(ip net.IP, allowLoopback bool) bool {
+// blockedWith reports whether ip must be refused. allowLoopback permits 127/8 + ::1;
+// allowPrivate permits RFC1918 + IPv6 ULA (fc00::/7). Cloud-metadata and link-local
+// addresses are refused unconditionally — a trusted credential must never reach IMDS.
+func blockedWith(ip net.IP, allowLoopback, allowPrivate bool) bool {
 	if ip == nil {
 		return true
 	}
-	if ip.IsLoopback() {
-		return !allowLoopback
-	}
-	if ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsMulticast() {
-		return true
-	}
+	// (1) Metadata IPs: blocked before any flag. fd00:ec2::254 is itself an fc00::/7
+	// ULA, so this MUST precede the IsPrivate() gate or allowPrivate would leak IMDS.
 	for _, m := range metadataIPs {
 		if ip.Equal(m) {
 			return true
 		}
 	}
+	// (2) Link-local (incl. 169.254.169.254 IMDS-v4), multicast, unspecified: always blocked.
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	// (3) Loopback: permitted only when explicitly trusted.
+	if ip.IsLoopback() {
+		return !allowLoopback
+	}
+	// (4) RFC1918 + IPv6 ULA: permitted only when explicitly trusted.
+	if ip.IsPrivate() {
+		return !allowPrivate
+	}
 	return false
 }
 
 // Blocked reports whether ip is a destination outbound requests must refuse
-// (loopback blocked — the default, locked-secure posture).
-func Blocked(ip net.IP) bool { return blockedWith(ip, false) }
+// (loopback + private blocked — the default, locked-secure posture).
+func Blocked(ip net.IP) bool { return blockedWith(ip, false, false) }
+
+// IsBlocked reports whether ip must be refused under o. Exposed so a caller can
+// pre-validate a LITERAL base_url host with the EXACT dialer policy (see the
+// credential service's create-time guard) rather than reimplementing it.
+func IsBlocked(ip net.IP, o Options) bool { return blockedWith(ip, o.AllowLoopback, o.AllowPrivate) }
 
 // Options configures a guarded client.
-type Options struct{ AllowLoopback bool }
+type Options struct {
+	AllowLoopback bool // permits 127/8 + ::1 (dev MCP / self-host)
+	AllowPrivate  bool // permits RFC1918 + IPv6 ULA; metadata stays blocked
+}
 
 // NewClientWithOptions builds a guarded client; AllowLoopback permits loopback only.
 func NewClientWithOptions(timeout time.Duration, o Options) *http.Client {
@@ -60,7 +76,7 @@ func NewClientWithOptions(timeout time.Duration, o Options) *http.Client {
 				return nil, err
 			}
 			for _, ip := range ips {
-				if blockedWith(ip.IP, o.AllowLoopback) {
+				if blockedWith(ip.IP, o.AllowLoopback, o.AllowPrivate) {
 					return nil, fmt.Errorf("blocked address %s for host %s", ip.IP, host)
 				}
 			}
