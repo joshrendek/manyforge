@@ -234,6 +234,23 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/accounting:
+    get:
+      operationId: getBusinessAccounting
+      summary: Per-agent token/cost rollup for a business over a window
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: window, in: query, required: false, schema: { type: string, enum: [this_month, last_month, last_30_days, custom] } }
+        - { name: from, in: query, required: false, schema: { type: string } }
+        - { name: to, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Accounting summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountingSummary" }
+        "400": { description: Invalid window }
+        "404": { description: Not found / not permitted }
   /businesses/{id}/approvals/{approvalID}/deny:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -428,3 +445,36 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/ApprovalItem" }
+    AccountingSummary:
+      type: object
+      required: [window, totals, agents]
+      properties:
+        window:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        totals:
+          type: object
+          required: [cost_cents, tokens_in, tokens_out, run_count]
+          properties:
+            cost_cents: { type: integer }
+            tokens_in: { type: integer }
+            tokens_out: { type: integer }
+            run_count: { type: integer }
+        agents:
+          type: array
+          items: { $ref: "#/components/schemas/AgentUsage" }
+    AgentUsage:
+      type: object
+      required: [agent_id, name, monthly_budget_cents, run_count, tokens_in, tokens_out, cost_cents]
+      properties:
+        agent_id: { type: string, format: uuid }
+        name: { type: string }
+        monthly_budget_cents: { type: integer }
+        run_count: { type: integer }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        cost_cents: { type: integer }
+        budget_pct: { type: integer, nullable: true }
