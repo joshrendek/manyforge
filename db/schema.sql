@@ -389,3 +389,18 @@ CREATE TABLE mcp_server (
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
 CREATE INDEX mcp_server_business_idx ON mcp_server (business_id, tenant_root_id);
+
+-- security: system catalog, no tenant scoping (like permission in 0003) — no RLS,
+-- SELECT-only grant; writes happen via migration, never from the app.
+CREATE TABLE model_pricing (
+    model_id              text PRIMARY KEY,
+    provider              text NOT NULL,
+    display_name          text NOT NULL,
+    context_window        integer NOT NULL,
+    input_cents_per_mtok  bigint NOT NULL,
+    output_cents_per_mtok bigint NOT NULL,
+    supports_tools        boolean NOT NULL,
+    enabled               boolean NOT NULL,
+    created_at            timestamptz NOT NULL,
+    updated_at            timestamptz NOT NULL
+);
