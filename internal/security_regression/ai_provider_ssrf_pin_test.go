@@ -73,13 +73,13 @@ func TestAIFactory_UsesNetsafeSource(t *testing.T) {
 			return true
 		}
 		pkg, ok := sel.X.(*ast.Ident)
-		if ok && pkg.Name == "netsafe" && sel.Sel.Name == "NewClient" {
+		if ok && pkg.Name == "netsafe" && (sel.Sel.Name == "NewClient" || sel.Sel.Name == "NewClientWithOptions") {
 			found = true
 		}
 		return true
 	})
 	if !found {
-		t.Fatalf("factory.go no longer calls netsafe.NewClient — SSRF guard dropped")
+		t.Fatalf("factory.go no longer calls netsafe.NewClient/NewClientWithOptions — SSRF guard dropped")
 	}
 	// Belt-and-suspenders: the prod factory must NOT fall back to a bare client.
 	// mustRead is the package's existing untagged helper (escalation_pin_test.go).

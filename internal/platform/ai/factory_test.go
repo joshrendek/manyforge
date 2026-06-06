@@ -1,7 +1,10 @@
 package ai
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -45,6 +48,39 @@ func TestFactoryOpenAICompatRequiresBaseURL(t *testing.T) {
 		if !errors.Is(err, ErrBadRequest) {
 			t.Fatalf("%s missing base_url err = %v, want Is(ErrBadRequest)", name, err)
 		}
+	}
+}
+
+func TestFactoryAllowPrivateBaseURL(t *testing.T) {
+	// httptest binds 127.0.0.1 — exactly what netsafe blocks by default. This proves
+	// the per-credential flag threads through factory.New into the dialer policy.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(loadGolden(t, "openai_text.json"))
+	}))
+	defer srv.Close()
+	req := Request{Model: "m", MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "hi"}}}
+
+	// Trust OFF (default): loopback dial is refused.
+	off, err := New(Credential{Provider: ProviderOllama, BaseURL: srv.URL + "/v1", Model: "m"})
+	if err != nil {
+		t.Fatalf("New(off): %v", err)
+	}
+	if _, err := off.Complete(context.Background(), req); !errors.Is(err, ErrProviderUnavailable) {
+		t.Fatalf("trust off: want ErrProviderUnavailable (dial refused), got %v", err)
+	}
+
+	// Trust ON: the same loopback base_url is reachable and parses.
+	on, err := New(Credential{Provider: ProviderOllama, BaseURL: srv.URL + "/v1", Model: "m", AllowPrivateBaseURL: true})
+	if err != nil {
+		t.Fatalf("New(on): %v", err)
+	}
+	resp, err := on.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("trust on: Complete: %v", err)
+	}
+	if resp.Text == "" {
+		t.Fatal("trust on: expected a parsed response body")
 	}
 }
 
