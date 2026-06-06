@@ -326,6 +326,7 @@ type Querier interface {
 	ListMessages(ctx context.Context, arg ListMessagesParams) ([]TicketMessage, error)
 	// ListMessagesAfter is the keyset continuation: rows strictly after (created_at, id).
 	ListMessagesAfter(ctx context.Context, arg ListMessagesAfterParams) ([]TicketMessage, error)
+	ListModelPricing(ctx context.Context) ([]ListModelPricingRow, error)
 	ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]Notification, error)
 	// Tenant roots where this principal directly holds the locked Owner role. RLS
 	// always exposes the caller's own membership rows, so this is reliable under

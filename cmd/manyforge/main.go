@@ -152,8 +152,11 @@ func main() {
 	// keyed on the resolved model id. The credential service resolves the agent's BYO
 	// provider key into an SSRF-guarded transport at run start.
 	credSvc := &agents.CredentialService{DB: database}
-	aiReg := ai.NewRegistry()
-	ai.RegisterDefaults(aiReg)
+	aiReg, err := agents.LoadModelRegistry(ctx, database)
+	if err != nil {
+		logger.Error("load model registry", "err", err)
+		os.Exit(1)
+	}
 	agentRunStore := &agents.AgentRunStore{DB: database}
 	agentEngine := &agents.Engine{
 		Runs:        agentRunStore,
