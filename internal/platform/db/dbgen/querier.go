@@ -15,6 +15,7 @@ type Querier interface {
 	// Per-agent usage rollup for a business over [from_ts, to_ts). LEFT JOIN so agents
 	// with zero runs in the window still appear (with zeros). RLS on agent + agent_run
 	// (under WithPrincipal) scopes to the caller's businesses; the business_id arg narrows.
+	// The window filter on r.created_at + r.agent_id rides agent_run_agent_month_idx (0028).
 	AccountingSummaryByAgent(ctx context.Context, arg AccountingSummaryByAgentParams) ([]AccountingSummaryByAgentRow, error)
 	// Serializes structural mutations within a tenant (research R5).
 	AcquireTenantLock(ctx context.Context, hashtext string) error
@@ -267,6 +268,10 @@ type Querier interface {
 	// ListAIProviderCredentials lists all credentials for a business, ordered
 	// by provider name for a stable, deterministic result.
 	ListAIProviderCredentials(ctx context.Context, businessID uuid.UUID) ([]AiProviderCredential, error)
+	// Keyset-paginated runs for one agent over [from_ts, to_ts), newest first. The cursor
+	// tuple (cur_created_at, cur_id) is passed as a far-future sentinel for page 1. RLS
+	// (under WithPrincipal) scopes to the caller's businesses; business_id+agent_id narrow.
+	ListAgentRuns(ctx context.Context, arg ListAgentRunsParams) ([]AgentRun, error)
 	ListAgentRunsByAgent(ctx context.Context, arg ListAgentRunsByAgentParams) ([]AgentRun, error)
 	// ListAgents lists all agents for a business, ordered by name for a stable result.
 	ListAgents(ctx context.Context, businessID uuid.UUID) ([]Agent, error)

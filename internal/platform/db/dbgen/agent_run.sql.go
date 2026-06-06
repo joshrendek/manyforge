@@ -7,6 +7,7 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -178,6 +179,78 @@ func (q *Queries) GetAgentRun(ctx context.Context, arg GetAgentRunParams) (Agent
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listAgentRuns = `-- name: ListAgentRuns :many
+SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, trigger_dedup_key, created_at, updated_at FROM agent_run
+WHERE business_id = $1::uuid
+  AND agent_id = $2::uuid
+  AND created_at >= $3::timestamptz
+  AND created_at <  $4::timestamptz
+  AND ($5::text IS NULL OR status = $5)
+  AND (created_at, id) < ($6::timestamptz, $7::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $8
+`
+
+type ListAgentRunsParams struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	AgentID      uuid.UUID `json:"agent_id"`
+	FromTs       time.Time `json:"from_ts"`
+	ToTs         time.Time `json:"to_ts"`
+	Status       *string   `json:"status"`
+	CurCreatedAt time.Time `json:"cur_created_at"`
+	CurID        uuid.UUID `json:"cur_id"`
+	Lim          int32     `json:"lim"`
+}
+
+// Keyset-paginated runs for one agent over [from_ts, to_ts), newest first. The cursor
+// tuple (cur_created_at, cur_id) is passed as a far-future sentinel for page 1. RLS
+// (under WithPrincipal) scopes to the caller's businesses; business_id+agent_id narrow.
+func (q *Queries) ListAgentRuns(ctx context.Context, arg ListAgentRunsParams) ([]AgentRun, error) {
+	rows, err := q.db.Query(ctx, listAgentRuns,
+		arg.BusinessID,
+		arg.AgentID,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Status,
+		arg.CurCreatedAt,
+		arg.CurID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentRun
+	for rows.Next() {
+		var i AgentRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.BusinessID,
+			&i.TenantRootID,
+			&i.Trigger,
+			&i.TargetType,
+			&i.TargetID,
+			&i.Status,
+			&i.TokensIn,
+			&i.TokensOut,
+			&i.CostCents,
+			&i.CorrelationID,
+			&i.Error,
+			&i.TriggerDedupKey,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAgentRunsByAgent = `-- name: ListAgentRunsByAgent :many
