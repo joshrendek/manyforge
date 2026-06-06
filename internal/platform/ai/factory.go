@@ -25,10 +25,11 @@ const (
 // import) so internal/platform/ai stays free of any internal/agents dependency
 // (agents imports ai, not the reverse).
 type Credential struct {
-	Provider string // anthropic | openai | ollama | vllm
-	APIKey   string // plaintext, in-memory only
-	BaseURL  string // required for openai-compat/self-host; ignored for anthropic default
-	Model    string // default model
+	Provider            string // anthropic | openai | ollama | vllm
+	APIKey              string // plaintext, in-memory only
+	BaseURL             string // required for openai-compat/self-host; ignored for anthropic default
+	Model               string // default model
+	AllowPrivateBaseURL bool   // self-host opt-in: permit a loopback/RFC1918 base_url for THIS credential
 }
 
 // New builds the live Provider for a resolved credential. The returned provider
@@ -41,7 +42,10 @@ type Credential struct {
 //	anthropic                 -> AnthropicProvider
 //	openai | ollama | vllm    -> OpenAICompatProvider
 func New(cred Credential) (Provider, error) {
-	hc := netsafe.NewClient(defaultRequestTimeout)
+	hc := netsafe.NewClientWithOptions(defaultRequestTimeout, netsafe.Options{
+		AllowLoopback: cred.AllowPrivateBaseURL,
+		AllowPrivate:  cred.AllowPrivateBaseURL,
+	})
 	switch cred.Provider {
 	case ProviderAnthropic:
 		return NewAnthropicProvider(cred.APIKey, cred.BaseURL, cred.Model, hc), nil
