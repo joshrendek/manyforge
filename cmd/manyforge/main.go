@@ -158,6 +158,8 @@ func main() {
 		os.Exit(1)
 	}
 	agentRunStore := &agents.AgentRunStore{DB: database}
+	accountingStore := &agents.AccountingStore{DB: database}
+	accountingH := agents.NewAccountingHandler(accountingStore)
 	agentEngine := &agents.Engine{
 		Runs:        agentRunStore,
 		Tools:       agents.NewToolRegistry(ticketSvc),
@@ -427,6 +429,7 @@ func main() {
 		agentsConfigure: httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
 		agentRuns:       agentRunH,
 		agentsRun:       httpx.RequirePermission(database, permResolve, "agents.run", businessIDFromPath),
+		accounting:      accountingH,
 		approvals:       approvalH,
 		agentsApprove:   httpx.RequirePermission(database, permResolve, "agents.approve", businessIDFromPath),
 		mcp:             mcpH,
@@ -587,6 +590,10 @@ type apiHandlers struct {
 	// 404-on-lacking-perm shape as the other groups.
 	agentsRun func(http.Handler) http.Handler
 
+	// accounting is the US7 accounting summary handler (Spec 003): GET per-agent
+	// token/cost rollup for a business over a window, gated by agents.run.
+	accounting *agents.AccountingHandler
+
 	// approvals is the US4 approvals-queue handler (Spec 003): list/approve/deny.
 	approvals *agents.ApprovalHandler
 	// agentsApprove gates the US4 approvals slice on the agents.approve permission, same
@@ -681,9 +688,11 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			// US3 agent-run slice: manual trigger + run status under a business's agent,
 			// gated on agents.run (migration-0029 catalog). The engine runs AS the agent
 			// principal; same RLS-bound 404-on-lacking-perm semantics as the other groups.
+			// US7 accounting summary is co-gated by agents.run (same permission).
 			pr.Group(func(ag chi.Router) {
 				ag.Use(h.agentsRun)
 				h.agentRuns.ProtectedRoutes(ag)
+				h.accounting.ProtectedRoutes(ag)
 			})
 			// US4 approvals slice: a human works a business's flat approvals queue
 			// (list/approve/deny), gated on agents.approve (migration-0031 catalog;
