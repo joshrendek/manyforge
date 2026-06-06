@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,6 +18,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
 // knownProviders is the closed set accepted at the service boundary (mirrors the
@@ -70,6 +73,32 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 	}
 	if in.DefaultModel == "" {
 		return fmt.Errorf("agents: default_model required: %w", errs.ErrValidation)
+	}
+	// openai-compat providers (openai/ollama/vllm) route through a base_url; require
+	// it at the boundary so a missing one is a clean 400, not a later factory error.
+	if in.Provider != "anthropic" && in.BaseURL == "" {
+		return fmt.Errorf("agents: base_url required for provider %q: %w", in.Provider, errs.ErrValidation)
+	}
+	if in.BaseURL != "" {
+		if err := validateBaseURL(in.BaseURL, in.AllowPrivateBaseURL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateBaseURL is a best-effort create-time guard: it pins the URL shape and,
+// for a LITERAL IP host, applies the exact netsafe dialer policy. Hostnames are
+// NOT resolved here (DNS can rebind) — dial-time netsafe stays authoritative.
+func validateBaseURL(raw string, allowPrivate bool) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return fmt.Errorf("agents: base_url must be a valid http(s) URL: %w", errs.ErrValidation)
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		if netsafe.IsBlocked(ip, netsafe.Options{AllowLoopback: allowPrivate, AllowPrivate: allowPrivate}) {
+			return fmt.Errorf("agents: base_url %q is a blocked address: %w", raw, errs.ErrValidation)
+		}
 	}
 	return nil
 }

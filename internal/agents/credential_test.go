@@ -77,3 +77,34 @@ func TestValidateInput(t *testing.T) {
 		t.Error("unknown provider must be a validation error")
 	}
 }
+
+func TestValidateBaseURL(t *testing.T) {
+	svc := &CredentialService{}
+	cases := []struct {
+		name    string
+		in      CreateCredentialInput
+		wantErr bool
+	}{
+		{"anthropic needs no base_url", CreateCredentialInput{Provider: "anthropic", DefaultModel: "m"}, false},
+		{"openai missing base_url", CreateCredentialInput{Provider: "openai", DefaultModel: "m"}, true},
+		{"openai public base_url", CreateCredentialInput{Provider: "openai", DefaultModel: "m", BaseURL: "https://api.example.com/v1"}, false},
+		{"openai junk base_url", CreateCredentialInput{Provider: "openai", DefaultModel: "m", BaseURL: "not a url"}, true},
+		{"openai non-http scheme", CreateCredentialInput{Provider: "openai", DefaultModel: "m", BaseURL: "ftp://x/v1"}, true},
+		{"ollama private IP, trust off -> reject", CreateCredentialInput{Provider: "ollama", DefaultModel: "m", BaseURL: "http://192.168.1.10:11434/v1"}, true},
+		{"ollama private IP, trust on -> ok", CreateCredentialInput{Provider: "ollama", DefaultModel: "m", BaseURL: "http://192.168.1.10:11434/v1", AllowPrivateBaseURL: true}, false},
+		{"ollama loopback, trust on -> ok", CreateCredentialInput{Provider: "ollama", DefaultModel: "m", BaseURL: "http://127.0.0.1:11434/v1", AllowPrivateBaseURL: true}, false},
+		{"ollama metadata IP, trust on -> STILL reject", CreateCredentialInput{Provider: "ollama", DefaultModel: "m", BaseURL: "http://169.254.169.254/v1", AllowPrivateBaseURL: true}, true},
+		{"ollama hostname not resolved at create", CreateCredentialInput{Provider: "ollama", DefaultModel: "m", BaseURL: "http://my-ollama.local/v1"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.validate(tc.in)
+			if tc.wantErr && err == nil {
+				t.Fatalf("want error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("want ok, got %v", err)
+			}
+		})
+	}
+}
