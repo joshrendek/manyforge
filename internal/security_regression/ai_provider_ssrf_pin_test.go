@@ -28,7 +28,7 @@ func TestAIProviderFactory_RefusesPrivateBaseURL(t *testing.T) {
 	privates := []string{
 		"http://10.0.0.1/v1",
 		"http://127.0.0.1:9999/v1",
-		"http://169.254.169.254/v1",       // cloud metadata
+		"http://169.254.169.254/v1", // cloud metadata
 		"http://192.168.1.1/v1",
 	}
 	for _, base := range privates {

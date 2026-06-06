@@ -48,9 +48,9 @@ func InApp(ctx context.Context, tx pgx.Tx, n Notification) error {
 // threading headers and the sending identity that make a support reply continue
 // the customer's conversation and send as the business's brand.
 type Mail struct {
-	From       string   // verified custom identity, else the system address (FR-013)
-	To         string   // the requester
-	Subject    string   // the reply subject ("Re: …"); the reply token rides ReplyTo, NOT the subject
+	From       string // verified custom identity, else the system address (FR-013)
+	To         string // the requester
+	Subject    string // the reply subject ("Re: …"); the reply token rides ReplyTo, NOT the subject
 	BodyText   string
 	BodyHTML   string
 	MessageID  string   // RFC822 Message-ID we mint for this outbound message

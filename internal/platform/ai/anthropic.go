@@ -21,7 +21,7 @@ const (
 
 type anthropicReq struct {
 	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"` // Anthropic REQUIRES this; 0 yields a 400 -> ErrBadRequest
+	MaxTokens   int                `json:"max_tokens"`  // Anthropic REQUIRES this; 0 yields a 400 -> ErrBadRequest
 	Temperature float64            `json:"temperature"` // sent as-is; unset (0) => deterministic. US3 sets per agent. manyforge-4po
 	System      string             `json:"system,omitempty"`
 	Messages    []anthropicMessage `json:"messages"`
@@ -205,7 +205,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response
 		// Network failure, timeout, or SSRF dial-refusal (netsafe) all land here.
 		return Response{}, fmt.Errorf("ai/anthropic: transport: %w", ErrProviderUnavailable)
 	}
-	defer func() { _ = res.Body.Close() }() // errcheck: close error is not actionable
+	defer func() { _ = res.Body.Close() }()                // errcheck: close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20)) // cap at 8 MiB
 
 	if res.StatusCode != http.StatusOK {

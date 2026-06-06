@@ -32,11 +32,11 @@ import (
 // its batched attachments). Both share the 200 ms budget; component p95s are
 // logged so a regression points at the culprit.
 const (
-	sc010PrimaryTickets  = 10_000              // FR/SC-010: 10k tickets in the measured business
-	sc010NeighborTickets = 5_000               // a second tenant so RLS must discriminate
+	sc010PrimaryTickets  = 10_000 // FR/SC-010: 10k tickets in the measured business
+	sc010NeighborTickets = 5_000  // a second tenant so RLS must discriminate
 	sc010TargetP95       = 200 * time.Millisecond
-	sc010Samples         = 200                 // p95 over 200 samples tolerates 10 outliers
-	sc010Warmup          = 20                  // discarded — warms pool + plan cache
+	sc010Samples         = 200 // p95 over 200 samples tolerates 10 outliers
+	sc010Warmup          = 20  // discarded — warms pool + plan cache
 )
 
 // TestSC010 asserts ticket-list and ticket-load p95 stay under 200 ms at scale,

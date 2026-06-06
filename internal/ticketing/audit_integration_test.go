@@ -48,12 +48,12 @@ import (
 
 // auditRow is the projected newest audit_entry for an action, read RLS-exempt.
 type auditRow struct {
-	action        string
-	targetType    *string
-	targetID      *uuid.UUID
-	actor         *uuid.UUID
-	hasOldValue   bool
-	hasNewValue   bool
+	action      string
+	targetType  *string
+	targetID    *uuid.UUID
+	actor       *uuid.UUID
+	hasOldValue bool
+	hasNewValue bool
 }
 
 // latestAudit reads the single newest audit_entry matching action (RLS-exempt via
