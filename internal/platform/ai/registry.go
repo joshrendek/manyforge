@@ -54,3 +54,10 @@ func (r *Registry) Lookup(id string) (Model, bool) {
 	m, ok := r.models[id]
 	return m, ok
 }
+
+// Len returns the number of registered models.
+func (r *Registry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.models)
+}

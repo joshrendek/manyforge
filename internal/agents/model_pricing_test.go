@@ -1,8 +1,11 @@
 package agents
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/manyforge/manyforge/internal/platform/ai"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 )
@@ -22,5 +25,37 @@ func TestModelRowToAIModel(t *testing.T) {
 	}
 	if c := got.CostCents(ai.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}); c != 1800 {
 		t.Fatalf("CostCents = %d, want 1800", c)
+	}
+}
+
+func TestRegistryLen(t *testing.T) {
+	reg := ai.NewRegistry()
+	if got := reg.Len(); got != 0 {
+		t.Fatalf("Len of empty registry = %d, want 0", got)
+	}
+	reg.Register(ai.Model{ID: "claude-sonnet-4-5", Provider: "anthropic"})
+	if got := reg.Len(); got != 1 {
+		t.Fatalf("Len after one Register = %d, want 1", got)
+	}
+}
+
+// stubModelPricingDB lets us exercise LoadModelRegistry's error path without a real
+// pgx.Tx: WithTx just returns the canned error (it never invokes the callback).
+type stubModelPricingDB struct {
+	withTxErr error
+}
+
+func (s stubModelPricingDB) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return s.withTxErr
+}
+
+func TestLoadModelRegistryWrapsWithTxError(t *testing.T) {
+	sentinel := errors.New("boom: connection refused")
+	_, err := LoadModelRegistry(context.Background(), stubModelPricingDB{withTxErr: sentinel})
+	if err == nil {
+		t.Fatal("LoadModelRegistry = nil error, want wrapped WithTx error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("LoadModelRegistry error = %v, want it to wrap %v", err, sentinel)
 	}
 }

@@ -27,8 +27,9 @@ func modelRowToAIModel(r dbgen.ListModelPricingRow) ai.Model {
 }
 
 // LoadModelRegistry builds an ai.Registry from the model_pricing catalog. It is the
-// prod source of truth (ai.RegisterDefaults stays the test fixture). An empty catalog
-// is an error — a misconfigured deploy should fail loudly, not run with zero models.
+// prod source of truth; unit tests seed via ai.RegisterDefaults instead. An empty
+// catalog is an error — a misconfigured deploy should fail loudly, not run with zero
+// models.
 func LoadModelRegistry(ctx context.Context, database modelPricingDB) (*ai.Registry, error) {
 	reg := ai.NewRegistry()
 	err := database.WithTx(ctx, func(tx pgx.Tx) error {
@@ -44,7 +45,7 @@ func LoadModelRegistry(ctx context.Context, database modelPricingDB) (*ai.Regist
 	if err != nil {
 		return nil, fmt.Errorf("agents: load model registry: %w", err)
 	}
-	if _, ok := reg.Lookup("claude-sonnet-4-5"); !ok {
+	if reg.Len() == 0 {
 		return nil, fmt.Errorf("agents: model_pricing catalog is empty or unseeded")
 	}
 	return reg, nil
