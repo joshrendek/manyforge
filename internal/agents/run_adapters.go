@@ -74,7 +74,10 @@ func NewCredentialProviderFactory(cs *CredentialService) providerFactory {
 		if err != nil {
 			return nil, "", err
 		}
-		p, perr := ai.New(ai.Credential{Provider: rc.Provider, APIKey: rc.APIKey, BaseURL: rc.BaseURL, Model: rc.Model})
+		p, perr := ai.New(ai.Credential{
+			Provider: rc.Provider, APIKey: rc.APIKey, BaseURL: rc.BaseURL,
+			Model: rc.Model, AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
+		})
 		if perr != nil {
 			return nil, "", perr
 		}

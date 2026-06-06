@@ -37,28 +37,31 @@ type CredentialService struct {
 
 // CreateCredentialInput is the caller-supplied credential to store.
 type CreateCredentialInput struct {
-	Provider     string
-	APIKey       string // plaintext; sealed before persistence, never stored/logged raw
-	BaseURL      string // optional (openai-compat / self-host)
-	DefaultModel string
+	Provider            string
+	APIKey              string // plaintext; sealed before persistence, never stored/logged raw
+	BaseURL             string // optional (openai-compat / self-host)
+	DefaultModel        string
+	AllowPrivateBaseURL bool // self-host opt-in: permit a loopback/RFC1918 base_url
 }
 
 // ResolvedCredential is what the gateway needs to build a Provider.
 type ResolvedCredential struct {
-	Provider string
-	APIKey   string // plaintext, in-memory only
-	BaseURL  string
-	Model    string
+	Provider            string
+	APIKey              string // plaintext, in-memory only
+	BaseURL             string
+	Model               string
+	AllowPrivateBaseURL bool
 }
 
 // storedCredential is the unsealed-at-rest shape (mirrors the dbgen row; defined
 // here so seal/resolve are unit-testable without the DB). Task 8 maps the dbgen
 // row into this.
 type storedCredential struct {
-	Provider     string
-	SealedKeyRef *string
-	BaseURL      *string
-	DefaultModel string
+	Provider            string
+	SealedKeyRef        *string
+	BaseURL             *string
+	DefaultModel        string
+	AllowPrivateBaseURL bool
 }
 
 func (s *CredentialService) validate(in CreateCredentialInput) error {
@@ -89,6 +92,7 @@ func (s *CredentialService) resolveRow(row storedCredential) (ResolvedCredential
 	if row.BaseURL != nil {
 		out.BaseURL = *row.BaseURL
 	}
+	out.AllowPrivateBaseURL = row.AllowPrivateBaseURL
 	if row.SealedKeyRef != nil && *row.SealedKeyRef != "" {
 		key, err := s.Sealer.Open(*row.SealedKeyRef)
 		if err != nil {
@@ -119,12 +123,13 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 	}
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		_, qerr := dbgen.New(tx).InsertAIProviderCredential(ctx, dbgen.InsertAIProviderCredentialParams{
-			ID:           id,
-			BusinessID:   businessID,
-			Provider:     dbgen.AiProvider(in.Provider),
-			SealedKeyRef: refArg,
-			BaseUrl:      baseArg,
-			DefaultModel: in.DefaultModel,
+			ID:                  id,
+			BusinessID:          businessID,
+			Provider:            dbgen.AiProvider(in.Provider),
+			SealedKeyRef:        refArg,
+			BaseUrl:             baseArg,
+			DefaultModel:        in.DefaultModel,
+			AllowPrivateBaseUrl: in.AllowPrivateBaseURL,
 		})
 		return qerr
 	})
@@ -150,6 +155,7 @@ func (s *CredentialService) Resolve(ctx context.Context, principalID, businessID
 	return s.resolveRow(storedCredential{
 		Provider: string(row.Provider), SealedKeyRef: row.SealedKeyRef,
 		BaseURL: row.BaseUrl, DefaultModel: row.DefaultModel,
+		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
 	})
 }
 
