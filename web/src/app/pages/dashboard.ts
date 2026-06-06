@@ -2,7 +2,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 import { BusinessService } from '../core/business.service';
 import { Business, Row, buildTree, flatten } from '../core/tree';
@@ -11,12 +11,15 @@ type PanelKind = 'add' | 'rename' | 'move';
 
 @Component({
   selector: 'app-dashboard',
-  imports: [FormsModule],
+  imports: [FormsModule, RouterLink],
   template: `
     <section class="card">
       <div class="spread">
         <div>
           <h1>Your businesses</h1>
+        </div>
+        <div class="row">
+          <a class="linklike" routerLink="/accounting" data-testid="nav-accounting">Accounting</a>
         </div>
       </div>
 
