@@ -1,0 +1,13 @@
+{
+  "id": "cmpl-vllm-1",
+  "object": "chat.completion",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Happy to help with this ticket." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 27, "completion_tokens": 7, "total_tokens": 34 }
+}

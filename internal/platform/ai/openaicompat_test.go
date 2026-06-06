@@ -152,6 +152,10 @@ func TestOpenAIComplete_GoldenRoundTrip(t *testing.T) {
 	}{
 		{"openai_text.json", "Hello! How can I help with your ticket?", "", FinishStop},
 		{"openai_tool_calls.json", "", "get_ticket", FinishToolUse},
+		{"ollama_text.json", "Sure — I can help with that ticket.", "", FinishStop},
+		{"ollama_tool_calls.json", "", "set_priority", FinishToolUse},
+		{"vllm_text.json", "Happy to help with this ticket.", "", FinishStop},
+		{"vllm_tool_calls.json", "", "set_status", FinishToolUse},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {

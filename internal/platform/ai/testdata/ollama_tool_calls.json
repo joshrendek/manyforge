@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-ollama-2",
+  "object": "chat.completion",
+  "model": "llama3.1",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_ollama_1",
+            "type": "function",
+            "function": { "name": "set_priority", "arguments": "{\"id\":\"t-7\",\"priority\":\"high\"}" }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 44, "completion_tokens": 21, "total_tokens": 65 }
+}
