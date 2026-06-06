@@ -1,0 +1,13 @@
+{
+  "id": "chatcmpl-ollama-1",
+  "object": "chat.completion",
+  "model": "llama3.1",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Sure — I can help with that ticket." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 31, "completion_tokens": 9, "total_tokens": 40 }
+}

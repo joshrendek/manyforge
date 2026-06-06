@@ -1,0 +1,23 @@
+{
+  "id": "cmpl-vllm-2",
+  "object": "chat.completion",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_vllm_1",
+            "type": "function",
+            "function": { "name": "set_status", "arguments": "{\"id\":\"t-9\",\"status\":\"closed\"}" }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 39, "completion_tokens": 18, "total_tokens": 57 }
+}

@@ -74,3 +74,49 @@ func TestRecordOpenAIFixture(t *testing.T) {
 	}
 	t.Logf("recorded openai response: text=%q finish=%s usage=%+v", resp.Text, resp.FinishReason, resp.Usage)
 }
+
+// TestRecordOllamaFixture refreshes the ollama fixtures from a live Ollama server.
+// Run: AI_RECORD=1 OLLAMA_BASE_URL=http://localhost:11434/v1 \
+//
+//	go test ./internal/platform/ai/ -run TestRecordOllamaFixture -v
+func TestRecordOllamaFixture(t *testing.T) {
+	if !recording() {
+		t.Skip("set AI_RECORD=1 to refresh golden fixtures from a live server")
+	}
+	base := os.Getenv("OLLAMA_BASE_URL")
+	if base == "" {
+		t.Skip("OLLAMA_BASE_URL not set")
+	}
+	p := NewOpenAICompatProvider("", base, "llama3.1", nil)
+	resp, err := p.Complete(context.Background(), Request{
+		Model: "llama3.1", MaxTokens: 64,
+		Messages: []Message{{Role: RoleUser, Text: "Say hello in one short sentence."}},
+	})
+	if err != nil {
+		t.Fatalf("live call: %v", err)
+	}
+	t.Logf("recorded ollama response: text=%q finish=%s usage=%+v", resp.Text, resp.FinishReason, resp.Usage)
+}
+
+// TestRecordVLLMFixture mirrors the above for a live vLLM OpenAI-compatible server.
+// Run: AI_RECORD=1 VLLM_BASE_URL=http://localhost:8000/v1 \
+//
+//	go test ./internal/platform/ai/ -run TestRecordVLLMFixture -v
+func TestRecordVLLMFixture(t *testing.T) {
+	if !recording() {
+		t.Skip("set AI_RECORD=1 to refresh golden fixtures from a live server")
+	}
+	base := os.Getenv("VLLM_BASE_URL")
+	if base == "" {
+		t.Skip("VLLM_BASE_URL not set")
+	}
+	p := NewOpenAICompatProvider("", base, "meta-llama/Llama-3.1-8B-Instruct", nil)
+	resp, err := p.Complete(context.Background(), Request{
+		Model: "meta-llama/Llama-3.1-8B-Instruct", MaxTokens: 64,
+		Messages: []Message{{Role: RoleUser, Text: "Say hello in one short sentence."}},
+	})
+	if err != nil {
+		t.Fatalf("live call: %v", err)
+	}
+	t.Logf("recorded vllm response: text=%q finish=%s usage=%+v", resp.Text, resp.FinishReason, resp.Usage)
+}
