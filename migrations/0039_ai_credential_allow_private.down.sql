@@ -1,0 +1,1 @@
+ALTER TABLE ai_provider_credential DROP COLUMN allow_private_base_url;
