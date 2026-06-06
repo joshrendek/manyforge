@@ -419,15 +419,16 @@ type AgentRun struct {
 }
 
 type AiProviderCredential struct {
-	ID           uuid.UUID  `json:"id"`
-	BusinessID   uuid.UUID  `json:"business_id"`
-	TenantRootID uuid.UUID  `json:"tenant_root_id"`
-	Provider     AiProvider `json:"provider"`
-	SealedKeyRef *string    `json:"sealed_key_ref"`
-	BaseUrl      *string    `json:"base_url"`
-	DefaultModel string     `json:"default_model"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID                  uuid.UUID  `json:"id"`
+	BusinessID          uuid.UUID  `json:"business_id"`
+	TenantRootID        uuid.UUID  `json:"tenant_root_id"`
+	Provider            AiProvider `json:"provider"`
+	SealedKeyRef        *string    `json:"sealed_key_ref"`
+	BaseUrl             *string    `json:"base_url"`
+	DefaultModel        string     `json:"default_model"`
+	AllowPrivateBaseUrl bool       `json:"allow_private_base_url"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type ApprovalItem struct {
