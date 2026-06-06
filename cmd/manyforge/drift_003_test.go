@@ -23,6 +23,7 @@ var inScope003Ops = []string{
 	"PATCH /businesses/{}/agents/{}",
 	"DELETE /businesses/{}/agents/{}",
 	"POST /businesses/{}/agents/{}/runs",
+	"GET /businesses/{}/agents/{}/runs",
 	"GET /businesses/{}/agents/{}/runs/{}",
 	"GET /businesses/{}/approvals",
 	"POST /businesses/{}/approvals/{}/approve",

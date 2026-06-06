@@ -136,3 +136,52 @@ func TestAccountingSummary_CrossTenantInvisible(t *testing.T) {
 		t.Fatalf("cross-tenant leak: %+v", sum)
 	}
 }
+
+func TestListAgentRuns_Pagination(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	seed := seedRunTenant(ctx, t, tdb)
+	ag := seedAccountingAgent(ctx, t, tdb, seed, "Agent A", 0)
+	now := time.Now().UTC()
+	// Seed runs 1h, 2h, 3h in the past so all three fall strictly within the
+	// [monthStart, now+1min) window (the SQL uses created_at < ToTs).
+	for i := 1; i <= 3; i++ {
+		seedAccountingRun(ctx, t, tdb, seed, ag, 10, 20, int64(10+i), now.Add(-time.Duration(i)*time.Hour))
+	}
+	store := &AgentRunStore{DB: tdb.App}
+	// Advance the window's To by one minute so all seeded rows are strictly < ToTs.
+	w, _ := ResolveWindow("this_month", "", "", now.Add(time.Minute))
+
+	page1, next, err := store.ListRuns(ctx, seed.ownerID, seed.businessID, ag.ID, RunListFilter{Window: w}, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page1) != 2 || next == nil {
+		t.Fatalf("page1: len=%d next=%v, want 2 + a cursor", len(page1), next)
+	}
+	if page1[0].CreatedAt.Before(page1[1].CreatedAt) {
+		t.Fatal("runs must be newest-first")
+	}
+	page2, next2, err := store.ListRuns(ctx, seed.ownerID, seed.businessID, ag.ID, RunListFilter{Window: w}, *next, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page2) != 1 || next2 != nil {
+		t.Fatalf("page2: len=%d next=%v, want 1 + nil", len(page2), next2)
+	}
+
+	// Verify no duplicate IDs across pages.
+	seen := make(map[uuid.UUID]struct{}, 3)
+	for _, r := range append(page1, page2...) {
+		if _, dup := seen[r.ID]; dup {
+			t.Fatalf("duplicate run ID across pages: %v", r.ID)
+		}
+		seen[r.ID] = struct{}{}
+	}
+}
