@@ -299,6 +299,7 @@ CREATE TABLE ai_provider_credential (
     sealed_key_ref  text,
     base_url        text,
     default_model   text NOT NULL,
+    allow_private_base_url boolean NOT NULL,
     created_at      timestamptz NOT NULL,
     updated_at      timestamptz NOT NULL,
     UNIQUE (business_id, provider),
