@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -38,6 +39,7 @@ type AgentRun struct {
 	CostCents     int64
 	CorrelationID string
 	Error         *string
+	CreatedAt     time.Time
 }
 
 type agentRunDB interface {
@@ -260,6 +262,81 @@ func (s *AgentRunStore) ClaimNextQueuedRun(ctx context.Context) (*ClaimedRun, er
 	return &c, nil
 }
 
+// RunListFilter narrows a run list. Status "" = all statuses.
+type RunListFilter struct {
+	Status string
+	Window Window
+}
+
+const (
+	runListDefaultLimit = 50
+	runListMaxLimit     = 100
+)
+
+func clampRunLimit(n int) int {
+	if n <= 0 {
+		return runListDefaultLimit
+	}
+	if n > runListMaxLimit {
+		return runListMaxLimit
+	}
+	return n
+}
+
+// ListRuns returns a keyset page of an agent's runs (newest first) plus the next
+// cursor (nil when exhausted). cursor "" starts at the newest run.
+func (s *AgentRunStore) ListRuns(ctx context.Context, principalID, businessID, agentID uuid.UUID, f RunListFilter, cursor string, limit int) ([]AgentRun, *string, error) {
+	lim := clampRunLimit(limit)
+
+	// Page 1 sentinel: a tuple greater than any real row in (created_at, id) DESC.
+	curTs := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	curID := uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
+	if cursor != "" {
+		k, err := decodeRunCursor(cursor)
+		if err != nil {
+			return nil, nil, err
+		}
+		curTs, curID = k.ts, k.id
+	}
+
+	var status *string
+	if f.Status != "" {
+		status = &f.Status
+	}
+
+	var rows []dbgen.AgentRun
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, e := dbgen.New(tx).ListAgentRuns(ctx, dbgen.ListAgentRunsParams{
+			BusinessID:   businessID,
+			AgentID:      agentID,
+			FromTs:       f.Window.From,
+			ToTs:         f.Window.To,
+			Status:       status,
+			CurCreatedAt: curTs,
+			CurID:        curID,
+			Lim:          int32(lim + 1),
+		})
+		rows = r
+		return e
+	})
+	if err != nil {
+		return nil, nil, mapAgentRunErr(err)
+	}
+
+	var next *string
+	if len(rows) > lim {
+		last := rows[lim-1]
+		tok := encodeRunCursor(runKeyset{ts: last.CreatedAt, id: last.ID})
+		next = &tok
+		rows = rows[:lim]
+	}
+	out := make([]AgentRun, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toAgentRun(r))
+	}
+	return out, next, nil
+}
+
 func mapAgentRunErr(err error) error {
 	var pgErr *pgconn.PgError
 	switch {
@@ -288,5 +365,6 @@ func toAgentRun(r dbgen.AgentRun) AgentRun {
 		v := uuid.UUID(r.TargetID.Bytes)
 		out.TargetID = &v
 	}
+	out.CreatedAt = r.CreatedAt
 	return out
 }
