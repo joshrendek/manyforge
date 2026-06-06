@@ -12,6 +12,10 @@ import (
 )
 
 type Querier interface {
+	// Per-agent usage rollup for a business over [from_ts, to_ts). LEFT JOIN so agents
+	// with zero runs in the window still appear (with zeros). RLS on agent + agent_run
+	// (under WithPrincipal) scopes to the caller's businesses; the business_id arg narrows.
+	AccountingSummaryByAgent(ctx context.Context, arg AccountingSummaryByAgentParams) ([]AccountingSummaryByAgentRow, error)
 	// Serializes structural mutations within a tenant (research R5).
 	AcquireTenantLock(ctx context.Context, hashtext string) error
 	AddRolePermission(ctx context.Context, arg AddRolePermissionParams) error
