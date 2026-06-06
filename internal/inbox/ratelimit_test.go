@@ -124,7 +124,7 @@ func TestWebhookPerRecipientRateLimitNoOracle(t *testing.T) {
 		return rec.Code, rec.Body.Bytes()
 	}
 
-	knownStatus, knownBody := drive(t, knownRcpt, nil)         // routes
+	knownStatus, knownBody := drive(t, knownRcpt, nil)              // routes
 	unknownStatus, unknownBody := drive(t, unknownRcpt, errNoRoute) // does not route
 
 	if knownStatus != http.StatusTooManyRequests {

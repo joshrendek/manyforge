@@ -186,8 +186,12 @@ func (h *Handler) rename(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) archive(w http.ResponseWriter, r *http.Request)  { h.statusChange(w, r, h.svc.Archive) }
-func (h *Handler) restore(w http.ResponseWriter, r *http.Request)  { h.statusChange(w, r, h.svc.Restore) }
+func (h *Handler) archive(w http.ResponseWriter, r *http.Request) {
+	h.statusChange(w, r, h.svc.Archive)
+}
+func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
+	h.statusChange(w, r, h.svc.Restore)
+}
 
 func (h *Handler) statusChange(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, p, id uuid.UUID) error) {
 	pid, ok := h.principal(w, r)

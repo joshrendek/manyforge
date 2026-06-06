@@ -36,7 +36,7 @@ func TestRedactIsSoftDeletePinned(t *testing.T) {
 	// (2) get/list exclude redacted tickets — no leak after redact.
 	for _, frag := range []string{
 		"WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL", // GetTicket
-		"t.redacted_at IS NULL",                                      // ListTickets / ListTicketsAfter
+		"t.redacted_at IS NULL", // ListTickets / ListTicketsAfter
 	} {
 		if !strings.Contains(sql, frag) {
 			t.Errorf("redact pin: ticketing.sql missing redacted-exclusion %q — a redacted ticket would leak", frag)
