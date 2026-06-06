@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -15,6 +17,7 @@ import (
 type runOps interface {
 	Trigger(ctx context.Context, principalID, businessID, agentID uuid.UUID, trigger string, targetType *string, targetID *uuid.UUID) (AgentRun, error)
 	GetRun(ctx context.Context, principalID, businessID, agentID, runID uuid.UUID) (AgentRun, error)
+	ListRuns(ctx context.Context, principalID, businessID, agentID uuid.UUID, f RunListFilter, cursor string, limit int) ([]AgentRun, *string, error)
 }
 
 // RunService triggers agent runs (as the agent principal) and reads run status.
@@ -49,6 +52,11 @@ func (s *RunService) GetRun(ctx context.Context, principalID, businessID, agentI
 	return s.runs.Get(ctx, principalID, businessID, agentID, runID)
 }
 
+// ListRuns delegates to the run store (keyset pagination).
+func (s *RunService) ListRuns(ctx context.Context, principalID, businessID, agentID uuid.UUID, f RunListFilter, cursor string, limit int) ([]AgentRun, *string, error) {
+	return s.runs.ListRuns(ctx, principalID, businessID, agentID, f, cursor, limit)
+}
+
 // RunHandler is the thin HTTP layer over runOps.
 type RunHandler struct{ svc runOps }
 
@@ -59,6 +67,7 @@ func NewRunHandler(svc runOps) *RunHandler { return &RunHandler{svc: svc} }
 func (h *RunHandler) ProtectedRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/agents/{agentID}/runs", func(r chi.Router) {
 		r.Post("/", h.triggerRun)
+		r.Get("/", h.listRuns)
 		r.Get("/{runID}", h.getRun)
 	})
 }
@@ -159,4 +168,65 @@ func (h *RunHandler) getRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toRunResp(run))
+}
+
+type runListItem struct {
+	ID            uuid.UUID `json:"id"`
+	AgentID       uuid.UUID `json:"agent_id"`
+	Trigger       string    `json:"trigger"`
+	Status        string    `json:"status"`
+	TokensIn      int       `json:"tokens_in"`
+	TokensOut     int       `json:"tokens_out"`
+	CostCents     int64     `json:"cost_cents"`
+	CorrelationID string    `json:"correlation_id"`
+	Error         *string   `json:"error,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+func toRunListItem(r AgentRun) runListItem {
+	return runListItem{
+		ID: r.ID, AgentID: r.AgentID, Trigger: r.Trigger, Status: r.Status,
+		TokensIn: r.TokensIn, TokensOut: r.TokensOut, CostCents: r.CostCents,
+		CorrelationID: r.CorrelationID, Error: r.Error, CreatedAt: r.CreatedAt,
+	}
+}
+
+func (h *RunHandler) listRuns(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := runBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	aid, err := runAgentID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	q := r.URL.Query()
+	win, err := ResolveWindow(q.Get("window"), q.Get("from"), q.Get("to"), time.Now().UTC())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	limit := 0
+	if v := q.Get("limit"); v != "" {
+		if n, e := strconv.Atoi(v); e == nil {
+			limit = n
+		}
+	}
+	runs, next, err := h.svc.ListRuns(r.Context(), pid, bid, aid, RunListFilter{Status: q.Get("status"), Window: win}, q.Get("cursor"), limit)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items := make([]runListItem, 0, len(runs))
+	for _, rn := range runs {
+		items = append(items, toRunListItem(rn))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
 }

@@ -44,6 +44,10 @@ func (f *fakeRunOps) GetRun(_ context.Context, _, _, agentID, _ uuid.UUID) (Agen
 	return f.gotRun, f.getErr
 }
 
+func (f *fakeRunOps) ListRuns(_ context.Context, _, _, _ uuid.UUID, _ RunListFilter, _ string, _ int) ([]AgentRun, *string, error) {
+	return nil, nil, nil
+}
+
 // serveRun mounts RunHandler behind the real auth chain (AuthToPrincipal +
 // RequireAuth) and serves one request, returning the recorder. Mirrors serveAgent.
 func serveRun(h *RunHandler, ring *auth.KeyRing, method, target, bearer string, body io.Reader) *httptest.ResponseRecorder {

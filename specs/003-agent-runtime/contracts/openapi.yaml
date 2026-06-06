@@ -172,6 +172,29 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      operationId: listAgentRuns
+      summary: List an agent's runs (keyset paginated)
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: window, in: query, required: false, schema: { type: string, enum: [this_month, last_month, last_30_days, custom] } }
+        - { name: from, in: query, required: false, schema: { type: string } }
+        - { name: to, in: query, required: false, schema: { type: string } }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200":
+          description: A page of runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/RunSummary" } }
+                  next_cursor: { type: string, nullable: true }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/agents/{agentID}/runs/{runID}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -424,6 +447,20 @@ components:
         cost_cents: { type: integer, minimum: 0 }
         correlation_id: { type: string }
         error: { type: string, nullable: true }
+    RunSummary:
+      type: object
+      required: [id, agent_id, trigger, status, tokens_in, tokens_out, cost_cents, correlation_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        trigger: { type: string }
+        status: { type: string }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        cost_cents: { type: integer }
+        correlation_id: { type: string }
+        error: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
     ApprovalItem:
       type: object
       description: >
