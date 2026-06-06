@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -152,7 +153,7 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 		baseArg = &in.BaseURL
 	}
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		_, qerr := dbgen.New(tx).InsertAIProviderCredential(ctx, dbgen.InsertAIProviderCredentialParams{
+		if _, qerr := dbgen.New(tx).InsertAIProviderCredential(ctx, dbgen.InsertAIProviderCredentialParams{
 			ID:                  id,
 			BusinessID:          businessID,
 			Provider:            dbgen.AiProvider(in.Provider),
@@ -160,8 +161,26 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 			BaseUrl:             baseArg,
 			DefaultModel:        in.DefaultModel,
 			AllowPrivateBaseUrl: in.AllowPrivateBaseURL,
-		})
-		return qerr
+		}); qerr != nil {
+			return qerr
+		}
+		// Trusting a private/loopback endpoint is a security-sensitive grant — audit it
+		// in the SAME tx as the insert so there is never a trusted credential without
+		// its trail (atomicity invariant).
+		if in.AllowPrivateBaseURL {
+			tt := "ai_provider_credential"
+			dec := "trust_private_base_url"
+			return audit.Write(ctx, tx, audit.Entry{
+				BusinessID:       &businessID,
+				ActorPrincipalID: &principalID,
+				Action:           "ai_credential.create",
+				TargetType:       &tt,
+				TargetID:         &id,
+				Decision:         &dec,
+				Inputs:           map[string]any{"provider": in.Provider, "base_url": in.BaseURL},
+			})
+		}
+		return nil
 	})
 	if err != nil {
 		return uuid.Nil, mapCredErr(err)

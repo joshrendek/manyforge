@@ -76,3 +76,49 @@ func TestCredentialCRUDRoundTrip(t *testing.T) {
 		t.Fatal("tenant B has no credential; must be not-found")
 	}
 }
+
+func TestCredentialTrustGrantAudited(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	ten := seedAgentTenant(ctx, t, tdb)
+	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
+
+	// A trusted self-host credential writes exactly one trust-grant audit row, atomically.
+	id, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+		Provider: "ollama", DefaultModel: "llama3",
+		BaseURL: "http://127.0.0.1:11434/v1", AllowPrivateBaseURL: true,
+	})
+	if err != nil {
+		t.Fatalf("create trusted: %v", err)
+	}
+	var n int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND action='ai_credential.create' AND decision='trust_private_base_url'`,
+		id).Scan(&n); err != nil {
+		t.Fatalf("count trust audit: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("want 1 trust-grant audit row, got %d", n)
+	}
+
+	// A non-trusted credential writes NO trust-grant row.
+	id2, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+		Provider: "openai", DefaultModel: "gpt-4o", BaseURL: "https://api.example.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("create untrusted: %v", err)
+	}
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND decision='trust_private_base_url'`,
+		id2).Scan(&n); err != nil {
+		t.Fatalf("count untrusted audit: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("untrusted credential must write no trust-grant row, got %d", n)
+	}
+}
