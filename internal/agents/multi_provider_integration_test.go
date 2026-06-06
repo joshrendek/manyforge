@@ -32,6 +32,8 @@ func TestMultiProviderConfigEndToEnd(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("path = %q", r.URL.Path)
+			http.Error(w, "wrong path", http.StatusBadRequest)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
@@ -54,6 +56,9 @@ func TestMultiProviderConfigEndToEnd(t *testing.T) {
 			}
 			if model != "m" {
 				t.Fatalf("model = %q, want m", model)
+			}
+			if p.Name() != "openai-compat" {
+				t.Fatalf("%s -> provider %q, want openai-compat", provider, p.Name())
 			}
 			resp, err := p.Complete(ctx, ai.Request{
 				Model: model, MaxTokens: 16, Messages: []ai.Message{{Role: ai.RoleUser, Text: "hi"}},
