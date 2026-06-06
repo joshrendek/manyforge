@@ -50,3 +50,17 @@ SELECT COALESCE(SUM(cost_cents), 0)::bigint AS cents
 FROM agent_run
 WHERE agent_id = $1 AND business_id = $2
   AND created_at >= date_trunc('month', now());
+
+-- name: ListAgentRuns :many
+-- Keyset-paginated runs for one agent over [from_ts, to_ts), newest first. The cursor
+-- tuple (cur_created_at, cur_id) is passed as a far-future sentinel for page 1. RLS
+-- (under WithPrincipal) scopes to the caller's businesses; business_id+agent_id narrow.
+SELECT * FROM agent_run
+WHERE business_id = sqlc.arg('business_id')::uuid
+  AND agent_id = sqlc.arg('agent_id')::uuid
+  AND created_at >= sqlc.arg('from_ts')::timestamptz
+  AND created_at <  sqlc.arg('to_ts')::timestamptz
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
+  AND (created_at, id) < (sqlc.arg('cur_created_at')::timestamptz, sqlc.arg('cur_id')::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('lim');
