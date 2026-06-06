@@ -59,8 +59,8 @@ func TestOracleUniformity(t *testing.T) {
 
 	t.Run("login failures are uniform (miss == wrong-pw == deactivated)", func(t *testing.T) {
 		cases := map[string]error{
-			"unknown email":      login(acct, ctx, "nobody@x.test", oraclePassword),
-			"wrong password":     login(acct, ctx, "real@x.test", "wrong-"+oraclePassword),
+			"unknown email":       login(acct, ctx, "nobody@x.test", oraclePassword),
+			"wrong password":      login(acct, ctx, "real@x.test", "wrong-"+oraclePassword),
 			"deactivated account": login(acct, ctx, "off@x.test", oraclePassword),
 		}
 		for name, err := range cases {

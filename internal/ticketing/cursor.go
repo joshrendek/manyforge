@@ -74,7 +74,7 @@ func decodeRequesterCursor(token string) (keyset, error) {
 	return decodeCursor(cursorRequesters, token)
 }
 
-func encodeEmailDomainCursor(k keyset) string         { return encodeCursor(cursorEmailDomains, k) }
+func encodeEmailDomainCursor(k keyset) string { return encodeCursor(cursorEmailDomains, k) }
 func decodeEmailDomainCursor(token string) (keyset, error) {
 	return decodeCursor(cursorEmailDomains, token)
 }

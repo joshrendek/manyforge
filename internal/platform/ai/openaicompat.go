@@ -198,7 +198,7 @@ func (p *OpenAICompatProvider) Complete(ctx context.Context, req Request) (Respo
 		// Network failure, timeout, or SSRF dial-refusal (netsafe) all land here.
 		return Response{}, fmt.Errorf("ai/openai: transport: %w", ErrProviderUnavailable)
 	}
-	defer func() { _ = res.Body.Close() }() // errcheck: close error is not actionable
+	defer func() { _ = res.Body.Close() }()                // errcheck: close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20)) // cap at 8 MiB
 
 	if res.StatusCode != http.StatusOK {
