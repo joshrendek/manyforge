@@ -37,6 +37,8 @@ type accountingDB interface {
 // AccountingStore reads usage aggregates. Read-only; separate from AgentRunStore.
 type AccountingStore struct{ DB accountingDB }
 
+var _ summaryOps = (*AccountingStore)(nil)
+
 // SummaryForWindow returns the per-agent rollup for a business over the window,
 // with business totals summed from the rows (one round-trip).
 func (s *AccountingStore) SummaryForWindow(ctx context.Context, principalID, businessID uuid.UUID, w Window) (Summary, error) {
