@@ -55,6 +55,19 @@ func TestResolveKeylessProvider(t *testing.T) {
 	}
 }
 
+func TestResolveRowCarriesAllowPrivate(t *testing.T) {
+	svc := &CredentialService{} // no sealer needed when SealedKeyRef is nil
+	got, err := svc.resolveRow(storedCredential{
+		Provider: "ollama", SealedKeyRef: nil, DefaultModel: "llama3", AllowPrivateBaseURL: true,
+	})
+	if err != nil {
+		t.Fatalf("resolveRow: %v", err)
+	}
+	if !got.AllowPrivateBaseURL {
+		t.Fatal("AllowPrivateBaseURL did not round-trip through resolveRow")
+	}
+}
+
 func TestValidateInput(t *testing.T) {
 	svc := &CredentialService{Sealer: newTestSealer(t)}
 	if err := svc.validate(CreateCredentialInput{Provider: "anthropic", DefaultModel: ""}); err == nil {
