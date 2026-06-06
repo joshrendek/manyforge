@@ -31,5 +31,10 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/accounting/summary').then((m) => m.AccountingSummaryComponent),
   },
+  {
+    path: 'accounting/:businessId/:agentId',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/accounting/agent-runs').then((m) => m.AgentRunsComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
