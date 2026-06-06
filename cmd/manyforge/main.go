@@ -26,7 +26,6 @@ import (
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
-	"github.com/manyforge/manyforge/internal/platform/ai"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/config"
@@ -166,14 +165,8 @@ func main() {
 		Auditor:     agents.NewDBAuditor(database),
 		Resolver:    agents.NewAuthzChecker(database),
 		NewProvider: agents.NewCredentialProviderFactory(credSvc),
-		Cost: func(model string, u ai.Usage) int64 {
-			m, ok := aiReg.Lookup(model)
-			if !ok {
-				return 0
-			}
-			return m.CostCents(u)
-		},
-		Limits: agents.RunLimits{}, // defaults (8 iters / 100k tokens / 4096 out / 120s)
+		Cost:        agents.NewRegistryCostFn(aiReg, logger),
+		Limits:      agents.RunLimits{}, // defaults (8 iters / 100k tokens / 4096 out / 120s)
 	}
 	agentRunSvc := agents.NewRunService(agentSvc, agentEngine, agentRunStore)
 	agentRunH := agents.NewRunHandler(agentRunSvc)
