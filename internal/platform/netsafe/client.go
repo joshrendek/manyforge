@@ -62,7 +62,8 @@ type Options struct {
 	AllowPrivate  bool // permits RFC1918 + IPv6 ULA; metadata stays blocked
 }
 
-// NewClientWithOptions builds a guarded client; AllowLoopback permits loopback only.
+// NewClientWithOptions builds a guarded client configured by o. See Options for the
+// available trust flags; the zero-value Options is the fully locked-down posture.
 func NewClientWithOptions(timeout time.Duration, o Options) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Client{Timeout: timeout, Transport: &http.Transport{
