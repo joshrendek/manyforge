@@ -448,19 +448,12 @@ components:
         correlation_id: { type: string }
         error: { type: string, nullable: true }
     RunSummary:
-      type: object
-      required: [id, agent_id, trigger, status, tokens_in, tokens_out, cost_cents, correlation_id, created_at]
-      properties:
-        id: { type: string, format: uuid }
-        agent_id: { type: string, format: uuid }
-        trigger: { type: string }
-        status: { type: string }
-        tokens_in: { type: integer }
-        tokens_out: { type: integer }
-        cost_cents: { type: integer }
-        correlation_id: { type: string }
-        error: { type: string, nullable: true }
-        created_at: { type: string, format: date-time }
+      allOf:
+        - $ref: "#/components/schemas/Run"
+        - type: object
+          required: [created_at]
+          properties:
+            created_at: { type: string, format: date-time }
     ApprovalItem:
       type: object
       description: >
