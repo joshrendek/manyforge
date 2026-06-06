@@ -168,12 +168,12 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 		// in the SAME tx as the insert so there is never a trusted credential without
 		// its trail (atomicity invariant).
 		if in.AllowPrivateBaseURL {
-			tt := "ai_provider_credential"
+			tt := "ai_credential"
 			dec := "trust_private_base_url"
 			return audit.Write(ctx, tx, audit.Entry{
 				BusinessID:       &businessID,
 				ActorPrincipalID: &principalID,
-				Action:           "ai_credential.create",
+				Action:           "ai_credential.created",
 				TargetType:       &tt,
 				TargetID:         &id,
 				Decision:         &dec,

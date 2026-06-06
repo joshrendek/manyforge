@@ -5,6 +5,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,12 +99,26 @@ func TestCredentialTrustGrantAudited(t *testing.T) {
 	}
 	var n int
 	if err := tdb.Super.QueryRow(ctx,
-		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND action='ai_credential.create' AND decision='trust_private_base_url'`,
+		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND action='ai_credential.created' AND decision='trust_private_base_url'`,
 		id).Scan(&n); err != nil {
 		t.Fatalf("count trust audit: %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("want 1 trust-grant audit row, got %d", n)
+	}
+	var actor uuid.UUID
+	var inputs []byte
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT actor_principal_id, inputs FROM audit_entry WHERE target_id=$1 AND action='ai_credential.created' AND decision='trust_private_base_url'`,
+		id).Scan(&actor, &inputs); err != nil {
+		t.Fatalf("read trust audit row: %v", err)
+	}
+	if actor != ten.principalID {
+		t.Fatalf("audit actor = %s, want %s", actor, ten.principalID)
+	}
+	// jsonb is re-serialized by Postgres with a space after each colon; match that form.
+	if !strings.Contains(string(inputs), `"provider": "ollama"`) || !strings.Contains(string(inputs), `"base_url": "http://127.0.0.1:11434/v1"`) {
+		t.Fatalf("audit inputs missing provider/base_url: %s", inputs)
 	}
 
 	// A non-trusted credential writes NO trust-grant row.
