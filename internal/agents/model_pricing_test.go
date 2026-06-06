@@ -59,3 +59,18 @@ func TestLoadModelRegistryWrapsWithTxError(t *testing.T) {
 		t.Fatalf("LoadModelRegistry error = %v, want it to wrap %v", err, sentinel)
 	}
 }
+
+func TestRegistryCostFn_UnknownModelIsFree(t *testing.T) {
+	reg := ai.NewRegistry()
+	ai.RegisterDefaults(reg) // anthropic + openai only — no self-host models
+	cost := NewRegistryCostFn(reg, nil)
+
+	// A self-hosted model absent from the catalog costs 0 — never an error/panic.
+	if c := cost("llama3.1:70b", ai.Usage{InputTokens: 1000, OutputTokens: 1000}); c != 0 {
+		t.Fatalf("unknown model cost = %d, want 0", c)
+	}
+	// Sanity: a known model still prices > 0 (the fn isn't always-zero).
+	if c := cost("gpt-4o", ai.Usage{InputTokens: 1_000_000, OutputTokens: 0}); c <= 0 {
+		t.Fatalf("known model cost = %d, want > 0", c)
+	}
+}
