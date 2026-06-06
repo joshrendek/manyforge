@@ -22,12 +22,12 @@ type AgentUsage struct {
 // Summary is a business-wide rollup for a window: totals (summed from the rows) plus
 // the per-agent breakdown.
 type Summary struct {
-	Window    Window
-	TotalCost int64
-	TotalIn   int64
-	TotalOut  int64
-	TotalRuns int64
-	Agents    []AgentUsage
+	Window         Window
+	TotalCost      int64
+	TotalTokensIn  int64
+	TotalTokensOut int64
+	TotalRuns      int64
+	Agents         []AgentUsage
 }
 
 type accountingDB interface {
@@ -61,8 +61,8 @@ func (s *AccountingStore) SummaryForWindow(ctx context.Context, principalID, bus
 				CostCents:          r.CostCents,
 			})
 			out.TotalCost += r.CostCents
-			out.TotalIn += r.TokensIn
-			out.TotalOut += r.TokensOut
+			out.TotalTokensIn += r.TokensIn
+			out.TotalTokensOut += r.TokensOut
 			out.TotalRuns += r.RunCount
 		}
 		return nil
