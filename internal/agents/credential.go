@@ -92,6 +92,7 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 // NOT resolved here (DNS can rebind) — dial-time netsafe stays authoritative.
 func validateBaseURL(raw string, allowPrivate bool) error {
 	u, err := url.Parse(raw)
+	// url.Parse is lenient and never errors on "not a url"; the scheme/host checks below catch it.
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return fmt.Errorf("agents: base_url must be a valid http(s) URL: %w", errs.ErrValidation)
 	}
