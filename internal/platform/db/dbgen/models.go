@@ -564,6 +564,19 @@ type Membership struct {
 	GrantedAt    time.Time   `json:"granted_at"`
 }
 
+type ModelPricing struct {
+	ModelID            string    `json:"model_id"`
+	Provider           string    `json:"provider"`
+	DisplayName        string    `json:"display_name"`
+	ContextWindow      int32     `json:"context_window"`
+	InputCentsPerMtok  int64     `json:"input_cents_per_mtok"`
+	OutputCentsPerMtok int64     `json:"output_cents_per_mtok"`
+	SupportsTools      bool      `json:"supports_tools"`
+	Enabled            bool      `json:"enabled"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
 type Notification struct {
 	ID           uuid.UUID          `json:"id"`
 	TenantRootID uuid.UUID          `json:"tenant_root_id"`
