@@ -34,6 +34,15 @@ type ExternalIssue struct {
 	UpdatedAt     time.Time
 }
 
+// ExternalIssueDraft is the minimal payload to create a new external issue (US4 outbound).
+type ExternalIssueDraft struct {
+	ProjectKey    string // required: external project/space key the issue is created in
+	IssueType     string // required: external issue type name (e.g. "Task")
+	Summary       string // maps from native ticket.subject
+	Description   string // maps from the native message body
+	ReporterEmail string // best-effort; empty is fine
+}
+
 // WebhookEvent is the routing info decoded from an inbound webhook payload.
 type WebhookEvent struct {
 	DeliveryID string // unique per delivery, for replay dedupe
@@ -58,4 +67,7 @@ type TicketingConnector interface {
 	VerifyWebhook(headers http.Header, body []byte) error
 	// DecodeWebhook extracts routing info from a verified inbound payload.
 	DecodeWebhook(body []byte) (WebhookEvent, error)
+	// CreateIssue creates a new external issue from a native ticket, returning its
+	// assigned external id + URL. Used by US4 outbound "new linked ticket -> issue".
+	CreateIssue(ctx context.Context, draft ExternalIssueDraft) (ExternalIssue, error)
 }
