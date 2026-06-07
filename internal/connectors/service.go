@@ -102,6 +102,45 @@ func (s *Service) Create(ctx context.Context, principalID, businessID uuid.UUID,
 	return id, nil
 }
 
+// Resolve loads the connector by id (RLS-scoped to business) and unseals its
+// credential from the vault, in one tx. Cross-tenant / unknown id → ErrNotFound.
+func (s *Service) Resolve(ctx context.Context, principalID, businessID, connectorID uuid.UUID) (ResolvedConnector, error) {
+	var out ResolvedConnector
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		row, qerr := dbgen.New(tx).GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID})
+		if qerr != nil {
+			return qerr
+		}
+		credBytes, oerr := s.Vault.Open(ctx, tx, businessID, row.SecretRef)
+		if oerr != nil {
+			return oerr
+		}
+		var cred Credential
+		if uerr := json.Unmarshal(credBytes, &cred); uerr != nil {
+			return fmt.Errorf("connectors: unmarshal credential: %w", uerr)
+		}
+		var cfg map[string]any
+		if len(row.Config) > 0 {
+			if uerr := json.Unmarshal(row.Config, &cfg); uerr != nil {
+				return fmt.Errorf("connectors: unmarshal config: %w", uerr)
+			}
+		}
+		out = ResolvedConnector{
+			ID:                  row.ID.String(),
+			Type:                string(row.Type),
+			BaseURL:             row.BaseUrl,
+			AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
+			Config:              cfg,
+			Credential:          cred,
+		}
+		return nil
+	})
+	if err != nil {
+		return ResolvedConnector{}, mapErr(err)
+	}
+	return out, nil
+}
+
 // mapErr converts DB/sentinel errors to stable service sentinels (mirrors
 // agents.mapCredErr): pgx.ErrNoRows→404, SQLSTATE 23505→409.
 func mapErr(err error) error {
