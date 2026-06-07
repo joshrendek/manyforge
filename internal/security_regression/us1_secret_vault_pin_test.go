@@ -1,12 +1,14 @@
 //go:build integration
 
-// us1_secret_vault_pin (spec 004 US1): connector credentials are sealed at rest and
-// never appear as plaintext in the secret column or in the create audit entry.
+// us1_secret_vault_pin (spec 004 US1, manyforge-a7j.1): connector credentials are
+// sealed at rest and never appear as plaintext in the secret column or the create
+// audit entry.
 //
-// Adaptation note: seedAgentTenant returns agentTenant{master, child, agent, ...}.
-// The agent principal is seed.agent; the tenant-root business is seed.master.
-// seedAgentTenant does NOT grant the agent a membership, so we add one here
-// (as seedConnectorTenant does) to satisfy the RLS WithPrincipal path.
+// Adaptation note: seedAgentTenant returns agentTenant{master, child, agent,
+// benignRole, ...}. The agent principal is seed.agent; the tenant-root business is
+// seed.master; seed.benignRole is an existing business.read role. seedAgentTenant
+// does NOT grant the agent a membership, so we grant that existing benign role via
+// the package's grantAgentMembership helper to satisfy the RLS WithPrincipal path.
 package security_regression
 
 import (
@@ -16,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
@@ -35,8 +36,12 @@ func TestUS1ConnectorSecretSealedAndUnlogged(t *testing.T) {
 	t.Cleanup(func() { tdb.Close(context.Background()) })
 	seed := seedAgentTenant(ctx, t, tdb)
 
-	// Grant the agent a benign membership so WithPrincipal (RLS) can scope it.
-	grantAgentPinMembership(ctx, t, tdb, seed.agent, seed.master)
+	// Grant the agent its existing benign (business.read) role on the home business
+	// so WithPrincipal (RLS) can scope it. seed.master is the home business AND the
+	// tenant root, so it serves as both business and tenantRoot args.
+	if err := grantAgentMembership(ctx, tdb, seed.agent, seed.master, seed.master, seed.benignRole); err != nil {
+		t.Fatalf("grant agent membership: %v", err)
+	}
 
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -75,37 +80,5 @@ func TestUS1ConnectorSecretSealedAndUnlogged(t *testing.T) {
 	}
 	if strings.Contains(string(inputs), token) || strings.Contains(string(inputs), email) {
 		t.Fatalf("PIN VIOLATION: secret material in audit_entry.inputs: %s", inputs)
-	}
-}
-
-// grantAgentPinMembership creates a minimal role with business.read and grants it
-// to the agent at the given business — satisfying the RLS WithPrincipal requirement
-// without elevating the principal beyond read access.
-func grantAgentPinMembership(ctx context.Context, t *testing.T, tdb *testdb.TestDB, agentID, businessID uuid.UUID) {
-	t.Helper()
-	roleID := uuid.New()
-	tx, err := tdb.Super.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin grant: %v", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	stmts := []struct {
-		sql  string
-		args []any
-	}{
-		{`INSERT INTO role (id,tenant_root_id,key,name,is_locked,created_at) VALUES ($1,$2,'pin-read','PinRead',false,now())`,
-			[]any{roleID, businessID}},
-		{`INSERT INTO role_permission (role_id,permission_key) VALUES ($1,'business.read')`,
-			[]any{roleID}},
-		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at) VALUES ($1,$2,$2,$3,now())`,
-			[]any{agentID, businessID, roleID}},
-	}
-	for _, s := range stmts {
-		if _, err := tx.Exec(ctx, s.sql, s.args...); err != nil {
-			t.Fatalf("grant exec: %v\nSQL: %s", err, s.sql)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit grant: %v", err)
 	}
 }
