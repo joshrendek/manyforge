@@ -336,6 +336,22 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 			return berr
 		}
 
+		// US4 outbound: a reply on a connector-linked ticket records a pending outbound op
+		// in THIS tx (the source write), for the OutboundDispatcher to post to the external
+		// system. Additive to the email enqueue below — email is NOT suppressed (see plan D2).
+		// The ownership/linkage predicate lives in the SQL (INSERT…SELECT … WHERE business_id
+		// = $ AND connector_id IS NOT NULL); the Go guard just avoids a no-op round-trip.
+		if tk.ConnectorID.Valid {
+			if oerr := q.EnqueueOutboundComment(ctx, dbgen.EnqueueOutboundCommentParams{
+				ID:         ticketID,         // $1 = ticket id
+				MessageID:  db.PGUUID(msgID), // $2 = the message just inserted
+				Body:       &in.BodyText,     // $3 = comment body
+				BusinessID: businessID,       // $4 = ownership predicate
+			}); oerr != nil {
+				return oerr
+			}
+		}
+
 		// Audit-in-tx (FR-014) via the shared helper.
 		targetType := "ticket_message"
 		if aerr := audit.Write(ctx, tx, audit.Entry{
