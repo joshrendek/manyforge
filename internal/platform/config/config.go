@@ -73,6 +73,14 @@ type Config struct {
 	// MCPAllowLoopback permits the outbound MCP HTTP client to dial loopback
 	// addresses. Default false (locked-secure); set true only for local dev MCP servers.
 	MCPAllowLoopback bool
+
+	// ConnectorMasterKey is the sealed-at-rest master key for connector credentials
+	// (Jira, Zendesk, etc.). Supplied via MANYFORGE_CONNECTOR_MASTER_KEY as base64 or
+	// hex; the decoded value MUST be 32 bytes (AES-256). Nil/empty when unset — the
+	// connector stack (webhook handler, inbound-sync subscriber, reconciler) is disabled
+	// and the server still boots. An explicitly-set-but-wrong-length key is a hard config
+	// error caught here.
+	ConnectorMasterKey []byte
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -179,6 +187,13 @@ func Load() (Config, error) {
 	// Agent runtime (US6): permit loopback MCP servers in dev; default false (locked-secure).
 	if cfg.MCPAllowLoopback, err = envBool("MANYFORGE_MCP_ALLOW_LOOPBACK", false); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_MCP_ALLOW_LOOPBACK: %w", err)
+	}
+
+	// Connector master key (US3 Spec 004): unset ⇒ nil (no error, connector stack
+	// disabled); set-but-not-32-bytes-after-decode ⇒ hard error so a misconfigured
+	// key never silently disables the webhook handler/inbound-sync/reconciler.
+	if cfg.ConnectorMasterKey, err = envKey32("MANYFORGE_CONNECTOR_MASTER_KEY"); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_CONNECTOR_MASTER_KEY: %w", err)
 	}
 
 	return cfg, nil
