@@ -576,7 +576,7 @@ git commit --no-verify -m "feat(connectors): T2 — outbound op queue table + cl
 - Modify: `internal/ticketing/service.go`
 - Modify/Create: `internal/ticketing/reply_outbound_integration_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/ticketing/reply_outbound_integration_test.go` (mirror the existing ticketing integration test setup — reuse whatever `startTicketing`/seed helpers `service_integration_test.go` provides; the snippet below names them generically — align to the real helper names when implementing):
 
@@ -620,12 +620,12 @@ func TestReplyEnqueuesOutboundOpForConnectorLinkedTicket(t *testing.T) {
 
 > Implement the small `env` helpers (`seedTicket`, `withConnectorLink`, `countOutboundOps`, `getOutboundOp`) in this test file using raw SQL through the env's DB, mirroring how other ticketing integration tests insert/inspect rows. `withConnectorLink` must insert a `connector` row (reuse the connectors test helper or a minimal insert) and set `ticket.connector_id`+`external_id` so the FK holds.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `go test -tags integration -p 1 ./internal/ticketing/ -run TestReplyEnqueuesOutboundOp -v`
 Expected: FAIL — linked ticket has 0 ops (no producer hook yet).
 
-- [ ] **Step 3: Add the RLS-scoped producer query**
+- [x] **Step 3: Add the RLS-scoped producer query**
 
 Create `db/query/connector_outbound.sql`:
 
@@ -655,7 +655,7 @@ WHERE t.id = $1 AND t.business_id = sqlc.arg(business_id) AND t.connector_id IS 
 
 Run `make generate` and confirm `go build ./...` is clean.
 
-- [ ] **Step 4: Wire the hook into `Reply`**
+- [x] **Step 4: Wire the hook into `Reply`**
 
 In `internal/ticketing/service.go`, inside `Reply`'s `WithPrincipal` closure, immediately after the `BumpTicketActivity` block (after line 337, before the audit at 339) add:
 
@@ -677,18 +677,20 @@ In `internal/ticketing/service.go`, inside `Reply`'s `WithPrincipal` closure, im
 
 > Match the generated param struct field names exactly (Step 3 note). `db.PGUUID` wraps a `uuid.UUID` into `pgtype.UUID` (already used in this file at line 325). `in.BodyText` is a `string`; if the generated `Body` field is `*string`, pass `&in.BodyText`.
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `go test -tags integration -p 1 ./internal/ticketing/ -run TestReplyEnqueuesOutboundOp -v && go test ./internal/ticketing/ -v`
 Expected: PASS (and existing non-connector reply tests still pass — email path untouched).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 gofmt -w internal/ticketing/ && make generate
 git add db/query/connector_outbound.sql internal/platform/db/dbgen/ internal/ticketing/service.go internal/ticketing/reply_outbound_integration_test.go .beads/issues.jsonl
 git commit --no-verify -m "feat(ticketing): T3 — enqueue connector outbound op on connector-linked replies (manyforge-a7j.4)"
 ```
+
+> ✅ **Task 3 DONE** (commit `cd587b1`). TDD: `TestReplyEnqueuesOutboundOpForConnectorLinkedTicket` (`//go:build integration`, in-package `ticketing`) goes RED (`linked ticket comment outbound ops = 0, want 1`) → GREEN after the producer query + `Reply` hook; full ticketing integration suite green (~145s), non-integration green; `go build ./...` clean, `gofmt -l` empty. Spec-compliance ✅ (both queries present with ownership/linkage predicate in SQL + connector_id/tenant_root_id derived from the ticket row; hook in-tx after `BumpTicketActivity`, before audit, gated on `tk.ConnectorID.Valid`, ADDITIVE — email outbox untouched, asserted by `ticket.replied` count=2; test proves linked→1 `comment` op carrying body+valid message_id, plain→0). Code-quality APPROVED (0 Critical/Important). **Real-schema adaptations (reality won):** test is in-package `package ticketing` (not `_test`) like the existing reply tests; real helpers `startReadDB`/`seedReadTenant`/`seedTicket`/`countSuper` + a local `linkTicketToConnector` (raw-seeds a `secret`+enabled `jira` `connector` via Super and stamps `ticket.connector_id`+`external_id` — satisfies the 0041 composite FK + connector-id-implies-external-id CHECK; no full `connectors.Service` needed since the producer reads linkage off the ticket row). **Generated params:** `EnqueueOutboundCommentParams{ID uuid.UUID, MessageID pgtype.UUID, Body *string, BusinessID uuid.UUID}` — `Body` is `*string` (text NULL) so the hook passes `&in.BodyText`; hook wraps `msgID` via `db.PGUUID`. **Plan SQL fix folded in:** the plan's `EnqueueOutboundCreate` snippet had a non-contiguous positional-param gap (`$3` body, no `$2`) which sqlc rejects → body changed to `sqlc.arg(body)::text` (the `::text` also anchors the otherwise-uninferable type → `Body string`). Triage: code-quality Minor (`EnqueueOutboundCreate` ships ahead of its T5 consumer, currently untested) REJECTED as intentional — plan Step 3 specifies both queries here; consumer + test land in T5. `manyforge-a7j.4.3` closed.
 
 ---
 
