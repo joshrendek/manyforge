@@ -1,0 +1,292 @@
+//go:build integration
+
+package connectors
+
+// TestInboundSyncSubscriber exercises the InboundSyncSubscriber end-to-end
+// against a real Postgres instance. It verifies:
+//   - The subscriber correctly upserts ticket + requester + messages + sync_state
+//     by calling the SECURITY DEFINER functions (principal-less, no RLS context).
+//   - Two Handle calls are idempotent: exactly ONE ticket, comments are NOT duplicated.
+//   - A status change on the second Handle call (external-wins) updates the ticket.
+//
+// Sealer-sharing: the Service and InboundSyncSubscriber share the SAME *crypto.Sealer
+// so the credential sealed by Service.Create can be successfully opened by the subscriber.
+
+import (
+	"encoding/json"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/manyforge/manyforge/internal/platform/events"
+	"github.com/manyforge/manyforge/internal/platform/secrets"
+)
+
+// buildInboundSyncEvent builds a synthetic connector.inbound.sync outbox event.
+func buildInboundSyncEvent(t *testing.T, connectorID uuid.UUID, externalID string, businessID uuid.UUID) events.Event {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"connector_id": connectorID,
+		"external_id":  externalID,
+		"business_id":  businessID,
+	})
+	if err != nil {
+		t.Fatalf("marshal event payload: %v", err)
+	}
+	id, _ := uuid.NewV7()
+	return events.Event{
+		ID:      id,
+		Topic:   TopicConnectorInboundSync,
+		Payload: payload,
+	}
+}
+
+// TestInboundSyncSubscriber verifies the full subscriber flow: fetch → upsert → idempotent.
+func TestInboundSyncSubscriber(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+
+	// Share ONE sealer between Service and Subscriber so unseal succeeds.
+	sharedSealer := newTestSealer(t)
+	vault := secrets.NewVault(sharedSealer)
+	svc := &Service{DB: tdb.App, Vault: vault, Verify: nil}
+
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	// Register a fake "jira" factory returning a canned issue with two comments.
+	issue := ExternalIssue{
+		ExternalID:    "JIRA-1",
+		URL:           "https://acme.atlassian.net/browse/JIRA-1",
+		Title:         "Login bug",
+		Status:        "Done",
+		Priority:      "High",
+		ReporterEmail: "reporter@acme.test",
+		ReporterName:  "R",
+		UpdatedAt:     time.Now().UTC().Add(-10 * time.Minute),
+		Comments: []ExternalComment{
+			{ExternalID: "c1", Author: "A", Body: "first"},
+			{ExternalID: "c2", Author: "B", Body: "second"},
+		},
+	}
+	reg := NewRegistry(svc)
+	reg.Register("jira", func(rc ResolvedConnector) (TicketingConnector, error) {
+		return &fakeConnector{issue: issue}, nil
+	})
+
+	sub := &InboundSyncSubscriber{
+		DB:       tdb.App,
+		Sealer:   sharedSealer,
+		Registry: reg,
+		Logger:   slog.Default(),
+	}
+
+	ev := buildInboundSyncEvent(t, connID, "JIRA-1", seed.businessID)
+
+	// --- First Handle: insert ---
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, ev)
+	}); err != nil {
+		t.Fatalf("first Handle: %v", err)
+	}
+
+	// Assert: exactly ONE ticket with correct connector + external_id.
+	var ticketCount int
+	var ticketStatus string
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*), max(status::text)
+		   FROM ticket WHERE connector_id=$1 AND external_id='JIRA-1'`,
+		connID,
+	).Scan(&ticketCount, &ticketStatus); err != nil {
+		t.Fatalf("count tickets: %v", err)
+	}
+	if ticketCount != 1 {
+		t.Fatalf("want 1 ticket after first Handle, got %d", ticketCount)
+	}
+	// Done → closed (external-wins mapping).
+	if ticketStatus != "closed" {
+		t.Fatalf("want status=closed (Done→closed mapping), got %q", ticketStatus)
+	}
+
+	// Assert: requester with reporter email.
+	var requesterCount int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*) FROM requester WHERE tenant_root_id=$1 AND email='reporter@acme.test'`,
+		seed.businessID,
+	).Scan(&requesterCount); err != nil {
+		t.Fatalf("count requester: %v", err)
+	}
+	if requesterCount != 1 {
+		t.Fatalf("want 1 requester row, got %d", requesterCount)
+	}
+
+	// Assert: two ticket_message rows (direction=inbound).
+	var msgCount int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*) FROM ticket_message
+		   WHERE connector_id=$1 AND direction='inbound'
+		     AND external_id IN ('c1','c2')`,
+		connID,
+	).Scan(&msgCount); err != nil {
+		t.Fatalf("count messages: %v", err)
+	}
+	if msgCount != 2 {
+		t.Fatalf("want 2 ticket_messages (c1, c2), got %d", msgCount)
+	}
+
+	// Assert: connector_sync_state row.
+	var syncStateCount int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*) FROM connector_sync_state
+		   WHERE connector_id=$1 AND external_id='JIRA-1'`,
+		connID,
+	).Scan(&syncStateCount); err != nil {
+		t.Fatalf("count sync_state: %v", err)
+	}
+	if syncStateCount != 1 {
+		t.Fatalf("want 1 connector_sync_state, got %d", syncStateCount)
+	}
+
+	// --- Second Handle (same event): idempotent — still ONE ticket, still TWO messages ---
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, ev)
+	}); err != nil {
+		t.Fatalf("second Handle (idempotent): %v", err)
+	}
+
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*), max(status::text) FROM ticket WHERE connector_id=$1 AND external_id='JIRA-1'`,
+		connID,
+	).Scan(&ticketCount, &ticketStatus); err != nil {
+		t.Fatalf("count tickets after 2nd Handle: %v", err)
+	}
+	if ticketCount != 1 {
+		t.Fatalf("idempotent: want 1 ticket, got %d", ticketCount)
+	}
+	if ticketStatus != "closed" {
+		t.Fatalf("idempotent: want status=closed, got %q", ticketStatus)
+	}
+
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*) FROM ticket_message
+		   WHERE connector_id=$1 AND direction='inbound'
+		     AND external_id IN ('c1','c2')`,
+		connID,
+	).Scan(&msgCount); err != nil {
+		t.Fatalf("count messages after 2nd Handle: %v", err)
+	}
+	if msgCount != 2 {
+		t.Fatalf("idempotent: want 2 ticket_messages, got %d (dedupe broken)", msgCount)
+	}
+}
+
+// TestInboundSyncStatusChange verifies that when the external issue changes status on a
+// subsequent sync, the ticket is updated (external-wins) and the snapshot is updated.
+func TestInboundSyncStatusChange(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+
+	sharedSealer := newTestSealer(t)
+	vault := secrets.NewVault(sharedSealer)
+	svc := &Service{DB: tdb.App, Vault: vault, Verify: nil}
+
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	// First sync: issue is "In Progress" → native 'open'.
+	firstIssue := ExternalIssue{
+		ExternalID:    "JIRA-2",
+		URL:           "https://acme.atlassian.net/browse/JIRA-2",
+		Title:         "Status test",
+		Status:        "In Progress",
+		Priority:      "Normal",
+		ReporterEmail: "user@acme.test",
+		ReporterName:  "User",
+		UpdatedAt:     time.Now().UTC().Add(-20 * time.Minute),
+	}
+
+	// fakeConnector is pointer so we can swap the issue for the second call.
+	fake := &fakeConnector{issue: firstIssue}
+	reg := NewRegistry(svc)
+	reg.Register("jira", func(rc ResolvedConnector) (TicketingConnector, error) {
+		return fake, nil
+	})
+
+	sub := &InboundSyncSubscriber{
+		DB:       tdb.App,
+		Sealer:   sharedSealer,
+		Registry: reg,
+		Logger:   slog.Default(),
+	}
+
+	// We need a fresh context for each Handle call; reuse the parent ctx.
+	ev1 := buildInboundSyncEvent(t, connID, "JIRA-2", seed.businessID)
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, ev1)
+	}); err != nil {
+		t.Fatalf("first Handle: %v", err)
+	}
+
+	var status1 string
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT status::text FROM ticket WHERE connector_id=$1 AND external_id='JIRA-2'`,
+		connID,
+	).Scan(&status1); err != nil {
+		t.Fatalf("read status after first sync: %v", err)
+	}
+	if status1 != "open" {
+		t.Fatalf("want status=open for 'In Progress', got %q", status1)
+	}
+
+	// Second sync: issue is now "Done" → native 'closed' (external-wins).
+	fake.issue.Status = "Done"
+	fake.issue.UpdatedAt = time.Now().UTC()
+
+	ev2 := buildInboundSyncEvent(t, connID, "JIRA-2", seed.businessID)
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, ev2)
+	}); err != nil {
+		t.Fatalf("second Handle: %v", err)
+	}
+
+	var ticketCount int
+	var status2 string
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*), max(t.status::text)
+		   FROM ticket t
+		  WHERE t.connector_id=$1 AND t.external_id='JIRA-2'`,
+		connID,
+	).Scan(&ticketCount, &status2); err != nil {
+		t.Fatalf("read after 2nd sync: %v", err)
+	}
+	if ticketCount != 1 {
+		t.Fatalf("want exactly 1 ticket after status change, got %d", ticketCount)
+	}
+	if status2 != "closed" {
+		t.Fatalf("want status=closed after Done sync, got %q", status2)
+	}
+
+	// Read snapshot separately to avoid max(jsonb) (no aggregate for jsonb).
+	var snapshotRaw []byte
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT s.snapshot FROM connector_sync_state s
+		   JOIN ticket t ON t.id = s.ticket_id
+		  WHERE t.connector_id=$1 AND t.external_id='JIRA-2'`,
+		connID,
+	).Scan(&snapshotRaw); err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	// Snapshot should reflect the updated status.
+	var snap map[string]any
+	if err := json.Unmarshal(snapshotRaw, &snap); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	if snap["status"] != "Done" {
+		t.Fatalf("want snapshot.status=Done, got %v", snap["status"])
+	}
+}
