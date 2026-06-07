@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const connectorWebhookContext = `-- name: ConnectorWebhookContext :one
@@ -64,30 +63,6 @@ func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const enqueueConnectorInboundSync = `-- name: EnqueueConnectorInboundSync :exec
-SELECT enqueue_connector_inbound_sync($1, $2, $3, $4)
-`
-
-type EnqueueConnectorInboundSyncParams struct {
-	EnqueueConnectorInboundSync   interface{} `json:"enqueue_connector_inbound_sync"`
-	EnqueueConnectorInboundSync_2 interface{} `json:"enqueue_connector_inbound_sync_2"`
-	EnqueueConnectorInboundSync_3 interface{} `json:"enqueue_connector_inbound_sync_3"`
-	EnqueueConnectorInboundSync_4 interface{} `json:"enqueue_connector_inbound_sync_4"`
-}
-
-// EnqueueConnectorInboundSync enqueues a connector.inbound.sync event through the
-// principal-less SECURITY DEFINER (reconcile poller has no principal; outbox is RLS-protected).
-// Migration 0044 creates the function.
-func (q *Queries) EnqueueConnectorInboundSync(ctx context.Context, arg EnqueueConnectorInboundSyncParams) error {
-	_, err := q.db.Exec(ctx, enqueueConnectorInboundSync,
-		arg.EnqueueConnectorInboundSync,
-		arg.EnqueueConnectorInboundSync_2,
-		arg.EnqueueConnectorInboundSync_3,
-		arg.EnqueueConnectorInboundSync_4,
-	)
-	return err
 }
 
 const getConnector = `-- name: GetConnector :one
@@ -242,55 +217,6 @@ func (q *Queries) InsertSecret(ctx context.Context, arg InsertSecretParams) (Sec
 	return i, err
 }
 
-const listConnectorsDueForReconcile = `-- name: ListConnectorsDueForReconcile :many
-
-SELECT id, business_id, tenant_root_id, type, last_reconciled_at
-FROM connector WHERE status = 'enabled'
-  AND (last_reconciled_at IS NULL OR last_reconciled_at < now() - $1::interval)
-`
-
-type ListConnectorsDueForReconcileRow struct {
-	ID               uuid.UUID          `json:"id"`
-	BusinessID       uuid.UUID          `json:"business_id"`
-	TenantRootID     uuid.UUID          `json:"tenant_root_id"`
-	Type             ConnectorType      `json:"type"`
-	LastReconciledAt pgtype.Timestamptz `json:"last_reconciled_at"`
-}
-
-// NOTE: ingest_connector_webhook, sync_inbound_external_issue, and
-// sync_inbound_external_comment are SECURITY DEFINER functions called via raw
-// tx.QueryRow at their (principal-less) call sites — NOT via sqlc wrappers. sqlc
-// cannot infer their scalar arg/return types without the fn in schema.sql, so a
-// wrapper erases every param+return to interface{} and propagates that to all
-// callers (T3/T4/T5). Mirrors the ingest_inbound_message precedent (inbox/service.go).
-// ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
-// older than the given interval (or NULL = never reconciled → always due).
-func (q *Queries) ListConnectorsDueForReconcile(ctx context.Context, dollar_1 pgtype.Interval) ([]ListConnectorsDueForReconcileRow, error) {
-	rows, err := q.db.Query(ctx, listConnectorsDueForReconcile, dollar_1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListConnectorsDueForReconcileRow
-	for rows.Next() {
-		var i ListConnectorsDueForReconcileRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.BusinessID,
-			&i.TenantRootID,
-			&i.Type,
-			&i.LastReconciledAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const recordWebhookDelivery = `-- name: RecordWebhookDelivery :execrows
 INSERT INTO connector_webhook_delivery (id, business_id, tenant_root_id, connector_id, external_delivery_id, received_at)
 SELECT $1, b.id, b.tenant_root_id, $2, $3, now()
@@ -322,14 +248,4 @@ func (q *Queries) RecordWebhookDelivery(ctx context.Context, arg RecordWebhookDe
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const stampConnectorReconciled = `-- name: StampConnectorReconciled :exec
-UPDATE connector SET last_reconciled_at = now(), updated_at = now() WHERE id = $1
-`
-
-// StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
-func (q *Queries) StampConnectorReconciled(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, stampConnectorReconciled, id)
-	return err
 }
