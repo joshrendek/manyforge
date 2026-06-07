@@ -1,6 +1,7 @@
 DROP FUNCTION IF EXISTS fail_outbound_op(uuid,text,boolean);
 DROP FUNCTION IF EXISTS complete_outbound_create(uuid,uuid,uuid,text,text);
 DROP FUNCTION IF EXISTS complete_outbound_comment(uuid,uuid,uuid,text);
+DROP FUNCTION IF EXISTS message_external_id(uuid);
 DROP FUNCTION IF EXISTS claim_outbound_ops(int);
 DROP FUNCTION IF EXISTS connector_outbound_context(uuid);
 DROP TABLE IF EXISTS connector_outbound_op;

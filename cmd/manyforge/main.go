@@ -265,6 +265,7 @@ func main() {
 	var connWebhookH *connectors.WebhookHandler
 	var inboundSyncSub *connectors.InboundSyncSubscriber
 	var connReconciler *connectors.Reconciler
+	var outboundDispatcher *connectors.OutboundDispatcher
 	if len(cfg.ConnectorMasterKey) > 0 {
 		connSealer, serr := mfcrypto.NewSealer(cfg.ConnectorMasterKey)
 		if serr != nil {
@@ -277,6 +278,7 @@ func main() {
 		connWebhookH = connectors.NewWebhookHandler(database, connSealer, connReg, logger)
 		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
 		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: 5 * time.Minute}
+		outboundDispatcher = &connectors.OutboundDispatcher{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: 15 * time.Second, Batch: 20}
 	} else {
 		logger.Warn("MANYFORGE_CONNECTOR_MASTER_KEY unset; external connectors disabled (no Jira webhook/sync)")
 	}
@@ -480,6 +482,12 @@ func main() {
 	// tick could enqueue events. The guard mirrors the approval-expire sweep pattern.
 	if connReconciler != nil {
 		go connReconciler.Run(workerCtx)
+	}
+
+	// Spec 004 US4 outbound dispatcher: drains connector_outbound_op, posting native
+	// replies as external comments + creating external issues, writing external ids back.
+	if outboundDispatcher != nil {
+		go outboundDispatcher.Run(workerCtx)
 	}
 
 	// US4 approvals expire sweep: every 60s, expire stale pending approval_items across
