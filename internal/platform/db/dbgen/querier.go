@@ -99,6 +99,7 @@ type Querier interface {
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
+	DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error)
 	// DeleteTicketTags removes every tag row for a ticket — the first half of a
 	// full-set tag replacement. Scoped to (ticket_id, business_id).
 	DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsParams) error
@@ -141,6 +142,7 @@ type Querier interface {
 	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
 	// GetEmailDomain loads a single email domain scoped to (id, business_id) — the
@@ -184,6 +186,7 @@ type Querier interface {
 	// The acting agent principal + the run's correlation id, so an approval executes as
 	// the agent and its audit rows join to the originating run by correlation.
 	GetRunActorForApproval(ctx context.Context, arg GetRunActorForApprovalParams) (GetRunActorForApprovalRow, error)
+	GetSecret(ctx context.Context, arg GetSecretParams) (Secret, error)
 	// ---- US2 write / threading queries ----
 	// GetThreadingParent loads the latest message on a ticket (any direction) — its
 	// message_id becomes the new outbound In-Reply-To; its references chain (+ its own
@@ -210,6 +213,7 @@ type Querier interface {
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	InsertConnector(ctx context.Context, arg InsertConnectorParams) (Connector, error)
 	// ---- inbound_address ----
 	// InsertCustomInboundAddress creates a kind='custom' inbound address bound to an
 	// email_domain that MUST be owned by the business AND verified — both enforced in
@@ -255,6 +259,7 @@ type Querier interface {
 	// approval execution conflicts on the partial UNIQUE index and inserts no second row
 	// (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
+	InsertSecret(ctx context.Context, arg InsertSecretParams) (Secret, error)
 	InsertSuppression(ctx context.Context, arg InsertSuppressionParams) error
 	// InsertTicketTag inserts one tag for a ticket (the second half of tag
 	// replacement). PK (ticket_id, tag); the service dedups before calling.

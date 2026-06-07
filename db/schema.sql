@@ -405,3 +405,40 @@ CREATE TABLE model_pricing (
     created_at            timestamptz NOT NULL,
     updated_at            timestamptz NOT NULL
 );
+
+-- ============================================================================
+-- External connectors + secret vault (spec 004) — mirrors migrations/0040.
+-- ============================================================================
+
+CREATE TYPE connector_type AS ENUM ('jira', 'zendesk');
+
+CREATE TABLE secret (
+    id              uuid PRIMARY KEY,
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    scope           text NOT NULL,
+    sealed_value    text NOT NULL,
+    created_at      timestamptz NOT NULL,
+    updated_at      timestamptz NOT NULL,
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
+);
+
+CREATE TABLE connector (
+    id                      uuid PRIMARY KEY,
+    business_id             uuid NOT NULL,
+    tenant_root_id          uuid NOT NULL,
+    type                    connector_type NOT NULL,
+    display_name            text NOT NULL,
+    base_url                text NOT NULL,
+    allow_private_base_url  boolean NOT NULL,
+    secret_ref              uuid NOT NULL,
+    config                  jsonb NOT NULL,
+    status                  text NOT NULL,
+    created_at              timestamptz NOT NULL,
+    updated_at              timestamptz NOT NULL,
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (business_id, type, base_url),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (secret_ref, tenant_root_id) REFERENCES secret (id, tenant_root_id)
+);

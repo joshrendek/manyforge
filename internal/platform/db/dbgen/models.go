@@ -57,6 +57,48 @@ func (ns NullAiProvider) Value() (driver.Value, error) {
 	return string(ns.AiProvider), nil
 }
 
+type ConnectorType string
+
+const (
+	ConnectorTypeJira    ConnectorType = "jira"
+	ConnectorTypeZendesk ConnectorType = "zendesk"
+)
+
+func (e *ConnectorType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ConnectorType(s)
+	case string:
+		*e = ConnectorType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ConnectorType: %T", src)
+	}
+	return nil
+}
+
+type NullConnectorType struct {
+	ConnectorType ConnectorType `json:"connector_type"`
+	Valid         bool          `json:"valid"` // Valid is true if ConnectorType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullConnectorType) Scan(value interface{}) error {
+	if value == nil {
+		ns.ConnectorType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ConnectorType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullConnectorType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ConnectorType), nil
+}
+
 type EmailDomainMode string
 
 const (
@@ -496,6 +538,21 @@ type BusinessClosure struct {
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 }
 
+type Connector struct {
+	ID                  uuid.UUID     `json:"id"`
+	BusinessID          uuid.UUID     `json:"business_id"`
+	TenantRootID        uuid.UUID     `json:"tenant_root_id"`
+	Type                ConnectorType `json:"type"`
+	DisplayName         string        `json:"display_name"`
+	BaseUrl             string        `json:"base_url"`
+	AllowPrivateBaseUrl bool          `json:"allow_private_base_url"`
+	SecretRef           uuid.UUID     `json:"secret_ref"`
+	Config              []byte        `json:"config"`
+	Status              string        `json:"status"`
+	CreatedAt           time.Time     `json:"created_at"`
+	UpdatedAt           time.Time     `json:"updated_at"`
+}
+
 type EmailDomain struct {
 	ID                uuid.UUID           `json:"id"`
 	BusinessID        uuid.UUID           `json:"business_id"`
@@ -663,6 +720,16 @@ type Role struct {
 type RolePermission struct {
 	RoleID        uuid.UUID `json:"role_id"`
 	PermissionKey string    `json:"permission_key"`
+}
+
+type Secret struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Scope        string    `json:"scope"`
+	SealedValue  string    `json:"sealed_value"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type Ticket struct {
