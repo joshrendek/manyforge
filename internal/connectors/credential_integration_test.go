@@ -100,6 +100,15 @@ func TestCreateDuplicateConflict(t *testing.T) {
 	if !errors.Is(err, errs.ErrConflict) {
 		t.Fatalf("want ErrConflict, got %v", err)
 	}
+	// The rolled-back 2nd create must not leave an orphan secret: the secret insert
+	// and the failed connector insert share one tx, so both roll back together.
+	var secretCount int
+	if err := tdb.Super.QueryRow(ctx, "SELECT count(*) FROM secret").Scan(&secretCount); err != nil {
+		t.Fatalf("count secrets: %v", err)
+	}
+	if secretCount != 1 {
+		t.Fatalf("orphan secret after rolled-back duplicate: got %d, want 1", secretCount)
+	}
 }
 
 func TestCreateVerifierFailureNoRows(t *testing.T) {
