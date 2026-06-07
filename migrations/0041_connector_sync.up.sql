@@ -8,7 +8,9 @@ ALTER TABLE ticket
     ADD COLUMN external_id  text NULL,
     ADD COLUMN external_url text NULL,
     ADD CONSTRAINT ticket_connector_fk
-        FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id);
+        FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id),
+    ADD CONSTRAINT ticket_connector_external_chk
+        CHECK (connector_id IS NULL OR external_id IS NOT NULL);
 CREATE UNIQUE INDEX ticket_external_idx ON ticket (connector_id, external_id)
     WHERE connector_id IS NOT NULL;
 
@@ -16,7 +18,9 @@ ALTER TABLE ticket_message
     ADD COLUMN connector_id uuid NULL,
     ADD COLUMN external_id  text NULL,
     ADD CONSTRAINT ticket_message_connector_fk
-        FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id);
+        FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id),
+    ADD CONSTRAINT ticket_message_connector_external_chk
+        CHECK (connector_id IS NULL OR external_id IS NOT NULL);
 CREATE UNIQUE INDEX ticket_message_external_idx ON ticket_message (connector_id, external_id)
     WHERE connector_id IS NOT NULL;
 
@@ -27,6 +31,9 @@ CREATE TABLE connector_sync_state (
     connector_id        uuid NOT NULL,
     external_id         text NOT NULL,
     snapshot            jsonb NOT NULL DEFAULT '{}',
+    -- external_updated_at has NO default on purpose: US3's upsert must always supply the
+    -- upstream system's updatedAt (the reconcile cursor); a missing value should be a hard
+    -- error at the call site, never silently defaulted to now().
     external_updated_at timestamptz NOT NULL,
     synced_at           timestamptz NOT NULL DEFAULT now(),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
