@@ -207,10 +207,6 @@ type Querier interface {
 	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
 	GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
-	// IngestConnectorWebhook dedupes a verified webhook delivery and enqueues a
-	// connector.inbound.sync outbox event atomically (SECURITY DEFINER — principal-less).
-	// Returns true on first delivery, false on replay.
-	IngestConnectorWebhook(ctx context.Context, arg IngestConnectorWebhookParams) (interface{}, error)
 	// Agent runtime (spec 003 US1a) — per-business BYO provider credential queries.
 	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
 	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement,
@@ -330,6 +326,12 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// NOTE: ingest_connector_webhook, sync_inbound_external_issue, and
+	// sync_inbound_external_comment are SECURITY DEFINER functions called via raw
+	// tx.QueryRow at their (principal-less) call sites — NOT via sqlc wrappers. sqlc
+	// cannot infer their scalar arg/return types without the fn in schema.sql, so a
+	// wrapper erases every param+return to interface{} and propagates that to all
+	// callers (T3/T4/T5). Mirrors the ingest_inbound_message precedent (inbox/service.go).
 	// ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
 	// older than the given interval (or NULL = never reconciled → always due).
 	ListConnectorsDueForReconcile(ctx context.Context, dollar_1 pgtype.Interval) ([]ListConnectorsDueForReconcileRow, error)
@@ -461,14 +463,6 @@ type Querier interface {
 	// StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
 	StampConnectorReconciled(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
-	// SyncInboundExternalComment appends one inbound comment, deduped by
-	// (connector_id, external_id). SECURITY DEFINER — no principal required.
-	// Returns the new ticket_message id, or NULL on duplicate.
-	SyncInboundExternalComment(ctx context.Context, arg SyncInboundExternalCommentParams) (interface{}, error)
-	// SyncInboundExternalIssue upserts requester+ticket+connector_sync_state for one
-	// external issue (external-wins scalars). SECURITY DEFINER — no principal required.
-	// Returns the native ticket_id.
-	SyncInboundExternalIssue(ctx context.Context, arg SyncInboundExternalIssueParams) (interface{}, error)
 	// UpdateAgent partially updates an agent (PATCH): COALESCE(narg, col) preserves any
 	// field the caller omitted (narg NULL = absent). provider is immutable (not settable
 	// here). No match → ErrNoRows → 404.
