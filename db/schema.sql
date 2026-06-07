@@ -445,6 +445,7 @@ CREATE TABLE connector (
     secret_ref              uuid NOT NULL,
     config                  jsonb NOT NULL,
     status                  text NOT NULL,
+    last_reconciled_at      timestamptz,
     created_at              timestamptz NOT NULL,
     updated_at              timestamptz NOT NULL,
     UNIQUE (id, tenant_root_id),

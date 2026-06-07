@@ -34,6 +34,11 @@ type Querier interface {
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
+	// ConnectorWebhookContext returns the connector's tenancy + sealed credential blob for
+	// the principal-less webhook handler to verify the HMAC signature in Go. Returns no row
+	// if the connector does not exist or is not enabled. Inlined so sqlc can infer column types
+	// (sqlc cannot introspect SECURITY DEFINER TABLE function returns without the function in schema.sql).
+	ConnectorWebhookContext(ctx context.Context, id uuid.UUID) (ConnectorWebhookContextRow, error)
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
 	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
 	// Direct Owners (locked role) whose membership is AT this business. At the tenant
@@ -202,6 +207,10 @@ type Querier interface {
 	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
 	GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
+	// IngestConnectorWebhook dedupes a verified webhook delivery and enqueues a
+	// connector.inbound.sync outbox event atomically (SECURITY DEFINER — principal-less).
+	// Returns true on first delivery, false on replay.
+	IngestConnectorWebhook(ctx context.Context, arg IngestConnectorWebhookParams) (interface{}, error)
 	// Agent runtime (spec 003 US1a) — per-business BYO provider credential queries.
 	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
 	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement,
@@ -321,6 +330,9 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
+	// older than the given interval (or NULL = never reconciled → always due).
+	ListConnectorsDueForReconcile(ctx context.Context, dollar_1 pgtype.Interval) ([]ListConnectorsDueForReconcileRow, error)
 	// ListEmailDomains is the first (unkeyed) page of a business's email domains, oldest
 	// first for a stable keyset. lim is the clamped limit + 1 so the service detects a
 	// further page.
@@ -446,7 +458,17 @@ type Querier interface {
 	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
+	// StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
+	StampConnectorReconciled(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
+	// SyncInboundExternalComment appends one inbound comment, deduped by
+	// (connector_id, external_id). SECURITY DEFINER — no principal required.
+	// Returns the new ticket_message id, or NULL on duplicate.
+	SyncInboundExternalComment(ctx context.Context, arg SyncInboundExternalCommentParams) (interface{}, error)
+	// SyncInboundExternalIssue upserts requester+ticket+connector_sync_state for one
+	// external issue (external-wins scalars). SECURITY DEFINER — no principal required.
+	// Returns the native ticket_id.
+	SyncInboundExternalIssue(ctx context.Context, arg SyncInboundExternalIssueParams) (interface{}, error)
 	// UpdateAgent partially updates an agent (PATCH): COALESCE(narg, col) preserves any
 	// field the caller omitted (narg NULL = absent). provider is immutable (not settable
 	// here). No match → ErrNoRows → 404.

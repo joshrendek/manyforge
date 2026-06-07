@@ -9,7 +9,37 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const connectorWebhookContext = `-- name: ConnectorWebhookContext :one
+SELECT c.business_id, c.tenant_root_id, c.type AS ctype, s.sealed_value AS sealed_secret
+FROM connector c JOIN secret s ON s.id = c.secret_ref
+WHERE c.id = $1 AND c.status = 'enabled'
+`
+
+type ConnectorWebhookContextRow struct {
+	BusinessID   uuid.UUID     `json:"business_id"`
+	TenantRootID uuid.UUID     `json:"tenant_root_id"`
+	Ctype        ConnectorType `json:"ctype"`
+	SealedSecret string        `json:"sealed_secret"`
+}
+
+// ConnectorWebhookContext returns the connector's tenancy + sealed credential blob for
+// the principal-less webhook handler to verify the HMAC signature in Go. Returns no row
+// if the connector does not exist or is not enabled. Inlined so sqlc can infer column types
+// (sqlc cannot introspect SECURITY DEFINER TABLE function returns without the function in schema.sql).
+func (q *Queries) ConnectorWebhookContext(ctx context.Context, id uuid.UUID) (ConnectorWebhookContextRow, error) {
+	row := q.db.QueryRow(ctx, connectorWebhookContext, id)
+	var i ConnectorWebhookContextRow
+	err := row.Scan(
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Ctype,
+		&i.SealedSecret,
+	)
+	return i, err
+}
 
 const deleteSecret = `-- name: DeleteSecret :execrows
 DELETE FROM secret WHERE id = $1 AND business_id = $2
@@ -30,7 +60,7 @@ func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int
 }
 
 const getConnector = `-- name: GetConnector :one
-SELECT id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, created_at, updated_at FROM connector WHERE id = $1 AND business_id = $2
+SELECT id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, last_reconciled_at, created_at, updated_at FROM connector WHERE id = $1 AND business_id = $2
 `
 
 type GetConnectorParams struct {
@@ -53,6 +83,7 @@ func (q *Queries) GetConnector(ctx context.Context, arg GetConnectorParams) (Con
 		&i.SecretRef,
 		&i.Config,
 		&i.Status,
+		&i.LastReconciledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -85,6 +116,34 @@ func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, e
 	return i, err
 }
 
+const ingestConnectorWebhook = `-- name: IngestConnectorWebhook :one
+SELECT ingest_connector_webhook($1, $2, $3, $4, $5)
+`
+
+type IngestConnectorWebhookParams struct {
+	IngestConnectorWebhook   interface{} `json:"ingest_connector_webhook"`
+	IngestConnectorWebhook_2 interface{} `json:"ingest_connector_webhook_2"`
+	IngestConnectorWebhook_3 interface{} `json:"ingest_connector_webhook_3"`
+	IngestConnectorWebhook_4 interface{} `json:"ingest_connector_webhook_4"`
+	IngestConnectorWebhook_5 interface{} `json:"ingest_connector_webhook_5"`
+}
+
+// IngestConnectorWebhook dedupes a verified webhook delivery and enqueues a
+// connector.inbound.sync outbox event atomically (SECURITY DEFINER — principal-less).
+// Returns true on first delivery, false on replay.
+func (q *Queries) IngestConnectorWebhook(ctx context.Context, arg IngestConnectorWebhookParams) (interface{}, error) {
+	row := q.db.QueryRow(ctx, ingestConnectorWebhook,
+		arg.IngestConnectorWebhook,
+		arg.IngestConnectorWebhook_2,
+		arg.IngestConnectorWebhook_3,
+		arg.IngestConnectorWebhook_4,
+		arg.IngestConnectorWebhook_5,
+	)
+	var ingest_connector_webhook interface{}
+	err := row.Scan(&ingest_connector_webhook)
+	return ingest_connector_webhook, err
+}
+
 const insertConnector = `-- name: InsertConnector :one
 INSERT INTO connector (id, business_id, tenant_root_id, type, display_name, base_url,
     allow_private_base_url, secret_ref, config, status, created_at, updated_at)
@@ -94,7 +153,7 @@ SELECT $1, b.id, b.tenant_root_id, $2::connector_type,
 FROM business b
 WHERE b.id = $9::uuid
   AND EXISTS (SELECT 1 FROM secret s WHERE s.id = $6 AND s.business_id = b.id)
-RETURNING id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, last_reconciled_at, created_at, updated_at
 `
 
 type InsertConnectorParams struct {
@@ -136,6 +195,7 @@ func (q *Queries) InsertConnector(ctx context.Context, arg InsertConnectorParams
 		&i.SecretRef,
 		&i.Config,
 		&i.Status,
+		&i.LastReconciledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -179,6 +239,48 @@ func (q *Queries) InsertSecret(ctx context.Context, arg InsertSecretParams) (Sec
 	return i, err
 }
 
+const listConnectorsDueForReconcile = `-- name: ListConnectorsDueForReconcile :many
+SELECT id, business_id, tenant_root_id, type, last_reconciled_at
+FROM connector WHERE status = 'enabled'
+  AND (last_reconciled_at IS NULL OR last_reconciled_at < now() - $1::interval)
+`
+
+type ListConnectorsDueForReconcileRow struct {
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	TenantRootID     uuid.UUID          `json:"tenant_root_id"`
+	Type             ConnectorType      `json:"type"`
+	LastReconciledAt pgtype.Timestamptz `json:"last_reconciled_at"`
+}
+
+// ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
+// older than the given interval (or NULL = never reconciled → always due).
+func (q *Queries) ListConnectorsDueForReconcile(ctx context.Context, dollar_1 pgtype.Interval) ([]ListConnectorsDueForReconcileRow, error) {
+	rows, err := q.db.Query(ctx, listConnectorsDueForReconcile, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConnectorsDueForReconcileRow
+	for rows.Next() {
+		var i ListConnectorsDueForReconcileRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.TenantRootID,
+			&i.Type,
+			&i.LastReconciledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordWebhookDelivery = `-- name: RecordWebhookDelivery :execrows
 INSERT INTO connector_webhook_delivery (id, business_id, tenant_root_id, connector_id, external_delivery_id, received_at)
 SELECT $1, b.id, b.tenant_root_id, $2, $3, now()
@@ -210,4 +312,78 @@ func (q *Queries) RecordWebhookDelivery(ctx context.Context, arg RecordWebhookDe
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const stampConnectorReconciled = `-- name: StampConnectorReconciled :exec
+UPDATE connector SET last_reconciled_at = now(), updated_at = now() WHERE id = $1
+`
+
+// StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
+func (q *Queries) StampConnectorReconciled(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, stampConnectorReconciled, id)
+	return err
+}
+
+const syncInboundExternalComment = `-- name: SyncInboundExternalComment :one
+SELECT sync_inbound_external_comment($1,$2,$3,$4)
+`
+
+type SyncInboundExternalCommentParams struct {
+	SyncInboundExternalComment   interface{} `json:"sync_inbound_external_comment"`
+	SyncInboundExternalComment_2 interface{} `json:"sync_inbound_external_comment_2"`
+	SyncInboundExternalComment_3 interface{} `json:"sync_inbound_external_comment_3"`
+	SyncInboundExternalComment_4 interface{} `json:"sync_inbound_external_comment_4"`
+}
+
+// SyncInboundExternalComment appends one inbound comment, deduped by
+// (connector_id, external_id). SECURITY DEFINER — no principal required.
+// Returns the new ticket_message id, or NULL on duplicate.
+func (q *Queries) SyncInboundExternalComment(ctx context.Context, arg SyncInboundExternalCommentParams) (interface{}, error) {
+	row := q.db.QueryRow(ctx, syncInboundExternalComment,
+		arg.SyncInboundExternalComment,
+		arg.SyncInboundExternalComment_2,
+		arg.SyncInboundExternalComment_3,
+		arg.SyncInboundExternalComment_4,
+	)
+	var sync_inbound_external_comment interface{}
+	err := row.Scan(&sync_inbound_external_comment)
+	return sync_inbound_external_comment, err
+}
+
+const syncInboundExternalIssue = `-- name: SyncInboundExternalIssue :one
+SELECT sync_inbound_external_issue($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`
+
+type SyncInboundExternalIssueParams struct {
+	SyncInboundExternalIssue    interface{} `json:"sync_inbound_external_issue"`
+	SyncInboundExternalIssue_2  interface{} `json:"sync_inbound_external_issue_2"`
+	SyncInboundExternalIssue_3  interface{} `json:"sync_inbound_external_issue_3"`
+	SyncInboundExternalIssue_4  interface{} `json:"sync_inbound_external_issue_4"`
+	SyncInboundExternalIssue_5  interface{} `json:"sync_inbound_external_issue_5"`
+	SyncInboundExternalIssue_6  interface{} `json:"sync_inbound_external_issue_6"`
+	SyncInboundExternalIssue_7  interface{} `json:"sync_inbound_external_issue_7"`
+	SyncInboundExternalIssue_8  interface{} `json:"sync_inbound_external_issue_8"`
+	SyncInboundExternalIssue_9  interface{} `json:"sync_inbound_external_issue_9"`
+	SyncInboundExternalIssue_10 interface{} `json:"sync_inbound_external_issue_10"`
+}
+
+// SyncInboundExternalIssue upserts requester+ticket+connector_sync_state for one
+// external issue (external-wins scalars). SECURITY DEFINER — no principal required.
+// Returns the native ticket_id.
+func (q *Queries) SyncInboundExternalIssue(ctx context.Context, arg SyncInboundExternalIssueParams) (interface{}, error) {
+	row := q.db.QueryRow(ctx, syncInboundExternalIssue,
+		arg.SyncInboundExternalIssue,
+		arg.SyncInboundExternalIssue_2,
+		arg.SyncInboundExternalIssue_3,
+		arg.SyncInboundExternalIssue_4,
+		arg.SyncInboundExternalIssue_5,
+		arg.SyncInboundExternalIssue_6,
+		arg.SyncInboundExternalIssue_7,
+		arg.SyncInboundExternalIssue_8,
+		arg.SyncInboundExternalIssue_9,
+		arg.SyncInboundExternalIssue_10,
+	)
+	var sync_inbound_external_issue interface{}
+	err := row.Scan(&sync_inbound_external_issue)
+	return sync_inbound_external_issue, err
 }

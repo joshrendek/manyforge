@@ -45,3 +45,41 @@ FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid
   AND EXISTS (SELECT 1 FROM connector c WHERE c.id = sqlc.arg('connector_id') AND c.business_id = b.id)
 ON CONFLICT (connector_id, external_delivery_id) DO NOTHING;
+
+-- ConnectorWebhookContext returns the connector's tenancy + sealed credential blob for
+-- the principal-less webhook handler to verify the HMAC signature in Go. Returns no row
+-- if the connector does not exist or is not enabled. Inlined so sqlc can infer column types
+-- (sqlc cannot introspect SECURITY DEFINER TABLE function returns without the function in schema.sql).
+-- name: ConnectorWebhookContext :one
+SELECT c.business_id, c.tenant_root_id, c.type AS ctype, s.sealed_value AS sealed_secret
+FROM connector c JOIN secret s ON s.id = c.secret_ref
+WHERE c.id = $1 AND c.status = 'enabled';
+
+-- IngestConnectorWebhook dedupes a verified webhook delivery and enqueues a
+-- connector.inbound.sync outbox event atomically (SECURITY DEFINER — principal-less).
+-- Returns true on first delivery, false on replay.
+-- name: IngestConnectorWebhook :one
+SELECT ingest_connector_webhook($1, $2, $3, $4, $5);
+
+-- SyncInboundExternalIssue upserts requester+ticket+connector_sync_state for one
+-- external issue (external-wins scalars). SECURITY DEFINER — no principal required.
+-- Returns the native ticket_id.
+-- name: SyncInboundExternalIssue :one
+SELECT sync_inbound_external_issue($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
+
+-- SyncInboundExternalComment appends one inbound comment, deduped by
+-- (connector_id, external_id). SECURITY DEFINER — no principal required.
+-- Returns the new ticket_message id, or NULL on duplicate.
+-- name: SyncInboundExternalComment :one
+SELECT sync_inbound_external_comment($1,$2,$3,$4);
+
+-- ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
+-- older than the given interval (or NULL = never reconciled → always due).
+-- name: ListConnectorsDueForReconcile :many
+SELECT id, business_id, tenant_root_id, type, last_reconciled_at
+FROM connector WHERE status = 'enabled'
+  AND (last_reconciled_at IS NULL OR last_reconciled_at < now() - $1::interval);
+
+-- StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
+-- name: StampConnectorReconciled :exec
+UPDATE connector SET last_reconciled_at = now(), updated_at = now() WHERE id = $1;
