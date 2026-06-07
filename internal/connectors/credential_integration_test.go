@@ -145,3 +145,41 @@ func TestCreateNormalizesBaseURL(t *testing.T) {
 		t.Fatalf("base_url not normalized (trailing slash): %q", stored)
 	}
 }
+
+func TestResolveRoundTrip(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil)
+	in := jiraInput()
+	in.Config = map[string]any{"project_key": "OPS"}
+	id, err := svc.Create(ctx, seed.principalID, seed.businessID, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	rc, err := svc.Resolve(ctx, seed.principalID, seed.businessID, id)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if rc.Type != "jira" || rc.BaseURL != "https://acme.atlassian.net" {
+		t.Fatalf("unexpected resolved connector: %+v", rc)
+	}
+	if rc.Credential.Email != "ops@acme.test" || rc.Credential.APIToken != "tok-abc-123" {
+		t.Fatalf("credential mismatch: %+v", rc.Credential)
+	}
+	if rc.Config["project_key"] != "OPS" {
+		t.Fatalf("config not round-tripped: %+v", rc.Config)
+	}
+}
+
+func TestResolveCrossTenantNotFound(t *testing.T) {
+	ctx, tdb, a := startConn(t)
+	b := seedConnectorTenant(ctx, t, tdb) // independent tenant in the same DB
+	svc := newConnService(t, tdb, nil)
+	id, err := svc.Create(ctx, a.principalID, a.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	_, err = svc.Resolve(ctx, b.principalID, b.businessID, id)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for cross-tenant resolve, got %v", err)
+	}
+}
