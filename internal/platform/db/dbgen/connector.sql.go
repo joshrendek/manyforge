@@ -66,6 +66,30 @@ func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int
 	return result.RowsAffected(), nil
 }
 
+const enqueueConnectorInboundSync = `-- name: EnqueueConnectorInboundSync :exec
+SELECT enqueue_connector_inbound_sync($1, $2, $3, $4)
+`
+
+type EnqueueConnectorInboundSyncParams struct {
+	EnqueueConnectorInboundSync   interface{} `json:"enqueue_connector_inbound_sync"`
+	EnqueueConnectorInboundSync_2 interface{} `json:"enqueue_connector_inbound_sync_2"`
+	EnqueueConnectorInboundSync_3 interface{} `json:"enqueue_connector_inbound_sync_3"`
+	EnqueueConnectorInboundSync_4 interface{} `json:"enqueue_connector_inbound_sync_4"`
+}
+
+// EnqueueConnectorInboundSync enqueues a connector.inbound.sync event through the
+// principal-less SECURITY DEFINER (reconcile poller has no principal; outbox is RLS-protected).
+// Migration 0044 creates the function.
+func (q *Queries) EnqueueConnectorInboundSync(ctx context.Context, arg EnqueueConnectorInboundSyncParams) error {
+	_, err := q.db.Exec(ctx, enqueueConnectorInboundSync,
+		arg.EnqueueConnectorInboundSync,
+		arg.EnqueueConnectorInboundSync_2,
+		arg.EnqueueConnectorInboundSync_3,
+		arg.EnqueueConnectorInboundSync_4,
+	)
+	return err
+}
+
 const getConnector = `-- name: GetConnector :one
 SELECT id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, last_reconciled_at, created_at, updated_at FROM connector WHERE id = $1 AND business_id = $2
 `
