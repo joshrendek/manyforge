@@ -1,3 +1,5 @@
+// credential.go holds input validation for connector-create requests — pure
+// business logic (no DB, no crypto). Mirrors agents.validateBaseURL.
 package connectors
 
 import (
