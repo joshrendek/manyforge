@@ -14,14 +14,19 @@ package connectors
 // external_id), so the claim's ticket_external_id assertion has a real value to read back.
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 func TestOutboundOpClaimComplete(t *testing.T) {
@@ -263,5 +268,49 @@ func TestOutboundDispatcherTerminalFailureCap(t *testing.T) {
 	}
 	if posts != maxOutboundAttempts {
 		t.Fatalf("terminal op was re-claimed: stub hit %d times, want %d", posts, maxOutboundAttempts)
+	}
+}
+
+// TestOutboundDispatcherCreatesIssue drives the create_issue path: an unlinked native ticket
+// is escalated via Service.EnqueueOutboundCreateIssue, the dispatcher calls CreateIssue against
+// the stub, and the native ticket is linked (connector_id + external_id + external_url set).
+func TestOutboundDispatcherCreatesIssue(t *testing.T) {
+	ctx, tdb, _ := startConn(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"10099","key":"SUP-99"}`))
+	}))
+	defer srv.Close()
+
+	seed := seedOutboundCreate(t, ctx, tdb, srv.URL) // connector (config project_key/issue_type) + an UNLINKED ticket
+
+	if err := seed.Service.EnqueueOutboundCreateIssue(ctx, seed.PrincipalID, seed.BusinessID, seed.TicketID, seed.ConnectorID); err != nil {
+		t.Fatalf("escalate: %v", err)
+	}
+
+	disp := &OutboundDispatcher{DB: tdb.App, Sealer: seed.Sealer, Registry: seed.Registry, Logger: slog.Default(), Batch: 10}
+	if err := disp.dispatchOnce(ctx); err != nil {
+		t.Fatalf("dispatchOnce: %v", err)
+	}
+
+	var ext, extURL *string
+	var connID pgtype.UUID
+	_ = tdb.Super.QueryRow(ctx, `SELECT connector_id, external_id, external_url FROM ticket WHERE id=$1`, seed.TicketID).
+		Scan(&connID, &ext, &extURL)
+	if !connID.Valid || ext == nil || *ext != "SUP-99" ||
+		extURL == nil || !strings.HasSuffix(*extURL, "/browse/SUP-99") {
+		t.Fatalf("ticket not linked: conn=%v ext=%v url=%v", connID, ext, extURL)
+	}
+}
+
+// TestEnqueueOutboundCreateIssueOwnership: a foreign business / unknown ticket returns ErrNotFound.
+func TestEnqueueOutboundCreateIssueOwnership(t *testing.T) {
+	ctx, tdb, _ := startConn(t)
+	seed := seedOutboundCreate(t, ctx, tdb, "https://unused.example")
+
+	err := seed.Service.EnqueueOutboundCreateIssue(ctx, seed.PrincipalID, seed.BusinessID, uuid.New(), seed.ConnectorID)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("unknown ticket err = %v, want ErrNotFound", err)
 	}
 }

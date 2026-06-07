@@ -40,7 +40,7 @@ func (q *Queries) EnqueueOutboundComment(ctx context.Context, arg EnqueueOutboun
 	return err
 }
 
-const enqueueOutboundCreate = `-- name: EnqueueOutboundCreate :exec
+const enqueueOutboundCreate = `-- name: EnqueueOutboundCreate :execrows
 INSERT INTO connector_outbound_op (business_id, tenant_root_id, connector_id, ticket_id, op_type, body)
 SELECT t.business_id, t.tenant_root_id, $2, t.id, 'create_issue', $3::text
 FROM ticket t
@@ -58,12 +58,15 @@ type EnqueueOutboundCreateParams struct {
 // native ticket to a connector. Inserted ONLY if the ticket is owned + NOT already linked.
 // connector_id is supplied (not derived) because the ticket isn't linked yet; tenant_root_id
 // comes from the ticket. The connector's own tenancy is re-checked via the composite FK.
-func (q *Queries) EnqueueOutboundCreate(ctx context.Context, arg EnqueueOutboundCreateParams) error {
-	_, err := q.db.Exec(ctx, enqueueOutboundCreate,
+func (q *Queries) EnqueueOutboundCreate(ctx context.Context, arg EnqueueOutboundCreateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, enqueueOutboundCreate,
 		arg.ID,
 		arg.ConnectorID,
 		arg.Body,
 		arg.BusinessID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

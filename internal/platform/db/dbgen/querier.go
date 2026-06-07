@@ -127,7 +127,7 @@ type Querier interface {
 	// native ticket to a connector. Inserted ONLY if the ticket is owned + NOT already linked.
 	// connector_id is supplied (not derived) because the ticket isn't linked yet; tenant_root_id
 	// comes from the ticket. The connector's own tenancy is re-checked via the composite FK.
-	EnqueueOutboundCreate(ctx context.Context, arg EnqueueOutboundCreateParams) error
+	EnqueueOutboundCreate(ctx context.Context, arg EnqueueOutboundCreateParams) (int64, error)
 	// Notify/events queries (spec 002, SL-C/SL-D). Plain table ops only; the
 	// SECURITY DEFINER drain functions (claim_outbox_batch / mark_outbox_processed /
 	// reschedule_outbox) are called via raw pgx in internal/platform/events (sqlc
