@@ -30,6 +30,7 @@ func TestValidate(t *testing.T) {
 		{"missing email", valid(func(i *CreateConnectorInput) { i.Email = "" }), true},
 		{"missing token", valid(func(i *CreateConnectorInput) { i.APIToken = "" }), true},
 		{"blocked literal IP no trust", valid(func(i *CreateConnectorInput) { i.BaseURL = "http://10.0.0.1" }), true},
+		{"loopback no trust blocked", valid(func(i *CreateConnectorInput) { i.BaseURL = "http://127.0.0.1" }), true},
 		{"private IP with trust ok", valid(func(i *CreateConnectorInput) {
 			i.BaseURL = "http://10.0.0.1"
 			i.AllowPrivateBaseURL = true
