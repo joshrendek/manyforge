@@ -220,7 +220,8 @@ CREATE TABLE ticket (
     external_id           text,
     external_url          text,
     UNIQUE (id, tenant_root_id),
-    UNIQUE (tenant_root_id, reply_token)
+    UNIQUE (tenant_root_id, reply_token),
+    CONSTRAINT ticket_connector_external_chk CHECK (connector_id IS NULL OR external_id IS NOT NULL)
 );
 
 CREATE TABLE ticket_tag (
@@ -253,7 +254,8 @@ CREATE TABLE ticket_message (
     connector_id        uuid,
     external_id         text,
     UNIQUE (tenant_root_id, message_id),
-    UNIQUE (id, tenant_root_id)
+    UNIQUE (id, tenant_root_id),
+    CONSTRAINT ticket_message_connector_external_chk CHECK (connector_id IS NULL OR external_id IS NOT NULL)
 );
 CREATE UNIQUE INDEX ticket_external_idx ON ticket (connector_id, external_id) WHERE connector_id IS NOT NULL;
 CREATE UNIQUE INDEX ticket_message_external_idx ON ticket_message (connector_id, external_id) WHERE connector_id IS NOT NULL;
