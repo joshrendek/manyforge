@@ -58,26 +58,11 @@ SELECT c.business_id, c.tenant_root_id, c.type AS ctype,
 FROM connector c JOIN secret s ON s.id = c.secret_ref
 WHERE c.id = $1 AND c.status = 'enabled';
 
--- NOTE: ingest_connector_webhook, sync_inbound_external_issue, and
--- sync_inbound_external_comment are SECURITY DEFINER functions called via raw
--- tx.QueryRow at their (principal-less) call sites — NOT via sqlc wrappers. sqlc
--- cannot infer their scalar arg/return types without the fn in schema.sql, so a
--- wrapper erases every param+return to interface{} and propagates that to all
--- callers (T3/T4/T5). Mirrors the ingest_inbound_message precedent (inbox/service.go).
-
--- ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
--- older than the given interval (or NULL = never reconciled → always due).
--- name: ListConnectorsDueForReconcile :many
-SELECT id, business_id, tenant_root_id, type, last_reconciled_at
-FROM connector WHERE status = 'enabled'
-  AND (last_reconciled_at IS NULL OR last_reconciled_at < now() - $1::interval);
-
--- StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
--- name: StampConnectorReconciled :exec
-UPDATE connector SET last_reconciled_at = now(), updated_at = now() WHERE id = $1;
-
--- EnqueueConnectorInboundSync enqueues a connector.inbound.sync event through the
--- principal-less SECURITY DEFINER (reconcile poller has no principal; outbox is RLS-protected).
--- Migration 0044 creates the function.
--- name: EnqueueConnectorInboundSync :exec
-SELECT enqueue_connector_inbound_sync($1, $2, $3, $4);
+-- NOTE: ingest_connector_webhook, sync_inbound_external_issue,
+-- sync_inbound_external_comment, list_connectors_due_for_reconcile,
+-- stamp_connector_reconciled, and enqueue_connector_inbound_sync are SECURITY
+-- DEFINER functions called via raw tx.QueryRow/tx.Exec at their (principal-less)
+-- call sites — NOT via sqlc wrappers. sqlc cannot infer their scalar arg/return
+-- types without the fn in schema.sql, so a wrapper erases every param+return to
+-- interface{} and propagates that to all callers (T3/T4/T5). Mirrors the
+-- ingest_inbound_message precedent (inbox/service.go).

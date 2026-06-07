@@ -118,10 +118,6 @@ type Querier interface {
 	// separately (HasOwnerRole + AllPermissionKeys) so future catalog additions are
 	// covered automatically (research R3).
 	EffectivePermissions(ctx context.Context, arg EffectivePermissionsParams) ([]string, error)
-	// EnqueueConnectorInboundSync enqueues a connector.inbound.sync event through the
-	// principal-less SECURITY DEFINER (reconcile poller has no principal; outbox is RLS-protected).
-	// Migration 0044 creates the function.
-	EnqueueConnectorInboundSync(ctx context.Context, arg EnqueueConnectorInboundSyncParams) error
 	// Notify/events queries (spec 002, SL-C/SL-D). Plain table ops only; the
 	// SECURITY DEFINER drain functions (claim_outbox_batch / mark_outbox_processed /
 	// reschedule_outbox) are called via raw pgx in internal/platform/events (sqlc
@@ -332,15 +328,6 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
-	// NOTE: ingest_connector_webhook, sync_inbound_external_issue, and
-	// sync_inbound_external_comment are SECURITY DEFINER functions called via raw
-	// tx.QueryRow at their (principal-less) call sites — NOT via sqlc wrappers. sqlc
-	// cannot infer their scalar arg/return types without the fn in schema.sql, so a
-	// wrapper erases every param+return to interface{} and propagates that to all
-	// callers (T3/T4/T5). Mirrors the ingest_inbound_message precedent (inbox/service.go).
-	// ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
-	// older than the given interval (or NULL = never reconciled → always due).
-	ListConnectorsDueForReconcile(ctx context.Context, dollar_1 pgtype.Interval) ([]ListConnectorsDueForReconcileRow, error)
 	// ListEmailDomains is the first (unkeyed) page of a business's email domains, oldest
 	// first for a stable keyset. lim is the clamped limit + 1 so the service detects a
 	// further page.
@@ -466,8 +453,6 @@ type Querier interface {
 	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
-	// StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
-	StampConnectorReconciled(ctx context.Context, id uuid.UUID) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	// UpdateAgent partially updates an agent (PATCH): COALESCE(narg, col) preserves any
 	// field the caller omitted (narg NULL = absent). provider is immutable (not settable

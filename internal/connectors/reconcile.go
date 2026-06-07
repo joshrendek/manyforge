@@ -7,10 +7,10 @@ package connectors
 // SECURITY DEFINER functions (migration 0044) that bypass RLS, mirroring the pattern used
 // by expire_stale_approvals (0032) and ingest_connector_webhook (0042).
 //
-// DEFINERs called (all in migration 0044):
+// DEFINERs called (all in migration 0044, except connector_webhook_context in 0043):
 //   - list_connectors_due_for_reconcile(interval) — list enabled connectors past their stale window
 //   - connector_webhook_context(uuid) — lookup sealed credential + tenancy (migration 0043)
-//   - enqueue_connector_inbound_sync(uuid,uuid,uuid,text) — outbox INSERT, RLS-exempt
+//   - enqueue_connector_inbound_sync(uuid,text) — outbox INSERT (derives tenancy from connector_id), RLS-exempt
 //   - stamp_connector_reconciled(uuid) — UPDATE last_reconciled_at, RLS-exempt
 //
 // The sealed credential is NEVER logged.
@@ -31,11 +31,10 @@ import (
 )
 
 // dueConnector holds the fields returned by list_connectors_due_for_reconcile.
+// Tenancy/type/credential are re-derived per-connector via connector_webhook_context,
+// so the sweep query only needs the id + the reconcile cursor.
 type dueConnector struct {
 	ID               uuid.UUID
-	BusinessID       uuid.UUID
-	TenantRootID     uuid.UUID
-	Type             string
 	LastReconciledAt pgtype.Timestamptz
 }
 
@@ -57,6 +56,15 @@ type Reconciler struct {
 // in cmd/manyforge/main.go:448-467: errors are logged but not fatal; the loop
 // continues until ctx is cancelled.
 func (r *Reconciler) Run(ctx context.Context) {
+	// Zero-value guards: an unset Every would panic time.NewTicker; an unset
+	// StaleAfter would make every connector perpetually due. T6's main.go wiring
+	// passes these explicitly — these defaults are just a footgun backstop.
+	if r.Every <= 0 {
+		r.Every = time.Minute
+	}
+	if r.StaleAfter <= 0 {
+		r.StaleAfter = 5 * time.Minute
+	}
 	t := time.NewTicker(r.Every)
 	defer t.Stop()
 	for {
@@ -85,7 +93,7 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 	var due []dueConnector
 	if err := r.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT id, business_id, tenant_root_id, ctype, last_reconciled_at
+			`SELECT id, last_reconciled_at
 			   FROM list_connectors_due_for_reconcile($1)`,
 			interval,
 		)
@@ -95,7 +103,7 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 		defer rows.Close()
 		for rows.Next() {
 			var c dueConnector
-			if err := rows.Scan(&c.ID, &c.BusinessID, &c.TenantRootID, &c.Type, &c.LastReconciledAt); err != nil {
+			if err := rows.Scan(&c.ID, &c.LastReconciledAt); err != nil {
 				return fmt.Errorf("scan due connector: %w", err)
 			}
 			due = append(due, c)
@@ -123,20 +131,22 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 // list updated issues → enqueue events → stamp last_reconciled_at.
 func (r *Reconciler) reconcileConnector(ctx context.Context, c dueConnector) error {
 	// Step 2a: principal-less DEFINER lookup for connector context (migration 0043).
+	// business_id + tenant_root_id are part of the DEFINER row but unused here — enqueue
+	// derives them from connector_id internally — so they're scanned into discards.
 	var (
-		bizID      uuid.UUID
-		tenantRoot uuid.UUID
-		ctype      string
-		baseURL    string
-		allowPriv  bool
-		sealed     string
+		discardBiz    uuid.UUID
+		discardTenant uuid.UUID
+		ctype         string
+		baseURL       string
+		allowPriv     bool
+		sealed        string
 	)
 	if err := r.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
 			`SELECT business_id, tenant_root_id, ctype, base_url, allow_private_base_url, sealed_secret
 			   FROM connector_webhook_context($1)`,
 			c.ID,
-		).Scan(&bizID, &tenantRoot, &ctype, &baseURL, &allowPriv, &sealed)
+		).Scan(&discardBiz, &discardTenant, &ctype, &baseURL, &allowPriv, &sealed)
 	}); err != nil {
 		if err == pgx.ErrNoRows {
 			r.logger().WarnContext(ctx, "connectors/reconcile: connector not found or disabled",
@@ -192,8 +202,8 @@ func (r *Reconciler) reconcileConnector(ctx context.Context, c dueConnector) err
 	if err := r.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		for _, extID := range ids {
 			if _, err := tx.Exec(ctx,
-				`SELECT enqueue_connector_inbound_sync($1, $2, $3, $4)`,
-				c.ID, bizID, tenantRoot, extID,
+				`SELECT enqueue_connector_inbound_sync($1, $2)`,
+				c.ID, extID,
 			); err != nil {
 				return fmt.Errorf("enqueue %s: %w", extID, err)
 			}
