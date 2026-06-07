@@ -18,6 +18,7 @@ package connectors
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -148,7 +149,7 @@ func (r *Reconciler) reconcileConnector(ctx context.Context, c dueConnector) err
 			c.ID,
 		).Scan(&discardBiz, &discardTenant, &ctype, &baseURL, &allowPriv, &sealed)
 	}); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			r.logger().WarnContext(ctx, "connectors/reconcile: connector not found or disabled",
 				"connector_id", c.ID)
 			return nil
