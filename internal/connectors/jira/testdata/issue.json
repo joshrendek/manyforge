@@ -1,0 +1,28 @@
+{
+  "id": "10001",
+  "key": "PROJ-42",
+  "self": "https://mycompany.atlassian.net/rest/api/3/issue/10001",
+  "fields": {
+    "summary": "Login button does not work on mobile",
+    "status": {
+      "id": "3",
+      "name": "In Progress",
+      "statusCategory": {
+        "id": 4,
+        "key": "indeterminate",
+        "name": "In Progress"
+      }
+    },
+    "priority": {
+      "id": "2",
+      "name": "High"
+    },
+    "reporter": {
+      "accountId": "5b10a2844c20165700ede21g",
+      "emailAddress": "alice@example.com",
+      "displayName": "Alice Smith",
+      "active": true
+    },
+    "updated": "2026-06-01T10:30:00.000+0000"
+  }
+}
