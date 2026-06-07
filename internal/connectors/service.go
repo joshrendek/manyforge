@@ -141,6 +141,35 @@ func (s *Service) Resolve(ctx context.Context, principalID, businessID, connecto
 	return out, nil
 }
 
+// EnqueueOutboundCreateIssue records a pending create_issue op linking an existing, as-yet-
+// unlinked native ticket to a connector. The ownership predicate is pushed into SQL (the
+// INSERT...SELECT only matches a ticket owned by businessID and not already linked); a
+// no-op (0 rows) means unknown/foreign/already-linked -> ErrNotFound (no oracle). The actual
+// Jira issue is created later by the OutboundDispatcher.
+func (s *Service) EnqueueOutboundCreateIssue(ctx context.Context, principalID, businessID, ticketID, connectorID uuid.UUID) error {
+	return mapErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		// Verify the connector is owned (same business) before enqueuing; the enabled gate is
+		// enforced downstream by the dispatcher (connector_outbound_context filters status='enabled').
+		if _, gerr := q.GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID}); gerr != nil {
+			return gerr // pgx.ErrNoRows -> mapErr -> ErrNotFound
+		}
+		tag, eerr := q.EnqueueOutboundCreate(ctx, dbgen.EnqueueOutboundCreateParams{
+			ID:          ticketID,
+			ConnectorID: connectorID,
+			Body:        "",
+			BusinessID:  businessID,
+		})
+		if eerr != nil {
+			return eerr
+		}
+		if tag == 0 {
+			return fmt.Errorf("ticket not found, foreign, or already linked: %w", errs.ErrNotFound)
+		}
+		return nil
+	}))
+}
+
 // mapErr converts DB/sentinel errors to stable service sentinels (mirrors
 // agents.mapCredErr): pgx.ErrNoRows→404, SQLSTATE 23505→409.
 func mapErr(err error) error {
