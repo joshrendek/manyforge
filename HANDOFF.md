@@ -1,0 +1,56 @@
+# Handoff — manyforge @ 004-external-connectors — 2026-06-07 ~21:30 UTC
+
+## ⚠️ Before you clear
+- **Uncommitted:** NONE (only untracked harness files — leave them all: `HANDOFF.md`, `.claude/scheduled_tasks.lock`, the stray `docs/superpowers/plans/2026-06-01-us2-reply-threading.md`, and several **claude-mem auto-generated** `CLAUDE.md` files under `db/`, `db/query/`, `migrations/`, `internal/agents/`, `internal/platform/db/dbgen/`, `internal/platform/netsafe/` — observation-index tables from the claude-mem hook, NOT real docs, NOT committed).
+- **Unpushed:** NONE. `004-external-connectors` @ `c43ee5c` is up to date with `origin/004-external-connectors`. (US1 = 14 commits `44f6a6e..f1ea402`; US2 = `00ee91f..c43ee5c`.)
+- **Still running:** This session started NO dev servers. There are **~6 `output-format stream-json` procs** alive — likely leftover subagent workers or other sessions. Verify + clean if orphaned: `ps aux | grep 'output-format stream-json' | grep -v grep` then kill the stale PIDs. Docker is up (testcontainers use it).
+
+## State (≤3 sentences)
+**Spec 004 (External Ticketing Connectors), epic `manyforge-a7j`: 2/7 complete.** **US1** (secrets vault + credential `Service`) and **US2** (framework: `TicketingConnector` + `Registry` + ext-id columns + sync tables + webhook-dedupe) are DONE/pushed/READY-TO-MERGE. **US3 (`a7j.3`, Jira inbound) is IN PROGRESS: the plan is written + committed** at `docs/superpowers/plans/2026-06-07-us3-jira-inbound.md` (8 tasks). **No US3 task is implemented yet — next increment = US3 Task 1** (migration 0042: DEFINER sync fns + reconcile cursor). A Ralph loop is driving US3→US6 (see cadence section).
+
+## Autonomous loop cadence (one fully-reviewed increment per iteration)
+This file drives a Ralph loop. Each iteration: read this file + `bd show manyforge-a7j`, perform exactly ONE increment, commit, end the turn (the loop re-feeds). Pick the lowest-numbered OPEN story (US3 `a7j.3` → US4 `a7j.4` → US5 `a7j.5` → US6 `a7j.6`). Three increment types by state:
+- **No plan yet** for that story under `docs/superpowers/plans/` → create one (writing-plans cadence; design doc is the spec below; brainstorming already done). First dispatch a subagent to extract the EXACT signatures you'll need (don't guess), then write a no-placeholder TDD plan to `docs/superpowers/plans/2026-06-07-us<N>-<slug>.md`, commit `--no-verify`, update this file. Also create the per-task bd children if the story needs them. One increment.
+- **Plan exists, task unfinished** (check `git log --oneline -40` for committed tasks tagged `(manyforge-a7j.<N>)` + the plan's `- [ ]` boxes) → implement the next task subagent-driven: fresh implementer subagent (TDD → commit `--no-verify`, NO `Co-Authored-By`) → spec-compliance review subagent → code-quality review subagent → triage findings RIGOROUSLY (verify each; reject noise, accept sound fixes) → implementer fixes via SendMessage → re-run code-quality review. Tick the plan box, update this file. One increment.
+- **All tasks committed, story not bd-closed** → run the FULL GATE: `export PATH=$PATH:$HOME/go/bin`; `gofmt -l internal/ cmd/ db/` (empty); `make test && make contract-test && make lint && make sec-test && make int-test` (int-test backgrounded ~7min). Green → final whole-story review subagent (opus). READY TO MERGE → `bd close manyforge-a7j.<N>`, file follow-ups, commit `.beads/issues.jsonl`, `git push`, update this file. Red gate → FIX it (no "pre-existing failures"). One increment.
+
+**HARD RULES:** one increment/iteration; NEVER skip the two reviews; NEVER bd-close on a red gate; NEVER push red; keep this file current so a post-compaction iteration resumes cleanly. **DONE = US3+US4+US5+US6 all bd-closed AND `git status` up-to-date with origin** → only then emit the completion promise.
+
+## Resume here
+**Start US3 = `manyforge-a7j.3` (Jira inbound).** Brainstorming is already covered by the approved spec, so go straight to the **writing-plans** skill. Concretely:
+1. `bd update manyforge-a7j.3 --status in_progress --claim`.
+2. **Read `bd show manyforge-a7j.3` NOTES first** — they hold the US2→US3 design decisions (esp. the per-connector reconcile-cursor question, which has no DB home yet).
+3. Invoke `superpowers:writing-plans`; dispatch a subagent to extract exact signatures for: the public inbound-webhook handler pattern (`internal/inbox/handler.go`/`webhook.go` — HMAC verify, body cap, rate-limit-before-routing, uniform 202), the events outbox subscriber wiring (`eventBus.Subscribe` in `cmd/manyforge/main.go`), `netsafe.NewClientWithOptions`, the requester/ticket upsert path, and golden-fixture test patterns (`internal/platform/ai/testdata/`).
+4. Write the plan to `docs/superpowers/plans/2026-06-07-us3-jira-inbound.md`, then **subagent-driven execution** (same cadence as US1/US2).
+
+US3 scope (spec §8 US3): Jira REST client (read issue/comments, list-updated-since) via SSRF-safe netsafe client + golden fixtures; signed webhook adapter (verify + the US2 `RecordWebhookDelivery` dedupe); inbound `connector.inbound.sync` subscriber doing external-wins upsert (by `external_id`) + `connector_sync_state` snapshot + the deferred `UpsertSyncState` helper; reconcile poller. The concrete Jira `Factory` is registered in `main.go` here (first production wiring of `Service`/`Registry` — incl. `MANYFORGE_CONNECTOR_MASTER_KEY` → `secrets.NewVault`).
+
+## Run & verify (full gate, all GREEN at c43ee5c)
+- **Pre-flight:** `export PATH="$PATH:$HOME/go/bin"` (golangci-lint only there — else `make lint` silently degrades to vet-only). Docker up.
+- **Full gate:** `gofmt -l internal/ cmd/ db/` (must be empty) `&& make test && make contract-test && make lint && make sec-test && make int-test`. `int-test` ≈ 6–7 min (run it backgrounded). `make generate` runs `sqlc generate` (the ONLY generator) after editing `db/schema.sql`/`db/query/`.
+- **Connectors-only fast loop:** `go test -tags integration -p 1 ./internal/connectors/ -v` (needs Docker; testcontainers auto-applies `migrations/`).
+- Dev DB (optional, for `migrate` round-trip checks): owner DSN `postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable` (SSH tunnel; not started by this session).
+
+## Gotchas (don't relearn these)
+- **gopls LIES persistently** on every file referencing `dbgen` ("undefined: dbgen.X") and on every `//go:build integration` file ("No packages found"). These are FALSE POSITIVES — `go build ./...` is clean and tests pass. **Trust `go build`/`go test`, NEVER the IDE diagnostics panel.** (Fired on every single task in US1+US2.)
+- **dbgen nullable nuance:** with the `uuid`/`timestamptz` go_type overrides, `emit_pointers_for_null_types` does NOT apply to them. `<col> uuid NULL` → `pgtype.UUID` (NOT `*uuid.UUID`); `text NULL` → `*string`; `timestamptz NULL` → `pgtype.Timestamptz`. Plain `text NOT NULL` → `string`. (`ticket.ConnectorID` is `pgtype.UUID`, `ticket.ExternalID`/`ExternalUrl` are `*string` — US3 reads/writes these.)
+- **Two casings:** Go service structs use `BaseURL`/`AllowPrivateBaseURL`; generated dbgen fields use `BaseUrl`/`AllowPrivateBaseUrl` (Url, not URL). Match each layer.
+- **Composite-FK discipline:** every new child table needs `business_id`+`tenant_root_id`, `FOREIGN KEY (x_id, tenant_root_id) → parent(id, tenant_root_id)`, a `*_troot_immutable` trigger, RLS (`authorized_businesses(current_principal())`), GRANT to `manyforge_app`. Mirror every column into `db/schema.sql` (strip DEFAULT/RLS/trigger). Reuse `support_tenant_root_immutable()` (from 0013, don't redefine).
+- **Push ownership predicates into SQL:** US1/US2 both gained a `EXISTS (SELECT 1 FROM <parent> WHERE id=$ref AND business_id=b.id)` guard in INSERT…SELECT (same-business defense-in-depth beyond the same-tenant FK). US3's upserts should do likewise.
+- **Commits use `--no-verify`** (intermediate task commits; full gate runs at US-close). **NO `Co-Authored-By`** (user rule). The **bd hook re-exports `.beads/issues.jsonl` on commit** — stage it. `sqlc`/`migrate` on standard PATH; `golangci-lint` only `~/go/bin`.
+- **Spec branches STACK:** master is ~141 commits behind; `004-external-connectors` branched off `003-agent-runtime` (not merged to master). Branch from current HEAD; don't merge to master.
+- **Next migration: 0042** (0041 is US2). External webhook ingest route is PUBLIC (no JWT) — mirror `internal/inbox/handler.go`'s rate-limit-before-routing + uniform-202 no-oracle pattern.
+
+## Decisions & rationale (brainstorming forks, all locked)
+- **Jira FIRST** end-to-end, then Zendesk as a thin 2nd (US5). **API-token auth** (email:token HTTP Basic); OAuth2 deferred. **External-wins** scalar conflict policy (Jira authoritative; ManyForge mirrors/triages); comments append-only union deduped by external id; deliberate gated writes are the separate authoritative path. **US6 agent tools = read + gated write** (add_external_comment / transition_external_status). On-prem Jira via the per-connector `allow_private_base_url` trust flag (deo.9 pattern).
+- **US3 open design decisions** (on `a7j.3` notes): where the per-connector reconcile cursor lives (MAX(external_updated_at) over sync_state, or a new `connector.last_reconciled_at`); whether to widen `ListUpdatedSince` from `[]string`; enqueue `connector.inbound.sync` in the SAME tx as the dedupe insert.
+
+## Next steps
+1. **US3** (`a7j.3`) — Jira inbound (this resume). 2. **US4** (`a7j.4`) — Jira outbound + full bidirectional + conflict finalize. 3. **US5** (`a7j.5`) — Zendesk thin 2nd. 4. **US6** (`a7j.6`) — read + gated-write agent tools. 5. Follow-up **`a7j.7`** — `UpdateConnectorCredential` must re-validate+re-audit the trust flag. Then close epic `a7j`.
+
+## Pointers
+- **Spec (master design):** `docs/superpowers/specs/2026-06-06-external-connectors-design.md` (§2 framework, §3 data model, §5 sync engine, §7 security pins, §8 US breakdown).
+- **Plans:** US1 `docs/superpowers/plans/2026-06-06-us1-secrets-vault.md`; US2 `docs/superpowers/plans/2026-06-07-us2-connector-framework.md`.
+- **Key code (US1+US2):** `internal/connectors/` — `connector.go` (`TicketingConnector` interface + `ExternalIssue`/`ExternalComment`/`WebhookEvent` + sync topics), `registry.go` (`Registry`/`Factory`), `service.go` (`Service.Create`/`Resolve`/`mapErr`), `credential.go` (`validate`/`validateBaseURL`), `sync_store.go` (`RecordWebhookDelivery`), `types.go` (`ResolvedConnector`/`Credential`/`CreateConnectorInput`/`Verifier`). Vault: `internal/platform/secrets/vault.go`. Schema: `migrations/0040_*`, `migrations/0041_connector_sync.*`, `db/query/connector.sql`. Test helpers (reuse in US3): `internal/connectors/{credential_test.go,testsupport_integration_test.go}` → `startConn(t)`, `newConnService(t,tdb,v)`, `jiraInput()`, `seedConnectorTenant(ctx,t,tdb)`, `fakeConnector`.
+- **Cadence skills:** `superpowers:writing-plans` → `superpowers:subagent-driven-development` (fresh implementer per task; spec-compliance review THEN code-quality review; opus for the final whole-US review). Track work in **bd** (`bd ready`, `bd show <id>`, `--claim`, `bd close`), NOT TodoWrite.
+- **bd:** epic `manyforge-a7j` (`bd show manyforge-a7j` for the tree). Resume command: `/handoff resume`.
