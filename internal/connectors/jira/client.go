@@ -140,6 +140,41 @@ func (c *client) PostComment(ctx context.Context, externalID, body string) (conn
 	}, nil
 }
 
+// CreateIssue creates a new Jira issue in the draft's project, returning its key + URL.
+func (c *client) CreateIssue(ctx context.Context, draft connectors.ExternalIssueDraft) (connectors.ExternalIssue, error) {
+	if draft.ProjectKey == "" || draft.IssueType == "" {
+		return connectors.ExternalIssue{}, fmt.Errorf("jira: project key and issue type required: %w", ErrUpstream)
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return connectors.ExternalIssue{}, fmt.Errorf("jira: invalid base_url: %w", ErrUpstream)
+	}
+	issueURL := base.JoinPath("rest", "api", "3", "issue")
+
+	fields := map[string]any{
+		"project":   map[string]any{"key": draft.ProjectKey},
+		"issuetype": map[string]any{"name": draft.IssueType},
+		"summary":   draft.Summary,
+	}
+	if draft.Description != "" {
+		fields["description"] = buildADFDoc(draft.Description)
+	}
+	payload, err := json.Marshal(map[string]any{"fields": fields})
+	if err != nil {
+		return connectors.ExternalIssue{}, fmt.Errorf("jira: marshal create: %w", ErrUpstream)
+	}
+
+	var resp jiraCreateIssueResponse
+	if err := c.doJSON(ctx, http.MethodPost, issueURL.String(), payload, &resp); err != nil {
+		return connectors.ExternalIssue{}, err
+	}
+	return connectors.ExternalIssue{
+		ExternalID: resp.Key,
+		URL:        base.JoinPath("browse", resp.Key).String(),
+		Title:      draft.Summary,
+	}, nil
+}
+
 // TransitionStatus moves the external issue to the target status name.
 func (c *client) TransitionStatus(ctx context.Context, externalID, status string) error {
 	if err := validateIssueKey(externalID); err != nil {
@@ -413,6 +448,11 @@ type jiraComment struct {
 	} `json:"author"`
 	Body    json.RawMessage `json:"body"`
 	Created jiraTime        `json:"created"`
+}
+
+type jiraCreateIssueResponse struct {
+	ID  string `json:"id"`
+	Key string `json:"key"`
 }
 
 type jiraCommentsResponse struct {
