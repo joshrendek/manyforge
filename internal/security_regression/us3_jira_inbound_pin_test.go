@@ -189,6 +189,9 @@ func (h *hmacFakeConnUS3) VerifyWebhook(headers http.Header, body []byte) error 
 	}
 	return nil
 }
+func (h *hmacFakeConnUS3) CreateIssue(_ context.Context, _ connectors.ExternalIssueDraft) (connectors.ExternalIssue, error) {
+	return connectors.ExternalIssue{}, nil
+}
 func (h *hmacFakeConnUS3) DecodeWebhook(body []byte) (connectors.WebhookEvent, error) {
 	var p struct {
 		Timestamp int64 `json:"timestamp"`

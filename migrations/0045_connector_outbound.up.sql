@@ -53,13 +53,13 @@ $$;
 CREATE FUNCTION claim_outbound_ops(p_limit int)
 RETURNS TABLE(op_id uuid, op_type connector_outbound_op_type, connector_id uuid,
               ticket_id uuid, message_id uuid, ticket_external_id text,
-              ticket_subject text, body text)
+              ticket_subject text, body text, attempts int)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
     RETURN QUERY
     WITH claimed AS (
         UPDATE connector_outbound_op o
-        SET status = 'in_progress', attempts = attempts + 1, updated_at = now()
+        SET status = 'in_progress', attempts = o.attempts + 1, updated_at = now()
         WHERE o.id IN (
             SELECT id FROM connector_outbound_op
             WHERE status = 'pending'
@@ -67,12 +67,23 @@ BEGIN
             FOR UPDATE SKIP LOCKED
             LIMIT p_limit
         )
-        RETURNING o.id, o.op_type, o.connector_id, o.ticket_id, o.message_id, o.body
+        -- attempts is returned POST-increment so the dispatcher's terminal-failure cap
+        -- (attempts >= maxOutboundAttempts) reflects the real retry count, not 0.
+        RETURNING o.id, o.op_type, o.connector_id, o.ticket_id, o.message_id, o.body, o.attempts
     )
     SELECT cl.id, cl.op_type, cl.connector_id, cl.ticket_id, cl.message_id,
-           t.external_id, t.subject, cl.body
+           t.external_id, t.subject, cl.body, cl.attempts
     FROM claimed cl JOIN ticket t ON t.id = cl.ticket_id;
 END;
+$$;
+
+-- message_external_id returns a connector-linked native message's external_id (NULL if not
+-- yet posted). Principal-less idempotency read for the dispatcher: ticket_message is
+-- RLS-protected, so a direct SELECT from the background poller sees nothing — this DEFINER
+-- lets the dispatcher short-circuit re-POSTing a comment whose external_id is already stamped.
+CREATE FUNCTION message_external_id(p_message_id uuid)
+RETURNS text LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+    SELECT external_id FROM ticket_message WHERE id = p_message_id;
 $$;
 
 CREATE FUNCTION complete_outbound_comment(p_op_id uuid, p_message_id uuid,
@@ -145,6 +156,8 @@ REVOKE ALL ON FUNCTION connector_outbound_context(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connector_outbound_context(uuid) TO manyforge_app;
 REVOKE ALL ON FUNCTION claim_outbound_ops(int) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_outbound_ops(int) TO manyforge_app;
+REVOKE ALL ON FUNCTION message_external_id(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION message_external_id(uuid) TO manyforge_app;
 REVOKE ALL ON FUNCTION complete_outbound_comment(uuid,uuid,uuid,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION complete_outbound_comment(uuid,uuid,uuid,text) TO manyforge_app;
 REVOKE ALL ON FUNCTION complete_outbound_create(uuid,uuid,uuid,text,text) FROM PUBLIC;
