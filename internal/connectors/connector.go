@@ -2,6 +2,7 @@ package connectors
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
 
@@ -15,20 +16,22 @@ const (
 // ExternalComment is one comment on an external issue.
 type ExternalComment struct {
 	ExternalID string
-	Author     string
+	Author     string // display name of the commenter (for UI attribution, not identity resolution)
 	Body       string
 	CreatedAt  time.Time
 }
 
 // ExternalIssue is the external system's view of a ticket (Jira issue / Zendesk ticket).
 type ExternalIssue struct {
-	ExternalID string
-	URL        string
-	Title      string
-	Status     string
-	Priority   string
-	Comments   []ExternalComment
-	UpdatedAt  time.Time
+	ExternalID    string
+	URL           string
+	Title         string
+	Status        string
+	Priority      string
+	ReporterEmail string // maps to requester (deduped by email); empty if the external system hides it
+	ReporterName  string // optional display name; empty is fine
+	Comments      []ExternalComment
+	UpdatedAt     time.Time
 }
 
 // WebhookEvent is the routing info decoded from an inbound webhook payload.
@@ -52,7 +55,7 @@ type TicketingConnector interface {
 	// ListUpdatedSince returns external issue ids updated at/after the cursor (reconcile).
 	ListUpdatedSince(ctx context.Context, since time.Time) ([]string, error)
 	// VerifyWebhook checks the inbound payload's signature (per-connector secret).
-	VerifyWebhook(headers map[string]string, body []byte) error
+	VerifyWebhook(headers http.Header, body []byte) error
 	// DecodeWebhook extracts routing info from a verified inbound payload.
 	DecodeWebhook(body []byte) (WebhookEvent, error)
 }
