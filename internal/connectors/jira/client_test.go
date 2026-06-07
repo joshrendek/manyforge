@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -412,6 +413,73 @@ func TestFetchIssue_RejectsTraversalKey(t *testing.T) {
 	}
 	if err := c.TransitionStatus(context.Background(), "PROJ-1/../admin", "Done"); !errors.Is(err, ErrBadIssueKey) {
 		t.Errorf("TransitionStatus traversal: err = %v, want Is(ErrBadIssueKey)", err)
+	}
+}
+
+// ── CreateIssue ───────────────────────────────────────────────────────────────
+
+func TestCreateIssue(t *testing.T) {
+	var gotMethod, gotPath, gotAuth string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(loadGolden(t, "create_issue_response.json"))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "ops@acme.test", "tok", "whsec", srv.Client())
+	iss, err := c.CreateIssue(context.Background(), connectors.ExternalIssueDraft{
+		ProjectKey: "SUP", IssueType: "Task", Summary: "Login broken", Description: "user can't log in",
+	})
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if iss.ExternalID != "SUP-42" {
+		t.Fatalf("external id = %q, want SUP-42", iss.ExternalID)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/rest/api/3/issue" {
+		t.Fatalf("request = %s %s, want POST /rest/api/3/issue", gotMethod, gotPath)
+	}
+	if gotAuth == "" {
+		t.Fatalf("missing basic auth")
+	}
+	fields, _ := gotBody["fields"].(map[string]any)
+	if fields == nil || fields["summary"] != "Login broken" {
+		t.Fatalf("fields summary wrong: %+v", gotBody)
+	}
+	proj, _ := fields["project"].(map[string]any)
+	if proj == nil || proj["key"] != "SUP" {
+		t.Fatalf("project key wrong: %+v", fields)
+	}
+}
+
+func TestCreateIssueRejectsEmptyProject(t *testing.T) {
+	c := newTestClient("https://acme.atlassian.net", "ops@acme.test", "tok", "whsec", http.DefaultClient)
+	_, err := c.CreateIssue(context.Background(), connectors.ExternalIssueDraft{IssueType: "Task", Summary: "x"})
+	if !errors.Is(err, ErrUpstream) {
+		t.Fatalf("err = %v, want ErrUpstream for empty project key", err)
+	}
+}
+
+func TestCreateIssueOmitsEmptyDescription(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(loadGolden(t, "create_issue_response.json"))
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "ops@acme.test", "tok", "whsec", srv.Client())
+	if _, err := c.CreateIssue(context.Background(), connectors.ExternalIssueDraft{
+		ProjectKey: "SUP", IssueType: "Task", Summary: "no desc",
+	}); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	fields, _ := gotBody["fields"].(map[string]any)
+	if _, ok := fields["description"]; ok {
+		t.Fatalf("description should be omitted when empty, got: %+v", fields)
 	}
 }
 

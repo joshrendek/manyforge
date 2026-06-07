@@ -31,6 +31,9 @@ func (f *fakeConnector) VerifyWebhook(headers http.Header, body []byte) error { 
 func (f *fakeConnector) DecodeWebhook(body []byte) (WebhookEvent, error) {
 	return WebhookEvent{DeliveryID: "d-1", ExternalID: f.issue.ExternalID, Kind: "issue.updated"}, nil
 }
+func (f *fakeConnector) CreateIssue(ctx context.Context, draft ExternalIssueDraft) (ExternalIssue, error) {
+	return ExternalIssue{ExternalID: "JIRA-NEW", URL: "https://example.test/JIRA-NEW", Title: draft.Summary}, nil
+}
 
 func TestFakeConnectorSatisfiesInterface(t *testing.T) {
 	ctx := context.Background()
