@@ -29,3 +29,6 @@ vendor/
 /us1-*.png
 tmp/
 .air.env
+
+# fresh-context ralph driver log
+ralph-driver.log
