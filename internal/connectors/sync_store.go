@@ -1,0 +1,29 @@
+package connectors
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
+)
+
+// RecordWebhookDelivery records an inbound webhook delivery for replay protection, in
+// the caller's tx. Returns true if newly recorded, false if this (connector, delivery_id)
+// was already seen — or if the connector is not visible to the business (RLS/guard) — in
+// which case the caller should no-op. The query's ON CONFLICT DO NOTHING + same-business
+// EXISTS guard make replays and cross-business attempts both yield zero rows.
+func (s *Service) RecordWebhookDelivery(ctx context.Context, tx pgx.Tx, businessID, connectorID uuid.UUID, deliveryID string) (bool, error) {
+	n, err := dbgen.New(tx).RecordWebhookDelivery(ctx, dbgen.RecordWebhookDeliveryParams{
+		ID:                 uuid.New(),
+		BusinessID:         businessID,
+		ConnectorID:        connectorID,
+		ExternalDeliveryID: deliveryID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("connectors: record webhook delivery: %w", err)
+	}
+	return n > 0, nil
+}
