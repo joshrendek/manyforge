@@ -37,6 +37,19 @@ func (r *Registry) Register(connectorType string, f Factory) {
 	r.factories[connectorType] = f
 }
 
+// BuildSystem builds a live connector from an already-resolved ResolvedConnector WITHOUT
+// a principal/DB lookup — for principal-less contexts (the public webhook handler, the
+// outbox worker) that obtained the connector via a DEFINER lookup + Go-side unseal.
+func (r *Registry) BuildSystem(rc ResolvedConnector) (TicketingConnector, error) {
+	r.mu.RLock()
+	f, ok := r.factories[rc.Type]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("connectors: no factory registered for type %q", rc.Type)
+	}
+	return f(rc)
+}
+
 // Resolve loads the connector (RLS-scoped to business) and builds its live client.
 // Cross-tenant / unknown connector → ErrNotFound (from the Service). An enabled
 // connector whose type has no registered factory is a server-config error (not a
