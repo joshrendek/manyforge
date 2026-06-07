@@ -46,12 +46,15 @@ WHERE b.id = sqlc.arg('business_id')::uuid
   AND EXISTS (SELECT 1 FROM connector c WHERE c.id = sqlc.arg('connector_id') AND c.business_id = b.id)
 ON CONFLICT (connector_id, external_delivery_id) DO NOTHING;
 
--- ConnectorWebhookContext returns the connector's tenancy + sealed credential blob for
--- the principal-less webhook handler to verify the HMAC signature in Go. Returns no row
--- if the connector does not exist or is not enabled. Inlined so sqlc can infer column types
--- (sqlc cannot introspect SECURITY DEFINER TABLE function returns without the function in schema.sql).
+-- ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
+-- sealed credential blob for the principal-less webhook handler to build the typed connector
+-- and verify the HMAC signature in Go. Returns no row if the connector does not exist or is
+-- not enabled. Inlined so sqlc can infer column types (sqlc cannot introspect SECURITY DEFINER
+-- TABLE function returns without the function in schema.sql). Migration 0043 extended the
+-- DEFINER fn to return base_url + allow_private_base_url; the inline query mirrors that.
 -- name: ConnectorWebhookContext :one
-SELECT c.business_id, c.tenant_root_id, c.type AS ctype, s.sealed_value AS sealed_secret
+SELECT c.business_id, c.tenant_root_id, c.type AS ctype,
+       c.base_url, c.allow_private_base_url, s.sealed_value AS sealed_secret
 FROM connector c JOIN secret s ON s.id = c.secret_ref
 WHERE c.id = $1 AND c.status = 'enabled';
 

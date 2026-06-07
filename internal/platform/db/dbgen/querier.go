@@ -34,10 +34,12 @@ type Querier interface {
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
-	// ConnectorWebhookContext returns the connector's tenancy + sealed credential blob for
-	// the principal-less webhook handler to verify the HMAC signature in Go. Returns no row
-	// if the connector does not exist or is not enabled. Inlined so sqlc can infer column types
-	// (sqlc cannot introspect SECURITY DEFINER TABLE function returns without the function in schema.sql).
+	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
+	// sealed credential blob for the principal-less webhook handler to build the typed connector
+	// and verify the HMAC signature in Go. Returns no row if the connector does not exist or is
+	// not enabled. Inlined so sqlc can infer column types (sqlc cannot introspect SECURITY DEFINER
+	// TABLE function returns without the function in schema.sql). Migration 0043 extended the
+	// DEFINER fn to return base_url + allow_private_base_url; the inline query mirrors that.
 	ConnectorWebhookContext(ctx context.Context, id uuid.UUID) (ConnectorWebhookContextRow, error)
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
 	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
