@@ -9,10 +9,12 @@ import "context"
 var knownConnectorTypes = map[string]bool{"jira": true, "zendesk": true}
 
 // Credential is the secret payload sealed into the vault. For Jira Cloud the auth
-// is HTTP Basic email:api_token.
+// is HTTP Basic email:api_token. WebhookSecret is the HMAC-SHA256 key used to
+// verify inbound webhook payloads (X-Hub-Signature: sha256=<hex>).
 type Credential struct {
-	Email    string `json:"email"`
-	APIToken string `json:"api_token"`
+	Email         string `json:"email"`
+	APIToken      string `json:"api_token"`
+	WebhookSecret string `json:"webhook_secret,omitempty"`
 }
 
 // CreateConnectorInput is the caller-supplied connector-create request.
