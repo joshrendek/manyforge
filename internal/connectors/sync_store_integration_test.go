@@ -57,4 +57,15 @@ func TestRecordWebhookDeliveryCrossBusiness(t *testing.T) {
 	if recordDelivery(t, ctx, tdb, svc, b.principalID, b.businessID, connID, "x") {
 		t.Fatalf("cross-business record must not succeed")
 	}
+	// Defence-in-depth: confirm nothing was persisted, not just that the call returned false.
+	var count int
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT COUNT(*) FROM connector_webhook_delivery WHERE connector_id = $1 AND external_delivery_id = 'x'",
+		connID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("cross-business delivery must not be persisted (got %d rows)", count)
+	}
 }
