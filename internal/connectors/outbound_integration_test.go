@@ -14,6 +14,9 @@ package connectors
 // external_id), so the claim's ticket_external_id assertion has a real value to read back.
 
 import (
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -132,5 +135,133 @@ func TestOutboundOpClaimComplete(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("re-claim returned %d ops, want 0", n)
+	}
+}
+
+// TestOutboundDispatcherPostsComment drives the full dispatcher comment path against an
+// httptest Jira stub behind the SSRF client: enqueue a comment op -> dispatchOnce -> the
+// stub receives the POST -> the native message's external_id is written back -> op done.
+// A second pass (op re-enqueued, message already stamped) must NOT re-POST (idempotency).
+func TestOutboundDispatcherPostsComment(t *testing.T) {
+	ctx, tdb, tenant := startConn(t)
+
+	var posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"jc-7","author":{"displayName":"ops"},"created":"2026-06-07T00:00:00.000+0000"}`))
+	}))
+	defer srv.Close()
+
+	seed := seedOutboundConnector(t, ctx, tdb, tenant, srv.URL)
+
+	disp := &OutboundDispatcher{
+		DB:       tdb.App,
+		Sealer:   seed.Sealer,
+		Registry: seed.Registry,
+		Logger:   slog.Default(),
+		Batch:    10,
+	}
+	if err := disp.dispatchOnce(ctx); err != nil {
+		t.Fatalf("dispatchOnce: %v", err)
+	}
+	if !posted {
+		t.Fatalf("stub never received the comment POST")
+	}
+
+	// Read-back via Super: ticket_message + connector_outbound_op are RLS-protected, so a
+	// principal-less App read sees nothing.
+	var ext *string
+	var status string
+	if err := tdb.Super.QueryRow(ctx, `SELECT external_id FROM ticket_message WHERE id=$1`, seed.MessageID).Scan(&ext); err != nil {
+		t.Fatalf("read message external_id: %v", err)
+	}
+	if err := tdb.Super.QueryRow(ctx, `SELECT status FROM connector_outbound_op WHERE id=$1`, seed.OpID).Scan(&status); err != nil {
+		t.Fatalf("read op status: %v", err)
+	}
+	if ext == nil || *ext != "jc-7" || status != "done" {
+		t.Fatalf("write-back failed: ext=%v status=%q", ext, status)
+	}
+
+	// Idempotency: re-enqueue the op (message already stamped) — dispatcher must NOT re-POST.
+	posted = false
+	if _, err := tdb.Super.Exec(ctx, `UPDATE connector_outbound_op SET status='pending' WHERE id=$1`, seed.OpID); err != nil {
+		t.Fatalf("re-enqueue op: %v", err)
+	}
+	if err := disp.dispatchOnce(ctx); err != nil {
+		t.Fatalf("dispatchOnce 2: %v", err)
+	}
+	if posted {
+		t.Fatalf("dispatcher re-posted a comment for an already-stamped message")
+	}
+
+	// The op should be back to done after the idempotent short-circuit.
+	if err := tdb.Super.QueryRow(ctx, `SELECT status FROM connector_outbound_op WHERE id=$1`, seed.OpID).Scan(&status); err != nil {
+		t.Fatalf("read op status after idempotent pass: %v", err)
+	}
+	if status != "done" {
+		t.Fatalf("idempotent pass left op status=%q, want done", status)
+	}
+}
+
+// TestOutboundDispatcherTerminalFailureCap pins the terminal-failure cap (maxOutboundAttempts).
+// The stub always returns HTTP 500, so PostComment always errors. claim_outbound_ops bumps and
+// returns the post-increment attempts, so attempts 1..4 requeue the op to 'pending' (reclaimable)
+// while attempt 5 (== maxOutboundAttempts) marks it terminally 'failed'. After 5 dispatchOnce
+// passes the op must be 'failed' and the stub must have been hit exactly maxOutboundAttempts times
+// (a 6th pass must NOT re-claim a terminal op).
+func TestOutboundDispatcherTerminalFailureCap(t *testing.T) {
+	ctx, tdb, tenant := startConn(t)
+
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	seed := seedOutboundConnector(t, ctx, tdb, tenant, srv.URL)
+
+	disp := &OutboundDispatcher{
+		DB:       tdb.App,
+		Sealer:   seed.Sealer,
+		Registry: seed.Registry,
+		Logger:   slog.Default(),
+		Batch:    10,
+	}
+
+	// Attempts 1..maxOutboundAttempts: each dispatchOnce claims the still-pending op, the POST
+	// 500s, and recordFailure requeues (non-terminal) until the final attempt goes terminal.
+	for i := 0; i < maxOutboundAttempts; i++ {
+		if err := disp.dispatchOnce(ctx); err != nil {
+			t.Fatalf("dispatchOnce pass %d: %v", i+1, err)
+		}
+	}
+
+	if posts != maxOutboundAttempts {
+		t.Fatalf("stub hit %d times, want %d (attempts 1..%d-1 retry, attempt %d terminal)",
+			posts, maxOutboundAttempts, maxOutboundAttempts, maxOutboundAttempts)
+	}
+
+	var status string
+	var attempts int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT status, attempts FROM connector_outbound_op WHERE id=$1`, seed.OpID).
+		Scan(&status, &attempts); err != nil {
+		t.Fatalf("read op status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("op status = %q, want failed (terminal cap)", status)
+	}
+	if attempts != maxOutboundAttempts {
+		t.Fatalf("op attempts = %d, want %d", attempts, maxOutboundAttempts)
+	}
+
+	// A further pass must NOT re-claim the terminal op (claim selects only status='pending').
+	if err := disp.dispatchOnce(ctx); err != nil {
+		t.Fatalf("dispatchOnce after terminal: %v", err)
+	}
+	if posts != maxOutboundAttempts {
+		t.Fatalf("terminal op was re-claimed: stub hit %d times, want %d", posts, maxOutboundAttempts)
 	}
 }
