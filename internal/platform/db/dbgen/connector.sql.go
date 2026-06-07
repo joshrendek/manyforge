@@ -178,3 +178,36 @@ func (q *Queries) InsertSecret(ctx context.Context, arg InsertSecretParams) (Sec
 	)
 	return i, err
 }
+
+const recordWebhookDelivery = `-- name: RecordWebhookDelivery :execrows
+INSERT INTO connector_webhook_delivery (id, business_id, tenant_root_id, connector_id, external_delivery_id, received_at)
+SELECT $1, b.id, b.tenant_root_id, $2, $3, now()
+FROM business b
+WHERE b.id = $4::uuid
+  AND EXISTS (SELECT 1 FROM connector c WHERE c.id = $2 AND c.business_id = b.id)
+ON CONFLICT (connector_id, external_delivery_id) DO NOTHING
+`
+
+type RecordWebhookDeliveryParams struct {
+	ID                 uuid.UUID `json:"id"`
+	ConnectorID        uuid.UUID `json:"connector_id"`
+	ExternalDeliveryID string    `json:"external_delivery_id"`
+	BusinessID         uuid.UUID `json:"business_id"`
+}
+
+// RecordWebhookDelivery dedupes inbound webhook deliveries per connector: ON CONFLICT
+// DO NOTHING means a replayed external_delivery_id inserts zero rows, which the caller
+// reads as "already seen". tenant_root derived from the RLS-visible business; the EXISTS
+// guard requires connector_id to belong to the SAME business (defense-in-depth).
+func (q *Queries) RecordWebhookDelivery(ctx context.Context, arg RecordWebhookDeliveryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordWebhookDelivery,
+		arg.ID,
+		arg.ConnectorID,
+		arg.ExternalDeliveryID,
+		arg.BusinessID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

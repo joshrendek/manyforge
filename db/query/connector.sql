@@ -33,3 +33,15 @@ RETURNING *;
 -- GetConnector fetches one connector scoped to (id, business); foreign/unknown id → no row (→ not-found).
 -- name: GetConnector :one
 SELECT * FROM connector WHERE id = $1 AND business_id = $2;
+
+-- RecordWebhookDelivery dedupes inbound webhook deliveries per connector: ON CONFLICT
+-- DO NOTHING means a replayed external_delivery_id inserts zero rows, which the caller
+-- reads as "already seen". tenant_root derived from the RLS-visible business; the EXISTS
+-- guard requires connector_id to belong to the SAME business (defense-in-depth).
+-- name: RecordWebhookDelivery :execrows
+INSERT INTO connector_webhook_delivery (id, business_id, tenant_root_id, connector_id, external_delivery_id, received_at)
+SELECT sqlc.arg('id'), b.id, b.tenant_root_id, sqlc.arg('connector_id'), sqlc.arg('external_delivery_id'), now()
+FROM business b
+WHERE b.id = sqlc.arg('business_id')::uuid
+  AND EXISTS (SELECT 1 FROM connector c WHERE c.id = sqlc.arg('connector_id') AND c.business_id = b.id)
+ON CONFLICT (connector_id, external_delivery_id) DO NOTHING;
