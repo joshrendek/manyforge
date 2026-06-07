@@ -7,6 +7,7 @@ package secrets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 // Vault seals + stores secrets. Sealer is the AES-256-GCM sealer.
@@ -28,6 +30,9 @@ func NewVault(s *crypto.Sealer) *Vault { return &Vault{Sealer: s} }
 // secret id. Plaintext is sealed BEFORE the insert; only ciphertext touches the DB.
 // The InsertSecret query derives tenant_root + enforces RLS from business_id.
 func (v *Vault) Put(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, scope string, plaintext []byte) (uuid.UUID, error) {
+	if len(plaintext) == 0 {
+		return uuid.Nil, fmt.Errorf("secrets: put: plaintext must not be empty: %w", errs.ErrValidation)
+	}
 	sealed, err := v.Sealer.Seal(plaintext)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("secrets: seal: %w", err)
@@ -45,6 +50,9 @@ func (v *Vault) Put(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, scope 
 func (v *Vault) Open(ctx context.Context, tx pgx.Tx, businessID, secretID uuid.UUID) ([]byte, error) {
 	row, err := dbgen.New(tx).GetSecret(ctx, dbgen.GetSecretParams{ID: secretID, BusinessID: businessID})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("secrets: not found: %w", errs.ErrNotFound)
+		}
 		return nil, fmt.Errorf("secrets: get: %w", err)
 	}
 	pt, err := v.Sealer.Open(row.SealedValue)
@@ -56,8 +64,12 @@ func (v *Vault) Open(ctx context.Context, tx pgx.Tx, businessID, secretID uuid.U
 
 // Delete removes the secret in the caller's tx.
 func (v *Vault) Delete(ctx context.Context, tx pgx.Tx, businessID, secretID uuid.UUID) error {
-	if _, err := dbgen.New(tx).DeleteSecret(ctx, dbgen.DeleteSecretParams{ID: secretID, BusinessID: businessID}); err != nil {
+	n, err := dbgen.New(tx).DeleteSecret(ctx, dbgen.DeleteSecretParams{ID: secretID, BusinessID: businessID})
+	if err != nil {
 		return fmt.Errorf("secrets: delete: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("secrets: not found: %w", errs.ErrNotFound)
 	}
 	return nil
 }
