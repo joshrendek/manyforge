@@ -11,6 +11,7 @@ package connectors
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -73,7 +74,7 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 		p.ConnectorID,
 	).Scan(&bizID, &tenantRoot, &ctype, &baseURL, &allowPriv, &sealed)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			s.logger().WarnContext(ctx, "connectors/inbound_sync: connector not found or disabled",
 				"connector_id", p.ConnectorID, "event_id", e.ID)
 			return nil
