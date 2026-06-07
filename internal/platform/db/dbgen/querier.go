@@ -118,6 +118,16 @@ type Querier interface {
 	// separately (HasOwnerRole + AllPermissionKeys) so future catalog additions are
 	// covered automatically (research R3).
 	EffectivePermissions(ctx context.Context, arg EffectivePermissionsParams) ([]string, error)
+	// EnqueueOutboundComment records a pending 'comment' outbound op for a connector-linked
+	// ticket, in the caller's (principal) tx. The ownership predicate is pushed into SQL: the
+	// row is inserted ONLY if the ticket is owned by the business AND is connector-linked, and
+	// connector_id/tenant_root_id are derived from that ticket row (defense-in-depth beyond RLS).
+	EnqueueOutboundComment(ctx context.Context, arg EnqueueOutboundCommentParams) error
+	// EnqueueOutboundCreate records a pending 'create_issue' op linking an as-yet-unlinked
+	// native ticket to a connector. Inserted ONLY if the ticket is owned + NOT already linked.
+	// connector_id is supplied (not derived) because the ticket isn't linked yet; tenant_root_id
+	// comes from the ticket. The connector's own tenancy is re-checked via the composite FK.
+	EnqueueOutboundCreate(ctx context.Context, arg EnqueueOutboundCreateParams) error
 	// Notify/events queries (spec 002, SL-C/SL-D). Plain table ops only; the
 	// SECURITY DEFINER drain functions (claim_outbox_batch / mark_outbox_processed /
 	// reschedule_outbox) are called via raw pgx in internal/platform/events (sqlc
