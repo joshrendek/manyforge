@@ -72,7 +72,7 @@ These resolve genuine forks the spec/US3-review left open. The spec-compliance r
 - Create: `internal/connectors/jira/testdata/create_issue_response.json`
 - Modify: `internal/connectors/jira/client_test.go`
 
-- [ ] **Step 1: Write the failing Jira-client unit test**
+- [x] **Step 1: Write the failing Jira-client unit test**
 
 Add to `internal/connectors/jira/client_test.go` (it already has `newTestClient`, `loadGolden`, `httptest`):
 
@@ -129,12 +129,12 @@ Create `internal/connectors/jira/testdata/create_issue_response.json`:
 {"id":"10042","key":"SUP-42","self":"https://acme.atlassian.net/rest/api/3/issue/10042"}
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/connectors/jira/ -run TestCreateIssue -v`
 Expected: FAIL — `c.CreateIssue undefined` and `connectors.ExternalIssueDraft undefined`.
 
-- [ ] **Step 3: Add the interface method + draft struct**
+- [x] **Step 3: Add the interface method + draft struct**
 
 In `internal/connectors/connector.go`, add after `ExternalIssue` (line 35) the draft struct:
 
@@ -157,7 +157,7 @@ In the `TicketingConnector` interface (after line 52, the `PostComment` line) ad
 	CreateIssue(ctx context.Context, draft ExternalIssueDraft) (ExternalIssue, error)
 ```
 
-- [ ] **Step 4: Add the stub to `fakeConnector`**
+- [x] **Step 4: Add the stub to `fakeConnector`**
 
 In `internal/connectors/connector_test.go`, after the `PostComment` method (line 23) add:
 
@@ -167,7 +167,7 @@ func (f *fakeConnector) CreateIssue(ctx context.Context, draft ExternalIssueDraf
 }
 ```
 
-- [ ] **Step 5: Implement `CreateIssue` on the Jira client**
+- [x] **Step 5: Implement `CreateIssue` on the Jira client**
 
 In `internal/connectors/jira/client.go`, add after `PostComment` (after line 141). It mirrors `PostComment`'s `doJSON` usage and uses `buildADFDoc` for the description:
 
@@ -217,18 +217,20 @@ type jiraCreateIssueResponse struct {
 }
 ```
 
-- [ ] **Step 6: Run the unit + interface tests to verify they pass**
+- [x] **Step 6: Run the unit + interface tests to verify they pass**
 
 Run: `go test ./internal/connectors/jira/ -run TestCreateIssue -v && go test ./internal/connectors/ -run TestFakeConnector -v`
 Expected: PASS. Then `go build ./...` (clean — confirms every other `TicketingConnector` implementer compiles).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 gofmt -w internal/connectors/
 git add internal/connectors/connector.go internal/connectors/connector_test.go internal/connectors/jira/ .beads/issues.jsonl
 git commit --no-verify -m "feat(connectors/jira): T1 — CreateIssue on connector interface + Jira client (manyforge-a7j.4)"
 ```
+
+> ✅ **Task 1 DONE** (commit `170e929`). TDD: 3 client tests pass (`TestCreateIssue`, `TestCreateIssueRejectsEmptyProject`, `TestCreateIssueOmitsEmptyDescription`); `go build ./...` clean. Spec-compliance ✅, code-quality APPROVED (re-reviewed after 2 accepted minor fixes: added empty-`Description` branch test + corrected `CreateIssue` doc comment). `manyforge-a7j.4.1` closed.
 
 ---
 
