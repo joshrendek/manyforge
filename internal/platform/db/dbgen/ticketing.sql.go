@@ -111,7 +111,7 @@ func (q *Queries) DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsPara
 }
 
 const getOutboundMessageByApproval = `-- name: GetOutboundMessageByApproval :one
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id FROM ticket_message
 WHERE source_approval_item_id = $1 AND business_id = $2
 `
 
@@ -143,6 +143,8 @@ func (q *Queries) GetOutboundMessageByApproval(ctx context.Context, arg GetOutbo
 		&i.DeliveryState,
 		&i.DeliveryError,
 		&i.SourceApprovalItemID,
+		&i.ConnectorID,
+		&i.ExternalID,
 	)
 	return i, err
 }
@@ -240,7 +242,7 @@ func (q *Queries) GetThreadingParent(ctx context.Context, arg GetThreadingParent
 }
 
 const getTicket = `-- name: GetTicket :one
-SELECT id, business_id, tenant_root_id, requester_id, subject, status, priority, assignee_principal_id, reply_token, last_message_at, redacted_at, created_at, updated_at FROM ticket
+SELECT id, business_id, tenant_root_id, requester_id, subject, status, priority, assignee_principal_id, reply_token, last_message_at, redacted_at, created_at, updated_at, connector_id, external_id, external_url FROM ticket
 WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL
 `
 
@@ -270,6 +272,9 @@ func (q *Queries) GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, e
 		&i.RedactedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConnectorID,
+		&i.ExternalID,
+		&i.ExternalUrl,
 	)
 	return i, err
 }
@@ -279,7 +284,7 @@ INSERT INTO ticket_message (
     id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
     message_id, body_text, body_html)
 VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8)
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id
 `
 
 type InsertNoteMessageParams struct {
@@ -324,6 +329,8 @@ func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessagePa
 		&i.DeliveryState,
 		&i.DeliveryError,
 		&i.SourceApprovalItemID,
+		&i.ConnectorID,
+		&i.ExternalID,
 	)
 	return i, err
 }
@@ -336,7 +343,7 @@ INSERT INTO ticket_message (
 VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending',
     $11)
 ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id
 `
 
 type InsertOutboundMessageParams struct {
@@ -390,6 +397,8 @@ func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundM
 		&i.DeliveryState,
 		&i.DeliveryError,
 		&i.SourceApprovalItemID,
+		&i.ConnectorID,
+		&i.ExternalID,
 	)
 	return i, err
 }
@@ -527,7 +536,7 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, arg ListAttach
 
 const listMessages = `-- name: ListMessages :many
 
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
 ORDER BY created_at ASC, id ASC
@@ -572,6 +581,8 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 			&i.DeliveryState,
 			&i.DeliveryError,
 			&i.SourceApprovalItemID,
+			&i.ConnectorID,
+			&i.ExternalID,
 		); err != nil {
 			return nil, err
 		}
@@ -584,7 +595,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 }
 
 const listMessagesAfter = `-- name: ListMessagesAfter :many
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
   AND (ticket_message.created_at, ticket_message.id) > ($3::timestamptz, $4::uuid)
@@ -634,6 +645,8 @@ func (q *Queries) ListMessagesAfter(ctx context.Context, arg ListMessagesAfterPa
 			&i.DeliveryState,
 			&i.DeliveryError,
 			&i.SourceApprovalItemID,
+			&i.ConnectorID,
+			&i.ExternalID,
 		); err != nil {
 			return nil, err
 		}
@@ -822,7 +835,7 @@ const listTickets = `-- name: ListTickets :many
 
 
 SELECT
-  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at,
+  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url,
   r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
   COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
             FROM ticket_tag tt
@@ -906,6 +919,9 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.Ticket.RedactedAt,
 			&i.Ticket.CreatedAt,
 			&i.Ticket.UpdatedAt,
+			&i.Ticket.ConnectorID,
+			&i.Ticket.ExternalID,
+			&i.Ticket.ExternalUrl,
 			&i.Requester.ID,
 			&i.Requester.BusinessID,
 			&i.Requester.TenantRootID,
@@ -931,7 +947,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 
 const listTicketsAfter = `-- name: ListTicketsAfter :many
 SELECT
-  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at,
+  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url,
   r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
   COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
             FROM ticket_tag tt
@@ -1008,6 +1024,9 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 			&i.Ticket.RedactedAt,
 			&i.Ticket.CreatedAt,
 			&i.Ticket.UpdatedAt,
+			&i.Ticket.ConnectorID,
+			&i.Ticket.ExternalID,
+			&i.Ticket.ExternalUrl,
 			&i.Requester.ID,
 			&i.Requester.BusinessID,
 			&i.Requester.TenantRootID,
