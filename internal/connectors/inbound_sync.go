@@ -11,6 +11,7 @@ package connectors
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -85,10 +86,17 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 	if err != nil {
 		s.logger().ErrorContext(ctx, "connectors/inbound_sync: unseal failed",
 			"connector_id", p.ConnectorID, "event_id", e.ID)
-		return nil // poison: config error, no point retrying
+		// RESCHEDULE (return err), don't drop: a rotated/misconfigured master key would
+		// otherwise silently lose every inbound event forever. Noisy capped retries give
+		// ops a window to fix the key before the outbox caps attempts. (Corrupt ciphertext
+		// — essentially impossible post-GCM — would loop until the cap; acceptable vs data loss.)
+		return fmt.Errorf("connectors/inbound_sync: unseal connector %s credential: %w", p.ConnectorID, err)
 	}
 	var cred Credential
 	if err := json.Unmarshal(plain, &cred); err != nil {
+		// Unlike unseal: a GCM-authenticated plaintext was written by Service.Create, which
+		// always marshals a valid Credential — so this is genuine corruption/a Create bug,
+		// not recoverable by retry. Drop (return nil).
 		s.logger().ErrorContext(ctx, "connectors/inbound_sync: credential unmarshal failed",
 			"connector_id", p.ConnectorID, "event_id", e.ID)
 		return nil
