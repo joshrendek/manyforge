@@ -75,3 +75,9 @@ FROM connector WHERE status = 'enabled'
 -- StampConnectorReconciled sets last_reconciled_at = now() after a successful reconcile pass.
 -- name: StampConnectorReconciled :exec
 UPDATE connector SET last_reconciled_at = now(), updated_at = now() WHERE id = $1;
+
+-- EnqueueConnectorInboundSync enqueues a connector.inbound.sync event through the
+-- principal-less SECURITY DEFINER (reconcile poller has no principal; outbox is RLS-protected).
+-- Migration 0044 creates the function.
+-- name: EnqueueConnectorInboundSync :exec
+SELECT enqueue_connector_inbound_sync($1, $2, $3, $4);

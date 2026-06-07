@@ -118,6 +118,10 @@ type Querier interface {
 	// separately (HasOwnerRole + AllPermissionKeys) so future catalog additions are
 	// covered automatically (research R3).
 	EffectivePermissions(ctx context.Context, arg EffectivePermissionsParams) ([]string, error)
+	// EnqueueConnectorInboundSync enqueues a connector.inbound.sync event through the
+	// principal-less SECURITY DEFINER (reconcile poller has no principal; outbox is RLS-protected).
+	// Migration 0044 creates the function.
+	EnqueueConnectorInboundSync(ctx context.Context, arg EnqueueConnectorInboundSyncParams) error
 	// Notify/events queries (spec 002, SL-C/SL-D). Plain table ops only; the
 	// SECURITY DEFINER drain functions (claim_outbox_batch / mark_outbox_processed /
 	// reschedule_outbox) are called via raw pgx in internal/platform/events (sqlc
