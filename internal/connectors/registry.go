@@ -3,6 +3,7 @@ package connectors
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -16,6 +17,7 @@ type Factory func(rc ResolvedConnector) (TicketingConnector, error)
 // US1 credential Service, RLS-scoped) into a live, credential-bound client.
 type Registry struct {
 	svc       *Service
+	mu        sync.RWMutex
 	factories map[string]Factory
 }
 
@@ -24,8 +26,14 @@ func NewRegistry(svc *Service) *Registry {
 	return &Registry{svc: svc, factories: map[string]Factory{}}
 }
 
-// Register binds a connector type (e.g. "jira") to its factory.
+// Register binds a connector type (e.g. "jira") to its factory. Intended to be called
+// at startup. Panics if the type is already registered (a wiring bug).
 func (r *Registry) Register(connectorType string, f Factory) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.factories[connectorType]; exists {
+		panic(fmt.Sprintf("connectors: factory for type %q already registered", connectorType))
+	}
 	r.factories[connectorType] = f
 }
 
@@ -38,7 +46,9 @@ func (r *Registry) Resolve(ctx context.Context, principalID, businessID, connect
 	if err != nil {
 		return nil, err
 	}
+	r.mu.RLock()
 	f, ok := r.factories[rc.Type]
+	r.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("connectors: no factory registered for type %q", rc.Type)
 	}
