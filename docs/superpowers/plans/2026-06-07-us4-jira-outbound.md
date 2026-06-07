@@ -1092,7 +1092,7 @@ git commit --no-verify -m "feat(connectors): T4 — OutboundDispatcher poller (c
 - Modify: `internal/connectors/outbound_integration_test.go`
 - Modify: `internal/connectors/service_integration_test.go` (or wherever `Service` tests live)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `internal/connectors/outbound_integration_test.go`:
 
@@ -1148,12 +1148,12 @@ func TestEnqueueOutboundCreateIssueOwnership(t *testing.T) {
 
 > Build `seedOutboundCreate` reusing `seedOutboundConnector`, but with `connector.config = '{"project_key":"SUP","issue_type":"Task"}'` and an UNLINKED `ticket` (no connector_id), returning the `Service`, `PrincipalID`, ids.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run 'TestOutboundDispatcherCreatesIssue|TestEnqueueOutboundCreateIssueOwnership' -v`
 Expected: FAIL — `Service.EnqueueOutboundCreateIssue` undefined.
 
-- [ ] **Step 3: Implement the escalation service method**
+- [x] **Step 3: Implement the escalation service method**
 
 In `internal/connectors/service.go`, add (it uses the existing `serviceDB.WithPrincipal` + `mapErr` + the `EnqueueOutboundCreate` dbgen query from Task 3):
 
@@ -1189,16 +1189,16 @@ func (s *Service) EnqueueOutboundCreateIssue(ctx context.Context, principalID, b
 
 > The `:exec` form returns no row count. To detect the no-op, change the `EnqueueOutboundCreate` query in `db/query/connector_outbound.sql` to `:execrows` (returns `int64`) and regenerate — then the method is `EnqueueOutboundCreate(...) (int64, error)`. Rename the call above to match (`q.EnqueueOutboundCreate`). Do the same for `EnqueueOutboundComment` only if Task 3's test needs the count (it asserts via a separate SELECT, so `:exec` is fine there). Confirm imports: `fmt`, `errs` (`internal/platform/errs`) are already imported in service.go.
 
-- [ ] **Step 4: Add the dispatcher create-branch coverage**
+- [x] **Step 4: Add the dispatcher create-branch coverage**
 
 `dispatchCreate` (Task 4) already handles `op_type='create_issue'`. No new dispatcher code — Step 1's test exercises it end-to-end.
 
-- [ ] **Step 5: Run + build**
+- [x] **Step 5: Run + build**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run 'TestOutboundDispatcherCreatesIssue|TestEnqueueOutboundCreateIssueOwnership' -v && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 gofmt -w internal/connectors/ && make generate
