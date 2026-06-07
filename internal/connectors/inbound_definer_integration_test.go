@@ -45,8 +45,8 @@ func TestInboundDefiner(t *testing.T) {
 	var ticketID uuid.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, syncIssueSQL,
-			connID,                                      // $1  p_connector_id
-			externalID,                                  // $2  p_external_id
+			connID,     // $1  p_connector_id
+			externalID, // $2  p_external_id
 			"https://acme.atlassian.net/browse/JIRA-42", // $3  p_external_url
 			"Test issue title",                          // $4  p_subject
 			"open",                                      // $5  p_status
