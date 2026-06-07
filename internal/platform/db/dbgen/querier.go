@@ -412,6 +412,11 @@ type Querier interface {
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).
 	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
+	// RecordWebhookDelivery dedupes inbound webhook deliveries per connector: ON CONFLICT
+	// DO NOTHING means a replayed external_delivery_id inserts zero rows, which the caller
+	// reads as "already seen". tenant_root derived from the RLS-visible business; the EXISTS
+	// guard requires connector_id to belong to the SAME business (defense-in-depth).
+	RecordWebhookDelivery(ctx context.Context, arg RecordWebhookDeliveryParams) (int64, error)
 	// ---- US5 redact / soft-delete (T066) ----
 	// RedactTicket soft-deletes a ticket in place: blanks its subject and stamps
 	// redacted_at, scoped to (id, business_id) under the caller's RLS context. Idempotent —

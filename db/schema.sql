@@ -216,6 +216,9 @@ CREATE TABLE ticket (
     redacted_at           timestamptz,
     created_at            timestamptz NOT NULL,
     updated_at            timestamptz NOT NULL,
+    connector_id          uuid,
+    external_id           text,
+    external_url          text,
     UNIQUE (id, tenant_root_id),
     UNIQUE (tenant_root_id, reply_token)
 );
@@ -247,9 +250,13 @@ CREATE TABLE ticket_message (
     delivery_state      message_delivery_state,
     delivery_error      text,
     source_approval_item_id uuid,
+    connector_id        uuid,
+    external_id         text,
     UNIQUE (tenant_root_id, message_id),
     UNIQUE (id, tenant_root_id)
 );
+CREATE UNIQUE INDEX ticket_external_idx ON ticket (connector_id, external_id) WHERE connector_id IS NOT NULL;
+CREATE UNIQUE INDEX ticket_message_external_idx ON ticket_message (connector_id, external_id) WHERE connector_id IS NOT NULL;
 
 CREATE TABLE attachment (
     id                uuid PRIMARY KEY,
@@ -445,3 +452,31 @@ CREATE TABLE connector (
     FOREIGN KEY (secret_ref, tenant_root_id) REFERENCES secret (id, tenant_root_id)
 );
 CREATE INDEX connector_business_idx ON connector (business_id, tenant_root_id);
+
+CREATE TABLE connector_sync_state (
+    ticket_id           uuid PRIMARY KEY,
+    business_id         uuid NOT NULL,
+    tenant_root_id      uuid NOT NULL,
+    connector_id        uuid NOT NULL,
+    external_id         text NOT NULL,
+    snapshot            jsonb NOT NULL,
+    external_updated_at timestamptz NOT NULL,
+    synced_at           timestamptz NOT NULL,
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (ticket_id, tenant_root_id) REFERENCES ticket (id, tenant_root_id),
+    FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id)
+);
+CREATE INDEX connector_sync_state_business_idx ON connector_sync_state (business_id, tenant_root_id);
+
+CREATE TABLE connector_webhook_delivery (
+    id                   uuid PRIMARY KEY,
+    business_id          uuid NOT NULL,
+    tenant_root_id       uuid NOT NULL,
+    connector_id         uuid NOT NULL,
+    external_delivery_id text NOT NULL,
+    received_at          timestamptz NOT NULL,
+    UNIQUE (connector_id, external_delivery_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id)
+);
+CREATE INDEX connector_webhook_delivery_business_idx ON connector_webhook_delivery (business_id, tenant_root_id);

@@ -553,6 +553,26 @@ type Connector struct {
 	UpdatedAt           time.Time     `json:"updated_at"`
 }
 
+type ConnectorSyncState struct {
+	TicketID          uuid.UUID `json:"ticket_id"`
+	BusinessID        uuid.UUID `json:"business_id"`
+	TenantRootID      uuid.UUID `json:"tenant_root_id"`
+	ConnectorID       uuid.UUID `json:"connector_id"`
+	ExternalID        string    `json:"external_id"`
+	Snapshot          []byte    `json:"snapshot"`
+	ExternalUpdatedAt time.Time `json:"external_updated_at"`
+	SyncedAt          time.Time `json:"synced_at"`
+}
+
+type ConnectorWebhookDelivery struct {
+	ID                 uuid.UUID `json:"id"`
+	BusinessID         uuid.UUID `json:"business_id"`
+	TenantRootID       uuid.UUID `json:"tenant_root_id"`
+	ConnectorID        uuid.UUID `json:"connector_id"`
+	ExternalDeliveryID string    `json:"external_delivery_id"`
+	ReceivedAt         time.Time `json:"received_at"`
+}
+
 type EmailDomain struct {
 	ID                uuid.UUID           `json:"id"`
 	BusinessID        uuid.UUID           `json:"business_id"`
@@ -746,6 +766,9 @@ type Ticket struct {
 	RedactedAt          pgtype.Timestamptz `json:"redacted_at"`
 	CreatedAt           time.Time          `json:"created_at"`
 	UpdatedAt           time.Time          `json:"updated_at"`
+	ConnectorID         pgtype.UUID        `json:"connector_id"`
+	ExternalID          *string            `json:"external_id"`
+	ExternalUrl         *string            `json:"external_url"`
 }
 
 type TicketMessage struct {
@@ -766,6 +789,8 @@ type TicketMessage struct {
 	DeliveryState        NullMessageDeliveryState `json:"delivery_state"`
 	DeliveryError        *string                  `json:"delivery_error"`
 	SourceApprovalItemID pgtype.UUID              `json:"source_approval_item_id"`
+	ConnectorID          pgtype.UUID              `json:"connector_id"`
+	ExternalID           *string                  `json:"external_id"`
 }
 
 type TicketTag struct {
