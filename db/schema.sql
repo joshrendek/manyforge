@@ -483,3 +483,26 @@ CREATE TABLE connector_webhook_delivery (
     FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id)
 );
 CREATE INDEX connector_webhook_delivery_business_idx ON connector_webhook_delivery (business_id, tenant_root_id);
+
+CREATE TYPE connector_outbound_op_type   AS ENUM ('comment', 'create_issue');
+CREATE TYPE connector_outbound_op_status AS ENUM ('pending', 'in_progress', 'done', 'failed');
+
+CREATE TABLE connector_outbound_op (
+    id             uuid PRIMARY KEY,
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    connector_id   uuid NOT NULL,
+    ticket_id      uuid NOT NULL,
+    message_id     uuid,
+    op_type        connector_outbound_op_type NOT NULL,
+    status         connector_outbound_op_status NOT NULL,
+    attempts       int NOT NULL,
+    body           text,
+    last_error     text,
+    created_at     timestamptz NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (connector_id, tenant_root_id) REFERENCES connector (id, tenant_root_id),
+    FOREIGN KEY (ticket_id, tenant_root_id) REFERENCES ticket (id, tenant_root_id)
+);
+CREATE INDEX connector_outbound_op_business_idx ON connector_outbound_op (business_id, tenant_root_id);

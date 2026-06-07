@@ -48,6 +48,9 @@ func (f *reconcileFakeConnector) VerifyWebhook(_ http.Header, _ []byte) error { 
 func (f *reconcileFakeConnector) DecodeWebhook(_ []byte) (WebhookEvent, error) {
 	return WebhookEvent{}, nil
 }
+func (f *reconcileFakeConnector) CreateIssue(_ context.Context, _ ExternalIssueDraft) (ExternalIssue, error) {
+	return ExternalIssue{}, nil
+}
 
 // TestReconcileOnce_NullLastReconciled verifies that a connector with
 // last_reconciled_at IS NULL is treated as due. reconcileOnce must:

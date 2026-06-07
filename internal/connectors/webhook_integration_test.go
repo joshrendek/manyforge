@@ -94,6 +94,9 @@ func (h *hmacFakeConnector) DecodeWebhook(body []byte) (WebhookEvent, error) {
 		Kind:       "issue.updated",
 	}, nil
 }
+func (h *hmacFakeConnector) CreateIssue(_ context.Context, _ ExternalIssueDraft) (ExternalIssue, error) {
+	return ExternalIssue{}, nil
+}
 
 // webhookPayload builds a minimal Jira webhook JSON payload.
 func webhookPayload(issueKey string, ts int64) []byte {
