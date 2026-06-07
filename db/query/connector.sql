@@ -55,23 +55,12 @@ SELECT c.business_id, c.tenant_root_id, c.type AS ctype, s.sealed_value AS seale
 FROM connector c JOIN secret s ON s.id = c.secret_ref
 WHERE c.id = $1 AND c.status = 'enabled';
 
--- IngestConnectorWebhook dedupes a verified webhook delivery and enqueues a
--- connector.inbound.sync outbox event atomically (SECURITY DEFINER — principal-less).
--- Returns true on first delivery, false on replay.
--- name: IngestConnectorWebhook :one
-SELECT ingest_connector_webhook($1, $2, $3, $4, $5);
-
--- SyncInboundExternalIssue upserts requester+ticket+connector_sync_state for one
--- external issue (external-wins scalars). SECURITY DEFINER — no principal required.
--- Returns the native ticket_id.
--- name: SyncInboundExternalIssue :one
-SELECT sync_inbound_external_issue($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
-
--- SyncInboundExternalComment appends one inbound comment, deduped by
--- (connector_id, external_id). SECURITY DEFINER — no principal required.
--- Returns the new ticket_message id, or NULL on duplicate.
--- name: SyncInboundExternalComment :one
-SELECT sync_inbound_external_comment($1,$2,$3,$4);
+-- NOTE: ingest_connector_webhook, sync_inbound_external_issue, and
+-- sync_inbound_external_comment are SECURITY DEFINER functions called via raw
+-- tx.QueryRow at their (principal-less) call sites — NOT via sqlc wrappers. sqlc
+-- cannot infer their scalar arg/return types without the fn in schema.sql, so a
+-- wrapper erases every param+return to interface{} and propagates that to all
+-- callers (T3/T4/T5). Mirrors the ingest_inbound_message precedent (inbox/service.go).
 
 -- ListConnectorsDueForReconcile returns enabled connectors whose last_reconciled_at is
 -- older than the given interval (or NULL = never reconciled → always due).

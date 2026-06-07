@@ -10,19 +10,21 @@ package connectors
 //     with same (connector_id, external_id) is a no-op (returns NULL).
 //
 // All calls run principal-less via tdb.App.WithTx (no manyforge.principal_id GUC set),
-// proving the DEFINER functions bypass RLS correctly.
+// proving the DEFINER functions bypass RLS correctly. The DEFINER fns are scalar-returning
+// and called via raw tx.QueryRow (sqlc generates no typed wrapper for them — see connector.sql).
 
 import (
-	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+)
 
-	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
+const (
+	syncIssueSQL   = `SELECT sync_inbound_external_issue($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
+	syncCommentSQL = `SELECT sync_inbound_external_comment($1,$2,$3,$4)`
 )
 
 func TestInboundDefiner(t *testing.T) {
@@ -36,43 +38,24 @@ func TestInboundDefiner(t *testing.T) {
 	}
 
 	externalID := "JIRA-42"
-	snapshotJSON, _ := json.Marshal(map[string]any{"key": "JIRA-42", "status": "open"})
+	snapshotJSON := []byte(`{"key":"JIRA-42","status":"open"}`)
 	updatedAt := time.Now().UTC().Add(-5 * time.Minute)
 
-	// ---- First call: insert ----
+	// ---- First call: insert (principal-less; the DEFINER bypasses RLS) ----
 	var ticketID uuid.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		var raw interface{}
-		var scanErr error
-		raw, scanErr = dbgen.New(tx).SyncInboundExternalIssue(ctx, dbgen.SyncInboundExternalIssueParams{
-			SyncInboundExternalIssue:    connID,
-			SyncInboundExternalIssue_2:  externalID,
-			SyncInboundExternalIssue_3:  "https://acme.atlassian.net/browse/JIRA-42",
-			SyncInboundExternalIssue_4:  "Test issue title",
-			SyncInboundExternalIssue_5:  "open",
-			SyncInboundExternalIssue_6:  "high",
-			SyncInboundExternalIssue_7:  "reporter@example.com",
-			SyncInboundExternalIssue_8:  "Reporter Name",
-			SyncInboundExternalIssue_9:  updatedAt,
-			SyncInboundExternalIssue_10: snapshotJSON,
-		})
-		if scanErr != nil {
-			return scanErr
-		}
-		// raw is a [16]byte from pgx for a uuid return
-		if raw == nil {
-			return context.DeadlineExceeded // shouldn't happen
-		}
-		switch v := raw.(type) {
-		case [16]byte:
-			ticketID = uuid.UUID(v)
-		default:
-			// pgx may decode uuid as string
-			if err := ticketID.Scan(raw); err != nil {
-				t.Fatalf("cannot scan ticket uuid: %T %v", raw, raw)
-			}
-		}
-		return nil
+		return tx.QueryRow(ctx, syncIssueSQL,
+			connID,                                      // $1  p_connector_id
+			externalID,                                  // $2  p_external_id
+			"https://acme.atlassian.net/browse/JIRA-42", // $3  p_external_url
+			"Test issue title",                          // $4  p_subject
+			"open",                                      // $5  p_status
+			"high",                                      // $6  p_priority
+			"reporter@example.com",                      // $7  p_reporter_email (citext)
+			"Reporter Name",                             // $8  p_reporter_name
+			updatedAt,                                   // $9  p_external_updated_at
+			snapshotJSON,                                // $10 p_snapshot (jsonb)
+		).Scan(&ticketID)
 	}); err != nil {
 		t.Fatalf("first SyncInboundExternalIssue: %v", err)
 	}
@@ -120,33 +103,21 @@ func TestInboundDefiner(t *testing.T) {
 	}
 
 	// ---- Second call: same external_id, different status (external-wins) ----
-	snapshotJSON2, _ := json.Marshal(map[string]any{"key": "JIRA-42", "status": "done"})
+	snapshotJSON2 := []byte(`{"key":"JIRA-42","status":"done"}`)
 	var ticketID2 uuid.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		raw, scanErr := dbgen.New(tx).SyncInboundExternalIssue(ctx, dbgen.SyncInboundExternalIssueParams{
-			SyncInboundExternalIssue:    connID,
-			SyncInboundExternalIssue_2:  externalID,
-			SyncInboundExternalIssue_3:  "https://acme.atlassian.net/browse/JIRA-42",
-			SyncInboundExternalIssue_4:  "Test issue title updated",
-			SyncInboundExternalIssue_5:  "done", // maps to 'closed'
-			SyncInboundExternalIssue_6:  "highest",
-			SyncInboundExternalIssue_7:  "reporter@example.com",
-			SyncInboundExternalIssue_8:  "Reporter Name",
-			SyncInboundExternalIssue_9:  time.Now().UTC(),
-			SyncInboundExternalIssue_10: snapshotJSON2,
-		})
-		if scanErr != nil {
-			return scanErr
-		}
-		switch v := raw.(type) {
-		case [16]byte:
-			ticketID2 = uuid.UUID(v)
-		default:
-			if err := ticketID2.Scan(raw); err != nil {
-				t.Fatalf("cannot scan ticket uuid (2nd): %T %v", raw, raw)
-			}
-		}
-		return nil
+		return tx.QueryRow(ctx, syncIssueSQL,
+			connID,
+			externalID,
+			"https://acme.atlassian.net/browse/JIRA-42",
+			"Test issue title updated",
+			"done", // maps to 'closed'
+			"highest",
+			"reporter@example.com",
+			"Reporter Name",
+			time.Now().UTC(),
+			snapshotJSON2,
+		).Scan(&ticketID2)
 	}); err != nil {
 		t.Fatalf("second SyncInboundExternalIssue: %v", err)
 	}
@@ -175,30 +146,12 @@ func TestInboundDefiner(t *testing.T) {
 	commentExternalID := "comment-1"
 	var msgID1 pgtype.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		raw, scanErr := dbgen.New(tx).SyncInboundExternalComment(ctx, dbgen.SyncInboundExternalCommentParams{
-			SyncInboundExternalComment:   ticketID,
-			SyncInboundExternalComment_2: connID,
-			SyncInboundExternalComment_3: commentExternalID,
-			SyncInboundExternalComment_4: "First comment body",
-		})
-		if scanErr != nil {
-			return scanErr
-		}
-		if raw == nil {
-			// NULL return means duplicate - unexpected on first call
-			return nil
-		}
-		switch v := raw.(type) {
-		case [16]byte:
-			msgID1 = pgtype.UUID{Bytes: v, Valid: true}
-		default:
-			var uid uuid.UUID
-			if err := uid.Scan(raw); err != nil {
-				t.Fatalf("cannot scan message uuid: %T %v", raw, raw)
-			}
-			msgID1 = pgtype.UUID{Bytes: uid, Valid: true}
-		}
-		return nil
+		return tx.QueryRow(ctx, syncCommentSQL,
+			ticketID,             // $1 p_ticket_id
+			connID,               // $2 p_connector_id
+			commentExternalID,    // $3 p_external_id
+			"First comment body", // $4 p_body
+		).Scan(&msgID1)
 	}); err != nil {
 		t.Fatalf("first SyncInboundExternalComment: %v", err)
 	}
@@ -221,30 +174,12 @@ func TestInboundDefiner(t *testing.T) {
 	// ---- Comment upsert: second call with same external_id → no-op (NULL return) ----
 	var msgID2 pgtype.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		raw, scanErr := dbgen.New(tx).SyncInboundExternalComment(ctx, dbgen.SyncInboundExternalCommentParams{
-			SyncInboundExternalComment:   ticketID,
-			SyncInboundExternalComment_2: connID,
-			SyncInboundExternalComment_3: commentExternalID, // same external_id → dedupe
-			SyncInboundExternalComment_4: "Duplicate comment body",
-		})
-		if scanErr != nil {
-			return scanErr
-		}
-		if raw == nil {
-			// NULL = duplicate (expected)
-			return nil
-		}
-		switch v := raw.(type) {
-		case [16]byte:
-			msgID2 = pgtype.UUID{Bytes: v, Valid: true}
-		default:
-			var uid uuid.UUID
-			if err := uid.Scan(raw); err != nil {
-				t.Fatalf("cannot scan message uuid (dup): %T %v", raw, raw)
-			}
-			msgID2 = pgtype.UUID{Bytes: uid, Valid: true}
-		}
-		return nil
+		return tx.QueryRow(ctx, syncCommentSQL,
+			ticketID,
+			connID,
+			commentExternalID, // same external_id → dedupe
+			"Duplicate comment body",
+		).Scan(&msgID2)
 	}); err != nil {
 		t.Fatalf("second SyncInboundExternalComment: %v", err)
 	}
@@ -261,5 +196,61 @@ func TestInboundDefiner(t *testing.T) {
 	}
 	if msgCount != 1 {
 		t.Fatalf("want 1 ticket_message after duplicate comment, got %d (no dedupe)", msgCount)
+	}
+}
+
+// TestInboundCommentCrossTenantRejected pins the composite-FK backstop: a comment whose
+// tenant_root is derived from tenant A's connector cannot attach to tenant B's ticket. The
+// DEFINER derives (business_id, tenant_root_id) from the *connector* row, so passing tenant
+// B's ticket_id with tenant A's connector violates ticket_message's composite FK
+// (ticket_id, tenant_root_id) -> ticket (id, tenant_root_id) and must ERROR — no row written.
+func TestInboundCommentCrossTenantRejected(t *testing.T) {
+	ctx, tdb, a := startConn(t)
+	b := seedConnectorTenant(ctx, t, tdb) // independent tenant in the same DB
+	svc := newConnService(t, tdb, nil)
+
+	// Tenant A's connector.
+	connA, err := svc.Create(ctx, a.principalID, a.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector A: %v", err)
+	}
+
+	// Tenant B's connector + ticket (driven through the DEFINER with B's connector).
+	connB, err := svc.Create(ctx, b.principalID, b.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector B: %v", err)
+	}
+	var ticketB uuid.UUID
+	snapshot := []byte(`{"key":"BIZB-1"}`)
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, syncIssueSQL,
+			connB, "BIZB-1", "https://b.example/BIZB-1", "Tenant B issue",
+			"open", "normal", "b@example.com", "B Reporter", time.Now().UTC(), snapshot,
+		).Scan(&ticketB)
+	}); err != nil {
+		t.Fatalf("seed tenant B ticket: %v", err)
+	}
+	if ticketB == uuid.Nil {
+		t.Fatal("tenant B ticket not created")
+	}
+
+	// Cross-tenant attack: tenant A's connector + tenant B's ticket. Must ERROR (composite FK).
+	var msgID pgtype.UUID
+	err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, syncCommentSQL, ticketB, connA, "X-1", "hi").Scan(&msgID)
+	})
+	if err == nil {
+		t.Fatal("cross-tenant comment must be rejected by the composite FK, but it succeeded")
+	}
+
+	// Defence-in-depth: no ticket_message row for (connA, 'X-1') was written.
+	var n int
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT COUNT(*) FROM ticket_message WHERE connector_id=$1 AND external_id='X-1'", connA,
+	).Scan(&n); err != nil {
+		t.Fatalf("count cross-tenant messages: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cross-tenant comment must not persist, got %d rows", n)
 	}
 }
