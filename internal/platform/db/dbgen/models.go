@@ -57,6 +57,92 @@ func (ns NullAiProvider) Value() (driver.Value, error) {
 	return string(ns.AiProvider), nil
 }
 
+type ConnectorOutboundOpStatus string
+
+const (
+	ConnectorOutboundOpStatusPending    ConnectorOutboundOpStatus = "pending"
+	ConnectorOutboundOpStatusInProgress ConnectorOutboundOpStatus = "in_progress"
+	ConnectorOutboundOpStatusDone       ConnectorOutboundOpStatus = "done"
+	ConnectorOutboundOpStatusFailed     ConnectorOutboundOpStatus = "failed"
+)
+
+func (e *ConnectorOutboundOpStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ConnectorOutboundOpStatus(s)
+	case string:
+		*e = ConnectorOutboundOpStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ConnectorOutboundOpStatus: %T", src)
+	}
+	return nil
+}
+
+type NullConnectorOutboundOpStatus struct {
+	ConnectorOutboundOpStatus ConnectorOutboundOpStatus `json:"connector_outbound_op_status"`
+	Valid                     bool                      `json:"valid"` // Valid is true if ConnectorOutboundOpStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullConnectorOutboundOpStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.ConnectorOutboundOpStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ConnectorOutboundOpStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullConnectorOutboundOpStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ConnectorOutboundOpStatus), nil
+}
+
+type ConnectorOutboundOpType string
+
+const (
+	ConnectorOutboundOpTypeComment     ConnectorOutboundOpType = "comment"
+	ConnectorOutboundOpTypeCreateIssue ConnectorOutboundOpType = "create_issue"
+)
+
+func (e *ConnectorOutboundOpType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ConnectorOutboundOpType(s)
+	case string:
+		*e = ConnectorOutboundOpType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ConnectorOutboundOpType: %T", src)
+	}
+	return nil
+}
+
+type NullConnectorOutboundOpType struct {
+	ConnectorOutboundOpType ConnectorOutboundOpType `json:"connector_outbound_op_type"`
+	Valid                   bool                    `json:"valid"` // Valid is true if ConnectorOutboundOpType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullConnectorOutboundOpType) Scan(value interface{}) error {
+	if value == nil {
+		ns.ConnectorOutboundOpType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ConnectorOutboundOpType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullConnectorOutboundOpType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ConnectorOutboundOpType), nil
+}
+
 type ConnectorType string
 
 const (
@@ -552,6 +638,22 @@ type Connector struct {
 	LastReconciledAt    pgtype.Timestamptz `json:"last_reconciled_at"`
 	CreatedAt           time.Time          `json:"created_at"`
 	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+type ConnectorOutboundOp struct {
+	ID           uuid.UUID                 `json:"id"`
+	BusinessID   uuid.UUID                 `json:"business_id"`
+	TenantRootID uuid.UUID                 `json:"tenant_root_id"`
+	ConnectorID  uuid.UUID                 `json:"connector_id"`
+	TicketID     uuid.UUID                 `json:"ticket_id"`
+	MessageID    pgtype.UUID               `json:"message_id"`
+	OpType       ConnectorOutboundOpType   `json:"op_type"`
+	Status       ConnectorOutboundOpStatus `json:"status"`
+	Attempts     int32                     `json:"attempts"`
+	Body         *string                   `json:"body"`
+	LastError    *string                   `json:"last_error"`
+	CreatedAt    time.Time                 `json:"created_at"`
+	UpdatedAt    time.Time                 `json:"updated_at"`
 }
 
 type ConnectorSyncState struct {
