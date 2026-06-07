@@ -4,6 +4,7 @@ package connectors
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -25,6 +26,10 @@ func TestRegistryResolveBindsCredential(t *testing.T) {
 		}
 		return &fakeConnector{issue: ExternalIssue{ExternalID: "JIRA-1", URL: rc.BaseURL}}, nil
 	})
+	reg.Register("zendesk", func(rc ResolvedConnector) (TicketingConnector, error) {
+		t.Fatalf("zendesk factory must not be called for a jira connector")
+		return nil, nil
+	})
 
 	c, err := reg.Resolve(ctx, seed.principalID, seed.businessID, connID)
 	if err != nil {
@@ -44,8 +49,12 @@ func TestRegistryUnregisteredTypeErrors(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	reg := NewRegistry(svc) // no factories registered
-	if _, err := reg.Resolve(ctx, seed.principalID, seed.businessID, connID); err == nil {
+	_, err = reg.Resolve(ctx, seed.principalID, seed.businessID, connID)
+	if err == nil {
 		t.Fatalf("expected error for unregistered connector type")
+	}
+	if !strings.Contains(err.Error(), "jira") {
+		t.Fatalf("error should name the connector type, got: %v", err)
 	}
 }
 
