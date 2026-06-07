@@ -423,6 +423,7 @@ CREATE TABLE secret (
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
+CREATE INDEX secret_business_idx ON secret (business_id, tenant_root_id);
 
 CREATE TABLE connector (
     id                      uuid PRIMARY KEY,
@@ -438,7 +439,9 @@ CREATE TABLE connector (
     created_at              timestamptz NOT NULL,
     updated_at              timestamptz NOT NULL,
     UNIQUE (id, tenant_root_id),
+    CONSTRAINT connector_status_chk CHECK (status IN ('enabled', 'disabled')),
     UNIQUE (business_id, type, base_url),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (secret_ref, tenant_root_id) REFERENCES secret (id, tenant_root_id)
 );
+CREATE INDEX connector_business_idx ON connector (business_id, tenant_root_id);

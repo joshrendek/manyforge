@@ -20,6 +20,7 @@ type DeleteSecretParams struct {
 	BusinessID uuid.UUID `json:"business_id"`
 }
 
+// DeleteSecret removes one secret scoped to (id, business); :execrows lets the caller detect a no-op delete.
 func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteSecret, arg.ID, arg.BusinessID)
 	if err != nil {
@@ -37,6 +38,7 @@ type GetConnectorParams struct {
 	BusinessID uuid.UUID `json:"business_id"`
 }
 
+// GetConnector fetches one connector scoped to (id, business); foreign/unknown id → no row (→ not-found).
 func (q *Queries) GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error) {
 	row := q.db.QueryRow(ctx, getConnector, arg.ID, arg.BusinessID)
 	var i Connector
@@ -66,6 +68,8 @@ type GetSecretParams struct {
 	BusinessID uuid.UUID `json:"business_id"`
 }
 
+// GetSecret fetches one sealed secret scoped to (id, business). RLS + the business predicate
+// make a foreign/unknown id return no row (→ not-found).
 func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, error) {
 	row := q.db.QueryRow(ctx, getSecret, arg.ID, arg.BusinessID)
 	var i Secret
@@ -89,6 +93,7 @@ SELECT $1, b.id, b.tenant_root_id, $2::connector_type,
     $6, $7, $8, now(), now()
 FROM business b
 WHERE b.id = $9::uuid
+  AND EXISTS (SELECT 1 FROM secret s WHERE s.id = $6 AND s.business_id = b.id)
 RETURNING id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, created_at, updated_at
 `
 
@@ -104,6 +109,9 @@ type InsertConnectorParams struct {
 	BusinessID          uuid.UUID     `json:"business_id"`
 }
 
+// InsertConnector derives tenant_root_id from the RLS-visible business AND requires secret_ref to
+// belong to the SAME business (defense-in-depth beyond the same-tenant FK). Unknown business or
+// foreign secret → zero rows.
 func (q *Queries) InsertConnector(ctx context.Context, arg InsertConnectorParams) (Connector, error) {
 	row := q.db.QueryRow(ctx, insertConnector,
 		arg.ID,
@@ -149,6 +157,8 @@ type InsertSecretParams struct {
 	BusinessID  uuid.UUID `json:"business_id"`
 }
 
+// InsertSecret seals-then-stores: caller passes a pre-generated id + the sealed ciphertext.
+// tenant_root_id is derived from the (RLS-visible) business, so an invisible business inserts zero rows.
 func (q *Queries) InsertSecret(ctx context.Context, arg InsertSecretParams) (Secret, error) {
 	row := q.db.QueryRow(ctx, insertSecret,
 		arg.ID,

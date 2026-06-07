@@ -99,6 +99,7 @@ type Querier interface {
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
+	// DeleteSecret removes one secret scoped to (id, business); :execrows lets the caller detect a no-op delete.
 	DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error)
 	// DeleteTicketTags removes every tag row for a ticket — the first half of a
 	// full-set tag replacement. Scoped to (ticket_id, business_id).
@@ -142,6 +143,7 @@ type Querier interface {
 	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	// GetConnector fetches one connector scoped to (id, business); foreign/unknown id → no row (→ not-found).
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
@@ -186,6 +188,8 @@ type Querier interface {
 	// The acting agent principal + the run's correlation id, so an approval executes as
 	// the agent and its audit rows join to the originating run by correlation.
 	GetRunActorForApproval(ctx context.Context, arg GetRunActorForApprovalParams) (GetRunActorForApprovalRow, error)
+	// GetSecret fetches one sealed secret scoped to (id, business). RLS + the business predicate
+	// make a foreign/unknown id return no row (→ not-found).
 	GetSecret(ctx context.Context, arg GetSecretParams) (Secret, error)
 	// ---- US2 write / threading queries ----
 	// GetThreadingParent loads the latest message on a ticket (any direction) — its
@@ -213,6 +217,9 @@ type Querier interface {
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	// InsertConnector derives tenant_root_id from the RLS-visible business AND requires secret_ref to
+	// belong to the SAME business (defense-in-depth beyond the same-tenant FK). Unknown business or
+	// foreign secret → zero rows.
 	InsertConnector(ctx context.Context, arg InsertConnectorParams) (Connector, error)
 	// ---- inbound_address ----
 	// InsertCustomInboundAddress creates a kind='custom' inbound address bound to an
@@ -259,6 +266,8 @@ type Querier interface {
 	// approval execution conflicts on the partial UNIQUE index and inserts no second row
 	// (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
+	// InsertSecret seals-then-stores: caller passes a pre-generated id + the sealed ciphertext.
+	// tenant_root_id is derived from the (RLS-visible) business, so an invisible business inserts zero rows.
 	InsertSecret(ctx context.Context, arg InsertSecretParams) (Secret, error)
 	InsertSuppression(ctx context.Context, arg InsertSuppressionParams) error
 	// InsertTicketTag inserts one tag for a ticket (the second half of tag
