@@ -1,0 +1,20 @@
+{
+  "timestamp": 1717228800000,
+  "webhookEvent": "jira:issue_updated",
+  "issue_event_type_name": "issue_generic",
+  "user": {
+    "accountId": "5b10a2844c20165700ede21g",
+    "displayName": "Alice Smith"
+  },
+  "issue": {
+    "id": "10001",
+    "key": "PROJ-42",
+    "self": "https://mycompany.atlassian.net/rest/api/3/issue/10001",
+    "fields": {
+      "summary": "Login button does not work on mobile",
+      "status": {
+        "name": "In Progress"
+      }
+    }
+  }
+}
