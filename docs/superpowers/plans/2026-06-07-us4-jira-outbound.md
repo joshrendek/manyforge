@@ -242,7 +242,7 @@ git commit --no-verify -m "feat(connectors/jira): T1 — CreateIssue on connecto
 - Modify: `db/schema.sql`
 - Create/Modify: `internal/connectors/outbound_integration_test.go`
 
-- [ ] **Step 1: Write the failing SQL-level integration test**
+- [x] **Step 1: Write the failing SQL-level integration test**
 
 Create `internal/connectors/outbound_integration_test.go` (white-box, package `connectors`):
 
@@ -342,12 +342,12 @@ func TestOutboundOpClaimComplete(t *testing.T) {
 
 > **Note on `seedConnectorTenant`:** US3 added it (`internal/connectors/testsupport_integration_test.go`). Confirm its returned struct exposes `BusinessID`, `TenantRootID`, `ConnectorID`, `TicketID` (and a synced ticket). If the helper does not yet seed a ticket, extend it minimally (insert one `ticket` row with `connector_id`+`external_id` set) and return its id — do this as Step 1a before the test compiles.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run TestOutboundOpClaimComplete -v`
 Expected: FAIL — relation `connector_outbound_op` / function `claim_outbound_ops` does not exist.
 
-- [ ] **Step 3: Write the up migration**
+- [x] **Step 3: Write the up migration**
 
 Create `migrations/0045_connector_outbound.up.sql`:
 
@@ -511,7 +511,7 @@ GRANT EXECUTE ON FUNCTION fail_outbound_op(uuid,text,boolean) TO manyforge_app;
 
 > **Confirmed:** `connector.config jsonb NOT NULL DEFAULT '{}'` exists (migration `0040_connector_secret_vault.up.sql:33`), so `c.config` is non-NULL — no COALESCE needed.
 
-- [ ] **Step 4: Write the down migration**
+- [x] **Step 4: Write the down migration**
 
 Create `migrations/0045_connector_outbound.down.sql`:
 
@@ -526,7 +526,7 @@ DROP TYPE IF EXISTS connector_outbound_op_status;
 DROP TYPE IF EXISTS connector_outbound_op_type;
 ```
 
-- [ ] **Step 5: Mirror the table into `db/schema.sql`**
+- [x] **Step 5: Mirror the table into `db/schema.sql`**
 
 In `db/schema.sql`, next to `connector_sync_state` / `connector_webhook_delivery` (~line 459-486), add the two enum types and the table **without** DEFAULT/RLS/trigger (sqlc reads this for type generation only; per the handoff gotcha). Use the existing nearby style:
 
@@ -551,18 +551,20 @@ CREATE TABLE connector_outbound_op (
 );
 ```
 
-- [ ] **Step 6: Run the SQL-level integration test to verify it passes**
+- [x] **Step 6: Run the SQL-level integration test to verify it passes**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run TestOutboundOpClaimComplete -v`
 Expected: PASS (testcontainers applies `migrations/0045`). If `seedConnectorTenant` lacked a ticket, your Step 1a extension makes it compile + pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 gofmt -w internal/connectors/
 git add migrations/0045_connector_outbound.up.sql migrations/0045_connector_outbound.down.sql db/schema.sql internal/connectors/outbound_integration_test.go internal/connectors/testsupport_integration_test.go .beads/issues.jsonl
 git commit --no-verify -m "feat(connectors): T2 — outbound op queue table + claim/complete DEFINERs (migration 0045) (manyforge-a7j.4)"
 ```
+
+> ✅ **Task 2 DONE** (commit `d997963`). TDD: `TestOutboundOpClaimComplete` (`//go:build integration`, white-box `package connectors`) goes RED (`relation "connector_outbound_op" does not exist`) → GREEN after migration 0045; full `internal/connectors` integration suite green (63s); `go build ./...` clean. Spec-compliance ✅ (all §7 pins verified per new fn + table: composite FK + RLS + tenant-root-immutable trigger + GRANT; every DEFINER `SECURITY DEFINER SET search_path=public` + REVOKE-FROM-PUBLIC + GRANT-EXECUTE-TO-manyforge_app with signature-exact down DROPs; both complete fns audit). Code-quality APPROVED (0 Critical/Important). Triage: accepted 1 minor (fail-safe doc-comment on the intentional unconditional `done` flip in both complete fns, applied + amended); rejected #2 (`status='in_progress'` predicate — partial without also gating the audit insert), #3 (max-attempts cap correctly lives in T4's Go dispatcher, NOT SQL), #4 (`left()` non-issue). **Real-schema adaptations (reality won):** test rewritten to real helpers (`startConn`→`(ctx, tdb, connSeed)`; raw/DEFINER SQL via `tdb.App.WithTx`, asserts via `tdb.Super.QueryRow`; linked ticket seeded via `svc.Create` + the 0042 `sync_inbound_external_issue` DEFINER, so `seedConnectorTenant` was NOT extended — Step 1a unneeded); `ticket_message` has no `updated_at` (dropped from `complete_outbound_comment`'s message UPDATE); test's outbound message sets `author_principal_id` (0013 CHECK); `db/schema.sql` mirror includes FK lines for sibling consistency. **Unplanned fix folded in:** T1 left the integration-tag build of `internal/connectors` RED (didn't stub `CreateIssue` on `reconcileFakeConnector`/`hmacFakeConnector`); both got a benign `(ExternalIssue{}, nil)` stub. `manyforge-a7j.4.2` closed.
 
 ---
 
