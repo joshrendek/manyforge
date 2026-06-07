@@ -25,6 +25,7 @@ type CreateConnectorInput struct {
 	AllowPrivateBaseURL bool
 	Email               string
 	APIToken            string
+	WebhookSecret       string
 	Config              map[string]any
 }
 
