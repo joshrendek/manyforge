@@ -701,7 +701,7 @@ git commit --no-verify -m "feat(ticketing): T3 — enqueue connector outbound op
 - Modify: `internal/connectors/outbound_integration_test.go`
 - Modify: `cmd/manyforge/main.go`
 
-- [ ] **Step 1: Write the failing dispatcher integration test**
+- [x] **Step 1: Write the failing dispatcher integration test**
 
 Add to `internal/connectors/outbound_integration_test.go`:
 
@@ -767,12 +767,12 @@ func TestOutboundDispatcherPostsComment(t *testing.T) {
 
 > **Helper `seedOutboundConnector`:** build it in `testsupport_integration_test.go` reusing US3 building blocks — it must (1) seal a `Credential{Email,APIToken,WebhookSecret}` via a real `crypto.Sealer`, insert a `secret` + a `connector` (`base_url`=stub, `allow_private_base_url=true`, `status='enabled'`, `config='{}'`), (2) insert a connector-linked `ticket` (external_id e.g. "JIRA-7"), (3) insert a pending outbound `ticket_message`, (4) insert a `connector_outbound_op` (op_type 'comment') for it, and (5) return `{Sealer, Registry, MessageID, OpID, ...}` where `Registry` has the real `jira.NewFactory(...)` registered. Model the seal+insert on US3's `newConnService`/`jiraInput` + `seedConnectorTenant`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run TestOutboundDispatcherPostsComment -v`
 Expected: FAIL — `OutboundDispatcher` undefined.
 
-- [ ] **Step 3: Implement the dispatcher**
+- [x] **Step 3: Implement the dispatcher**
 
 Create `internal/connectors/outbound.go` (mirrors `reconcile.go`'s no-tx-across-HTTP structure):
 
@@ -1051,7 +1051,7 @@ func (d *OutboundDispatcher) logger() *slog.Logger {
 
 > **Simplify `messageAlreadyPosted`/`markDone` if review prefers:** the cleanest form is a dedicated DEFINER. If the code-quality reviewer flags the inline `UPDATE ... status='done'` in `markDone` as bypassing the op-status enum guard or the RLS grant, replace both with a single migration-0045 DEFINER `mark_outbound_done(uuid)` and a `message_external_id(uuid)` DEFINER read. Left as a noted simplification to avoid over-DEFINER-ing on the first pass; the integration test is the arbiter.
 
-- [ ] **Step 4: Wire into `cmd/manyforge/main.go`**
+- [x] **Step 4: Wire into `cmd/manyforge/main.go`**
 
 Alongside the connector-stack vars (near line 264-267) add `var outboundDispatcher *connectors.OutboundDispatcher`. Inside the `if len(cfg.ConnectorMasterKey) > 0` block, next to the reconciler construction (line 279) add:
 
@@ -1070,12 +1070,12 @@ Next to the reconciler goroutine start (line 481-483) add:
 	}
 ```
 
-- [ ] **Step 5: Run the dispatcher test + build**
+- [x] **Step 5: Run the dispatcher test + build**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run TestOutboundDispatcher -v && go build ./...`
 Expected: PASS; build clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit** — done at `69264a8` (amended after review). Deviations from this sketch, all reviewer-validated: (1) extended migration 0045's `claim_outbound_ops` to RETURN the real post-increment `attempts` (the sketch hardcoded `0`, which would loop a permanently-failing op forever); (2) added a `message_external_id(uuid)` DEFINER for the idempotency read (`ticket_message` is RLS-protected, principal-less direct read sees nothing); (3) `markDone` replaced by re-calling `complete_outbound_comment` (no raw enum-bypassing status UPDATE); (4) inline `httpStubConnector` test factory instead of `jira.NewFactory` (real import cycle: `connectors/jira` imports `connectors`), still builds a genuine netsafe SSRF client. Added `TestOutboundDispatcherTerminalFailureCap` (pins the off-by-one cap: 500 stub → 5 passes → `status='failed'`, `attempts=5`). Follow-up `manyforge-a7j.4.9` filed for the stale-`in_progress` reaper (out of T4 scope).
 
 ```bash
 gofmt -w internal/connectors/ cmd/manyforge/
