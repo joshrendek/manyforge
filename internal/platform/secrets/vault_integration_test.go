@@ -4,6 +4,7 @@ package secrets
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 func TestVaultPutOpenRoundTrip(t *testing.T) {
@@ -82,7 +84,40 @@ func TestVaultOpenWrongBusinessNotFound(t *testing.T) {
 		_, oerr := v.Open(ctx, tx, b.businessID, secretID)
 		return oerr
 	})
-	if err == nil {
-		t.Fatalf("expected error opening cross-tenant secret, got nil")
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for cross-tenant open, got %v", err)
+	}
+}
+
+func TestVaultDelete(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	seed := seedVaultTenant(ctx, t, tdb)
+	v := NewVault(newTestSealer(t))
+
+	var secretID uuid.UUID
+	if err := tdb.App.WithPrincipal(ctx, seed.principalID, func(tx pgx.Tx) error {
+		id, perr := v.Put(ctx, tx, seed.businessID, "connector", []byte("to-delete"))
+		secretID = id
+		return perr
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if err := tdb.App.WithPrincipal(ctx, seed.principalID, func(tx pgx.Tx) error {
+		return v.Delete(ctx, tx, seed.businessID, secretID)
+	}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	err = tdb.App.WithPrincipal(ctx, seed.principalID, func(tx pgx.Tx) error {
+		_, oerr := v.Open(ctx, tx, seed.businessID, secretID)
+		return oerr
+	})
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("want ErrNotFound after delete, got %v", err)
 	}
 }
