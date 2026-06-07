@@ -51,6 +51,9 @@ BEGIN
     SELECT business_id, tenant_root_id INTO v_business_id, v_tenant_root FROM connector WHERE id = p_connector_id;
     IF v_business_id IS NULL THEN RAISE EXCEPTION 'unknown connector %', p_connector_id; END IF;
 
+    -- External-wins: Jira statuses are per-project-configurable, so only done/closed/resolved
+    -- map to native 'closed'; everything else (incl. custom statuses) -> 'open'. The ON CONFLICT
+    -- DO UPDATE below intentionally overwrites an operator's manual status on every re-sync.
     v_status := CASE lower(coalesce(p_status,''))
         WHEN 'done' THEN 'closed' WHEN 'closed' THEN 'closed' WHEN 'resolved' THEN 'closed'
         ELSE 'open' END::ticket_status;
@@ -107,7 +110,13 @@ BEGIN
 END;
 $$;
 
+-- CREATE FUNCTION grants EXECUTE to PUBLIC by default; these fns BYPASS RLS, so revoke
+-- from PUBLIC first then grant ONLY to manyforge_app (mirrors ingest_inbound_message 0024).
+REVOKE ALL ON FUNCTION connector_webhook_context(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connector_webhook_context(uuid) TO manyforge_app;
+REVOKE ALL ON FUNCTION ingest_connector_webhook(uuid,uuid,uuid,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ingest_connector_webhook(uuid,uuid,uuid,text,text) TO manyforge_app;
+REVOKE ALL ON FUNCTION sync_inbound_external_issue(uuid,text,text,text,text,text,citext,text,timestamptz,jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION sync_inbound_external_issue(uuid,text,text,text,text,text,citext,text,timestamptz,jsonb) TO manyforge_app;
+REVOKE ALL ON FUNCTION sync_inbound_external_comment(uuid,uuid,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION sync_inbound_external_comment(uuid,uuid,text,text) TO manyforge_app;
