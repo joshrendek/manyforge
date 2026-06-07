@@ -24,6 +24,8 @@ import (
 	"github.com/manyforge/manyforge/internal/account"
 	"github.com/manyforge/manyforge/internal/agents"
 	"github.com/manyforge/manyforge/internal/authz"
+	"github.com/manyforge/manyforge/internal/connectors"
+	"github.com/manyforge/manyforge/internal/connectors/jira"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
@@ -39,6 +41,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/notify"
 	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
+	"github.com/manyforge/manyforge/internal/platform/secrets"
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
 	"github.com/manyforge/manyforge/migrations"
@@ -255,6 +258,29 @@ func main() {
 	// validated on agent create/update in production (cross-tenant/foreign ids rejected).
 	agentSvc.MCPServers = mcpServerSvc
 
+	// Spec 004 connector stack (US3 Jira inbound). Mirrors the MCP sealer pattern:
+	// unset key ⇒ connector stack disabled (warn, no fatal); the server still boots.
+	// An explicitly-set-but-wrong-length key is a hard config error caught at Load().
+	var connReg *connectors.Registry
+	var connWebhookH *connectors.WebhookHandler
+	var inboundSyncSub *connectors.InboundSyncSubscriber
+	var connReconciler *connectors.Reconciler
+	if len(cfg.ConnectorMasterKey) > 0 {
+		connSealer, serr := mfcrypto.NewSealer(cfg.ConnectorMasterKey)
+		if serr != nil {
+			logger.Error("init connector sealer", "err", serr)
+			os.Exit(1)
+		}
+		connSvc := &connectors.Service{DB: database, Vault: secrets.NewVault(connSealer)}
+		connReg = connectors.NewRegistry(connSvc)
+		connReg.Register("jira", jira.NewFactory(60*time.Second))
+		connWebhookH = connectors.NewWebhookHandler(database, connSealer, connReg, logger)
+		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
+		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: 5 * time.Minute}
+	} else {
+		logger.Warn("MANYFORGE_CONNECTOR_MASTER_KEY unset; external connectors disabled (no Jira webhook/sync)")
+	}
+
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,
 	// so no event is drained without a handler. The in-process SMTP receiver
@@ -361,6 +387,13 @@ func main() {
 	// reply emits ticket.replied, not ticket.created, so it can never re-trigger triage.
 	eventBus.Subscribe(events.TopicTicketCreated, triageTrigger.Handle)
 
+	// Spec 004 inbound-sync subscriber: fetch external issue + DEFINER upsert.
+	// Registered BEFORE the outbox worker starts so no connector.inbound.sync event
+	// is drained without a handler. Guard mirrors the other conditional subscribers.
+	if inboundSyncSub != nil {
+		eventBus.Subscribe(connectors.TopicConnectorInboundSync, inboundSyncSub.Handle)
+	}
+
 	mux := httpx.NewRouter(ring)
 	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -427,6 +460,7 @@ func main() {
 		agentsApprove:   httpx.RequirePermission(database, permResolve, "agents.approve", businessIDFromPath),
 		mcp:             mcpH,
 		mcpConfigure:    httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
+		connWebhookH:    connWebhookH,
 	})
 
 	srv := &http.Server{
@@ -439,6 +473,14 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	go outboxWorker.Run(workerCtx)
+
+	// Spec 004 reconcile poller: periodically lists connectors past their stale window
+	// and enqueues connector.inbound.sync events for externally-updated issues.
+	// Started AFTER the outbox worker so the subscriber is registered before the first
+	// tick could enqueue events. The guard mirrors the approval-expire sweep pattern.
+	if connReconciler != nil {
+		go connReconciler.Run(workerCtx)
+	}
 
 	// US4 approvals expire sweep: every 60s, expire stale pending approval_items across
 	// ALL tenants via the SECURITY DEFINER expire_stale_approvals() function (migration
@@ -549,6 +591,10 @@ type apiHandlers struct {
 	identity     *ticketing.IdentityHandler
 	inboxWebhook *inbox.Handler
 	bounce       *inbox.BounceHandler
+	// connWebhookH is the Spec 004 public connector webhook handler. Nil when
+	// MANYFORGE_CONNECTOR_MASTER_KEY is unset (connectors disabled); mountAPIRoutes
+	// guards on nil so the route is not registered in that case.
+	connWebhookH *connectors.WebhookHandler
 
 	// Group-level middleware. Each gates a route group exactly as main wires it:
 	// authLimit (per-IP auth abuse cap), ingestLimit (per-IP inbound ingest cap),
@@ -621,6 +667,12 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			// Hard-bounce intake (T040): same public, HMAC-authed, per-IP ingest-rate-
 			// limited group. Its own purpose-separated secret + uniform no-oracle 202.
 			h.bounce.PublicRoutes(ingress)
+			// Spec 004 connector webhook: public, per-connector HMAC-authed, per-IP
+			// ingest-rate-limited. Guard on nil: when MANYFORGE_CONNECTOR_MASTER_KEY is
+			// unset the handler is nil and the route is simply not registered.
+			if h.connWebhookH != nil {
+				h.connWebhookH.PublicRoutes(ingress)
+			}
 		})
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
