@@ -1,0 +1,15 @@
+{
+  "startAt": 2,
+  "maxResults": 2,
+  "total": 3,
+  "issues": [
+    {
+      "id": "10003",
+      "key": "PROJ-44",
+      "self": "https://mycompany.atlassian.net/rest/api/3/issue/10003",
+      "fields": {
+        "updated": "2026-06-01T14:00:00.000+0000"
+      }
+    }
+  ]
+}

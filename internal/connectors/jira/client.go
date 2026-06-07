@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,20 +24,35 @@ import (
 
 // sentinel errors — never wrap upstream bodies.
 var (
-	ErrUpstream   = errors.New("jira: upstream error")
+	ErrUpstream    = errors.New("jira: upstream error")
 	ErrUnreachable = errors.New("jira: service unreachable")
-	ErrBadSig     = errors.New("jira: invalid webhook signature")
+	ErrBadSig      = errors.New("jira: invalid webhook signature")
+	ErrBadIssueKey = errors.New("jira: invalid issue key")
 )
 
 const bodyLimit = 8 << 20 // 8 MiB
 
+// issueKeyRe matches a Jira issue key (e.g. "PROJ-42"): an uppercase project key
+// followed by a numeric id. Validated before any URL build so a crafted key from
+// an inbound webhook (DecodeWebhook lifts issue.key) cannot smuggle path-traversal
+// segments through url.JoinPath (which collapses "..").
+var issueKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9]+-[0-9]+$`)
+
+// validateIssueKey rejects any externalID that is not a well-formed Jira issue key.
+func validateIssueKey(key string) error {
+	if !issueKeyRe.MatchString(key) {
+		return fmt.Errorf("jira: issue key %q: %w", key, ErrBadIssueKey)
+	}
+	return nil
+}
+
 // client is a live Jira Cloud REST client bound to one business's credential.
 type client struct {
-	httpClient     *http.Client
-	baseURL        string // e.g. "https://mycompany.atlassian.net"
-	email          string
-	apiToken       string
-	webhookSecret  string
+	httpClient    *http.Client
+	baseURL       string // e.g. "https://mycompany.atlassian.net"
+	email         string
+	apiToken      string
+	webhookSecret string
 }
 
 // compile-time check
@@ -44,6 +60,9 @@ var _ connectors.TicketingConnector = (*client)(nil)
 
 // FetchIssue returns the external issue plus its comments.
 func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.ExternalIssue, error) {
+	if err := validateIssueKey(externalID); err != nil {
+		return connectors.ExternalIssue{}, err
+	}
 	// Fetch the issue fields.
 	base, err := url.Parse(c.baseURL)
 	if err != nil {
@@ -92,6 +111,9 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 
 // PostComment appends a plain-text comment to the external issue.
 func (c *client) PostComment(ctx context.Context, externalID, body string) (connectors.ExternalComment, error) {
+	if err := validateIssueKey(externalID); err != nil {
+		return connectors.ExternalComment{}, err
+	}
 	base, err := url.Parse(c.baseURL)
 	if err != nil {
 		return connectors.ExternalComment{}, fmt.Errorf("jira: invalid base_url: %w", ErrUpstream)
@@ -120,6 +142,9 @@ func (c *client) PostComment(ctx context.Context, externalID, body string) (conn
 
 // TransitionStatus moves the external issue to the target status name.
 func (c *client) TransitionStatus(ctx context.Context, externalID, status string) error {
+	if err := validateIssueKey(externalID); err != nil {
+		return err
+	}
 	base, err := url.Parse(c.baseURL)
 	if err != nil {
 		return fmt.Errorf("jira: invalid base_url: %w", ErrUpstream)
@@ -153,29 +178,51 @@ func (c *client) TransitionStatus(ctx context.Context, externalID, status string
 	return c.doJSON(ctx, http.MethodPost, transURL.String(), payload, nil)
 }
 
-// ListUpdatedSince returns the keys of issues updated at or after since (reconcile).
+// searchPageSize is the per-request page size for the paginated search. Jira's
+// default (50) silently truncates; we page explicitly so reconcile never misses
+// an updated issue.
+const searchPageSize = 100
+
+// ListUpdatedSince returns the keys of issues updated at or after since (reconcile),
+// paging through ALL results (Jira's default page size of 50 would otherwise
+// silently truncate the reconcile set).
 func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]string, error) {
 	base, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("jira: invalid base_url: %w", ErrUpstream)
 	}
-
-	searchURL := base.JoinPath("rest", "api", "3", "search")
-	q := url.Values{}
 	// Format as Jira expects: "2006-01-02 15:04"
 	ts := since.UTC().Format("2006-01-02 15:04")
-	q.Set("jql", fmt.Sprintf(`updated >= "%s" ORDER BY updated ASC`, ts))
-	q.Set("fields", "updated")
-	searchURL.RawQuery = q.Encode()
+	jql := fmt.Sprintf(`updated >= "%s" ORDER BY updated ASC`, ts)
 
-	var searchResp jiraSearchResponse
-	if err := c.doJSON(ctx, http.MethodGet, searchURL.String(), nil, &searchResp); err != nil {
-		return nil, err
-	}
+	var keys []string
+	startAt := 0
+	for {
+		searchURL := base.JoinPath("rest", "api", "3", "search")
+		q := url.Values{}
+		q.Set("jql", jql)
+		q.Set("fields", "updated")
+		q.Set("startAt", fmt.Sprintf("%d", startAt))
+		q.Set("maxResults", fmt.Sprintf("%d", searchPageSize))
+		searchURL.RawQuery = q.Encode()
 
-	keys := make([]string, 0, len(searchResp.Issues))
-	for _, issue := range searchResp.Issues {
-		keys = append(keys, issue.Key)
+		var page jiraSearchResponse
+		if err := c.doJSON(ctx, http.MethodGet, searchURL.String(), nil, &page); err != nil {
+			return nil, err
+		}
+
+		for _, issue := range page.Issues {
+			keys = append(keys, issue.Key)
+		}
+
+		// Stop on an empty page (defensive) or once we've covered the total.
+		if len(page.Issues) == 0 {
+			break
+		}
+		startAt += len(page.Issues)
+		if startAt >= page.Total {
+			break
+		}
 	}
 	return keys, nil
 }
@@ -184,6 +231,11 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 // HMAC-SHA256 of the body using the per-connector webhook secret.
 // Returns ErrBadSig if the signature is missing, malformed, or does not match.
 func (c *client) VerifyWebhook(headers http.Header, body []byte) error {
+	// Fail closed: an unconfigured secret means an empty HMAC key, which makes
+	// EVERY signature forgeable. Reject before computing the MAC.
+	if c.webhookSecret == "" {
+		return fmt.Errorf("jira: webhook secret not configured: %w", ErrBadSig)
+	}
 	sig := headers.Get("X-Hub-Signature")
 	if sig == "" {
 		return fmt.Errorf("jira: missing X-Hub-Signature header: %w", ErrBadSig)
@@ -220,6 +272,11 @@ func (c *client) DecodeWebhook(body []byte) (connectors.WebhookEvent, error) {
 	}
 
 	externalID := payload.Issue.Key
+	// Reject a malformed issue key so a crafted webhook can never push a
+	// path-traversal key into the sync pipeline (and downstream URL builds).
+	if err := validateIssueKey(externalID); err != nil {
+		return connectors.WebhookEvent{}, err
+	}
 	// Derive a stable delivery ID from the timestamp + issue key (Jira does not
 	// always provide a unique delivery header).
 	deliveryID := fmt.Sprintf("%s:%d", externalID, payload.Timestamp)
@@ -330,12 +387,16 @@ func (t *jiraTime) UnmarshalJSON(b []byte) error {
 }
 
 type jiraIssueResponse struct {
-	ID  string `json:"id"`
-	Key string `json:"key"`
+	ID     string `json:"id"`
+	Key    string `json:"key"`
 	Fields struct {
-		Summary  string    `json:"summary"`
-		Status   struct{ Name string `json:"name"` } `json:"status"`
-		Priority struct{ Name string `json:"name"` } `json:"priority"`
+		Summary string `json:"summary"`
+		Status  struct {
+			Name string `json:"name"`
+		} `json:"status"`
+		Priority struct {
+			Name string `json:"name"`
+		} `json:"priority"`
 		Reporter struct {
 			EmailAddress string `json:"emailAddress"`
 			DisplayName  string `json:"displayName"`
@@ -345,7 +406,7 @@ type jiraIssueResponse struct {
 }
 
 type jiraComment struct {
-	ID     string   `json:"id"`
+	ID     string `json:"id"`
 	Author struct {
 		DisplayName  string `json:"displayName"`
 		EmailAddress string `json:"emailAddress"`
@@ -359,7 +420,10 @@ type jiraCommentsResponse struct {
 }
 
 type jiraSearchResponse struct {
-	Issues []struct {
+	StartAt    int `json:"startAt"`
+	MaxResults int `json:"maxResults"`
+	Total      int `json:"total"`
+	Issues     []struct {
 		Key    string `json:"key"`
 		Fields struct {
 			Updated jiraTime `json:"updated"`

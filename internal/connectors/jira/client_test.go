@@ -165,6 +165,12 @@ func TestListUpdatedSince(t *testing.T) {
 		if r.URL.Query().Get("fields") != "updated" {
 			t.Errorf("ListUpdatedSince: fields = %q, want 'updated'", r.URL.Query().Get("fields"))
 		}
+		if r.URL.Query().Get("startAt") != "0" {
+			t.Errorf("ListUpdatedSince: startAt = %q, want '0'", r.URL.Query().Get("startAt"))
+		}
+		if r.URL.Query().Get("maxResults") == "" {
+			t.Errorf("ListUpdatedSince: maxResults missing")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(searchBody)
 	}))
@@ -179,6 +185,51 @@ func TestListUpdatedSince(t *testing.T) {
 		t.Fatalf("len(keys) = %d, want 3", len(keys))
 	}
 	want := []string{"PROJ-42", "PROJ-43", "PROJ-44"}
+	for i, k := range keys {
+		if k != want[i] {
+			t.Errorf("keys[%d] = %q, want %q", i, k, want[i])
+		}
+	}
+}
+
+// I3 pin: ListUpdatedSince must page through ALL results, not stop at Jira's
+// default page size. Two pages, total=3 → all 3 keys returned in order.
+func TestListUpdatedSince_Paginates(t *testing.T) {
+	page1 := loadGolden(t, "search_updated_page1.json")
+	page2 := loadGolden(t, "search_updated_page2.json")
+	since := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/rest/api/3/search" {
+			t.Errorf("path = %q, want /rest/api/3/search", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("startAt") {
+		case "0":
+			_, _ = w.Write(page1)
+		case "2":
+			_, _ = w.Write(page2)
+		default:
+			t.Errorf("unexpected startAt = %q", r.URL.Query().Get("startAt"))
+			_, _ = w.Write([]byte(`{"startAt":0,"maxResults":2,"total":0,"issues":[]}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user@example.com", "test-api-token", "secret", srv.Client())
+	keys, err := c.ListUpdatedSince(context.Background(), since)
+	if err != nil {
+		t.Fatalf("ListUpdatedSince: %v", err)
+	}
+	if requests != 2 {
+		t.Errorf("server saw %d requests, want 2 (one per page)", requests)
+	}
+	want := []string{"PROJ-42", "PROJ-43", "PROJ-44"}
+	if len(keys) != len(want) {
+		t.Fatalf("len(keys) = %d, want %d: %v", len(keys), len(want), keys)
+	}
 	for i, k := range keys {
 		if k != want[i] {
 			t.Errorf("keys[%d] = %q, want %q", i, k, want[i])
@@ -231,6 +282,26 @@ func TestVerifyWebhook_MissingHeader(t *testing.T) {
 	}
 }
 
+// C1 pin: a client with NO webhook secret must FAIL CLOSED — even a "correct"
+// signature computed against the empty key (i.e. the forgeable case) is rejected.
+func TestVerifyWebhook_EmptySecretRejected(t *testing.T) {
+	body := []byte(`{"webhookEvent":"jira:issue_updated","issue":{"key":"PROJ-42"}}`)
+
+	// Compute the signature an attacker WOULD produce against the empty key.
+	mac := hmac.New(sha256.New, []byte(""))
+	mac.Write(body)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	c := &client{webhookSecret: ""} // unconfigured secret
+	err := c.VerifyWebhook(http.Header{"X-Hub-Signature": []string{sig}}, body)
+	if err == nil {
+		t.Fatal("VerifyWebhook empty secret: expected rejection, got nil (FORGEABLE)")
+	}
+	if !errors.Is(err, ErrBadSig) {
+		t.Errorf("VerifyWebhook empty secret: err = %v, want Is(ErrBadSig)", err)
+	}
+}
+
 // ── DecodeWebhook ────────────────────────────────────────────────────────────
 
 func TestDecodeWebhook(t *testing.T) {
@@ -252,6 +323,23 @@ func TestDecodeWebhook(t *testing.T) {
 	}
 	if !strings.Contains(event.DeliveryID, "PROJ-42") {
 		t.Errorf("DeliveryID = %q, want to contain PROJ-42", event.DeliveryID)
+	}
+}
+
+// C2 pin: DecodeWebhook must reject a malformed/path-traversal issue key so it
+// never enters the sync pipeline.
+func TestDecodeWebhook_RejectsBadKey(t *testing.T) {
+	for _, badKey := range []string{"PROJ-1/../../admin", "../secret", "proj-1", "PROJ-1 OR 1=1", ""} {
+		body := []byte(fmt.Sprintf(`{"webhookEvent":"jira:issue_updated","timestamp":1717228800000,"issue":{"key":%q}}`, badKey))
+		c := &client{}
+		_, err := c.DecodeWebhook(body)
+		if err == nil {
+			t.Errorf("DecodeWebhook(%q): expected error, got nil", badKey)
+			continue
+		}
+		if !errors.Is(err, ErrBadIssueKey) {
+			t.Errorf("DecodeWebhook(%q): err = %v, want Is(ErrBadIssueKey)", badKey, err)
+		}
 	}
 }
 
@@ -295,6 +383,35 @@ func TestListUpdatedSince_DoesNotLeakUpstreamBody(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), upstreamSecret) {
 		t.Errorf("error leaks upstream body: %q", err.Error())
+	}
+}
+
+// C2 pin: a path-traversal issue key must be rejected BEFORE any URL build /
+// HTTP call. The server handler t.Fatals if it is ever hit.
+func TestFetchIssue_RejectsTraversalKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("server must NOT be hit for a traversal key; got request to %q", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user@example.com", "token", "secret", srv.Client())
+	for _, badKey := range []string{"PROJ-1/../../admin", "../../secret", "PROJ-1/comment", ""} {
+		_, err := c.FetchIssue(context.Background(), badKey)
+		if err == nil {
+			t.Errorf("FetchIssue(%q): expected error, got nil", badKey)
+			continue
+		}
+		if !errors.Is(err, ErrBadIssueKey) {
+			t.Errorf("FetchIssue(%q): err = %v, want Is(ErrBadIssueKey)", badKey, err)
+		}
+	}
+
+	// PostComment / TransitionStatus must reject too (no HTTP call).
+	if _, err := c.PostComment(context.Background(), "PROJ-1/../admin", "hi"); !errors.Is(err, ErrBadIssueKey) {
+		t.Errorf("PostComment traversal: err = %v, want Is(ErrBadIssueKey)", err)
+	}
+	if err := c.TransitionStatus(context.Background(), "PROJ-1/../admin", "Done"); !errors.Is(err, ErrBadIssueKey) {
+		t.Errorf("TransitionStatus traversal: err = %v, want Is(ErrBadIssueKey)", err)
 	}
 }
 

@@ -43,12 +43,12 @@ func (s *Service) Create(ctx context.Context, principalID, businessID uuid.UUID,
 	if s.Verify != nil {
 		if err := s.Verify.Verify(ctx, VerifyTarget{
 			Type: in.Type, BaseURL: in.BaseURL, AllowPrivateBaseURL: in.AllowPrivateBaseURL,
-			Credential: Credential{Email: in.Email, APIToken: in.APIToken},
+			Credential: Credential{Email: in.Email, APIToken: in.APIToken, WebhookSecret: in.WebhookSecret},
 		}); err != nil {
 			return uuid.Nil, fmt.Errorf("connectors: credential verification failed: %w", errs.ErrValidation)
 		}
 	}
-	credBytes, err := json.Marshal(Credential{Email: in.Email, APIToken: in.APIToken})
+	credBytes, err := json.Marshal(Credential{Email: in.Email, APIToken: in.APIToken, WebhookSecret: in.WebhookSecret})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("connectors: marshal credential: %w", err)
 	}
