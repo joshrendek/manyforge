@@ -22,14 +22,15 @@ import (
 
 // syncIssueConflict calls sync_inbound_external_issue with a snapshot that carries the
 // external status in snapshot->>'status', matching how inbound_sync.go builds the snapshot.
-func syncIssueConflict(t *testing.T, ctx context.Context, db *appdb.DB, connID uuid.UUID, extID, extStatus string) {
+// It returns the ticket UUID returned by the DEFINER (stable across re-syncs).
+func syncIssueConflict(t *testing.T, ctx context.Context, db *appdb.DB, connID uuid.UUID, extID, extStatus string) uuid.UUID {
 	t.Helper()
 	snap, err := json.Marshal(map[string]any{"status": extStatus})
 	if err != nil {
 		t.Fatalf("syncIssueConflict: marshal snapshot: %v", err)
 	}
+	var id uuid.UUID
 	if err := db.WithTx(ctx, func(tx pgx.Tx) error {
-		var id uuid.UUID
 		return tx.QueryRow(ctx, syncIssueSQL,
 			connID,
 			extID,
@@ -44,18 +45,6 @@ func syncIssueConflict(t *testing.T, ctx context.Context, db *appdb.DB, connID u
 		).Scan(&id)
 	}); err != nil {
 		t.Fatalf("syncIssueConflict(%q, %q): %v", extID, extStatus, err)
-	}
-}
-
-// ticketIDByExternal returns the ticket UUID for the given connector + external ID via superuser pool.
-func ticketIDByExternal(t *testing.T, ctx context.Context, super *pgxpool.Pool, connID uuid.UUID, extID string) uuid.UUID {
-	t.Helper()
-	var id uuid.UUID
-	if err := super.QueryRow(ctx,
-		`SELECT id FROM ticket WHERE connector_id=$1 AND external_id=$2`,
-		connID, extID,
-	).Scan(&id); err != nil {
-		t.Fatalf("ticketIDByExternal(%q): %v", extID, err)
 	}
 	return id
 }
@@ -104,8 +93,7 @@ func TestInboundConflictAudited(t *testing.T) {
 	}
 
 	// First sync: external status "To Do" → native open. Snapshot holds status='To Do'.
-	syncIssueConflict(t, ctx, tdb.App, connID, "JIRA-100", "To Do")
-	ticketID := ticketIDByExternal(t, ctx, tdb.Super, connID, "JIRA-100")
+	ticketID := syncIssueConflict(t, ctx, tdb.App, connID, "JIRA-100", "To Do")
 
 	// Operator locally diverges: native status -> closed (DIVERGES from snapshot's external "To Do").
 	mustExecSuper(t, ctx, tdb.Super, `UPDATE ticket SET status='closed' WHERE id=$1`, ticketID)
