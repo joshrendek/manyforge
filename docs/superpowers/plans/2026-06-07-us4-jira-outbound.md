@@ -1215,7 +1215,7 @@ git commit --no-verify -m "feat(connectors): T5 — EnqueueOutboundCreateIssue +
 - Create: `migrations/0046_connector_conflict_audit.down.sql`
 - Modify: `internal/connectors/inbound_sync_integration_test.go` (or a new conflict test file)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `internal/connectors/conflict_integration_test.go`:
 
@@ -1261,12 +1261,12 @@ func TestInboundConflictAudited(t *testing.T) {
 
 > Implement the small SQL helpers (`syncIssue` calls `SELECT sync_inbound_external_issue(...)` with a snapshot `jsonb_build_object('status', <ext>)`, `ticketByExternal`, `mustExec`, `auditCount`, `ticketStatus`) inline in the test file. The snapshot MUST carry the external status string so the DEFINER can compare against it.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run TestInboundConflictAudited -v`
 Expected: FAIL — `auditCount` returns 0 (no conflict audit emitted yet).
 
-- [ ] **Step 3: Write the up migration (`CREATE OR REPLACE`)**
+- [x] **Step 3: Write the up migration (`CREATE OR REPLACE`)**
 
 Create `migrations/0046_connector_conflict_audit.up.sql`. It is `sync_inbound_external_issue` from 0042 with a conflict-detection block added before the ticket upsert. The snapshot's previous external status is read from the existing `connector_sync_state.snapshot->>'status'`; "both changed" = native current status differs from the mapped previous-external AND the incoming external status differs from the previous-external.
 
@@ -1352,7 +1352,7 @@ $$;
 
 > Because the grants already exist from 0042 and `CREATE OR REPLACE` preserves them, no REVOKE/GRANT is needed. The inbound subscriber must pass a snapshot containing `status` — confirm `inbound_sync.go` builds `p_snapshot` with the external status string; if it currently passes `{}`, extend it to `jsonb_build_object('status', issue.Status, ...)` as part of this task (small change in `inbound_sync.go` where it calls `sync_inbound_external_issue`).
 
-- [ ] **Step 4: Write the down migration**
+- [x] **Step 4: Write the down migration**
 
 Create `migrations/0046_connector_conflict_audit.down.sql` — restore the 0042 body verbatim (no conflict block):
 
@@ -1400,12 +1400,12 @@ END;
 $$;
 ```
 
-- [ ] **Step 5: Run the conflict test + full inbound regression**
+- [x] **Step 5: Run the conflict test + full inbound regression**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run 'TestInboundConflict|TestInbound' -v`
 Expected: PASS (conflict audited once; clean sync writes none; existing inbound tests still green).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 gofmt -w internal/connectors/
