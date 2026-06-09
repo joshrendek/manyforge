@@ -13,6 +13,7 @@ DECLARE
     v_reply_token text := 'conn:' || p_connector_id::text || ':' || p_external_id;
     v_email citext := COALESCE(NULLIF(p_reporter_email, ''), ('noreply+' || p_connector_id::text || '@connector.local')::citext);
     v_prev_ext_status text; v_cur_native_status ticket_status; v_prev_mapped ticket_status;
+    v_existing_ticket_id uuid;
 BEGIN
     SELECT business_id, tenant_root_id INTO v_business_id, v_tenant_root FROM connector WHERE id = p_connector_id;
     IF v_business_id IS NULL THEN RAISE EXCEPTION 'unknown connector %', p_connector_id; END IF;
@@ -27,13 +28,14 @@ BEGIN
     -- Conflict detection: read the PRIOR external status (from last snapshot) + the current
     -- native status BEFORE overwriting. "Both changed" = native diverged from the prior
     -- external mapping AND the incoming external differs from the prior external.
-    SELECT t.status, st.snapshot->>'status'
-      INTO v_cur_native_status, v_prev_ext_status
+    SELECT t.id, t.status, st.snapshot->>'status'
+      INTO v_existing_ticket_id, v_cur_native_status, v_prev_ext_status
       FROM ticket t
       LEFT JOIN connector_sync_state st ON st.ticket_id = t.id
      WHERE t.connector_id = p_connector_id AND t.external_id = p_external_id;
 
     IF v_prev_ext_status IS NOT NULL THEN
+        -- keep status mapping in sync with v_status mapping above
         v_prev_mapped := CASE lower(v_prev_ext_status)
             WHEN 'done' THEN 'closed' WHEN 'closed' THEN 'closed' WHEN 'resolved' THEN 'closed'
             ELSE 'open' END::ticket_status;
@@ -42,12 +44,11 @@ BEGIN
            AND v_status IS DISTINCT FROM v_cur_native_status THEN
             INSERT INTO audit_entry (business_id, tenant_root_id, actor_principal_id, action,
                                      target_type, target_id, old_value, new_value, decision)
-            SELECT v_business_id, v_tenant_root, NULL, 'connector.conflict.resolved',
-                   'ticket', t.id,
-                   jsonb_build_object('status', v_cur_native_status::text),
-                   jsonb_build_object('status', v_status::text, 'external_status', p_status),
-                   'external_wins'
-              FROM ticket t WHERE t.connector_id = p_connector_id AND t.external_id = p_external_id;
+            VALUES (v_business_id, v_tenant_root, NULL, 'connector.conflict.resolved',
+                    'ticket', v_existing_ticket_id,
+                    jsonb_build_object('status', v_cur_native_status::text),
+                    jsonb_build_object('status', v_status::text, 'external_status', p_status),
+                    'external_wins');
         END IF;
     END IF;
 
