@@ -201,7 +201,10 @@ func (s *Service) TicketConnectorRef(ctx context.Context, principalID, businessI
 }
 
 // EnqueueOutboundComment enqueues a 'comment' outbound op for a connector-linked ticket the
-// caller owns, anchored to messageID (for external-id write-back + inbound dedup). 0 rows → ErrNotFound.
+// caller owns, anchored to messageID (for external-id write-back + inbound dedup). Ownership
+// and connector-linkage are enforced by the TicketConnectorRef pre-check: a not-found, foreign,
+// or unlinked ticket → ErrNotFound. The dbgen insert is :exec (a 0-row INSERT returns nil), so
+// the pre-check — not the insert — is the not-found gate.
 func (s *Service) EnqueueOutboundComment(ctx context.Context, principalID, businessID, ticketID, messageID uuid.UUID, body string) error {
 	// Pre-check confirms the ticket is owned + connector-linked; also gives consistent ErrNotFound semantics.
 	if _, _, err := s.TicketConnectorRef(ctx, principalID, businessID, ticketID); err != nil {
@@ -218,7 +221,10 @@ func (s *Service) EnqueueOutboundComment(ctx context.Context, principalID, busin
 }
 
 // EnqueueOutboundTransition enqueues a 'transition' outbound op (target status in body) for a
-// connector-linked ticket the caller owns; dedups identical in-flight transitions. 0 rows → ErrNotFound.
+// connector-linked ticket the caller owns. Ownership and connector-linkage are enforced by the
+// TicketConnectorRef pre-check: a not-found, foreign, or unlinked ticket → ErrNotFound. The
+// dbgen insert is :exec with a NOT EXISTS dedup guard, so an identical in-flight transition is
+// intentionally a no-op (0 rows inserted → nil), not an error.
 func (s *Service) EnqueueOutboundTransition(ctx context.Context, principalID, businessID, ticketID uuid.UUID, status string) error {
 	// Pre-check confirms the ticket is owned + connector-linked; also gives consistent ErrNotFound semantics.
 	if _, _, err := s.TicketConnectorRef(ctx, principalID, businessID, ticketID); err != nil {

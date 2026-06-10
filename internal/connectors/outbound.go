@@ -274,13 +274,17 @@ func (d *OutboundDispatcher) dispatchCreate(ctx context.Context, conn TicketingC
 // write-back); the op is marked done by complete_outbound_transition on success.
 func (d *OutboundDispatcher) dispatchTransition(ctx context.Context, conn TicketingConnector, o claimedOp) error {
 	if o.TicketExtID == nil || *o.TicketExtID == "" {
-		// Terminal: ticket has no external_id → this op can never succeed.
+		// Terminal: ticket has no external_id → this op can never succeed. Mark it terminally
+		// failed immediately (returning the error instead would let it retry to the attempt cap,
+		// which we do NOT want) and log, so this is not a silent DB-only state change.
 		d.recordFailure(ctx, o.ID, fmt.Errorf("transition op %s ticket has no external_id", o.ID), true)
+		d.logger().WarnContext(ctx, "connectors/outbound: transition op terminal", "op_id", o.ID, "reason", "no external_id")
 		return nil
 	}
 	if o.Body == nil {
-		// Terminal: no target status recorded.
+		// Terminal: no target status recorded. Same immediate-terminal + log handling as above.
 		d.recordFailure(ctx, o.ID, fmt.Errorf("transition op %s missing body (target status)", o.ID), true)
+		d.logger().WarnContext(ctx, "connectors/outbound: transition op terminal", "op_id", o.ID, "reason", "no target status")
 		return nil
 	}
 	status := *o.Body
