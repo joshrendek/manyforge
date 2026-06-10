@@ -184,13 +184,13 @@
 - Modify: `internal/connectors/outbound.go` (`case "transition"` + `dispatchTransition` + `completeTransition`)
 - Create: `internal/connectors/agent_gateway_integration_test.go`, `internal/connectors/outbound_transition_integration_test.go`
 
-- [ ] **Step 1 (RED): integration tests** (reuse `startConn`/`seedOutboundConnector`):
+- [x] **Step 1 (RED): integration tests** (reuse `startConn`/`seedOutboundConnector`):
   - `TestAgentGatewayReadTicketExternal` — seed a connector-linked ticket whose external id resolves via a stub `TicketingConnector` returning a canned `ExternalIssue` (use a recording fake registered in a test `Registry`); `gw.ReadTicketExternal(ctx, pid, bid, ticketID)` returns the issue + comments; foreign business / unlinked ticket → `errs.ErrNotFound`.
   - `TestServiceEnqueueOutboundCommentOwnership` — `svc.EnqueueOutboundComment(ctx, pid, bid, ticketID, noteMsgID, "hi")` inserts a `'comment'` op (message_id = noteMsgID); unlinked/foreign ticket → `ErrNotFound`.
   - `TestServiceEnqueueOutboundTransitionOwnership` — `svc.EnqueueOutboundTransition(ctx, pid, bid, ticketID, "Done")` inserts a `'transition'` op; foreign → `ErrNotFound`; duplicate in-flight → no second op.
   - `TestDispatchTransitionPostsAndCompletes` — seed a pending `'transition'` op + a recording fake whose `TransitionStatus(extID,status)` records the call; run one `OutboundDispatcher` tick; assert the fake saw `(externalID,"Done")`, op → `status='done'`, audit `connector.outbound.transitioned`. (Add a `transitionRecorder` fake — every existing fake's `TransitionStatus` is a no-op, so a recording one is needed.)
 
-- [ ] **Step 2 (GREEN): `internal/connectors/service.go`** — add, mirroring `EnqueueOutboundCreateIssue` (`service.go:149-168`) with the established `WithPrincipal` tx pattern of `Resolve`:
+- [x] **Step 2 (GREEN): `internal/connectors/service.go`** — add, mirroring `EnqueueOutboundCreateIssue` (`service.go:149-168`) with the established `WithPrincipal` tx pattern of `Resolve`:
   ```go
   // TicketConnectorRef returns the connector id + external id of a connector-linked ticket the
   // caller owns. Unlinked, unknown, or foreign → ErrNotFound (no 403/404 oracle).
@@ -208,7 +208,7 @@
   - `EnqueueOutboundComment`: pre-check via `TicketConnectorRef` (gives the `ErrNotFound` semantics + confirms linkage), then `dbgen.EnqueueOutboundComment{ID:ticketID, MessageID:db.PGUUID(messageID), Body:&body, BusinessID:businessID}` (reuse existing `:exec` query). `mapErr`.
   - `EnqueueOutboundTransition`: pre-check via `TicketConnectorRef`, then `dbgen.EnqueueOutboundTransition{ID:ticketID, BusinessID:businessID, Status:status}`. `mapErr`.
 
-- [ ] **Step 3 (GREEN): `internal/connectors/agent_gateway.go`:**
+- [x] **Step 3 (GREEN): `internal/connectors/agent_gateway.go`:**
   ```go
   // AgentGateway is the narrow surface Spec-003 agent tools use to read external ticket state
   // and enqueue gated external writes. Composes Service (ownership-scoped DB ops) + Registry
@@ -231,9 +231,9 @@
   }
   ```
 
-- [ ] **Step 4 (GREEN): `internal/connectors/outbound.go`** — add `case "transition": return d.dispatchTransition(ctx, conn, o)` to the switch (`:182-189`); implement `dispatchTransition` mirroring `dispatchComment` (`:195-237`): guard `o.TicketExtID` non-empty (else terminal `fail_outbound_op`); read target status from `*o.Body` (guard non-nil); `conn.TransitionStatus(ctx, *o.TicketExtID, status)`; on success a short write-back tx `SELECT complete_outbound_transition($1,$2,$3)` with `(o.ID, o.ConnectorID, status)` (add a `completeTransition` helper next to `completeComment` at `:273`); on error `recordFailure`.
+- [x] **Step 4 (GREEN): `internal/connectors/outbound.go`** — add `case "transition": return d.dispatchTransition(ctx, conn, o)` to the switch (`:182-189`); implement `dispatchTransition` mirroring `dispatchComment` (`:195-237`): guard `o.TicketExtID` non-empty (else terminal `fail_outbound_op`); read target status from `*o.Body` (guard non-nil); `conn.TransitionStatus(ctx, *o.TicketExtID, status)`; on success a short write-back tx `SELECT complete_outbound_transition($1,$2,$3)` with `(o.ID, o.ConnectorID, status)` (add a `completeTransition` helper next to `completeComment` at `:273`); on error `recordFailure`.
 
-- [ ] **Step 5:** `go build ./...` clean; integration tests GREEN (`go test -tags integration -p 1 ./internal/connectors/ -run 'Gateway|Transition|EnqueueOutbound' -v`); `gofmt -l`. Commit `--no-verify`: `feat(connectors): US6 T2 — Service enqueue/ref methods + AgentGateway + dispatchTransition (manyforge-a7j.6.2)`.
+- [x] **Step 5:** `go build ./...` clean; integration tests GREEN (`go test -tags integration -p 1 ./internal/connectors/ -run 'Gateway|Transition|EnqueueOutbound' -v`); `gofmt -l`. Commit `--no-verify`: `feat(connectors): US6 T2 — Service enqueue/ref methods + AgentGateway + dispatchTransition (manyforge-a7j.6.2)`.
 
 **Test plan (T2):** integration tests above — gateway read (+ ownership not-found), comment/transition enqueue (+ ownership not-found + transition dedup), dispatcher transition round-trip (recording fake → DEFINER mark-done + audit).
 
