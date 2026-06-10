@@ -282,23 +282,29 @@ func (q *Queries) GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, e
 const insertNoteMessage = `-- name: InsertNoteMessage :one
 INSERT INTO ticket_message (
     id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
-    message_id, body_text, body_html)
-VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8)
+    message_id, body_text, body_html, source_approval_item_id)
+VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8,
+    $9)
 RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id
 `
 
 type InsertNoteMessageParams struct {
-	ID                uuid.UUID   `json:"id"`
-	TicketID          uuid.UUID   `json:"ticket_id"`
-	BusinessID        uuid.UUID   `json:"business_id"`
-	TenantRootID      uuid.UUID   `json:"tenant_root_id"`
-	AuthorPrincipalID pgtype.UUID `json:"author_principal_id"`
-	MessageID         string      `json:"message_id"`
-	BodyText          *string     `json:"body_text"`
-	BodyHtml          *string     `json:"body_html"`
+	ID                   uuid.UUID   `json:"id"`
+	TicketID             uuid.UUID   `json:"ticket_id"`
+	BusinessID           uuid.UUID   `json:"business_id"`
+	TenantRootID         uuid.UUID   `json:"tenant_root_id"`
+	AuthorPrincipalID    pgtype.UUID `json:"author_principal_id"`
+	MessageID            string      `json:"message_id"`
+	BodyText             *string     `json:"body_text"`
+	BodyHtml             *string     `json:"body_html"`
+	SourceApprovalItemID pgtype.UUID `json:"source_approval_item_id"`
 }
 
 // InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
+// source_approval_item_id (nullable) is the idempotency key for agent-driven notes:
+// a redelivered ApprovalExecutor replay supplies the same key, which the service
+// detects via GetOutboundMessageByApproval before inserting. NULL for ordinary human
+// notes — NULLs never conflict, so existing behavior holds.
 func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error) {
 	row := q.db.QueryRow(ctx, insertNoteMessage,
 		arg.ID,
@@ -309,6 +315,7 @@ func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessagePa
 		arg.MessageID,
 		arg.BodyText,
 		arg.BodyHtml,
+		arg.SourceApprovalItemID,
 	)
 	var i TicketMessage
 	err := row.Scan(

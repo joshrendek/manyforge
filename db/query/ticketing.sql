@@ -179,11 +179,16 @@ SELECT * FROM ticket_message
 WHERE source_approval_item_id = $1 AND business_id = $2;
 
 -- InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
+-- source_approval_item_id (nullable) is the idempotency key for agent-driven notes:
+-- a redelivered ApprovalExecutor replay supplies the same key, which the service
+-- detects via GetOutboundMessageByApproval before inserting. NULL for ordinary human
+-- notes — NULLs never conflict, so existing behavior holds.
 -- name: InsertNoteMessage :one
 INSERT INTO ticket_message (
     id, ticket_id, business_id, tenant_root_id, direction, author_principal_id,
-    message_id, body_text, body_html)
-VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8)
+    message_id, body_text, body_html, source_approval_item_id)
+VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8,
+    sqlc.narg('source_approval_item_id'))
 RETURNING *;
 
 -- BumpTicketActivity touches the denormalized last_message_at/updated_at after a
