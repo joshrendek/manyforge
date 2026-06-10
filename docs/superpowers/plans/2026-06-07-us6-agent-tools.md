@@ -93,13 +93,13 @@
 - Run: `make generate` (regenerates `internal/platform/db/dbgen/connector_outbound.sql.go`)
 - Create/modify: `internal/connectors/migration_0047_integration_test.go` (white-box DEFINER + query test)
 
-- [ ] **Step 1 (RED): white-box integration test** in `internal/connectors/` (`//go:build integration`) using `startConn(t)` + `seedOutboundConnector`-style scaffold:
+- [x] **Step 1 (RED): white-box integration test** in `internal/connectors/` (`//go:build integration`) using `startConn(t)` + `seedOutboundConnector`-style scaffold:
   - `TestEnqueueOutboundTransitionInsertsPendingOp` — seed a connector-linked ticket; call dbgen `EnqueueOutboundTransition{ID:ticketID, BusinessID:bid, Status:"Done"}`; assert one `connector_outbound_op` row with `op_type='transition'`, `status='pending'`, `body='Done'`. Second identical call → still exactly one pending op (the `NOT EXISTS` dedup).
   - `TestEnqueueOutboundTransitionRejectsUnlinkedTicket` — ticket with `connector_id IS NULL` → 0 rows inserted.
   - `TestCompleteOutboundTransitionMarksDoneAndAudits` — insert a pending transition op; `SELECT complete_outbound_transition($op,$conn,'Done')`; assert op `status='done'`, `last_error IS NULL`, and one `audit_entry` row `action='connector.outbound.transitioned'`, `decision='external_post'`, `new_value->>'status'='Done'`.
   - `TestGetTicketConnectorRefOwnershipScoped` — `GetTicketConnectorRef{ID:ticketID, BusinessID:otherBiz}` → `pgx.ErrNoRows` (cross-business returns not-found, no oracle); correct business → `(connector_id, external_id)`.
 
-- [ ] **Step 2 (GREEN): write `migrations/0047_connector_agent_tools.up.sql`:**
+- [x] **Step 2 (GREEN): write `migrations/0047_connector_agent_tools.up.sql`:**
   ```sql
   -- US6: agent connector tools. New 'transition' outbound op-kind + completion DEFINER
   -- (no external-id write-back) + connectors.read/connectors.write permission catalog.
@@ -148,9 +148,9 @@
 
   **`.down.sql`:** `DROP FUNCTION IF EXISTS complete_outbound_transition(uuid,uuid,text);` + `DELETE FROM role_permission WHERE permission_key IN ('connectors.read','connectors.write');` + `DELETE FROM permission WHERE key IN ('connectors.read','connectors.write');` (note: PG cannot remove an enum value — document that `'transition'` persists on down-migration; acceptable, matches how enum additions are irreversible elsewhere).
 
-- [ ] **Step 3: mirror into `db/schema.sql`** — add `'transition'` to the `connector_outbound_op_type` enum list; add `complete_outbound_transition` following the existing convention for whether the 0045 DEFINERs appear in `schema.sql` (match `complete_outbound_comment`'s presence/absence there). Do NOT add the permission seed INSERTs to `schema.sql` (seeds are data, not schema).
+- [x] **Step 3: mirror into `db/schema.sql`** — add `'transition'` to the `connector_outbound_op_type` enum list; add `complete_outbound_transition` following the existing convention for whether the 0045 DEFINERs appear in `schema.sql` (match `complete_outbound_comment`'s presence/absence there). Do NOT add the permission seed INSERTs to `schema.sql` (seeds are data, not schema).
 
-- [ ] **Step 4: add queries to `db/query/connector_outbound.sql`:**
+- [x] **Step 4: add queries to `db/query/connector_outbound.sql`:**
   ```sql
   -- name: GetTicketConnectorRef :one
   SELECT connector_id, external_id
@@ -170,7 +170,7 @@
   ```
   Then `make generate`; verify `go build ./...` clean (ignore gopls). `GetTicketConnectorRef` returns `connector_id pgtype.UUID` + `external_id *string` (dbgen nullable nuance).
 
-- [ ] **Step 5:** run the integration test (`go test -tags integration -p 1 ./internal/connectors/ -run 'Transition|TicketConnectorRef' -v`) → GREEN. `gofmt -l`. Commit `--no-verify`: `feat(connectors): US6 T1 — 0047 transition op-kind + complete_outbound_transition + connectors.read/write perms + dbgen queries (manyforge-a7j.6.1)` (stage `.beads/issues.jsonl`).
+- [x] **Step 5:** run the integration test (`go test -tags integration -p 1 ./internal/connectors/ -run 'Transition|TicketConnectorRef' -v`) → GREEN. `gofmt -l`. Commit `--no-verify`: `feat(connectors): US6 T1 — 0047 transition op-kind + complete_outbound_transition + connectors.read/write perms + dbgen queries (manyforge-a7j.6.1)` (stage `.beads/issues.jsonl`).
 
 **Test plan (T1):** white-box integration tests above (enqueue insert + dedup, unlinked rejection, DEFINER mark-done+audit, ref ownership-scoping). No unit-level tests (pure SQL/DEFINER surface).
 
