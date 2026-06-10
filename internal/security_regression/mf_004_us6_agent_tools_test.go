@@ -73,9 +73,12 @@ func TestMF004US6_PermGating(t *testing.T) {
 	// MF-004-US6-PERM-GATING — Spec 004 US6 §7
 	src := readAgentsSource(t, "tools.go")
 
-	// read_external_ticket requires connectors.read.
-	if !strings.Contains(src, `RequiredPerm: "connectors.read"`) {
-		t.Fatal("MF-004-US6-PERM-GATING SOURCE PIN: connectors.read perm missing from tools.go — read_external_ticket must require this perm")
+	// read_external_ticket requires connectors.read. We pin the full struct-literal triple
+	// (Name + Effect + RequiredPerm are contiguous on one line) so a double-edit regression
+	// — moving read_external_ticket to a different perm AND adding connectors.read to some
+	// OTHER tool — cannot escape a file-wide substring match.
+	if !strings.Contains(src, `Name: "read_external_ticket", Effect: EffectRead, RequiredPerm: "connectors.read"`) {
+		t.Fatal(`MF-004-US6-PERM-GATING SOURCE PIN: read_external_ticket no longer declares RequiredPerm: "connectors.read" on its Name/Effect line — the read tool must be perm-gated by connectors.read`)
 	}
 
 	// Both write tools require connectors.write. The perm string must appear; one occurrence
