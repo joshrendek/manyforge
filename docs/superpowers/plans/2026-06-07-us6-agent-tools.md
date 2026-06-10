@@ -322,10 +322,10 @@
 
 **Why:** Spec §10 demo — an agent reads an external ticket and takes a gated write that lands externally. Prove the full path against the real outbound queue + dispatcher (the unit/gate tests use fakes).
 
-- [ ] **Step 1 (RED→GREEN):** using the connectors integration harness + an `httpStub`/recording connector registered in a real `Registry`:
+- [x] **Step 1 (RED→GREEN):** using the connectors integration harness + an `httpStub`/recording connector registered in a real `Registry`:
   - `TestAgentReadThenGatedTransitionE2E` — seed a connector-linked ticket; `gw.ReadTicketExternal` returns the stubbed issue; `gw.EnqueueTransition(...,"Done")` inserts the op; run the dispatcher; assert the stub connector received the transition and the op is `done` + audited.
   - `TestAgentGatedCommentE2E` — `AddNote` + `gw.EnqueueComment`; dispatcher posts the comment via the stub; `ticket_message.external_id` stamped by `complete_outbound_comment`; a subsequent inbound upsert of the same external comment id is deduped (no duplicate message) — proves the no-double-comment design.
-- [ ] **Step 2:** `go test -tags integration -p 1 ./internal/connectors/ -run 'E2E' -v` GREEN; `gofmt -l`. Commit `--no-verify`: `test(connectors): US6 T6 — agent read + gated write e2e (transition + comment dedup) (manyforge-a7j.6.6)`.
+- [x] **Step 2:** `go test -tags integration -p 1 ./internal/connectors/ -run 'E2E' -v` GREEN; `gofmt -l`. Commit `--no-verify`: `test(connectors): US6 T6 — agent read + gated write e2e (transition + comment dedup) (manyforge-a7j.6.6)`.
 
 **Test plan (T6):** integration round-trips for transition and comment through the real queue + dispatcher + DEFINERs, including the inbound-dedup assertion that validates decision #2.
 
