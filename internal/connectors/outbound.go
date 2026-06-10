@@ -184,6 +184,8 @@ func (d *OutboundDispatcher) dispatchOp(ctx context.Context, o claimedOp) error 
 		return d.dispatchComment(ctx, conn, o)
 	case "create_issue":
 		return d.dispatchCreate(ctx, conn, o, cfg)
+	case "transition":
+		return d.dispatchTransition(ctx, conn, o)
 	default:
 		return fmt.Errorf("unknown op type %q", o.Type)
 	}
@@ -263,6 +265,39 @@ func (d *OutboundDispatcher) dispatchCreate(ctx context.Context, conn TicketingC
 	return d.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `SELECT complete_outbound_create($1,$2,$3,$4,$5)`,
 			o.ID, o.TicketID, o.ConnectorID, iss.ExternalID, iss.URL)
+		return e
+	})
+}
+
+// dispatchTransition posts a status transition to the external system for a connector-linked
+// ticket. Unlike dispatchComment there is no idempotency read (transitions have no external-id
+// write-back); the op is marked done by complete_outbound_transition on success.
+func (d *OutboundDispatcher) dispatchTransition(ctx context.Context, conn TicketingConnector, o claimedOp) error {
+	if o.TicketExtID == nil || *o.TicketExtID == "" {
+		// Terminal: ticket has no external_id → this op can never succeed.
+		d.recordFailure(ctx, o.ID, fmt.Errorf("transition op %s ticket has no external_id", o.ID), true)
+		return nil
+	}
+	if o.Body == nil {
+		// Terminal: no target status recorded.
+		d.recordFailure(ctx, o.ID, fmt.Errorf("transition op %s missing body (target status)", o.ID), true)
+		return nil
+	}
+	status := *o.Body
+	// HTTP — NO tx held.
+	if err := conn.TransitionStatus(ctx, *o.TicketExtID, status); err != nil {
+		return fmt.Errorf("TransitionStatus: %w", err)
+	}
+	// Write-back — short tx.
+	return d.completeTransition(ctx, o.ID, o.ConnectorID, status)
+}
+
+// completeTransition marks the transition op done + audits, in one short tx via the
+// migration-0047 DEFINER complete_outbound_transition(op_id, connector_id, status).
+func (d *OutboundDispatcher) completeTransition(ctx context.Context, opID, connID uuid.UUID, status string) error {
+	return d.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `SELECT complete_outbound_transition($1,$2,$3)`,
+			opID, connID, status)
 		return e
 	})
 }
