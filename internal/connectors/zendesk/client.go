@@ -31,6 +31,15 @@ var (
 
 const bodyLimit = 8 << 20 // 8 MiB
 
+// searchPageSize is the per-request page size for the paginated Zendesk search.
+const searchPageSize = 100
+
+// zendeskStatuses is the closed set of valid Zendesk ticket statuses (clamps the target
+// before any write, mirroring Jira's transition-name lookup).
+var zendeskStatuses = map[string]bool{
+	"new": true, "open": true, "pending": true, "hold": true, "solved": true, "closed": true,
+}
+
 // ticketIDRe matches a Zendesk ticket id (one or more ASCII digits). Validated before any URL
 // build so a crafted id from an inbound webhook (DecodeWebhook lifts detail.id) cannot
 // smuggle path-traversal segments through url.JoinPath.
@@ -244,16 +253,69 @@ func (c *client) CreateIssue(ctx context.Context, draft connectors.ExternalIssue
 	}, nil
 }
 
-// ── Stub methods — implemented in T3–T4 ──
+// ── T3 implementations ──
 
-// TransitionStatus implements connectors.TicketingConnector (T3).
-func (c *client) TransitionStatus(_ context.Context, _, _ string) error {
-	return fmt.Errorf("zendesk: TransitionStatus: %w", ErrUpstream)
+// TransitionStatus sets the ticket's status (Zendesk applies it directly; there is no
+// transition graph). The target is clamped to the valid status set before the write.
+func (c *client) TransitionStatus(ctx context.Context, externalID, status string) error {
+	if err := validateTicketID(externalID); err != nil {
+		return err
+	}
+	target := strings.ToLower(status)
+	if !zendeskStatuses[target] {
+		return fmt.Errorf("zendesk: unknown status %q: %w", status, ErrUpstream)
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return fmt.Errorf("zendesk: invalid base_url: %w", ErrUpstream)
+	}
+	ticketURL := base.JoinPath("api", "v2", "tickets", externalID+".json")
+	payload, err := json.Marshal(map[string]any{
+		"ticket": map[string]any{"status": target},
+	})
+	if err != nil {
+		return fmt.Errorf("zendesk: marshal transition: %w", ErrUpstream)
+	}
+	return c.doJSON(ctx, http.MethodPut, ticketURL.String(), payload, nil)
 }
 
-// ListUpdatedSince implements connectors.TicketingConnector (T3).
-func (c *client) ListUpdatedSince(_ context.Context, _ time.Time) ([]string, error) {
-	return nil, fmt.Errorf("zendesk: ListUpdatedSince: %w", ErrUpstream)
+// ListUpdatedSince returns the ids of tickets updated at/after since (reconcile), paging
+// through ALL results. We page with explicit page/per_page rather than following the
+// response's next_page URL, so we never dial an upstream-controlled absolute URL through
+// the SSRF client. Zendesk search "updated>" is date-granular; over-fetch is harmless
+// because the inbound upsert is idempotent.
+func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]string, error) {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("zendesk: invalid base_url: %w", ErrUpstream)
+	}
+	query := fmt.Sprintf("type:ticket updated>%s", since.UTC().Format("2006-01-02"))
+
+	var ids []string
+	page := 1
+	for {
+		searchURL := base.JoinPath("api", "v2", "search.json")
+		q := url.Values{}
+		q.Set("query", query)
+		q.Set("sort_by", "updated_at")
+		q.Set("sort_order", "asc")
+		q.Set("page", strconv.Itoa(page))
+		q.Set("per_page", strconv.Itoa(searchPageSize))
+		searchURL.RawQuery = q.Encode()
+
+		var pageResp zendeskSearchResponse
+		if err := c.doJSON(ctx, http.MethodGet, searchURL.String(), nil, &pageResp); err != nil {
+			return nil, err
+		}
+		for _, r := range pageResp.Results {
+			ids = append(ids, strconv.FormatInt(r.ID, 10))
+		}
+		if len(pageResp.Results) == 0 || len(ids) >= pageResp.Count {
+			break
+		}
+		page++
+	}
+	return ids, nil
 }
 
 // VerifyWebhook implements connectors.TicketingConnector (T4).
@@ -311,4 +373,13 @@ type zendeskComment struct {
 	AuthorID  int64     `json:"author_id"`
 	PlainBody string    `json:"plain_body"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// zendeskSearchResponse is the GET /api/v2/search.json response page consumed by
+// ListUpdatedSince; only ticket ids and the total count are needed for pagination.
+type zendeskSearchResponse struct {
+	Results []struct {
+		ID int64 `json:"id"`
+	} `json:"results"`
+	Count int `json:"count"`
 }
