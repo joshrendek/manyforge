@@ -1,0 +1,11 @@
+{
+  "ticket": { "id": 12345, "subject": "Login button is broken", "status": "open", "priority": "high", "requester_id": 999, "updated_at": "2026-06-09T12:10:00Z" },
+  "audit": {
+    "id": 7000,
+    "created_at": "2026-06-09T12:10:00Z",
+    "events": [
+      { "id": 8001, "type": "Comment" },
+      { "id": 8002, "type": "Notification" }
+    ]
+  }
+}

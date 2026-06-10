@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/manyforge/manyforge/internal/connectors"
@@ -162,12 +163,88 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 	return issue, nil
 }
 
-// ── Stub methods — implemented in T2–T4 ──
-
-// PostComment implements connectors.TicketingConnector (T2).
-func (c *client) PostComment(_ context.Context, _, _ string) (connectors.ExternalComment, error) {
-	return connectors.ExternalComment{}, fmt.Errorf("zendesk: PostComment: %w", ErrUpstream)
+// PostComment appends a public comment by updating the ticket; the created comment's id
+// comes from the response audit's "Comment" event.
+func (c *client) PostComment(ctx context.Context, externalID, body string) (connectors.ExternalComment, error) {
+	if err := validateTicketID(externalID); err != nil {
+		return connectors.ExternalComment{}, err
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return connectors.ExternalComment{}, fmt.Errorf("zendesk: invalid base_url: %w", ErrUpstream)
+	}
+	ticketURL := base.JoinPath("api", "v2", "tickets", externalID+".json")
+	payload, err := json.Marshal(map[string]any{
+		"ticket": map[string]any{
+			"comment": map[string]any{"body": body, "public": true},
+		},
+	})
+	if err != nil {
+		return connectors.ExternalComment{}, fmt.Errorf("zendesk: marshal comment: %w", ErrUpstream)
+	}
+	var resp zendeskUpdateResponse
+	if err := c.doJSON(ctx, http.MethodPut, ticketURL.String(), payload, &resp); err != nil {
+		return connectors.ExternalComment{}, err
+	}
+	commentID := resp.Audit.ID // fall back to the audit id if no Comment event is present
+	for _, ev := range resp.Audit.Events {
+		if ev.Type == "Comment" {
+			commentID = ev.ID
+			break
+		}
+	}
+	return connectors.ExternalComment{
+		ExternalID: strconv.FormatInt(commentID, 10),
+		Author:     "",
+		Body:       body,
+		CreatedAt:  resp.Audit.CreatedAt,
+	}, nil
 }
+
+// CreateIssue creates a new Zendesk ticket from the draft, returning its id + agent URL.
+// Zendesk has no project/issue-type; a recognized IssueType maps onto the ticket "type".
+func (c *client) CreateIssue(ctx context.Context, draft connectors.ExternalIssueDraft) (connectors.ExternalIssue, error) {
+	if draft.Summary == "" {
+		return connectors.ExternalIssue{}, fmt.Errorf("zendesk: summary required: %w", ErrUpstream)
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return connectors.ExternalIssue{}, fmt.Errorf("zendesk: invalid base_url: %w", ErrUpstream)
+	}
+	ticketsURL := base.JoinPath("api", "v2", "tickets.json")
+
+	commentBody := draft.Description
+	if commentBody == "" {
+		commentBody = draft.Summary
+	}
+	ticket := map[string]any{
+		"subject": draft.Summary,
+		"comment": map[string]any{"body": commentBody},
+	}
+	switch strings.ToLower(draft.IssueType) {
+	case "problem", "incident", "question", "task":
+		ticket["type"] = strings.ToLower(draft.IssueType)
+	}
+	if draft.ReporterEmail != "" {
+		ticket["requester"] = map[string]any{"email": draft.ReporterEmail}
+	}
+	payload, err := json.Marshal(map[string]any{"ticket": ticket})
+	if err != nil {
+		return connectors.ExternalIssue{}, fmt.Errorf("zendesk: marshal create: %w", ErrUpstream)
+	}
+	var resp zendeskTicketResponse
+	if err := c.doJSON(ctx, http.MethodPost, ticketsURL.String(), payload, &resp); err != nil {
+		return connectors.ExternalIssue{}, err
+	}
+	idStr := strconv.FormatInt(resp.Ticket.ID, 10)
+	return connectors.ExternalIssue{
+		ExternalID: idStr,
+		URL:        base.JoinPath("agent", "tickets", idStr).String(),
+		Title:      draft.Summary,
+	}, nil
+}
+
+// ── Stub methods — implemented in T3–T4 ──
 
 // TransitionStatus implements connectors.TicketingConnector (T3).
 func (c *client) TransitionStatus(_ context.Context, _, _ string) error {
@@ -189,16 +266,24 @@ func (c *client) DecodeWebhook(_ []byte) (connectors.WebhookEvent, error) {
 	return connectors.WebhookEvent{}, fmt.Errorf("zendesk: DecodeWebhook: %w", ErrUpstream)
 }
 
-// CreateIssue implements connectors.TicketingConnector (T2).
-func (c *client) CreateIssue(_ context.Context, _ connectors.ExternalIssueDraft) (connectors.ExternalIssue, error) {
-	return connectors.ExternalIssue{}, fmt.Errorf("zendesk: CreateIssue: %w", ErrUpstream)
-}
-
 // ── Zendesk REST v2 response shapes (timestamps are RFC3339, decoded by time.Time) ──
 
 type zendeskTicketResponse struct {
 	Ticket zendeskTicket `json:"ticket"`
 	Users  []zendeskUser `json:"users"`
+}
+
+// zendeskUpdateResponse is the PUT /tickets/{id} response carrying the audit of the change.
+type zendeskUpdateResponse struct {
+	Ticket zendeskTicket `json:"ticket"`
+	Audit  struct {
+		ID        int64     `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		Events    []struct {
+			ID   int64  `json:"id"`
+			Type string `json:"type"`
+		} `json:"events"`
+	} `json:"audit"`
 }
 
 type zendeskTicket struct {

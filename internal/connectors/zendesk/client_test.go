@@ -3,12 +3,15 @@ package zendesk
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/manyforge/manyforge/internal/connectors"
 )
 
 // newTestClient builds a *client pointed at srvURL with the given credentials.
@@ -113,5 +116,90 @@ func TestFetchIssue_DoesNotLeakAPIToken(t *testing.T) {
 	}
 	if !errors.Is(err, ErrUpstream) {
 		t.Fatalf("err = %v, want Is(ErrUpstream)", err)
+	}
+}
+
+func TestPostComment(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(mustFixture(t, "post_comment_response.json"))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	cm, err := c.PostComment(context.Background(), "12345", "Reply from ManyForge")
+	if err != nil {
+		t.Fatalf("PostComment: %v", err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/api/v2/tickets/12345.json" {
+		t.Errorf("request = %s %s, want PUT /api/v2/tickets/12345.json", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"comment"`) || !strings.Contains(gotBody, "Reply from ManyForge") {
+		t.Errorf("body did not carry the comment: %s", gotBody)
+	}
+	if cm.ExternalID != "8001" {
+		t.Errorf("ExternalID = %q, want 8001 (audit Comment event id)", cm.ExternalID)
+	}
+	if cm.Body != "Reply from ManyForge" {
+		t.Errorf("Body = %q", cm.Body)
+	}
+}
+
+func TestPostComment_RejectsTraversalID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server must not be reached for an invalid ticket id")
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	if _, err := c.PostComment(context.Background(), "9/../1", "hi"); !errors.Is(err, ErrBadTicketID) {
+		t.Fatalf("err = %v, want Is(ErrBadTicketID)", err)
+	}
+}
+
+func TestCreateIssue(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(mustFixture(t, "create_ticket_response.json"))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	issue, err := c.CreateIssue(context.Background(), connectors.ExternalIssueDraft{
+		Summary: "Escalated from ManyForge", Description: "Customer cannot log in", IssueType: "Task",
+	})
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/v2/tickets.json" {
+		t.Errorf("request = %s %s, want POST /api/v2/tickets.json", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"subject":"Escalated from ManyForge"`) ||
+		!strings.Contains(gotBody, "Customer cannot log in") || !strings.Contains(gotBody, `"type":"task"`) {
+		t.Errorf("create body wrong: %s", gotBody)
+	}
+	if issue.ExternalID != "67890" {
+		t.Errorf("ExternalID = %q, want 67890", issue.ExternalID)
+	}
+	if !strings.HasSuffix(issue.URL, "/agent/tickets/67890") {
+		t.Errorf("URL = %q", issue.URL)
+	}
+}
+
+func TestCreateIssue_RequiresSummary(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server must not be reached without a summary")
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	if _, err := c.CreateIssue(context.Background(), connectors.ExternalIssueDraft{}); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("err = %v, want Is(ErrUpstream) for empty summary", err)
 	}
 }
