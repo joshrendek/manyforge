@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/manyforge/manyforge/internal/platform/ai"
+	"github.com/manyforge/manyforge/internal/ticketing"
 )
 
 // --- fakes ---
@@ -400,5 +401,183 @@ func TestRun_ResolverErrorDeniesTool(t *testing.T) {
 	}
 	if !containsDecision(aud.actions, "denied") {
 		t.Fatalf("resolver-error denial must be audited; actions=%v", aud.actions)
+	}
+}
+
+// --- US6 T5: gate-branch pins — external connector WRITE tools ---
+
+// TestRun_ExternalCommentQueuesInAssist — ModeAssist + add_external_comment:
+// the gate must queue an approval and NOT call EnqueueComment.
+func TestRun_ExternalCommentQueuesInAssist(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "add_external_comment", `{"ticket_id":"`+tid.String()+`","body_text":"hi"}`),
+		finalText("ok"),
+	)
+	fts := &fakeTicketSvc{}
+	fgw := &fakeConnectorGateway{}
+	store := &fakeRunStore{}
+	eng, aud, ap := newTestEngine(prov, store, map[string]bool{"connectors.write": true}, NewToolRegistry(fts, fgw))
+	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("add_external_comment"), "manual", nil, nil)
+	if fgw.enqueueCommentCalled {
+		t.Fatal("ModeAssist: EnqueueComment must NOT be called (tool must be queued)")
+	}
+	if len(ap.created) != 1 || ap.created[0] != "add_external_comment:2" { // 2 == EffectExternal
+		t.Fatalf("expected one queued add_external_comment approval; got %v", ap.created)
+	}
+	if run.Status != RunAwaitingApproval {
+		t.Fatalf("status=%s want awaiting_approval", run.Status)
+	}
+	if !containsDecision(aud.actions, "proposed") {
+		t.Fatalf("queued action must be audited proposed; actions=%v", aud.actions)
+	}
+}
+
+// TestRun_ExternalCommentQueuesInQueueWrites — ModeQueueWrites + add_external_comment:
+// same queued behaviour (no enqueue) as ModeAssist.
+func TestRun_ExternalCommentQueuesInQueueWrites(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "add_external_comment", `{"ticket_id":"`+tid.String()+`","body_text":"hi"}`),
+		finalText("ok"),
+	)
+	fts := &fakeTicketSvc{}
+	fgw := &fakeConnectorGateway{}
+	eng, aud, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"connectors.write": true}, NewToolRegistry(fts, fgw))
+	ag := loadedAgent("add_external_comment")
+	ag.AutonomyMode = ModeQueueWrites
+	run, _ := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
+	if fgw.enqueueCommentCalled {
+		t.Fatal("ModeQueueWrites: EnqueueComment must NOT be called (tool must be queued)")
+	}
+	if len(ap.created) != 1 || ap.created[0] != "add_external_comment:2" { // 2 == EffectExternal
+		t.Fatalf("expected one queued add_external_comment approval; got %v", ap.created)
+	}
+	if run.Status != RunAwaitingApproval {
+		t.Fatalf("status=%s want awaiting_approval", run.Status)
+	}
+	if !containsDecision(aud.actions, "proposed") {
+		t.Fatalf("queued action must be audited proposed; actions=%v", aud.actions)
+	}
+}
+
+// TestRun_ExternalCommentExecutesInAutonomous — ModeAutonomous + add_external_comment:
+// EnqueueComment must be called once; no approval queued; run succeeds.
+func TestRun_ExternalCommentExecutesInAutonomous(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "add_external_comment", `{"ticket_id":"`+tid.String()+`","body_text":"hi"}`),
+		finalText("ok"),
+	)
+	noteID := uuid.New()
+	fts := &fakeTicketSvc{addNoteMsg: ticketing.Message{ID: noteID}}
+	fgw := &fakeConnectorGateway{}
+	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"connectors.write": true}, NewToolRegistry(fts, fgw))
+	ag := loadedAgent("add_external_comment")
+	ag.AutonomyMode = ModeAutonomous
+	run, _ := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
+	if !fgw.enqueueCommentCalled {
+		t.Fatal("ModeAutonomous: EnqueueComment must be called once inline")
+	}
+	if len(ap.created) != 0 {
+		t.Fatalf("ModeAutonomous must not queue approvals; got %v", ap.created)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("status=%s want succeeded", run.Status)
+	}
+}
+
+// TestRun_TransitionQueuesInAssist — ModeAssist + transition_external_status:
+// the gate must queue an approval and NOT call EnqueueTransition.
+func TestRun_TransitionQueuesInAssist(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "transition_external_status", `{"ticket_id":"`+tid.String()+`","status":"Done"}`),
+		finalText("ok"),
+	)
+	fgw := &fakeConnectorGateway{}
+	store := &fakeRunStore{}
+	eng, aud, ap := newTestEngine(prov, store, map[string]bool{"connectors.write": true}, NewToolRegistry(&fakeTicketSvc{}, fgw))
+	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("transition_external_status"), "manual", nil, nil)
+	if fgw.enqueueTransitionCalled {
+		t.Fatal("ModeAssist: EnqueueTransition must NOT be called (tool must be queued)")
+	}
+	if len(ap.created) != 1 || ap.created[0] != "transition_external_status:2" { // 2 == EffectExternal
+		t.Fatalf("expected one queued transition_external_status approval; got %v", ap.created)
+	}
+	if run.Status != RunAwaitingApproval {
+		t.Fatalf("status=%s want awaiting_approval", run.Status)
+	}
+	if !containsDecision(aud.actions, "proposed") {
+		t.Fatalf("queued action must be audited proposed; actions=%v", aud.actions)
+	}
+}
+
+// TestRun_TransitionExecutesInAutonomous — ModeAutonomous + transition_external_status:
+// EnqueueTransition must be called once; no approval queued; run succeeds.
+func TestRun_TransitionExecutesInAutonomous(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "transition_external_status", `{"ticket_id":"`+tid.String()+`","status":"Done"}`),
+		finalText("ok"),
+	)
+	fgw := &fakeConnectorGateway{}
+	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"connectors.write": true}, NewToolRegistry(&fakeTicketSvc{}, fgw))
+	ag := loadedAgent("transition_external_status")
+	ag.AutonomyMode = ModeAutonomous
+	run, _ := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
+	if !fgw.enqueueTransitionCalled {
+		t.Fatal("ModeAutonomous: EnqueueTransition must be called once inline")
+	}
+	if len(ap.created) != 0 {
+		t.Fatalf("ModeAutonomous must not queue approvals; got %v", ap.created)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("status=%s want succeeded", run.Status)
+	}
+}
+
+// TestRun_ExternalToolDeniedWithoutPerm — perms map lacks connectors.write:
+// RBAC gate denies the tool; no enqueue, no approval; audited "denied".
+func TestRun_ExternalToolDeniedWithoutPerm(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "add_external_comment", `{"ticket_id":"`+tid.String()+`","body_text":"hi"}`),
+		finalText("ok"),
+	)
+	fts := &fakeTicketSvc{}
+	fgw := &fakeConnectorGateway{}
+	eng, aud, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(fts, fgw))
+	_, _ = eng.run(context.Background(), uuid.New(), loadedAgent("add_external_comment"), "manual", nil, nil)
+	if fgw.enqueueCommentCalled {
+		t.Fatal("RBAC-denied tool must NOT call EnqueueComment")
+	}
+	if len(ap.created) != 0 {
+		t.Fatalf("RBAC-denied tool must NOT create an approval; got %v", ap.created)
+	}
+	if !containsDecision(aud.actions, "denied") {
+		t.Fatalf("RBAC-denied tool must be audited denied; actions=%v", aud.actions)
+	}
+}
+
+// TestRun_ReadExternalRunsInline — read_external_ticket (EffectRead) executes inline
+// in ModeAssist (reads never queue); gateway ReadTicketExternal called once.
+func TestRun_ReadExternalRunsInline(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "read_external_ticket", `{"ticket_id":"`+tid.String()+`"}`),
+		finalText("ok"),
+	)
+	fgw := &fakeConnectorGateway{}
+	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"connectors.read": true}, NewToolRegistry(&fakeTicketSvc{}, fgw))
+	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("read_external_ticket"), "manual", nil, nil)
+	if !fgw.readCalled {
+		t.Fatal("ModeAssist read tool must execute inline; ReadTicketExternal was not called")
+	}
+	if len(ap.created) != 0 {
+		t.Fatalf("read tools must never queue approvals; got %v", ap.created)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("status=%s want succeeded", run.Status)
 	}
 }
