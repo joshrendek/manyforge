@@ -148,16 +148,19 @@ func TestAgentReadThenGatedTransitionE2E(t *testing.T) {
 		t.Fatalf("EnqueueTransition: %v", err)
 	}
 
-	// Confirm a pending 'transition' op was enqueued.
-	var pendingOps int
+	// Confirm a pending 'transition' op was enqueued, and capture its id so the audit
+	// assertion below pins the exact row the DEFINER wrote (target_id), not a
+	// fresh-DB-only connector_id match.
+	var opID uuid.UUID
+	var opStatusEnq string
 	if err := tdb.Super.QueryRow(ctx,
-		`SELECT count(*) FROM connector_outbound_op
-		   WHERE ticket_id=$1 AND op_type='transition' AND status='pending' AND body='Done'`,
-		ticketID).Scan(&pendingOps); err != nil {
-		t.Fatalf("count pending transition ops: %v", err)
+		`SELECT id, status FROM connector_outbound_op
+		   WHERE ticket_id=$1 AND op_type='transition' AND body='Done'`,
+		ticketID).Scan(&opID, &opStatusEnq); err != nil {
+		t.Fatalf("fetch transition op: %v", err)
 	}
-	if pendingOps != 1 {
-		t.Fatalf("want 1 pending transition op, got %d", pendingOps)
+	if opStatusEnq != "pending" {
+		t.Fatalf("want 1 pending transition op, got status=%q", opStatusEnq)
 	}
 
 	// Step 3: run the dispatcher — should call conn.TransitionStatus("JIRA-E2E-TR","Done").
@@ -187,22 +190,20 @@ func TestAgentReadThenGatedTransitionE2E(t *testing.T) {
 	// Step 4b: op must be status='done'.
 	var opStatus string
 	if err := tdb.Super.QueryRow(ctx,
-		`SELECT status FROM connector_outbound_op
-		   WHERE ticket_id=$1 AND op_type='transition' AND body='Done' LIMIT 1`,
-		ticketID).Scan(&opStatus); err != nil {
+		`SELECT status FROM connector_outbound_op WHERE id=$1`, opID).Scan(&opStatus); err != nil {
 		t.Fatalf("read op status: %v", err)
 	}
 	if opStatus != "done" {
 		t.Fatalf("op status = %q, want done", opStatus)
 	}
 
-	// Step 4c: audit row written with action='connector.outbound.transitioned'.
+	// Step 4c: audit row written by complete_outbound_transition. Pin the exact row via
+	// target_id=opID (target_type='connector_outbound_op'), matching the DEFINER precisely.
 	var auditCount int
 	if err := tdb.Super.QueryRow(ctx,
 		`SELECT count(*) FROM audit_entry
-		   WHERE action='connector.outbound.transitioned'
-		     AND new_value->>'connector_id' = $1`,
-		connID.String()).Scan(&auditCount); err != nil {
+		   WHERE action='connector.outbound.transitioned' AND target_id=$1`,
+		opID).Scan(&auditCount); err != nil {
 		t.Fatalf("count audit: %v", err)
 	}
 	if auditCount != 1 {
@@ -336,6 +337,20 @@ func TestAgentGatedCommentE2E(t *testing.T) {
 	}
 	if extID == nil || *extID != "C-E2E-COMM-1" {
 		t.Fatalf("message external_id = %v, want C-E2E-COMM-1", extID)
+	}
+
+	// Step 4b': complete_outbound_comment must have written its audit, closing the e2e loop.
+	// The DEFINER (migration 0045) writes action='connector.outbound.commented' with
+	// target_type='ticket_message', target_id=p_message_id (the note message id, msgID).
+	var commentAuditCount int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM audit_entry
+		   WHERE action='connector.outbound.commented' AND target_id=$1`,
+		msgID).Scan(&commentAuditCount); err != nil {
+		t.Fatalf("count comment audit: %v", err)
+	}
+	if commentAuditCount != 1 {
+		t.Fatalf("comment audit rows = %d, want 1", commentAuditCount)
 	}
 
 	// Step 4c: op must be status='done'.
