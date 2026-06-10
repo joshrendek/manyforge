@@ -107,7 +107,7 @@ func TestRun_SafeToolThenFinish(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts, nil))
 
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestExecute_OnPreCreatedRun(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts, nil))
 
 	ttype := "ticket"
 	pre := AgentRun{ID: uuid.New(), AgentID: uuid.New(), BusinessID: uuid.New(), Trigger: "event", TargetType: &ttype, TargetID: &tid, Status: RunRunning, CorrelationID: uuid.NewString()}
@@ -157,7 +157,7 @@ func TestExecute_OnPreCreatedRun(t *testing.T) {
 func TestRun_BudgetRefusesStart(t *testing.T) {
 	prov := ai.NewMockProvider(finalText("never"))
 	store := &fakeRunStore{mtd: 500}
-	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	ag := loadedAgent()
 	ag.MonthlyBudgetCents = 500
 	run, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
@@ -180,7 +180,7 @@ func TestRun_AllowlistDenied(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, aud, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, aud, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts, nil))
 	_, _ = eng.run(context.Background(), uuid.New(), loadedAgent("read_ticket"), "manual", nil, nil)
 	if fts.triageIn.Status != nil {
 		t.Fatal("disallowed tool must NOT execute")
@@ -198,7 +198,7 @@ func TestRun_Mode1ExternalQueuesApproval(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, aud, ap := newTestEngine(prov, store, map[string]bool{"tickets.reply": true}, NewToolRegistry(fts))
+	eng, aud, ap := newTestEngine(prov, store, map[string]bool{"tickets.reply": true}, NewToolRegistry(fts, nil))
 	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("draft_reply"), "manual", nil, nil)
 	if fts.gotTicket != (uuid.UUID{}) {
 		t.Fatal("Mode-1 external tool must be queued (no execution)")
@@ -221,7 +221,7 @@ func TestRun_Mode2QueuesReversibleWrite(t *testing.T) {
 		finalText("done"),
 	)
 	fts := &fakeTicketSvc{}
-	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"tickets.write": true}, NewToolRegistry(fts, nil))
 	ag := loadedAgent("set_status")
 	ag.AutonomyMode = ModeQueueWrites
 	run, _ := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
@@ -243,7 +243,7 @@ func TestRun_Mode3AutoRunsExternal(t *testing.T) {
 		finalText("ok"),
 	)
 	fts := &fakeTicketSvc{}
-	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"tickets.reply": true}, NewToolRegistry(fts))
+	eng, _, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{"tickets.reply": true}, NewToolRegistry(fts, nil))
 	ag := loadedAgent("draft_reply")
 	ag.AutonomyMode = ModeAutonomous
 	run, _ := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
@@ -266,7 +266,7 @@ func TestRun_MaxIterationsBound(t *testing.T) {
 	}
 	prov := ai.NewMockProvider(resps...)
 	store := &fakeRunStore{}
-	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if run.Status != RunFailed || run.Error == nil {
 		t.Fatalf("bound-hit run must fail with an error reason; got %+v", run)
@@ -278,7 +278,7 @@ func TestRun_MaxIterationsBound(t *testing.T) {
 
 func TestRun_DisabledAgentRefused(t *testing.T) {
 	prov := ai.NewMockProvider(finalText("never"))
-	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	ag := loadedAgent()
 	ag.Enabled = false
 	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err == nil {
@@ -297,7 +297,7 @@ func TestRun_MaxTokensBound(t *testing.T) {
 	)
 	fts := &fakeTicketSvc{}
 	store := &fakeRunStore{}
-	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(fts, nil))
 	eng.Limits.MaxTokensPerRun = 10
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if err != nil {
@@ -324,7 +324,7 @@ func (blockingProvider) Name() string { return "blocking" }
 
 func TestRun_WallClockTimeout(t *testing.T) {
 	store := &fakeRunStore{}
-	eng, _, _ := newTestEngine(blockingProvider{}, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(blockingProvider{}, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	eng.Limits.WallClock = 10 * time.Millisecond
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent(), "manual", nil, nil)
 	if err != nil {
@@ -342,7 +342,7 @@ func TestRun_CostAndTokensAccumulated(t *testing.T) {
 		finalText("done"), // 4/2
 	)
 	store := &fakeRunStore{}
-	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{"tickets.write": true}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
 	if err != nil || run.Status != RunSucceeded {
 		t.Fatalf("want clean success; got run=%+v err=%v", run, err)
@@ -356,7 +356,7 @@ func TestRun_CostAndTokensAccumulated(t *testing.T) {
 func TestRun_ProviderErrorFailsRun(t *testing.T) {
 	prov := ai.NewMockProvider() // empty queue → exhausted on first Complete
 	store := &fakeRunStore{}
-	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}))
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	run, err := eng.run(context.Background(), uuid.New(), loadedAgent(), "manual", nil, nil)
 	// Per-turn provider failure is NOT a Go error: Status is authoritative.
 	if err != nil {
@@ -384,7 +384,7 @@ func TestRun_ResolverErrorDeniesTool(t *testing.T) {
 	aud := &fakeAuditor{}
 	eng := &Engine{
 		Runs:      &fakeRunStore{},
-		Tools:     NewToolRegistry(fts),
+		Tools:     NewToolRegistry(fts, nil),
 		Auditor:   aud,
 		Resolver:  errResolver{},
 		Approvals: &fakeApprovals{},

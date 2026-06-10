@@ -158,7 +158,7 @@ func TestApprovalReplayIdempotent(t *testing.T) {
 	ticketSvc := &ticketing.Service{DB: tdb.App, ReplyTokenKey: replyTokenKey, SystemDomain: "inbound.localhost"}
 	exec := &ApprovalExecutor{
 		Approvals: store,
-		Tools:     NewToolRegistry(ticketSvc),
+		Tools:     NewToolRegistry(ticketSvc, nil),
 		Auditor:   NewDBAuditor(tdb.App),
 	}
 

@@ -163,9 +163,14 @@ func main() {
 	agentRunStore := &agents.AgentRunStore{DB: database}
 	accountingStore := &agents.AccountingStore{DB: database}
 	accountingH := agents.NewAccountingHandler(accountingStore)
+	// connGateway is declared here (interface-typed, not *connectors.AgentGateway) so it
+	// is a TRUE nil interface until the connector block below assigns it. This avoids the
+	// typed-nil trap: a (*connectors.AgentGateway)(nil) boxed into ConnectorGateway would
+	// be non-nil at the interface level and incorrectly register connector tools.
+	var connGateway agents.ConnectorGateway // nil interface = connectors disabled
 	agentEngine := &agents.Engine{
 		Runs:        agentRunStore,
-		Tools:       agents.NewToolRegistry(ticketSvc),
+		Tools:       agents.NewToolRegistry(ticketSvc, connGateway),
 		Auditor:     agents.NewDBAuditor(database),
 		Resolver:    agents.NewAuthzChecker(database),
 		NewProvider: agents.NewCredentialProviderFactory(credSvc),
@@ -185,7 +190,7 @@ func main() {
 	approvalH := agents.NewApprovalHandler(approvalSvc)
 	approvalExec := &agents.ApprovalExecutor{
 		Approvals: approvalStore,
-		Tools:     agents.NewToolRegistry(ticketSvc), // reuse the same ticketing service as the Engine
+		Tools:     agents.NewToolRegistry(ticketSvc, connGateway), // reuse the same ticketing service as the Engine
 		Auditor:   agents.NewDBAuditor(database),
 	}
 	// approvalExec subscribes to TopicAgentApproved below, once eventBus is constructed.
@@ -281,6 +286,12 @@ func main() {
 		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
 		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: 5 * time.Minute}
 		outboundDispatcher = &connectors.OutboundDispatcher{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: 15 * time.Second, Batch: 20}
+		// Assign the gateway and rebuild the tool registry for both the Engine and
+		// the ApprovalExecutor so they pick up the connector tools. This mirrors the
+		// late-wiring pattern used for MCP (agentEngine.MCP = mcpHost below).
+		connGateway = connectors.NewAgentGateway(connSvc, connReg)
+		agentEngine.Tools = agents.NewToolRegistry(ticketSvc, connGateway)
+		approvalExec.Tools = agents.NewToolRegistry(ticketSvc, connGateway)
 	} else {
 		logger.Warn("MANYFORGE_CONNECTOR_MASTER_KEY unset; external connectors disabled (no Jira webhook/sync)")
 	}
