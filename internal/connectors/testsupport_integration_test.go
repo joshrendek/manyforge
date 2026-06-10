@@ -9,17 +9,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/events"
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
+	"github.com/manyforge/manyforge/internal/ticketing"
 )
 
 type connSeed struct {
@@ -373,4 +378,242 @@ func (c *httpStubConnector) ListUpdatedSince(_ context.Context, _ time.Time) ([]
 func (c *httpStubConnector) VerifyWebhook(_ http.Header, _ []byte) error { return nil }
 func (c *httpStubConnector) DecodeWebhook(_ []byte) (WebhookEvent, error) {
 	return WebhookEvent{}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Bidirectional round-trip scaffolding (US4 T8)
+// ---------------------------------------------------------------------------
+
+// roundTripConnector is the single TicketingConnector the round-trip env registers under
+// "jira". It bridges BOTH halves of the loop through one factory:
+//   - inbound webhook: the embedded hmacFakeConnector supplies the real HMAC VerifyWebhook +
+//     DecodeWebhook, so the public webhook handler exercises the genuine cryptographic path;
+//   - inbound sync: FetchIssue returns a populated ExternalIssue (with a ReporterEmail so
+//     sync_inbound_external_issue creates the requester that Reply later resolves);
+//   - outbound: PostComment issues a REAL HTTP POST through the netsafe SSRF-safe client
+//     to the httptest stub (like httpStubConnector), so the dispatcher genuinely traverses
+//     the dial gate against 127.0.0.1.
+//
+// It composes the two existing test connectors rather than re-deriving their logic: it
+// embeds hmacFakeConnector (inheriting VerifyWebhook/DecodeWebhook/TransitionStatus/
+// ListUpdatedSince for free; set its secret via the embedded field) and delegates the
+// outbound calls to httpStubConnector, overriding only FetchIssue/PostComment/CreateIssue.
+type roundTripConnector struct {
+	hmacFakeConnector                    // inbound HMAC verify/decode (set .secret)
+	issue             ExternalIssue      // canned issue returned by FetchIssue (inbound sync)
+	post              *httpStubConnector // real SSRF POST path (outbound comment/create)
+}
+
+var _ TicketingConnector = (*roundTripConnector)(nil)
+
+func (c *roundTripConnector) FetchIssue(_ context.Context, externalID string) (ExternalIssue, error) {
+	iss := c.issue
+	if iss.ExternalID == "" {
+		iss.ExternalID = externalID
+	}
+	return iss, nil
+}
+
+func (c *roundTripConnector) PostComment(ctx context.Context, externalID, body string) (ExternalComment, error) {
+	return c.post.PostComment(ctx, externalID, body)
+}
+func (c *roundTripConnector) CreateIssue(ctx context.Context, draft ExternalIssueDraft) (ExternalIssue, error) {
+	return c.post.CreateIssue(ctx, draft)
+}
+
+// connectorRoundTripEnv bundles everything the bidirectional loop needs behind one stub:
+// the connectors.Service (+ shared sealer) that owns the connector, the Registry whose
+// "jira" factory returns the roundTripConnector, the wired inbound subscriber + outbound
+// dispatcher, the genuine ticketing.Service producer, the webhook handler, and the tenancy
+// ids. seedFullConnectorEnv composes it from the Task 2/4 helpers (shared sealer / stub
+// jira factory via the SSRF netsafe client) plus the US3 inbound webhook + subscriber path.
+type connectorRoundTripEnv struct {
+	tdb           *testdb.TestDB
+	WebhookSecret string
+
+	Service    *Service
+	Registry   *Registry
+	Subscriber *InboundSyncSubscriber
+	Dispatcher *OutboundDispatcher
+	Ticketing  *ticketing.Service
+	Webhook    *WebhookHandler
+
+	ConnectorID uuid.UUID
+	BusinessID  uuid.UUID
+	PrincipalID uuid.UUID
+}
+
+// seedFullConnectorEnv builds the round-trip fixture. baseURL is the httptest Jira stub URL
+// (127.0.0.1) so the connector is created with allow_private_base_url=true and the netsafe
+// SSRF client is told to allow loopback — the same trust path seedOutboundConnector uses.
+func seedFullConnectorEnv(t *testing.T, ctx context.Context, tdb *testdb.TestDB, seed connSeed, baseURL string) *connectorRoundTripEnv {
+	t.Helper()
+
+	webhookSecret := "rt-webhook-secret-" + uuid.NewString()
+
+	// Shared sealer across Service / subscriber / dispatcher / webhook handler so the
+	// credential sealed by Service.Create can be opened by every consumer.
+	sealer := newTestSealer(t)
+	svc := &Service{DB: tdb.App, Vault: secrets.NewVault(sealer), Verify: nil}
+
+	in := jiraInput()
+	in.BaseURL = baseURL
+	in.AllowPrivateBaseURL = true // httptest is 127.0.0.1
+	in.WebhookSecret = webhookSecret
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, in)
+	if err != nil {
+		t.Fatalf("seedFullConnectorEnv: create connector: %v", err)
+	}
+
+	// The canned external issue the inbound sync upserts into a native ticket. A non-empty
+	// ReporterEmail is required so sync_inbound_external_issue creates the requester that
+	// ticketing.Service.Reply later resolves as the recipient.
+	issue := ExternalIssue{
+		URL:           baseURL + "/browse/JIRA-RT",
+		Title:         "Round-trip issue",
+		Status:        "In Progress",
+		Priority:      "Normal",
+		ReporterEmail: "rt-reporter@acme.test",
+		ReporterName:  "RT Reporter",
+		UpdatedAt:     time.Now().UTC().Add(-time.Minute),
+	}
+
+	// One factory, one connector type — both inbound (webhook handler + subscriber) and
+	// outbound (dispatcher) resolve "jira" through it. The outbound POST path is a REAL
+	// netsafe SSRF client honoring rc.AllowPrivateBaseURL (mirrors registerStubJira).
+	reg := NewRegistry(svc)
+	reg.Register("jira", func(rc ResolvedConnector) (TicketingConnector, error) {
+		if rc.BaseURL == "" {
+			return nil, fmt.Errorf("round-trip jira factory: base_url is required")
+		}
+		return &roundTripConnector{
+			hmacFakeConnector: hmacFakeConnector{secret: rc.Credential.WebhookSecret},
+			issue:             issue,
+			post: &httpStubConnector{
+				httpClient: netsafe.NewClientWithOptions(30*time.Second, netsafe.Options{
+					AllowLoopback: rc.AllowPrivateBaseURL,
+					AllowPrivate:  rc.AllowPrivateBaseURL,
+				}),
+				baseURL:  rc.BaseURL,
+				email:    rc.Credential.Email,
+				apiToken: rc.Credential.APIToken,
+			},
+		}, nil
+	})
+
+	wh := NewWebhookHandler(tdb.App, sealer, reg, slog.Default())
+
+	return &connectorRoundTripEnv{
+		tdb:           tdb,
+		WebhookSecret: webhookSecret,
+		Service:       svc,
+		Registry:      reg,
+		Subscriber:    &InboundSyncSubscriber{DB: tdb.App, Sealer: sealer, Registry: reg, Logger: slog.Default()},
+		Dispatcher:    &OutboundDispatcher{DB: tdb.App, Sealer: sealer, Registry: reg, Logger: slog.Default(), Batch: 10},
+		Ticketing:     &ticketing.Service{DB: tdb.App, SystemDomain: "inbound.localhost"},
+		Webhook:       wh,
+		ConnectorID:   connID,
+		BusinessID:    seed.businessID,
+		PrincipalID:   seed.principalID,
+	}
+}
+
+// deliverWebhook POSTs a signed Jira webhook to the public handler (the genuine US3 inbound
+// entry point), asserting the handler accepted it (202) and wrote the connector.inbound.sync
+// outbox event. ts must be unique per call (it is the delivery-id discriminator).
+func (e *connectorRoundTripEnv) deliverWebhook(t *testing.T, ctx context.Context, issueKey string, ts int64) {
+	t.Helper()
+	body := webhookPayload(issueKey, ts)
+	sig := hmacHeader(e.WebhookSecret, body)
+
+	r := chi.NewRouter()
+	e.Webhook.PublicRoutes(r)
+	path := fmt.Sprintf("/connectors/jira/%s/webhook", e.ConnectorID.String())
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("X-Hub-Signature", sig)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("deliverWebhook: want 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Confirm the handler produced the inbound-sync outbox event for this issue (the
+	// hand-off the subscriber drains).
+	var n int
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM outbox WHERE topic=$1
+		   AND payload->>'connector_id'=$2 AND payload->>'external_id'=$3 AND processed_at IS NULL`,
+		TopicConnectorInboundSync, e.ConnectorID.String(), issueKey).Scan(&n); err != nil {
+		t.Fatalf("deliverWebhook: count outbox: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("deliverWebhook: want 1 pending inbound-sync outbox event, got %d", n)
+	}
+}
+
+// runInboundOnce drains the oldest pending connector.inbound.sync outbox event for this
+// connector through the real InboundSyncSubscriber (which calls FetchIssue + the
+// sync_inbound_* DEFINERs), then marks it processed — exactly as the outbox worker would.
+// This is the genuine webhook -> outbox -> subscriber -> native ticket chain.
+func (e *connectorRoundTripEnv) runInboundOnce(t *testing.T, ctx context.Context) {
+	t.Helper()
+	var evID uuid.UUID
+	var tenantRoot uuid.UUID
+	var payload []byte
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT id, tenant_root_id, payload FROM outbox
+		   WHERE topic=$1 AND payload->>'connector_id'=$2 AND processed_at IS NULL
+		   ORDER BY id LIMIT 1`,
+		TopicConnectorInboundSync, e.ConnectorID.String()).Scan(&evID, &tenantRoot, &payload); err != nil {
+		t.Fatalf("runInboundOnce: load outbox event: %v", err)
+	}
+
+	ev := events.Event{ID: evID, TenantRootID: tenantRoot, Topic: TopicConnectorInboundSync, Payload: payload}
+	if err := e.tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return e.Subscriber.Handle(ctx, tx, ev)
+	}); err != nil {
+		t.Fatalf("runInboundOnce: subscriber Handle: %v", err)
+	}
+
+	if _, err := e.tdb.Super.Exec(ctx, `UPDATE outbox SET processed_at=now() WHERE id=$1`, evID); err != nil {
+		t.Fatalf("runInboundOnce: mark processed: %v", err)
+	}
+}
+
+// replyAsOperator sends an operator reply on the (now connector-linked) ticket through the
+// genuine ticketing.Service.Reply producer — the Task 3 hook that enqueues the pending
+// 'comment' connector_outbound_op inside the SAME source tx (NOT a raw queue insert).
+func (e *connectorRoundTripEnv) replyAsOperator(t *testing.T, ctx context.Context, ticketID uuid.UUID, body string) {
+	t.Helper()
+	if _, err := e.Ticketing.Reply(ctx, e.PrincipalID, e.BusinessID, ticketID, ticketing.ReplyInput{BodyText: body}); err != nil {
+		t.Fatalf("replyAsOperator: Reply: %v", err)
+	}
+}
+
+// ticketByExternal returns the native ticket id linked to (connector_id, external_id), or
+// fatals if it does not exist. Read via the RLS-exempt Super pool.
+func ticketByExternal(t *testing.T, ctx context.Context, tdb *testdb.TestDB, connID uuid.UUID, externalID string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id FROM ticket WHERE connector_id=$1 AND external_id=$2`,
+		connID, externalID).Scan(&id); err != nil {
+		t.Fatalf("ticketByExternal(%q): %v", externalID, err)
+	}
+	return id
+}
+
+// operatorMessageHasExternalID reports whether the ticket's outbound operator message was
+// linked back to a Jira comment id (external_id non-NULL) — the write-back the dispatcher
+// performs via complete_outbound_comment. Read via the RLS-exempt Super pool.
+func operatorMessageHasExternalID(t *testing.T, ctx context.Context, tdb *testdb.TestDB, ticketID uuid.UUID) bool {
+	t.Helper()
+	var n int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM ticket_message
+		   WHERE ticket_id=$1 AND direction='outbound' AND external_id IS NOT NULL`,
+		ticketID).Scan(&n); err != nil {
+		t.Fatalf("operatorMessageHasExternalID: %v", err)
+	}
+	return n > 0
 }
