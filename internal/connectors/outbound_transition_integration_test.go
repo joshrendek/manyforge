@@ -151,3 +151,65 @@ func TestDispatchTransitionPostsAndCompletes(t *testing.T) {
 		t.Fatalf("audit rows = %d, want 1", auditCount)
 	}
 }
+
+// TestDispatchTransitionTerminalNoExternalID covers the terminal-guard path: a 'transition' op
+// whose ticket has NULL external_id (the claim returns ticket_external_id = NULL, so the
+// dispatcher's TicketExtID==nil guard fires). The op must go terminally 'failed' immediately
+// (NOT retried to the attempt cap), without ever calling TransitionStatus. Validates the Fix-1
+// terminal-guard behavior.
+func TestDispatchTransitionTerminalNoExternalID(t *testing.T) {
+	ctx, tdb, _ := startConn(t)
+
+	// seedOutboundCreate yields an UNLINKED native ticket (connector_id NULL, external_id NULL)
+	// plus a connector + shared sealer + a stub-jira Registry. A transition op pointing at this
+	// ticket claims with ticket_external_id = NULL.
+	cs := seedOutboundCreate(t, ctx, tdb, "https://stub.invalid")
+
+	// Seed a pending 'transition' op directly. The op's connector_id is a separate column from
+	// the ticket's linkage, so this is allowed even though the ticket itself is unlinked; the
+	// claim joins the ticket and returns its NULL external_id.
+	var opID uuid.UUID
+	if err := tdb.Super.QueryRow(ctx, `
+		INSERT INTO connector_outbound_op
+			(business_id, tenant_root_id, connector_id, ticket_id, op_type, body)
+		VALUES ($1,$1,$2,$3,'transition','Done') RETURNING id`,
+		cs.BusinessID, cs.ConnectorID, cs.TicketID).Scan(&opID); err != nil {
+		t.Fatalf("seed transition op: %v", err)
+	}
+
+	rec := &transitionRecorder{}
+	reg := transitionRecorderRegistry(cs.Service, cs.Sealer, rec)
+
+	disp := &OutboundDispatcher{
+		DB:       tdb.App,
+		Sealer:   cs.Sealer,
+		Registry: reg,
+		Batch:    10,
+	}
+	if err := disp.dispatchOnce(ctx); err != nil {
+		t.Fatalf("dispatchOnce: %v", err)
+	}
+
+	// The recorder must NOT have been called (terminal guard fires before the HTTP call).
+	rec.mu.Lock()
+	nCalls := len(rec.calls)
+	rec.mu.Unlock()
+	if nCalls != 0 {
+		t.Fatalf("TransitionStatus called %d times, want 0 (terminal guard)", nCalls)
+	}
+
+	// Op must be terminally 'failed' (immediate terminal, not requeued for retry).
+	var status string
+	var attempts int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT status, attempts FROM connector_outbound_op WHERE id=$1`, opID).
+		Scan(&status, &attempts); err != nil {
+		t.Fatalf("read op status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("op status = %q, want failed (immediate terminal)", status)
+	}
+	if attempts != 1 {
+		t.Fatalf("op attempts = %d, want 1 (terminal on first claim, not retried)", attempts)
+	}
+}
