@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -167,6 +168,68 @@ func (s *Service) EnqueueOutboundCreateIssue(ctx context.Context, principalID, b
 			return fmt.Errorf("ticket not found, foreign, or already linked: %w", errs.ErrNotFound)
 		}
 		return nil
+	}))
+}
+
+// TicketConnectorRef returns the connector id + external id of a connector-linked ticket the
+// caller owns. Unlinked, unknown, or foreign → ErrNotFound (no 403/404 oracle).
+func (s *Service) TicketConnectorRef(ctx context.Context, principalID, businessID, ticketID uuid.UUID) (uuid.UUID, string, error) {
+	var connID uuid.UUID
+	var extID string
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		ref, qerr := dbgen.New(tx).GetTicketConnectorRef(ctx, dbgen.GetTicketConnectorRefParams{
+			ID:         ticketID,
+			BusinessID: businessID,
+		})
+		if qerr != nil {
+			return qerr // pgx.ErrNoRows -> mapErr -> ErrNotFound
+		}
+		if !ref.ConnectorID.Valid {
+			return fmt.Errorf("ticket connector_id is NULL: %w", errs.ErrNotFound)
+		}
+		if ref.ExternalID == nil {
+			return fmt.Errorf("ticket external_id is NULL: %w", errs.ErrNotFound)
+		}
+		connID = uuid.UUID(ref.ConnectorID.Bytes)
+		extID = *ref.ExternalID
+		return nil
+	})
+	if err != nil {
+		return uuid.Nil, "", mapErr(err)
+	}
+	return connID, extID, nil
+}
+
+// EnqueueOutboundComment enqueues a 'comment' outbound op for a connector-linked ticket the
+// caller owns, anchored to messageID (for external-id write-back + inbound dedup). 0 rows → ErrNotFound.
+func (s *Service) EnqueueOutboundComment(ctx context.Context, principalID, businessID, ticketID, messageID uuid.UUID, body string) error {
+	// Pre-check confirms the ticket is owned + connector-linked; also gives consistent ErrNotFound semantics.
+	if _, _, err := s.TicketConnectorRef(ctx, principalID, businessID, ticketID); err != nil {
+		return err
+	}
+	return mapErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		return dbgen.New(tx).EnqueueOutboundComment(ctx, dbgen.EnqueueOutboundCommentParams{
+			ID:         ticketID,
+			MessageID:  pgtype.UUID{Bytes: [16]byte(messageID), Valid: true},
+			Body:       &body,
+			BusinessID: businessID,
+		})
+	}))
+}
+
+// EnqueueOutboundTransition enqueues a 'transition' outbound op (target status in body) for a
+// connector-linked ticket the caller owns; dedups identical in-flight transitions. 0 rows → ErrNotFound.
+func (s *Service) EnqueueOutboundTransition(ctx context.Context, principalID, businessID, ticketID uuid.UUID, status string) error {
+	// Pre-check confirms the ticket is owned + connector-linked; also gives consistent ErrNotFound semantics.
+	if _, _, err := s.TicketConnectorRef(ctx, principalID, businessID, ticketID); err != nil {
+		return err
+	}
+	return mapErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		return dbgen.New(tx).EnqueueOutboundTransition(ctx, dbgen.EnqueueOutboundTransitionParams{
+			ID:         ticketID,
+			BusinessID: businessID,
+			Status:     status,
+		})
 	}))
 }
 
