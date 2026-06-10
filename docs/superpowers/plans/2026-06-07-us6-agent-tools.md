@@ -264,7 +264,7 @@
 - Modify: `cmd/manyforge/main.go` (`:168`, `:188`, gateway build near `:276-283`)
 - Modify: `internal/agents/tools_test.go`
 
-- [ ] **Step 1 (RED): unit tests** in `tools_test.go`:
+- [x] **Step 1 (RED): unit tests** in `tools_test.go`:
   - Extend `TestEffectClasses` (`:88-108`): `read_external_ticket→EffectRead`, `add_external_comment→EffectExternal`, `transition_external_status→EffectExternal`.
   - `TestConnectorToolsValidation` — bad UUID / unknown field / empty body → `errs.ErrValidation` (use a `fakeConnectorGateway` recording calls).
   - `TestConnectorToolsAbsentWhenGatewayNil` — `NewToolRegistry(&fakeTicketSvc{}, nil)` → `Get("read_external_ticket")` etc. return `false` (binary boots without connectors).
@@ -272,7 +272,7 @@
   - `TestAddExternalCommentCreatesNoteThenEnqueues` — fake ticketSvc records `AddNote`, fake gateway records `EnqueueComment(ticketID, noteMsgID, body)`; assert ordering (note first) and that `approvalKeyFrom(ctx)` flows into `NoteInput.IdempotencyKey`.
   - `TestTransitionExternalStatusEnqueues` — fake gateway records `EnqueueTransition(ticketID, status)`.
 
-- [ ] **Step 2 (GREEN): `tools.go`** — define the interface + register the tools:
+- [x] **Step 2 (GREEN): `tools.go`** — define the interface + register the tools:
   ```go
   type connectorGateway interface {
       ReadTicketExternal(ctx context.Context, principalID, businessID, ticketID uuid.UUID) (connectors.ExternalIssue, error)
@@ -287,9 +287,9 @@
   - Add `externalTicketView` struct + `toExternalTicketView(connectors.ExternalIssue)` mapper (no internal ids/secrets); add `keyPtrFrom(ctx)` (wrap `approvalKeyFrom` → `*uuid.UUID`).
   > Note: agents already imports `internal/ticketing`; adding an import of `internal/connectors` introduces no cycle (connectors does not import agents).
 
-- [ ] **Step 3 (GREEN): `cmd/manyforge/main.go`** — where the connector stack is built (`:276-283`, guarded by `cfg.ConnectorMasterKey`), construct `connGateway := connectors.NewAgentGateway(connSvc, connReg)` (leave it `nil` when connectors are disabled — declare a `var connGateway *connectors.AgentGateway` defaulting nil, or an interface-typed nil). Pass it as the 2nd arg to both `NewToolRegistry` calls (`:168` Engine, `:188` ApprovalExecutor). A nil `*AgentGateway` typed into the interface param is non-nil at the interface level — pass an explicit `nil` interface (or guard) so `conn != nil` is false when disabled; the cleanest is `var connGateway connectorGateway` left nil and only assigned when the stack is built. Verify the disabled-connectors path still boots (`go build ./...`).
+- [x] **Step 3 (GREEN): `cmd/manyforge/main.go`** — where the connector stack is built (`:276-283`, guarded by `cfg.ConnectorMasterKey`), construct `connGateway := connectors.NewAgentGateway(connSvc, connReg)` (leave it `nil` when connectors are disabled — declare a `var connGateway *connectors.AgentGateway` defaulting nil, or an interface-typed nil). Pass it as the 2nd arg to both `NewToolRegistry` calls (`:168` Engine, `:188` ApprovalExecutor). A nil `*AgentGateway` typed into the interface param is non-nil at the interface level — pass an explicit `nil` interface (or guard) so `conn != nil` is false when disabled; the cleanest is `var connGateway connectorGateway` left nil and only assigned when the stack is built. Verify the disabled-connectors path still boots (`go build ./...`).
 
-- [ ] **Step 4:** `go test ./internal/agents/...` GREEN; `go build ./...`; `gofmt -l`. Commit `--no-verify`: `feat(agents): US6 T4 — read_external_ticket + add_external_comment + transition_external_status tools + registry wiring (manyforge-a7j.6.4)`.
+- [x] **Step 4:** `go test ./internal/agents/...` GREEN; `go build ./...`; `gofmt -l`. Commit `--no-verify`: `feat(agents): US6 T4 — read_external_ticket + add_external_comment + transition_external_status tools + registry wiring (manyforge-a7j.6.4)`.
 
 **Test plan (T4):** unit tests above (effect classes, validation, nil-gateway absence, read view redaction, comment note-then-enqueue ordering + idempotency-key flow, transition enqueue). All via fakes (no DB).
 
