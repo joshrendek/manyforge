@@ -102,6 +102,42 @@ func TestAddNoteIdempotentByKey(t *testing.T) {
 	}
 }
 
+// TestAddNoteSameKeyDifferentBodyReturnsFirst — first-write-wins under at-least-once
+// replay: a second AddNote with the SAME IdempotencyKey but a DIFFERENT body returns
+// the FIRST message (same ID, FIRST body — "body A", not "body B") and inserts no
+// second row. Notes may carry synthesized agent text, so the winning body must be the
+// one already persisted, never silently overwritten by a redelivery (US6 T3).
+func TestAddNoteSameKeyDifferentBodyReturnsFirst(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	ticketID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, ticketID, "open", "normal", "Need help", nil, nil, -1*time.Hour)
+
+	svc := &Service{DB: tdb.App, SystemDomain: "inbound.localhost"}
+
+	key := uuid.New()
+	m1, err := svc.AddNote(ctx, rt.reader, rt.master, ticketID, NoteInput{BodyText: "body A", IdempotencyKey: &key})
+	if err != nil {
+		t.Fatalf("AddNote 1: %v", err)
+	}
+	m2, err := svc.AddNote(ctx, rt.reader, rt.master, ticketID, NoteInput{BodyText: "body B", IdempotencyKey: &key})
+	if err != nil {
+		t.Fatalf("AddNote 2: %v", err)
+	}
+	if m1.ID != m2.ID {
+		t.Fatalf("dedup failed: two distinct messages %s vs %s", m1.ID, m2.ID)
+	}
+	// First-write-wins: the returned body is the FIRST one, not the redelivery's.
+	if m2.BodyText == nil || *m2.BodyText != "body A" {
+		t.Errorf("body = %v, want %q (first-write-wins; replay must not overwrite)", m2.BodyText, "body A")
+	}
+	// Exactly one note row for this key — the differing-body replay inserted none.
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM ticket_message WHERE source_approval_item_id=$1", key); n != 1 {
+		t.Errorf("ticket_message with source_approval_item_id = %d, want 1", n)
+	}
+}
+
 // TestAddNoteNilKeyAlwaysInserts — a nil IdempotencyKey produces independent inserts
 // (current behavior preserved). Two calls with no key yield two distinct note rows.
 func TestAddNoteNilKeyAlwaysInserts(t *testing.T) {
