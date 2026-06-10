@@ -42,7 +42,7 @@ func buildMCPEngine(tdb *testdb.TestDB, mc mcp.ClientLike) (*Engine, *ApprovalSt
 
 	engine := &Engine{
 		Runs:      store,
-		Tools:     NewToolRegistry(tktSvc),
+		Tools:     NewToolRegistry(tktSvc, nil),
 		MCP:       host,
 		Auditor:   NewDBAuditor(tdb.App),
 		Resolver:  NewAuthzChecker(tdb.App),
@@ -200,7 +200,7 @@ func testMCPHappyPath(t *testing.T) {
 	}
 	exec := &ApprovalExecutor{
 		Approvals: approvalStore,
-		Tools:     NewToolRegistry(tktSvc),
+		Tools:     NewToolRegistry(tktSvc, nil),
 		Auditor:   NewDBAuditor(tdb.App),
 		MCP:       host,
 	}
@@ -279,7 +279,7 @@ func testMCPDiscoveryFailOpen(t *testing.T) {
 
 	engine := &Engine{
 		Runs:      store,
-		Tools:     NewToolRegistry(tktSvc),
+		Tools:     NewToolRegistry(tktSvc, nil),
 		MCP:       host,
 		Auditor:   NewDBAuditor(tdb.App),
 		Resolver:  NewAuthzChecker(tdb.App),
