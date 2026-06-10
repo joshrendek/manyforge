@@ -7,6 +7,9 @@ package zendesk
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +31,9 @@ var (
 	ErrBadSig      = errors.New("zendesk: invalid webhook signature")
 	ErrBadTicketID = errors.New("zendesk: invalid ticket id")
 )
+
+// compile-time check
+var _ connectors.TicketingConnector = (*client)(nil)
 
 const bodyLimit = 8 << 20 // 8 MiB
 
@@ -318,14 +324,79 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 	return ids, nil
 }
 
-// VerifyWebhook implements connectors.TicketingConnector (T4).
-func (c *client) VerifyWebhook(_ http.Header, _ []byte) error {
-	return fmt.Errorf("zendesk: VerifyWebhook: %w", ErrUpstream)
+// VerifyWebhook checks the X-Zendesk-Webhook-Signature header (base64 of
+// HMAC-SHA256(secret, timestamp + body)) using the per-connector webhook secret and the
+// X-Zendesk-Webhook-Signature-Timestamp header. Fails closed: an unconfigured secret, a
+// missing header/timestamp, malformed base64, or a mismatch all return ErrBadSig.
+func (c *client) VerifyWebhook(headers http.Header, body []byte) error {
+	if c.webhookSecret == "" {
+		return fmt.Errorf("zendesk: webhook secret not configured: %w", ErrBadSig)
+	}
+	sig := headers.Get("X-Zendesk-Webhook-Signature")
+	if sig == "" {
+		return fmt.Errorf("zendesk: missing signature header: %w", ErrBadSig)
+	}
+	ts := headers.Get("X-Zendesk-Webhook-Signature-Timestamp")
+	if ts == "" {
+		return fmt.Errorf("zendesk: missing signature timestamp: %w", ErrBadSig)
+	}
+	got, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil {
+		return fmt.Errorf("zendesk: malformed signature base64: %w", ErrBadSig)
+	}
+	mac := hmac.New(sha256.New, []byte(c.webhookSecret))
+	mac.Write([]byte(ts))
+	mac.Write(body)
+	if !hmac.Equal(got, mac.Sum(nil)) {
+		return fmt.Errorf("zendesk: signature mismatch: %w", ErrBadSig)
+	}
+	return nil
 }
 
-// DecodeWebhook implements connectors.TicketingConnector (T4).
-func (c *client) DecodeWebhook(_ []byte) (connectors.WebhookEvent, error) {
-	return connectors.WebhookEvent{}, fmt.Errorf("zendesk: DecodeWebhook: %w", ErrUpstream)
+// DecodeWebhook parses a Zendesk event-format webhook body into a WebhookEvent. The
+// ticket id is validated so a crafted payload cannot push a path-traversal id downstream.
+func (c *client) DecodeWebhook(body []byte) (connectors.WebhookEvent, error) {
+	var payload struct {
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		Time   string `json:"time"`
+		Detail struct {
+			ID string `json:"id"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return connectors.WebhookEvent{}, fmt.Errorf("zendesk: decode webhook: %w", ErrUpstream)
+	}
+	externalID := payload.Detail.ID
+	if err := validateTicketID(externalID); err != nil {
+		return connectors.WebhookEvent{}, err
+	}
+	deliveryID := payload.ID
+	if deliveryID == "" {
+		deliveryID = fmt.Sprintf("%s:%s", externalID, payload.Time)
+	}
+	return connectors.WebhookEvent{
+		DeliveryID: deliveryID,
+		ExternalID: externalID,
+		Kind:       mapZendeskEventKind(payload.Type),
+	}, nil
+}
+
+// mapZendeskEventKind maps a Zendesk event "type" onto a canonical kind string.
+func mapZendeskEventKind(t string) string {
+	switch t {
+	case "zen:event-type:ticket.created":
+		return "issue.created"
+	case "zen:event-type:ticket.updated",
+		"zen:event-type:ticket.status_changed",
+		"zen:event-type:ticket.priority_changed",
+		"zen:event-type:ticket.subject_changed":
+		return "issue.updated"
+	case "zen:event-type:ticket.comment_added":
+		return "comment.created"
+	default:
+		return t
+	}
 }
 
 // ── Zendesk REST v2 response shapes (timestamps are RFC3339, decoded by time.Time) ──

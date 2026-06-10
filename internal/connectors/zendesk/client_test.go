@@ -2,6 +2,9 @@ package zendesk
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -282,5 +285,109 @@ func TestListUpdatedSince_Paginates(t *testing.T) {
 	}
 	if strings.Join(pages, ",") != "1,2" {
 		t.Errorf("pages requested = %v, want [1 2]", pages)
+	}
+}
+
+// zendeskSig computes the header value Zendesk sends: base64(HMAC-SHA256(secret, ts+body)).
+func zendeskSig(secret, ts string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts))
+	mac.Write(body)
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func TestVerifyWebhook_Valid(t *testing.T) {
+	secret := "whsec-123"
+	ts := "1718000000"
+	body := []byte(`{"id":"d1","type":"zen:event-type:ticket.updated","detail":{"id":"12345"}}`)
+	c := newTestClient("https://acme.zendesk.com", "ops@acme.test", "tok", secret, nil)
+	hdr := http.Header{
+		"X-Zendesk-Webhook-Signature":           []string{zendeskSig(secret, ts, body)},
+		"X-Zendesk-Webhook-Signature-Timestamp": []string{ts},
+	}
+	if err := c.VerifyWebhook(hdr, body); err != nil {
+		t.Fatalf("VerifyWebhook valid: %v", err)
+	}
+}
+
+func TestVerifyWebhook_Forged(t *testing.T) {
+	secret := "whsec-123"
+	ts := "1718000000"
+	body := []byte(`{"detail":{"id":"12345"}}`)
+	c := newTestClient("https://acme.zendesk.com", "ops@acme.test", "tok", secret, nil)
+	good, err := base64.StdEncoding.DecodeString(zendeskSig(secret, ts, body))
+	if err != nil {
+		t.Fatalf("decode good sig: %v", err)
+	}
+	good[0] ^= 0xff // same length (32 bytes), wrong bytes
+	hdr := http.Header{
+		"X-Zendesk-Webhook-Signature":           []string{base64.StdEncoding.EncodeToString(good)},
+		"X-Zendesk-Webhook-Signature-Timestamp": []string{ts},
+	}
+	if err := c.VerifyWebhook(hdr, body); !errors.Is(err, ErrBadSig) {
+		t.Fatalf("forged: err = %v, want Is(ErrBadSig)", err)
+	}
+}
+
+func TestVerifyWebhook_MissingPieces(t *testing.T) {
+	c := newTestClient("https://acme.zendesk.com", "ops@acme.test", "tok", "whsec-123", nil)
+	body := []byte(`{}`)
+	// Missing signature header.
+	if err := c.VerifyWebhook(http.Header{"X-Zendesk-Webhook-Signature-Timestamp": []string{"1"}}, body); !errors.Is(err, ErrBadSig) {
+		t.Errorf("missing sig: err = %v, want ErrBadSig", err)
+	}
+	// Missing timestamp header.
+	if err := c.VerifyWebhook(http.Header{"X-Zendesk-Webhook-Signature": []string{"AAAA"}}, body); !errors.Is(err, ErrBadSig) {
+		t.Errorf("missing ts: err = %v, want ErrBadSig", err)
+	}
+}
+
+func TestVerifyWebhook_EmptySecretRejected(t *testing.T) {
+	// Fail closed: an unconfigured secret must never validate any signature.
+	c := newTestClient("https://acme.zendesk.com", "ops@acme.test", "tok", "", nil)
+	body := []byte(`{}`)
+	hdr := http.Header{
+		"X-Zendesk-Webhook-Signature":           []string{zendeskSig("", "1", body)},
+		"X-Zendesk-Webhook-Signature-Timestamp": []string{"1"},
+	}
+	if err := c.VerifyWebhook(hdr, body); !errors.Is(err, ErrBadSig) {
+		t.Fatalf("empty secret: err = %v, want Is(ErrBadSig)", err)
+	}
+}
+
+func TestDecodeWebhook(t *testing.T) {
+	c := newTestClient("https://acme.zendesk.com", "ops@acme.test", "tok", "secret", nil)
+	ev, err := c.DecodeWebhook(mustFixture(t, "webhook_ticket_updated.json"))
+	if err != nil {
+		t.Fatalf("DecodeWebhook: %v", err)
+	}
+	if ev.DeliveryID != "01HXDELIVERY7" {
+		t.Errorf("DeliveryID = %q, want 01HXDELIVERY7", ev.DeliveryID)
+	}
+	if ev.ExternalID != "12345" {
+		t.Errorf("ExternalID = %q, want 12345", ev.ExternalID)
+	}
+	if ev.Kind != "issue.updated" {
+		t.Errorf("Kind = %q, want issue.updated", ev.Kind)
+	}
+}
+
+func TestDecodeWebhook_RejectsBadTicketID(t *testing.T) {
+	c := newTestClient("https://acme.zendesk.com", "ops@acme.test", "tok", "secret", nil)
+	body := []byte(`{"id":"d1","type":"zen:event-type:ticket.updated","detail":{"id":"../../etc/passwd"}}`)
+	if _, err := c.DecodeWebhook(body); !errors.Is(err, ErrBadTicketID) {
+		t.Fatalf("err = %v, want Is(ErrBadTicketID)", err)
+	}
+}
+
+func TestDecodeWebhook_DeliveryIDFallback(t *testing.T) {
+	c := newTestClient("https://acme.zendesk.com", "ops@acme.test", "tok", "secret", nil)
+	body := []byte(`{"type":"zen:event-type:ticket.updated","time":"2026-06-09T12:00:00Z","detail":{"id":"12345"}}`)
+	ev, err := c.DecodeWebhook(body)
+	if err != nil {
+		t.Fatalf("DecodeWebhook: %v", err)
+	}
+	if ev.DeliveryID != "12345:2026-06-09T12:00:00Z" {
+		t.Errorf("DeliveryID = %q, want 12345:2026-06-09T12:00:00Z", ev.DeliveryID)
 	}
 }

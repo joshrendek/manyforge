@@ -1,0 +1,1 @@
+{ "id": "01HXDELIVERY7", "type": "zen:event-type:ticket.updated", "time": "2026-06-09T12:00:00Z", "detail": { "id": "12345" } }
