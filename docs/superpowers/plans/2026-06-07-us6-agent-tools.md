@@ -302,14 +302,14 @@
 
 **Why:** prove the two write tools are gated **before** any enqueue. Mirror `TestRun_Mode1ExternalQueuesApproval` (`:193-215`) and `TestRun_Mode3AutoRunsExternal` (`:239-259`).
 
-- [ ] **Step 1 (RED→GREEN):** add, using `newTestEngine(prov, store, map[string]bool{"connectors.write": true}, reg)` and a recording `fakeConnectorGateway`:
+- [x] **Step 1 (RED→GREEN):** add, using `newTestEngine(prov, store, map[string]bool{"connectors.write": true}, reg)` and a recording `fakeConnectorGateway`:
   - `TestRun_ExternalCommentQueuesInAssist` — `ModeAssist` + `add_external_comment`: assert the gateway's `EnqueueComment` was **NOT** called, exactly one approval queued with effect 2 (`ap.created[0] == "add_external_comment:2"`), `run.Status == RunAwaitingApproval`, audit decision `"proposed"`.
   - `TestRun_ExternalCommentQueuesInQueueWrites` — `ModeQueueWrites`: same queued assertion (no enqueue).
   - `TestRun_ExternalCommentExecutesInAutonomous` — `ModeAutonomous`: assert `EnqueueComment` **WAS** called once, zero approvals, `run.Status == RunSucceeded`.
   - `TestRun_TransitionQueuesInAssist` / `TestRun_TransitionExecutesInAutonomous` — same two-branch pair for `transition_external_status` → `EnqueueTransition`.
   - `TestRun_ExternalToolDeniedWithoutPerm` — perms map lacks `connectors.write` → tool denied (no enqueue, no approval) per the RBAC step (`runner.go:298-303`).
   - `TestRun_ReadExternalRunsInline` — `read_external_ticket` (`EffectRead`) executes inline in `ModeAssist` (reads never queue), gateway `ReadTicketExternal` called once.
-- [ ] **Step 2:** `go test ./internal/agents/...` GREEN; `gofmt -l`. Commit `--no-verify`: `test(agents): US6 T5 — gate-branch pins (external comment/transition queue in assist, exec in autonomous; RBAC deny) (manyforge-a7j.6.5)`.
+- [x] **Step 2:** `go test ./internal/agents/...` GREEN; `gofmt -l`. Commit `--no-verify`: `test(agents): US6 T5 — gate-branch pins (external comment/transition queue in assist, exec in autonomous; RBAC deny) (manyforge-a7j.6.5)`.
 
 **Test plan (T5):** run-loop tests proving gate-before-enqueue across all three autonomy modes + RBAC denial for both write tools, and read-inline for the read tool. This is the behavioral half of the §7 pin 6.
 
