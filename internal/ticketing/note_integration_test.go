@@ -65,3 +65,67 @@ func TestAddNoteUnknownTicketIsNotFound(t *testing.T) {
 		t.Errorf("unknown ticket: want ErrNotFound, got %v", err)
 	}
 }
+
+// TestAddNoteIdempotentByKey — calling AddNote twice with the same IdempotencyKey
+// produces exactly ONE ticket_message row; the second call returns the same Message
+// (same ID) and inserts nothing. Proves at-least-once ApprovalExecutor redelivery
+// does not create a duplicate note (US6 T3).
+func TestAddNoteIdempotentByKey(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	ticketID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, ticketID, "open", "normal", "Need help", nil, nil, -1*time.Hour)
+
+	svc := &Service{DB: tdb.App, SystemDomain: "inbound.localhost"}
+
+	key := uuid.New()
+	m1, err := svc.AddNote(ctx, rt.reader, rt.master, ticketID, NoteInput{BodyText: "agent note", IdempotencyKey: &key})
+	if err != nil {
+		t.Fatalf("AddNote 1: %v", err)
+	}
+	m2, err := svc.AddNote(ctx, rt.reader, rt.master, ticketID, NoteInput{BodyText: "agent note", IdempotencyKey: &key})
+	if err != nil {
+		t.Fatalf("AddNote 2: %v", err)
+	}
+	if m1.ID != m2.ID {
+		t.Fatalf("dedup failed: two distinct messages %s vs %s", m1.ID, m2.ID)
+	}
+	// Exactly one note row carries this approval key — redelivery inserted none.
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM ticket_message WHERE source_approval_item_id=$1", key); n != 1 {
+		t.Errorf("ticket_message with source_approval_item_id = %d, want 1", n)
+	}
+	// And exactly one note total on the ticket.
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM ticket_message WHERE ticket_id=$1 AND direction='note'", ticketID); n != 1 {
+		t.Errorf("note count = %d, want 1 (replay must not insert a second)", n)
+	}
+}
+
+// TestAddNoteNilKeyAlwaysInserts — a nil IdempotencyKey produces independent inserts
+// (current behavior preserved). Two calls with no key yield two distinct note rows.
+func TestAddNoteNilKeyAlwaysInserts(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	ticketID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, ticketID, "open", "normal", "Need help", nil, nil, -1*time.Hour)
+
+	svc := &Service{DB: tdb.App, SystemDomain: "inbound.localhost"}
+
+	m1, err := svc.AddNote(ctx, rt.reader, rt.master, ticketID, NoteInput{BodyText: "first note"})
+	if err != nil {
+		t.Fatalf("AddNote 1: %v", err)
+	}
+	m2, err := svc.AddNote(ctx, rt.reader, rt.master, ticketID, NoteInput{BodyText: "second note"})
+	if err != nil {
+		t.Fatalf("AddNote 2: %v", err)
+	}
+	if m1.ID == m2.ID {
+		t.Fatalf("nil-key notes must be independent inserts, got same ID %s", m1.ID)
+	}
+	// Two note rows on the ticket.
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM ticket_message WHERE ticket_id=$1 AND direction='note'", ticketID); n != 2 {
+		t.Errorf("note count = %d, want 2", n)
+	}
+}

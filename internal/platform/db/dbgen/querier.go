@@ -287,6 +287,10 @@ type Querier interface {
 	// Duplicate (business_id, name) → unique violation → 409.
 	InsertMCPServer(ctx context.Context, arg InsertMCPServerParams) (McpServer, error)
 	// InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
+	// source_approval_item_id (nullable) is the idempotency key for agent-driven notes:
+	// a redelivered ApprovalExecutor replay supplies the same key, which the service
+	// detects via GetOutboundMessageByApproval before inserting. NULL for ordinary human
+	// notes — NULLs never conflict, so existing behavior holds.
 	InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error)
 	// ---- notification (SL-D) ----
 	InsertNotification(ctx context.Context, arg InsertNotificationParams) error
