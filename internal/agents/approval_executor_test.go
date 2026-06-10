@@ -36,7 +36,7 @@ func payload(t *testing.T, p approvalEventPayload) []byte {
 func TestExecutor_ExecutesApprovedOnce(t *testing.T) {
 	fts := &fakeTicketSvc{}
 	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
-	ex := &ApprovalExecutor{Approvals: st, Tools: NewToolRegistry(fts), Auditor: &fakeAuditor{}}
+	ex := &ApprovalExecutor{Approvals: st, Tools: NewToolRegistry(fts, nil), Auditor: &fakeAuditor{}}
 	// The executor invokes the tool with p.Args from the PAYLOAD (not the Get result),
 	// so the payload must carry valid args matching the named tool.
 	tid := uuid.New()
@@ -58,7 +58,7 @@ func TestExecutor_ExecutesApprovedOnce(t *testing.T) {
 func TestExecutor_SkipsNonApproved(t *testing.T) {
 	fts := &fakeTicketSvc{}
 	st := &fakeApprovalState{state: ApprovalExecuted} // already done
-	ex := &ApprovalExecutor{Approvals: st, Tools: NewToolRegistry(fts), Auditor: &fakeAuditor{}}
+	ex := &ApprovalExecutor{Approvals: st, Tools: NewToolRegistry(fts, nil), Auditor: &fakeAuditor{}}
 	pl := approvalEventPayload{ApprovalID: uuid.New(), Tool: "set_status"}
 	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
 		t.Fatalf("handle: %v", err)
@@ -90,7 +90,7 @@ func TestExecutor_NoDoubleAuditOnReplay(t *testing.T) {
 
 	// Winner: claim succeeds (ok==true) → exactly one executed audit.
 	win := &corrAuditor{}
-	exWin := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: true}, Tools: NewToolRegistry(&fakeTicketSvc{}), Auditor: win}
+	exWin := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: true}, Tools: NewToolRegistry(&fakeTicketSvc{}, nil), Auditor: win}
 	if err := exWin.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
 		t.Fatalf("handle (winner): %v", err)
 	}
@@ -100,7 +100,7 @@ func TestExecutor_NoDoubleAuditOnReplay(t *testing.T) {
 
 	// Replay: claim loses (ok==false) → zero executed audit rows (no second "executed").
 	replay := &corrAuditor{}
-	exReplay := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: false}, Tools: NewToolRegistry(&fakeTicketSvc{}), Auditor: replay}
+	exReplay := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: false}, Tools: NewToolRegistry(&fakeTicketSvc{}, nil), Auditor: replay}
 	if err := exReplay.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
 		t.Fatalf("handle (replay): %v", err)
 	}
@@ -118,7 +118,7 @@ func TestExecutor_AuditCarriesCorrelationID(t *testing.T) {
 		Tool: "set_status", Args: json.RawMessage(`{"ticket_id":"` + tid.String() + `","status":"open"}`), CorrelationID: corr,
 	}
 	aud := &corrAuditor{}
-	ex := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: true}, Tools: NewToolRegistry(&fakeTicketSvc{}), Auditor: aud}
+	ex := &ApprovalExecutor{Approvals: &fakeApprovalState{state: ApprovalApproved, markOK: true}, Tools: NewToolRegistry(&fakeTicketSvc{}, nil), Auditor: aud}
 	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestExecutor_MCP_ExecutesApprovedOnce(t *testing.T) {
 	aud := &corrAuditor{}
 	ex := &ApprovalExecutor{
 		Approvals: st,
-		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Tools:     NewToolRegistry(&fakeTicketSvc{}, nil),
 		Auditor:   aud,
 		MCP:       invoker,
 	}
@@ -211,7 +211,7 @@ func TestExecutor_MCP_SecondDeliverySkips(t *testing.T) {
 	aud := &corrAuditor{}
 	ex := &ApprovalExecutor{
 		Approvals: st,
-		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Tools:     NewToolRegistry(&fakeTicketSvc{}, nil),
 		Auditor:   aud,
 		MCP:       invoker,
 	}
@@ -239,7 +239,7 @@ func TestExecutor_MCP_UnknownServerMarkedFailed(t *testing.T) {
 	aud := &corrAuditor{}
 	ex := &ApprovalExecutor{
 		Approvals: st,
-		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Tools:     NewToolRegistry(&fakeTicketSvc{}, nil),
 		Auditor:   aud,
 		MCP:       invoker,
 	}
@@ -272,7 +272,7 @@ func TestExecutor_MCP_NoMCPHostConfigured(t *testing.T) {
 	aud := &corrAuditor{}
 	ex := &ApprovalExecutor{
 		Approvals: st,
-		Tools:     NewToolRegistry(&fakeTicketSvc{}),
+		Tools:     NewToolRegistry(&fakeTicketSvc{}, nil),
 		Auditor:   aud,
 		MCP:       nil, // intentionally nil
 	}
