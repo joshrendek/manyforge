@@ -106,6 +106,7 @@ type ConnectorOutboundOpType string
 const (
 	ConnectorOutboundOpTypeComment     ConnectorOutboundOpType = "comment"
 	ConnectorOutboundOpTypeCreateIssue ConnectorOutboundOpType = "create_issue"
+	ConnectorOutboundOpTypeTransition  ConnectorOutboundOpType = "transition"
 )
 
 func (e *ConnectorOutboundOpType) Scan(src interface{}) error {

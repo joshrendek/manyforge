@@ -128,6 +128,12 @@ type Querier interface {
 	// connector_id is supplied (not derived) because the ticket isn't linked yet; tenant_root_id
 	// comes from the ticket. The connector's own tenancy is re-checked via the composite FK.
 	EnqueueOutboundCreate(ctx context.Context, arg EnqueueOutboundCreateParams) (int64, error)
+	// EnqueueOutboundTransition records a pending 'transition' outbound op for a connector-linked
+	// ticket, in the caller's (principal) tx. Ownership is pushed into SQL (id + business_id +
+	// connector-linked) and connector_id/tenant_root_id are derived from the ticket row. The
+	// NOT EXISTS guard dedups: a second identical enqueue while a same-status transition is still
+	// pending/in_progress is a no-op (idempotent agent retries do not pile up duplicate ops).
+	EnqueueOutboundTransition(ctx context.Context, arg EnqueueOutboundTransitionParams) error
 	// Notify/events queries (spec 002, SL-C/SL-D). Plain table ops only; the
 	// SECURITY DEFINER drain functions (claim_outbox_batch / mark_outbox_processed /
 	// reschedule_outbox) are called via raw pgx in internal/platform/events (sqlc
@@ -218,6 +224,12 @@ type Querier interface {
 	// businesses; the explicit business_id is defense in depth. pgx.ErrNoRows ⇒ the
 	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
 	GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, error)
+	// GetTicketConnectorRef returns the connector linkage (connector_id, external_id) for a
+	// connector-linked ticket owned by the business. Ownership is pushed into SQL (id + business_id
+	// + connector-linked); a cross-business or unknown id returns no row (pgx.ErrNoRows -> 404, no
+	// UUID-existence oracle). The agent read/write tools resolve a native ticket's external handle
+	// through this before calling the connector.
+	GetTicketConnectorRef(ctx context.Context, arg GetTicketConnectorRefParams) (GetTicketConnectorRefRow, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
 	// Agent runtime (spec 003 US1a) — per-business BYO provider credential queries.
 	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
