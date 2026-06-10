@@ -482,7 +482,9 @@ func (h *Handler) addNote(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errValidation("body_text required"))
 		return
 	}
-	m, err := h.svc.AddNote(r.Context(), pid, bid, tid, NoteInput(body))
+	// Field-by-field (not a struct conversion): IdempotencyKey is internal-only — the
+	// approvals executor sets it, the public HTTP body must never carry one.
+	m, err := h.svc.AddNote(r.Context(), pid, bid, tid, NoteInput{BodyText: body.BodyText})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
