@@ -328,18 +328,15 @@ func TestReadExternalTicketReturnsView(t *testing.T) {
 	}
 }
 
-// TestAddExternalCommentCreatesNoteThenEnqueues — AddNote FIRST, then EnqueueComment;
-// ordering asserted; approvalKeyFrom flows into NoteInput.IdempotencyKey.
+// TestAddExternalCommentCreatesNoteThenEnqueues — approvalKeyFrom flows into
+// NoteInput.IdempotencyKey, then the external comment is enqueued anchored to the note id.
+// ordering: add_external_comment calls AddNote before EnqueueComment, returning early if AddNote errors.
 func TestAddExternalCommentCreatesNoteThenEnqueues(t *testing.T) {
 	noteID := uuid.New()
 	fts := &fakeTicketSvc{
 		addNoteMsg: ticketing.Message{ID: noteID},
 	}
 	fgw := &fakeConnectorGateway{}
-
-	// Track ordering.
-	var order []string
-	fts.addNoteMsg = ticketing.Message{ID: noteID}
 
 	reg := NewToolRegistry(fts, fgw)
 	tool, ok := reg.Get("add_external_comment")
@@ -350,10 +347,6 @@ func TestAddExternalCommentCreatesNoteThenEnqueues(t *testing.T) {
 	approvalKey := uuid.New()
 	ctx := withApprovalKey(context.Background(), approvalKey)
 	tid := uuid.New()
-
-	// Wrap fakes to track call order.
-	origAddNote := fts.addNoteMsg
-	_ = origAddNote // used to verify note recorded first
 
 	result, err := tool.Invoke(ctx, uuid.New(), uuid.New(), []byte(`{"ticket_id":"`+tid.String()+`","body_text":"hello external"}`))
 	if err != nil {
@@ -385,10 +378,6 @@ func TestAddExternalCommentCreatesNoteThenEnqueues(t *testing.T) {
 	if fgw.enqueueCommentBody != "hello external" {
 		t.Errorf("EnqueueComment body = %q, want %q", fgw.enqueueCommentBody, "hello external")
 	}
-
-	// Verify ordering: if AddNote failed the whole invoke would error, so if we got
-	// here with no error, AddNote ran first and EnqueueComment ran second.
-	_ = order // ordering guaranteed by sequential code path
 }
 
 // TestTransitionExternalStatusEnqueues — calls EnqueueTransition with ticket_id and status.
