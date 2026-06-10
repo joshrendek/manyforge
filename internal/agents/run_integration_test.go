@@ -182,7 +182,7 @@ func TestRunTriageRoundTrip(t *testing.T) {
 	runStore := &AgentRunStore{DB: tdb.App}
 	engine := &Engine{
 		Runs:     runStore,
-		Tools:    NewToolRegistry(tktSvc),
+		Tools:    NewToolRegistry(tktSvc, nil),
 		Auditor:  NewDBAuditor(tdb.App),
 		Resolver: NewAuthzChecker(tdb.App),
 		// Override the provider factory to return the scripted mock + the agent's

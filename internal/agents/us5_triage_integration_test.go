@@ -236,7 +236,7 @@ func TestUS5_TriageAcceptanceThread(t *testing.T) {
 	reg := ai.NewRegistry()
 	ai.RegisterDefaults(reg)
 	engine := &Engine{
-		Runs: store, Tools: NewToolRegistry(tktSvc), Auditor: NewDBAuditor(tdb.App),
+		Runs: store, Tools: NewToolRegistry(tktSvc, nil), Auditor: NewDBAuditor(tdb.App),
 		Resolver: NewAuthzChecker(tdb.App), Approvals: approvalStore,
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return mock, ag.Model, nil
@@ -290,7 +290,7 @@ func TestUS5_TriageAcceptanceThread(t *testing.T) {
 	if _, err := approvalStore.Approve(ctx, seed.ownerID, seed.businessID, apID, seed.ownerID); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	exec := &ApprovalExecutor{Approvals: approvalStore, Tools: NewToolRegistry(tktSvc), Auditor: NewDBAuditor(tdb.App)}
+	exec := &ApprovalExecutor{Approvals: approvalStore, Tools: NewToolRegistry(tktSvc, nil), Auditor: NewDBAuditor(tdb.App)}
 	if err := exec.Handle(ctx, nil, drainApprovedEvent(ctx, t, tdb, seed.tenantRootID)); err != nil {
 		t.Fatalf("approval executor: %v", err)
 	}
