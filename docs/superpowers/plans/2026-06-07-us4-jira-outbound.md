@@ -1517,7 +1517,7 @@ git commit --no-verify -m "test(sec): T7 — MF-004-US4 outbound pins (conflict 
 
 Proves the full loop the spec demo (§10) requires, behind the SSRF httptest stub: inbound webhook → native ticket → native reply → outbound dispatcher → Jira comment, plus the create-issue direction.
 
-- [ ] **Step 1: Write the round-trip test**
+- [x] **Step 1: Write the round-trip test**
 
 Create `internal/connectors/bidirectional_integration_test.go`:
 
@@ -1572,17 +1572,17 @@ func TestBidirectionalRoundTrip(t *testing.T) {
 
 > Compose `seedFullConnectorEnv` from the helpers built in Tasks 2/4 plus the US3 inbound webhook + subscriber helpers (`webhook_integration_test.go`, `inbound_sync_integration_test.go`). `replyAsOperator` calls `ticketing.Service.Reply` (wire a `ticketing.Service` into the env) — this is the genuine producer path from Task 3, not a raw insert.
 
-- [ ] **Step 2: Run**
+- [x] **Step 2: Run**
 
 Run: `go test -tags integration -p 1 ./internal/connectors/ -run TestBidirectionalRoundTrip -v`
 Expected: PASS.
 
-- [ ] **Step 3: Full connectors integration sweep + build + gofmt**
+- [x] **Step 3: Full connectors integration sweep + build + gofmt**
 
 Run: `go build ./... && gofmt -l internal/ cmd/ db/ && go test -tags integration -p 1 ./internal/connectors/ -v`
 Expected: build clean, gofmt empty, all connector integration tests green.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/connectors/bidirectional_integration_test.go internal/connectors/testsupport_integration_test.go .beads/issues.jsonl
