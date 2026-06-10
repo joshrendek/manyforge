@@ -91,7 +91,9 @@ func TestMF004US6_TenantIsolationAgentGateway(t *testing.T) {
 	}
 
 	// EnqueueComment: business B trying to enqueue a comment on A's ticket → ErrNotFound.
-	err = gw.EnqueueComment(ctx, seedB.principalID, seedB.businessID, ticketID, uuid.New(), "evil comment")
+	// noteMsgID is A's seeded message; B is denied at the ownership check before the
+	// messageID anchor matters, so using the real anchor here keeps the seed meaningful.
+	err = gw.EnqueueComment(ctx, seedB.principalID, seedB.businessID, ticketID, noteMsgID, "evil comment")
 	if !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("MF-004-US6-TENANT VIOLATION: EnqueueComment(business B, ticket in A) = %v, want errs.ErrNotFound (tenant isolation breach)", err)
 	}
@@ -102,11 +104,16 @@ func TestMF004US6_TenantIsolationAgentGateway(t *testing.T) {
 		t.Fatalf("MF-004-US6-TENANT VIOLATION: EnqueueTransition(business B, ticket in A) = %v, want errs.ErrNotFound (tenant isolation breach)", err)
 	}
 
-	// Completeness: verify the happy-path (A reading its own ticket) still works,
-	// so the test is non-vacuous (a broken seed would produce false-positive ErrNotFound
-	// for BOTH A and B, masking a tenant isolation regression as a passing test).
+	// Completeness: verify the happy-path (A reading its own ticket, and A enqueueing a
+	// comment anchored to its own seeded message) still works, so the test is non-vacuous
+	// (a broken seed would produce false-positive ErrNotFound for BOTH A and B, masking a
+	// tenant isolation regression as a passing test). The EnqueueComment self-check also
+	// exercises noteMsgID as the real comment anchor for an OWNING caller.
 	_, err = gw.ReadTicketExternal(ctx, seedA.principalID, seedA.businessID, ticketID)
 	if err != nil {
 		t.Fatalf("MF-004-US6-TENANT: sanity — A reading its own ticket: %v (non-vacuity check: seed must produce a valid linked ticket)", err)
+	}
+	if err := gw.EnqueueComment(ctx, seedA.principalID, seedA.businessID, ticketID, noteMsgID, "tenant isolation test body"); err != nil {
+		t.Fatalf("MF-004-US6-TENANT: sanity — A enqueueing a comment on its own ticket (anchor=noteMsgID): %v (non-vacuity check)", err)
 	}
 }
