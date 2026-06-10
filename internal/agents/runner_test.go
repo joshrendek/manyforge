@@ -479,6 +479,9 @@ func TestRun_ExternalCommentExecutesInAutonomous(t *testing.T) {
 	if !fgw.enqueueCommentCalled {
 		t.Fatal("ModeAutonomous: EnqueueComment must be called once inline")
 	}
+	if fgw.enqueueCommentMsgID != noteID {
+		t.Fatalf("EnqueueComment msgID=%v want note id %v", fgw.enqueueCommentMsgID, noteID)
+	}
 	if len(ap.created) != 0 {
 		t.Fatalf("ModeAutonomous must not queue approvals; got %v", ap.created)
 	}
@@ -548,7 +551,7 @@ func TestRun_ExternalToolDeniedWithoutPerm(t *testing.T) {
 	fts := &fakeTicketSvc{}
 	fgw := &fakeConnectorGateway{}
 	eng, aud, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(fts, fgw))
-	_, _ = eng.run(context.Background(), uuid.New(), loadedAgent("add_external_comment"), "manual", nil, nil)
+	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("add_external_comment"), "manual", nil, nil)
 	if fgw.enqueueCommentCalled {
 		t.Fatal("RBAC-denied tool must NOT call EnqueueComment")
 	}
@@ -557,6 +560,9 @@ func TestRun_ExternalToolDeniedWithoutPerm(t *testing.T) {
 	}
 	if !containsDecision(aud.actions, "denied") {
 		t.Fatalf("RBAC-denied tool must be audited denied; actions=%v", aud.actions)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("status=%s want succeeded (deny is non-fatal)", run.Status)
 	}
 }
 
