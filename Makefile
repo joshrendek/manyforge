@@ -24,6 +24,7 @@ test:
 # via testcontainers (Docker required).
 sec-test:
 	$(GO) test -tags integration -timeout 600s ./internal/security_regression/...
+	$(GO) test -tags integration -timeout 600s -run 'TestMF004US' ./internal/connectors/...
 
 # All integration tests (testcontainers; Docker required). Superset of sec-test.
 # -p 1 serializes package test binaries: each spins up its own ephemeral Postgres
