@@ -1422,7 +1422,7 @@ git commit --no-verify -m "feat(connectors): T6 — audit both-changed conflict 
 
 These pin §7.4 (conflict determinism + audited) and §7.5 (SSRF-safe outbound). Follow the US3 pin style (one file per finding, finding id in the header, `//go:build integration` for behavioral pins, plus source-level `strings.Contains` pins so a refactor that drops the fix fails CI even without infra).
 
-- [ ] **Step 1: Write the pins**
+- [x] **Step 1: Write the pins**
 
 Create `internal/security_regression/mf_004_us4_outbound_test.go`:
 
@@ -1490,22 +1490,22 @@ func TestMF004US4_OutboundRefusesMetadataDial(t *testing.T) {
 
 > Notes: `dispatchOnce` is unexported. Either (a) place this behavioral pin in `package connectors` under `internal/connectors/` with the rest, or (b) add a thin exported `DispatchOnceForTest(ctx) error` wrapper guarded by a comment. Prefer (a) — keep the SSRF behavioral pin as `mf_004_us4_outbound_integration_test.go` inside `internal/connectors/` (same package, calls `dispatchOnce` directly) and keep ONLY the infra-free `strings.Contains` source pins in `internal/security_regression/`. This matches US3's split (source pins in `security_regression`, behavioral pins co-located). Adjust file placement accordingly when implementing.
 
-- [ ] **Step 2: Run to verify the source pins pass and behavioral pin fails first if the fix were absent**
+- [x] **Step 2: Run to verify the source pins pass and behavioral pin fails first if the fix were absent**
 
 Run: `go test ./internal/security_regression/ -run TestMF004US4 -v` (source pins; no infra) and `go test -tags integration -p 1 ./internal/connectors/ -run TestMF004US4_OutboundRefusesMetadataDial -v`.
 Expected: source pins PASS (the code from T2/T4/T6 satisfies them); behavioral SSRF pin PASS (netsafe refuses 169.254.169.254).
 
-- [ ] **Step 3: Confirm `make sec-test` picks the file up**
+- [x] **Step 3: Confirm `make sec-test` picks the file up**
 
 Run: `export PATH="$PATH:$HOME/go/bin" && make sec-test`
 Expected: green, including the new MF-004-US4 source pins.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit** — done at `c66c05c` (amended once after the code-quality review). **Deviations from this sketch, both reviewer-validated:** (1) **File split** — only the infra-free `strings.Contains` source pins live in `internal/security_regression/mf_004_us4_outbound_test.go` (5 pins: SSRF-via-`BuildSystem`, outbound writes audited in 0045, conflict `external_wins` audited in 0046, create-issue ownership predicate in SQL, service→`ErrNotFound` no-oracle); the behavioral SSRF dial-refusal pin lives co-located in `internal/connectors/mf_004_us4_outbound_pin_integration_test.go` (same package — it calls the unexported `dispatchOnce` + reuses `seedOutboundConnector`/`registerStubJira`). (2) **Metadata seed** — the behavioral pin can't seed `http://169.254.169.254` straight through `seedOutboundConnector`, because `Service.Create → validateBaseURL → netsafe.IsBlocked` rejects it at **create-time** (SSRF defense layer #1). To isolate and exercise the **dial-time** guard (layer #2, the one `dispatchOnce` hits), the test seeds a loopback connector then `UPDATE`s the stored `base_url` to the metadata IP via the Super conn before dispatch; `connector_outbound_context` reads `base_url` straight off the row, so the dispatcher genuinely attempts the dial and netsafe refuses it (`AllowPrivateBaseURL=true` makes the pin *stronger* — metadata blocked even with the private-IP hatch open). Spec-compliance ✅ + code-quality ✅ APPROVED (1 Minor — OWNERSHIP `business_id` literal was shared with the comment query — fixed by adding the create-unique INSERT-column-tuple anchor; amended into `c66c05c`).
 
 ```bash
 gofmt -w internal/security_regression/ internal/connectors/
-git add internal/security_regression/mf_004_us4_outbound_test.go internal/connectors/ .beads/issues.jsonl
-git commit --no-verify -m "test(sec): T7 — MF-004-US4 outbound pins (conflict audited, SSRF dial-refusal, idempotency) (manyforge-a7j.4)"
+git add internal/security_regression/mf_004_us4_outbound_test.go internal/connectors/mf_004_us4_outbound_pin_integration_test.go .beads/issues.jsonl
+git commit --no-verify -m "test(sec): T7 — MF-004-US4 outbound pins (conflict audited, SSRF dial-refusal, ownership no-oracle) (manyforge-a7j.4)"
 ```
 
 ---
