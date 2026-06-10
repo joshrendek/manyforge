@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/ticketing"
 )
@@ -48,6 +49,16 @@ type ticketSvc interface {
 	ListMessages(ctx context.Context, pid, bid, ticketID uuid.UUID, cursor string, limit int) (ticketing.Page[ticketing.Message], error)
 	Triage(ctx context.Context, pid, bid, ticketID uuid.UUID, in ticketing.TriageInput) (ticketing.Ticket, error)
 	Reply(ctx context.Context, pid, bid, ticketID uuid.UUID, in ticketing.ReplyInput) (ticketing.Message, error)
+	AddNote(ctx context.Context, pid, bid, ticketID uuid.UUID, in ticketing.NoteInput) (ticketing.Message, error)
+}
+
+// ConnectorGateway is the narrow surface the connector agent tools use (lets unit tests fake it).
+// connectors.AgentGateway implements this interface. Exported so main.go can declare a
+// typed interface variable (avoiding the typed-nil trap from *connectors.AgentGateway).
+type ConnectorGateway interface {
+	ReadTicketExternal(ctx context.Context, principalID, businessID, ticketID uuid.UUID) (connectors.ExternalIssue, error)
+	EnqueueComment(ctx context.Context, principalID, businessID, ticketID, messageID uuid.UUID, body string) error
+	EnqueueTransition(ctx context.Context, principalID, businessID, ticketID uuid.UUID, status string) error
 }
 
 // Tool is one invokable capability exposed to the model.
@@ -106,6 +117,14 @@ type setAssigneeArgs struct {
 type draftReplyArgs struct {
 	TicketID uuid.UUID `json:"ticket_id"`
 	BodyText string    `json:"body_text"`
+}
+type addExternalCommentArgs struct {
+	TicketID uuid.UUID `json:"ticket_id"`
+	BodyText string    `json:"body_text"`
+}
+type transitionExternalStatusArgs struct {
+	TicketID uuid.UUID `json:"ticket_id"`
+	Status   string    `json:"status"`
 }
 
 var validStatusValue = map[string]bool{"new": true, "open": true, "pending": true, "solved": true, "closed": true}
@@ -182,8 +201,61 @@ func toMessageViews(msgs []ticketing.Message) []messageView {
 	return out
 }
 
-// NewToolRegistry builds the US3 ticketing tool set.
-func NewToolRegistry(svc ticketSvc) *ToolRegistry {
+// externalTicketView is the redacted projection of an external issue handed to the model.
+// It deliberately omits connector_id, secret_ref, and any other internal identifiers.
+type externalTicketView struct {
+	ExternalID    string                `json:"external_id"`
+	URL           string                `json:"url"`
+	Title         string                `json:"title"`
+	Status        string                `json:"status"`
+	Priority      string                `json:"priority"`
+	ReporterEmail string                `json:"reporter_email"`
+	ReporterName  string                `json:"reporter_name"`
+	Comments      []externalCommentView `json:"comments"`
+	UpdatedAt     time.Time             `json:"updated_at"`
+}
+
+type externalCommentView struct {
+	ExternalID string    `json:"external_id"`
+	Author     string    `json:"author"`
+	Body       string    `json:"body"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func toExternalTicketView(iss connectors.ExternalIssue) externalTicketView {
+	comments := make([]externalCommentView, 0, len(iss.Comments))
+	for _, c := range iss.Comments {
+		comments = append(comments, externalCommentView{
+			ExternalID: c.ExternalID,
+			Author:     c.Author,
+			Body:       c.Body,
+			CreatedAt:  c.CreatedAt,
+		})
+	}
+	return externalTicketView{
+		ExternalID:    iss.ExternalID,
+		URL:           iss.URL,
+		Title:         iss.Title,
+		Status:        iss.Status,
+		Priority:      iss.Priority,
+		ReporterEmail: iss.ReporterEmail,
+		ReporterName:  iss.ReporterName,
+		Comments:      comments,
+		UpdatedAt:     iss.UpdatedAt,
+	}
+}
+
+// keyPtrFrom wraps approvalKeyFrom, returning a *uuid.UUID (nil when no key is set).
+func keyPtrFrom(ctx context.Context) *uuid.UUID {
+	if k, ok := approvalKeyFrom(ctx); ok {
+		return &k
+	}
+	return nil
+}
+
+// NewToolRegistry builds the US3 ticketing tool set, optionally extended with
+// US6 connector tools when conn is non-nil.
+func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	reg := &ToolRegistry{tools: map[string]Tool{}}
 	add := func(t Tool) { reg.tools[t.Name] = t }
 
@@ -333,6 +405,75 @@ func NewToolRegistry(svc ticketSvc) *ToolRegistry {
 			return "reply sent", nil
 		},
 	})
+
+	// Connector tools are only registered when a gateway is available. When connectors
+	// are disabled (conn == nil, e.g. MANYFORGE_CONNECTOR_MASTER_KEY unset) the tools
+	// are absent from the registry and the binary boots without them.
+	if conn != nil {
+		add(Tool{
+			Name: "read_external_ticket", Effect: EffectRead, RequiredPerm: "connectors.read",
+			Description: "Read the external issue (Jira/Zendesk) linked to a support ticket.",
+			SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
+			Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
+				var a ticketRefArgs
+				if err := strictUnmarshal(raw, &a); err != nil {
+					return "", err
+				}
+				iss, err := conn.ReadTicketExternal(ctx, pid, bid, a.TicketID)
+				if err != nil {
+					return "", err
+				}
+				return jsonResult(toExternalTicketView(iss))
+			},
+		})
+
+		add(Tool{
+			Name: "add_external_comment", Effect: EffectExternal, RequiredPerm: "connectors.write",
+			Description: "Add a comment to the external issue (Jira/Zendesk) linked to a support ticket. Records an internal note first, then enqueues the external write.",
+			SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"body_text":{"type":"string","minLength":1}},"required":["ticket_id","body_text"],"additionalProperties":false}`,
+			Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
+				var a addExternalCommentArgs
+				if err := strictUnmarshal(raw, &a); err != nil {
+					return "", err
+				}
+				if strings.TrimSpace(a.BodyText) == "" {
+					return "", fmt.Errorf("agents: empty comment body: %w", errs.ErrValidation)
+				}
+				// Record an internal note first; this anchors the external write to a
+				// durable message id for dedup on at-least-once outbox redelivery.
+				note, err := svc.AddNote(ctx, pid, bid, a.TicketID, ticketing.NoteInput{
+					BodyText:       a.BodyText,
+					IdempotencyKey: keyPtrFrom(ctx),
+				})
+				if err != nil {
+					return "", err
+				}
+				if err := conn.EnqueueComment(ctx, pid, bid, a.TicketID, note.ID, a.BodyText); err != nil {
+					return "", err
+				}
+				return "external comment queued", nil
+			},
+		})
+
+		add(Tool{
+			Name: "transition_external_status", Effect: EffectExternal, RequiredPerm: "connectors.write",
+			Description: "Transition the external issue (Jira/Zendesk) linked to a support ticket to a new status.",
+			SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"status":{"type":"string","minLength":1}},"required":["ticket_id","status"],"additionalProperties":false}`,
+			Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
+				var a transitionExternalStatusArgs
+				if err := strictUnmarshal(raw, &a); err != nil {
+					return "", err
+				}
+				if strings.TrimSpace(a.Status) == "" {
+					return "", fmt.Errorf("agents: empty status: %w", errs.ErrValidation)
+				}
+				if err := conn.EnqueueTransition(ctx, pid, bid, a.TicketID, a.Status); err != nil {
+					return "", err
+				}
+				return "status transition queued", nil
+			},
+		})
+	}
 
 	return reg
 }
