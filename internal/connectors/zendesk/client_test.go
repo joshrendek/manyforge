@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manyforge/manyforge/internal/connectors"
 )
@@ -39,12 +40,12 @@ func TestFetchIssue(t *testing.T) {
 	var sawInclude string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuthUser, gotAuthPass, _ = r.BasicAuth()
-		switch {
-		case r.URL.Path == "/api/v2/tickets/12345.json":
+		switch r.URL.Path {
+		case "/api/v2/tickets/12345.json":
 			sawInclude = r.URL.Query().Get("include")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(mustFixture(t, "ticket.json"))
-		case r.URL.Path == "/api/v2/tickets/12345/comments.json":
+		case "/api/v2/tickets/12345/comments.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(mustFixture(t, "comments.json"))
 		default:
@@ -201,5 +202,85 @@ func TestCreateIssue_RequiresSummary(t *testing.T) {
 	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
 	if _, err := c.CreateIssue(context.Background(), connectors.ExternalIssueDraft{}); !errors.Is(err, ErrUpstream) {
 		t.Fatalf("err = %v, want Is(ErrUpstream) for empty summary", err)
+	}
+}
+
+func TestTransitionStatus(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ticket":{"id":12345,"status":"solved"}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	if err := c.TransitionStatus(context.Background(), "12345", "Solved"); err != nil {
+		t.Fatalf("TransitionStatus: %v", err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/api/v2/tickets/12345.json" {
+		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"status":"solved"`) {
+		t.Errorf("body = %s, want lowercased status", gotBody)
+	}
+}
+
+func TestTransitionStatus_RejectsUnknownStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server must not be reached for an unknown status")
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	if err := c.TransitionStatus(context.Background(), "12345", "frozen"); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("err = %v, want Is(ErrUpstream) for unknown status", err)
+	}
+}
+
+func TestTransitionStatus_RejectsTraversalID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server must not be reached for an invalid ticket id")
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	if err := c.TransitionStatus(context.Background(), "../../admin", "open"); !errors.Is(err, ErrBadTicketID) {
+		t.Fatalf("err = %v, want Is(ErrBadTicketID)", err)
+	}
+}
+
+func TestListUpdatedSince_Paginates(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		if got := r.URL.Query().Get("query"); !strings.Contains(got, "type:ticket updated>") {
+			t.Errorf("query = %q, want type:ticket updated> filter", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case "1":
+			_, _ = w.Write(mustFixture(t, "search_page1.json"))
+		case "2":
+			_, _ = w.Write(mustFixture(t, "search_page2.json"))
+		default:
+			t.Errorf("unexpected page %q (must stop after count is covered)", page)
+			_, _ = w.Write([]byte(`{"results":[],"count":3}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
+	ids, err := c.ListUpdatedSince(context.Background(), time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ListUpdatedSince: %v", err)
+	}
+	want := []string{"101", "102", "103"}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Errorf("ids = %v, want %v", ids, want)
+	}
+	if strings.Join(pages, ",") != "1,2" {
+		t.Errorf("pages requested = %v, want [1 2]", pages)
 	}
 }
