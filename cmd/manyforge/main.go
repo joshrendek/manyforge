@@ -26,6 +26,7 @@ import (
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/jira"
+	"github.com/manyforge/manyforge/internal/connectors/zendesk"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
@@ -275,6 +276,7 @@ func main() {
 		connSvc := &connectors.Service{DB: database, Vault: secrets.NewVault(connSealer)}
 		connReg = connectors.NewRegistry(connSvc)
 		connReg.Register("jira", jira.NewFactory(60*time.Second))
+		connReg.Register("zendesk", zendesk.NewFactory(60*time.Second))
 		connWebhookH = connectors.NewWebhookHandler(database, connSealer, connReg, logger)
 		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
 		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: 5 * time.Minute}

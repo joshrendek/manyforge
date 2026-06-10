@@ -1,0 +1,14 @@
+{
+  "ticket": {
+    "id": 12345,
+    "subject": "Login button is broken",
+    "status": "open",
+    "priority": "high",
+    "requester_id": 999,
+    "url": "https://acme.zendesk.com/api/v2/tickets/12345.json",
+    "updated_at": "2026-06-09T12:00:00Z"
+  },
+  "users": [
+    { "id": 999, "email": "reporter@acme.test", "name": "Reporter Person" }
+  ]
+}
