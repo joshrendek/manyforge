@@ -285,6 +285,7 @@ INSERT INTO ticket_message (
     message_id, body_text, body_html, source_approval_item_id)
 VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8,
     $9)
+ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
 RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id
 `
 
@@ -303,8 +304,11 @@ type InsertNoteMessageParams struct {
 // InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
 // source_approval_item_id (nullable) is the idempotency key for agent-driven notes:
 // a redelivered ApprovalExecutor replay supplies the same key, which the service
-// detects via GetOutboundMessageByApproval before inserting. NULL for ordinary human
-// notes — NULLs never conflict, so existing behavior holds.
+// detects via GetOutboundMessageByApproval before inserting. Under a concurrent race
+// both pre-checks can miss; the partial UNIQUE index then makes the loser conflict and
+// insert no second row (returns 0 rows ⇒ pgx.ErrNoRows ⇒ the at-least-once executor
+// retries, and the retry's pre-check finds the winner — same semantics as Reply). NULL
+// for ordinary human notes — NULLs never conflict, so existing behavior holds.
 func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error) {
 	row := q.db.QueryRow(ctx, insertNoteMessage,
 		arg.ID,

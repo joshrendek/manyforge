@@ -289,8 +289,11 @@ type Querier interface {
 	// InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
 	// source_approval_item_id (nullable) is the idempotency key for agent-driven notes:
 	// a redelivered ApprovalExecutor replay supplies the same key, which the service
-	// detects via GetOutboundMessageByApproval before inserting. NULL for ordinary human
-	// notes — NULLs never conflict, so existing behavior holds.
+	// detects via GetOutboundMessageByApproval before inserting. Under a concurrent race
+	// both pre-checks can miss; the partial UNIQUE index then makes the loser conflict and
+	// insert no second row (returns 0 rows ⇒ pgx.ErrNoRows ⇒ the at-least-once executor
+	// retries, and the retry's pre-check finds the winner — same semantics as Reply). NULL
+	// for ordinary human notes — NULLs never conflict, so existing behavior holds.
 	InsertNoteMessage(ctx context.Context, arg InsertNoteMessageParams) (TicketMessage, error)
 	// ---- notification (SL-D) ----
 	InsertNotification(ctx context.Context, arg InsertNotificationParams) error
