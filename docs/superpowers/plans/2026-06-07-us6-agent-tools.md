@@ -338,14 +338,14 @@
 
 **Why:** §7 pin 6 (external actions gated + audited) + pin 7 (tenant isolation) for US6, in the dedicated regression package — one file per finding id, source-level pins (`strings.Contains`/reflection) + behavioral pins.
 
-- [ ] **Step 1 (RED→GREEN):** add, with the `MF-004-US6` id in the header comment:
+- [x] **Step 1 (RED→GREEN):** add, with the `MF-004-US6` id in the header comment:
   - **Source pin (effect classes):** assert via the registry that `read_external_ticket` is `EffectRead` and `add_external_comment`/`transition_external_status` are `EffectExternal` — so a refactor that downgrades a write tool's effect (bypassing the gate) fails CI. (Build a registry with a fake gateway.)
   - **Source pin (perm gating):** assert both write tools carry `RequiredPerm == "connectors.write"` and the read tool `"connectors.read"`.
   - **Source pin (no per-tool gate bypass):** `strings.Contains` scan of `tools.go` connector-tool `Invoke` bodies assert they contain no direct `gate(`/`decideExec` call (gating is the loop's job) — i.e. the tools rely on the central gate, and the bodies do enqueue (so the gate genuinely guards a side effect).
   - **Behavioral pin (gated):** run-loop in `ModeAssist` → `add_external_comment` queues an approval and does **not** enqueue (reuse the T5 fakes) — the load-bearing "gate before external op" assertion.
   - **Behavioral pin (audited):** assert a gated proposal emits the audit decision and an executed transition op writes the `connector.outbound.transitioned` audit entry (or assert the DEFINER audit insert via the T2 integration path / a source pin on `0047`).
   - **Behavioral pin (tenant isolation):** `gw.ReadTicketExternal` / `EnqueueComment` / `EnqueueTransition` for a ticket in another business → `errs.ErrNotFound` (no cross-tenant access, no oracle).
-- [ ] **Step 2:** `make sec-test` GREEN; `gofmt -l`. Commit `--no-verify`: `test(sec): US6 T7 — MF-004-US6 pins (external action gated+audited, perm-gating, tenant isolation) (manyforge-a7j.6.7)`.
+- [x] **Step 2:** `make sec-test` GREEN; `gofmt -l`. Commit `--no-verify`: `test(sec): US6 T7 — MF-004-US6 pins (external action gated+audited, perm-gating, tenant isolation) (manyforge-a7j.6.7)`.
 
 **Test plan (T7):** source-level pins (effect classes, required perms, no in-tool gate bypass) + behavioral pins (assist-mode queues-not-enqueues, audited, cross-tenant not-found). Non-vacuous (each would fail if the corresponding control regressed).
 
