@@ -7,33 +7,41 @@ import { AuthService } from '../core/auth.service';
   selector: 'app-signup',
   imports: [FormsModule, RouterLink],
   template: `
-    <section class="card auth">
+    <div class="mf-card" style="max-width:410px;margin:8vh auto 0">
       @if (step() === 'form') {
         <h1>Create your account</h1>
-        <p class="sub">Start your ManyForge workspace.</p>
+        <p class="mf-pageheader-sub">Start your ManyForge workspace.</p>
         <form (ngSubmit)="signup()">
-          <label for="email">Email</label>
-          <input id="email" type="email" name="email" [(ngModel)]="email" autocomplete="email" required />
-          <label for="displayName">Display name</label>
-          <input id="displayName" type="text" name="displayName" [(ngModel)]="displayName" required />
-          <label for="password">Password</label>
-          <input id="password" type="password" name="password" [(ngModel)]="password" autocomplete="new-password" required />
-          <button type="submit" [disabled]="loading()">{{ loading() ? 'Creating…' : 'Create account' }}</button>
+          <div class="mf-field">
+            <label for="email">Email</label>
+            <input class="mf-input" id="email" type="email" name="email" [(ngModel)]="email" autocomplete="email" required data-testid="signup-email" />
+          </div>
+          <div class="mf-field">
+            <label for="displayName">Display name</label>
+            <input class="mf-input" id="displayName" type="text" name="displayName" [(ngModel)]="displayName" required data-testid="signup-display-name" />
+          </div>
+          <div class="mf-field">
+            <label for="password">Password</label>
+            <input class="mf-input" id="password" type="password" name="password" [(ngModel)]="password" autocomplete="new-password" required data-testid="signup-password" />
+          </div>
+          <button class="mf-btn mf-btn-primary" type="submit" [disabled]="loading()" data-testid="signup-submit">{{ loading() ? 'Creating…' : 'Create account' }}</button>
         </form>
-        @if (error()) { <p class="msg error">{{ error() }}</p> }
-        <p class="switch">Already have an account? <a routerLink="/login">Sign in</a></p>
+        @if (error()) { <p class="mf-err" data-testid="signup-error">{{ error() }}</p> }
+        <p>Already have an account? <a class="mf-btn-link" routerLink="/login">Sign in</a></p>
       } @else {
         <h1>Verify your email</h1>
-        <p class="sub">We sent a verification link to <b>{{ email }}</b>.</p>
+        <p class="mf-pageheader-sub">We sent a verification link to <b>{{ email }}</b>.</p>
         <form (ngSubmit)="verify()">
-          <label for="token">Verification token</label>
-          <input id="token" type="text" name="token" [(ngModel)]="token" required />
-          <button type="submit" [disabled]="loading()">{{ loading() ? 'Verifying…' : 'Verify email' }}</button>
+          <div class="mf-field">
+            <label for="token">Verification token</label>
+            <input class="mf-input" id="token" type="text" name="token" [(ngModel)]="token" required data-testid="signup-token" />
+          </div>
+          <button class="mf-btn mf-btn-primary" type="submit" [disabled]="loading()" data-testid="signup-verify-submit">{{ loading() ? 'Verifying…' : 'Verify email' }}</button>
         </form>
-        <p class="hint">Local dev: grab the token from the API server log line <code>dev mailer: would send … body=token: …</code></p>
-        @if (error()) { <p class="msg error">{{ error() }}</p> }
+        <p class="mf-hint">Local dev: grab the token from the API server log line <code>dev mailer: would send … body=token: …</code></p>
+        @if (error()) { <p class="mf-err" data-testid="signup-error">{{ error() }}</p> }
       }
-    </section>
+    </div>
   `,
 })
 export class SignupComponent {
