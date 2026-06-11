@@ -58,4 +58,16 @@ describe('App shell', () => {
     expect(el.querySelector('[data-testid="nav-accounting"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="theme-toggle"]')).toBeTruthy();
   });
+
+  it('shows a pending-count badge on the Approvals nav for the current business', () => {
+    localStorage.setItem('mf_access', 'tok');
+    localStorage.setItem('mf-current-business', 'b1');
+    const f = TestBed.createComponent(App);
+    f.detectChanges();
+    mock.expectOne('/api/v1/me').flush({ id: '1', email: 'a@b.c', display_name: 'A', email_verified: true, status: 'active' });
+    mock.expectOne('/api/v1/businesses/b1/approvals').flush({ items: [{ id: 'x1' }, { id: 'x2' }] });
+    f.detectChanges();
+    const badge = f.nativeElement.querySelector('[data-testid="nav-approvals"] .nav-badge');
+    expect(badge?.textContent).toContain('2');
+  });
 });
