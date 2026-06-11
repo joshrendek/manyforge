@@ -7,6 +7,15 @@ foundation in `specs/001-tenant-foundation/`. Program roadmap: `docs/ROADMAP.md`
 Governance: `.specify/memory/constitution.md`.
 <!-- SPECKIT END -->
 
+## Branching & Git Workflow
+
+**At most ONE branch off `master` at a time. Never stack branches.**
+
+- Branch directly from `master` for a unit of work → open a PR **into `master`** → merge → delete the branch. The next piece of work branches fresh from the updated `master`.
+- **Do NOT** branch off another feature branch, and **do NOT** build a chain of long-lived per-spec / per-stream branches (e.g. `001-… → 002-… → 003-… → 004-… → ui-redesign`). That exact stack accumulated **285 unmerged commits** before being collapsed back onto `master` on 2026-06-11 — never recreate it.
+- `master` is the single integration point. Land work there continuously (merge PRs promptly) instead of letting parallel or stacked branches drift away from it.
+- Always set a PR's base to `master`. If you ever find more than one branch off `master`, stop and merge/delete down to one.
+
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
