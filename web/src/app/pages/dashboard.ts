@@ -137,9 +137,7 @@ type PanelKind = 'add' | 'rename' | 'move';
               }
             </li>
           } @empty {
-            <mf-empty-state icon="🏢" title="No businesses yet">
-              Create your master business below to get started.
-            </mf-empty-state>
+            <mf-empty-state icon="🏢" title="No businesses yet — create your master business below." />
           }
         </ul>
       }
