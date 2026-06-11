@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ticketPriorityTone, ticketStatusTone, runStatusTone, Tone } from './status';
+import { ticketPriorityTone, ticketStatusTone, runStatusTone, Tone, effectClassTone, effectClassLabel } from './status';
 
 describe('status tone helpers', () => {
   it('maps ticket status to a tone', () => {
@@ -19,5 +19,20 @@ describe('status tone helpers', () => {
     expect(runStatusTone('succeeded')).toBe<Tone>('success');
     expect(runStatusTone('failed')).toBe<Tone>('danger');
     expect(runStatusTone('running')).toBe<Tone>('accent');
+  });
+});
+
+describe('effect class mapping', () => {
+  it('maps effect class int to tone', () => {
+    expect(effectClassTone(0)).toBe('neutral');
+    expect(effectClassTone(1)).toBe('accent');
+    expect(effectClassTone(2)).toBe('warn');
+    expect(effectClassTone(3)).toBe('danger');
+  });
+  it('labels effect classes', () => {
+    expect(effectClassLabel(0)).toBe('Read');
+    expect(effectClassLabel(1)).toBe('Reversible');
+    expect(effectClassLabel(2)).toBe('External');
+    expect(effectClassLabel(3)).toBe('Irreversible');
   });
 });
