@@ -49,6 +49,30 @@ func TestApprovalSummary(t *testing.T) {
 	}
 }
 
+func TestToApprovalResp_IncludesSummary_NotArgs(t *testing.T) {
+	tid := "7bbeb32e-7c98-4c8f-966b-70acdb440dce"
+	item := ApprovalItem{
+		Tool:        "transition_external_status",
+		Args:        json.RawMessage(`{"ticket_id":"` + tid + `","status":"closed"}`),
+		EffectClass: 2,
+		State:       "pending",
+	}
+	resp := toApprovalResp(item)
+	if resp.Summary != "Transition ticket 7bbeb32e → closed" {
+		t.Fatalf("summary = %q", resp.Summary)
+	}
+	b, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"args"`) || strings.Contains(string(b), "ticket_id") {
+		t.Fatalf("wire response must not leak raw args: %s", b)
+	}
+	if !strings.Contains(string(b), `"summary"`) {
+		t.Fatal("wire response must include summary")
+	}
+}
+
 func TestApprovalSummary_TruncatesAndStripsNewlines(t *testing.T) {
 	// `\\n` is a literal backslash-n in the raw JSON string (valid JSON); json.Unmarshal
 	// decodes it to a real newline in body_text, which truncate's strings.Fields then strips.

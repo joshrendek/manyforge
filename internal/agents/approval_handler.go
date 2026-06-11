@@ -68,12 +68,14 @@ type approvalResp struct {
 	EffectClass int       `json:"effect_class"`
 	State       string    `json:"state"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	Summary     string    `json:"summary"`
 }
 
 func toApprovalResp(a ApprovalItem) approvalResp {
 	return approvalResp{
 		ID: a.ID, AgentRunID: a.AgentRunID, Tool: a.Tool,
 		EffectClass: a.EffectClass, State: a.State, ExpiresAt: a.ExpiresAt,
+		Summary: approvalSummary(a.Tool, a.Args),
 	}
 }
 
