@@ -8,8 +8,31 @@ import {
   InboundAddress,
   TicketService,
 } from '../../core/ticket.service';
+import { PageHeader } from '../../ui/page-header/page-header';
+import { StatusPill } from '../../ui/status-pill/status-pill';
+import { EmptyState } from '../../ui/empty-state/empty-state';
+import { Spinner } from '../../ui/spinner/spinner';
+import { Tone } from '../../ui/status';
 
 const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'];
+
+function verificationTone(v: string): Tone {
+  switch (v) {
+    case 'verified': return 'success';
+    case 'pending': return 'warn';
+    case 'failed': return 'danger';
+    default: return 'neutral';
+  }
+}
+
+function dkimSpfTone(s: string): Tone {
+  switch (s) {
+    case 'pass': return 'success';
+    case 'fail': return 'danger';
+    case 'pending': return 'warn';
+    default: return 'neutral';
+  }
+}
 
 // US4 inbox-settings page. Manages a business's custom email domains and inbound
 // addresses (FR-012/FR-013). Mirrors thread-view.ts / ticket-list.ts: signal-driven
@@ -24,57 +47,72 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
 // VERIFIED domains only (the backend 409s on an unverified domain regardless).
 @Component({
   selector: 'app-inbox-settings',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, PageHeader, StatusPill, EmptyState, Spinner],
   template: `
-    <section class="card">
-      <div class="spread">
-        <div>
-          <h1>Inbox settings</h1>
-          <p class="sub">Custom email domains and inbound addresses for this business.</p>
-        </div>
-        <a class="linklike" routerLink="/support" data-testid="back-to-support">Back to tickets</a>
-      </div>
+    <div class="mf-card">
+      <mf-page-header
+        title="Inbox settings"
+        subtitle="Custom email domains and inbound addresses for this business."
+      >
+        <ng-container actions>
+          <a
+            class="mf-btn mf-btn-ghost mf-btn-sm"
+            routerLink="/support"
+            data-testid="back-to-support"
+            >Back to tickets</a
+          >
+        </ng-container>
+      </mf-page-header>
 
       @if (loading()) {
-        <p class="empty" data-testid="settings-loading">Loading inbox settings…</p>
+        <div data-testid="settings-loading" style="display:flex;align-items:center;gap:10px;color:var(--mf-text-muted)">
+          <mf-spinner />
+          <span>Loading inbox settings…</span>
+        </div>
       } @else if (loadFailed()) {
-        <div class="empty">
-          <p data-testid="settings-load-error">
+        <div style="padding:var(--mf-space-4);text-align:center">
+          <p class="mf-err" data-testid="settings-load-error">
             {{ error() || "We couldn't load inbox settings." }}
           </p>
-          <button class="ghost compact" (click)="reload()">Try again</button>
+          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="reload()">Try again</button>
         </div>
       } @else {
         <!-- ── Email domains ─────────────────────────────────────────────── -->
-        <h2 class="section-head">Email domains</h2>
+        <h2 class="mf-section-head">Email domains</h2>
 
-        <form class="add-form" data-testid="add-domain-form" (ngSubmit)="addDomain()">
-          <label for="domain-input">Domain</label>
-          <input
-            type="text"
-            id="domain-input"
-            data-testid="domain-input"
-            placeholder="support.acme.com"
-            autocomplete="off"
-            [(ngModel)]="domainDraft"
-            name="domain"
-            [disabled]="addingDomain()"
-          />
-          <label for="mode-select">Mode</label>
-          <select
-            id="mode-select"
-            data-testid="mode-select"
-            [(ngModel)]="modeDraft"
-            name="mode"
-            [disabled]="addingDomain()"
-          >
-            @for (m of modes; track m) {
-              <option [value]="m">{{ m }}</option>
-            }
-          </select>
+        <form class="mf-add-form" data-testid="add-domain-form" (ngSubmit)="addDomain()">
+          <div class="mf-field" style="flex:1 1 220px">
+            <label for="domain-input">Domain</label>
+            <input
+              type="text"
+              id="domain-input"
+              class="mf-input"
+              data-testid="domain-input"
+              placeholder="support.acme.com"
+              autocomplete="off"
+              [(ngModel)]="domainDraft"
+              name="domain"
+              [disabled]="addingDomain()"
+            />
+          </div>
+          <div class="mf-field" style="flex:0 1 200px">
+            <label for="mode-select">Mode</label>
+            <select
+              id="mode-select"
+              class="mf-select"
+              data-testid="mode-select"
+              [(ngModel)]="modeDraft"
+              name="mode"
+              [disabled]="addingDomain()"
+            >
+              @for (m of modes; track m) {
+                <option [value]="m">{{ m }}</option>
+              }
+            </select>
+          </div>
           <button
             type="submit"
-            class="primary compact"
+            class="mf-btn mf-btn-primary mf-btn-sm"
             data-testid="add-domain-submit"
             [disabled]="addingDomain() || !domainDraft.trim()"
           >
@@ -82,30 +120,42 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
           </button>
         </form>
 
-        <ul class="tree" data-testid="email-domain-list">
+        <div class="mf-table" data-testid="email-domain-list">
           @for (d of domains(); track d.id) {
-            <li class="biz domain-row" data-testid="domain-row" [attr.data-domain-id]="d.id">
-              <div class="biz-main">
-                <span class="name" data-testid="domain-name">{{ d.domain }}</span>
-                <span class="badge" data-testid="domain-mode">{{ d.mode }}</span>
-                @if (d.verification === 'verified') {
-                  <span class="pill ok" data-testid="domain-status">{{ d.verification }}</span>
-                } @else {
-                  <span class="badge" data-testid="domain-status">{{ d.verification }}</span>
-                }
-                <span class="badge" data-testid="dkim-state">DKIM: {{ d.dkim_state }}</span>
-                <span class="badge" data-testid="spf-state">SPF: {{ d.spf_state }}</span>
+            <div class="mf-tr mf-domain-row" data-testid="domain-row" [attr.data-domain-id]="d.id">
+              <div class="mf-row-main">
+                <span class="mf-row-name" data-testid="domain-name">{{ d.domain }}</span>
+                <mf-status-pill
+                  [tone]="'neutral'"
+                  [label]="d.mode"
+                  data-testid="domain-mode"
+                />
+                <mf-status-pill
+                  [tone]="verificationTone(d.verification)"
+                  [label]="d.verification"
+                  data-testid="domain-status"
+                />
+                <mf-status-pill
+                  [tone]="dkimSpfTone(d.dkim_state)"
+                  [label]="'DKIM: ' + d.dkim_state"
+                  data-testid="dkim-state"
+                />
+                <mf-status-pill
+                  [tone]="dkimSpfTone(d.spf_state)"
+                  [label]="'SPF: ' + d.spf_state"
+                  data-testid="spf-state"
+                />
               </div>
 
               @if (d.verification !== 'verified') {
-                <div class="panel dns-challenge" data-testid="dns-challenge">
-                  <p class="challenge-intro">
+                <div class="mf-dns-challenge" data-testid="dns-challenge">
+                  <p class="mf-dns-intro">
                     Publish these DNS records, then verify. Verification reads public DNS — changes
                     can take a while to propagate.
                   </p>
 
-                  <div class="dns-rec">
-                    <span class="dns-kind">Ownership (TXT)</span>
+                  <div class="mf-dns-rec">
+                    <span class="mf-dns-kind">Ownership (TXT)</span>
                     <code data-testid="challenge-txt-name">{{
                       d.dns_challenge.verification_txt.name
                     }}</code>
@@ -114,8 +164,8 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
                     }}</code>
                   </div>
 
-                  <div class="dns-rec">
-                    <span class="dns-kind">DKIM (TXT)</span>
+                  <div class="mf-dns-rec">
+                    <span class="mf-dns-kind">DKIM (TXT)</span>
                     <code data-testid="challenge-dkim-name">{{
                       d.dns_challenge.dkim_record.name
                     }}</code>
@@ -124,22 +174,22 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
                     }}</code>
                   </div>
 
-                  <div class="dns-rec">
-                    <span class="dns-kind">SPF</span>
+                  <div class="mf-dns-rec">
+                    <span class="mf-dns-kind">SPF</span>
                     <code data-testid="challenge-spf-hint">{{ d.dns_challenge.spf_hint }}</code>
                   </div>
 
                   @if (d.dns_challenge.mx_hint) {
-                    <div class="dns-rec">
-                      <span class="dns-kind">MX</span>
+                    <div class="mf-dns-rec">
+                      <span class="mf-dns-kind">MX</span>
                       <code data-testid="challenge-mx-hint">{{ d.dns_challenge.mx_hint }}</code>
                     </div>
                   }
 
-                  <div class="challenge-actions">
+                  <div class="mf-challenge-actions">
                     <button
                       type="button"
-                      class="ghost compact"
+                      class="mf-btn mf-btn-ghost mf-btn-sm"
                       data-testid="verify-domain"
                       [disabled]="verifyingId() !== null"
                       (click)="verify(d)"
@@ -147,54 +197,60 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
                       {{ verifyingId() === d.id ? 'Checking DNS…' : 'Verify' }}
                     </button>
                     @if (verifyHintId() === d.id) {
-                      <span class="msg verify-hint" data-testid="verify-hint">
+                      <span class="mf-hint" data-testid="verify-hint">
                         Not verified yet — re-check that the records are published and try again.
                       </span>
                     }
                   </div>
                 </div>
               }
-            </li>
+            </div>
           } @empty {
-            <li class="empty" data-testid="domain-empty">No custom email domains yet.</li>
+            <mf-empty-state title="No custom email domains yet." data-testid="domain-empty" />
           }
-        </ul>
+        </div>
 
         <!-- ── Inbound addresses ─────────────────────────────────────────── -->
-        <h2 class="section-head">Inbound addresses</h2>
+        <h2 class="mf-section-head">Inbound addresses</h2>
 
-        <form class="add-form" data-testid="add-address-form" (ngSubmit)="addAddress()">
-          <label for="address-input">Address</label>
-          <input
-            type="text"
-            id="address-input"
-            data-testid="address-input"
-            placeholder="hello@support.acme.com"
-            autocomplete="off"
-            [(ngModel)]="addressDraft"
-            name="address"
-            [disabled]="addingAddress()"
-          />
-          <label for="address-domain-select">Domain</label>
-          <select
-            id="address-domain-select"
-            data-testid="address-domain-select"
-            [(ngModel)]="selectedDomainId"
-            name="email_domain_id"
-            [disabled]="addingAddress() || !verifiedDomains().length"
-          >
-            <option value="" disabled>
-              {{
-                verifiedDomains().length ? 'Choose a verified domain…' : 'No verified domains yet'
-              }}
-            </option>
-            @for (d of verifiedDomains(); track d.id) {
-              <option [value]="d.id">{{ d.domain }}</option>
-            }
-          </select>
+        <form class="mf-add-form" data-testid="add-address-form" (ngSubmit)="addAddress()">
+          <div class="mf-field" style="flex:1 1 220px">
+            <label for="address-input">Address</label>
+            <input
+              type="text"
+              id="address-input"
+              class="mf-input"
+              data-testid="address-input"
+              placeholder="hello@support.acme.com"
+              autocomplete="off"
+              [(ngModel)]="addressDraft"
+              name="address"
+              [disabled]="addingAddress()"
+            />
+          </div>
+          <div class="mf-field" style="flex:0 1 200px">
+            <label for="address-domain-select">Domain</label>
+            <select
+              id="address-domain-select"
+              class="mf-select"
+              data-testid="address-domain-select"
+              [(ngModel)]="selectedDomainId"
+              name="email_domain_id"
+              [disabled]="addingAddress() || !verifiedDomains().length"
+            >
+              <option value="" disabled>
+                {{
+                  verifiedDomains().length ? 'Choose a verified domain…' : 'No verified domains yet'
+                }}
+              </option>
+              @for (d of verifiedDomains(); track d.id) {
+                <option [value]="d.id">{{ d.domain }}</option>
+              }
+            </select>
+          </div>
           <button
             type="submit"
-            class="primary compact"
+            class="mf-btn mf-btn-primary mf-btn-sm"
             data-testid="add-address-submit"
             [disabled]="addingAddress() || !addressDraft.trim() || !selectedDomainId"
           >
@@ -202,105 +258,112 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
           </button>
         </form>
 
-        <ul class="tree" data-testid="inbound-address-list">
+        <div class="mf-table" data-testid="inbound-address-list">
           @for (a of addresses(); track a.id) {
-            <li class="biz address-row" data-testid="address-row" [attr.data-address-id]="a.id">
-              <div class="biz-main">
-                <span class="name" data-testid="address-value">{{ a.address }}</span>
-                <span class="badge" data-testid="address-kind">{{ a.kind }}</span>
+            <div class="mf-tr mf-address-row" data-testid="address-row" [attr.data-address-id]="a.id">
+              <div class="mf-row-main">
+                <span class="mf-row-name" data-testid="address-value">{{ a.address }}</span>
+                <mf-status-pill [tone]="'neutral'" [label]="a.kind" data-testid="address-kind" />
                 @if (!a.active) {
-                  <span class="badge" data-testid="address-inactive">inactive</span>
+                  <mf-status-pill [tone]="'danger'" label="inactive" data-testid="address-inactive" />
                 }
               </div>
-            </li>
+            </div>
           } @empty {
-            <li class="empty" data-testid="address-empty">No inbound addresses yet.</li>
+            <mf-empty-state title="No inbound addresses yet." data-testid="address-empty" />
           }
-        </ul>
+        </div>
       }
 
       @if (error() && !loadFailed()) {
-        <p class="msg error" data-testid="settings-error">{{ error() }}</p>
+        <p class="mf-err" data-testid="settings-error">{{ error() }}</p>
       }
-    </section>
+    </div>
   `,
   styles: [
     `
-      .section-head {
-        margin-top: 22px;
-        padding-top: 18px;
-        border-top: 1px solid var(--border);
+      .mf-section-head {
+        font-size: var(--mf-fs-base);
+        font-weight: 600;
+        color: var(--mf-text);
+        margin-top: var(--mf-space-6);
+        padding-top: var(--mf-space-4);
+        border-top: 1px solid var(--mf-border);
       }
-      .section-head:first-of-type {
-        margin-top: 8px;
+      .mf-section-head:first-of-type {
+        margin-top: var(--mf-space-2);
         padding-top: 0;
         border-top: 0;
       }
-      .add-form {
+      .mf-add-form {
         display: flex;
-        gap: 10px;
+        gap: var(--mf-space-3);
+        flex-wrap: wrap;
+        align-items: flex-end;
+        margin-top: var(--mf-space-3);
+      }
+      .mf-domain-row,
+      .mf-address-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--mf-space-3);
+        padding: var(--mf-space-3) 0;
+        border-bottom: 1px solid var(--mf-border);
+      }
+      .mf-row-main {
+        display: flex;
         flex-wrap: wrap;
         align-items: center;
-        margin-top: 12px;
+        gap: var(--mf-space-2);
       }
-      .add-form input {
-        flex: 1 1 220px;
-        margin: 0;
+      .mf-row-name {
+        font-weight: 500;
+        color: var(--mf-text);
+        font-size: var(--mf-fs-sm);
       }
-      .add-form select {
-        flex: 0 1 200px;
-        margin: 0;
-      }
-      .domain-row,
-      .address-row {
-        align-items: flex-start;
-      }
-      .biz-main {
-        flex-wrap: wrap;
-      }
-      .dns-challenge {
+      .mf-dns-challenge {
         display: grid;
-        gap: 10px;
+        gap: var(--mf-space-3);
+        background: var(--mf-surface-raised);
+        border: 1px solid var(--mf-border);
+        border-radius: var(--mf-radius);
+        padding: var(--mf-space-4);
+        width: 100%;
       }
-      .challenge-intro {
+      .mf-dns-intro {
         margin: 0;
-        color: var(--muted);
-        font-size: 12.5px;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
         line-height: 1.5;
       }
-      .dns-rec {
+      .mf-dns-rec {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 8px;
+        gap: var(--mf-space-2);
       }
-      .dns-rec .dns-kind {
-        font-size: 10.5px;
+      .mf-dns-kind {
+        font-size: var(--mf-fs-xs);
         font-weight: 600;
         letter-spacing: 0.03em;
         text-transform: uppercase;
-        color: var(--muted);
+        color: var(--mf-text-muted);
         min-width: 92px;
       }
-      .dns-rec code {
-        font-size: 11.5px;
+      .mf-dns-rec code {
+        font-size: var(--mf-fs-xs);
         word-break: break-all;
         max-width: 100%;
+        background: var(--mf-surface);
+        border: 1px solid var(--mf-border);
+        border-radius: var(--mf-radius-sm);
+        padding: 2px var(--mf-space-2);
       }
-      .challenge-actions {
+      .mf-challenge-actions {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: var(--mf-space-3);
         flex-wrap: wrap;
-      }
-      .verify-hint {
-        margin: 0;
-        color: var(--muted);
-      }
-      .pill.ok {
-        color: var(--ok);
-        background: transparent;
-        border-color: var(--ok);
       }
     `,
   ],
@@ -308,6 +371,10 @@ const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'
 export class InboxSettingsComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private api = inject(TicketService);
+
+  // Template tone helpers
+  readonly verificationTone = verificationTone;
+  readonly dkimSpfTone = dkimSpfTone;
 
   readonly modes = MODES;
 
