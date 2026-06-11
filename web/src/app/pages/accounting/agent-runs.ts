@@ -3,61 +3,62 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { AccountingService, RunSummary } from '../../core/accounting.service';
+import { PageHeader } from '../../ui/page-header/page-header';
+import { StatusPill } from '../../ui/status-pill/status-pill';
+import { EmptyState } from '../../ui/empty-state/empty-state';
+import { runStatusTone } from '../../ui/status';
 
 @Component({
   selector: 'app-agent-runs',
-  imports: [RouterLink, DatePipe, CurrencyPipe],
+  imports: [RouterLink, DatePipe, CurrencyPipe, PageHeader, StatusPill, EmptyState],
   template: `
-    <section class="card">
-      <div class="spread">
-        <div>
-          <h1>Agent runs</h1>
-          <p class="sub">Per-run token and cost breakdown.</p>
-        </div>
-        <a class="linklike" routerLink="/accounting" data-testid="back-to-accounting">Back to accounting</a>
-      </div>
+    <div class="mf-card">
+      <mf-page-header title="Agent runs" subtitle="Per-run token and cost breakdown.">
+        <a routerLink="/accounting" data-testid="back-to-accounting" class="mf-btn mf-btn-ghost mf-btn-sm" actions>Back to accounting</a>
+      </mf-page-header>
 
       @if (loading()) {
-        <p class="empty">Loading runs…</p>
+        <p style="color:var(--mf-text-muted)">Loading runs…</p>
       } @else if (loadFailed()) {
-        <div class="empty">
+        <div style="color:var(--mf-text-muted)">
           <p>We couldn't load these runs.</p>
-          <button class="ghost compact" (click)="reload()">Try again</button>
+          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="reload()">Try again</button>
         </div>
       } @else {
-        <ul class="tree" data-testid="run-list">
+        <div class="mf-table" data-testid="run-list">
           @for (r of runs(); track r.id) {
-            <li class="biz" data-testid="run-row" [attr.data-run-id]="r.id">
-              <div class="biz-main">
-                <span class="badge" data-testid="run-status">{{ r.status }}</span>
-                <span class="name" data-testid="run-cost">{{ r.cost_cents / 100 | currency }}</span>
+            <div class="mf-tr" data-testid="run-row" [attr.data-run-id]="r.id">
+              <div style="display:flex;align-items:center;gap:10px;flex:1">
+                <mf-status-pill [tone]="runStatusTone(r.status)" [label]="r.status" data-testid="run-status" />
+                <span data-testid="run-cost">{{ r.cost_cents / 100 | currency }}</span>
               </div>
-              <div class="ticket-meta">
+              <div style="display:flex;gap:12px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">
                 <span data-testid="run-tokens">{{ r.tokens_in }} in / {{ r.tokens_out }} out</span>
                 <span>{{ r.created_at | date: 'short' }}</span>
               </div>
-            </li>
+            </div>
           } @empty {
-            <li class="empty" data-testid="run-empty">No runs in this window.</li>
+            <mf-empty-state title="No runs" data-testid="run-empty">No runs in this window.</mf-empty-state>
           }
-        </ul>
+        </div>
         @if (nextCursor()) {
-          <button class="ghost compact" data-testid="load-more" [disabled]="busy()" (click)="loadMore()">
+          <button class="mf-btn mf-btn-ghost" data-testid="load-more" [disabled]="busy()" (click)="loadMore()">
             {{ busy() ? 'Loading…' : 'Load more' }}
           </button>
         }
       }
 
       @if (error()) {
-        <p class="msg error" data-testid="list-error">{{ error() }}</p>
+        <p class="mf-err" data-testid="list-error">{{ error() }}</p>
       }
-    </section>
+    </div>
   `,
-  styles: [`.ticket-meta { display: flex; gap: 12px; color: var(--muted); font-size: 12.5px; }`],
 })
 export class AgentRunsComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private api = inject(AccountingService);
+
+  readonly runStatusTone = runStatusTone;
 
   businessId = '';
   agentId = '';
