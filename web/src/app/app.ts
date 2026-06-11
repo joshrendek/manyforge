@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import {
   NavigationEnd,
   Router,
@@ -7,7 +7,9 @@ import {
   RouterOutlet,
 } from '@angular/router';
 import { filter } from 'rxjs';
+import { ApprovalsService } from './core/approvals.service';
 import { AuthService, Profile } from './core/auth.service';
+import { CurrentBusinessService } from './core/current-business.service';
 import { NAV_ITEMS } from './ui/nav';
 import { ThemeToggle } from './ui/theme-toggle/theme-toggle';
 import { ToastHost } from './ui/toast/toast';
@@ -18,12 +20,25 @@ import { ToastHost } from './ui/toast/toast';
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
-export class App implements OnInit {
+export class App implements OnInit, OnDestroy {
   private auth = inject(AuthService);
   private router = inject(Router);
+  private approvals = inject(ApprovalsService);
+  private currentBusiness = inject(CurrentBusinessService);
 
-  readonly navItems = NAV_ITEMS;
+  private badgeTimer?: ReturnType<typeof setInterval>;
+
   readonly profile = signal<Profile | null>(null);
+
+  // Copy NAV_ITEMS (object spread — never mutate the shared array) and stamp the
+  // live pending-approvals count onto the Approvals item for the current business.
+  readonly navItemsWithBadge = computed(() => {
+    const count = this.approvals.pendingCount();
+    const hasBiz = !!this.currentBusiness.businessId();
+    return NAV_ITEMS.map((item) =>
+      item.route === '/approvals' && hasBiz && count > 0 ? { ...item, badge: count } : item,
+    );
+  });
 
   // The current URL, tracked so the shell can hide itself on the auth screens.
   private currentUrl = signal(this.router.url);
@@ -47,6 +62,21 @@ export class App implements OnInit {
     if (this.auth.isAuthenticated()) {
       this.auth.me().subscribe({ next: (p) => this.profile.set(p), error: () => {} });
     }
+
+    if (this.auth.isAuthenticated()) {
+      const id = this.currentBusiness.businessId();
+      if (id) this.approvals.refreshCount(id);
+      // Poll for freshness; read businessId live each tick so a business chosen later (on the
+      // approvals page, which persists it) is picked up without an app reload.
+      this.badgeTimer = setInterval(() => {
+        const b = this.currentBusiness.businessId();
+        if (b) this.approvals.refreshCount(b);
+      }, 20000);
+    }
+  }
+
+  ngOnDestroy(): void {
+    if (this.badgeTimer) clearInterval(this.badgeTimer);
   }
 
   logout(): void {
