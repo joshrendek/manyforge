@@ -348,4 +348,150 @@ describe('InboxSettingsComponent (US4)', () => {
     expect(cmp.loadFailed()).toBe(true);
     expect(text('settings-load-error')).toBe("You don't have access to do that.");
   });
+
+  // ── Task 21: design-system markup assertions ──────────────────────────────
+
+  function q(sel: string): HTMLElement | null {
+    return fixture.nativeElement.querySelector(sel) as HTMLElement | null;
+  }
+
+  it('renders mf-page-header with title "Inbox settings" and preserves back-to-support', () => {
+    loadWith([], []);
+    const header = q('mf-page-header');
+    expect(header).not.toBeNull();
+    expect(header!.textContent).toContain('Inbox settings');
+    expect(q('[data-testid="back-to-support"]')).not.toBeNull();
+  });
+
+  it('domain-input is an input.mf-input and mode-select is a select.mf-select', () => {
+    loadWith([], []);
+    const input = q('[data-testid="domain-input"]');
+    expect(input).not.toBeNull();
+    expect(input!.tagName.toLowerCase()).toBe('input');
+    expect(input!.classList.contains('mf-input')).toBe(true);
+
+    const sel = q('[data-testid="mode-select"]');
+    expect(sel).not.toBeNull();
+    expect(sel!.tagName.toLowerCase()).toBe('select');
+    expect(sel!.classList.contains('mf-select')).toBe(true);
+  });
+
+  it('add-domain-submit is a .mf-btn', () => {
+    loadWith([], []);
+    const btn = q('[data-testid="add-domain-submit"]');
+    expect(btn).not.toBeNull();
+    expect(btn!.classList.contains('mf-btn')).toBe(true);
+  });
+
+  it('email-domain-list uses div.mf-table (no table/tr/td elements)', () => {
+    loadWith([mockEmailDomain()], []);
+    // Domain list container must be a div with mf-table, not a <ul>
+    const list = q('[data-testid="email-domain-list"]');
+    expect(list).not.toBeNull();
+    expect(list!.tagName.toLowerCase()).toBe('div');
+    expect(list!.classList.contains('mf-table')).toBe(true);
+
+    // Row must be a div.mf-tr, not <li>/<tr>
+    const row = q('[data-testid="domain-row"]');
+    expect(row).not.toBeNull();
+    expect(row!.tagName.toLowerCase()).toBe('div');
+    expect(row!.classList.contains('mf-tr')).toBe(true);
+
+    // No native table elements
+    expect(fixture.nativeElement.querySelector('table')).toBeNull();
+    expect(fixture.nativeElement.querySelector('tr')).toBeNull();
+    expect(fixture.nativeElement.querySelector('td')).toBeNull();
+  });
+
+  it('address-input is an input.mf-input and address-domain-select is a select.mf-select', () => {
+    loadWith([], []);
+    const input = q('[data-testid="address-input"]');
+    expect(input).not.toBeNull();
+    expect(input!.tagName.toLowerCase()).toBe('input');
+    expect(input!.classList.contains('mf-input')).toBe(true);
+
+    const sel = q('[data-testid="address-domain-select"]');
+    expect(sel).not.toBeNull();
+    expect(sel!.tagName.toLowerCase()).toBe('select');
+    expect(sel!.classList.contains('mf-select')).toBe(true);
+  });
+
+  it('add-address-submit is a .mf-btn', () => {
+    loadWith([], []);
+    const btn = q('[data-testid="add-address-submit"]');
+    expect(btn).not.toBeNull();
+    expect(btn!.classList.contains('mf-btn')).toBe(true);
+  });
+
+  it('inbound-address-list uses div.mf-table with div.mf-tr rows', () => {
+    loadWith([], [mockInboundAddress()]);
+    const list = q('[data-testid="inbound-address-list"]');
+    expect(list).not.toBeNull();
+    expect(list!.tagName.toLowerCase()).toBe('div');
+    expect(list!.classList.contains('mf-table')).toBe(true);
+
+    const row = q('[data-testid="address-row"]');
+    expect(row).not.toBeNull();
+    expect(row!.tagName.toLowerCase()).toBe('div');
+    expect(row!.classList.contains('mf-tr')).toBe(true);
+  });
+
+  it('loading state renders mf-spinner (not a plain p element) with settings-loading testid', () => {
+    fixture = TestBed.createComponent(InboxSettingsComponent);
+    cmp = fixture.componentInstance;
+    fixture.detectChanges(); // ngOnInit, only the domains request fires first
+
+    const loadingEl = q('[data-testid="settings-loading"]');
+    expect(loadingEl).not.toBeNull();
+    // mf-spinner host wraps the loading indicator
+    expect(q('mf-spinner')).not.toBeNull();
+
+    // Flush domains, then addresses fires; flush that too for mock.verify()
+    mock.expectOne(domainsUrl).flush({ items: [], next_cursor: null });
+    mock.expectOne(addressesUrl).flush({ items: [], next_cursor: null });
+  });
+
+  it('domain-status uses mf-status-pill for a verified domain', () => {
+    loadWith(
+      [mockEmailDomain({ verification: 'verified', verified_at: '2024-02-02T00:00:00Z' })],
+      [],
+    );
+    const statusEl = q('[data-testid="domain-status"]');
+    expect(statusEl).not.toBeNull();
+    // The host or nearest ancestor must be mf-status-pill
+    const pill = statusEl!.closest('mf-status-pill') ?? statusEl;
+    expect(pill).not.toBeNull();
+  });
+
+  it('domain-empty uses mf-empty-state when domain list is empty', () => {
+    loadWith([], []);
+    expect(q('[data-testid="domain-empty"]')).not.toBeNull();
+    expect(q('mf-empty-state')).not.toBeNull();
+  });
+
+  it('settings-error uses .mf-err class', () => {
+    loadWith(
+      [mockEmailDomain({ verification: 'verified', verified_at: '2024-02-02T00:00:00Z' })],
+      [],
+    );
+    cmp.addressDraft = 'hello@support.acme.com';
+    cmp.selectedDomainId = 'ed1';
+    cmp.addAddress();
+    mock.expectOne(addressesUrl).flush(
+      { code: 'CONFLICT', message: 'dup' },
+      { status: 409, statusText: 'Conflict' },
+    );
+    fixture.detectChanges();
+
+    const errEl = q('[data-testid="settings-error"]');
+    expect(errEl).not.toBeNull();
+    expect(errEl!.classList.contains('mf-err')).toBe(true);
+  });
+
+  it('dark-theme render: mf-card is present', () => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    loadWith([], []);
+    expect(q('.mf-card')).not.toBeNull();
+    document.documentElement.setAttribute('data-theme', 'light');
+  });
 });
