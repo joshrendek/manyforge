@@ -269,3 +269,162 @@ describe('ThreadViewComponent triage (US3)', () => {
     expect(cmp.triageError()).toBe("You don't have access to do that.");
   });
 });
+
+// Task 20 UI-redesign render coverage. Drives the real component against a mock
+// backend and asserts the design-system markup (mf-card, mf-select, mf-textarea,
+// mf-btn, mf-status-pill) is present and the data-testid contract is preserved,
+// in both light and dark themes. Mirrors ticket-list.spec.ts style.
+function makeMessage(over: Partial<TicketMessage> = {}): TicketMessage {
+  return {
+    id: 'm1',
+    ticket_id: tid,
+    direction: 'inbound',
+    body_text: 'Hello there',
+    delivery_state: 'delivered',
+    spf_result: 'pass',
+    dkim_result: 'pass',
+    dmarc_result: 'pass',
+    attachments: [],
+    created_at: '2024-01-01T00:00:00Z',
+    ...over,
+  } as TicketMessage;
+}
+
+describe('ThreadViewComponent (Task 20 UI redesign)', () => {
+  let fixture: ComponentFixture<ThreadViewComponent>;
+  let mock: HttpTestingController;
+
+  function boot(
+    t: Ticket = makeTicketTv(),
+    msgs: TicketMessage[] = [makeMessage()],
+    members: AssignableMember[] = [],
+  ): void {
+    fixture = TestBed.createComponent(ThreadViewComponent);
+    fixture.detectChanges(); // ngOnInit → /me + assignable-members + getTicket
+    mock.expectOne('/api/v1/me').flush({
+      id: myPid,
+      email: 'me@x.test',
+      display_name: 'Me',
+      email_verified: true,
+      status: 'active',
+    });
+    mock
+      .expectOne(`/api/v1/businesses/${biz}/assignable-members`)
+      .flush({ items: members, next_cursor: null });
+    mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`).flush(t);
+    mock
+      .expectOne((r) => r.url === `/api/v1/businesses/${biz}/tickets/${tid}/messages`)
+      .flush({ items: msgs, next_cursor: null });
+    fixture.detectChanges();
+  }
+
+  function q(sel: string): HTMLElement | null {
+    return fixture.nativeElement.querySelector(sel) as HTMLElement | null;
+  }
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: {
+              paramMap: new Map([
+                ['businessId', biz],
+                ['tid', tid],
+              ]),
+            },
+          },
+        },
+      ],
+    });
+    mock = TestBed.inject(HttpTestingController);
+    document.documentElement.setAttribute('data-theme', 'light');
+  });
+
+  afterEach(() => {
+    mock.verify();
+    document.documentElement.setAttribute('data-theme', 'light');
+  });
+
+  it('renders the thread subject', () => {
+    boot(makeTicketTv({ subject: 'Printer down' }));
+    const subj = q('[data-testid="thread-subject"]');
+    expect(subj).not.toBeNull();
+    expect(subj!.textContent).toContain('Printer down');
+  });
+
+  it('triage-status is a select.mf-select', () => {
+    boot();
+    const sel = q('[data-testid="triage-status"]');
+    expect(sel).not.toBeNull();
+    expect(sel!.tagName.toLowerCase()).toBe('select');
+    expect(sel!.classList.contains('mf-select')).toBe(true);
+  });
+
+  it('composer-body is a textarea.mf-textarea', () => {
+    boot();
+    const ta = q('[data-testid="composer-body"]');
+    expect(ta).not.toBeNull();
+    expect(ta!.tagName.toLowerCase()).toBe('textarea');
+    expect(ta!.classList.contains('mf-textarea')).toBe(true);
+  });
+
+  it('composer-submit has the mf-btn class', () => {
+    boot();
+    const btn = q('[data-testid="composer-submit"]');
+    expect(btn).not.toBeNull();
+    expect(btn!.classList.contains('mf-btn')).toBe(true);
+  });
+
+  it('preserves the header, message-thread, and composer testids', () => {
+    boot();
+    for (const id of [
+      'back-to-list',
+      'thread-header',
+      'thread-status',
+      'thread-priority',
+      'thread-requester',
+      'triage',
+      'triage-priority',
+      'triage-tags',
+      'triage-tag-input',
+      'triage-assignee',
+      'assign-to-me',
+      'unassign',
+      'assign-uuid-input',
+      'assign-uuid-submit',
+      'message-thread',
+      'message',
+      'message-direction',
+      'message-body',
+      'composer',
+      'composer-toggle',
+      'toggle-reply',
+      'toggle-note',
+    ]) {
+      expect(q(`[data-testid="${id}"]`)).not.toBeNull();
+    }
+  });
+
+  it('renders inbound auth flags (spf/dkim/dmarc) for inbound messages', () => {
+    boot(makeTicketTv(), [makeMessage({ direction: 'inbound' })]);
+    expect(q('[data-testid="auth-flags"]')).not.toBeNull();
+    expect(q('[data-testid="spf-result"]')).not.toBeNull();
+    expect(q('[data-testid="dkim-result"]')).not.toBeNull();
+    expect(q('[data-testid="dmarc-result"]')).not.toBeNull();
+  });
+
+  it('dark-theme: .mf-card is present', () => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    boot();
+    expect(q('.mf-card')).not.toBeNull();
+  });
+});
+
+function makeTicketTv(over: Partial<Ticket> = {}): Ticket {
+  return makeTicket(over);
+}
