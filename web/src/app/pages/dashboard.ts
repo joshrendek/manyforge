@@ -6,110 +6,120 @@ import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 import { BusinessService } from '../core/business.service';
 import { Business, Row, buildTree, flatten } from '../core/tree';
+import { PageHeader } from '../ui/page-header/page-header';
+import { StatusPill } from '../ui/status-pill/status-pill';
+import { EmptyState } from '../ui/empty-state/empty-state';
 
 type PanelKind = 'add' | 'rename' | 'move';
 
 @Component({
   selector: 'app-dashboard',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, PageHeader, StatusPill, EmptyState],
   template: `
-    <section class="card">
-      <div class="spread">
-        <div>
-          <h1>Your businesses</h1>
-        </div>
-        <div class="row">
-          <a class="linklike" routerLink="/accounting" data-testid="nav-accounting">Accounting</a>
-        </div>
-      </div>
+    <div class="mf-card">
+      <mf-page-header title="Your businesses" subtitle="Manage your tenant businesses and their hierarchy.">
+        <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/accounting" data-testid="nav-accounting" actions>Accounting</a>
+      </mf-page-header>
 
       @if (loading()) {
-        <p class="empty">Loading your businesses…</p>
+        <p class="mf-text-muted">Loading your businesses…</p>
       } @else if (loadFailed()) {
-        <div class="empty">
+        <div class="mf-err">
           <p>We couldn't load your businesses.</p>
-          <button class="ghost compact" (click)="loadBusinesses()">Try again</button>
+          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="loadBusinesses()">Try again</button>
         </div>
       } @else {
-        <ul class="tree">
+        <ul class="mf-tree">
           @for (row of rows(); track row.business.id) {
             <li
-              class="biz"
+              class="mf-tr"
               data-testid="biz-row"
               [class.is-child]="row.depth > 0"
               [style.paddingLeft.px]="row.depth * 22 + 16"
             >
-              <div class="biz-main">
+              <div class="mf-tr-main">
                 @if (row.hasChildren) {
                   <button
-                    class="caret"
+                    class="mf-btn mf-btn-ghost mf-btn-sm mf-caret"
                     [attr.aria-label]="row.collapsed ? 'Expand' : 'Collapse'"
                     (click)="toggle(row.business.id)"
                   >{{ row.collapsed ? '▸' : '▾' }}</button>
                 } @else {
-                  <span class="caret-spacer"></span>
+                  <span class="mf-caret-spacer"></span>
                 }
-                <span class="name" [class.muted]="row.business.status === 'archived'">{{ row.business.name }}</span>
-                @if (row.business.is_tenant_root) { <span class="pill">master</span> }
-                @if (row.business.status === 'archived') { <span class="badge">archived</span> }
-              </div>
-
-              <div class="biz-actions">
-                <button class="linklike" (click)="openPanel('add', row)">Add sub</button>
-                <button class="linklike" (click)="openPanel('rename', row)">Rename</button>
-                @if (!row.business.is_tenant_root) {
-                  <button class="linklike" (click)="openPanel('move', row)">Move</button>
+                <span class="mf-tr-name" [class.mf-text-muted]="row.business.status === 'archived'">{{ row.business.name }}</span>
+                @if (row.business.is_tenant_root) {
+                  <mf-status-pill tone="accent" label="master" />
                 }
                 @if (row.business.status === 'archived') {
-                  <button class="linklike" (click)="restore(row.business)">Restore</button>
-                } @else {
-                  <button class="linklike" (click)="archive(row.business)">Archive</button>
+                  <mf-status-pill tone="neutral" label="archived" />
                 }
-                <button class="linklike danger" (click)="askDelete(row.business)">Delete</button>
+              </div>
+
+              <div class="mf-tr-actions">
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="openPanel('add', row)">Add sub</button>
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="openPanel('rename', row)">Rename</button>
+                @if (!row.business.is_tenant_root) {
+                  <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="openPanel('move', row)">Move</button>
+                }
+                @if (row.business.status === 'archived') {
+                  <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="restore(row.business)">Restore</button>
+                } @else {
+                  <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="archive(row.business)">Archive</button>
+                }
+                <button class="mf-btn mf-btn-link mf-btn-sm mf-btn-danger" (click)="askDelete(row.business)">Delete</button>
               </div>
 
               @if (panel()?.id === row.business.id) {
-                <div class="panel">
+                <div class="mf-card mf-panel">
                   @switch (panel()!.kind) {
                     @case ('add') {
-                      <label [attr.for]="'sub-' + row.business.id">New sub-business under {{ row.business.name }}</label>
-                      <div class="row">
-                        <input
-                          [id]="'sub-' + row.business.id"
-                          data-testid="sub-name-input"
-                          type="text"
-                          [(ngModel)]="draftName"
-                          placeholder="e.g. Engineering"
-                          (keyup.enter)="createSub(row.business)"
-                        />
-                        <button class="compact" [disabled]="busy()" (click)="createSub(row.business)">Create sub-business</button>
-                        <button class="ghost compact" (click)="closePanel()">Cancel</button>
+                      <div class="mf-field">
+                        <label [attr.for]="'sub-' + row.business.id">New sub-business under {{ row.business.name }}</label>
+                        <div class="mf-field-row">
+                          <input
+                            class="mf-input"
+                            [id]="'sub-' + row.business.id"
+                            data-testid="sub-name-input"
+                            type="text"
+                            [(ngModel)]="draftName"
+                            placeholder="e.g. Engineering"
+                            (keyup.enter)="createSub(row.business)"
+                          />
+                          <button class="mf-btn mf-btn-primary mf-btn-sm" [disabled]="busy()" (click)="createSub(row.business)">Create sub-business</button>
+                          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="closePanel()">Cancel</button>
+                        </div>
                       </div>
                     }
                     @case ('rename') {
-                      <label [attr.for]="'rename-' + row.business.id">Rename {{ row.business.name }}</label>
-                      <div class="row">
-                        <input
-                          [id]="'rename-' + row.business.id"
-                          type="text"
-                          [(ngModel)]="draftName"
-                          (keyup.enter)="rename(row.business)"
-                        />
-                        <button class="compact" [disabled]="busy()" (click)="rename(row.business)">Save name</button>
-                        <button class="ghost compact" (click)="closePanel()">Cancel</button>
+                      <div class="mf-field">
+                        <label [attr.for]="'rename-' + row.business.id">Rename {{ row.business.name }}</label>
+                        <div class="mf-field-row">
+                          <input
+                            class="mf-input"
+                            [id]="'rename-' + row.business.id"
+                            type="text"
+                            [(ngModel)]="draftName"
+                            (keyup.enter)="rename(row.business)"
+                          />
+                          <button class="mf-btn mf-btn-primary mf-btn-sm" [disabled]="busy()" (click)="rename(row.business)">Save name</button>
+                          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="closePanel()">Cancel</button>
+                        </div>
                       </div>
                     }
                     @case ('move') {
-                      <label [attr.for]="'move-' + row.business.id">Move {{ row.business.name }} under</label>
-                      <div class="row">
-                        <select [id]="'move-' + row.business.id" [(ngModel)]="draftTarget">
-                          <option value="" disabled>Choose a new parent…</option>
-                          @for (t of moveTargets(row.business); track t.id) {
-                            <option [value]="t.id">{{ t.label }}</option>
-                          }
-                        </select>
-                        <button class="compact" [disabled]="busy() || !draftTarget" (click)="move(row.business)">Move here</button>
-                        <button class="ghost compact" (click)="closePanel()">Cancel</button>
+                      <div class="mf-field">
+                        <label [attr.for]="'move-' + row.business.id">Move {{ row.business.name }} under</label>
+                        <div class="mf-field-row">
+                          <select class="mf-select" [id]="'move-' + row.business.id" [(ngModel)]="draftTarget">
+                            <option value="" disabled>Choose a new parent…</option>
+                            @for (t of moveTargets(row.business); track t.id) {
+                              <option [value]="t.id">{{ t.label }}</option>
+                            }
+                          </select>
+                          <button class="mf-btn mf-btn-primary mf-btn-sm" [disabled]="busy() || !draftTarget" (click)="move(row.business)">Move here</button>
+                          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="closePanel()">Cancel</button>
+                        </div>
                       </div>
                     }
                   }
@@ -117,33 +127,36 @@ type PanelKind = 'add' | 'rename' | 'move';
               }
 
               @if (confirmDelete()?.id === row.business.id) {
-                <div class="panel danger-panel">
+                <div class="mf-card mf-panel mf-panel-danger">
                   <span>Delete <b>{{ row.business.name }}</b>? This can't be undone.</span>
-                  <div class="row">
-                    <button class="danger compact" [disabled]="busy()" (click)="doDelete(row.business)">Confirm delete</button>
-                    <button class="ghost compact" (click)="confirmDelete.set(null)">Cancel</button>
+                  <div class="mf-field-row">
+                    <button class="mf-btn mf-btn-danger mf-btn-sm" [disabled]="busy()" (click)="doDelete(row.business)">Confirm delete</button>
+                    <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="confirmDelete.set(null)">Cancel</button>
                   </div>
                 </div>
               }
             </li>
           } @empty {
-            <li class="empty">No businesses yet — create your master business below.</li>
+            <mf-empty-state icon="🏢" title="No businesses yet">
+              Create your master business below to get started.
+            </mf-empty-state>
           }
         </ul>
       }
 
-      @if (error()) { <p class="msg error">{{ error() }}</p> }
-    </section>
+      @if (error()) { <p class="mf-err">{{ error() }}</p> }
+    </div>
 
-    <section class="card" style="margin-top:20px">
-      <h2>Create a master business</h2>
-      <p class="sub">A master business is the root of its own tenant — fully isolated from your others.</p>
+    <div class="mf-card" style="margin-top:var(--mf-space-4)">
+      <mf-page-header title="Create a master business" subtitle="A master business is the root of its own tenant — fully isolated from your others." />
       <form (ngSubmit)="createMaster()">
-        <label for="bizname">Business name</label>
-        <input id="bizname" type="text" name="name" [(ngModel)]="masterName" placeholder="Acme, Inc." required />
-        <button type="submit" [disabled]="busy()">{{ busy() ? 'Working…' : 'Create master business' }}</button>
+        <div class="mf-field">
+          <label for="bizname">Business name</label>
+          <input class="mf-input" id="bizname" type="text" name="name" [(ngModel)]="masterName" placeholder="Acme, Inc." required />
+        </div>
+        <button class="mf-btn mf-btn-primary" type="submit" [disabled]="busy()">{{ busy() ? 'Working…' : 'Create master business' }}</button>
       </form>
-    </section>
+    </div>
   `,
 })
 export class DashboardComponent implements OnInit {
