@@ -4,7 +4,7 @@
     <aside class="sidebar" data-testid="app-sidebar">
       <div class="sidebar-brand">Many<span class="brand-accent">Forge</span></div>
       <nav class="sidebar-nav">
-        @for (item of navItems; track item.route) {
+        @for (item of navItemsWithBadge(); track item.route) {
           <a [routerLink]="item.route" routerLinkActive="active" [attr.data-testid]="item.testid"
              [attr.aria-current]="rla.isActive ? 'page' : null" #rla="routerLinkActive">
             {{ item.label }}
