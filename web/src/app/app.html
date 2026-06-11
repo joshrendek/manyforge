@@ -1,10 +1,16 @@
+<div class="mf-app">
 @if (showShell()) {
   <div class="shell">
     <aside class="sidebar" data-testid="app-sidebar">
       <div class="sidebar-brand">Many<span class="brand-accent">Forge</span></div>
       <nav class="sidebar-nav">
-        <a routerLink="/dashboard" routerLinkActive="active" data-testid="nav-dashboard">Dashboard</a>
-        <a routerLink="/support" routerLinkActive="active" data-testid="nav-support">Support</a>
+        @for (item of navItems; track item.route) {
+          <a [routerLink]="item.route" routerLinkActive="active" [attr.data-testid]="item.testid"
+             [attr.aria-current]="rla.isActive ? 'page' : null" #rla="routerLinkActive">
+            {{ item.label }}
+            @if (item.badge) { <span class="nav-badge">{{ item.badge }}</span> }
+          </a>
+        }
       </nav>
       <div class="sidebar-foot">
         @if (profile(); as p) {
@@ -12,7 +18,10 @@
             Signed in as <b>{{ p.display_name }}</b><br /><span class="faint">{{ p.email }}</span>
           </p>
         }
-        <button class="ghost compact" (click)="logout()" data-testid="sign-out">Sign out</button>
+        <div class="sidebar-foot-row">
+          <mf-theme-toggle />
+          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="logout()" data-testid="sign-out">Sign out</button>
+        </div>
       </div>
     </aside>
     <main class="shell-main"><router-outlet /></main>
@@ -21,6 +30,10 @@
   <header class="topbar">
     <span class="brand">Many<span class="brand-accent">Forge</span></span>
     <span class="tagline">all-in-one founder platform</span>
+    <span style="flex:1"></span>
+    <mf-theme-toggle />
   </header>
   <main class="container"><router-outlet /></main>
 }
+<mf-toast-host />
+</div>

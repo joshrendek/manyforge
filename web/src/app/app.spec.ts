@@ -46,4 +46,16 @@ describe('App shell', () => {
     expect(el.querySelector('.topbar')).toBeTruthy();
     mock.expectNone('/api/v1/me');
   });
+
+  it('renders all nav items including Accounting', () => {
+    localStorage.setItem('mf_access', 'tok');
+    const f = TestBed.createComponent(App); f.detectChanges();
+    mock.expectOne('/api/v1/me').flush({ id: '1', email: 'a@b.c', display_name: 'A', email_verified: true, status: 'active' });
+    f.detectChanges();
+    const el: HTMLElement = f.nativeElement;
+    expect(el.querySelector('[data-testid="nav-dashboard"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-support"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-accounting"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="theme-toggle"]')).toBeTruthy();
+  });
 });
