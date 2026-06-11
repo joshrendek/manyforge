@@ -155,7 +155,7 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
                   @if (t.tags.length) {
                     <span class="mf-tags" data-testid="ticket-tags">
                       @for (tag of t.tags; track tag) {
-                        <span class="mf-pill-neutral">{{ tag }}</span>
+                        <span class="mf-pill mf-pill-neutral">{{ tag }}</span>
                       }
                     </span>
                   }

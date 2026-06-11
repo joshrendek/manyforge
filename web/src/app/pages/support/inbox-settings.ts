@@ -324,7 +324,7 @@ function dkimSpfTone(s: string): Tone {
       .mf-dns-challenge {
         display: grid;
         gap: var(--mf-space-3);
-        background: var(--mf-surface-raised);
+        background: var(--mf-surface-2);
         border: 1px solid var(--mf-border);
         border-radius: var(--mf-radius);
         padding: var(--mf-space-4);
