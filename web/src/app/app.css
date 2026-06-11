@@ -43,7 +43,7 @@
 }
 .sidebar-nav a:hover {
   color: var(--mf-text);
-  background: var(--mf-surface-raised);
+  background: var(--mf-surface-2);
   text-decoration: none;
 }
 .sidebar-nav a.active {
