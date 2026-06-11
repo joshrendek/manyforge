@@ -12,6 +12,11 @@ import {
   TicketService,
   TicketStatus,
 } from '../../core/ticket.service';
+import { PageHeader } from '../../ui/page-header/page-header';
+import { StatusPill } from '../../ui/status-pill/status-pill';
+import { EmptyState } from '../../ui/empty-state/empty-state';
+import { Spinner } from '../../ui/spinner/spinner';
+import { ticketStatusTone, ticketPriorityTone } from '../../ui/status';
 
 const STATUSES: TicketStatus[] = ['new', 'open', 'pending', 'solved', 'closed'];
 const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
@@ -23,34 +28,31 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 // route. Status/priority filters and keyset "load more" drive the list.
 @Component({
   selector: 'app-ticket-list',
-  imports: [FormsModule, RouterLink, DatePipe],
+  imports: [FormsModule, RouterLink, DatePipe, PageHeader, StatusPill, EmptyState, Spinner],
   template: `
-    <section class="card">
-      <div class="spread">
-        <div>
-          <h1>Support</h1>
-          <p class="sub">Inbound conversations for the selected business.</p>
-        </div>
-        <div class="row">
+    <div class="mf-card">
+      <mf-page-header title="Support" subtitle="Inbound conversations for the selected business.">
+        <ng-container actions>
           @if (businessId()) {
             <a
-              class="linklike"
+              class="mf-btn mf-btn-ghost mf-btn-sm"
               [routerLink]="['/support', businessId(), 'settings', 'inbox']"
               data-testid="inbox-settings-link"
               >Inbox settings</a
             >
           }
-          <a class="linklike" routerLink="/dashboard" data-testid="back-to-dashboard"
+          <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/dashboard" data-testid="back-to-dashboard"
             >Back to dashboard</a
           >
-        </div>
-      </div>
+        </ng-container>
+      </mf-page-header>
 
-      <div class="row" style="margin-top:6px">
-        <div style="flex:1 1 220px">
+      <div class="mf-filters">
+        <div class="mf-field" style="flex:1 1 220px">
           <label for="biz-select">Business</label>
           <select
             id="biz-select"
+            class="mf-select"
             data-testid="business-select"
             [ngModel]="businessId()"
             (ngModelChange)="selectBusiness($event)"
@@ -61,10 +63,11 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
             }
           </select>
         </div>
-        <div style="flex:1 1 160px">
+        <div class="mf-field" style="flex:1 1 160px">
           <label for="status-filter">Status</label>
           <select
             id="status-filter"
+            class="mf-select"
             data-testid="status-filter"
             [ngModel]="status()"
             (ngModelChange)="setStatus($event)"
@@ -75,10 +78,11 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
             }
           </select>
         </div>
-        <div style="flex:1 1 160px">
+        <div class="mf-field" style="flex:1 1 160px">
           <label for="priority-filter">Priority</label>
           <select
             id="priority-filter"
+            class="mf-select"
             data-testid="priority-filter"
             [ngModel]="priority()"
             (ngModelChange)="setPriority($event)"
@@ -92,59 +96,87 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
       </div>
 
       @if (!businessId()) {
-        <p class="empty" data-testid="no-business">
+        <p class="mf-empty-inline" data-testid="no-business">
           Select a business to view its support tickets.
         </p>
       } @else if (loading()) {
-        <p class="empty">Loading tickets…</p>
+        <div class="mf-loading-row">
+          <mf-spinner />
+          <span>Loading tickets…</span>
+        </div>
       } @else if (loadFailed()) {
-        <div class="empty">
+        <div class="mf-empty-inline">
           <p>We couldn't load these tickets.</p>
-          <button class="ghost compact" (click)="reload()">Try again</button>
+          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="reload()">Try again</button>
         </div>
       } @else {
-        <ul class="tree" data-testid="ticket-list">
-          @for (t of tickets(); track t.id) {
-            <li
-              class="biz ticket"
-              data-testid="ticket-row"
-              [attr.data-ticket-id]="t.id"
-              (click)="open(t)"
-            >
-              <div class="biz-main">
-                <span class="name" data-testid="ticket-subject">{{
+        @if (tickets().length) {
+          <div class="mf-table" data-testid="ticket-list">
+            <div class="mf-tr mf-th">
+              <span style="flex:1">Subject</span>
+              <span style="width:90px">Status</span>
+              <span style="width:90px">Priority</span>
+              <span style="width:140px">Requester</span>
+              <span style="width:70px">Messages</span>
+              <span style="flex:1">Tags</span>
+              <span style="width:120px">Last message</span>
+            </div>
+            @for (t of tickets(); track t.id) {
+              <div
+                class="mf-tr mf-clickable"
+                data-testid="ticket-row"
+                [attr.data-ticket-id]="t.id"
+                (click)="open(t)"
+              >
+                <span style="flex:1" data-testid="ticket-subject">{{
                   t.subject || '(no subject)'
                 }}</span>
-                <span class="badge" data-testid="ticket-status">{{ t.status }}</span>
-                <span class="pill" data-testid="ticket-priority">{{ t.priority }}</span>
-              </div>
-              <div class="ticket-meta">
-                <span class="requester" data-testid="ticket-requester">{{
+                <span style="width:90px">
+                  <mf-status-pill
+                    [tone]="ticketStatusTone(t.status)"
+                    [label]="t.status"
+                    data-testid="ticket-status"
+                  />
+                </span>
+                <span style="width:90px">
+                  <mf-status-pill
+                    [tone]="ticketPriorityTone(t.priority)"
+                    [label]="t.priority"
+                    data-testid="ticket-priority"
+                  />
+                </span>
+                <span style="width:140px" data-testid="ticket-requester">{{
                   t.requester.display_name || t.requester.email
                 }}</span>
-                <span class="count" data-testid="ticket-message-count"
+                <span style="width:70px" data-testid="ticket-message-count"
                   >{{ t.message_count }} msg</span
                 >
-                @if (t.last_message_at) {
-                  <span class="when">{{ t.last_message_at | date: 'short' }}</span>
-                }
-                @if (t.tags.length) {
-                  <span class="tags" data-testid="ticket-tags">
-                    @for (tag of t.tags; track tag) {
-                      <span class="badge">{{ tag }}</span>
-                    }
-                  </span>
-                }
+                <span style="flex:1">
+                  @if (t.tags.length) {
+                    <span class="mf-tags" data-testid="ticket-tags">
+                      @for (tag of t.tags; track tag) {
+                        <span class="mf-pill-neutral">{{ tag }}</span>
+                      }
+                    </span>
+                  }
+                </span>
+                <span style="width:120px">
+                  @if (t.last_message_at) {
+                    {{ t.last_message_at | date: 'short' }}
+                  }
+                </span>
               </div>
-            </li>
-          } @empty {
-            <li class="empty" data-testid="ticket-empty">No tickets match these filters.</li>
-          }
-        </ul>
+            }
+          </div>
+        } @else {
+          <mf-empty-state title="No tickets" data-testid="ticket-empty">
+            No tickets match these filters.
+          </mf-empty-state>
+        }
 
         @if (nextCursor()) {
           <button
-            class="ghost compact"
+            class="mf-btn mf-btn-ghost"
             data-testid="load-more"
             [disabled]="busy()"
             (click)="loadMore()"
@@ -155,37 +187,10 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
       }
 
       @if (error()) {
-        <p class="msg error" data-testid="list-error">{{ error() }}</p>
+        <p class="mf-err" data-testid="list-error">{{ error() }}</p>
       }
-    </section>
+    </div>
   `,
-  styles: [
-    `
-      .ticket {
-        cursor: pointer;
-      }
-      .ticket-meta {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-wrap: wrap;
-        color: var(--muted);
-        font-size: 12.5px;
-      }
-      .ticket-meta .requester {
-        color: var(--text);
-        font-weight: 500;
-      }
-      .ticket-meta .tags {
-        display: inline-flex;
-        gap: 6px;
-        flex-wrap: wrap;
-      }
-      [data-testid='load-more'] {
-        margin-top: 16px;
-      }
-    `,
-  ],
 })
 export class TicketListComponent implements OnInit {
   private bizApi = inject(BusinessService);
@@ -285,6 +290,10 @@ export class TicketListComponent implements OnInit {
   open(t: Ticket): void {
     void this.router.navigate(['/support', this.businessId(), t.id]);
   }
+
+  // Template helpers — delegate to pure status functions so the template stays clean.
+  readonly ticketStatusTone = ticketStatusTone;
+  readonly ticketPriorityTone = ticketPriorityTone;
 
   // No-oracle: 403/404 both map to a generic message (mirrors dashboard.ts).
   private describeError(e: HttpErrorResponse): string {
