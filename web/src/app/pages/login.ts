@@ -7,19 +7,23 @@ import { AuthService } from '../core/auth.service';
   selector: 'app-login',
   imports: [FormsModule, RouterLink],
   template: `
-    <section class="card auth">
+    <div class="mf-card" style="max-width:410px;margin:8vh auto 0">
       <h1>Welcome back</h1>
-      <p class="sub">Sign in to your ManyForge workspace.</p>
+      <p class="mf-pageheader-sub">Sign in to your ManyForge workspace.</p>
       <form (ngSubmit)="submit()">
-        <label for="email">Email</label>
-        <input id="email" type="email" name="email" [(ngModel)]="email" autocomplete="email" required />
-        <label for="password">Password</label>
-        <input id="password" type="password" name="password" [(ngModel)]="password" autocomplete="current-password" required />
-        <button type="submit" [disabled]="loading()">{{ loading() ? 'Signing in…' : 'Sign in' }}</button>
+        <div class="mf-field">
+          <label for="email">Email</label>
+          <input class="mf-input" id="email" type="email" name="email" [(ngModel)]="email" autocomplete="email" required data-testid="login-email" />
+        </div>
+        <div class="mf-field">
+          <label for="password">Password</label>
+          <input class="mf-input" id="password" type="password" name="password" [(ngModel)]="password" autocomplete="current-password" required data-testid="login-password" />
+        </div>
+        <button class="mf-btn mf-btn-primary" type="submit" [disabled]="loading()" data-testid="login-submit">{{ loading() ? 'Signing in…' : 'Sign in' }}</button>
       </form>
-      @if (error()) { <p class="msg error">{{ error() }}</p> }
-      <p class="switch">New here? <a routerLink="/signup">Create an account</a></p>
-    </section>
+      @if (error()) { <p class="mf-err" data-testid="login-error">{{ error() }}</p> }
+      <p>New here? <a class="mf-btn-link" routerLink="/signup">Create an account</a></p>
+    </div>
   `,
 })
 export class LoginComponent {
