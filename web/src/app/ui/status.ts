@@ -25,3 +25,15 @@ export function runStatusTone(s: string): Tone {
     default: return 'neutral';
   }
 }
+
+export function effectClassTone(e: number): Tone {
+  switch (e) {
+    case 1: return 'accent';
+    case 2: return 'warn';
+    case 3: return 'danger';
+    default: return 'neutral';
+  }
+}
+export function effectClassLabel(e: number): string {
+  return ['Read', 'Reversible', 'External', 'Irreversible'][e] ?? 'Unknown';
+}
