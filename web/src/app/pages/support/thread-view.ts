@@ -13,6 +13,10 @@ import {
   TicketStatus,
 } from '../../core/ticket.service';
 import { AuthService, Profile } from '../../core/auth.service';
+import { PageHeader } from '../../ui/page-header/page-header';
+import { StatusPill } from '../../ui/status-pill/status-pill';
+import { Spinner } from '../../ui/spinner/spinner';
+import { ticketStatusTone, ticketPriorityTone } from '../../ui/status';
 
 // Thread view for a single ticket. Mirrors signup.ts's signal-driven view
 // switching and dashboard.ts's load/error pattern. Business id + ticket id come
@@ -21,31 +25,50 @@ import { AuthService, Profile } from '../../core/auth.service';
 // inbound/outbound/note styling, attachments, and the SPF/DKIM/DMARC flags.
 @Component({
   selector: 'app-thread-view',
-  imports: [RouterLink, DatePipe, FormsModule],
+  imports: [RouterLink, DatePipe, FormsModule, PageHeader, StatusPill, Spinner],
   template: `
-    <section class="card">
-      <div class="spread">
-        <a class="linklike" routerLink="/support" data-testid="back-to-list">Back to tickets</a>
-      </div>
+    <div class="mf-card">
+      <mf-page-header title="Conversation">
+        <ng-container actions>
+          <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/support" data-testid="back-to-list"
+            >Back to tickets</a
+          >
+        </ng-container>
+      </mf-page-header>
 
       @if (loading()) {
-        <p class="empty">Loading conversation…</p>
+        <div class="mf-loading-row">
+          <mf-spinner />
+          <span>Loading conversation…</span>
+        </div>
       } @else if (loadFailed()) {
-        <div class="empty">
+        <div class="mf-empty-inline">
           <p>{{ error() || "We couldn't load this conversation." }}</p>
-          <button class="ghost compact" (click)="reload()">Try again</button>
+          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="reload()">Try again</button>
         </div>
       } @else if (ticket(); as t) {
         <header class="thread-head" data-testid="thread-header">
-          <h1 data-testid="thread-subject">{{ t.subject || '(no subject)' }}</h1>
+          <h1 class="thread-subject" data-testid="thread-subject">
+            {{ t.subject || '(no subject)' }}
+          </h1>
           <div class="thread-tags">
-            <span class="badge" data-testid="thread-status">{{ t.status }}</span>
-            <span class="pill" data-testid="thread-priority">{{ t.priority }}</span>
+            <mf-status-pill
+              [tone]="ticketStatusTone(t.status)"
+              [label]="t.status"
+              data-testid="thread-status"
+            />
+            <mf-status-pill
+              [tone]="ticketPriorityTone(t.priority)"
+              [label]="t.priority"
+              data-testid="thread-priority"
+            />
             @for (tag of t.tags; track tag) {
-              <span class="badge" data-testid="thread-tag">{{ tag }}</span>
+              <span class="mf-pill mf-pill-neutral" data-testid="thread-tag">{{ tag }}</span>
             }
             @if (!t.assignee_principal_id) {
-              <span class="badge" data-testid="thread-unassigned">unassigned</span>
+              <span class="mf-pill mf-pill-neutral" data-testid="thread-unassigned"
+                >unassigned</span
+              >
             }
           </div>
           <p class="requester" data-testid="thread-requester">
@@ -55,10 +78,11 @@ import { AuthService, Profile } from '../../core/auth.service';
 
           <!-- US3 triage controls. Each mutation PATCHes the ticket and reflects
                the returned Ticket so the header above never goes stale. -->
-          <div class="triage" data-testid="triage">
-            <label class="triage-field">
-              <span class="triage-label">Status</span>
+          <div class="triage mf-card" data-testid="triage">
+            <div class="mf-field triage-field">
+              <label>Status</label>
               <select
+                class="mf-select"
                 data-testid="triage-status"
                 [disabled]="triaging()"
                 [ngModel]="t.status"
@@ -68,11 +92,12 @@ import { AuthService, Profile } from '../../core/auth.service';
                   <option [value]="s">{{ s }}</option>
                 }
               </select>
-            </label>
+            </div>
 
-            <label class="triage-field">
-              <span class="triage-label">Priority</span>
+            <div class="mf-field triage-field">
+              <label>Priority</label>
               <select
+                class="mf-select"
                 data-testid="triage-priority"
                 [disabled]="triaging()"
                 [ngModel]="t.priority"
@@ -82,13 +107,13 @@ import { AuthService, Profile } from '../../core/auth.service';
                   <option [value]="p">{{ p }}</option>
                 }
               </select>
-            </label>
+            </div>
 
-            <div class="triage-field triage-tags">
-              <span class="triage-label">Tags</span>
+            <div class="mf-field triage-field triage-tags-field">
+              <label>Tags</label>
               <div class="chips" data-testid="triage-tags">
                 @for (tag of t.tags; track tag) {
-                  <span class="chip" data-testid="triage-chip">
+                  <span class="mf-pill mf-pill-neutral chip" data-testid="triage-chip">
                     {{ tag }}
                     <button
                       type="button"
@@ -104,7 +129,7 @@ import { AuthService, Profile } from '../../core/auth.service';
                 }
                 <input
                   type="text"
-                  class="chip-input"
+                  class="mf-input chip-input"
                   data-testid="triage-tag-input"
                   placeholder="add tag…"
                   [(ngModel)]="tagDraft"
@@ -114,12 +139,12 @@ import { AuthService, Profile } from '../../core/auth.service';
               </div>
             </div>
 
-            <div class="triage-field triage-assignee">
-              <span class="triage-label">Assignee</span>
+            <div class="mf-field triage-field triage-assignee-field">
+              <label>Assignee</label>
               <div class="assignee-row" data-testid="triage-assignee">
                 <button
                   type="button"
-                  class="ghost compact"
+                  class="mf-btn mf-btn-ghost mf-btn-sm"
                   data-testid="assign-to-me"
                   [disabled]="
                     triaging() || !myPrincipalId() || t.assignee_principal_id === myPrincipalId()
@@ -130,7 +155,7 @@ import { AuthService, Profile } from '../../core/auth.service';
                 </button>
                 <button
                   type="button"
-                  class="ghost compact"
+                  class="mf-btn mf-btn-ghost mf-btn-sm"
                   data-testid="unassign"
                   [disabled]="triaging() || !t.assignee_principal_id"
                   (click)="unassign()"
@@ -144,7 +169,7 @@ import { AuthService, Profile } from '../../core/auth.service';
               @if (members().length > 0) {
                 <div class="assignee-picker-row">
                   <select
-                    class="assignee-picker"
+                    class="mf-select assignee-picker"
                     data-testid="assignee-picker"
                     aria-label="Assign to a member"
                     [disabled]="triaging()"
@@ -164,7 +189,7 @@ import { AuthService, Profile } from '../../core/auth.service';
               <div class="assignee-manual">
                 <input
                   type="text"
-                  class="chip-input"
+                  class="mf-input chip-input"
                   data-testid="assign-uuid-input"
                   placeholder="principal uuid…"
                   [(ngModel)]="assigneeDraft"
@@ -173,7 +198,7 @@ import { AuthService, Profile } from '../../core/auth.service';
                 />
                 <button
                   type="button"
-                  class="ghost compact"
+                  class="mf-btn mf-btn-ghost mf-btn-sm"
                   data-testid="assign-uuid-submit"
                   [disabled]="triaging() || !assigneeDraft.trim()"
                   (click)="assignManual()"
@@ -184,7 +209,7 @@ import { AuthService, Profile } from '../../core/auth.service';
             </div>
 
             @if (triageError()) {
-              <p class="msg error" data-testid="triage-error">{{ triageError() }}</p>
+              <p class="mf-err triage-error" data-testid="triage-error">{{ triageError() }}</p>
             }
           </div>
         </header>
@@ -250,13 +275,15 @@ import { AuthService, Profile } from '../../core/auth.service';
               }
             </li>
           } @empty {
-            <li class="empty" data-testid="message-empty">No messages in this conversation yet.</li>
+            <li class="message-empty" data-testid="message-empty">
+              No messages in this conversation yet.
+            </li>
           }
         </ul>
 
         @if (nextCursor()) {
           <button
-            class="ghost compact"
+            class="mf-btn mf-btn-ghost load-more"
             data-testid="load-more-messages"
             [disabled]="busy()"
             (click)="loadMore()"
@@ -265,21 +292,23 @@ import { AuthService, Profile } from '../../core/auth.service';
           </button>
         }
 
-        <div class="composer" data-testid="composer">
+        <div class="composer mf-card" data-testid="composer">
           <div class="composer-toggle" data-testid="composer-toggle">
             <button
-              class="toggle-btn"
+              class="mf-btn mf-btn-sm toggle-btn"
+              [class.mf-btn-primary]="!noteMode()"
+              [class.mf-btn-ghost]="noteMode()"
               data-testid="toggle-reply"
-              [class.active]="!noteMode()"
               [attr.aria-pressed]="!noteMode()"
               (click)="noteMode.set(false)"
             >
               Reply
             </button>
             <button
-              class="toggle-btn"
+              class="mf-btn mf-btn-sm toggle-btn"
+              [class.mf-btn-primary]="noteMode()"
+              [class.mf-btn-ghost]="!noteMode()"
               data-testid="toggle-note"
-              [class.active]="noteMode()"
               [attr.aria-pressed]="noteMode()"
               (click)="noteMode.set(true)"
             >
@@ -287,7 +316,7 @@ import { AuthService, Profile } from '../../core/auth.service';
             </button>
           </div>
           <textarea
-            class="composer-body"
+            class="mf-textarea composer-body"
             data-testid="composer-body"
             [placeholder]="noteMode() ? 'Add an internal note…' : 'Write a reply…'"
             [(ngModel)]="composerText"
@@ -295,11 +324,11 @@ import { AuthService, Profile } from '../../core/auth.service';
             rows="4"
           ></textarea>
           @if (sendError()) {
-            <p class="msg error" data-testid="composer-error">{{ sendError() }}</p>
+            <p class="mf-err" data-testid="composer-error">{{ sendError() }}</p>
           }
           <div class="composer-actions">
             <button
-              class="primary compact"
+              class="mf-btn mf-btn-primary"
               data-testid="composer-submit"
               [disabled]="!composerText.trim() || sending()"
               (click)="submitComposer()"
@@ -309,61 +338,81 @@ import { AuthService, Profile } from '../../core/auth.service';
           </div>
         </div>
       }
-    </section>
+    </div>
   `,
   styles: [
     `
+      .mf-loading-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
+        padding: 18px 0;
+      }
+      .mf-empty-inline {
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-base);
+        padding: 18px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+      }
+
       .thread-head {
         margin-bottom: 18px;
+      }
+      .thread-subject {
+        font-size: var(--mf-fs-xl);
+        font-weight: 680;
+        letter-spacing: -0.02em;
+        margin: 0;
       }
       .thread-tags {
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
         margin: 8px 0;
+        align-items: center;
       }
       .thread-head .requester {
-        color: var(--muted);
-        font-size: 13px;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
         margin: 6px 0 0;
       }
       .thread-head .requester b {
-        color: var(--text);
+        color: var(--mf-text);
       }
 
       .triage {
         margin-top: 14px;
-        padding-top: 14px;
-        border-top: 1px solid var(--border);
         display: flex;
         flex-wrap: wrap;
         gap: 16px;
         align-items: flex-start;
       }
       .triage-field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
+        flex: 0 0 auto;
       }
-      .triage-label {
-        font-size: 11px;
+      .triage-field label {
+        font-size: var(--mf-fs-xs);
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: var(--muted);
+        color: var(--mf-text-muted);
       }
-      .triage select {
-        padding: 6px 8px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--panel);
-        color: var(--text);
-        font-size: 13px;
-        font-family: inherit;
+      .triage .mf-select {
+        width: auto;
+        min-width: 130px;
       }
-      .triage select:disabled {
+      .triage .mf-select:disabled {
         opacity: 0.6;
         cursor: not-allowed;
+      }
+      .triage-tags-field,
+      .triage-assignee-field {
+        flex: 1 1 240px;
       }
       .chips {
         display: flex;
@@ -372,20 +421,16 @@ import { AuthService, Profile } from '../../core/auth.service';
         align-items: center;
       }
       .chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 4px 2px 8px;
-        font-size: 12px;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        background: var(--panel-2);
+        text-transform: none;
+        letter-spacing: normal;
+        font-weight: 500;
+        padding: 3px 4px 3px 9px;
       }
       .chip-x {
         border: none;
         background: none;
         cursor: pointer;
-        color: var(--muted);
+        color: var(--mf-text-muted);
         font-size: 14px;
         line-height: 1;
         padding: 0 2px;
@@ -395,25 +440,28 @@ import { AuthService, Profile } from '../../core/auth.service';
         opacity: 0.5;
       }
       .chip-input {
+        width: auto;
         min-width: 96px;
         padding: 4px 8px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--panel);
-        color: var(--text);
-        font-size: 13px;
-        font-family: inherit;
+        font-size: var(--mf-fs-sm);
       }
       .assignee-row {
         display: flex;
         gap: 6px;
+      }
+      .assignee-picker-row {
+        margin-top: 6px;
+      }
+      .assignee-picker {
+        width: auto;
+        min-width: 200px;
       }
       .assignee-manual {
         display: flex;
         gap: 6px;
         margin-top: 6px;
       }
-      .triage .msg.error {
+      .triage-error {
         flex-basis: 100%;
         margin: 0;
       }
@@ -426,21 +474,21 @@ import { AuthService, Profile } from '../../core/auth.service';
         gap: 12px;
       }
       .message {
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
+        border: 1px solid var(--mf-border);
+        border-radius: var(--mf-radius-sm);
         padding: 14px 16px;
-        background: var(--panel-2);
+        background: var(--mf-surface-2);
       }
       .message.inbound {
-        box-shadow: inset 3px 0 0 var(--accent-soft);
+        box-shadow: inset 3px 0 0 var(--mf-accent);
       }
       .message.outbound {
-        box-shadow: inset 3px 0 0 var(--ok);
-        background: var(--panel);
+        box-shadow: inset 3px 0 0 var(--mf-success);
+        background: var(--mf-surface);
       }
       .message.note {
-        box-shadow: inset 3px 0 0 var(--danger-soft);
-        background: var(--danger-soft);
+        box-shadow: inset 3px 0 0 var(--mf-danger);
+        background: var(--mf-danger-soft);
       }
 
       .message-head {
@@ -451,20 +499,21 @@ import { AuthService, Profile } from '../../core/auth.service';
       }
       .message-head .direction {
         font-weight: 600;
-        font-size: 12.5px;
+        font-size: var(--mf-fs-xs);
         text-transform: uppercase;
         letter-spacing: 0.03em;
-        color: var(--muted);
+        color: var(--mf-text-muted);
       }
       .message-head .when {
-        color: var(--faint);
-        font-size: 12px;
+        color: var(--mf-text-faint);
+        font-size: var(--mf-fs-xs);
       }
       .message-body {
         margin-top: 8px;
         white-space: pre-wrap;
-        font-size: 14px;
+        font-size: var(--mf-fs-base);
         line-height: 1.5;
+        color: var(--mf-text);
       }
 
       .attachments {
@@ -478,10 +527,14 @@ import { AuthService, Profile } from '../../core/auth.service';
         display: flex;
         gap: 10px;
         align-items: baseline;
-        font-size: 12.5px;
+        font-size: var(--mf-fs-sm);
+        color: var(--mf-text);
       }
       .attachment .filename {
         font-weight: 600;
+      }
+      .muted {
+        color: var(--mf-text-muted);
       }
 
       .auth-flags {
@@ -491,85 +544,62 @@ import { AuthService, Profile } from '../../core/auth.service';
         margin-top: 10px;
       }
       .auth-flags .flag {
-        font-size: 10.5px;
+        font-size: var(--mf-fs-xs);
         font-weight: 600;
         letter-spacing: 0.02em;
         text-transform: uppercase;
         padding: 3px 8px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        color: var(--muted);
+        border-radius: var(--mf-radius-pill);
+        border: 1px solid var(--mf-border);
+        color: var(--mf-text-muted);
       }
       .auth-flags .flag.pass {
-        color: var(--ok);
-        border-color: var(--ok);
+        color: var(--mf-success-text);
+        border-color: var(--mf-success);
       }
       .auth-flags .flag.fail {
-        color: var(--danger);
-        border-color: var(--danger-dim);
+        color: var(--mf-danger-text);
+        border-color: var(--mf-danger);
       }
 
-      [data-testid='load-more-messages'] {
+      .message-empty {
+        list-style: none;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-base);
+        padding: 18px 0;
+        text-align: center;
+      }
+
+      .load-more {
         margin-top: 16px;
       }
 
       .delivery-failed {
         margin-top: 8px;
-        font-size: 11px;
+        font-size: var(--mf-fs-xs);
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: var(--danger);
+        color: var(--mf-danger-text);
         padding: 2px 8px;
-        border: 1px solid var(--danger-dim);
-        border-radius: 999px;
+        border: 1px solid var(--mf-danger);
+        border-radius: var(--mf-radius-pill);
         display: inline-block;
       }
 
       .composer {
         margin-top: 24px;
-        border-top: 1px solid var(--border);
-        padding-top: 16px;
         display: grid;
         gap: 10px;
       }
       .composer-toggle {
         display: flex;
-        gap: 0;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        overflow: hidden;
+        gap: 6px;
         width: fit-content;
       }
-      .toggle-btn {
-        background: var(--panel-2);
-        border: none;
-        padding: 6px 14px;
-        font-size: 13px;
-        font-weight: 500;
-        cursor: pointer;
-        color: var(--muted);
-        transition: background 0.1s;
-      }
-      .toggle-btn:not(:last-child) {
-        border-right: 1px solid var(--border);
-      }
-      .toggle-btn.active {
-        background: var(--accent-soft);
-        color: var(--text);
-      }
       .composer-body {
-        width: 100%;
-        box-sizing: border-box;
         resize: vertical;
-        font-size: 14px;
         line-height: 1.5;
-        padding: 10px 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--panel);
-        color: var(--text);
-        font-family: inherit;
       }
       .composer-body:disabled {
         opacity: 0.6;
@@ -822,4 +852,8 @@ export class ThreadViewComponent implements OnInit {
     if (e.status === 403 || e.status === 404) return "You don't have access to do that.";
     return "We couldn't load this conversation.";
   }
+
+  // Template helpers — delegate to pure status functions so the template stays clean.
+  readonly ticketStatusTone = ticketStatusTone;
+  readonly ticketPriorityTone = ticketPriorityTone;
 }
