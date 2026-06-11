@@ -8,10 +8,13 @@ import {
 } from '@angular/router';
 import { filter } from 'rxjs';
 import { AuthService, Profile } from './core/auth.service';
+import { NAV_ITEMS } from './ui/nav';
+import { ThemeToggle } from './ui/theme-toggle/theme-toggle';
+import { ToastHost } from './ui/toast/toast';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ThemeToggle, ToastHost],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
@@ -19,6 +22,7 @@ export class App implements OnInit {
   private auth = inject(AuthService);
   private router = inject(Router);
 
+  readonly navItems = NAV_ITEMS;
   readonly profile = signal<Profile | null>(null);
 
   // The current URL, tracked so the shell can hide itself on the auth screens.
