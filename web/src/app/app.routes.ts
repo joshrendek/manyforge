@@ -27,6 +27,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/support/thread-view').then((m) => m.ThreadViewComponent),
   },
   {
+    path: 'approvals',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/approvals/queue').then((m) => m.ApprovalsQueueComponent),
+  },
+  {
     path: 'accounting',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/accounting/summary').then((m) => m.AccountingSummaryComponent),
