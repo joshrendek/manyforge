@@ -32,3 +32,6 @@ tmp/
 
 # fresh-context ralph driver log
 ralph-driver.log
+
+# superpowers brainstorm/visual-companion scratch
+.superpowers/
