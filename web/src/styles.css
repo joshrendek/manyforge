@@ -1,36 +1,82 @@
 @import '@fontsource-variable/inter';
 
 :root {
-  /* Surfaces */
-  --bg: #0e1014;
-  --panel: #161922;
-  --panel-2: #1c2029;
-  --panel-3: #232834; /* hover / raised */
-  --border: #282d39;
-  --border-strong: #353c4b;
-
-  /* Ink */
-  --text: #e8eaf0;
-  --muted: #98a1b2;
-  --faint: #6b7280;
-
-  /* Accent + status */
-  --accent: #6d6afe;
-  --accent-2: #8b7bff;
-  --accent-soft: rgba(125, 118, 255, 0.16);
-  --danger: #ff6b6b;
-  --danger-dim: #c9707a;
-  --danger-soft: rgba(255, 107, 107, 0.14);
-  --ok: #41d6a3;
-
-  /* Shape + depth */
-  --radius: 14px;
-  --radius-sm: 9px;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 40px -22px rgba(0, 0, 0, 0.7);
-  --ring: 0 0 0 3px rgba(125, 118, 255, 0.35);
-
-  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mf-bg:#f6f7f9; --mf-surface:#ffffff; --mf-surface-2:#f1f3f7; --mf-surface-inset:#ffffff;
+  --mf-border:#e6e8ee; --mf-border-strong:#d4d8e0;
+  --mf-text:#0f172a; --mf-text-muted:#64748b; --mf-text-faint:#94a3b8; --mf-text-on-accent:#ffffff;
+  --mf-accent:#0066ff; --mf-accent-hover:#0052cc; --mf-accent-soft:#e8f0ff; --mf-accent-text:#0052cc;
+  --mf-danger:#dc2626; --mf-danger-soft:#fef2f2; --mf-danger-text:#b91c1c;
+  --mf-warn:#d97706; --mf-warn-soft:#fffbeb; --mf-warn-text:#b45309;
+  --mf-success:#16a34a; --mf-success-soft:#f0fdf4; --mf-success-text:#15803d;
+  --mf-info:#0066ff; --mf-info-soft:#e8f0ff; --mf-info-text:#0052cc;
+  --mf-ring:0 0 0 3px rgba(0,102,255,.30);
+  --mf-shadow-sm:0 1px 2px rgba(16,24,40,.06); --mf-shadow:0 4px 16px -6px rgba(16,24,40,.12);
+  --mf-radius:12px; --mf-radius-sm:8px; --mf-radius-pill:999px;
+  --mf-space-1:4px; --mf-space-2:8px; --mf-space-3:12px; --mf-space-4:16px;
+  --mf-space-5:20px; --mf-space-6:24px; --mf-space-7:32px; --mf-space-8:40px;
+  --mf-fs-xs:12px; --mf-fs-sm:13px; --mf-fs-base:14px; --mf-fs-md:15px;
+  --mf-fs-lg:17px; --mf-fs-xl:20px; --mf-fs-2xl:24px;
+  --mf-font:'Inter Variable','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
 }
+html[data-theme="dark"] {
+  --mf-bg:#0a0a0c; --mf-surface:#131418; --mf-surface-2:#1b1d24; --mf-surface-inset:#0f1014;
+  --mf-border:#232530; --mf-border-strong:#313340;
+  --mf-text:#f3f4f6; --mf-text-muted:#9ca3af; --mf-text-faint:#6b7280; --mf-text-on-accent:#ffffff;
+  --mf-accent:#3d8bff; --mf-accent-hover:#5a9cff; --mf-accent-soft:rgba(0,102,255,.18); --mf-accent-text:#bcd6ff;
+  --mf-danger:#f87171; --mf-danger-soft:rgba(248,113,113,.14); --mf-danger-text:#fca5a5;
+  --mf-warn:#f59e0b; --mf-warn-soft:rgba(245,158,11,.14); --mf-warn-text:#fcd34d;
+  --mf-success:#22c55e; --mf-success-soft:rgba(34,197,94,.14); --mf-success-text:#4ade80;
+  --mf-info:#3d8bff; --mf-info-soft:rgba(0,102,255,.18); --mf-info-text:#bcd6ff;
+  --mf-ring:0 0 0 3px rgba(61,139,255,.35);
+  --mf-shadow-sm:0 1px 2px rgba(0,0,0,.4); --mf-shadow:0 16px 40px -22px rgba(0,0,0,.7);
+}
+.mf-app { background:var(--mf-bg); color:var(--mf-text); font-family:var(--mf-font);
+  -webkit-font-smoothing:antialiased; min-height:100vh; }
+
+/* primitives (token-only) */
+.mf-btn{font:inherit;font-size:var(--mf-fs-base);font-weight:600;padding:9px 14px;border-radius:var(--mf-radius-sm);border:1px solid transparent;cursor:pointer;transition:background .15s,filter .15s,box-shadow .15s,border-color .15s;display:inline-flex;align-items:center;gap:7px}
+.mf-btn:focus-visible{outline:none;box-shadow:var(--mf-ring)}
+.mf-btn-primary{background:var(--mf-accent);color:var(--mf-text-on-accent)}
+.mf-btn-primary:hover{background:var(--mf-accent-hover)}
+.mf-btn-ghost{background:transparent;border-color:var(--mf-border);color:var(--mf-text)}
+.mf-btn-ghost:hover{background:var(--mf-surface-2);border-color:var(--mf-border-strong)}
+.mf-btn-danger{background:var(--mf-danger);color:#fff}
+.mf-btn-danger:hover{filter:brightness(1.06)}
+.mf-btn-link{background:none;border:0;color:var(--mf-accent-text);padding:6px 4px;font-weight:500}
+.mf-btn-link:hover{text-decoration:underline}
+.mf-btn:disabled{opacity:.5;cursor:default;filter:none}
+.mf-btn-sm{font-size:var(--mf-fs-sm);padding:6px 11px}
+
+.mf-field{display:block}
+.mf-field label{display:block;font-size:var(--mf-fs-sm);color:var(--mf-text-muted);font-weight:500;margin-bottom:6px}
+.mf-input,.mf-select,.mf-textarea{width:100%;font:inherit;font-size:var(--mf-fs-base);padding:10px 12px;background:var(--mf-surface-inset);border:1px solid var(--mf-border);border-radius:var(--mf-radius-sm);color:var(--mf-text);outline:none;transition:border-color .15s,box-shadow .15s}
+.mf-input::placeholder{color:var(--mf-text-faint)}
+.mf-input:hover,.mf-select:hover{border-color:var(--mf-border-strong)}
+.mf-input:focus,.mf-select:focus,.mf-textarea:focus{border-color:var(--mf-accent);box-shadow:var(--mf-ring)}
+.mf-field .mf-hint{font-size:var(--mf-fs-xs);color:var(--mf-text-faint);margin-top:6px}
+.mf-field.mf-invalid .mf-input{border-color:var(--mf-danger)}
+.mf-field .mf-err{font-size:var(--mf-fs-xs);color:var(--mf-danger-text);margin-top:6px}
+
+.mf-card{background:var(--mf-surface);border:1px solid var(--mf-border);border-radius:var(--mf-radius);padding:22px;box-shadow:var(--mf-shadow-sm)}
+
+.mf-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:3px 9px;border-radius:var(--mf-radius-pill)}
+.mf-pill .mf-dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+.mf-pill-neutral{color:var(--mf-text-muted);border:1px solid var(--mf-border)}
+.mf-pill-accent{color:var(--mf-accent-text);background:var(--mf-accent-soft)}
+.mf-pill-danger{color:var(--mf-danger-text);background:var(--mf-danger-soft)}
+.mf-pill-warn{color:var(--mf-warn-text);background:var(--mf-warn-soft)}
+.mf-pill-success{color:var(--mf-success-text);background:var(--mf-success-soft)}
+
+.mf-table{background:var(--mf-surface);border:1px solid var(--mf-border);border-radius:var(--mf-radius);overflow:hidden}
+.mf-tr{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--mf-border);font-size:var(--mf-fs-base)}
+.mf-tr:last-child{border-bottom:0}
+.mf-tr.mf-th{background:var(--mf-surface-2);font-size:var(--mf-fs-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--mf-text-faint);font-weight:600}
+.mf-tr.mf-clickable{cursor:pointer}
+.mf-tr.mf-clickable:hover{background:var(--mf-surface-2)}
+
+a{color:var(--mf-accent-text);text-decoration:none}
+a:hover{text-decoration:underline}
+@media (prefers-reduced-motion: reduce){*{transition:none !important}}
 
 * { box-sizing: border-box; }
 
