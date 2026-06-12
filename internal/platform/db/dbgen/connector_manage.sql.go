@@ -218,6 +218,36 @@ func (q *Queries) ListConnectors(ctx context.Context, businessID uuid.UUID) ([]C
 	return items, nil
 }
 
+const rotateConnectorSecretRef = `-- name: RotateConnectorSecretRef :one
+WITH old AS (
+    SELECT secret_ref FROM connector
+    WHERE id = $2 AND business_id = $3
+    FOR UPDATE
+)
+UPDATE connector
+SET secret_ref = $1, updated_at = now()
+FROM old
+WHERE connector.id = $2 AND connector.business_id = $3
+RETURNING old.secret_ref
+`
+
+type RotateConnectorSecretRefParams struct {
+	NewSecretRef uuid.UUID `json:"new_secret_ref"`
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+}
+
+// RotateConnectorSecretRef atomically swaps the sealed-credential pointer to new_secret_ref,
+// locking the connector row (FOR UPDATE) and RETURNING the OLD secret_ref it replaced — so the
+// caller deletes exactly the secret it displaced, with no TOCTOU against a concurrent rotation.
+// Scoped to (id, business_id); unknown/foreign id → no row → pgx.ErrNoRows → 404.
+func (q *Queries) RotateConnectorSecretRef(ctx context.Context, arg RotateConnectorSecretRefParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, rotateConnectorSecretRef, arg.NewSecretRef, arg.ID, arg.BusinessID)
+	var secret_ref uuid.UUID
+	err := row.Scan(&secret_ref)
+	return secret_ref, err
+}
+
 const updateConnector = `-- name: UpdateConnector :one
 UPDATE connector SET
     display_name = COALESCE($1, display_name),
@@ -265,25 +295,4 @@ func (q *Queries) UpdateConnector(ctx context.Context, arg UpdateConnectorParams
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const updateConnectorSecretRef = `-- name: UpdateConnectorSecretRef :execrows
-UPDATE connector SET secret_ref = $1, updated_at = now()
-WHERE id = $2 AND business_id = $3
-`
-
-type UpdateConnectorSecretRefParams struct {
-	SecretRef  uuid.UUID `json:"secret_ref"`
-	ID         uuid.UUID `json:"id"`
-	BusinessID uuid.UUID `json:"business_id"`
-}
-
-// UpdateConnectorSecretRef swaps the sealed-credential pointer during rotation, scoped to
-// (id, business_id). :execrows lets the caller detect a no-op (unknown/foreign id → 0 rows).
-func (q *Queries) UpdateConnectorSecretRef(ctx context.Context, arg UpdateConnectorSecretRefParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateConnectorSecretRef, arg.SecretRef, arg.ID, arg.BusinessID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
