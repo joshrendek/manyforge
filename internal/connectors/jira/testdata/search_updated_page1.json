@@ -1,7 +1,6 @@
 {
-  "startAt": 0,
+  "nextPageToken": "PAGE2",
   "maxResults": 2,
-  "total": 3,
   "issues": [
     {
       "id": "10001",
