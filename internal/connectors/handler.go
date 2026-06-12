@@ -2,7 +2,9 @@ package connectors
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -25,12 +27,26 @@ type manageCRUD interface {
 
 var _ manageCRUD = (*Service)(nil)
 
+// SyncTrigger runs an immediate on-demand reconcile of one connector (the "Sync now" action).
+// *Reconciler satisfies it; exported so cmd/manyforge can wire it after construction. Optional —
+// when nil the sync endpoint reports the capability unavailable.
+type SyncTrigger interface {
+	ReconcileOne(ctx context.Context, connectorID uuid.UUID) error
+}
+
 // Handler exposes connector-management CRUD over HTTP, mounted behind the connectors.manage
 // RequirePermission gate (so a lacking perm / invisible business is a no-oracle 404).
-type Handler struct{ svc manageCRUD }
+type Handler struct {
+	svc  manageCRUD
+	sync SyncTrigger
+}
 
 // NewHandler builds a connectors management HTTP handler.
 func NewHandler(svc manageCRUD) *Handler { return &Handler{svc: svc} }
+
+// SetSyncTrigger wires the on-demand reconcile capability (the "Sync now" endpoint). Optional;
+// when unset, POST /{cid}/sync returns a validation error.
+func (h *Handler) SetSyncTrigger(s SyncTrigger) { h.sync = s }
 
 // ProtectedRoutes mounts authenticated connector endpoints under a business.
 func (h *Handler) ProtectedRoutes(r chi.Router) {
@@ -41,6 +57,7 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 		r.Patch("/{cid}", h.update)
 		r.Put("/{cid}/credential", h.rotate)
 		r.Post("/{cid}/test", h.test)
+		r.Post("/{cid}/sync", h.syncNow)
 		r.Delete("/{cid}", h.delete)
 	})
 }
@@ -253,6 +270,39 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// syncNow triggers an immediate, project-scoped reconcile of the connector ("Sync now").
+// Ownership is authorized first (svc.Get is RLS-scoped → 404 if not the caller's). The
+// reconcile is slow network I/O, so it runs detached from the request (background context with
+// a cap) and the endpoint returns 202 immediately. Without a wired SyncTrigger (connector stack
+// disabled) it returns a validation error.
+func (h *Handler) syncNow(w http.ResponseWriter, r *http.Request) {
+	pid, bid, ok := h.ctxIDs(w, r)
+	if !ok {
+		return
+	}
+	cid, err := connPathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	// Authorize ownership before triggering the principal-less reconcile.
+	if _, err := h.svc.Get(r.Context(), pid, bid, cid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.sync == nil {
+		httpx.WriteError(w, r, fmt.Errorf("connectors: sync unavailable: %w", errs.ErrValidation))
+		return
+	}
+	// Detach from the request lifecycle (WithoutCancel keeps logging values) and cap the run.
+	go func() {
+		bg, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
+		defer cancel()
+		_ = h.sync.ReconcileOne(bg, cid)
+	}()
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "sync_started"})
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {

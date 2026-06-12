@@ -288,3 +288,49 @@ func TestConnectorBadBusinessID_404(t *testing.T) {
 	}
 }
 
+type fakeSyncTrigger struct{ called chan uuid.UUID }
+
+func (f *fakeSyncTrigger) ReconcileOne(_ context.Context, id uuid.UUID) error {
+	if f.called != nil {
+		f.called <- id
+	}
+	return nil
+}
+
+func TestSyncNow_AuthorizesThenTriggers202(t *testing.T) {
+	bid := uuid.New()
+	cid := uuid.New()
+	h := NewHandler(&fakeManageSvc{getOut: ConnectorView{ID: cid.String(), BusinessID: bid.String()}})
+	fs := &fakeSyncTrigger{called: make(chan uuid.UUID, 1)}
+	h.SetSyncTrigger(fs)
+	rr := serveConnBody(t, h, http.MethodPost, "/businesses/"+bid.String()+"/connectors/"+cid.String()+"/sync", "")
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", rr.Code, rr.Body.String())
+	}
+	select {
+	case got := <-fs.called:
+		if got != cid {
+			t.Fatalf("ReconcileOne(%s), want %s", got, cid)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReconcileOne was not called")
+	}
+}
+
+func TestSyncNow_UnownedIs404AndDoesNotTrigger(t *testing.T) {
+	bid := uuid.New()
+	cid := uuid.New()
+	h := NewHandler(&fakeManageSvc{getErr: errs.ErrNotFound})
+	fs := &fakeSyncTrigger{called: make(chan uuid.UUID, 1)}
+	h.SetSyncTrigger(fs)
+	rr := serveConnBody(t, h, http.MethodPost, "/businesses/"+bid.String()+"/connectors/"+cid.String()+"/sync", "")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+	select {
+	case <-fs.called:
+		t.Fatal("ReconcileOne must NOT be called for an unowned connector")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
