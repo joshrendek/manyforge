@@ -84,6 +84,9 @@ export class ConnectorsService {
   remove(businessId: string, id: string): Observable<void> {
     return this.http.delete<void>(`${this.base(businessId)}/${id}`);
   }
+  sync(businessId: string, id: string): Observable<{ status: string }> {
+    return this.http.post<{ status: string }>(`${this.base(businessId)}/${id}/sync`, {});
+  }
   refreshCount(businessId: string): void {
     this.list(businessId).subscribe({ error: () => this.degradedCount.set(0) });
   }
