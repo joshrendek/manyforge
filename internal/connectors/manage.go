@@ -249,6 +249,33 @@ func validateRotate(in RotateCredentialInput) error {
 	return nil
 }
 
+// TestResult reports a live connection test. Detail is a short, non-leaking status string
+// (never the credential or an upstream response body).
+type TestResult struct {
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
+}
+
+// Test resolves the stored credential and runs a live verify against the external system.
+// Unknown/foreign id → ErrNotFound. A configured-but-failing credential returns {ok:false}
+// with a safe detail (HTTP 200 — a test result is not an API error). If no Verifier is wired
+// (dev without the connector master key), returns {ok:false, detail:"verification unavailable"}.
+func (s *Service) Test(ctx context.Context, principalID, businessID, connectorID uuid.UUID) (TestResult, error) {
+	rc, err := s.Resolve(ctx, principalID, businessID, connectorID)
+	if err != nil {
+		return TestResult{}, err // already mapped (ErrNotFound on unknown)
+	}
+	if s.Verify == nil {
+		return TestResult{OK: false, Detail: "verification unavailable"}, nil
+	}
+	if verr := s.Verify.Verify(ctx, VerifyTarget{
+		Type: rc.Type, BaseURL: rc.BaseURL, AllowPrivateBaseURL: rc.AllowPrivateBaseURL, Credential: rc.Credential,
+	}); verr != nil {
+		return TestResult{OK: false, Detail: "credential verification failed"}, nil
+	}
+	return TestResult{OK: true, Detail: "ok"}, nil
+}
+
 // RotateCredential seals a new credential bundle and atomically swaps the connector's
 // secret_ref, deleting the old sealed secret — mirroring Create's seal/audit discipline.
 // When a Verifier is wired, the NEW credential is live-verified BEFORE the tx; a credential
