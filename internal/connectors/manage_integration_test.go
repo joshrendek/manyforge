@@ -251,3 +251,79 @@ func TestManageDeleteDetaches(t *testing.T) {
 }
 
 func timeMinus5() time.Time { return time.Now().UTC().Add(-5 * time.Minute) }
+
+// seedOther inserts a second, fully independent tenant (account → business → owner principal
+// + membership) into the test DB using the same pattern as seedConnectorTenant in
+// testsupport_integration_test.go. It returns a connSeed with the new tenant's principalID
+// (the owner human principal) + businessID.
+func seedOther(t *testing.T, ctx context.Context, tdb *testdb.TestDB) connSeed {
+	t.Helper()
+
+	var ownerRole uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'").Scan(&ownerRole); err != nil {
+		t.Fatalf("seedOther: preset owner role: %v", err)
+	}
+
+	masterID := uuid.New()
+	ownerAcctID := uuid.New()
+	ownerHumanID := uuid.New()
+	ownerEmail := "other-owner-" + masterID.String() + "@x.test"
+
+	tx, err := tdb.Super.Begin(ctx)
+	if err != nil {
+		t.Fatalf("seedOther: begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	stmts := []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO account (id,email,display_name,status,created_at,updated_at,email_verified_at) VALUES ($1,$2,'OtherOwner','active',now(),now(),now())`,
+			[]any{ownerAcctID, ownerEmail}},
+		{`INSERT INTO principal (id,kind,account_id,created_at) VALUES ($1,'human',$2,now())`,
+			[]any{ownerHumanID, ownerAcctID}},
+		{`INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at) VALUES ($1,NULL,$1,'OtherCo','active',now(),now())`,
+			[]any{masterID}},
+		{`INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id) VALUES ($1,$1,0,$1)`,
+			[]any{masterID}},
+		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at) VALUES ($1,$2,$2,$3,now())`,
+			[]any{ownerHumanID, masterID, ownerRole}},
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(ctx, s.sql, s.args...); err != nil {
+			t.Fatalf("seedOther exec: %v\nSQL: %s", err, s.sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("seedOther: commit: %v", err)
+	}
+	return connSeed{businessID: masterID, principalID: ownerHumanID}
+}
+
+// TestManageCrossTenantIsolation: a connector created by tenant A is invisible to tenant B —
+// Get/Update/Delete by B's principal all return ErrNotFound (RLS + business predicate).
+func TestManageCrossTenantIsolation(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil)
+	idA, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+
+	// seedOther builds a second tenant (principal + business). If the connectors harness lacks
+	// it, mirror the multi-tenant seed used by the ticketing/agents integration tests.
+	other := seedOther(t, ctx, tdb)
+
+	if _, err := svc.Get(ctx, other.principalID, other.businessID, idA); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("cross-tenant Get: want ErrNotFound, got %v", err)
+	}
+	name := "hijack"
+	if _, err := svc.Update(ctx, other.principalID, other.businessID, idA, UpdateConnectorInput{DisplayName: &name}); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("cross-tenant Update: want ErrNotFound, got %v", err)
+	}
+	if err := svc.Delete(ctx, other.principalID, other.businessID, idA); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("cross-tenant Delete: want ErrNotFound, got %v", err)
+	}
+}
