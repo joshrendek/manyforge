@@ -3,11 +3,13 @@
 package connectors
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
@@ -91,4 +93,66 @@ func TestManageUpdate(t *testing.T) {
 	if _, err := svc.Update(ctx, seed.principalID, seed.businessID, uuid.New(), UpdateConnectorInput{DisplayName: &newName}); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("update unknown: want ErrNotFound, got %v", err)
 	}
+}
+
+func TestManageRotateCredential(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil) // nil Verifier: rotation skips live verify (mirrors Create)
+	id, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Capture the original secret_ref to prove it is swapped + the old secret deleted.
+	oldRef := connectorSecretRef(t, ctx, tdb, seed.businessID, id)
+
+	if err := svc.RotateCredential(ctx, seed.principalID, seed.businessID, id, RotateCredentialInput{
+		Email: "rotated@acme.test", APIToken: "new-token-xyz", WebhookSecret: "new-webhook-secret",
+	}); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	newRef := connectorSecretRef(t, ctx, tdb, seed.businessID, id)
+	if newRef == oldRef {
+		t.Fatal("rotate: secret_ref was not swapped")
+	}
+	// Old secret row must be gone.
+	if secretExists(t, ctx, tdb, oldRef) {
+		t.Fatal("rotate: old secret was not deleted")
+	}
+	// The resolved credential must be the new one.
+	rc, err := svc.Resolve(ctx, seed.principalID, seed.businessID, id)
+	if err != nil {
+		t.Fatalf("resolve after rotate: %v", err)
+	}
+	if rc.Credential.APIToken != "new-token-xyz" {
+		t.Fatalf("rotate: resolved token = %q, want new-token-xyz", rc.Credential.APIToken)
+	}
+
+	// Empty api_token → validation, nothing changed.
+	if err := svc.RotateCredential(ctx, seed.principalID, seed.businessID, id, RotateCredentialInput{Email: "x@y.z", APIToken: ""}); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("rotate empty token: want ErrValidation, got %v", err)
+	}
+
+	// Unknown id → ErrNotFound.
+	if err := svc.RotateCredential(ctx, seed.principalID, seed.businessID, uuid.New(), RotateCredentialInput{Email: "x@y.z", APIToken: "t"}); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("rotate unknown: want ErrNotFound, got %v", err)
+	}
+}
+
+func connectorSecretRef(t *testing.T, ctx context.Context, tdb *testdb.TestDB, businessID, connectorID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var ref uuid.UUID
+	if err := tdb.Super.QueryRow(ctx, "SELECT secret_ref FROM connector WHERE id=$1 AND business_id=$2", connectorID, businessID).Scan(&ref); err != nil {
+		t.Fatalf("read secret_ref: %v", err)
+	}
+	return ref
+}
+
+func secretExists(t *testing.T, ctx context.Context, tdb *testdb.TestDB, secretID uuid.UUID) bool {
+	t.Helper()
+	var n int
+	if err := tdb.Super.QueryRow(ctx, "SELECT count(*) FROM secret WHERE id=$1", secretID).Scan(&n); err != nil {
+		t.Fatalf("count secret: %v", err)
+	}
+	return n > 0
 }
