@@ -87,7 +87,9 @@ import { ConnectorFormComponent } from './connector-form';
                 <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-toggle" (click)="toggle(c)">
                   {{ c.status === 'enabled' ? 'Disable' : 'Enable' }}
                 </button>
-                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-rotate" (click)="rotateId.set(rotateId() === c.id ? '' : c.id)">Rotate</button>
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-sync" (click)="sync(c)">Sync</button>
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-rotate" (click)="rotateId.set(rotateId() === c.id ? '' : c.id); editId.set('')">Rotate</button>
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-edit" (click)="editId.set(editId() === c.id ? '' : c.id); rotateId.set('')">Edit</button>
                 <button class="mf-btn mf-btn-danger mf-btn-sm" data-testid="connector-delete" (click)="confirmDeleteId.set(c.id)">Delete</button>
               }
             </span>
@@ -95,6 +97,12 @@ import { ConnectorFormComponent } from './connector-form';
               <div style="flex:1 1 100%">
                 <app-connector-form mode="rotate" [businessId]="businessId()" [connectorId]="c.id"
                                     (saved)="onRotated()" (cancelled)="rotateId.set('')" />
+              </div>
+            }
+            @if (editId() === c.id) {
+              <div style="flex:1 1 100%">
+                <app-connector-form mode="edit" [businessId]="businessId()" [connectorId]="c.id" [connector]="c"
+                                    (saved)="onEdited()" (cancelled)="editId.set('')" />
               </div>
             }
           </div>
@@ -125,6 +133,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   error = signal('');
   showAdd = signal(false);
   rotateId = signal<string>('');
+  editId = signal<string>('');
   confirmDeleteId = signal<string>('');
 
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -162,6 +171,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
     this.current.set(id);
     this.confirmDeleteId.set('');
     this.rotateId.set('');
+    this.editId.set('');
     this.reload();
   }
 
@@ -195,6 +205,19 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
     this.rotateId.set('');
     this.toast.success('Credential rotated');
     this.reload();
+  }
+
+  onEdited(): void {
+    this.editId.set('');
+    this.toast.success('Connector updated');
+    this.reload();
+  }
+
+  sync(c: Connector): void {
+    this.api.sync(this.businessId(), c.id).subscribe({
+      next: () => this.toast.success('Sync started'),
+      error: () => this.toast.error('Sync failed'),
+    });
   }
 
   test(c: Connector): void {

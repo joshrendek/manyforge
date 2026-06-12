@@ -44,4 +44,13 @@ describe('ConnectorsService', () => {
     expect(req.request.method).toBe('POST');
     req.flush({ ok: true, detail: 'ok' });
   });
+
+  it('sync() POSTs to the sync subpath and returns status', () => {
+    let result: { status: string } | undefined;
+    svc.sync('b1', 'c1').subscribe((r) => (result = r));
+    const req = mock.expectOne('/api/v1/businesses/b1/connectors/c1/sync');
+    expect(req.request.method).toBe('POST');
+    req.flush({ status: 'sync_started' });
+    expect(result?.status).toBe('sync_started');
+  });
 });
