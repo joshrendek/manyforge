@@ -219,8 +219,10 @@ func (c *client) TransitionStatus(ctx context.Context, externalID, status string
 const searchPageSize = 100
 
 // ListUpdatedSince returns the keys of issues updated at or after since (reconcile),
-// paging through ALL results (Jira's default page size of 50 would otherwise
-// silently truncate the reconcile set).
+// paging through ALL results via the new JQL search endpoint
+// (GET /rest/api/3/search/jql). The legacy /rest/api/3/search was removed by
+// Atlassian (returns 410 Gone), so this uses cursor pagination (nextPageToken) —
+// there is no startAt/total; the loop stops when nextPageToken is absent.
 func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]string, error) {
 	base, err := url.Parse(c.baseURL)
 	if err != nil {
@@ -231,14 +233,16 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 	jql := fmt.Sprintf(`updated >= "%s" ORDER BY updated ASC`, ts)
 
 	var keys []string
-	startAt := 0
+	nextPageToken := ""
 	for {
-		searchURL := base.JoinPath("rest", "api", "3", "search")
+		searchURL := base.JoinPath("rest", "api", "3", "search", "jql")
 		q := url.Values{}
 		q.Set("jql", jql)
 		q.Set("fields", "updated")
-		q.Set("startAt", fmt.Sprintf("%d", startAt))
 		q.Set("maxResults", fmt.Sprintf("%d", searchPageSize))
+		if nextPageToken != "" {
+			q.Set("nextPageToken", nextPageToken)
+		}
 		searchURL.RawQuery = q.Encode()
 
 		var page jiraSearchResponse
@@ -250,14 +254,12 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 			keys = append(keys, issue.Key)
 		}
 
-		// Stop on an empty page (defensive) or once we've covered the total.
-		if len(page.Issues) == 0 {
+		// The new API signals "no more pages" by omitting nextPageToken. Stop on an
+		// empty token, or an empty page (defensive — a page with a token but no issues).
+		if page.NextPageToken == "" || len(page.Issues) == 0 {
 			break
 		}
-		startAt += len(page.Issues)
-		if startAt >= page.Total {
-			break
-		}
+		nextPageToken = page.NextPageToken
 	}
 	return keys, nil
 }
@@ -460,10 +462,11 @@ type jiraCommentsResponse struct {
 }
 
 type jiraSearchResponse struct {
-	StartAt    int `json:"startAt"`
-	MaxResults int `json:"maxResults"`
-	Total      int `json:"total"`
-	Issues     []struct {
+	// NextPageToken is the cursor for the next page (search/jql endpoint). It is
+	// absent/empty on the last page — that is the only stop signal (the new API
+	// returns no startAt/total).
+	NextPageToken string `json:"nextPageToken"`
+	Issues        []struct {
 		Key    string `json:"key"`
 		Fields struct {
 			Updated jiraTime `json:"updated"`

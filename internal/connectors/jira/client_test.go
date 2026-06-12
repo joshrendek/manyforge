@@ -153,8 +153,8 @@ func TestListUpdatedSince(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if r.URL.Path != "/rest/api/3/search" {
-			t.Errorf("ListUpdatedSince: path = %q, want /rest/api/3/search", r.URL.Path)
+		if r.URL.Path != "/rest/api/3/search/jql" {
+			t.Errorf("ListUpdatedSince: path = %q, want /rest/api/3/search/jql", r.URL.Path)
 		}
 		jql := r.URL.Query().Get("jql")
 		if !strings.Contains(jql, "updated >= ") {
@@ -166,8 +166,8 @@ func TestListUpdatedSince(t *testing.T) {
 		if r.URL.Query().Get("fields") != "updated" {
 			t.Errorf("ListUpdatedSince: fields = %q, want 'updated'", r.URL.Query().Get("fields"))
 		}
-		if r.URL.Query().Get("startAt") != "0" {
-			t.Errorf("ListUpdatedSince: startAt = %q, want '0'", r.URL.Query().Get("startAt"))
+		if r.URL.Query().Get("nextPageToken") != "" {
+			t.Errorf("ListUpdatedSince: first page must not send nextPageToken, got %q", r.URL.Query().Get("nextPageToken"))
 		}
 		if r.URL.Query().Get("maxResults") == "" {
 			t.Errorf("ListUpdatedSince: maxResults missing")
@@ -203,18 +203,18 @@ func TestListUpdatedSince_Paginates(t *testing.T) {
 	var requests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.URL.Path != "/rest/api/3/search" {
-			t.Errorf("path = %q, want /rest/api/3/search", r.URL.Path)
+		if r.URL.Path != "/rest/api/3/search/jql" {
+			t.Errorf("path = %q, want /rest/api/3/search/jql", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Query().Get("startAt") {
-		case "0":
+		switch r.URL.Query().Get("nextPageToken") {
+		case "":
 			_, _ = w.Write(page1)
-		case "2":
+		case "PAGE2":
 			_, _ = w.Write(page2)
 		default:
-			t.Errorf("unexpected startAt = %q", r.URL.Query().Get("startAt"))
-			_, _ = w.Write([]byte(`{"startAt":0,"maxResults":2,"total":0,"issues":[]}`))
+			t.Errorf("unexpected nextPageToken = %q", r.URL.Query().Get("nextPageToken"))
+			_, _ = w.Write([]byte(`{"issues":[]}`))
 		}
 	}))
 	defer srv.Close()
