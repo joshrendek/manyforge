@@ -238,6 +238,32 @@ func TestListUpdatedSince_Paginates(t *testing.T) {
 	}
 }
 
+// A connector with a configured project_key must scope the JQL to that project so
+// inbound reconcile does not pull every project the token can see.
+func TestListUpdatedSince_ScopedToProject(t *testing.T) {
+	since := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	var gotJQL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotJQL = r.URL.Query().Get("jql")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"issues":[{"key":"MT-1","fields":{"updated":"2026-06-01T10:30:00.000+0000"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user@example.com", "test-api-token", "secret", srv.Client())
+	c.projectKey = "MT"
+	keys, err := c.ListUpdatedSince(context.Background(), since)
+	if err != nil {
+		t.Fatalf("ListUpdatedSince: %v", err)
+	}
+	if !strings.Contains(gotJQL, `project = "MT"`) {
+		t.Errorf("jql = %q, want a `project = \"MT\"` clause", gotJQL)
+	}
+	if len(keys) != 1 || keys[0] != "MT-1" {
+		t.Errorf("keys = %v, want [MT-1]", keys)
+	}
+}
+
 // ── VerifyWebhook ────────────────────────────────────────────────────────────
 
 func TestVerifyWebhook_Valid(t *testing.T) {
