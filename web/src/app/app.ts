@@ -9,6 +9,7 @@ import {
 import { filter } from 'rxjs';
 import { ApprovalsService } from './core/approvals.service';
 import { AuthService, Profile } from './core/auth.service';
+import { ConnectorsService } from './core/connectors.service';
 import { CurrentBusinessService } from './core/current-business.service';
 import { NAV_ITEMS } from './ui/nav';
 import { ThemeToggle } from './ui/theme-toggle/theme-toggle';
@@ -24,20 +25,25 @@ export class App implements OnInit, OnDestroy {
   private auth = inject(AuthService);
   private router = inject(Router);
   private approvals = inject(ApprovalsService);
+  private connectors = inject(ConnectorsService);
   private currentBusiness = inject(CurrentBusinessService);
 
   private badgeTimer?: ReturnType<typeof setInterval>;
 
   readonly profile = signal<Profile | null>(null);
 
-  // Copy NAV_ITEMS (object spread — never mutate the shared array) and stamp the
-  // live pending-approvals count onto the Approvals item for the current business.
+  // Copy NAV_ITEMS (object spread — never mutate the shared array) and stamp the live
+  // pending-approvals count and degraded-connector count onto their nav items for the
+  // current business.
   readonly navItemsWithBadge = computed(() => {
-    const count = this.approvals.pendingCount();
+    const approvals = this.approvals.pendingCount();
+    const degraded = this.connectors.degradedCount();
     const hasBiz = !!this.currentBusiness.businessId();
-    return NAV_ITEMS.map((item) =>
-      item.route === '/approvals' && hasBiz && count > 0 ? { ...item, badge: count } : item,
-    );
+    return NAV_ITEMS.map((item) => {
+      if (item.route === '/approvals' && hasBiz && approvals > 0) return { ...item, badge: approvals };
+      if (item.route === '/connectors' && hasBiz && degraded > 0) return { ...item, badge: degraded };
+      return item;
+    });
   });
 
   // The current URL, tracked so the shell can hide itself on the auth screens.
@@ -65,12 +71,18 @@ export class App implements OnInit, OnDestroy {
 
     if (this.auth.isAuthenticated()) {
       const id = this.currentBusiness.businessId();
-      if (id) this.approvals.refreshCount(id);
+      if (id) {
+        this.approvals.refreshCount(id);
+        this.connectors.refreshCount(id);
+      }
       // Poll for freshness; read businessId live each tick so a business chosen later (on the
       // approvals page, which persists it) is picked up without an app reload.
       this.badgeTimer = setInterval(() => {
         const b = this.currentBusiness.businessId();
-        if (b) this.approvals.refreshCount(b);
+        if (b) {
+          this.approvals.refreshCount(b);
+          this.connectors.refreshCount(b);
+        }
       }, 20000);
     }
   }

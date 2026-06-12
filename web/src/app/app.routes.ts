@@ -32,6 +32,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/approvals/queue').then((m) => m.ApprovalsQueueComponent),
   },
   {
+    path: 'connectors',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/connectors/list').then((m) => m.ConnectorsListComponent),
+  },
+  {
     path: 'accounting',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/accounting/summary').then((m) => m.AccountingSummaryComponent),
