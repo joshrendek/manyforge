@@ -140,6 +140,74 @@ func TestFetchIssue(t *testing.T) {
 	}
 }
 
+// ── PostComment (internal vs public) ─────────────────────────────────────────
+
+// TestPostComment_Internal asserts that PostComment(..., internal=true) attaches the JSM
+// sd.public.comment property with internal=true so the comment is agent-only (not visible
+// to the requester). This is the core of manyforge-8c4.
+func TestPostComment_Internal(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"30001","author":{"displayName":"Agent"},"created":"2026-06-01T10:30:00.000+0000"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "agent@example.com", "tok", "secret", srv.Client())
+	cm, err := c.PostComment(context.Background(), "PROJ-42", "internal triage note", true)
+	if err != nil {
+		t.Fatalf("PostComment internal: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/rest/api/3/issue/PROJ-42/comment" {
+		t.Errorf("request = %s %s, want POST /rest/api/3/issue/PROJ-42/comment", gotMethod, gotPath)
+	}
+	// Decode the body and assert the JSM internal-comment property is present + internal=true.
+	var payload struct {
+		Properties []struct {
+			Key   string `json:"key"`
+			Value struct {
+				Internal bool `json:"internal"`
+			} `json:"value"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(gotBody), &payload); err != nil {
+		t.Fatalf("unmarshal body: %v (body=%s)", err, gotBody)
+	}
+	if len(payload.Properties) != 1 {
+		t.Fatalf("internal=true must carry exactly one property, body: %s", gotBody)
+	}
+	if payload.Properties[0].Key != "sd.public.comment" || !payload.Properties[0].Value.Internal {
+		t.Errorf("property = %+v, want key=sd.public.comment value.internal=true", payload.Properties[0])
+	}
+	if cm.ExternalID != "30001" {
+		t.Errorf("ExternalID = %q, want 30001", cm.ExternalID)
+	}
+}
+
+// TestPostComment_Public asserts that PostComment(..., internal=false) does NOT attach the
+// sd.public.comment property, so the comment posts as a normal (requester-visible) reply.
+func TestPostComment_Public(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"30002","author":{"displayName":"Agent"},"created":"2026-06-01T10:30:00.000+0000"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "agent@example.com", "tok", "secret", srv.Client())
+	if _, err := c.PostComment(context.Background(), "PROJ-42", "public reply", false); err != nil {
+		t.Fatalf("PostComment public: %v", err)
+	}
+	if strings.Contains(gotBody, "sd.public.comment") || strings.Contains(gotBody, "properties") {
+		t.Errorf("internal=false comment must NOT carry the JSM internal property, body: %s", gotBody)
+	}
+}
+
 // ── ListUpdatedSince ─────────────────────────────────────────────────────────
 
 func TestListUpdatedSince(t *testing.T) {
@@ -434,7 +502,7 @@ func TestFetchIssue_RejectsTraversalKey(t *testing.T) {
 	}
 
 	// PostComment / TransitionStatus must reject too (no HTTP call).
-	if _, err := c.PostComment(context.Background(), "PROJ-1/../admin", "hi"); !errors.Is(err, ErrBadIssueKey) {
+	if _, err := c.PostComment(context.Background(), "PROJ-1/../admin", "hi", false); !errors.Is(err, ErrBadIssueKey) {
 		t.Errorf("PostComment traversal: err = %v, want Is(ErrBadIssueKey)", err)
 	}
 	if err := c.TransitionStatus(context.Background(), "PROJ-1/../admin", "Done"); !errors.Is(err, ErrBadIssueKey) {

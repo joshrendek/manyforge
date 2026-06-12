@@ -114,8 +114,10 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 	return issue, nil
 }
 
-// PostComment appends a plain-text comment to the external issue.
-func (c *client) PostComment(ctx context.Context, externalID, body string) (connectors.ExternalComment, error) {
+// PostComment appends a plain-text comment to the external issue. When internal is true the
+// comment is posted as a Jira Service Management INTERNAL comment (agent-only, not visible to
+// the requester) by attaching the sd.public.comment property with internal=true.
+func (c *client) PostComment(ctx context.Context, externalID, body string, internal bool) (connectors.ExternalComment, error) {
 	if err := validateIssueKey(externalID); err != nil {
 		return connectors.ExternalComment{}, err
 	}
@@ -127,7 +129,15 @@ func (c *client) PostComment(ctx context.Context, externalID, body string) (conn
 	commURL := base.JoinPath("rest", "api", "3", "issue", externalID, "comment")
 
 	adfBody := buildADFDoc(body)
-	payload, err := json.Marshal(map[string]any{"body": adfBody})
+	commentPayload := map[string]any{"body": adfBody}
+	if internal {
+		// JSM internal comment: the sd.public.comment property with internal=true marks the
+		// comment visible to agents only. On a non-Service-Management project Jira ignores it.
+		commentPayload["properties"] = []map[string]any{
+			{"key": "sd.public.comment", "value": map[string]any{"internal": true}},
+		}
+	}
+	payload, err := json.Marshal(commentPayload)
 	if err != nil {
 		return connectors.ExternalComment{}, fmt.Errorf("jira: marshal comment: %w", ErrUpstream)
 	}

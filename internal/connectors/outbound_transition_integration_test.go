@@ -48,7 +48,7 @@ func (r *transitionRecorder) TransitionStatus(_ context.Context, externalID, sta
 func (r *transitionRecorder) FetchIssue(_ context.Context, _ string) (ExternalIssue, error) {
 	return ExternalIssue{}, nil
 }
-func (r *transitionRecorder) PostComment(_ context.Context, _, _ string) (ExternalComment, error) {
+func (r *transitionRecorder) PostComment(_ context.Context, _, _ string, _ bool) (ExternalComment, error) {
 	return ExternalComment{}, nil
 }
 func (r *transitionRecorder) ListUpdatedSince(_ context.Context, _ time.Time) ([]string, error) {

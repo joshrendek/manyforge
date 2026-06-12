@@ -42,7 +42,7 @@ func (f *fetchRecorder) FetchIssue(_ context.Context, externalID string) (Extern
 	}
 	return iss, nil
 }
-func (f *fetchRecorder) PostComment(_ context.Context, _, _ string) (ExternalComment, error) {
+func (f *fetchRecorder) PostComment(_ context.Context, _, _ string, _ bool) (ExternalComment, error) {
 	return ExternalComment{}, nil
 }
 func (f *fetchRecorder) TransitionStatus(_ context.Context, _, _ string) error { return nil }

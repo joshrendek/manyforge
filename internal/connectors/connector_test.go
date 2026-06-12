@@ -18,7 +18,7 @@ var _ TicketingConnector = (*fakeConnector)(nil)
 func (f *fakeConnector) FetchIssue(ctx context.Context, externalID string) (ExternalIssue, error) {
 	return f.issue, nil
 }
-func (f *fakeConnector) PostComment(ctx context.Context, externalID, body string) (ExternalComment, error) {
+func (f *fakeConnector) PostComment(ctx context.Context, externalID, body string, _ bool) (ExternalComment, error) {
 	return ExternalComment{ExternalID: "c-1", Body: body, CreatedAt: time.Unix(0, 0).UTC()}, nil
 }
 func (f *fakeConnector) TransitionStatus(ctx context.Context, externalID, status string) error {
@@ -43,7 +43,7 @@ func TestFakeConnectorSatisfiesInterface(t *testing.T) {
 	if err != nil || iss.ExternalID != "JIRA-1" {
 		t.Fatalf("fetch: err=%v issue=%+v", err, iss)
 	}
-	cm, err := c.PostComment(ctx, "JIRA-1", "hello")
+	cm, err := c.PostComment(ctx, "JIRA-1", "hello", false)
 	if err != nil || cm.Body != "hello" {
 		t.Fatalf("post comment: err=%v comment=%+v", err, cm)
 	}
