@@ -352,12 +352,12 @@ func (s *Service) RotateCredential(ctx context.Context, principalID, businessID,
 		}
 		if err := s.Verify.Verify(ctx, VerifyTarget{
 			Type: string(meta.Type), BaseURL: meta.BaseUrl, AllowPrivateBaseURL: meta.AllowPrivateBaseUrl,
-			Credential: Credential{Email: in.Email, APIToken: in.APIToken, WebhookSecret: in.WebhookSecret},
+			Credential: Credential(in),
 		}); err != nil {
 			return fmt.Errorf("connectors: credential verification failed: %w", errs.ErrValidation)
 		}
 	}
-	credBytes, err := json.Marshal(Credential{Email: in.Email, APIToken: in.APIToken, WebhookSecret: in.WebhookSecret})
+	credBytes, err := json.Marshal(Credential(in))
 	if err != nil {
 		return fmt.Errorf("connectors: marshal credential: %w", err)
 	}
