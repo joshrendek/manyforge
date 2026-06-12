@@ -346,7 +346,8 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 				ID:         ticketID,         // $1 = ticket id
 				MessageID:  db.PGUUID(msgID), // $2 = the message just inserted
 				Body:       &in.BodyText,     // $3 = comment body
-				BusinessID: businessID,       // $4 = ownership predicate
+				Internal:   false,            // a reply is requester-visible (public)
+				BusinessID: businessID,       // ownership predicate
 			}); oerr != nil {
 				return oerr
 			}
@@ -458,6 +459,25 @@ func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID
 		})
 		if ierr != nil {
 			return ierr
+		}
+
+		// manyforge-8c4: an internal note on a connector-linked ticket records a pending
+		// outbound op in THIS tx (the source write) with internal=true, so the
+		// OutboundDispatcher posts it to the external system as an INTERNAL comment (JSM
+		// internal comment / Zendesk private comment) — agent-only, never requester-visible.
+		// Mirrors Reply's enqueue: the ownership/linkage predicate lives in the SQL
+		// (INSERT…SELECT … WHERE business_id = $ AND connector_id IS NOT NULL), so this is a
+		// safe no-op for non-connector tickets; the Go guard just avoids a no-op round-trip.
+		if tk.ConnectorID.Valid {
+			if oerr := q.EnqueueOutboundComment(ctx, dbgen.EnqueueOutboundCommentParams{
+				ID:         ticketID,         // $1 = ticket id
+				MessageID:  db.PGUUID(msgID), // $2 = the note message just inserted
+				Body:       &in.BodyText,     // $3 = note body
+				Internal:   true,             // an internal note syncs as an INTERNAL comment
+				BusinessID: businessID,       // ownership predicate
+			}); oerr != nil {
+				return oerr
+			}
 		}
 
 		// Audit-in-tx (FR-014) via the shared helper.

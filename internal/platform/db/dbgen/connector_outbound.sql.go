@@ -13,16 +13,17 @@ import (
 )
 
 const enqueueOutboundComment = `-- name: EnqueueOutboundComment :exec
-INSERT INTO connector_outbound_op (business_id, tenant_root_id, connector_id, ticket_id, message_id, op_type, body)
-SELECT t.business_id, t.tenant_root_id, t.connector_id, t.id, $2, 'comment', $3
+INSERT INTO connector_outbound_op (business_id, tenant_root_id, connector_id, ticket_id, message_id, op_type, body, internal)
+SELECT t.business_id, t.tenant_root_id, t.connector_id, t.id, $2, 'comment', $3, $4
 FROM ticket t
-WHERE t.id = $1 AND t.business_id = $4 AND t.connector_id IS NOT NULL
+WHERE t.id = $1 AND t.business_id = $5 AND t.connector_id IS NOT NULL
 `
 
 type EnqueueOutboundCommentParams struct {
 	ID         uuid.UUID   `json:"id"`
 	MessageID  pgtype.UUID `json:"message_id"`
 	Body       *string     `json:"body"`
+	Internal   bool        `json:"internal"`
 	BusinessID uuid.UUID   `json:"business_id"`
 }
 
@@ -35,6 +36,7 @@ func (q *Queries) EnqueueOutboundComment(ctx context.Context, arg EnqueueOutboun
 		arg.ID,
 		arg.MessageID,
 		arg.Body,
+		arg.Internal,
 		arg.BusinessID,
 	)
 	return err

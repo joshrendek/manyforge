@@ -135,7 +135,7 @@ func TestPostComment(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
-	cm, err := c.PostComment(context.Background(), "12345", "Reply from ManyForge")
+	cm, err := c.PostComment(context.Background(), "12345", "Reply from ManyForge", false)
 	if err != nil {
 		t.Fatalf("PostComment: %v", err)
 	}
@@ -144,6 +144,10 @@ func TestPostComment(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, `"comment"`) || !strings.Contains(gotBody, "Reply from ManyForge") {
 		t.Errorf("body did not carry the comment: %s", gotBody)
+	}
+	// internal=false ⇒ a PUBLIC (requester-visible) comment.
+	if !strings.Contains(gotBody, `"public":true`) {
+		t.Errorf("internal=false comment must be public:true, body: %s", gotBody)
 	}
 	if cm.ExternalID != "8001" {
 		t.Errorf("ExternalID = %q, want 8001 (audit Comment event id)", cm.ExternalID)
@@ -159,7 +163,7 @@ func TestPostComment_RejectsTraversalID(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newTestClient(srv.URL, "ops@acme.test", "tok-123", "secret", srv.Client())
-	if _, err := c.PostComment(context.Background(), "9/../1", "hi"); !errors.Is(err, ErrBadTicketID) {
+	if _, err := c.PostComment(context.Background(), "9/../1", "hi", false); !errors.Is(err, ErrBadTicketID) {
 		t.Fatalf("err = %v, want Is(ErrBadTicketID)", err)
 	}
 }

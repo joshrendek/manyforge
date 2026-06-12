@@ -37,7 +37,7 @@ var _ TicketingConnector = (*reconcileFakeConnector)(nil)
 func (f *reconcileFakeConnector) FetchIssue(_ context.Context, _ string) (ExternalIssue, error) {
 	return ExternalIssue{}, nil
 }
-func (f *reconcileFakeConnector) PostComment(_ context.Context, _, _ string) (ExternalComment, error) {
+func (f *reconcileFakeConnector) PostComment(_ context.Context, _, _ string, _ bool) (ExternalComment, error) {
 	return ExternalComment{}, nil
 }
 func (f *reconcileFakeConnector) TransitionStatus(_ context.Context, _, _ string) error { return nil }

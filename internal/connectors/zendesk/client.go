@@ -178,9 +178,11 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 	return issue, nil
 }
 
-// PostComment appends a public comment by updating the ticket; the created comment's id
-// comes from the response audit's "Comment" event.
-func (c *client) PostComment(ctx context.Context, externalID, body string) (connectors.ExternalComment, error) {
+// PostComment appends a comment to the external ticket by updating it; the created comment's
+// id comes from the response audit's "Comment" event. When internal is true the comment is
+// posted as a Zendesk PRIVATE/internal comment (public=false) — visible to agents only, never
+// to the requester.
+func (c *client) PostComment(ctx context.Context, externalID, body string, internal bool) (connectors.ExternalComment, error) {
 	if err := validateTicketID(externalID); err != nil {
 		return connectors.ExternalComment{}, err
 	}
@@ -189,9 +191,10 @@ func (c *client) PostComment(ctx context.Context, externalID, body string) (conn
 		return connectors.ExternalComment{}, fmt.Errorf("zendesk: invalid base_url: %w", ErrUpstream)
 	}
 	ticketURL := base.JoinPath("api", "v2", "tickets", externalID+".json")
+	// A Zendesk comment is internal when public=false; an internal note maps to public=!internal.
 	payload, err := json.Marshal(map[string]any{
 		"ticket": map[string]any{
-			"comment": map[string]any{"body": body, "public": true},
+			"comment": map[string]any{"body": body, "public": !internal},
 		},
 	})
 	if err != nil {

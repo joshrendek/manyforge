@@ -48,7 +48,7 @@ var _ TicketingConnector = (*hmacFakeConnector)(nil)
 func (h *hmacFakeConnector) FetchIssue(_ context.Context, _ string) (ExternalIssue, error) {
 	return ExternalIssue{}, nil
 }
-func (h *hmacFakeConnector) PostComment(_ context.Context, _, _ string) (ExternalComment, error) {
+func (h *hmacFakeConnector) PostComment(_ context.Context, _, _ string, _ bool) (ExternalComment, error) {
 	return ExternalComment{}, nil
 }
 func (h *hmacFakeConnector) TransitionStatus(_ context.Context, _, _ string) error { return nil }

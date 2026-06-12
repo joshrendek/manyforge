@@ -50,6 +50,7 @@ type claimedOp struct {
 	TicketSubject string
 	Body          *string
 	Attempts      int
+	Internal      bool
 }
 
 // OutboundDispatcher periodically claims pending outbound ops and pushes them to the
@@ -96,7 +97,7 @@ func (d *OutboundDispatcher) dispatchOnce(ctx context.Context) error {
 	var ops []claimedOp
 	if err := d.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT op_id, op_type, connector_id, ticket_id, message_id, ticket_external_id, ticket_subject, body, attempts
+			`SELECT op_id, op_type, connector_id, ticket_id, message_id, ticket_external_id, ticket_subject, body, attempts, internal
 			   FROM claim_outbound_ops($1)`, batch)
 		if err != nil {
 			return fmt.Errorf("claim_outbound_ops: %w", err)
@@ -105,7 +106,7 @@ func (d *OutboundDispatcher) dispatchOnce(ctx context.Context) error {
 		for rows.Next() {
 			var o claimedOp
 			if err := rows.Scan(&o.ID, &o.Type, &o.ConnectorID, &o.TicketID, &o.MessageID,
-				&o.TicketExtID, &o.TicketSubject, &o.Body, &o.Attempts); err != nil {
+				&o.TicketExtID, &o.TicketSubject, &o.Body, &o.Attempts, &o.Internal); err != nil {
 				return fmt.Errorf("scan claimed op: %w", err)
 			}
 			ops = append(ops, o)
@@ -226,8 +227,10 @@ func (d *OutboundDispatcher) dispatchComment(ctx context.Context, conn Ticketing
 	if o.Body != nil {
 		body = *o.Body
 	}
-	// HTTP — NO tx held.
-	cm, err := conn.PostComment(ctx, *o.TicketExtID, body)
+	// HTTP — NO tx held. o.Internal routes an internal note to the external system as an
+	// INTERNAL comment (JSM internal comment / Zendesk private comment) rather than a
+	// requester-visible reply.
+	cm, err := conn.PostComment(ctx, *o.TicketExtID, body, o.Internal)
 	if err != nil {
 		return fmt.Errorf("PostComment: %w", err)
 	}

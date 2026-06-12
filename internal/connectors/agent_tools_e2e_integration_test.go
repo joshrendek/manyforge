@@ -58,7 +58,7 @@ func (c *e2eConnector) TransitionStatus(_ context.Context, externalID, status st
 	return nil
 }
 
-func (c *e2eConnector) PostComment(_ context.Context, _, _ string) (ExternalComment, error) {
+func (c *e2eConnector) PostComment(_ context.Context, _, _ string, _ bool) (ExternalComment, error) {
 	return ExternalComment{}, nil
 }
 func (c *e2eConnector) ListUpdatedSince(_ context.Context, _ time.Time) ([]string, error) {

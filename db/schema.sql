@@ -499,6 +499,7 @@ CREATE TABLE connector_outbound_op (
     attempts       int NOT NULL,
     body           text,
     last_error     text,
+    internal       boolean NOT NULL DEFAULT false,
     created_at     timestamptz NOT NULL,
     updated_at     timestamptz NOT NULL,
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
