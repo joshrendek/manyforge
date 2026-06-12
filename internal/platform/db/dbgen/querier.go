@@ -503,6 +503,11 @@ type Querier interface {
 	// (invitees are not yet members), invoked via raw SQL in the service.
 	// A role assignable within the tenant: a preset (NULL tenant) or the tenant's own.
 	RoleVisibleInTenant(ctx context.Context, arg RoleVisibleInTenantParams) (uuid.UUID, error)
+	// RotateConnectorSecretRef atomically swaps the sealed-credential pointer to new_secret_ref,
+	// locking the connector row (FOR UPDATE) and RETURNING the OLD secret_ref it replaced — so the
+	// caller deletes exactly the secret it displaced, with no TOCTOU against a concurrent rotation.
+	// Scoped to (id, business_id); unknown/foreign id → no row → pgx.ErrNoRows → 404.
+	RotateConnectorSecretRef(ctx context.Context, arg RotateConnectorSecretRefParams) (uuid.UUID, error)
 	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
 	// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
 	ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error
@@ -522,9 +527,6 @@ type Querier interface {
 	// updatable (they are part of the connector's identity). No matching row → no row returned
 	// → pgx.ErrNoRows → 404 (no oracle). status is written as text exactly like InsertConnector.
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
-	// UpdateConnectorSecretRef swaps the sealed-credential pointer during rotation, scoped to
-	// (id, business_id). :execrows lets the caller detect a no-op (unknown/foreign id → 0 rows).
-	UpdateConnectorSecretRef(ctx context.Context, arg UpdateConnectorSecretRefParams) (int64, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
 	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error

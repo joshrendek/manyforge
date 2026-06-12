@@ -39,11 +39,21 @@ UPDATE connector SET
 WHERE id = sqlc.arg('id') AND business_id = sqlc.arg('business_id')
 RETURNING *;
 
--- UpdateConnectorSecretRef swaps the sealed-credential pointer during rotation, scoped to
--- (id, business_id). :execrows lets the caller detect a no-op (unknown/foreign id → 0 rows).
--- name: UpdateConnectorSecretRef :execrows
-UPDATE connector SET secret_ref = sqlc.arg('secret_ref'), updated_at = now()
-WHERE id = sqlc.arg('id') AND business_id = sqlc.arg('business_id');
+-- RotateConnectorSecretRef atomically swaps the sealed-credential pointer to new_secret_ref,
+-- locking the connector row (FOR UPDATE) and RETURNING the OLD secret_ref it replaced — so the
+-- caller deletes exactly the secret it displaced, with no TOCTOU against a concurrent rotation.
+-- Scoped to (id, business_id); unknown/foreign id → no row → pgx.ErrNoRows → 404.
+-- name: RotateConnectorSecretRef :one
+WITH old AS (
+    SELECT secret_ref FROM connector
+    WHERE id = sqlc.arg('id') AND business_id = sqlc.arg('business_id')
+    FOR UPDATE
+)
+UPDATE connector
+SET secret_ref = sqlc.arg('new_secret_ref'), updated_at = now()
+FROM old
+WHERE connector.id = sqlc.arg('id') AND connector.business_id = sqlc.arg('business_id')
+RETURNING old.secret_ref;
 
 -- DetachTicketsFromConnector severs linked tickets on hard-delete: NULL connector_id only,
 -- PRESERVING external_id/external_url as read-only history. Permitted by

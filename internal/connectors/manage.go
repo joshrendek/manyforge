@@ -3,6 +3,7 @@ package connectors
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -58,6 +59,8 @@ func healthState(status string, failedOps int64) string {
 func connectorToView(row dbgen.Connector, h ConnectorHealth) ConnectorView {
 	var cfg map[string]any
 	if len(row.Config) > 0 {
+		// Stored config is always well-formed (written via json.Marshal); on the read path a
+		// corrupt config renders as {} intentionally rather than failing the list/get.
 		_ = json.Unmarshal(row.Config, &cfg)
 	}
 	if cfg == nil {
@@ -132,6 +135,9 @@ func (s *Service) Get(ctx context.Context, principalID, businessID, connectorID 
 	var h ConnectorHealth
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
+		// GetConnector is the ownership gate (scoped to id + business_id) and MUST precede
+		// GetConnectorHealth, which is a pure-aggregate query that succeeds for any id and
+		// would otherwise leak counts for connectors the caller doesn't own.
 		r, qerr := q.GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID})
 		if qerr != nil {
 			return qerr
@@ -316,7 +322,7 @@ func (s *Service) Delete(ctx context.Context, principalID, businessID, connector
 		if n == 0 {
 			return fmt.Errorf("connectors: not found: %w", errs.ErrNotFound)
 		}
-		if verr := s.Vault.Delete(ctx, tx, businessID, row.SecretRef); verr != nil {
+		if verr := s.Vault.Delete(ctx, tx, businessID, row.SecretRef); verr != nil && !errors.Is(verr, errs.ErrNotFound) {
 			return verr
 		}
 		return auditConnector(ctx, tx, businessID, principalID, connectorID, "connector.deleted",
@@ -333,18 +339,17 @@ func (s *Service) RotateCredential(ctx context.Context, principalID, businessID,
 	if err := validateRotate(in); err != nil {
 		return err
 	}
-	// Read connector metadata (and prove ownership) in a short tx; need base_url/type/flag for
-	// verification and the old secret_ref for deletion.
-	var meta dbgen.Connector
-	if err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		r, qerr := dbgen.New(tx).GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID})
-		meta = r
-		return qerr
-	}); err != nil {
-		return mapErr(err)
-	}
-	// Live-verify the NEW credential before sealing (only when a Verifier is configured).
+	// When a Verifier is wired, live-verify the NEW credential before any write. The connector's
+	// immutable base_url/type/flag are read here (ownership also proven); base_url/type can't change.
 	if s.Verify != nil {
+		var meta dbgen.Connector
+		if err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+			r, qerr := dbgen.New(tx).GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID})
+			meta = r
+			return qerr
+		}); err != nil {
+			return mapErr(err)
+		}
 		if err := s.Verify.Verify(ctx, VerifyTarget{
 			Type: string(meta.Type), BaseURL: meta.BaseUrl, AllowPrivateBaseURL: meta.AllowPrivateBaseUrl,
 			Credential: Credential{Email: in.Email, APIToken: in.APIToken, WebhookSecret: in.WebhookSecret},
@@ -357,20 +362,19 @@ func (s *Service) RotateCredential(ctx context.Context, principalID, businessID,
 		return fmt.Errorf("connectors: marshal credential: %w", err)
 	}
 	return mapErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
 		newRef, perr := s.Vault.Put(ctx, tx, businessID, "connector", credBytes)
 		if perr != nil {
 			return perr
 		}
-		n, uerr := dbgen.New(tx).UpdateConnectorSecretRef(ctx, dbgen.UpdateConnectorSecretRefParams{
-			SecretRef: newRef, ID: connectorID, BusinessID: businessID,
+		oldRef, uerr := q.RotateConnectorSecretRef(ctx, dbgen.RotateConnectorSecretRefParams{
+			ID: connectorID, BusinessID: businessID, NewSecretRef: newRef,
 		})
 		if uerr != nil {
-			return uerr
+			return uerr // pgx.ErrNoRows → ErrNotFound (connector gone)
 		}
-		if n == 0 {
-			return fmt.Errorf("connectors: not found: %w", errs.ErrNotFound)
-		}
-		if derr := s.Vault.Delete(ctx, tx, businessID, meta.SecretRef); derr != nil {
+		// Delete the displaced secret. A secret already absent is not an error here.
+		if derr := s.Vault.Delete(ctx, tx, businessID, oldRef); derr != nil && !errors.Is(derr, errs.ErrNotFound) {
 			return derr
 		}
 		return auditConnector(ctx, tx, businessID, principalID, connectorID, "connector.credential_rotated", map[string]any{})
