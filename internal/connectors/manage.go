@@ -276,6 +276,54 @@ func (s *Service) Test(ctx context.Context, principalID, businessID, connectorID
 	return TestResult{OK: true, Detail: "ok"}, nil
 }
 
+// Delete is the terminal connector removal. In one tx it: confirms ownership (and reads
+// secret_ref), detaches linked tickets + messages to native (NULL connector_id, PRESERVING
+// external_id/external_url), cascade-deletes the sync/webhook/outbound bookkeeping, deletes
+// the connector row, then deletes the sealed secret — and audits. Order matters: tickets and
+// bookkeeping clear their FKs into connector BEFORE the connector row is deleted; the secret
+// is deleted LAST (the connector references it until then). Unknown/foreign id → ErrNotFound.
+func (s *Service) Delete(ctx context.Context, principalID, businessID, connectorID uuid.UUID) error {
+	return mapErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		row, gerr := q.GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID})
+		if gerr != nil {
+			return gerr // pgx.ErrNoRows → ErrNotFound
+		}
+		// Capture the linked-ticket count for the audit before detaching.
+		linked, herr := q.GetConnectorHealth(ctx, toPGUUID(connectorID))
+		if herr != nil {
+			return herr
+		}
+		if _, derr := q.DetachTicketsFromConnector(ctx, toPGUUID(connectorID)); derr != nil {
+			return derr
+		}
+		if _, derr := q.DetachTicketMessagesFromConnector(ctx, toPGUUID(connectorID)); derr != nil {
+			return derr
+		}
+		if _, derr := q.DeleteConnectorSyncState(ctx, connectorID); derr != nil {
+			return derr
+		}
+		if _, derr := q.DeleteConnectorWebhookDeliveries(ctx, connectorID); derr != nil {
+			return derr
+		}
+		if _, derr := q.DeleteConnectorOutboundOps(ctx, connectorID); derr != nil {
+			return derr
+		}
+		n, derr := q.DeleteConnectorRow(ctx, dbgen.DeleteConnectorRowParams{ID: connectorID, BusinessID: businessID})
+		if derr != nil {
+			return derr
+		}
+		if n == 0 {
+			return fmt.Errorf("connectors: not found: %w", errs.ErrNotFound)
+		}
+		if verr := s.Vault.Delete(ctx, tx, businessID, row.SecretRef); verr != nil {
+			return verr
+		}
+		return auditConnector(ctx, tx, businessID, principalID, connectorID, "connector.deleted",
+			map[string]any{"type": string(row.Type), "base_url": row.BaseUrl, "detached_tickets": linked.LinkedTicketCount})
+	}))
+}
+
 // RotateCredential seals a new credential bundle and atomically swaps the connector's
 // secret_ref, deleting the old sealed secret — mirroring Create's seal/audit discipline.
 // When a Verifier is wired, the NEW credential is live-verified BEFORE the tx; a credential
