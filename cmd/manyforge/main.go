@@ -287,6 +287,7 @@ func main() {
 		connManageH = connectors.NewHandler(connSvc)
 		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
 		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: 5 * time.Minute}
+		connManageH.SetSyncTrigger(connReconciler) // wire the "Sync now" endpoint to the reconciler
 		outboundDispatcher = &connectors.OutboundDispatcher{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: 15 * time.Second, Batch: 20}
 		// Assign the gateway and rebuild the tool registry for both the Engine and
 		// the ApprovalExecutor so they pick up the connector tools. This mirrors the

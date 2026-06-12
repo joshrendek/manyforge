@@ -230,6 +230,17 @@ func (r *Reconciler) reconcileConnector(ctx context.Context, c dueConnector) err
 	return nil
 }
 
+// ReconcileOne runs an immediate, on-demand reconcile of a single connector (the
+// "Sync now" management action). It does a FULL pull (since = zero) so the caller gets a
+// complete re-sync regardless of last_reconciled_at; the inbound upsert is idempotent
+// (external-wins, deduped by the unique (connector_id, external_id) index) and the search is
+// project-scoped via config.project_key. Principal-less like the poller (DEFINER-gated) —
+// callers MUST authorize connector ownership (RLS) first. A disabled/unknown connector is a
+// no-op (logged inside reconcileConnector).
+func (r *Reconciler) ReconcileOne(ctx context.Context, connectorID uuid.UUID) error {
+	return r.reconcileConnector(ctx, dueConnector{ID: connectorID})
+}
+
 func (r *Reconciler) logger() *slog.Logger {
 	if r.Logger != nil {
 		return r.Logger
