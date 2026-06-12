@@ -99,6 +99,16 @@ type Querier interface {
 	// row is deleted first (it FKs the principal), then the principal. rows-affected (the
 	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
 	DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error)
+	// DeleteConnectorOutboundOps cascades the outbound op queue for a connector.
+	DeleteConnectorOutboundOps(ctx context.Context, connectorID uuid.UUID) (int64, error)
+	// DeleteConnectorRow removes the connector row, scoped to (id, business_id). Run AFTER the
+	// detach + cascade (those clear FKs into connector) and BEFORE Vault.Delete (the connector
+	// still references secret_ref until this runs).
+	DeleteConnectorRow(ctx context.Context, arg DeleteConnectorRowParams) (int64, error)
+	// DeleteConnectorSyncState cascades the per-ticket sync bookkeeping for a connector.
+	DeleteConnectorSyncState(ctx context.Context, connectorID uuid.UUID) (int64, error)
+	// DeleteConnectorWebhookDeliveries cascades the inbound webhook-dedup rows for a connector.
+	DeleteConnectorWebhookDeliveries(ctx context.Context, connectorID uuid.UUID) (int64, error)
 	// DeleteMCPServer deletes an MCP server by (id, business_id).
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams) (int64, error)
@@ -112,6 +122,13 @@ type Querier interface {
 	// full-set tag replacement. Scoped to (ticket_id, business_id).
 	DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsParams) error
 	DepthFromRoot(ctx context.Context, arg DepthFromRootParams) (int32, error)
+	// DetachTicketMessagesFromConnector — same sever for message-level external linkage.
+	DetachTicketMessagesFromConnector(ctx context.Context, connectorID pgtype.UUID) (int64, error)
+	// DetachTicketsFromConnector severs linked tickets on hard-delete: NULL connector_id only,
+	// PRESERVING external_id/external_url as read-only history. Permitted by
+	// CHECK(connector_id IS NULL OR external_id IS NOT NULL) — the NULL-connector clause passes.
+	// Scoped by connector_id (a globally-unique uuid the caller already confirmed it owns).
+	DetachTicketsFromConnector(ctx context.Context, connectorID pgtype.UUID) (int64, error)
 	// Effective permissions for a principal at a business: the union of permissions
 	// from every grant the principal holds on the business or any non-archived
 	// ancestor (downward-only inheritance, FR-010). The locked Owner role is handled
@@ -168,6 +185,9 @@ type Querier interface {
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	// GetConnector fetches one connector scoped to (id, business); foreign/unknown id → no row (→ not-found).
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
+	// GetConnectorHealth returns the same aggregates for a single connector (used by Get). The
+	// caller has already confirmed ownership via GetConnector; RLS still scopes the subqueries.
+	GetConnectorHealth(ctx context.Context, connectorID pgtype.UUID) (GetConnectorHealthRow, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
 	// GetEmailDomain loads a single email domain scoped to (id, business_id) — the
@@ -357,6 +377,14 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// ListConnectorHealth returns per-connector sync-health aggregates for a business in one
+	// round-trip (avoids N+1). Counts run under the caller's RLS context. last_error is the
+	// most-recent failed outbound op's stored reason (already redacted at write time).
+	ListConnectorHealth(ctx context.Context, businessID uuid.UUID) ([]ListConnectorHealthRow, error)
+	// ListConnectors returns all connectors for a business, newest-stable order. RLS + the
+	// business_id predicate scope this to the caller's tenant. Credentials are NOT joined —
+	// only the connector row (which holds no plaintext secret, just secret_ref).
+	ListConnectors(ctx context.Context, businessID uuid.UUID) ([]Connector, error)
 	// ListEmailDomains is the first (unkeyed) page of a business's email domains, oldest
 	// first for a stable keyset. lim is the clamped limit + 1 so the service detects a
 	// further page.
@@ -489,6 +517,14 @@ type Querier interface {
 	UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error)
 	// Final/intermediate state write. status + token/cost totals + optional error.
 	UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRunProgressParams) (AgentRun, error)
+	// UpdateConnector applies a partial (PATCH) change scoped to (id, business_id). Omitted
+	// fields (NULL narg) are preserved via COALESCE. base_url and type are intentionally NOT
+	// updatable (they are part of the connector's identity). No matching row → no row returned
+	// → pgx.ErrNoRows → 404 (no oracle). status is written as text exactly like InsertConnector.
+	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
+	// UpdateConnectorSecretRef swaps the sealed-credential pointer during rotation, scoped to
+	// (id, business_id). :execrows lets the caller detect a no-op (unknown/foreign id → 0 rows).
+	UpdateConnectorSecretRef(ctx context.Context, arg UpdateConnectorSecretRefParams) (int64, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
 	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error
