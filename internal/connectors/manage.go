@@ -230,3 +230,74 @@ func (s *Service) Update(ctx context.Context, principalID, businessID, connector
 	}
 	return connectorToView(row, h), nil
 }
+
+// RotateCredentialInput replaces the full sealed credential bundle. Partial (webhook-secret-only)
+// rotation is intentionally unsupported (YAGNI) — callers always supply the complete bundle.
+type RotateCredentialInput struct {
+	Email         string
+	APIToken      string
+	WebhookSecret string
+}
+
+func validateRotate(in RotateCredentialInput) error {
+	if in.Email == "" {
+		return fmt.Errorf("connectors: email required: %w", errs.ErrValidation)
+	}
+	if in.APIToken == "" {
+		return fmt.Errorf("connectors: api_token required: %w", errs.ErrValidation)
+	}
+	return nil
+}
+
+// RotateCredential seals a new credential bundle and atomically swaps the connector's
+// secret_ref, deleting the old sealed secret — mirroring Create's seal/audit discipline.
+// When a Verifier is wired, the NEW credential is live-verified BEFORE the tx; a credential
+// that fails to authenticate is refused (400) and nothing is persisted. base_url/type are
+// read from the existing connector (unchanged).
+func (s *Service) RotateCredential(ctx context.Context, principalID, businessID, connectorID uuid.UUID, in RotateCredentialInput) error {
+	if err := validateRotate(in); err != nil {
+		return err
+	}
+	// Read connector metadata (and prove ownership) in a short tx; need base_url/type/flag for
+	// verification and the old secret_ref for deletion.
+	var meta dbgen.Connector
+	if err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, qerr := dbgen.New(tx).GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID})
+		meta = r
+		return qerr
+	}); err != nil {
+		return mapErr(err)
+	}
+	// Live-verify the NEW credential before sealing (only when a Verifier is configured).
+	if s.Verify != nil {
+		if err := s.Verify.Verify(ctx, VerifyTarget{
+			Type: string(meta.Type), BaseURL: meta.BaseUrl, AllowPrivateBaseURL: meta.AllowPrivateBaseUrl,
+			Credential: Credential{Email: in.Email, APIToken: in.APIToken, WebhookSecret: in.WebhookSecret},
+		}); err != nil {
+			return fmt.Errorf("connectors: credential verification failed: %w", errs.ErrValidation)
+		}
+	}
+	credBytes, err := json.Marshal(Credential{Email: in.Email, APIToken: in.APIToken, WebhookSecret: in.WebhookSecret})
+	if err != nil {
+		return fmt.Errorf("connectors: marshal credential: %w", err)
+	}
+	return mapErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		newRef, perr := s.Vault.Put(ctx, tx, businessID, "connector", credBytes)
+		if perr != nil {
+			return perr
+		}
+		n, uerr := dbgen.New(tx).UpdateConnectorSecretRef(ctx, dbgen.UpdateConnectorSecretRefParams{
+			SecretRef: newRef, ID: connectorID, BusinessID: businessID,
+		})
+		if uerr != nil {
+			return uerr
+		}
+		if n == 0 {
+			return fmt.Errorf("connectors: not found: %w", errs.ErrNotFound)
+		}
+		if derr := s.Vault.Delete(ctx, tx, businessID, meta.SecretRef); derr != nil {
+			return derr
+		}
+		return auditConnector(ctx, tx, businessID, principalID, connectorID, "connector.credential_rotated", map[string]any{})
+	}))
+}
