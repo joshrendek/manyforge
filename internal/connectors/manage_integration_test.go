@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -183,3 +185,69 @@ func TestManageTest(t *testing.T) {
 type stubVerifier struct{}
 
 func (stubVerifier) Verify(ctx context.Context, t VerifyTarget) error { return nil }
+
+func TestManageDeleteDetaches(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil)
+	id, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	oldRef := connectorSecretRef(t, ctx, tdb, seed.businessID, id)
+
+	// Link a ticket to the connector (simulate a synced ticket) via the inbound DEFINER fn.
+	externalID := "JIRA-77"
+	var ticketID uuid.UUID
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, syncIssueSQL,
+			id, externalID, "https://acme.atlassian.net/browse/JIRA-77", "Linked issue",
+			"open", "high", "reporter@example.com", "Reporter", timeMinus5(), []byte(`{"key":"JIRA-77"}`),
+		).Scan(&ticketID)
+	}); err != nil {
+		t.Fatalf("seed linked ticket: %v", err)
+	}
+
+	// Delete the connector.
+	if err := svc.Delete(ctx, seed.principalID, seed.businessID, id); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Connector row gone.
+	var connCount int
+	tdb.Super.QueryRow(ctx, "SELECT count(*) FROM connector WHERE id=$1", id).Scan(&connCount)
+	if connCount != 0 {
+		t.Fatalf("delete: connector row still present")
+	}
+	// Secret deleted.
+	if secretExists(t, ctx, tdb, oldRef) {
+		t.Fatalf("delete: sealed secret not removed")
+	}
+	// Ticket SURVIVES, connector_id NULL, external_id/external_url PRESERVED.
+	var connID *uuid.UUID
+	var extID, extURL *string
+	if err := tdb.Super.QueryRow(ctx, "SELECT connector_id, external_id, external_url FROM ticket WHERE id=$1", ticketID).Scan(&connID, &extID, &extURL); err != nil {
+		t.Fatalf("read detached ticket: %v", err)
+	}
+	if connID != nil {
+		t.Fatalf("delete: ticket.connector_id not nulled")
+	}
+	if extID == nil || *extID != externalID {
+		t.Fatalf("delete: ticket.external_id not preserved, got %v", extID)
+	}
+	if extURL == nil || *extURL == "" {
+		t.Fatalf("delete: ticket.external_url not preserved")
+	}
+	// Sync-state bookkeeping gone.
+	var ssCount int
+	tdb.Super.QueryRow(ctx, "SELECT count(*) FROM connector_sync_state WHERE ticket_id=$1", ticketID).Scan(&ssCount)
+	if ssCount != 0 {
+		t.Fatalf("delete: connector_sync_state not cascaded")
+	}
+
+	// Delete unknown id → ErrNotFound.
+	if err := svc.Delete(ctx, seed.principalID, seed.businessID, uuid.New()); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("delete unknown: want ErrNotFound, got %v", err)
+	}
+}
+
+func timeMinus5() time.Time { return time.Now().UTC().Add(-5 * time.Minute) }
