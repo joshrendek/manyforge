@@ -53,7 +53,12 @@ type client struct {
 	email         string
 	apiToken      string
 	webhookSecret string
+	projectKey    string // optional: scope reconcile/search to this Jira project (config.project_key)
 }
+
+// projectKeyRe bounds a Jira project key to injection-safe characters before it is
+// interpolated into a JQL `project = "<key>"` clause.
+var projectKeyRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
 // compile-time check
 var _ connectors.TicketingConnector = (*client)(nil)
@@ -230,7 +235,13 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 	}
 	// Format as Jira expects: "2006-01-02 15:04"
 	ts := since.UTC().Format("2006-01-02 15:04")
+	// Scope to the connector's project when configured (config.project_key) so inbound
+	// reconcile only pulls that project, not every project the token can see. The key is
+	// validated against a strict pattern to stay injection-safe inside the JQL.
 	jql := fmt.Sprintf(`updated >= "%s" ORDER BY updated ASC`, ts)
+	if pk := c.projectKey; pk != "" && projectKeyRe.MatchString(pk) {
+		jql = fmt.Sprintf(`project = "%s" AND updated >= "%s" ORDER BY updated ASC`, pk, ts)
+	}
 
 	var keys []string
 	nextPageToken := ""

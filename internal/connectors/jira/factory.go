@@ -25,12 +25,16 @@ func NewFactory(timeout time.Duration) connectors.Factory {
 			AllowPrivate:  rc.AllowPrivateBaseURL,
 		})
 
+		// project_key (optional) scopes inbound reconcile to a single Jira project.
+		projectKey, _ := rc.Config["project_key"].(string)
+
 		return &client{
 			httpClient:    httpClient,
 			baseURL:       rc.BaseURL,
 			email:         rc.Credential.Email,
 			apiToken:      rc.Credential.APIToken,
 			webhookSecret: rc.Credential.WebhookSecret,
+			projectKey:    projectKey,
 		}, nil
 	}
 }

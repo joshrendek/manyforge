@@ -141,13 +141,18 @@ func (r *Reconciler) reconcileConnector(ctx context.Context, c dueConnector) err
 		baseURL       string
 		allowPriv     bool
 		sealed        string
+		configRaw     []byte
 	)
 	if err := r.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		// connector_outbound_context returns the same connector context as
+		// connector_webhook_context PLUS config (jsonb); reuse it so the reconcile can read
+		// config.project_key and scope the search to that one project (not every project the
+		// token can see).
 		return tx.QueryRow(ctx,
-			`SELECT business_id, tenant_root_id, ctype, base_url, allow_private_base_url, sealed_secret
-			   FROM connector_webhook_context($1)`,
+			`SELECT business_id, tenant_root_id, ctype, base_url, allow_private_base_url, sealed_secret, config
+			   FROM connector_outbound_context($1)`,
 			c.ID,
-		).Scan(&discardBiz, &discardTenant, &ctype, &baseURL, &allowPriv, &sealed)
+		).Scan(&discardBiz, &discardTenant, &ctype, &baseURL, &allowPriv, &sealed, &configRaw)
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			r.logger().WarnContext(ctx, "connectors/reconcile: connector not found or disabled",
@@ -172,12 +177,17 @@ func (r *Reconciler) reconcileConnector(ctx context.Context, c dueConnector) err
 		return nil // corruption / Create bug — not recoverable by retry
 	}
 
-	// Step 2c: build connector client.
+	// Step 2c: build connector client. Pass config so the client can scope to project_key.
+	var cfg map[string]any
+	if len(configRaw) > 0 {
+		_ = json.Unmarshal(configRaw, &cfg)
+	}
 	conn, err := r.Registry.BuildSystem(ResolvedConnector{
 		ID:                  c.ID.String(),
 		Type:                ctype,
 		BaseURL:             baseURL,
 		AllowPrivateBaseURL: allowPriv,
+		Config:              cfg,
 		Credential:          cred,
 	})
 	if err != nil {
