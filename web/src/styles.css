@@ -87,6 +87,7 @@ html[data-theme="dark"] {
 .mf-panel-danger{border-color:var(--mf-danger-soft);background:var(--mf-danger-soft)}
 .mf-field-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
 .mf-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+.mf-add-form{display:flex;gap:var(--mf-space-3);flex-wrap:wrap;align-items:flex-end;margin-top:var(--mf-space-3)}
 .mf-tags{display:inline-flex;gap:6px;flex-wrap:wrap}
 .mf-loading-row{display:flex;align-items:center;gap:8px;color:var(--mf-text-muted);padding:14px}
 .mf-empty-inline{color:var(--mf-text-muted);font-size:var(--mf-fs-sm);padding:14px}
