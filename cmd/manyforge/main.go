@@ -269,6 +269,7 @@ func main() {
 	// An explicitly-set-but-wrong-length key is a hard config error caught at Load().
 	var connReg *connectors.Registry
 	var connWebhookH *connectors.WebhookHandler
+	var connManageH *connectors.Handler
 	var inboundSyncSub *connectors.InboundSyncSubscriber
 	var connReconciler *connectors.Reconciler
 	var outboundDispatcher *connectors.OutboundDispatcher
@@ -283,6 +284,7 @@ func main() {
 		connReg.Register("jira", jira.NewFactory(60*time.Second))
 		connReg.Register("zendesk", zendesk.NewFactory(60*time.Second))
 		connWebhookH = connectors.NewWebhookHandler(database, connSealer, connReg, logger)
+		connManageH = connectors.NewHandler(connSvc)
 		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
 		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: 5 * time.Minute}
 		outboundDispatcher = &connectors.OutboundDispatcher{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: 15 * time.Second, Batch: 20}
@@ -467,15 +469,17 @@ func main() {
 		ticketsDelete:   httpx.RequirePermission(database, permResolve, "tickets.delete", businessIDFromPath),
 		inboxManage:     httpx.RequirePermission(database, permResolve, "inbox.manage", businessIDFromPath),
 		agents:          agentH,
-		agentsConfigure: httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
-		agentRuns:       agentRunH,
+		agentsConfigure:  httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
+		agentRuns:        agentRunH,
 		agentsRun:       httpx.RequirePermission(database, permResolve, "agents.run", businessIDFromPath),
 		accounting:      accountingH,
 		approvals:       approvalH,
 		agentsApprove:   httpx.RequirePermission(database, permResolve, "agents.approve", businessIDFromPath),
-		mcp:             mcpH,
-		mcpConfigure:    httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
-		connWebhookH:    connWebhookH,
+		mcp:              mcpH,
+		mcpConfigure:     httpx.RequirePermission(database, permResolve, "agents.configure", businessIDFromPath),
+		connWebhookH:     connWebhookH,
+		connectors:       connManageH,
+		connectorsManage: httpx.RequirePermission(database, permResolve, "connectors.manage", businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -643,6 +647,15 @@ type apiHandlers struct {
 	// other groups.
 	agentsConfigure func(http.Handler) http.Handler
 
+	// connectors is the Spec 004 connector-management CRUD handler. Nil when
+	// MANYFORGE_CONNECTOR_MASTER_KEY is unset (connectors disabled); mountAPIRoutes
+	// guards on nil so the route group is not registered in that case.
+	connectors *connectors.Handler
+	// connectorsManage gates the connector-management CRUD slice on the
+	// connectors.manage permission (migration-0048 catalog). Same RLS-bound
+	// 404-on-lacking-perm semantics as the other groups.
+	connectorsManage func(http.Handler) http.Handler
+
 	// agentRuns is the US3 run trigger/status handler (Spec 003): POST a manual run
 	// (202) and GET its status (200) under a business's agent.
 	agentRuns *agents.RunHandler
@@ -775,6 +788,16 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				mc.Use(h.mcpConfigure)
 				h.mcp.ProtectedRoutes(mc)
 			})
+			// Connectors management slice: CRUD external connectors under a business, gated on
+			// connectors.manage (migration-0048 catalog). Same RLS-bound 404-on-lacking-perm semantics.
+			// Guard on nil: when MANYFORGE_CONNECTOR_MASTER_KEY is unset the handler is nil and the
+			// route group is simply not registered.
+			if h.connectors != nil {
+				pr.Group(func(cg chi.Router) {
+					cg.Use(h.connectorsManage)
+					h.connectors.ProtectedRoutes(cg)
+				})
+			}
 		})
 	})
 }
