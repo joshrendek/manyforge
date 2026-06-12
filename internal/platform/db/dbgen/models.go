@@ -653,6 +653,7 @@ type ConnectorOutboundOp struct {
 	Attempts     int32                     `json:"attempts"`
 	Body         *string                   `json:"body"`
 	LastError    *string                   `json:"last_error"`
+	Internal     bool                      `json:"internal"`
 	CreatedAt    time.Time                 `json:"created_at"`
 	UpdatedAt    time.Time                 `json:"updated_at"`
 }

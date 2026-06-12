@@ -3,8 +3,8 @@
 -- row is inserted ONLY if the ticket is owned by the business AND is connector-linked, and
 -- connector_id/tenant_root_id are derived from that ticket row (defense-in-depth beyond RLS).
 -- name: EnqueueOutboundComment :exec
-INSERT INTO connector_outbound_op (business_id, tenant_root_id, connector_id, ticket_id, message_id, op_type, body)
-SELECT t.business_id, t.tenant_root_id, t.connector_id, t.id, $2, 'comment', $3
+INSERT INTO connector_outbound_op (business_id, tenant_root_id, connector_id, ticket_id, message_id, op_type, body, internal)
+SELECT t.business_id, t.tenant_root_id, t.connector_id, t.id, $2, 'comment', $3, sqlc.arg(internal)
 FROM ticket t
 WHERE t.id = $1 AND t.business_id = sqlc.arg(business_id) AND t.connector_id IS NOT NULL;
 

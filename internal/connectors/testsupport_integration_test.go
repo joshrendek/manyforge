@@ -339,7 +339,7 @@ func (c *httpStubConnector) post(ctx context.Context, path string, payload any, 
 	return nil
 }
 
-func (c *httpStubConnector) PostComment(ctx context.Context, externalID, body string) (ExternalComment, error) {
+func (c *httpStubConnector) PostComment(ctx context.Context, externalID, body string, _ bool) (ExternalComment, error) {
 	var resp struct {
 		ID     string `json:"id"`
 		Author struct {
@@ -414,8 +414,8 @@ func (c *roundTripConnector) FetchIssue(_ context.Context, externalID string) (E
 	return iss, nil
 }
 
-func (c *roundTripConnector) PostComment(ctx context.Context, externalID, body string) (ExternalComment, error) {
-	return c.post.PostComment(ctx, externalID, body)
+func (c *roundTripConnector) PostComment(ctx context.Context, externalID, body string, internal bool) (ExternalComment, error) {
+	return c.post.PostComment(ctx, externalID, body, internal)
 }
 func (c *roundTripConnector) CreateIssue(ctx context.Context, draft ExternalIssueDraft) (ExternalIssue, error) {
 	return c.post.CreateIssue(ctx, draft)

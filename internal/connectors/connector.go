@@ -57,8 +57,10 @@ type WebhookEvent struct {
 type TicketingConnector interface {
 	// FetchIssue returns the external issue + its comments by external id.
 	FetchIssue(ctx context.Context, externalID string) (ExternalIssue, error)
-	// PostComment appends a comment, returning the created comment's metadata.
-	PostComment(ctx context.Context, externalID, body string) (ExternalComment, error)
+	// PostComment appends a comment, returning the created comment's metadata. When internal
+	// is true the comment is posted as INTERNAL/private (JSM internal comment / Zendesk
+	// private comment) — visible to agents only, never to the requester.
+	PostComment(ctx context.Context, externalID, body string, internal bool) (ExternalComment, error)
 	// TransitionStatus moves the external issue to the target status.
 	TransitionStatus(ctx context.Context, externalID, status string) error
 	// ListUpdatedSince returns external issue ids updated at/after the cursor (reconcile).
