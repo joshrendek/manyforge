@@ -156,3 +156,30 @@ func secretExists(t *testing.T, ctx context.Context, tdb *testdb.TestDB, secretI
 	}
 	return n > 0
 }
+
+func TestManageTest(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+
+	// With a stub Verifier that returns nil → ok=true.
+	okSvc := newConnService(t, tdb, stubVerifier{})
+	id, err := okSvc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	res, err := okSvc.Test(ctx, seed.principalID, seed.businessID, id)
+	if err != nil {
+		t.Fatalf("test: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("test: want ok=true, got %+v", res)
+	}
+
+	// Unknown id → ErrNotFound (the connector must resolve first).
+	if _, err := okSvc.Test(ctx, seed.principalID, seed.businessID, uuid.New()); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("test unknown: want ErrNotFound, got %v", err)
+	}
+}
+
+type stubVerifier struct{}
+
+func (stubVerifier) Verify(ctx context.Context, t VerifyTarget) error { return nil }
