@@ -1,0 +1,225 @@
+openapi: 3.1.0
+info:
+  title: ManyForge External Connectors API
+  version: 0.1.0
+  description: >
+    Backend contract for connector management (Spec 004 / manyforge-4zs.3), layered on the
+    tenant foundation (spec 001). Inherits every foundation convention: Bearer JWT auth, RLS
+    tenant scoping, 404-for-unauthorized (no existence oracle), 400 VALIDATION with safe
+    messages. Credentials (email/api_token/webhook_secret) are WRITE-ONLY: accepted on
+    create/rotate, never returned. This file describes ONLY the connector-management endpoints;
+    the inbound webhook endpoint and auth/account endpoints live in their own contracts.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Connectors
+    description: Manage external ticketing connectors (Jira/Zendesk) for a business.
+paths:
+  /businesses/{id}/connectors:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+    get:
+      tags: [Connectors]
+      operationId: listConnectors
+      summary: List connectors for a business (with sync health)
+      responses:
+        '200':
+          description: Connector list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Connector' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Connectors]
+      operationId: createConnector
+      summary: Connect a new external system (validates + live-verifies the credential)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConnector' }
+      responses:
+        '201':
+          description: Created connector (no credential)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /businesses/{id}/connectors/{cid}:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/ConnectorID'
+    get:
+      tags: [Connectors]
+      operationId: getConnector
+      responses:
+        '200':
+          description: Connector
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Connectors]
+      operationId: updateConnector
+      summary: Edit display_name / config / status (base_url + type immutable)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateConnector' }
+      responses:
+        '200':
+          description: Updated connector
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Connectors]
+      operationId: deleteConnector
+      summary: Terminal delete — detaches synced tickets to native, drops bookkeeping + secret
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/connectors/{cid}/credential:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/ConnectorID'
+    put:
+      tags: [Connectors]
+      operationId: rotateConnectorCredential
+      summary: Rotate the sealed credential (re-verified before sealing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateCredential' }
+      responses:
+        '200':
+          description: Connector after rotation (no credential)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/connectors/{cid}/test:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/ConnectorID'
+    post:
+      tags: [Connectors]
+      operationId: testConnector
+      summary: Live-verify the stored credential
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    BusinessID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ConnectorID:
+      name: cid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    NotFound:
+      description: Not found (also returned for unauthorized — no existence oracle)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Invalid input (message is safe to surface)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Duplicate (business, type, base_url) or concurrent mutation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+      required: [code, message]
+    Health:
+      type: object
+      properties:
+        state: { type: string, enum: [healthy, degraded, disabled] }
+        linked_ticket_count: { type: integer, format: int64 }
+        pending_outbound_ops: { type: integer, format: int64 }
+        failed_outbound_ops: { type: integer, format: int64 }
+        last_error: { type: [string, 'null'] }
+      required: [state, linked_ticket_count, pending_outbound_ops, failed_outbound_ops]
+    Connector:
+      type: object
+      description: A connector. NEVER contains credential fields (write-only).
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        type: { type: string, enum: [jira, zendesk] }
+        display_name: { type: string }
+        base_url: { type: string, format: uri }
+        allow_private_base_url: { type: boolean }
+        config: { type: object, additionalProperties: true }
+        status: { type: string, enum: [enabled, disabled] }
+        last_reconciled_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        health: { $ref: '#/components/schemas/Health' }
+      required: [id, business_id, type, display_name, base_url, status, health]
+    CreateConnector:
+      type: object
+      properties:
+        type: { type: string, enum: [jira, zendesk] }
+        display_name: { type: string }
+        base_url: { type: string, format: uri }
+        allow_private_base_url: { type: boolean, default: false }
+        email: { type: string }
+        api_token: { type: string, description: Write-only; never returned. }
+        webhook_secret: { type: string, description: Write-only; never returned. }
+        config: { type: object, additionalProperties: true }
+      required: [type, display_name, base_url, email, api_token]
+    UpdateConnector:
+      type: object
+      description: Partial update. Omitted fields preserved. base_url + type are immutable.
+      properties:
+        display_name: { type: string }
+        config: { type: object, additionalProperties: true }
+        status: { type: string, enum: [enabled, disabled] }
+    RotateCredential:
+      type: object
+      properties:
+        email: { type: string }
+        api_token: { type: string }
+        webhook_secret: { type: string }
+      required: [email, api_token]
+    TestResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        detail: { type: string }
+      required: [ok, detail]
