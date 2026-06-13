@@ -271,7 +271,7 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 				return err
 			}
 		}
-		if err := events.Enqueue(ctx, tx, r.tenantRootID, "message.received", map[string]any{
+		if err := events.Enqueue(ctx, tx, r.tenantRootID, events.TopicMessageReceived, map[string]any{
 			"ticket_id":   out.TicketID,
 			"business_id": r.businessID,
 			"message_id":  out.MessageID,

@@ -30,6 +30,11 @@ const (
 	// triage. Payload carries {ticket_id, business_id, message_id}.
 	TopicTicketCreated = "ticket.created"
 
+	// TopicMessageReceived fans out on every non-duplicate inbound message (including the
+	// first message of a brand-new ticket, which ALSO emits TopicTicketCreated). Consumed by
+	// the reply re-triage trigger (manyforge-deo.1).
+	TopicMessageReceived = "message.received"
+
 	// TopicAttachmentPurge is emitted (one per blob) in the redact tx; the purge
 	// worker drains it to delete the attachment object from blob storage out-of-band
 	// (T066/FR-014). Payload carries {blob_key}. The handler is idempotent.

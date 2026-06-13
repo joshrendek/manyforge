@@ -209,6 +209,53 @@ func (s *AgentRunStore) EnabledAgentsForBusiness(ctx context.Context, businessID
 	return refs, nil
 }
 
+// EnabledRetriageAgentsForBusiness lists the enabled agents for a business that have opted
+// in to reply re-triage (retriage_on_reply = true), via the system-wide SECURITY DEFINER fn.
+// Principal-less (the message.received subscriber has no principal GUC); the fn is scoped by
+// business_id AND tenant_root_id so a cross-tenant event can never surface another tenant's
+// agents. Mirrors EnabledAgentsForBusiness.
+func (s *AgentRunStore) EnabledRetriageAgentsForBusiness(ctx context.Context, businessID, tenantRootID uuid.UUID) ([]AgentRef, error) {
+	var refs []AgentRef
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		rows, e := tx.Query(ctx,
+			"SELECT agent_id, principal_id FROM enabled_retriage_agents_for_business($1, $2)",
+			businessID, tenantRootID)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r AgentRef
+			if se := rows.Scan(&r.AgentID, &r.PrincipalID); se != nil {
+				return se
+			}
+			refs = append(refs, r)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agents: list retriage agents: %w", err)
+	}
+	return refs, nil
+}
+
+// EnqueueReplyRetriageRun runs the atomic guard+cap+dedup-insert DEFINER for one
+// (message, agent) pair and returns its text outcome (one of: enqueued, skipped_not_inbound,
+// skipped_auto_reply, skipped_capped, skipped_dedup). Principal-less (mirrors
+// ClaimNextQueuedRun): the DEFINER derives business/tenant from the message row.
+func (s *AgentRunStore) EnqueueReplyRetriageRun(ctx context.Context, messageID, agentID uuid.UUID, cap int) (string, error) {
+	var outcome string
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			"SELECT enqueue_reply_retriage_run($1, $2, $3)",
+			messageID, agentID, cap).Scan(&outcome)
+	})
+	if err != nil {
+		return "", fmt.Errorf("agents: enqueue reply retriage run: %w", err)
+	}
+	return outcome, nil
+}
+
 // ClaimNextQueuedRun atomically claims the oldest queued run (queued→running) across all
 // tenants via the SECURITY DEFINER fn (SKIP LOCKED ⇒ concurrent drainers never
 // double-claim). Returns (nil, nil) when nothing is queued.
