@@ -259,6 +259,7 @@ CREATE TABLE ticket_message (
 );
 CREATE UNIQUE INDEX ticket_external_idx ON ticket (connector_id, external_id) WHERE connector_id IS NOT NULL;
 CREATE UNIQUE INDEX ticket_message_external_idx ON ticket_message (connector_id, external_id) WHERE connector_id IS NOT NULL;
+CREATE UNIQUE INDEX ticket_message_source_approval_idx ON ticket_message (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL;
 
 CREATE TABLE attachment (
     id                uuid PRIMARY KEY,
