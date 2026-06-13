@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -23,6 +24,17 @@ import (
 
 	"github.com/manyforge/manyforge/internal/connectors"
 )
+
+// logSafeURL returns scheme://host/path with the query stripped, for safe diagnostic logging.
+// Zendesk auth rides the Basic-auth header, not the URL, but stripping the query keeps any future
+// credential-bearing param out of the logs (CLAUDE.md logging rule).
+func logSafeURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + u.Path
+}
 
 // sentinel errors — never wrap upstream bodies.
 var (
@@ -77,6 +89,8 @@ func (c *client) doJSON(ctx context.Context, method, rawURL string, body []byte,
 	}
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, reqBody)
 	if err != nil {
+		slog.Default().WarnContext(ctx, "zendesk: build request error",
+			"method", method, "url", logSafeURL(rawURL), "err", err)
 		return fmt.Errorf("zendesk: build request: %w", ErrUnreachable)
 	}
 	if body != nil {
@@ -88,7 +102,11 @@ func (c *client) doJSON(ctx context.Context, method, rawURL string, body []byte,
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		// Network failure, timeout, or SSRF dial-refusal (netsafe) all land here.
+		// Network failure, timeout, or SSRF dial-refusal (netsafe) all land here. The caller only
+		// ever sees the opaque ErrUnreachable (Principle II), so log the REAL cause server-side —
+		// otherwise a firewall block is indistinguishable from a genuine outage (manyforge-zci).
+		slog.Default().WarnContext(ctx, "zendesk: transport error",
+			"method", method, "url", logSafeURL(rawURL), "err", err)
 		return fmt.Errorf("zendesk: transport: %w", ErrUnreachable)
 	}
 	defer func() { _ = res.Body.Close() }()

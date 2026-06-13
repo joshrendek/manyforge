@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +21,44 @@ import (
 
 	"github.com/manyforge/manyforge/internal/connectors"
 )
+
+// roundTripFunc adapts a function to http.RoundTripper so a test can force httpClient.Do to fail.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestDoJSONLogsTransportCause pins manyforge-zci: a transport failure (network error, timeout,
+// netsafe SSRF dial-refusal, firewall block) collapses to the opaque ErrUnreachable sentinel,
+// which callers MUST keep seeing (Principle II — never leak library/network internals). But the
+// REAL underlying cause must be logged server-side so an operator can tell a firewall block from
+// a genuine upstream outage (the 2026-06-12 Little Snitch incident: identical "service
+// unreachable" log lines with zero pointer to the firewall).
+func TestDoJSONLogsTransportCause(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	const cause = "dial tcp 13.227.180.4:443: connect: blocked by firewall"
+	hc := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New(cause)
+	})}
+	c := newTestClient("https://acme.atlassian.net", "agent@example.com", "tok", "secret", hc)
+
+	_, err := c.FetchIssue(context.Background(), "JIRA-1")
+
+	if !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("err = %v, want ErrUnreachable", err)
+	}
+	// The cause must be logged server-side so the failure is diagnosable...
+	if !strings.Contains(buf.String(), "blocked by firewall") {
+		t.Fatalf("transport cause was not logged; log output: %s", buf.String())
+	}
+	// ...but must NOT leak into the error returned to callers (Principle II).
+	if strings.Contains(err.Error(), "blocked by firewall") {
+		t.Fatalf("returned error leaked the underlying cause: %v", err)
+	}
+}
 
 // loadGolden reads a golden fixture from testdata/.
 func loadGolden(t *testing.T, name string) []byte {
