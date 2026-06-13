@@ -1,12 +1,14 @@
 package zendesk
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +19,40 @@ import (
 
 	"github.com/manyforge/manyforge/internal/connectors"
 )
+
+// roundTripFunc adapts a function to http.RoundTripper so a test can force httpClient.Do to fail.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestDoJSONLogsTransportCause pins manyforge-zci: a transport failure collapses to the opaque
+// ErrUnreachable sentinel (Principle II — callers never see network/library internals), but the
+// real underlying cause must be logged server-side so a firewall block is distinguishable from a
+// genuine upstream outage.
+func TestDoJSONLogsTransportCause(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	const cause = "dial tcp 104.16.51.111:443: connect: blocked by firewall"
+	hc := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New(cause)
+	})}
+	c := newTestClient("https://acme.zendesk.com", "agent@example.com", "tok", "secret", hc)
+
+	_, err := c.FetchIssue(context.Background(), "123")
+
+	if !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("err = %v, want ErrUnreachable", err)
+	}
+	if !strings.Contains(buf.String(), "blocked by firewall") {
+		t.Fatalf("transport cause was not logged; log output: %s", buf.String())
+	}
+	if strings.Contains(err.Error(), "blocked by firewall") {
+		t.Fatalf("returned error leaked the underlying cause: %v", err)
+	}
+}
 
 // newTestClient builds a *client pointed at srvURL with the given credentials.
 func newTestClient(srvURL, email, apiToken, webhookSecret string, httpClient *http.Client) *client {
