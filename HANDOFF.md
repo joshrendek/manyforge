@@ -1,33 +1,42 @@
-# Handoff — manyforge @ master — 2026-06-11 UTC
+# Handoff — manyforge @ master — 2026-06-13 ~17:30 UTC
 
 ## ⚠️ Before you clear
-- **Everything is on `master`.** The entire stack (specs 001–004 + UI Streams 1–2) was fast-forwarded onto `master` (`master` @ `363c318`, pushed). All stacked branches (`001-tenant-foundation`, `002-support-desk`, `003-agent-runtime`, `004-external-connectors`, `ui-redesign`) are **deleted** (local + remote). **Only `master` remains. No open PRs.** Nothing unpushed.
-- **NEW workflow rule (now in `CLAUDE.md` → "Branching & Git Workflow" + `bd remember`):** at most **ONE** branch off `master` at a time — **never stack branches**. Branch from master → PR into master → merge → delete → next work branches fresh from master.
-- **Uncommitted:** none of consequence (only pre-existing untracked harness artifacts: `.claude/scheduled_tasks.lock`, a stray `docs/superpowers/plans/2026-06-01-us2-reply-threading.md`, and claude-mem `CLAUDE.md` files — leave them).
-- **Still running:** dev **Postgres :55432**, **backend `air` :8081**, **frontend `ng serve` :4300**. Stop with `pkill -f bin/air` + `pkill -f 'ng serve --port 4300'` (leave Postgres).
+- **Uncommitted:** none of consequence — only `HANDOFF.md` (this file) + untracked claude-mem `CLAUDE.md` files / `.claude/scheduled_tasks.lock` / a stray `docs/superpowers/plans/2026-06-01-us2-reply-threading.md`. Leave them. **Unpushed:** none — `master` is up to date with `origin/master` @ `bbd3014`.
+- **Still running:** dev **Postgres** (the `mf-dev` container; this session it was at schema 49 and got migrated 0050→0052 — see below). **backend `:8081`** / **frontend `:4300`** may still be up from prior sessions. No orphan subagents from this session (2 `claude … stream-json` procs are the SessionStart claude-mem hooks, not leftovers).
 
 ## State (≤3 sentences)
-**All delivered work now lives on `master`:** tenant foundation (001), support desk (002), agent runtime (003), external connectors (004), and the UI program's Stream 1 (design system + page migration) and Stream 2 (approvals queue UI + safe action-summary, bd `manyforge-4zs.2`, closed). The previously-stacked per-spec/per-stream branches were collapsed onto `master` and deleted; going forward the repo uses a single-branch-off-master workflow. Latest gate was green end-to-end (backend `make test`+`make sec-test`; frontend 140 Vitest + 42 Playwright) and CI passed on the Stream-2 PR before merge.
+**deo.1 SHIPPED** (reply re-triage on `message.received` + claim hardening) — migration **0052**, 8 commits `7b56b49..bbd3014`, all gates green (build/test/sec-test/lint + 12 integration cases), pushed, `bd close`d. The only remaining original feature is **k0d** (per-tool MCP Safe/Reversible reclassification + policy store + admin UI) — not started, needs a brainstorm. Spec 003 epic `deo` also has a tail of P4 follow-ups (`deo.6/7/8/10/11`) and unrelated P3/P4s (`3jt` DKIM RSA fallback, `crm`, `q9c`) in `bd ready`.
 
 ## Resume here
-No work in flight. Pick the next unit of work, **branch once off `master`**, PR back into `master`. Candidates: `bd ready` for the next issue; the UI program's `manyforge-4zs.3` (connectors UI — full-stack, needs its own brainstorm/spec/plan); or Spec-004 deferred follow-ups under epic `manyforge-a7j` (`a7j.7`–`a7j.12`) if prioritized.
+**k0d next action:** it's a real feature, so **brainstorm first** (`superpowers:brainstorming`) → spec → `superpowers:writing-plans` → execute the same way deo.1/7zx were done (one cohesive implementer subagent; the orchestrator independently verifies gates + pushes + `bd close`). k0d = a per-tool policy store keyed `mcp:<server>:<tool>` classifying each tool Safe/Reversible (auto-exec) vs gated, plumbed into the agent gate (`internal/agents/gate.go`, `ModeAssist`/`ModeAutonomous`) + an admin UI. Confirm scope with the user before building.
 
 ## Run & verify
-- **Backend:** `export PATH="$HOME/go/bin:$PATH" && go build ./... && make test && make sec-test` (Docker up; testcontainers may need one retry).
-- **Frontend:** `cd web && npm run build && npm test` (Vitest) + `npx playwright test` (needs dev server on :4300).
-- **Dev login (real app):** `live-demo@manyforge.test` / `DevPassw0rd!` (owner of Acme Holdings). Migrate as SUPERUSER if the backend refuses to serve (schema < code): `/opt/homebrew/bin/migrate -path migrations -database "postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" up`.
+- **Go:** prefix with `export PATH="$HOME/go/bin:$PATH"`. Gates: `go build ./...` · `make test` · `make sec-test` · `make lint` (all exit 0). Integration: `go test -tags integration ./internal/<pkg>/...` (Docker up; agents ~130s — use `-run` while iterating). `make int-test` runs ALL integration `-p 1`.
+- **sqlc (CRITICAL):** regenerate with **`/opt/homebrew/bin/sqlc generate`** (that binary IS the pinned v1.27.0). **NEVER `make generate`** — it's bare `sqlc generate` = the PATH v1.31.1 that churns the whole dbgen layer. After generating, `git status -s internal/platform/db/dbgen/` should show ONLY your query's files.
+- **Migrate:** `make migrate` needs `MANYFORGE_DATABASE_URL` and **must run as the `manyforge` superuser/owner role** (NOT `manyforge_app`, which is a non-owner). Load env first: `set -a; . ./.air.env; set +a; make migrate`. Latest migration = **0052** (next is 0053).
+- **Restart backend (direct binary):** `pkill -9 -f 'tmp/manyforge'` → `go build -o ./tmp/manyforge ./cmd/manyforge` → `set -a; . ./.air.env; set +a; ./tmp/manyforge` (background). Re-login after.
 
 ## Gotchas (don't relearn these)
-- **`master` is unprotected** — direct pushes work, but per the new rule, route real work through a single branch + PR.
-- **bd journal auto-rides commits:** `.beads/issues.jsonl` gets auto-staged by bd tooling, so it lands in whatever commit you make after a `bd` mutation even with `git add <specific files>` + `--no-verify`. Either commit bd changes deliberately as a `chore(bd)` (or accept it riding a coherent docs commit), and never `git add -A`.
-- **Undefined CSS classes/vars render SILENTLY** (no console error) and the green unit/e2e gate doesn't catch them — always eyes-on both light + dark themes for UI work. Reuse only existing `.mf-*` classes + `--mf-*` tokens (`web/src/styles.css` + `web/src/app/ui/`).
-- **Frontend test cmd is `cd web && npm test`** (Vitest via `@angular/build:unit-test`), NOT bare `npx vitest`. `.mf-table`/`.mf-tr` are DIV-flex, not real `<table>`; `mf-select` is a native `<select class="mf-select">` + `[ngModel]` (needs FormsModule).
+- **gopls inline diagnostics are systematically STALE/misleading** for agents/connectors/dbgen (false "undefined: dbgen.X / ReplyRetriageTrigger / cfg.X", esp. right after a sqlc regen). This session the harness surfaced a whole batch of them while `go build`/`make test` were exit 0. **TRUST `go build`/`go test`, never the squiggles.**
+- **bd has NO dolt remote** — `bd dolt push` is a no-op here; bd state travels via `.beads/issues.jsonl` committed into git. The bd hook auto-stages that journal, so `git pull --rebase` often errors "cannot pull with rebase: unstaged changes" — harmless when origin isn't ahead; verify with `git log origin/master..HEAD` (empty = pushed). Closing an issue then needs its own `chore(bd): close <id>` commit if you already committed everything else.
+- **Never `git add -A`** (sweeps untracked claude-mem `CLAUDE.md` files + the lock). Commit explicit paths.
+- **plpgsql `RETURNS TABLE` + `SELECT *`:** an OUT-param name (e.g. `tenant_root_id`) collides with a bare column ref of the same name → `column reference ... is ambiguous`. Alias every table in the body and qualify all refs. (Bit the 0052 claim rewrite; caught by `TestClaim_ToleratesOrphanedRun`.)
+- **Integration orphan-run seeding:** `tdb.Super` is a true superuser, so `SET LOCAL session_replication_role = replica` inside the seed tx disables FK triggers to plant an `agent_run` with a non-existent `agent_id` (see `reply_retriage_integration_test.go`).
 
-## Open follow-ups (bd)
-- `manyforge-crm` (P4) — Support page should seed `CurrentBusinessService` so the approvals nav badge tracks the viewed business everywhere.
-- Epic `manyforge-a7j` deferred items (`a7j.7`–`a7j.12`, + `a7j.4.9`) — Spec-004 connector polish; none blocking.
+## Decisions & rationale (deo.1, as built — differs from the spec in 3 ways)
+- **`enqueue_reply_retriage_run` is a NEW principal-less `SECURITY DEFINER`** (sig `(p_message_id uuid, p_agent_id uuid, p_cap integer) RETURNS text`). It **dropped the spec's `p_agent_principal_id`** — a DEFINER derives business/tenant from the message row, so the principal is dead weight (only `CreateEventRun`, which inserts under the agent's RLS, needs it).
+- **New-ticket double-emit is self-guarding:** a fresh ticket's first message emits BOTH `ticket.created` and `message.received`. The dedup index `agent_run (agent_id, trigger_dedup_key)` is keyed on the message-row id and is NOT partitioned by `trigger`, so the `event` run and the would-be `reply` run collide → reply is `skipped_dedup`. No "is this the first message?" logic needed. Pinned by `TestReplyRetriage_RedeliveryDedups`.
+- **`'reply'` added to the DB `agent_run.trigger` CHECK only** (not to Go `validTrigger`, which gates caller-supplied manual triggers; `reply` is system-generated). The agent loop treats a `reply` run like any ticket-targeted run.
+- **Topic constant added:** `events.TopicMessageReceived = "message.received"` (previously a bare string). The triage loop-guard pin was **narrowed** to forbid only `triageTrigger` (not the new `replyRetriageTrigger`) from binding `message.received`.
+- **Config:** `MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR` (default 5; per-(ticket,agent)/hour). Zero-backstops to 5 in the trigger's `cap()`.
+
+## Next steps
+1. Brainstorm **k0d** → spec → plan → execute (cohesive subagent) → push → `bd close`.
+2. Optional: drain the Spec-003 P4 tail (`deo.6` dead-query removal, `deo.7/8` run-cursor/window polish, `deo.10` netsafe empty-LookupIPAddr guard, `deo.11` allow_private_base_url on the new credential query).
+3. Optional: `3jt` (RSA-2048 DKIM fallback), `crm`, `q9c` (connector write-tool RBAC-denied test).
 
 ## Pointers
-- **bd:** UI program epic `manyforge-4zs` — `.1` ✓ Stream1, `.2` ✓ Stream2, `.3` ○ connectors. `bd prime` / `bd ready` to resume.
-- **Stream 2 artifacts:** `docs/superpowers/specs/2026-06-11-approvals-queue-ui-design.md` + `docs/superpowers/plans/2026-06-11-approvals-queue-ui.md`. Key code: `internal/agents/approval_summary.go`, `web/src/app/pages/approvals/queue.ts`, `web/src/app/core/{approvals,current-business}.service.ts`.
+- **deo.1 (done):** spec `docs/superpowers/specs/2026-06-13-reply-retriage-design.md`; plan `docs/superpowers/plans/2026-06-13-reply-retriage.md`. Code: `migrations/0052_agent_retriage.{up,down}.sql`, `internal/agents/{reply_trigger.go,agent_run.go,agent.go,agent_handler.go}`, `internal/platform/events/bus.go`, `internal/inbox/service.go`, `internal/platform/config/config.go`, `cmd/manyforge/main.go`. Pins: `internal/security_regression/{reply_retriage_pins_test.go,agent_run_us5_pins_test.go}`. Tests: `internal/agents/{reply_trigger_test.go,reply_retriage_integration_test.go}`.
+- **k0d:** `bd show manyforge-k0d`. Key code to extend: `internal/agents/gate.go` (autonomy modes), the MCP server/tool model under `internal/agents/` + `db/query/`.
+- **bd:** `bd ready` for the queue. Latest migration = **0052**.
 - Resume: `/handoff resume`.
