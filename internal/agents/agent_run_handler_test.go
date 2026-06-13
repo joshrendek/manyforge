@@ -29,6 +29,15 @@ type fakeRunOps struct {
 	gotTrigger    string
 	gotAgentID    uuid.UUID
 	gotGetAgentID uuid.UUID
+
+	// ListRuns control + recorded inputs
+	listResult []AgentRun
+	listNext   *string
+	listErr    error
+	listCalled bool
+	gotLimit   int
+	gotCursor  string
+	gotFilter  RunListFilter
 }
 
 func (f *fakeRunOps) Trigger(_ context.Context, _, _, agentID uuid.UUID, trigger string, _ *string, _ *uuid.UUID) (AgentRun, error) {
@@ -44,8 +53,12 @@ func (f *fakeRunOps) GetRun(_ context.Context, _, _, agentID, _ uuid.UUID) (Agen
 	return f.gotRun, f.getErr
 }
 
-func (f *fakeRunOps) ListRuns(_ context.Context, _, _, _ uuid.UUID, _ RunListFilter, _ string, _ int) ([]AgentRun, *string, error) {
-	return nil, nil, nil
+func (f *fakeRunOps) ListRuns(_ context.Context, _, _, _ uuid.UUID, filter RunListFilter, cursor string, limit int) ([]AgentRun, *string, error) {
+	f.listCalled = true
+	f.gotFilter = filter
+	f.gotCursor = cursor
+	f.gotLimit = limit
+	return f.listResult, f.listNext, f.listErr
 }
 
 // serveRun mounts RunHandler behind the real auth chain (AuthToPrincipal +
@@ -194,5 +207,103 @@ func TestTriggerRunHandler_Unauthenticated(t *testing.T) {
 	rec := serveRun(h, ring, http.MethodPost, "/businesses/"+bid.String()+"/agents/"+aid.String()+"/runs", "", bytes.NewReader([]byte(`{"trigger":"manual"}`)))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 (no bearer)", rec.Code)
+	}
+}
+
+// TestListRunsHandler_PassthroughAndNextCursor pins the listRuns HTTP glue (manyforge-deo.4):
+// the parsed limit, cursor, and status filter are forwarded to the service, and the service's
+// non-nil next cursor is serialized as "next_cursor".
+func TestListRunsHandler_PassthroughAndNextCursor(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	aid := uuid.New()
+	next := "cursor-token-xyz"
+	svc := &fakeRunOps{
+		listResult: []AgentRun{{ID: uuid.New(), AgentID: aid, Status: RunSucceeded}},
+		listNext:   &next,
+	}
+	h := NewRunHandler(svc)
+	rec := serveRun(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/agents/"+aid.String()+"/runs?limit=7&cursor=abc&status=succeeded",
+		mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.gotLimit != 7 {
+		t.Errorf("forwarded limit = %d, want 7", svc.gotLimit)
+	}
+	if svc.gotCursor != "abc" {
+		t.Errorf("forwarded cursor = %q, want abc", svc.gotCursor)
+	}
+	if svc.gotFilter.Status != "succeeded" {
+		t.Errorf("forwarded status = %q, want succeeded", svc.gotFilter.Status)
+	}
+	var resp struct {
+		Items      []runListItem `json:"items"`
+		NextCursor *string       `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode resp: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(resp.Items))
+	}
+	if resp.NextCursor == nil || *resp.NextCursor != next {
+		t.Errorf("next_cursor = %v, want %q", resp.NextCursor, next)
+	}
+}
+
+// TestListRunsHandler_NullNextCursorOnLastPage: a nil service cursor serializes as JSON null.
+func TestListRunsHandler_NullNextCursorOnLastPage(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	aid := uuid.New()
+	svc := &fakeRunOps{listResult: []AgentRun{}, listNext: nil}
+	h := NewRunHandler(svc)
+	rec := serveRun(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/agents/"+aid.String()+"/runs",
+		mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"next_cursor":null`)) {
+		t.Errorf("body = %s, want next_cursor:null on last page", rec.Body.String())
+	}
+}
+
+// TestListRunsHandler_BadLimitDefaultsToZero: an unparseable limit is dropped (0 → store default),
+// not surfaced as a 400; the handler defers the bound to the store.
+func TestListRunsHandler_BadLimitDefaultsToZero(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	aid := uuid.New()
+	svc := &fakeRunOps{listResult: []AgentRun{}}
+	h := NewRunHandler(svc)
+	rec := serveRun(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/agents/"+aid.String()+"/runs?limit=not-a-number",
+		mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (bad limit ignored, not 400)", rec.Code)
+	}
+	if svc.gotLimit != 0 {
+		t.Errorf("forwarded limit = %d, want 0 (unparseable → store default/clamp)", svc.gotLimit)
+	}
+}
+
+// TestListRunsHandler_WindowErrorIs400: an unknown window is a 400 and the service is never hit.
+func TestListRunsHandler_WindowErrorIs400(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	aid := uuid.New()
+	svc := &fakeRunOps{}
+	h := NewRunHandler(svc)
+	rec := serveRun(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/agents/"+aid.String()+"/runs?window=bogus",
+		mintBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (unknown window → ErrValidation)", rec.Code)
+	}
+	if svc.listCalled {
+		t.Error("service must not be called when the window fails to resolve")
 	}
 }
