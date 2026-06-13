@@ -29,10 +29,11 @@ type approvalEventPayload struct {
 	CorrelationID string `json:"correlation_id"`
 }
 
-// approvalReader is the executor's view of the store (pre-check + idempotency claim).
+// approvalReader is the executor's view of the store (pre-check + idempotency claims).
 type approvalReader interface {
 	Get(ctx context.Context, principalID, businessID, id uuid.UUID) (ApprovalItem, error)
 	MarkExecuted(ctx context.Context, principalID, businessID, id uuid.UUID) (bool, error)
+	MarkFailed(ctx context.Context, principalID, businessID, id uuid.UUID, reason string) (bool, error)
 }
 
 // The production store provably satisfies the executor's view of it.
@@ -96,9 +97,8 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		// as idemHint so the remote server can (optionally) deduplicate on it.
 		// At-least-once caveat (design §3.6): see InvokeMCPTool for the full note.
 		if e.MCP == nil {
-			// No MCP host wired — treat as unknown tool (fail-closed).
-			_, _ = e.Approvals.MarkExecuted(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID)
-			_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": "no MCP host configured"}, "error")
+			// No MCP host wired — a deterministic permanent failure (retry can't help). Terminal.
+			e.markTerminalFailure(ctx, p, run, "no MCP host configured")
 			return nil
 		}
 		out, toolErr, ierr = e.MCP.InvokeMCPTool(execCtx, p.AgentPrincipalID, p.BusinessID, p.Tool, p.Args, p.ApprovalID.String())
@@ -106,16 +106,22 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		// Internal tool path: look up in the registry and invoke.
 		tool, ok := e.Tools.Get(p.Tool)
 		if !ok {
-			// A tool removed since proposal: do not execute; mark executed-with-error so it
-			// leaves the queue. (Fail-closed: never guess an action.)
-			_, _ = e.Approvals.MarkExecuted(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID)
-			_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": "unknown tool"}, "error")
+			// A tool removed since proposal: do not execute. Deterministic permanent failure
+			// (retry can't help). Mark terminally failed with the reason. (Fail-closed.)
+			e.markTerminalFailure(ctx, p, run, "unknown tool")
 			return nil
 		}
 		out, ierr = tool.Invoke(execCtx, p.AgentPrincipalID, p.BusinessID, p.Args)
 	}
 
 	if ierr != nil {
+		// A transient/infra failure: reschedule — UNLESS this is the final delivery, in which case
+		// rescheduling would dead-letter the outbox row while the approval lingers 'approved'
+		// forever. On exhaustion, record a terminal failure with the reason instead (manyforge-sa8).
+		if isFinalAttempt(ev) {
+			e.markTerminalFailure(ctx, p, run, safeMsg(ierr))
+			return nil
+		}
 		_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": safeMsg(ierr)}, "error")
 		return fmt.Errorf("approval execute %s: %w", p.Tool, ierr) // reschedule
 	}
@@ -140,4 +146,20 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		}
 	}
 	return nil
+}
+
+// markTerminalFailure flips an approved action that can never succeed to 'failed' (recording the
+// reason for operator visibility) and audits it. Best-effort on the store write — a failed claim
+// (already executed/failed by a prior delivery, or a DB error) is left to the audit row; the
+// caller has already decided not to reschedule.
+func (e *ApprovalExecutor) markTerminalFailure(ctx context.Context, p approvalEventPayload, run AgentRun, reason string) {
+	_, _ = e.Approvals.MarkFailed(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID, reason)
+	_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.failed", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": reason}, "failed")
+}
+
+// isFinalAttempt reports whether this delivery is the outbox worker's last try before it would
+// dead-letter the event. MaxAttempts is zero on the in-process Bus path (no retry budget), so
+// that path never short-circuits to a terminal failure here.
+func isFinalAttempt(ev events.Event) bool {
+	return ev.MaxAttempts > 0 && ev.Attempts+1 >= ev.MaxAttempts
 }
