@@ -123,24 +123,24 @@ DECLARE
     v_agent agent%ROWTYPE;
 BEGIN
     LOOP
-        SELECT * INTO v_run FROM agent_run
-            WHERE status = 'queued'
-            ORDER BY created_at
+        SELECT ar.* INTO v_run FROM agent_run ar
+            WHERE ar.status = 'queued'
+            ORDER BY ar.created_at
             FOR UPDATE SKIP LOCKED
             LIMIT 1;
         EXIT WHEN NOT FOUND;  -- queue empty
 
-        SELECT * INTO v_agent FROM agent
-            WHERE id = v_run.agent_id AND tenant_root_id = v_run.tenant_root_id;
+        SELECT a.* INTO v_agent FROM agent a
+            WHERE a.id = v_run.agent_id AND a.tenant_root_id = v_run.tenant_root_id;
         IF NOT FOUND THEN
             -- Orphan: agent row gone. Terminal-fail it and drain the next; never stall.
-            UPDATE agent_run SET status = 'failed', error = 'agent no longer exists',
+            UPDATE agent_run ar SET status = 'failed', error = 'agent no longer exists',
                    updated_at = now()
-                WHERE id = v_run.id;
+                WHERE ar.id = v_run.id;
             CONTINUE;
         END IF;
 
-        UPDATE agent_run SET status = 'running', updated_at = now() WHERE id = v_run.id;
+        UPDATE agent_run ar SET status = 'running', updated_at = now() WHERE ar.id = v_run.id;
         RETURN QUERY SELECT
             v_run.id, v_run.business_id, v_run.tenant_root_id, v_run.correlation_id,
             v_run.target_type, v_run.target_id,
