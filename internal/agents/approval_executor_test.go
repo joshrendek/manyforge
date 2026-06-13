@@ -146,16 +146,17 @@ func countSuffix(actions []string, want string) int {
 type fakeMCPInvoker struct {
 	calls    int
 	err      error
+	toolErr  bool
 	result   string
 	lastHint string
 	lastTool string
 }
 
-func (f *fakeMCPInvoker) InvokeMCPTool(_ context.Context, _, _ uuid.UUID, tool string, _ json.RawMessage, idemHint string) (string, error) {
+func (f *fakeMCPInvoker) InvokeMCPTool(_ context.Context, _, _ uuid.UUID, tool string, _ json.RawMessage, idemHint string) (string, bool, error) {
 	f.calls++
 	f.lastTool = tool
 	f.lastHint = idemHint
-	return f.result, f.err
+	return f.result, f.toolErr, f.err
 }
 
 // TestExecutor_MCP_ExecutesApprovedOnce verifies that an approved mcp: tool is
@@ -261,6 +262,49 @@ func TestExecutor_MCP_UnknownServerMarkedFailed(t *testing.T) {
 	// An error audit row must be recorded.
 	if got := countSuffix(aud.actions, "agent.approval.error:error"); got != 1 {
 		t.Errorf("error-audit count=%d, want 1; actions=%v", got, aud.actions)
+	}
+}
+
+// TestExecutor_MCP_ToolErrorResultCompletes pins manyforge-9zi: when the MCP server returns an
+// error RESULT (toolErr=true, no transport error), the call has COMPLETED — the foreign side
+// effect, if any, already happened. The executor must MarkExecuted (so it leaves the queue) and
+// NOT reschedule (which would re-dispatch and double-fire the side effect). The error content is
+// fed back as the result and the audit lands in the executed lane with an "error" outcome.
+func TestExecutor_MCP_ToolErrorResultCompletes(t *testing.T) {
+	invoker := &fakeMCPInvoker{result: "the remote tool failed", toolErr: true}
+	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{
+		Approvals: st,
+		Tools:     NewToolRegistry(&fakeTicketSvc{}, nil),
+		Auditor:   aud,
+		MCP:       invoker,
+	}
+	pl := approvalEventPayload{
+		ApprovalID:       uuid.New(),
+		AgentPrincipalID: uuid.New(),
+		BusinessID:       uuid.New(),
+		Tool:             "mcp:crm:delete_contact",
+		Args:             json.RawMessage(`{"id":"123"}`),
+	}
+	// A completed-with-tool-error must NOT return an error (no reschedule).
+	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("Handle with tool-error result: want nil (no reschedule), got %v", err)
+	}
+	// The tool was invoked exactly once — not re-dispatched.
+	if invoker.calls != 1 {
+		t.Fatalf("InvokeMCPTool calls=%d, want 1 (no re-dispatch)", invoker.calls)
+	}
+	// MarkExecuted must fire once — the item leaves the queue.
+	if st.markCalls != 1 {
+		t.Fatalf("MarkExecuted calls=%d, want 1 (completed)", st.markCalls)
+	}
+	// Audit lands in the executed lane with an error outcome — NOT a reschedule-error.
+	if got := countSuffix(aud.actions, "agent.approval.executed:error"); got != 1 {
+		t.Errorf("executed-with-error audit count=%d, want 1; actions=%v", got, aud.actions)
+	}
+	if got := countSuffix(aud.actions, "agent.approval.error:error"); got != 0 {
+		t.Errorf("reschedule-error audit count=%d, want 0; actions=%v", got, aud.actions)
 	}
 }
 
