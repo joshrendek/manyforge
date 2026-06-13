@@ -81,6 +81,15 @@ type Config struct {
 	// and the server still boots. An explicitly-set-but-wrong-length key is a hard config
 	// error caught here.
 	ConnectorMasterKey []byte
+
+	// Agent run loop bounds (Spec 003 §8, manyforge-ji7). Defaults below mirror the code
+	// defaults in agents.RunLimits (withDefaults backstops any zero). Tunable per-deployment
+	// via env so the loop budget isn't a recompile.
+	AgentMaxIterations   int           // MANYFORGE_AGENT_MAX_ITERATIONS (default 8)
+	AgentMaxTokensPerRun int           // MANYFORGE_AGENT_MAX_TOKENS_PER_RUN (default 100000)
+	AgentMaxOutputTokens int           // MANYFORGE_AGENT_MAX_OUTPUT_TOKENS (default 4096)
+	AgentWallClock       time.Duration // MANYFORGE_AGENT_WALL_CLOCK (default 120s)
+	AgentTemperature     float64       // MANYFORGE_AGENT_TEMPERATURE (default 0.0; deterministic)
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -194,6 +203,24 @@ func Load() (Config, error) {
 	// key never silently disables the webhook handler/inbound-sync/reconciler.
 	if cfg.ConnectorMasterKey, err = envKey32("MANYFORGE_CONNECTOR_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_CONNECTOR_MASTER_KEY: %w", err)
+	}
+
+	// Agent run loop bounds (Spec 003 §8). Defaults mirror agents.RunLimits; a malformed value
+	// is a hard config error rather than a silent fallback (the loop budget is a safety bound).
+	if cfg.AgentMaxIterations, err = envInt("MANYFORGE_AGENT_MAX_ITERATIONS", 8); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_AGENT_MAX_ITERATIONS: %w", err)
+	}
+	if cfg.AgentMaxTokensPerRun, err = envInt("MANYFORGE_AGENT_MAX_TOKENS_PER_RUN", 100_000); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_AGENT_MAX_TOKENS_PER_RUN: %w", err)
+	}
+	if cfg.AgentMaxOutputTokens, err = envInt("MANYFORGE_AGENT_MAX_OUTPUT_TOKENS", 4096); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_AGENT_MAX_OUTPUT_TOKENS: %w", err)
+	}
+	if cfg.AgentWallClock, err = envDuration("MANYFORGE_AGENT_WALL_CLOCK", 120*time.Second); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_AGENT_WALL_CLOCK: %w", err)
+	}
+	if cfg.AgentTemperature, err = envFloat("MANYFORGE_AGENT_TEMPERATURE", 0.0); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_AGENT_TEMPERATURE: %w", err)
 	}
 
 	return cfg, nil
