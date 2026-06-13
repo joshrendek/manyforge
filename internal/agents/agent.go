@@ -51,6 +51,7 @@ type Agent struct {
 	Enabled            bool
 	MonthlyBudgetCents int
 	AllowedMCPServers  []uuid.UUID
+	RetriageOnReply    bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -66,6 +67,7 @@ type CreateAgentInput struct {
 	Enabled            bool
 	MonthlyBudgetCents int
 	AllowedMCPServers  []uuid.UUID
+	RetriageOnReply    bool
 }
 
 // UpdateAgentInput is a partial (PATCH) update — nil fields are left unchanged.
@@ -81,6 +83,7 @@ type UpdateAgentInput struct {
 	Enabled            *bool
 	MonthlyBudgetCents *int
 	AllowedMCPServers  *[]uuid.UUID
+	RetriageOnReply    *bool
 }
 
 func validateCreateAgent(in CreateAgentInput) error {
@@ -135,6 +138,7 @@ func toAgent(r dbgen.Agent) Agent {
 		AutonomyMode: int(r.AutonomyMode), Enabled: r.Enabled,
 		MonthlyBudgetCents: int(r.MonthlyBudgetCents),
 		AllowedMCPServers:  mcpServers,
+		RetriageOnReply:    r.RetriageOnReply,
 		CreatedAt:          r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -185,6 +189,7 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 			Enabled:            in.Enabled,
 			MonthlyBudgetCents: int32(in.MonthlyBudgetCents),
 			AllowedMcpServers:  mcpServers,
+			RetriageOnReply:    in.RetriageOnReply,
 			BusinessID:         businessID,
 		})
 		if aerr != nil {
@@ -285,6 +290,7 @@ func (s *AgentService) Update(ctx context.Context, principalID, businessID, agen
 	if in.AllowedMCPServers != nil {
 		params.AllowedMcpServers = *in.AllowedMCPServers
 	}
+	params.RetriageOnReply = in.RetriageOnReply
 	var row dbgen.Agent
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		r, qerr := dbgen.New(tx).UpdateAgent(ctx, params)

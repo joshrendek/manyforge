@@ -61,6 +61,7 @@ type agentResp struct {
 	Enabled            bool        `json:"enabled"`
 	MonthlyBudgetCents int         `json:"monthly_budget_cents"`
 	AllowedMCPServers  []uuid.UUID `json:"allowed_mcp_servers"`
+	RetriageOnReply    bool        `json:"retriage_on_reply"`
 	CreatedAt          time.Time   `json:"created_at"`
 	UpdatedAt          time.Time   `json:"updated_at"`
 }
@@ -79,6 +80,7 @@ func toAgentResp(a Agent) agentResp {
 		Name: a.Name, Provider: a.Provider, Model: a.Model, SystemPrompt: a.SystemPrompt,
 		AllowedTools: tools, AutonomyMode: a.AutonomyMode, Enabled: a.Enabled,
 		MonthlyBudgetCents: a.MonthlyBudgetCents, AllowedMCPServers: mcpServers,
+		RetriageOnReply: a.RetriageOnReply,
 		CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
 	}
 }
@@ -129,6 +131,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Enabled            *bool       `json:"enabled"`
 		MonthlyBudgetCents int         `json:"monthly_budget_cents"`
 		AllowedMCPServers  []uuid.UUID `json:"allowed_mcp_servers"`
+		RetriageOnReply    *bool       `json:"retriage_on_reply"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -141,10 +144,15 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	if in.Enabled != nil {
 		enabled = *in.Enabled
 	}
+	retriageOnReply := false
+	if in.RetriageOnReply != nil {
+		retriageOnReply = *in.RetriageOnReply
+	}
 	created, err := h.svc.Create(r.Context(), pid, bid, CreateAgentInput{
 		Name: in.Name, Provider: in.Provider, Model: in.Model, SystemPrompt: in.SystemPrompt,
 		AllowedTools: in.AllowedTools, AutonomyMode: mode, Enabled: enabled,
 		MonthlyBudgetCents: in.MonthlyBudgetCents, AllowedMCPServers: in.AllowedMCPServers,
+		RetriageOnReply: retriageOnReply,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -203,6 +211,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Enabled            *bool        `json:"enabled"`
 		MonthlyBudgetCents *int         `json:"monthly_budget_cents"`
 		AllowedMCPServers  *[]uuid.UUID `json:"allowed_mcp_servers"`
+		RetriageOnReply    *bool        `json:"retriage_on_reply"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -211,7 +220,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Name: in.Name, Model: in.Model, SystemPrompt: in.SystemPrompt,
 		AllowedTools: in.AllowedTools, AutonomyMode: in.AutonomyMode,
 		Enabled: in.Enabled, MonthlyBudgetCents: in.MonthlyBudgetCents,
-		AllowedMCPServers: in.AllowedMCPServers,
+		AllowedMCPServers: in.AllowedMCPServers, RetriageOnReply: in.RetriageOnReply,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
