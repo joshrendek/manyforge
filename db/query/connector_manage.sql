@@ -83,3 +83,42 @@ DELETE FROM connector_outbound_op WHERE connector_id = $1;
 -- still references secret_ref until this runs).
 -- name: DeleteConnectorRow :execrows
 DELETE FROM connector WHERE id = sqlc.arg('id') AND business_id = sqlc.arg('business_id');
+
+-- name: CountReadoptableTickets :one
+-- Count detached (native) tickets in this business that belong to the connector's provider host
+-- (same scheme://host as base_url). Used to derive the skipped-duplicate count after relink.
+SELECT count(*) FROM ticket
+WHERE business_id = sqlc.arg('business_id')::uuid
+  AND connector_id IS NULL
+  AND external_id IS NOT NULL
+  AND split_part(external_url, '/', 3) = split_part(sqlc.arg('base_url')::text, '/', 3);
+
+-- name: ReadoptDetachedTickets :many
+-- Relink the newest detached ticket per external_id (for this business + provider host) to the
+-- new connector; duplicates (older rows sharing an external_id) stay detached so the
+-- (connector_id, external_id) unique index is never violated. Returns the relinked ticket ids.
+WITH ranked AS (
+    SELECT id,
+           row_number() OVER (PARTITION BY external_id ORDER BY updated_at DESC) AS rn
+    FROM ticket
+    WHERE business_id = sqlc.arg('business_id')::uuid
+      AND connector_id IS NULL
+      AND external_id IS NOT NULL
+      AND split_part(external_url, '/', 3) = split_part(sqlc.arg('base_url')::text, '/', 3)
+)
+UPDATE ticket t
+SET connector_id = sqlc.arg('connector_id')::uuid, updated_at = now()
+FROM ranked r
+WHERE t.id = r.id AND r.rn = 1
+RETURNING t.id;
+
+-- name: RelinkReadoptedMessages :exec
+-- Restore connector_id on the re-adopted tickets' messages. Gated on external_id IS NOT NULL to
+-- satisfy ticket_message_connector_external_chk (connector_id set ⇒ external_id present); messages
+-- without an external id correctly stay native.
+UPDATE ticket_message
+SET connector_id = sqlc.arg('connector_id')::uuid
+WHERE business_id = sqlc.arg('business_id')::uuid
+  AND ticket_id = ANY(sqlc.arg('ticket_ids')::uuid[])
+  AND connector_id IS NULL
+  AND external_id IS NOT NULL;
