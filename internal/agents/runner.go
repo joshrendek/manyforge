@@ -13,7 +13,8 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
-// Loop bounds (design §8 — defaults; config-key promotion tracked as a follow-up).
+// Loop bounds (design §8). These are the code defaults; deployments override them via config
+// keys (MANYFORGE_AGENT_*) wired into RunLimits at Engine construction in main.go (manyforge-ji7).
 const (
 	defaultMaxIterations   = 8
 	defaultMaxTokensPerRun = 100_000
@@ -22,12 +23,14 @@ const (
 	defaultTemperature     = 0.0
 )
 
-// RunLimits bounds a single run. Zero-value fields fall back to defaults.
+// RunLimits bounds a single run. Zero-value fields fall back to defaults (Temperature's zero
+// value 0.0 IS the deterministic default, so it has no withDefaults clause).
 type RunLimits struct {
 	MaxIterations   int
 	MaxTokensPerRun int
 	MaxOutputTokens int
 	WallClock       time.Duration
+	Temperature     float64
 }
 
 func (l RunLimits) withDefaults() RunLimits {
@@ -238,7 +241,7 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 		if iter >= limits.MaxIterations {
 			return finish(RunFailed, "max_iterations exceeded", tokIn, tokOut, costCents)
 		}
-		req := ai.Request{Model: model, System: ag.SystemPrompt, Messages: msgs, Tools: toolDefs, MaxTokens: limits.MaxOutputTokens, Temperature: defaultTemperature}
+		req := ai.Request{Model: model, System: ag.SystemPrompt, Messages: msgs, Tools: toolDefs, MaxTokens: limits.MaxOutputTokens, Temperature: limits.Temperature}
 		resp, cErr := prov.Complete(loopCtx, req)
 		if cErr != nil {
 			if errors.Is(cErr, context.DeadlineExceeded) {

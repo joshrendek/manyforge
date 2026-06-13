@@ -132,3 +132,52 @@ func TestEnvKey32Disambiguation(t *testing.T) {
 	t.Run("explicit hex non-hex errors", func(t *testing.T) { bad(t, "hex:zzzz") })
 	t.Run("explicit base64 garbage errors", func(t *testing.T) { bad(t, "base64:not valid!!") })
 }
+
+// TestLoadAgentRunLimits pins manyforge-ji7: the agent run-loop bounds + temperature load from
+// MANYFORGE_AGENT_* env keys, defaulting to the code defaults when unset.
+func TestLoadAgentRunLimits(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.AgentMaxIterations != 8 {
+			t.Errorf("AgentMaxIterations = %d, want 8", cfg.AgentMaxIterations)
+		}
+		if cfg.AgentMaxTokensPerRun != 100_000 {
+			t.Errorf("AgentMaxTokensPerRun = %d, want 100000", cfg.AgentMaxTokensPerRun)
+		}
+		if cfg.AgentMaxOutputTokens != 4096 {
+			t.Errorf("AgentMaxOutputTokens = %d, want 4096", cfg.AgentMaxOutputTokens)
+		}
+		if cfg.AgentWallClock.String() != "2m0s" {
+			t.Errorf("AgentWallClock = %s, want 2m0s", cfg.AgentWallClock)
+		}
+		if cfg.AgentTemperature != 0.0 {
+			t.Errorf("AgentTemperature = %v, want 0", cfg.AgentTemperature)
+		}
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		t.Setenv("MANYFORGE_AGENT_MAX_ITERATIONS", "12")
+		t.Setenv("MANYFORGE_AGENT_MAX_TOKENS_PER_RUN", "250000")
+		t.Setenv("MANYFORGE_AGENT_MAX_OUTPUT_TOKENS", "8192")
+		t.Setenv("MANYFORGE_AGENT_WALL_CLOCK", "90s")
+		t.Setenv("MANYFORGE_AGENT_TEMPERATURE", "0.7")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.AgentMaxIterations != 12 || cfg.AgentMaxTokensPerRun != 250_000 ||
+			cfg.AgentMaxOutputTokens != 8192 || cfg.AgentWallClock.String() != "1m30s" || cfg.AgentTemperature != 0.7 {
+			t.Errorf("overrides not applied: %+v", cfg)
+		}
+	})
+
+	t.Run("malformed-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_AGENT_MAX_ITERATIONS", "not-a-number")
+		if _, err := Load(); err == nil {
+			t.Fatal("Load with malformed MANYFORGE_AGENT_MAX_ITERATIONS: want error, got nil")
+		}
+	})
+}

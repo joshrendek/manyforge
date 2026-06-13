@@ -175,7 +175,13 @@ func main() {
 		Resolver:    agents.NewAuthzChecker(database),
 		NewProvider: agents.NewCredentialProviderFactory(credSvc),
 		Cost:        agents.NewRegistryCostFn(aiReg, logger),
-		Limits:      agents.RunLimits{}, // defaults (8 iters / 100k tokens / 4096 out / 120s)
+		Limits: agents.RunLimits{ // config keys (MANYFORGE_AGENT_*), defaulting to the code defaults
+			MaxIterations:   cfg.AgentMaxIterations,
+			MaxTokensPerRun: cfg.AgentMaxTokensPerRun,
+			MaxOutputTokens: cfg.AgentMaxOutputTokens,
+			WallClock:       cfg.AgentWallClock,
+			Temperature:     cfg.AgentTemperature,
+		},
 	}
 	agentRunSvc := agents.NewRunService(agentSvc, agentEngine, agentRunStore)
 	agentRunH := agents.NewRunHandler(agentRunSvc)
