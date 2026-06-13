@@ -11,7 +11,7 @@ package connectors
 // short tx for context-load, NO tx during HTTP, short tx for write-back.
 //
 // DEFINERs called (migration 0045):
-//   - claim_outbound_ops(int)                            — atomically claim pending ops (returns post-increment attempts)
+//   - claim_outbound_ops(int, interval)                  — atomically claim pending ops + reclaim in_progress ops past the lease (returns post-increment attempts)
 //   - connector_outbound_context(uuid)                   — sealed credential + tenancy + config
 //   - message_external_id(uuid)                          — idempotency read (RLS-protected ticket_message)
 //   - complete_outbound_comment(uuid,uuid,uuid,text)     — stamp message external_id + mark op done + audit
@@ -62,7 +62,16 @@ type OutboundDispatcher struct {
 	Logger   *slog.Logger
 	Every    time.Duration
 	Batch    int
+	// StaleAfter is the lease window after which an op stuck in 'in_progress' (a double-fault
+	// where recordFailure's own tx failed) is reclaimed by claim_outbound_ops. It MUST exceed
+	// the worst-case single-op processing time (the connector HTTP timeout) so an op that is
+	// legitimately mid-flight is never reclaimed and dispatched twice. Defaults to 5m.
+	StaleAfter time.Duration
 }
+
+// defaultStaleAfter is the reclaim lease used when StaleAfter is unset. 5m ≫ the 60s connector
+// HTTP timeout, so an in-flight op is never reclaimed out from under the dispatcher.
+const defaultStaleAfter = 5 * time.Minute
 
 // Run starts the dispatch ticker loop. Errors are logged, never fatal; the loop continues
 // until ctx is cancelled. Mirrors Reconciler.Run.
@@ -72,6 +81,9 @@ func (d *OutboundDispatcher) Run(ctx context.Context) {
 	}
 	if d.Batch <= 0 {
 		d.Batch = 20
+	}
+	if d.StaleAfter <= 0 {
+		d.StaleAfter = defaultStaleAfter
 	}
 	t := time.NewTicker(d.Every)
 	defer t.Stop()
@@ -94,11 +106,16 @@ func (d *OutboundDispatcher) dispatchOnce(ctx context.Context) error {
 	if batch <= 0 {
 		batch = 20
 	}
+	lease := d.StaleAfter
+	if lease <= 0 {
+		lease = defaultStaleAfter
+	}
+	leaseInterval := pgtype.Interval{Microseconds: lease.Microseconds(), Valid: true}
 	var ops []claimedOp
 	if err := d.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT op_id, op_type, connector_id, ticket_id, message_id, ticket_external_id, ticket_subject, body, attempts, internal
-			   FROM claim_outbound_ops($1)`, batch)
+			   FROM claim_outbound_ops($1, $2)`, batch, leaseInterval)
 		if err != nil {
 			return fmt.Errorf("claim_outbound_ops: %w", err)
 		}
@@ -339,9 +356,9 @@ func (d *OutboundDispatcher) messageExternalID(ctx context.Context, msgID uuid.U
 // non-terminal failure the op is requeued to 'pending' (reclaimable by a later
 // claim_outbound_ops pass, which only selects status='pending'); on a terminal failure it
 // is set to 'failed'. Best-effort: if THIS fail-tx itself fails it is only logged, NOT
-// propagated — the op is then stranded in 'in_progress' and will NOT be reclaimed (claim
-// never selects 'in_progress'). There is no reaper for stuck 'in_progress' ops yet; that
-// is tracked as follow-up manyforge-a7j.4.9.
+// propagated — the op is then left stranded in 'in_progress'. That double-fault is recovered
+// by claim_outbound_ops' lease reclaim (migration 0050): an in_progress op whose updated_at is
+// older than StaleAfter is re-claimed on a later pass (manyforge-a7j.4.9).
 func (d *OutboundDispatcher) recordFailure(ctx context.Context, opID uuid.UUID, cause error, terminal bool) {
 	if err := d.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `SELECT fail_outbound_op($1,$2,$3)`, opID, cause.Error(), terminal)
