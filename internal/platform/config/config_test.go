@@ -156,6 +156,9 @@ func TestLoadAgentRunLimits(t *testing.T) {
 		if cfg.AgentTemperature != 0.0 {
 			t.Errorf("AgentTemperature = %v, want 0", cfg.AgentTemperature)
 		}
+		if cfg.AgentRetriageCapPerHour != 5 {
+			t.Errorf("AgentRetriageCapPerHour = %d, want 5", cfg.AgentRetriageCapPerHour)
+		}
 	})
 
 	t.Run("overrides", func(t *testing.T) {
@@ -164,12 +167,14 @@ func TestLoadAgentRunLimits(t *testing.T) {
 		t.Setenv("MANYFORGE_AGENT_MAX_OUTPUT_TOKENS", "8192")
 		t.Setenv("MANYFORGE_AGENT_WALL_CLOCK", "90s")
 		t.Setenv("MANYFORGE_AGENT_TEMPERATURE", "0.7")
+		t.Setenv("MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR", "9")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
 		if cfg.AgentMaxIterations != 12 || cfg.AgentMaxTokensPerRun != 250_000 ||
-			cfg.AgentMaxOutputTokens != 8192 || cfg.AgentWallClock.String() != "1m30s" || cfg.AgentTemperature != 0.7 {
+			cfg.AgentMaxOutputTokens != 8192 || cfg.AgentWallClock.String() != "1m30s" || cfg.AgentTemperature != 0.7 ||
+			cfg.AgentRetriageCapPerHour != 9 {
 			t.Errorf("overrides not applied: %+v", cfg)
 		}
 	})

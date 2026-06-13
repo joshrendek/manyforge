@@ -85,11 +85,12 @@ type Config struct {
 	// Agent run loop bounds (Spec 003 §8, manyforge-ji7). Defaults below mirror the code
 	// defaults in agents.RunLimits (withDefaults backstops any zero). Tunable per-deployment
 	// via env so the loop budget isn't a recompile.
-	AgentMaxIterations   int           // MANYFORGE_AGENT_MAX_ITERATIONS (default 8)
-	AgentMaxTokensPerRun int           // MANYFORGE_AGENT_MAX_TOKENS_PER_RUN (default 100000)
-	AgentMaxOutputTokens int           // MANYFORGE_AGENT_MAX_OUTPUT_TOKENS (default 4096)
-	AgentWallClock       time.Duration // MANYFORGE_AGENT_WALL_CLOCK (default 120s)
-	AgentTemperature     float64       // MANYFORGE_AGENT_TEMPERATURE (default 0.0; deterministic)
+	AgentMaxIterations      int           // MANYFORGE_AGENT_MAX_ITERATIONS (default 8)
+	AgentMaxTokensPerRun    int           // MANYFORGE_AGENT_MAX_TOKENS_PER_RUN (default 100000)
+	AgentMaxOutputTokens    int           // MANYFORGE_AGENT_MAX_OUTPUT_TOKENS (default 4096)
+	AgentWallClock          time.Duration // MANYFORGE_AGENT_WALL_CLOCK (default 120s)
+	AgentTemperature        float64       // MANYFORGE_AGENT_TEMPERATURE (default 0.0; deterministic)
+	AgentRetriageCapPerHour int           // MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR (default 5; per-ticket/agent reply re-triage cap)
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -221,6 +222,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AgentTemperature, err = envFloat("MANYFORGE_AGENT_TEMPERATURE", 0.0); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_AGENT_TEMPERATURE: %w", err)
+	}
+	if cfg.AgentRetriageCapPerHour, err = envInt("MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR", 5); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR: %w", err)
 	}
 
 	return cfg, nil
