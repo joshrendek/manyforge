@@ -204,9 +204,15 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 	// them into the per-run allow-map and tool defs. Fail-open: a discovery error
 	// is audited and the run proceeds with whatever tools succeeded.
 	if e.MCP != nil && len(ag.AllowedMCPServers) > 0 {
-		mcpTools, discErr := e.MCP.DiscoverTools(ctx, agentPrincipalID, businessID, ag.AllowedMCPServers)
+		mcpTools, discFailures, discErr := e.MCP.DiscoverTools(ctx, agentPrincipalID, businessID, ag.AllowedMCPServers)
 		if discErr != nil {
 			_ = e.Auditor.Run(ctx, agentPrincipalID, run, "agent.mcp.discovery_failed", map[string]any{"err": discErr.Error()}, nil, "failed")
+		}
+		// Per-server discovery failures are fail-open; audit each so the event has audit-trail
+		// parity with the resolver-level failure above, not just a log line (manyforge-3ck).
+		for _, f := range discFailures {
+			_ = e.Auditor.Run(ctx, agentPrincipalID, run, "agent.mcp.discovery_failed",
+				map[string]any{"server_id": f.ServerID, "server_name": f.ServerName, "err": f.Err}, nil, "failed")
 		}
 		for _, t := range mcpTools {
 			allow[t.Name] = true

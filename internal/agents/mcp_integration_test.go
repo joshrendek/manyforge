@@ -306,11 +306,7 @@ func testMCPDiscoveryFailOpen(t *testing.T) {
 		t.Fatalf("run status = failed (want succeeded or awaiting_approval — discovery failure must not abort the run)")
 	}
 
-	// Per-server discovery failures are logged via slog (MCPHost.DiscoverTools issues
-	// a WarnContext per failing server), not written as DB audit rows — the spec says
-	// "audit (or log)". The run-level auditor only fires on resolver errors (DB down),
-	// not per-server transport failures. The primary contract here is that the run
-	// completes with status != failed (verified above). An agent_run row must exist.
+	// The run completes (verified above) and an agent_run row exists.
 	var runCount int
 	if err := tdb.Super.QueryRow(ctx,
 		"SELECT count(*) FROM agent_run WHERE agent_id=$1",
@@ -319,6 +315,19 @@ func testMCPDiscoveryFailOpen(t *testing.T) {
 	}
 	if runCount != 1 {
 		t.Fatalf("agent_run rows = %d, want 1", runCount)
+	}
+
+	// manyforge-3ck: a per-server discovery failure is now written as a DB audit row (audit-trail
+	// parity with the resolver-level failure), not only an slog line. The engine emits one
+	// agent.mcp.discovery_failed audit per failed server, carrying the server id.
+	var discAuditCount int
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT count(*) FROM audit_entry WHERE actor_principal_id=$1 AND action='agent.mcp.discovery_failed'",
+		ag.PrincipalID).Scan(&discAuditCount); err != nil {
+		t.Fatalf("count agent.mcp.discovery_failed audit: %v", err)
+	}
+	if discAuditCount < 1 {
+		t.Fatalf("agent.mcp.discovery_failed audit rows = %d, want >= 1 (per-server failure must be audited)", discAuditCount)
 	}
 }
 

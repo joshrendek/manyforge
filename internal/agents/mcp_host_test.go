@@ -70,7 +70,7 @@ func TestMCPHost_DiscoverTools_Namespacing(t *testing.T) {
 		&fakeMCPServerResolver{servers: []ResolvedMCPServer{server}},
 	)
 
-	tools, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{serverID})
+	tools, _, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{serverID})
 	if err != nil {
 		t.Fatalf("DiscoverTools: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestMCPHost_DiscoverTools_InvokeCallsTool(t *testing.T) {
 		&fakeMCPServerResolver{servers: []ResolvedMCPServer{server}},
 	)
 
-	tools, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{serverID})
+	tools, _, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{serverID})
 	if err != nil {
 		t.Fatalf("DiscoverTools: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestMCPHost_DiscoverTools_FailOpen(t *testing.T) {
 		Logger: slog.Default(),
 	}
 
-	tools, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{goodServerID, badServerID})
+	tools, failures, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{goodServerID, badServerID})
 	if err != nil {
 		t.Fatalf("DiscoverTools returned error on fail-open path: %v", err)
 	}
@@ -213,6 +213,18 @@ func TestMCPHost_DiscoverTools_FailOpen(t *testing.T) {
 	}
 	if tools[0].Name != "mcp:good:do_good" {
 		t.Errorf("unexpected tool name %q", tools[0].Name)
+	}
+
+	// The bad server's failure must be REPORTED (not just logged) so the engine can audit it
+	// (manyforge-3ck): exactly one failure, naming the bad server, with a non-empty reason.
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 reported discovery failure, got %d: %v", len(failures), failures)
+	}
+	if failures[0].ServerID != badServerID || failures[0].ServerName != "bad" {
+		t.Errorf("failure = %+v, want the bad server (%v/%q)", failures[0], badServerID, "bad")
+	}
+	if failures[0].Err == "" {
+		t.Error("reported failure has an empty Err; the cause must be carried for the audit row")
 	}
 }
 
@@ -234,7 +246,7 @@ func TestMCPHost_DiscoverTools_ListToolsFailOpen(t *testing.T) {
 		Logger:  slog.Default(),
 	}
 
-	tools, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{serverID})
+	tools, _, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{serverID})
 	if err != nil {
 		t.Fatalf("DiscoverTools returned error on ListTools fail-open path: %v", err)
 	}
@@ -298,7 +310,7 @@ func TestMCPHost_DiscoverTools_MultipleServers(t *testing.T) {
 		Logger: slog.Default(),
 	}
 
-	tools, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{idA, idB})
+	tools, _, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{idA, idB})
 	if err != nil {
 		t.Fatalf("DiscoverTools: %v", err)
 	}
@@ -360,7 +372,7 @@ func TestMCPHost_DiscoverTools_MultipleServers_InvokeBindsDistinctClient(t *test
 		Logger: slog.Default(),
 	}
 
-	tools, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{idA, idB})
+	tools, _, err := host.DiscoverTools(context.Background(), uuid.New(), uuid.New(), []uuid.UUID{idA, idB})
 	if err != nil {
 		t.Fatalf("DiscoverTools: %v", err)
 	}
