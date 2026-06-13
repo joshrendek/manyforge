@@ -207,6 +207,7 @@ func main() {
 	// claims queued runs and runs the loop as the agent, decoupled from the outbox worker
 	// so a long run never stalls event delivery.
 	triageTrigger := &agents.TriageTrigger{Runs: agentRunStore, Logger: logger}
+	replyRetriageTrigger := &agents.ReplyRetriageTrigger{Runs: agentRunStore, RetriageCap: cfg.AgentRetriageCapPerHour, Logger: logger}
 	runDrainer := &agents.RunDrainer{Runs: agentRunStore, Engine: agentEngine, Logger: logger}
 
 	// US4 inbox-management identity surface (custom email domains + verification +
@@ -410,6 +411,12 @@ func main() {
 	// subscribed (never message.received) — the structural loop-guard: an agent's own
 	// reply emits ticket.replied, not ticket.created, so it can never re-trigger triage.
 	eventBus.Subscribe(events.TopicTicketCreated, triageTrigger.Handle)
+
+	// US5 follow-up (manyforge-deo.1): an OPTED-IN agent re-runs when a customer replies to
+	// an existing ticket. message.received also fires for a new ticket's first message, but
+	// that shares the ticket.created run's dedup key, so a fresh ticket still runs once.
+	// Guarded in the enqueue_reply_retriage_run DEFINER (inbound-only + per-ticket/agent cap).
+	eventBus.Subscribe(events.TopicMessageReceived, replyRetriageTrigger.Handle)
 
 	// Spec 004 inbound-sync subscriber: fetch external issue + DEFINER upsert.
 	// Registered BEFORE the outbox worker starts so no connector.inbound.sync event
