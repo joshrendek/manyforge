@@ -86,6 +86,10 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 	execCtx := withApprovalKey(ctx, p.ApprovalID)
 	var out string
 	var ierr error
+	// toolErr distinguishes a COMPLETED call whose tool returned an error result (MCP isError)
+	// from a TRANSPORT failure (ierr). A completed call must NOT reschedule — its side effect, if
+	// any, already happened on the remote (manyforge-9zi). Internal tools leave this false.
+	var toolErr bool
 
 	if strings.HasPrefix(p.Tool, "mcp:") {
 		// MCP tool path: resolve and invoke via the MCPHost. The approval id is passed
@@ -97,7 +101,7 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 			_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.error", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": "no MCP host configured"}, "error")
 			return nil
 		}
-		out, ierr = e.MCP.InvokeMCPTool(execCtx, p.AgentPrincipalID, p.BusinessID, p.Tool, p.Args, p.ApprovalID.String())
+		out, toolErr, ierr = e.MCP.InvokeMCPTool(execCtx, p.AgentPrincipalID, p.BusinessID, p.Tool, p.Args, p.ApprovalID.String())
 	} else {
 		// Internal tool path: look up in the registry and invoke.
 		tool, ok := e.Tools.Get(p.Tool)
@@ -125,7 +129,15 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		return merr // reschedule; re-execution is dedup-safe
 	}
 	if okMarked {
-		_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.executed", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "result": out}, "executed")
+		if toolErr {
+			// The call COMPLETED but the tool returned an error result (MCP isError). It is not
+			// rescheduled — the foreign side effect, if any, already happened. Record it in the
+			// executed lane with an "error" outcome and feed the error content back as the result
+			// so the model can react to it (manyforge-9zi).
+			_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.executed", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "result": out, "tool_error": true}, "error")
+		} else {
+			_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.executed", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "result": out}, "executed")
+		}
 	}
 	return nil
 }
