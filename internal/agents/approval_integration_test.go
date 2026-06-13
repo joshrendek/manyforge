@@ -220,3 +220,59 @@ func TestApprovalReplayIdempotent(t *testing.T) {
 		t.Fatalf("ticket.replied outbox rows = %d, want exactly 1 (replay must enqueue nothing)", outboxCount)
 	}
 }
+
+// TestMarkFailedTerminal pins manyforge-sa8 against a real DB: MarkFailed flips an approved item
+// to the terminal 'failed' state (accepted by the migration-0051 CHECK) and records the reason in
+// the error column, and a second call is an idempotent no-op (no longer 'approved').
+func TestMarkFailedTerminal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	seed := seedRunTenant(ctx, t, tdb)
+	ticketID := seedRunTicket(ctx, t, tdb, seed, "open")
+	agentSvc := &AgentService{DB: tdb.App}
+	agent, err := agentSvc.Create(ctx, seed.ownerID, seed.businessID, CreateAgentInput{
+		Name: "Fail Bot", Provider: "anthropic", Model: "claude-sonnet-4-5",
+		SystemPrompt: "x", AllowedTools: []string{"read_ticket", "draft_reply"},
+		AutonomyMode: 1, Enabled: true, MonthlyBudgetCents: 0,
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	_, approvalID, _ := seedApprovedReply(ctx, t, tdb, seed, agent.ID, ticketID, ApprovalApproved)
+
+	store := &ApprovalStore{DB: tdb.App}
+	const reason = "boom: upstream retry budget exhausted"
+	ok, err := store.MarkFailed(ctx, agent.PrincipalID, seed.businessID, approvalID, reason)
+	if err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+	if !ok {
+		t.Fatal("MarkFailed ok=false, want true (approved -> failed)")
+	}
+
+	item, err := store.Get(ctx, agent.PrincipalID, seed.businessID, approvalID)
+	if err != nil {
+		t.Fatalf("Get after MarkFailed: %v", err)
+	}
+	if item.State != ApprovalFailed {
+		t.Errorf("state = %q, want %q", item.State, ApprovalFailed)
+	}
+	if item.Error == nil || *item.Error != reason {
+		t.Errorf("error = %v, want %q", item.Error, reason)
+	}
+
+	// Idempotent: a second MarkFailed is a no-op claim (state is no longer 'approved').
+	ok2, err := store.MarkFailed(ctx, agent.PrincipalID, seed.businessID, approvalID, "again")
+	if err != nil {
+		t.Fatalf("MarkFailed (replay): %v", err)
+	}
+	if ok2 {
+		t.Error("second MarkFailed ok=true, want false (already terminal)")
+	}
+}

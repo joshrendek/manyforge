@@ -39,6 +39,15 @@ SET state = 'executed', executed_at = now(), updated_at = now()
 WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid AND state = 'approved'
 RETURNING *;
 
+-- name: MarkApprovalFailed :one
+-- Terminal-failure claim: flip approved -> failed iff still approved, recording the reason in
+-- the error column. Zero rows means a prior delivery already executed/failed it -> the executor
+-- skips (same idempotency contract as MarkApprovalExecuted).
+UPDATE approval_item
+SET state = 'failed', error = sqlc.arg('error')::text, updated_at = now()
+WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid AND state = 'approved'
+RETURNING *;
+
 -- name: GetRunActorForApproval :one
 -- The acting agent principal + the run's correlation id, so an approval executes as
 -- the agent and its audit rows join to the originating run by correlation.

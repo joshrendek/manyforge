@@ -98,6 +98,9 @@ func (w *Worker) drainOnce(ctx context.Context) (int, error) {
 		}
 		count = len(batch)
 		for _, e := range batch {
+			// Stamp the dead-letter threshold so a handler can detect its final attempt and record
+			// a terminal outcome rather than letting the row dead-letter with work half-done.
+			e.MaxAttempts = w.MaxAttempts
 			derr := w.dispatch(ctx, tx, e)
 			if derr == nil {
 				if _, err := tx.Exec(ctx, "SELECT mark_outbox_processed($1)", e.ID); err != nil {

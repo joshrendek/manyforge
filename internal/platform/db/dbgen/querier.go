@@ -463,6 +463,10 @@ type Querier interface {
 	// Idempotency claim: flip approved -> executed iff still approved. Zero rows means a
 	// prior delivery already executed it (or it was denied) -> the executor skips.
 	MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExecutedParams) (ApprovalItem, error)
+	// Terminal-failure claim: flip approved -> failed iff still approved, recording the reason in
+	// the error column. Zero rows means a prior delivery already executed/failed it -> the executor
+	// skips (same idempotency contract as MarkApprovalExecuted).
+	MarkApprovalFailed(ctx context.Context, arg MarkApprovalFailedParams) (ApprovalItem, error)
 	// MarkEmailDomainVerified sets verified_at = now() ONLY when it is currently NULL —
 	// idempotent (a re-verify of an already-verified domain is a no-op, leaving the
 	// original timestamp untouched). Scoped to (id, business_id, tenant_root_id) for
