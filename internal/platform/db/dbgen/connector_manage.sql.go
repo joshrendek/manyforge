@@ -12,6 +12,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countReadoptableTickets = `-- name: CountReadoptableTickets :one
+SELECT count(*) FROM ticket
+WHERE business_id = $1::uuid
+  AND connector_id IS NULL
+  AND external_id IS NOT NULL
+  AND split_part(external_url, '/', 3) = split_part($2::text, '/', 3)
+`
+
+type CountReadoptableTicketsParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	BaseUrl    string    `json:"base_url"`
+}
+
+// Count detached (native) tickets in this business that belong to the connector's provider host
+// (same scheme://host as base_url). Used to derive the skipped-duplicate count after relink.
+func (q *Queries) CountReadoptableTickets(ctx context.Context, arg CountReadoptableTicketsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countReadoptableTickets, arg.BusinessID, arg.BaseUrl)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteConnectorOutboundOps = `-- name: DeleteConnectorOutboundOps :execrows
 DELETE FROM connector_outbound_op WHERE connector_id = $1
 `
@@ -216,6 +238,75 @@ func (q *Queries) ListConnectors(ctx context.Context, businessID uuid.UUID) ([]C
 		return nil, err
 	}
 	return items, nil
+}
+
+const readoptDetachedTickets = `-- name: ReadoptDetachedTickets :many
+WITH ranked AS (
+    SELECT id,
+           row_number() OVER (PARTITION BY external_id ORDER BY updated_at DESC) AS rn
+    FROM ticket
+    WHERE business_id = $2::uuid
+      AND connector_id IS NULL
+      AND external_id IS NOT NULL
+      AND split_part(external_url, '/', 3) = split_part($3::text, '/', 3)
+)
+UPDATE ticket t
+SET connector_id = $1::uuid, updated_at = now()
+FROM ranked r
+WHERE t.id = r.id AND r.rn = 1
+RETURNING t.id
+`
+
+type ReadoptDetachedTicketsParams struct {
+	ConnectorID uuid.UUID `json:"connector_id"`
+	BusinessID  uuid.UUID `json:"business_id"`
+	BaseUrl     string    `json:"base_url"`
+}
+
+// Relink the newest detached ticket per external_id (for this business + provider host) to the
+// new connector; duplicates (older rows sharing an external_id) stay detached so the
+// (connector_id, external_id) unique index is never violated. Returns the relinked ticket ids.
+func (q *Queries) ReadoptDetachedTickets(ctx context.Context, arg ReadoptDetachedTicketsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, readoptDetachedTickets, arg.ConnectorID, arg.BusinessID, arg.BaseUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const relinkReadoptedMessages = `-- name: RelinkReadoptedMessages :exec
+UPDATE ticket_message
+SET connector_id = $1::uuid
+WHERE business_id = $2::uuid
+  AND ticket_id = ANY($3::uuid[])
+  AND connector_id IS NULL
+  AND external_id IS NOT NULL
+`
+
+type RelinkReadoptedMessagesParams struct {
+	ConnectorID uuid.UUID   `json:"connector_id"`
+	BusinessID  uuid.UUID   `json:"business_id"`
+	TicketIds   []uuid.UUID `json:"ticket_ids"`
+}
+
+// Restore connector_id on the re-adopted tickets' messages. Gated on external_id IS NOT NULL to
+// satisfy ticket_message_connector_external_chk (connector_id set ⇒ external_id present); messages
+// without an external id correctly stay native.
+func (q *Queries) RelinkReadoptedMessages(ctx context.Context, arg RelinkReadoptedMessagesParams) error {
+	_, err := q.db.Exec(ctx, relinkReadoptedMessages, arg.ConnectorID, arg.BusinessID, arg.TicketIds)
+	return err
 }
 
 const rotateConnectorSecretRef = `-- name: RotateConnectorSecretRef :one

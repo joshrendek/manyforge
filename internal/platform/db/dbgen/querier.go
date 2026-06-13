@@ -46,6 +46,9 @@ type Querier interface {
 	// Direct Owners (locked role) whose membership is AT this business. At the tenant
 	// root this is the last-Owner count guarded by FR-014/FR-024.
 	CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error)
+	// Count detached (native) tickets in this business that belong to the connector's provider host
+	// (same scheme://host as base_url). Used to derive the skipped-duplicate count after relink.
+	CountReadoptableTickets(ctx context.Context, arg CountReadoptableTicketsParams) (int64, error)
 	CountRoleMemberships(ctx context.Context, roleID uuid.UUID) (int64, error)
 	// CountTicketMessages is the message_count facet of the Ticket schema.
 	CountTicketMessages(ctx context.Context, arg CountTicketMessagesParams) (int64, error)
@@ -480,6 +483,10 @@ type Querier interface {
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).
 	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
+	// Relink the newest detached ticket per external_id (for this business + provider host) to the
+	// new connector; duplicates (older rows sharing an external_id) stay detached so the
+	// (connector_id, external_id) unique index is never violated. Returns the relinked ticket ids.
+	ReadoptDetachedTickets(ctx context.Context, arg ReadoptDetachedTicketsParams) ([]uuid.UUID, error)
 	// RecordWebhookDelivery dedupes inbound webhook deliveries per connector: ON CONFLICT
 	// DO NOTHING means a replayed external_delivery_id inserts zero rows, which the caller
 	// reads as "already seen". tenant_root derived from the RLS-visible business; the EXISTS
@@ -493,6 +500,10 @@ type Querier interface {
 	// shape). NEVER a hard DELETE (Principle VI / FR-014). Returns tenant_root_id +
 	// redacted_at for the in-tx audit and the per-blob purge enqueue.
 	RedactTicket(ctx context.Context, arg RedactTicketParams) (RedactTicketRow, error)
+	// Restore connector_id on the re-adopted tickets' messages. Gated on external_id IS NOT NULL to
+	// satisfy ticket_message_connector_external_chk (connector_id set ⇒ external_id present); messages
+	// without an external id correctly stay native.
+	RelinkReadoptedMessages(ctx context.Context, arg RelinkReadoptedMessagesParams) error
 	// Subtree move is performed by the SECURITY DEFINER move_business() function
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
