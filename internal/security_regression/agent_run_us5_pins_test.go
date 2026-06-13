@@ -25,9 +25,13 @@ func TestPin_TriageTriggerOnlyTicketCreated(t *testing.T) {
 	if !strings.Contains(mainGo, "eventBus.Subscribe(events.TopicTicketCreated, triageTrigger.Handle)") {
 		t.Error("main.go: triage trigger must subscribe to events.TopicTicketCreated")
 	}
-	// Forbid the actual SUBSCRIPTION forms (not the bare string, which appears in the
-	// explanatory loop-guard comment) so a future message.received subscription fails here.
-	for _, bad := range []string{`Subscribe(events.TopicMessageReceived`, `Subscribe("message.received"`} {
+	// The TRIAGE trigger must NEVER subscribe to message.received (that reopens the
+	// agent-reply loop). The separately-guarded ReplyRetriageTrigger (manyforge-deo.1) may —
+	// so forbid only the triage handler binding to message.received, not the bare topic.
+	for _, bad := range []string{
+		"Subscribe(events.TopicMessageReceived, triageTrigger.Handle)",
+		`Subscribe("message.received", triageTrigger.Handle)`,
+	} {
 		if strings.Contains(mainGo, bad) {
 			t.Errorf("main.go: triage must NOT subscribe to message.received (%q) — that reopens the agent-reply loop", bad)
 		}
