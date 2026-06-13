@@ -21,6 +21,10 @@ const (
 	ApprovalDenied   = "denied"
 	ApprovalExecuted = "executed"
 	ApprovalExpired  = "expired"
+	// ApprovalFailed is terminal: the executor sets it (recording the reason in error) when an
+	// approved action can never execute — an unknown tool / no MCP host, or a transient failure
+	// that exhausted the outbox retry budget (manyforge-sa8).
+	ApprovalFailed = "failed"
 )
 
 // defaultApprovalTTL is how long a pending item stays actionable before the sweep
@@ -197,6 +201,23 @@ func (s *ApprovalStore) Approve(ctx context.Context, principalID, businessID, id
 func (s *ApprovalStore) MarkExecuted(ctx context.Context, principalID, businessID, id uuid.UUID) (ok bool, err error) {
 	e := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		_, ie := dbgen.New(tx).MarkApprovalExecuted(ctx, dbgen.MarkApprovalExecutedParams{ID: id, BusinessID: businessID})
+		return ie
+	})
+	if e != nil {
+		if errors.Is(e, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, mapAgentRunErr(e)
+	}
+	return true, nil
+}
+
+// MarkFailed is the executor's terminal-failure claim: approved -> failed iff still approved,
+// recording reason in the error column for operator visibility. ok=false means a prior delivery
+// already executed/failed it (an idempotent replay) — same contract as MarkExecuted.
+func (s *ApprovalStore) MarkFailed(ctx context.Context, principalID, businessID, id uuid.UUID, reason string) (ok bool, err error) {
+	e := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		_, ie := dbgen.New(tx).MarkApprovalFailed(ctx, dbgen.MarkApprovalFailedParams{ID: id, BusinessID: businessID, Error: reason})
 		return ie
 	})
 	if e != nil {

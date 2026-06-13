@@ -43,6 +43,11 @@ type Event struct {
 	Topic        string
 	Payload      []byte // JSON
 	Attempts     int32
+	// MaxAttempts is the worker's dead-letter threshold, stamped onto the event before dispatch
+	// so a handler can detect its FINAL attempt (Attempts+1 >= MaxAttempts) and record a terminal
+	// outcome instead of letting the row dead-letter with the work half-done. Zero on the
+	// in-process Bus path (no retry budget there).
+	MaxAttempts int32
 }
 
 // Handler processes one event. It runs inside the worker's transaction (use tx

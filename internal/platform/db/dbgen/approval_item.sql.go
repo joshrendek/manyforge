@@ -255,3 +255,42 @@ func (q *Queries) MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExec
 	)
 	return i, err
 }
+
+const markApprovalFailed = `-- name: MarkApprovalFailed :one
+UPDATE approval_item
+SET state = 'failed', error = $1::text, updated_at = now()
+WHERE id = $2::uuid AND business_id = $3::uuid AND state = 'approved'
+RETURNING id, agent_run_id, business_id, tenant_root_id, tool, args, effect_class, state, decided_by_principal_id, decided_at, executed_at, expires_at, error, created_at, updated_at
+`
+
+type MarkApprovalFailedParams struct {
+	Error      string    `json:"error"`
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// Terminal-failure claim: flip approved -> failed iff still approved, recording the reason in
+// the error column. Zero rows means a prior delivery already executed/failed it -> the executor
+// skips (same idempotency contract as MarkApprovalExecuted).
+func (q *Queries) MarkApprovalFailed(ctx context.Context, arg MarkApprovalFailedParams) (ApprovalItem, error) {
+	row := q.db.QueryRow(ctx, markApprovalFailed, arg.Error, arg.ID, arg.BusinessID)
+	var i ApprovalItem
+	err := row.Scan(
+		&i.ID,
+		&i.AgentRunID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Tool,
+		&i.Args,
+		&i.EffectClass,
+		&i.State,
+		&i.DecidedByPrincipalID,
+		&i.DecidedAt,
+		&i.ExecutedAt,
+		&i.ExpiresAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

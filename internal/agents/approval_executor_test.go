@@ -12,10 +12,12 @@ import (
 
 // fakeApprovalState drives the executor's pre-check + claim deterministically.
 type fakeApprovalState struct {
-	state     string
-	getCalls  int
-	markCalls int
-	markOK    bool
+	state      string
+	getCalls   int
+	markCalls  int
+	markOK     bool
+	failCalls  int
+	failReason string
 }
 
 func (f *fakeApprovalState) Get(_ context.Context, _, _, _ uuid.UUID) (ApprovalItem, error) {
@@ -25,6 +27,11 @@ func (f *fakeApprovalState) Get(_ context.Context, _, _, _ uuid.UUID) (ApprovalI
 func (f *fakeApprovalState) MarkExecuted(_ context.Context, _, _, _ uuid.UUID) (bool, error) {
 	f.markCalls++
 	return f.markOK, nil
+}
+func (f *fakeApprovalState) MarkFailed(_ context.Context, _, _, _ uuid.UUID, reason string) (bool, error) {
+	f.failCalls++
+	f.failReason = reason
+	return true, nil
 }
 
 func payload(t *testing.T, p approvalEventPayload) []byte {
@@ -308,9 +315,9 @@ func TestExecutor_MCP_ToolErrorResultCompletes(t *testing.T) {
 	}
 }
 
-// TestExecutor_MCP_NoMCPHostConfigured verifies that when MCP is nil, an mcp: tool
-// is treated as unknown: MarkExecuted fires (to drain the queue) and an error audit
-// row is recorded, with no panic.
+// TestExecutor_MCP_NoMCPHostConfigured verifies that when MCP is nil, an mcp: tool is a
+// deterministic permanent failure: it is marked terminally 'failed' (NOT 'executed') with a
+// reason, and a failed audit row is recorded (manyforge-sa8).
 func TestExecutor_MCP_NoMCPHostConfigured(t *testing.T) {
 	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
 	aud := &corrAuditor{}
@@ -330,10 +337,87 @@ func TestExecutor_MCP_NoMCPHostConfigured(t *testing.T) {
 	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
 		t.Fatalf("Handle (nil MCP): %v", err)
 	}
-	if st.markCalls != 1 {
-		t.Errorf("MarkExecuted calls=%d, want 1 (drain the queue)", st.markCalls)
+	if st.failCalls != 1 {
+		t.Errorf("MarkFailed calls=%d, want 1 (terminal failure)", st.failCalls)
+	}
+	if st.markCalls != 0 {
+		t.Errorf("MarkExecuted calls=%d, want 0 (must NOT be marked executed)", st.markCalls)
+	}
+	if st.failReason != "no MCP host configured" {
+		t.Errorf("fail reason = %q, want 'no MCP host configured'", st.failReason)
+	}
+	if got := countSuffix(aud.actions, "agent.approval.failed:failed"); got != 1 {
+		t.Errorf("failed-audit count=%d, want 1; actions=%v", got, aud.actions)
+	}
+}
+
+// TestExecutor_UnknownToolMarkedFailed: an internal tool removed since proposal is a
+// deterministic permanent failure → terminal 'failed' with reason (manyforge-sa8).
+func TestExecutor_UnknownToolMarkedFailed(t *testing.T) {
+	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{Approvals: st, Tools: NewToolRegistry(&fakeTicketSvc{}, nil), Auditor: aud}
+	pl := approvalEventPayload{
+		ApprovalID: uuid.New(), AgentPrincipalID: uuid.New(), BusinessID: uuid.New(),
+		Tool: "no_such_tool", Args: json.RawMessage(`{}`),
+	}
+	if err := ex.Handle(context.Background(), nil, events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl)}); err != nil {
+		t.Fatalf("Handle (unknown tool): %v", err)
+	}
+	if st.failCalls != 1 || st.markCalls != 0 {
+		t.Errorf("MarkFailed=%d MarkExecuted=%d, want 1/0 (terminal failure, not executed)", st.failCalls, st.markCalls)
+	}
+	if st.failReason != "unknown tool" {
+		t.Errorf("fail reason = %q, want 'unknown tool'", st.failReason)
+	}
+}
+
+// TestExecutor_FinalAttemptTransientErrorMarkedFailed pins the dead-letter half of manyforge-sa8:
+// a transient invoke error on the FINAL delivery (Attempts+1 == MaxAttempts) must record a
+// terminal 'failed' (so the approval doesn't linger 'approved' forever) and return nil so the
+// outbox marks the row processed rather than dead-lettering it.
+func TestExecutor_FinalAttemptTransientErrorMarkedFailed(t *testing.T) {
+	invoker := &fakeMCPInvoker{err: fmt.Errorf("agents: mcp_host: transport: unreachable")}
+	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{Approvals: st, Tools: NewToolRegistry(&fakeTicketSvc{}, nil), Auditor: aud, MCP: invoker}
+	pl := approvalEventPayload{
+		ApprovalID: uuid.New(), AgentPrincipalID: uuid.New(), BusinessID: uuid.New(),
+		Tool: "mcp:crm:get_contact", Args: json.RawMessage(`{}`),
+	}
+	// Attempts=9, MaxAttempts=10 → this is the final try.
+	ev := events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl), Attempts: 9, MaxAttempts: 10}
+	if err := ex.Handle(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Handle final attempt: want nil (terminal-failed, not re-dead-lettered), got %v", err)
+	}
+	if st.failCalls != 1 {
+		t.Errorf("MarkFailed calls=%d, want 1 on exhaustion", st.failCalls)
+	}
+	if got := countSuffix(aud.actions, "agent.approval.failed:failed"); got != 1 {
+		t.Errorf("failed-audit count=%d, want 1; actions=%v", got, aud.actions)
+	}
+}
+
+// TestExecutor_NonFinalAttemptTransientErrorReschedules: the same transient error on an EARLIER
+// attempt must reschedule (return error), NOT mark failed — retries may still succeed.
+func TestExecutor_NonFinalAttemptTransientErrorReschedules(t *testing.T) {
+	invoker := &fakeMCPInvoker{err: fmt.Errorf("agents: mcp_host: transport: unreachable")}
+	st := &fakeApprovalState{state: ApprovalApproved, markOK: true}
+	aud := &corrAuditor{}
+	ex := &ApprovalExecutor{Approvals: st, Tools: NewToolRegistry(&fakeTicketSvc{}, nil), Auditor: aud, MCP: invoker}
+	pl := approvalEventPayload{
+		ApprovalID: uuid.New(), AgentPrincipalID: uuid.New(), BusinessID: uuid.New(),
+		Tool: "mcp:crm:get_contact", Args: json.RawMessage(`{}`),
+	}
+	// Attempts=0, MaxAttempts=10 → many tries left.
+	ev := events.Event{Topic: TopicAgentApproved, Payload: payload(t, pl), Attempts: 0, MaxAttempts: 10}
+	if err := ex.Handle(context.Background(), nil, ev); err == nil {
+		t.Fatal("Handle non-final attempt: want error (reschedule), got nil")
+	}
+	if st.failCalls != 0 {
+		t.Errorf("MarkFailed calls=%d, want 0 (retries may still succeed)", st.failCalls)
 	}
 	if got := countSuffix(aud.actions, "agent.approval.error:error"); got != 1 {
-		t.Errorf("error-audit count=%d, want 1; actions=%v", got, aud.actions)
+		t.Errorf("reschedule-error audit count=%d, want 1; actions=%v", got, aud.actions)
 	}
 }
