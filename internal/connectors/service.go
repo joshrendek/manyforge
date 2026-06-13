@@ -80,6 +80,44 @@ func (s *Service) Create(ctx context.Context, principalID, businessID uuid.UUID,
 		}); perr != nil {
 			return perr
 		}
+		// Re-adopt orphaned tickets from a previously-deleted connector to the same provider host
+		// (manyforge-7zx): relink the newest detached ticket per external_id + its messages, so a
+		// recreated connector resumes instead of re-importing duplicates. Bounded by existing
+		// detached rows (never imports). Same tx → atomic with the create.
+		q := dbgen.New(tx)
+		candidates, perr := q.CountReadoptableTickets(ctx, dbgen.CountReadoptableTicketsParams{
+			BusinessID: businessID, BaseUrl: in.BaseURL,
+		})
+		if perr != nil {
+			return perr
+		}
+		readoptedIDs, perr := q.ReadoptDetachedTickets(ctx, dbgen.ReadoptDetachedTicketsParams{
+			BusinessID: businessID, BaseUrl: in.BaseURL, ConnectorID: id,
+		})
+		if perr != nil {
+			return perr
+		}
+		if len(readoptedIDs) > 0 {
+			if perr := q.RelinkReadoptedMessages(ctx, dbgen.RelinkReadoptedMessagesParams{
+				BusinessID: businessID, ConnectorID: id, TicketIds: readoptedIDs,
+			}); perr != nil {
+				return perr
+			}
+			rtt := "connector"
+			if werr := audit.Write(ctx, tx, audit.Entry{
+				BusinessID:       &businessID,
+				ActorPrincipalID: &principalID,
+				Action:           "connector.tickets_readopted",
+				TargetType:       &rtt,
+				TargetID:         &id,
+				Inputs: map[string]any{
+					"readopted_count":         len(readoptedIDs),
+					"skipped_duplicate_count": int(candidates) - len(readoptedIDs),
+				},
+			}); werr != nil {
+				return werr
+			}
+		}
 		// Audit every connector.created (a new external data path) in the SAME tx.
 		// Inputs carry only non-secret metadata. Decision flags the trust grant only.
 		tt := "connector"
