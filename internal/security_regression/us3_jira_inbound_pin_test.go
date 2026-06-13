@@ -162,7 +162,7 @@ var _ connectors.TicketingConnector = (*hmacFakeConnUS3)(nil)
 func (h *hmacFakeConnUS3) FetchIssue(_ context.Context, _ string) (connectors.ExternalIssue, error) {
 	return connectors.ExternalIssue{}, nil
 }
-func (h *hmacFakeConnUS3) PostComment(_ context.Context, _, _ string) (connectors.ExternalComment, error) {
+func (h *hmacFakeConnUS3) PostComment(_ context.Context, _, _ string, _ bool) (connectors.ExternalComment, error) {
 	return connectors.ExternalComment{}, nil
 }
 func (h *hmacFakeConnUS3) TransitionStatus(_ context.Context, _, _ string) error { return nil }

@@ -81,7 +81,7 @@ func TestOutboundOpClaimComplete(t *testing.T) {
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT op_id, op_type, message_id, ticket_external_id, body
-			FROM claim_outbound_ops(10) LIMIT 1`).
+			FROM claim_outbound_ops(10, interval '5 minutes') LIMIT 1`).
 			Scan(&claimedOp, &opType, &claimedMsg, &ticketExt, &body)
 	}); err != nil {
 		t.Fatalf("claim: %v", err)
@@ -134,12 +134,81 @@ func TestOutboundOpClaimComplete(t *testing.T) {
 	// Second claim returns nothing (op no longer pending) — idempotency at the queue level.
 	var n int
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT count(*) FROM claim_outbound_ops(10)`).Scan(&n)
+		return tx.QueryRow(ctx, `SELECT count(*) FROM claim_outbound_ops(10, interval '5 minutes')`).Scan(&n)
 	}); err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}
 	if n != 0 {
 		t.Fatalf("re-claim returned %d ops, want 0", n)
+	}
+}
+
+// TestOutboundClaimReclaimsStaleInProgress pins manyforge-a7j.4.9: a double-fault (recordFailure's
+// own tx fails) can strand an op in 'in_progress' with no path back, because claim_outbound_ops
+// only reclaimed status='pending'. The widened claim takes a lease interval and MUST also reclaim
+// in_progress ops whose updated_at is older than the lease, while leaving a freshly-claimed
+// in_progress op (still mid-flight, no tx held during its HTTP call) untouched so it is never
+// dispatched twice.
+func TestOutboundClaimReclaimsStaleInProgress(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil)
+
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	var ticketID uuid.UUID
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, syncIssueSQL,
+			connID, "JIRA-1", "https://acme.atlassian.net/browse/JIRA-1", "Test issue",
+			"open", "normal", "reporter@example.com", "Reporter", time.Now().UTC().Add(-time.Minute),
+			[]byte(`{"key":"JIRA-1"}`),
+		).Scan(&ticketID)
+	}); err != nil {
+		t.Fatalf("seed ticket: %v", err)
+	}
+
+	// An op stranded in_progress by a double-fault: status='in_progress', last touched 10m ago.
+	var opID uuid.UUID
+	if err := tdb.Super.QueryRow(ctx, `
+		INSERT INTO connector_outbound_op
+			(business_id, tenant_root_id, connector_id, ticket_id, op_type, body, status, attempts, updated_at)
+		VALUES ($1,$1,$2,$3,'comment','stranded','in_progress',1, now() - interval '10 minutes')
+		RETURNING id`,
+		seed.businessID, connID, ticketID).Scan(&opID); err != nil {
+		t.Fatalf("seed stranded op: %v", err)
+	}
+
+	lease := pgtype.Interval{Microseconds: (5 * time.Minute).Microseconds(), Valid: true}
+
+	// Claim with a 5-minute lease: the 10-minute-stale op MUST be reclaimed, attempts bumped 1->2.
+	var claimed uuid.UUID
+	var attempts int
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT op_id, attempts FROM claim_outbound_ops($1,$2) LIMIT 1`, 10, lease).
+			Scan(&claimed, &attempts)
+	}); err != nil {
+		t.Fatalf("claim stale: %v", err)
+	}
+	if claimed != opID {
+		t.Fatalf("claim returned %v, want stranded op %v", claimed, opID)
+	}
+	if attempts != 2 {
+		t.Fatalf("reclaimed op attempts = %d, want 2 (1 + this reclaim)", attempts)
+	}
+
+	// The claim reset updated_at to now(), so the op is now freshly in_progress (mid-flight). A
+	// second claim with the same lease must NOT reclaim it again — the lease guards live ops from
+	// being dispatched a second time.
+	var n int
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM claim_outbound_ops($1,$2)`, 10, lease).Scan(&n)
+	}); err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("freshly-claimed in_progress op was reclaimed (n=%d), want 0 — lease must guard mid-flight ops", n)
 	}
 }
 
