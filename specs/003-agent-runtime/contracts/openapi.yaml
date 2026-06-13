@@ -347,6 +347,12 @@ components:
         autonomy_mode: { type: integer, enum: [1, 2, 3] }
         enabled: { type: boolean }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647 }
+        retriage_on_reply:
+          type: boolean
+          default: false
+          description: >-
+            When true, a customer reply on an existing ticket re-invokes this agent
+            (bounded by a per-ticket hourly cap). Default false.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     AgentList:
@@ -368,6 +374,12 @@ components:
         autonomy_mode: { type: integer, enum: [1, 2, 3], default: 1 }
         enabled: { type: boolean, default: true }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647, default: 0 }
+        retriage_on_reply:
+          type: boolean
+          default: false
+          description: >-
+            When true, a customer reply on an existing ticket re-invokes this agent
+            (bounded by a per-ticket hourly cap). Default false.
     UpdateAgentRequest:
       type: object
       description: Partial update — omit a field to leave it unchanged. provider is immutable.
@@ -379,6 +391,12 @@ components:
         autonomy_mode: { type: integer, enum: [1, 2, 3] }
         enabled: { type: boolean }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647 }
+        retriage_on_reply:
+          type: boolean
+          default: false
+          description: >-
+            When true, a customer reply on an existing ticket re-invokes this agent
+            (bounded by a per-ticket hourly cap). Default false.
     MCPServer:
       type: object
       description: >
