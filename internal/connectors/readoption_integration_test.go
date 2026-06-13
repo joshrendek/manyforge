@@ -5,6 +5,8 @@ package connectors
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,4 +161,16 @@ func TestReadopt_DifferentHostNotRelinked(t *testing.T) {
 		t.Errorf("different-host ticket relinked (%v), want nil", conn)
 	}
 	_ = connID
+}
+
+// TestReadopt_WiredIntoCreate_SourcePin fails loudly if a refactor drops the re-adoption call
+// from Service.Create (the behavior is otherwise easy to silently delete).
+func TestReadopt_WiredIntoCreate_SourcePin(t *testing.T) {
+	src, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatalf("read service.go: %v", err)
+	}
+	if !strings.Contains(string(src), "ReadoptDetachedTickets") {
+		t.Fatal("Service.Create no longer calls ReadoptDetachedTickets — re-adoption was dropped (manyforge-7zx)")
+	}
 }
