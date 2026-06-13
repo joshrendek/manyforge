@@ -44,13 +44,14 @@ type MCPHost struct {
 // audit; DiscoverTools never returns a non-nil error from a per-server failure
 // (fail-open). The only non-nil error return is from the resolver itself
 // (e.g. DB down at run start), which the caller treats as a discovery failure.
-func (h *MCPHost) DiscoverTools(ctx context.Context, principalID, businessID uuid.UUID, ids []uuid.UUID) ([]Tool, error) {
+func (h *MCPHost) DiscoverTools(ctx context.Context, principalID, businessID uuid.UUID, ids []uuid.UUID) ([]Tool, []DiscoveryFailure, error) {
 	servers, err := h.Servers.ListEnabledForAgent(ctx, principalID, businessID, ids)
 	if err != nil {
-		return nil, fmt.Errorf("agents: mcp_host: list enabled servers: %w", err)
+		return nil, nil, fmt.Errorf("agents: mcp_host: list enabled servers: %w", err)
 	}
 
 	var tools []Tool
+	var failures []DiscoveryFailure
 	for _, server := range servers {
 		discovered, err := h.discoverServerTools(ctx, server)
 		if err != nil {
@@ -59,12 +60,23 @@ func (h *MCPHost) DiscoverTools(ctx context.Context, principalID, businessID uui
 				"server_name", server.Name,
 				"err", err,
 			)
-			// Fail-open: continue to next server.
+			// Fail-open: continue to the next server, but report the failure so the engine can
+			// audit it (per-server audit-trail parity with the resolver-level failure, manyforge-3ck).
+			failures = append(failures, DiscoveryFailure{ServerID: server.ID, ServerName: server.Name, Err: err.Error()})
 			continue
 		}
 		tools = append(tools, discovered...)
 	}
-	return tools, nil
+	return tools, failures, nil
+}
+
+// DiscoveryFailure records one MCP server whose tool discovery failed (fail-open). The engine —
+// which holds the run + DB auditor — emits an agent.mcp.discovery_failed audit row per failure so
+// the event has audit-trail parity with the resolver-level failure, not just a log line.
+type DiscoveryFailure struct {
+	ServerID   uuid.UUID
+	ServerName string
+	Err        string
 }
 
 // mcpInvoker is the narrow interface the ApprovalExecutor uses to invoke an MCP
