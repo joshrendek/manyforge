@@ -432,9 +432,12 @@ func TestMCPHost_InvokeMCPTool_Success(t *testing.T) {
 	)
 
 	idemHint := uuid.New().String()
-	out, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:erp:get_order", json.RawMessage(`{}`), idemHint)
+	out, toolErr, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:erp:get_order", json.RawMessage(`{}`), idemHint)
 	if err != nil {
 		t.Fatalf("InvokeMCPTool: %v", err)
+	}
+	if toolErr {
+		t.Errorf("InvokeMCPTool toolErr=true on a successful (IsError=false) result, want false")
 	}
 	if out != `{"order":"42"}` {
 		t.Errorf("InvokeMCPTool content=%q, want {\"order\":\"42\"}", out)
@@ -465,7 +468,7 @@ func TestMCPHost_InvokeMCPTool_MalformedName(t *testing.T) {
 		"mcp:only-one", // only one colon
 	}
 	for _, tc := range cases {
-		_, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), tc, nil, "")
+		_, _, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), tc, nil, "")
 		if err == nil {
 			t.Errorf("InvokeMCPTool(%q): want error for malformed name, got nil", tc)
 		}
@@ -476,14 +479,16 @@ func TestMCPHost_InvokeMCPTool_MalformedName(t *testing.T) {
 // (not visible under RLS) returns an error.
 func TestMCPHost_InvokeMCPTool_UnknownServer(t *testing.T) {
 	host := buildMCPHost(nil, &fakeMCPServerResolver{servers: []ResolvedMCPServer{}})
-	_, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:nonexistent:some_tool", nil, "")
+	_, _, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:nonexistent:some_tool", nil, "")
 	if err == nil {
 		t.Fatal("InvokeMCPTool with unknown server: want error, got nil")
 	}
 }
 
-// TestMCPHost_InvokeMCPTool_IsError verifies that a tool call where IsError=true
-// is surfaced as an error from InvokeMCPTool.
+// TestMCPHost_InvokeMCPTool_IsError pins manyforge-9zi: a tool call where IsError=true means the
+// server PROCESSED the request and returned an error RESULT — NOT a transport failure. It must
+// surface as a completed call: toolErr=true, the error content in out, and a nil err (so the
+// caller marks it executed instead of rescheduling and double-firing the side effect).
 func TestMCPHost_InvokeMCPTool_IsError(t *testing.T) {
 	server := ResolvedMCPServer{ID: uuid.New(), Name: "svc", URL: "http://svc.local"}
 	toolDefs := []mcp.ToolDef{{Name: "fail_tool", InputSchema: json.RawMessage(`{}`)}}
@@ -494,8 +499,36 @@ func TestMCPHost_InvokeMCPTool_IsError(t *testing.T) {
 		map[string]*mcp.MockClient{"http://svc.local": mockClient},
 		&fakeMCPServerResolver{servers: []ResolvedMCPServer{server}},
 	)
-	_, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:svc:fail_tool", json.RawMessage(`{}`), "")
+	out, toolErr, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:svc:fail_tool", json.RawMessage(`{}`), "")
+	if err != nil {
+		t.Fatalf("InvokeMCPTool with IsError result: want nil err (completed, not transport), got %v", err)
+	}
+	if !toolErr {
+		t.Error("InvokeMCPTool with IsError result: want toolErr=true")
+	}
+	if out != "something went wrong" {
+		t.Errorf("InvokeMCPTool content=%q, want the error content fed back to the model", out)
+	}
+}
+
+// TestMCPHost_InvokeMCPTool_TransportError verifies the other side of manyforge-9zi: when the
+// underlying CallTool returns a TRANSPORT error (no response received), InvokeMCPTool surfaces a
+// non-nil err with toolErr=false, so the caller reschedules.
+func TestMCPHost_InvokeMCPTool_TransportError(t *testing.T) {
+	server := ResolvedMCPServer{ID: uuid.New(), Name: "svc", URL: "http://svc.local"}
+	toolDefs := []mcp.ToolDef{{Name: "flaky_tool", InputSchema: json.RawMessage(`{}`)}}
+	// No queued result for flaky_tool → MockClient.CallTool returns ErrMockExhausted, standing in
+	// for a transport failure (no response received).
+	mockClient := mcp.NewMockClient(toolDefs, map[string][]mcp.Result{})
+	host := buildMCPHost(
+		map[string]*mcp.MockClient{"http://svc.local": mockClient},
+		&fakeMCPServerResolver{servers: []ResolvedMCPServer{server}},
+	)
+	_, toolErr, err := host.InvokeMCPTool(context.Background(), uuid.New(), uuid.New(), "mcp:svc:flaky_tool", json.RawMessage(`{}`), "")
 	if err == nil {
-		t.Fatal("InvokeMCPTool with IsError tool result: want error, got nil")
+		t.Fatal("InvokeMCPTool with transport error: want non-nil err (reschedule), got nil")
+	}
+	if toolErr {
+		t.Error("InvokeMCPTool with transport error: want toolErr=false (a transport failure is not a tool-error result)")
 	}
 }
