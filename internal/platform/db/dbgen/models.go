@@ -526,6 +526,7 @@ type Agent struct {
 	CreatedAt          time.Time   `json:"created_at"`
 	UpdatedAt          time.Time   `json:"updated_at"`
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
+	RetriageOnReply    bool        `json:"retriage_on_reply"`
 }
 
 type AgentRun struct {

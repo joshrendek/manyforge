@@ -15,7 +15,7 @@ const createAgent = `-- name: CreateAgent :one
 INSERT INTO agent (
     id, business_id, tenant_root_id, principal_id, name, provider, model,
     system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents,
-    allowed_mcp_servers, created_at, updated_at)
+    allowed_mcp_servers, retriage_on_reply, created_at, updated_at)
 SELECT
     $1::uuid,
     b.id,
@@ -30,10 +30,11 @@ SELECT
     $9,
     $10::integer,
     $11::uuid[],
+    $12::boolean,
     now(), now()
 FROM business b
-WHERE b.id = $12::uuid
-RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers
+WHERE b.id = $13::uuid
+RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply
 `
 
 type CreateAgentParams struct {
@@ -48,6 +49,7 @@ type CreateAgentParams struct {
 	Enabled            bool        `json:"enabled"`
 	MonthlyBudgetCents int32       `json:"monthly_budget_cents"`
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
+	RetriageOnReply    bool        `json:"retriage_on_reply"`
 	BusinessID         uuid.UUID   `json:"business_id"`
 }
 
@@ -66,6 +68,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.Enabled,
 		arg.MonthlyBudgetCents,
 		arg.AllowedMcpServers,
+		arg.RetriageOnReply,
 		arg.BusinessID,
 	)
 	var i Agent
@@ -85,6 +88,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowedMcpServers,
+		&i.RetriageOnReply,
 	)
 	return i, err
 }
@@ -142,7 +146,7 @@ func (q *Queries) DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers FROM agent
+SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply FROM agent
 WHERE id = $1 AND business_id = $2
 `
 
@@ -173,12 +177,13 @@ func (q *Queries) GetAgent(ctx context.Context, arg GetAgentParams) (Agent, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowedMcpServers,
+		&i.RetriageOnReply,
 	)
 	return i, err
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers FROM agent
+SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply FROM agent
 WHERE business_id = $1
 ORDER BY name
 `
@@ -209,6 +214,7 @@ func (q *Queries) ListAgents(ctx context.Context, businessID uuid.UUID) ([]Agent
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AllowedMcpServers,
+			&i.RetriageOnReply,
 		); err != nil {
 			return nil, err
 		}
@@ -230,9 +236,10 @@ UPDATE agent SET
     enabled              = COALESCE($6, enabled),
     monthly_budget_cents = COALESCE($7::integer, monthly_budget_cents),
     allowed_mcp_servers  = COALESCE($8::uuid[], allowed_mcp_servers),
+    retriage_on_reply    = COALESCE($9::boolean, retriage_on_reply),
     updated_at           = now()
-WHERE id = $9::uuid AND business_id = $10::uuid
-RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers
+WHERE id = $10::uuid AND business_id = $11::uuid
+RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply
 `
 
 type UpdateAgentParams struct {
@@ -244,6 +251,7 @@ type UpdateAgentParams struct {
 	Enabled            *bool       `json:"enabled"`
 	MonthlyBudgetCents *int32      `json:"monthly_budget_cents"`
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
+	RetriageOnReply    *bool       `json:"retriage_on_reply"`
 	ID                 uuid.UUID   `json:"id"`
 	BusinessID         uuid.UUID   `json:"business_id"`
 }
@@ -261,6 +269,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.Enabled,
 		arg.MonthlyBudgetCents,
 		arg.AllowedMcpServers,
+		arg.RetriageOnReply,
 		arg.ID,
 		arg.BusinessID,
 	)
@@ -281,6 +290,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AllowedMcpServers,
+		&i.RetriageOnReply,
 	)
 	return i, err
 }
