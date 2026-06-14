@@ -80,3 +80,9 @@ WHERE business_id = $1 AND id = ANY($2::uuid[]);
 -- name: GetEnabledMCPServerByName :one
 SELECT * FROM mcp_server
 WHERE business_id = $1 AND name = $2 AND enabled;
+
+-- GetEnabledMCPServerByID resolves one enabled server by id under RLS (+ explicit business_id).
+-- Used by the tool-discovery endpoint to connect. pgx.ErrNoRows => ErrNotFound (no oracle).
+-- name: GetEnabledMCPServerByID :one
+SELECT * FROM mcp_server
+WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid AND enabled;
