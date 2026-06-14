@@ -32,6 +32,29 @@ func TestBlocked(t *testing.T) {
 	}
 }
 
+func TestVettedDialAddr(t *testing.T) {
+	// Empty resolution (the soft LookupIPAddr guarantee) must error, not panic on ips[0].
+	if _, err := vettedDialAddr(nil, "example.com", "443", Options{}); err == nil {
+		t.Error("empty ips slice must return an error, not be dialed (would panic on ips[0])")
+	}
+	// A blocked IP among the resolved set is refused.
+	if _, err := vettedDialAddr([]net.IPAddr{{IP: net.ParseIP("10.0.0.1")}}, "h", "80", Options{}); err == nil {
+		t.Error("private IP must be refused under the locked-down posture")
+	}
+	// A public IP yields the host:port to dial (first resolved IP, vetted).
+	got, err := vettedDialAddr([]net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, "h", "443", Options{})
+	if err != nil {
+		t.Fatalf("public IP: unexpected err %v", err)
+	}
+	if got != "8.8.8.8:443" {
+		t.Errorf("got %q, want 8.8.8.8:443", got)
+	}
+	// Trust flags flow through: a private IP is permitted when AllowPrivate is set.
+	if _, err := vettedDialAddr([]net.IPAddr{{IP: net.ParseIP("10.0.0.1")}}, "h", "80", Options{AllowPrivate: true}); err != nil {
+		t.Errorf("private IP under AllowPrivate must be allowed, got %v", err)
+	}
+}
+
 func TestBlockedWithLoopbackAllowed(t *testing.T) {
 	// loopback permitted; everything else still blocked.
 	if blockedWith(net.ParseIP("127.0.0.1"), true, false) {
