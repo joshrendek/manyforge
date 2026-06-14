@@ -37,6 +37,11 @@ func NewRunService(a *AgentService, e *Engine, r *AgentRunStore) *RunService {
 // Trigger loads the (caller-visible) agent under the caller's RLS context, then runs
 // the loop AS the agent principal (ag.PrincipalID) so all tool calls, audit rows, and
 // run records happen under the agent's acting identity.
+//
+// NOTE: targetID is a PROMPT HINT (which ticket the agent should look at first), NOT an
+// ownership gate. Authorization is enforced downstream by the tools, which run under the
+// agent's own RLS principal — a targetID the agent cannot access simply yields nothing
+// when a tool reads it. Do not mistake the absence of an ownership check here for a bug.
 func (s *RunService) Trigger(ctx context.Context, principalID, businessID, agentID uuid.UUID, trigger string, targetType *string, targetID *uuid.UUID) (AgentRun, error) {
 	ag, err := s.agents.Get(ctx, principalID, businessID, agentID)
 	if err != nil {

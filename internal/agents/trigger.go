@@ -54,7 +54,7 @@ func (t *TriageTrigger) Handle(ctx context.Context, _ pgx.Tx, ev events.Event) e
 	if err != nil {
 		return err // transient → reschedule
 	}
-	targetType := "ticket"
+	targetType := targetTypeTicket
 	dedup := p.MessageID.String()
 	for _, ref := range refs {
 		if _, err := t.Runs.CreateEventRun(ctx, ref.PrincipalID, p.BusinessID, ref.AgentID, dedup, &targetType, &p.TicketID); err != nil {
