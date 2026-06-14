@@ -266,10 +266,10 @@ paths:
       parameters:
         - { name: status, in: query, required: false, schema: { type: string } }
         - { name: window, in: query, required: false, schema: { type: string, enum: [this_month, last_month, last_30_days, custom] } }
-        - { name: from, in: query, required: false, schema: { type: string } }
-        - { name: to, in: query, required: false, schema: { type: string } }
+        - { name: from, in: query, required: false, schema: { type: string }, description: "custom window start; RFC3339 or YYYY-MM-DD (UTC), inclusive" }
+        - { name: to, in: query, required: false, schema: { type: string }, description: "custom window end; RFC3339 or YYYY-MM-DD (UTC). A bare date includes the whole day (half-open [from,to) advances to next midnight); an RFC3339 instant is honored exactly" }
         - { name: cursor, in: query, required: false, schema: { type: string } }
-        - { name: limit, in: query, required: false, schema: { type: integer } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 100 }, description: "page size; non-positive -> 50, server caps at 100" }
       responses:
         "200":
           description: A page of runs
@@ -352,8 +352,8 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: window, in: query, required: false, schema: { type: string, enum: [this_month, last_month, last_30_days, custom] } }
-        - { name: from, in: query, required: false, schema: { type: string } }
-        - { name: to, in: query, required: false, schema: { type: string } }
+        - { name: from, in: query, required: false, schema: { type: string }, description: "custom window start; RFC3339 or YYYY-MM-DD (UTC), inclusive" }
+        - { name: to, in: query, required: false, schema: { type: string }, description: "custom window end; RFC3339 or YYYY-MM-DD (UTC). A bare date includes the whole day (half-open [from,to) advances to next midnight); an RFC3339 instant is honored exactly" }
       responses:
         "200":
           description: Accounting summary
