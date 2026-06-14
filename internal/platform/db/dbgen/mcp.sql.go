@@ -31,6 +31,35 @@ func (q *Queries) DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams
 	return result.RowsAffected(), nil
 }
 
+const getEnabledMCPServerByID = `-- name: GetEnabledMCPServerByID :one
+SELECT id, business_id, tenant_root_id, name, url, sealed_auth_ref, enabled, created_at, updated_at FROM mcp_server
+WHERE id = $1::uuid AND business_id = $2::uuid AND enabled
+`
+
+type GetEnabledMCPServerByIDParams struct {
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// GetEnabledMCPServerByID resolves one enabled server by id under RLS (+ explicit business_id).
+// Used by the tool-discovery endpoint to connect. pgx.ErrNoRows => ErrNotFound (no oracle).
+func (q *Queries) GetEnabledMCPServerByID(ctx context.Context, arg GetEnabledMCPServerByIDParams) (McpServer, error) {
+	row := q.db.QueryRow(ctx, getEnabledMCPServerByID, arg.ID, arg.BusinessID)
+	var i McpServer
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Name,
+		&i.Url,
+		&i.SealedAuthRef,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getEnabledMCPServerByName = `-- name: GetEnabledMCPServerByName :one
 SELECT id, business_id, tenant_root_id, name, url, sealed_auth_ref, enabled, created_at, updated_at FROM mcp_server
 WHERE business_id = $1 AND name = $2 AND enabled
