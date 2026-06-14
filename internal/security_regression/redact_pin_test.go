@@ -60,7 +60,9 @@ func TestRedactIsSoftDeletePinned(t *testing.T) {
 	if !strings.Contains(handler, `r.Delete("/businesses/{id}/tickets/{tid}", h.deleteTicket)`) {
 		t.Error("redact pin: the DELETE /businesses/{id}/tickets/{tid} route is gone")
 	}
-	if !strings.Contains(mainGo, `httpx.RequirePermission(database, permResolve, "tickets.delete", businessIDFromPath)`) {
+	// authz.PermTicketsDelete since manyforge-xxe (constant→SQL key pinned by
+	// TestPin_PermConstantsMatchSeededCatalog).
+	if !strings.Contains(mainGo, `httpx.RequirePermission(database, permResolve, authz.PermTicketsDelete, businessIDFromPath)`) {
 		t.Error("redact pin: the DELETE route is no longer gated on tickets.delete")
 	}
 }

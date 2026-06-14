@@ -77,14 +77,16 @@ func TestMF004US6_PermGating(t *testing.T) {
 	// (Name + Effect + RequiredPerm are contiguous on one line) so a double-edit regression
 	// — moving read_external_ticket to a different perm AND adding connectors.read to some
 	// OTHER tool — cannot escape a file-wide substring match.
-	if !strings.Contains(src, `Name: "read_external_ticket", Effect: EffectRead, RequiredPerm: "connectors.read"`) {
-		t.Fatal(`MF-004-US6-PERM-GATING SOURCE PIN: read_external_ticket no longer declares RequiredPerm: "connectors.read" on its Name/Effect line — the read tool must be perm-gated by connectors.read`)
+	// RequiredPerm uses authz.PermConnectors* constants since manyforge-xxe (the constant→SQL
+	// key mapping is pinned by TestPin_PermConstantsMatchSeededCatalog).
+	if !strings.Contains(src, `Name: "read_external_ticket", Effect: EffectRead, RequiredPerm: authz.PermConnectorsRead`) {
+		t.Fatal(`MF-004-US6-PERM-GATING SOURCE PIN: read_external_ticket no longer declares RequiredPerm: authz.PermConnectorsRead on its Name/Effect line — the read tool must be perm-gated by connectors.read`)
 	}
 
-	// Both write tools require connectors.write. The perm string must appear; one occurrence
-	// per write tool means it appears at least twice (the source contains exactly two write
+	// Both write tools require connectors.write. The perm must appear; one occurrence per
+	// write tool means it appears at least twice (the source contains exactly two write
 	// tool declarations). We count occurrences to pin that BOTH tools carry the perm.
-	count := strings.Count(src, `RequiredPerm: "connectors.write"`)
+	count := strings.Count(src, `RequiredPerm: authz.PermConnectorsWrite`)
 	if count < 2 {
 		t.Fatalf("MF-004-US6-PERM-GATING SOURCE PIN: connectors.write appears %d time(s) in tools.go, want ≥2 (one per write tool — add_external_comment + transition_external_status)", count)
 	}
