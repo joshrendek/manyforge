@@ -252,7 +252,7 @@ func main() {
 		logger.Warn("MANYFORGE_MCP_MASTER_KEY unset; MCP server bearer-token sealing disabled (auth-token creation will fail)")
 	}
 	mcpServerSvc := &agents.MCPServerService{DB: database, Sealer: mcpSealer}
-	mcpH := agents.NewMCPServerHandler(mcpServerSvc)
+	mcpPolicySvc := &agents.MCPToolPolicyService{DB: database} // manyforge-k0d: per-tool effect policy
 
 	// US6 MCP host wiring. The guarded HTTP client honours MCPAllowLoopback so that
 	// dev environments may point at localhost MCP servers while production keeps the
@@ -264,7 +264,11 @@ func main() {
 	mcpConnect := mcp.ClientFactory(func(serverURL, authHeader string) mcp.ClientLike {
 		return mcp.NewClient(serverURL, authHeader, mcpHTTP)
 	})
-	mcpHost := &agents.MCPHost{Servers: mcpServerSvc, Connect: mcpConnect, Logger: logger}
+	mcpHost := &agents.MCPHost{Servers: mcpServerSvc, Policies: mcpPolicySvc, Connect: mcpConnect, Logger: logger}
+	// manyforge-k0d: the policy handler discovers tools via mcpHost and CRUDs via mcpPolicySvc;
+	// it nests under /mcp_servers/{serverID} (sharing the agents.configure gate).
+	mcpPolicyH := agents.NewMCPToolPolicyHandler(mcpPolicySvc, mcpHost)
+	mcpH := agents.NewMCPServerHandler(mcpServerSvc, mcpPolicyH)
 	agentEngine.MCP = mcpHost
 	approvalExec.MCP = mcpHost
 	// security carry-forward (Task 7): wire the validator so allowed_mcp_servers ids are
