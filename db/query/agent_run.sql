@@ -29,9 +29,6 @@ RETURNING *;
 -- run R via a DIFFERENT agent's path yields no row -> pgx.ErrNoRows -> no-oracle 404.
 SELECT * FROM agent_run WHERE id = $1 AND business_id = $2 AND agent_id = $3;
 
--- name: ListAgentRunsByAgent :many
-SELECT * FROM agent_run WHERE agent_id = $1 AND business_id = $2 ORDER BY created_at DESC LIMIT $3;
-
 -- name: UpdateAgentRunProgress :one
 -- Final/intermediate state write. status + token/cost totals + optional error.
 UPDATE agent_run
