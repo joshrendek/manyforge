@@ -37,6 +37,16 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/connectors/list').then((m) => m.ConnectorsListComponent),
   },
   {
+    path: 'mcp',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/mcp/server-list').then((m) => m.McpServerListComponent),
+  },
+  {
+    path: 'mcp/:businessId/:serverId',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/mcp/server-tools').then((m) => m.McpServerToolsComponent),
+  },
+  {
     path: 'accounting',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/accounting/summary').then((m) => m.AccountingSummaryComponent),
