@@ -4,6 +4,7 @@ import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Router, RouterLink } from '@angular/router';
 import { BusinessService } from '../../core/business.service';
+import { CurrentBusinessService } from '../../core/current-business.service';
 import { Business } from '../../core/tree';
 import {
   Ticket,
@@ -196,6 +197,7 @@ export class TicketListComponent implements OnInit {
   private bizApi = inject(BusinessService);
   private api = inject(TicketService);
   private router = inject(Router);
+  private currentBiz = inject(CurrentBusinessService);
 
   readonly statuses = STATUSES;
   readonly priorities = PRIORITIES;
@@ -227,7 +229,13 @@ export class TicketListComponent implements OnInit {
         const items = r.items ?? [];
         this.businesses.set(items);
         if (items.length && !this.businessId()) {
-          this.businessId.set(items[0].id);
+          // Prefer the shared current business (set on other pages, e.g. approvals) when it
+          // is one the caller can see; else default to the first. Seed the shared service
+          // either way so the approvals nav badge tracks the business shown here (crm).
+          const shared = this.currentBiz.businessId();
+          const initial = items.some((b) => b.id === shared) ? (shared as string) : items[0].id;
+          this.businessId.set(initial);
+          this.currentBiz.set(initial);
           this.reload();
         }
       },
@@ -237,6 +245,7 @@ export class TicketListComponent implements OnInit {
 
   selectBusiness(id: string): void {
     this.businessId.set(id);
+    this.currentBiz.set(id); // keep the approvals nav badge in sync with the viewed business (crm)
     this.reload();
   }
 

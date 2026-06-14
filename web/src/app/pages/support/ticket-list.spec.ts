@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CurrentBusinessService } from '../../core/current-business.service';
 import { Page, Ticket } from '../../core/ticket.service';
 import { TicketListComponent } from './ticket-list';
 
@@ -86,6 +87,7 @@ describe('TicketListComponent (Task 19 UI redesign)', () => {
     });
     mock = TestBed.inject(HttpTestingController);
     document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.clear(); // deterministic shared current-business state
   });
 
   afterEach(() => {
@@ -99,6 +101,17 @@ describe('TicketListComponent (Task 19 UI redesign)', () => {
     expect(header).not.toBeNull();
     // PageHeader renders the title in an <h1>
     expect(header!.textContent).toContain('Support');
+  });
+
+  it('seeds CurrentBusinessService so the approvals badge tracks the viewed business (crm)', () => {
+    boot();
+    const cb = TestBed.inject(CurrentBusinessService);
+    expect(cb.businessId()).toBe('b1'); // seeded on default load
+
+    // Switching business updates the shared service that drives the nav badge.
+    fixture.componentInstance.selectBusiness('b2');
+    mock.expectOne('/api/v1/businesses/b2/tickets').flush(ticketPage);
+    expect(cb.businessId()).toBe('b2');
   });
 
   it('business-select is a select.mf-select', () => {
