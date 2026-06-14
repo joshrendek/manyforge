@@ -51,6 +51,19 @@ test('accounting summary renders totals + per-agent rows (incl. zero-run agent)'
   await expect(rows.first().getByTestId('agent-budget-pct')).toContainText('2%');
 });
 
+test('budget-% hint appears only for non-current-month windows (deo.7)', async ({ page }) => {
+  await installStack(page);
+  await page.goto('/accounting');
+
+  // this_month: budget % pills are populated, so no hint.
+  await expect(page.getByTestId('agent-row').first().getByTestId('agent-budget-pct')).toContainText('2%');
+  await expect(page.getByTestId('budget-hint')).toHaveCount(0);
+
+  // Switching to last_month: budget % is unavailable, so a hint explains it.
+  await page.getByTestId('window-select').selectOption('last_month');
+  await expect(page.getByTestId('budget-hint')).toContainText('current month');
+});
+
 test('clicking an agent drills into its run list', async ({ page }) => {
   await installStack(page);
   await page.goto('/accounting');

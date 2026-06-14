@@ -22,10 +22,17 @@ func TestResolveWindow(t *testing.T) {
 		{name: "this_month", win: "this_month", wantFrom: monthStart, wantTo: now},
 		{name: "last_month", win: "last_month", wantFrom: prevMonthStart, wantTo: monthStart},
 		{name: "last_30_days", win: "last_30_days", wantFrom: now.Add(-30 * 24 * time.Hour), wantTo: now},
+		// RFC3339 'to' carries an explicit instant -> respected exactly, NOT normalized.
 		{name: "custom rfc3339", win: "custom", from: "2026-03-01T00:00:00Z", to: "2026-03-31T00:00:00Z",
 			wantFrom: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), wantTo: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)},
-		{name: "custom date-only", win: "custom", from: "2026-03-01", to: "2026-03-31",
-			wantFrom: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), wantTo: time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)},
+		// Date-only 'to' names a whole day; [from, to) advances to the next midnight so
+		// the entire final day (Mar 31) is included rather than silently excluded.
+		{name: "custom date-only inclusive end", win: "custom", from: "2026-03-01", to: "2026-03-31",
+			wantFrom: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), wantTo: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)},
+		// A single date-only day yields a 1-day window covering all of that day.
+		{name: "custom date-only single day", win: "custom", from: "2026-03-15", to: "2026-03-15",
+			wantFrom: time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC), wantTo: time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC)},
+		// Inverted range is rejected on the RAW instants, before normalization can mask it.
 		{name: "custom from>to", win: "custom", from: "2026-03-31", to: "2026-03-01", wantErr: true},
 		{name: "custom over cap", win: "custom", from: "2024-01-01", to: "2026-01-02", wantErr: true},
 		{name: "custom unparseable", win: "custom", from: "nope", to: "2026-03-01", wantErr: true},

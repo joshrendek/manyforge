@@ -40,6 +40,12 @@ const WINDOWS: WindowName[] = ['this_month', 'last_month', 'last_30_days'];
         </div>
       </div>
 
+      @if (window() !== 'this_month') {
+        <p style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm);margin:-4px 0 16px" data-testid="budget-hint">
+          Budget % is shown only for the current month.
+        </p>
+      }
+
       @if (!businessId()) {
         <p style="color:var(--mf-text-muted)" data-testid="no-business">Select a business to view usage.</p>
       } @else if (loading()) {
