@@ -304,6 +304,30 @@ func (s *MCPServerService) ResolveEnabledByName(ctx context.Context, principalID
 	}, nil
 }
 
+// ResolveEnabledByID fetches a single enabled server by id under RLS and unseals its auth header.
+// Used by the tool-discovery endpoint. pgx.ErrNoRows → ErrNotFound (no oracle).
+func (s *MCPServerService) ResolveEnabledByID(ctx context.Context, principalID, businessID, serverID uuid.UUID) (ResolvedMCPServer, error) {
+	var out ResolvedMCPServer
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		row, qerr := dbgen.New(tx).GetEnabledMCPServerByID(ctx, dbgen.GetEnabledMCPServerByIDParams{
+			ID: serverID, BusinessID: businessID,
+		})
+		if qerr != nil {
+			return qerr
+		}
+		header, herr := s.resolveAuthHeader(row.SealedAuthRef)
+		if herr != nil {
+			return herr
+		}
+		out = ResolvedMCPServer{ID: row.ID, Name: row.Name, URL: row.Url, AuthHeader: header}
+		return nil
+	})
+	if err != nil {
+		return ResolvedMCPServer{}, mapMCPErr(err)
+	}
+	return out, nil
+}
+
 // ValidateServerIDs checks that every id in ids belongs to businessID.
 // Returns ErrValidation if any id is missing/foreign/cross-tenant.
 func (s *MCPServerService) ValidateServerIDs(ctx context.Context, principalID, businessID uuid.UUID, ids []uuid.UUID) error {

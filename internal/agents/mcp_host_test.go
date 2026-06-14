@@ -36,6 +36,20 @@ func (f *fakeMCPServerResolver) ResolveEnabledByName(_ context.Context, _, _ uui
 	return ResolvedMCPServer{}, errors.New("mcp server not found: " + name)
 }
 
+// ResolveEnabledByID returns the first server whose ID matches (manyforge-k0d: the
+// discovery endpoint resolves by id). Mirrors ResolveEnabledByName's lookup shape.
+func (f *fakeMCPServerResolver) ResolveEnabledByID(_ context.Context, _, _, serverID uuid.UUID) (ResolvedMCPServer, error) {
+	if f.err != nil {
+		return ResolvedMCPServer{}, f.err
+	}
+	for _, s := range f.servers {
+		if s.ID == serverID {
+			return s, nil
+		}
+	}
+	return ResolvedMCPServer{}, errors.New("mcp server not found by id")
+}
+
 // buildMCPHost constructs an MCPHost whose Connect factory maps serverURL →
 // the provided MockClient. Servers not in the map get a nil return (callers
 // must only request servers present in the map).
