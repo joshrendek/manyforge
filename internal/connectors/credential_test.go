@@ -27,6 +27,13 @@ func TestValidate(t *testing.T) {
 		{"missing display_name", valid(func(i *CreateConnectorInput) { i.DisplayName = "" }), true},
 		{"missing base_url", valid(func(i *CreateConnectorInput) { i.BaseURL = "" }), true},
 		{"not http(s)", valid(func(i *CreateConnectorInput) { i.BaseURL = "ftp://x" }), true},
+		// a7j.11: public-host http is rejected without the trust flag (token-in-transit), but
+		// permitted with it (legitimate on-prem). https is always fine.
+		{"public http no trust rejected", valid(func(i *CreateConnectorInput) { i.BaseURL = "http://jira.example.com" }), true},
+		{"public http with trust ok", valid(func(i *CreateConnectorInput) {
+			i.BaseURL = "http://jira.example.com"
+			i.AllowPrivateBaseURL = true
+		}), false},
 		{"missing email", valid(func(i *CreateConnectorInput) { i.Email = "" }), true},
 		{"missing token", valid(func(i *CreateConnectorInput) { i.APIToken = "" }), true},
 		{"blocked literal IP no trust", valid(func(i *CreateConnectorInput) { i.BaseURL = "http://10.0.0.1" }), true},
