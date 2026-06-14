@@ -18,7 +18,7 @@ import (
 // the connector_id-implies-external_id CHECK (migration 0041). Raw Super-pool inserts
 // mirror seedTicket; the producer hook reads connector linkage off the ticket row, so a
 // fully wired connectors.Service is unnecessary here. Returns the connector id.
-func linkTicketToConnector(ctx context.Context, t *testing.T, tdb *testdb.TestDB, rt readTenant, ticketID uuid.UUID, externalID string) uuid.UUID {
+func linkTicketToConnector(ctx context.Context, t *testing.T, tdb *testdb.TestDB, rt readTenant, ticketID uuid.UUID, externalID string, suppressNative bool) uuid.UUID {
 	t.Helper()
 	connID := uuid.New()
 	secretID := uuid.New()
@@ -36,9 +36,9 @@ func linkTicketToConnector(ctx context.Context, t *testing.T, tdb *testdb.TestDB
 		t.Fatalf("seed secret: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO connector (id,business_id,tenant_root_id,type,display_name,base_url,secret_ref,status,created_at,updated_at)
-		 VALUES ($1,$2,$2,'jira','Jira','https://acme.atlassian.net',$3,'enabled',now(),now())`,
-		connID, rt.master, secretID); err != nil {
+		`INSERT INTO connector (id,business_id,tenant_root_id,type,display_name,base_url,secret_ref,status,suppress_native_notifications,created_at,updated_at)
+		 VALUES ($1,$2,$2,'jira','Jira','https://acme.atlassian.net',$3,'enabled',$4,now(),now())`,
+		connID, rt.master, secretID, suppressNative); err != nil {
 		t.Fatalf("seed connector: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
@@ -64,7 +64,7 @@ func TestReplyEnqueuesOutboundOpForConnectorLinkedTicket(t *testing.T) {
 
 	linkedID := uuid.New()
 	seedTicket(ctx, t, tdb, rt, linkedID, "open", "normal", "Linked", nil, nil, -1*time.Hour)
-	linkTicketToConnector(ctx, t, tdb, rt, linkedID, "JIRA-7")
+	linkTicketToConnector(ctx, t, tdb, rt, linkedID, "JIRA-7", false)
 
 	plainID := uuid.New()
 	seedTicket(ctx, t, tdb, rt, plainID, "open", "normal", "Plain", nil, nil, -1*time.Hour)
@@ -117,5 +117,41 @@ func TestReplyEnqueuesOutboundOpForConnectorLinkedTicket(t *testing.T) {
 	if n := countSuper(ctx, t, tdb.Super,
 		"SELECT count(*) FROM outbox WHERE tenant_root_id=$1 AND topic='ticket.replied'", rt.tenantRootID); n != 2 {
 		t.Errorf("outbox ticket.replied = %d, want 2 (one per reply; email NOT suppressed)", n)
+	}
+}
+
+// a7j.8: when the linked connector has suppress_native_notifications=true, a reply still
+// mirrors to the external system (outbound op enqueued) but the native ticket.replied email
+// is suppressed (single-channel). A plain ticket in the same tenant is unaffected.
+func TestReplySuppressesNativeEmailWhenConnectorOptsIn(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	svc := &Service{DB: tdb.App, ReplyTokenKey: replyKey, SystemDomain: "inbound.localhost"}
+
+	suppressedID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, suppressedID, "open", "normal", "Suppressed", nil, nil, -1*time.Hour)
+	linkTicketToConnector(ctx, t, tdb, rt, suppressedID, "JIRA-9", true)
+
+	plainID := uuid.New()
+	seedTicket(ctx, t, tdb, rt, plainID, "open", "normal", "Plain", nil, nil, -1*time.Hour)
+
+	if _, err := svc.Reply(ctx, rt.reader, rt.master, suppressedID, ReplyInput{BodyText: "mirrored only"}); err != nil {
+		t.Fatalf("reply suppressed: %v", err)
+	}
+	if _, err := svc.Reply(ctx, rt.reader, rt.master, plainID, ReplyInput{BodyText: "native only"}); err != nil {
+		t.Fatalf("reply plain: %v", err)
+	}
+
+	// The external mirror still fires for the suppressed connector's ticket.
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM connector_outbound_op WHERE ticket_id=$1 AND op_type='comment'", suppressedID); n != 1 {
+		t.Fatalf("suppressed ticket comment outbound ops = %d, want 1 (mirror not suppressed)", n)
+	}
+	// Native email: the suppressed reply enqueues none, the plain reply enqueues one, so the
+	// tenant total is exactly 1 — proving the suppressed ticket's email was skipped while the
+	// plain ticket's was not.
+	if n := countSuper(ctx, t, tdb.Super,
+		"SELECT count(*) FROM outbox WHERE tenant_root_id=$1 AND topic='ticket.replied'", rt.tenantRootID); n != 1 {
+		t.Fatalf("tenant ticket.replied outbox = %d, want 1 (suppressed reply skipped, plain reply sent)", n)
 	}
 }

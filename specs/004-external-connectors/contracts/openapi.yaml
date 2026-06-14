@@ -184,6 +184,7 @@ components:
         display_name: { type: string }
         base_url: { type: string, format: uri }
         allow_private_base_url: { type: boolean }
+        suppress_native_notifications: { type: boolean, description: "When true, replies on tickets linked to this connector skip the native ticket.replied email (single-channel — the external system notifies)." }
         config: { type: object, additionalProperties: true }
         status: { type: string, enum: [enabled, disabled] }
         last_reconciled_at: { type: [string, 'null'], format: date-time }
@@ -198,6 +199,7 @@ components:
         display_name: { type: string }
         base_url: { type: string, format: uri }
         allow_private_base_url: { type: boolean, default: false }
+        suppress_native_notifications: { type: boolean, default: false, description: "When true, replies on this connector's tickets skip the native ticket.replied email (single-channel)." }
         email: { type: string }
         api_token: { type: string, description: Write-only; never returned. }
         webhook_secret: { type: string, description: Write-only; never returned. }
@@ -210,6 +212,7 @@ components:
         display_name: { type: string }
         config: { type: object, additionalProperties: true }
         status: { type: string, enum: [enabled, disabled] }
+        suppress_native_notifications: { type: boolean, description: "Omitted = preserved." }
     RotateCredential:
       type: object
       properties:

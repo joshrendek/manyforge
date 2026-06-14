@@ -458,6 +458,7 @@ CREATE TABLE connector (
     display_name            text NOT NULL,
     base_url                text NOT NULL,
     allow_private_base_url  boolean NOT NULL,
+    suppress_native_notifications boolean NOT NULL DEFAULT false,
     secret_ref              uuid NOT NULL,
     config                  jsonb NOT NULL,
     status                  text NOT NULL,

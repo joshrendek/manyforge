@@ -200,7 +200,7 @@ func (q *Queries) ListConnectorHealth(ctx context.Context, businessID uuid.UUID)
 }
 
 const listConnectors = `-- name: ListConnectors :many
-SELECT id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, last_reconciled_at, created_at, updated_at FROM connector WHERE business_id = $1 ORDER BY display_name, created_at
+SELECT id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, suppress_native_notifications, secret_ref, config, status, last_reconciled_at, created_at, updated_at FROM connector WHERE business_id = $1 ORDER BY display_name, created_at
 `
 
 // ListConnectors returns all connectors for a business, newest-stable order. RLS + the
@@ -223,6 +223,7 @@ func (q *Queries) ListConnectors(ctx context.Context, businessID uuid.UUID) ([]C
 			&i.DisplayName,
 			&i.BaseUrl,
 			&i.AllowPrivateBaseUrl,
+			&i.SuppressNativeNotifications,
 			&i.SecretRef,
 			&i.Config,
 			&i.Status,
@@ -344,28 +345,37 @@ UPDATE connector SET
     display_name = COALESCE($1, display_name),
     config       = COALESCE($2, config),
     status       = COALESCE($3, status),
+    suppress_native_notifications = COALESCE($4, suppress_native_notifications),
     updated_at   = now()
-WHERE id = $4 AND business_id = $5
-RETURNING id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, last_reconciled_at, created_at, updated_at
+WHERE id = $5 AND business_id = $6
+RETURNING id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, suppress_native_notifications, secret_ref, config, status, last_reconciled_at, created_at, updated_at
 `
 
 type UpdateConnectorParams struct {
-	DisplayName *string   `json:"display_name"`
-	Config      []byte    `json:"config"`
-	Status      *string   `json:"status"`
-	ID          uuid.UUID `json:"id"`
-	BusinessID  uuid.UUID `json:"business_id"`
+	DisplayName                 *string   `json:"display_name"`
+	Config                      []byte    `json:"config"`
+	Status                      *string   `json:"status"`
+	SuppressNativeNotifications *bool     `json:"suppress_native_notifications"`
+	ID                          uuid.UUID `json:"id"`
+	BusinessID                  uuid.UUID `json:"business_id"`
 }
 
 // UpdateConnector applies a partial (PATCH) change scoped to (id, business_id). Omitted
 // fields (NULL narg) are preserved via COALESCE. base_url and type are intentionally NOT
 // updatable (they are part of the connector's identity). No matching row → no row returned
 // → pgx.ErrNoRows → 404 (no oracle). status is written as text exactly like InsertConnector.
+//
+// NOTE (manyforge-a7j.7): if base_url or allow_private_base_url ever become mutable here (or
+// via a new UpdateConnectorCredential query), the service MUST re-run validateBaseURL on the
+// new value AND re-audit the trust grant — create-time validation (credential.go) alone is
+// insufficient once these are mutable, or an update silently bypasses the SSRF/trust checks.
+// Pinned in internal/security_regression/connector_credential_update_pin_test.go.
 func (q *Queries) UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error) {
 	row := q.db.QueryRow(ctx, updateConnector,
 		arg.DisplayName,
 		arg.Config,
 		arg.Status,
+		arg.SuppressNativeNotifications,
 		arg.ID,
 		arg.BusinessID,
 	)
@@ -378,6 +388,7 @@ func (q *Queries) UpdateConnector(ctx context.Context, arg UpdateConnectorParams
 		&i.DisplayName,
 		&i.BaseUrl,
 		&i.AllowPrivateBaseUrl,
+		&i.SuppressNativeNotifications,
 		&i.SecretRef,
 		&i.Config,
 		&i.Status,
