@@ -402,6 +402,20 @@ CREATE TABLE mcp_server (
 );
 CREATE INDEX mcp_server_business_idx ON mcp_server (business_id, tenant_root_id);
 
+CREATE TABLE mcp_tool_policy (
+    mcp_server_id  uuid     NOT NULL,
+    business_id    uuid     NOT NULL,
+    tenant_root_id uuid     NOT NULL,
+    tool_name      text     NOT NULL,
+    effect         smallint NOT NULL,
+    created_at     timestamptz NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    PRIMARY KEY (mcp_server_id, tool_name),
+    FOREIGN KEY (mcp_server_id, tenant_root_id) REFERENCES mcp_server (id, tenant_root_id) ON DELETE CASCADE,
+    FOREIGN KEY (business_id, tenant_root_id)   REFERENCES business (id, tenant_root_id)
+);
+CREATE INDEX mcp_tool_policy_business_idx ON mcp_tool_policy (business_id, tenant_root_id);
+
 -- security: system catalog, no tenant scoping (like permission in 0003) — no RLS,
 -- SELECT-only grant; writes happen via migration, never from the app.
 CREATE TABLE model_pricing (
