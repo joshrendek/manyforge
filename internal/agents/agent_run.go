@@ -320,6 +320,9 @@ const (
 	runListMaxLimit     = 100
 )
 
+// clampRunLimit applies the service-boundary page cap on the runs list. A non-positive
+// request gets the default; an oversized request is silently capped at the max (never an
+// unbounded scan) — the DoS guard, enforced here so every caller inherits it.
 func clampRunLimit(n int) int {
 	if n <= 0 {
 		return runListDefaultLimit
@@ -335,9 +338,9 @@ func clampRunLimit(n int) int {
 func (s *AgentRunStore) ListRuns(ctx context.Context, principalID, businessID, agentID uuid.UUID, f RunListFilter, cursor string, limit int) ([]AgentRun, *string, error) {
 	lim := clampRunLimit(limit)
 
-	// Page 1 sentinel: a tuple greater than any real row in (created_at, id) DESC.
-	curTs := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
-	curID := uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
+	// Page 1 starts at the sentinel tuple (greater than any real row under
+	// (created_at, id) DESC); a non-empty cursor resumes from its keyset.
+	curTs, curID := runCursorPage1.ts, runCursorPage1.id
 	if cursor != "" {
 		k, err := decodeRunCursor(cursor)
 		if err != nil {
