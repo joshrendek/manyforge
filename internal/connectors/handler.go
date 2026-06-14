@@ -76,18 +76,19 @@ type healthResp struct {
 }
 
 type connectorResp struct {
-	ID                  string         `json:"id"`
-	BusinessID          string         `json:"business_id"`
-	Type                string         `json:"type"`
-	DisplayName         string         `json:"display_name"`
-	BaseURL             string         `json:"base_url"`
-	AllowPrivateBaseURL bool           `json:"allow_private_base_url"`
-	Config              map[string]any `json:"config"`
-	Status              string         `json:"status"`
-	LastReconciledAt    *string        `json:"last_reconciled_at"`
-	CreatedAt           string         `json:"created_at"`
-	UpdatedAt           string         `json:"updated_at"`
-	Health              healthResp     `json:"health"`
+	ID                          string         `json:"id"`
+	BusinessID                  string         `json:"business_id"`
+	Type                        string         `json:"type"`
+	DisplayName                 string         `json:"display_name"`
+	BaseURL                     string         `json:"base_url"`
+	AllowPrivateBaseURL         bool           `json:"allow_private_base_url"`
+	SuppressNativeNotifications bool           `json:"suppress_native_notifications"`
+	Config                      map[string]any `json:"config"`
+	Status                      string         `json:"status"`
+	LastReconciledAt            *string        `json:"last_reconciled_at"`
+	CreatedAt                   string         `json:"created_at"`
+	UpdatedAt                   string         `json:"updated_at"`
+	Health                      healthResp     `json:"health"`
 }
 
 func toConnectorResp(v ConnectorView) connectorResp {
@@ -97,7 +98,8 @@ func toConnectorResp(v ConnectorView) connectorResp {
 	}
 	return connectorResp{
 		ID: v.ID, BusinessID: v.BusinessID, Type: v.Type, DisplayName: v.DisplayName,
-		BaseURL: v.BaseURL, AllowPrivateBaseURL: v.AllowPrivateBaseURL, Config: cfg, Status: v.Status,
+		BaseURL: v.BaseURL, AllowPrivateBaseURL: v.AllowPrivateBaseURL,
+		SuppressNativeNotifications: v.SuppressNativeNotifications, Config: cfg, Status: v.Status,
 		LastReconciledAt: v.LastReconciledAt, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Health: healthResp{
 			State: v.Health.State, LinkedTicketCount: v.Health.LinkedTicketCount,
@@ -146,21 +148,23 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Type                string         `json:"type"`
-		DisplayName         string         `json:"display_name"`
-		BaseURL             string         `json:"base_url"`
-		AllowPrivateBaseURL bool           `json:"allow_private_base_url"`
-		Email               string         `json:"email"`
-		APIToken            string         `json:"api_token"`
-		WebhookSecret       string         `json:"webhook_secret"`
-		Config              map[string]any `json:"config"`
+		Type                        string         `json:"type"`
+		DisplayName                 string         `json:"display_name"`
+		BaseURL                     string         `json:"base_url"`
+		AllowPrivateBaseURL         bool           `json:"allow_private_base_url"`
+		SuppressNativeNotifications bool           `json:"suppress_native_notifications"`
+		Email                       string         `json:"email"`
+		APIToken                    string         `json:"api_token"`
+		WebhookSecret               string         `json:"webhook_secret"`
+		Config                      map[string]any `json:"config"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
 	id, err := h.svc.Create(r.Context(), pid, bid, CreateConnectorInput{
 		Type: in.Type, DisplayName: in.DisplayName, BaseURL: in.BaseURL,
-		AllowPrivateBaseURL: in.AllowPrivateBaseURL, Email: in.Email, APIToken: in.APIToken,
+		AllowPrivateBaseURL: in.AllowPrivateBaseURL, SuppressNativeNotifications: in.SuppressNativeNotifications,
+		Email: in.Email, APIToken: in.APIToken,
 		WebhookSecret: in.WebhookSecret, Config: in.Config,
 	})
 	if err != nil {
@@ -205,15 +209,17 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		DisplayName *string         `json:"display_name"`
-		Config      *map[string]any `json:"config"`
-		Status      *string         `json:"status"`
+		DisplayName                 *string         `json:"display_name"`
+		Config                      *map[string]any `json:"config"`
+		Status                      *string         `json:"status"`
+		SuppressNativeNotifications *bool           `json:"suppress_native_notifications"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
 	v, err := h.svc.Update(r.Context(), pid, bid, cid, UpdateConnectorInput{
 		DisplayName: in.DisplayName, Config: in.Config, Status: in.Status,
+		SuppressNativeNotifications: in.SuppressNativeNotifications,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)

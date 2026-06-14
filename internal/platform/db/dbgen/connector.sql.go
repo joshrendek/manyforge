@@ -66,7 +66,7 @@ func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int
 }
 
 const getConnector = `-- name: GetConnector :one
-SELECT id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, last_reconciled_at, created_at, updated_at FROM connector WHERE id = $1 AND business_id = $2
+SELECT id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, suppress_native_notifications, secret_ref, config, status, last_reconciled_at, created_at, updated_at FROM connector WHERE id = $1 AND business_id = $2
 `
 
 type GetConnectorParams struct {
@@ -86,6 +86,7 @@ func (q *Queries) GetConnector(ctx context.Context, arg GetConnectorParams) (Con
 		&i.DisplayName,
 		&i.BaseUrl,
 		&i.AllowPrivateBaseUrl,
+		&i.SuppressNativeNotifications,
 		&i.SecretRef,
 		&i.Config,
 		&i.Status,
@@ -124,26 +125,28 @@ func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, e
 
 const insertConnector = `-- name: InsertConnector :one
 INSERT INTO connector (id, business_id, tenant_root_id, type, display_name, base_url,
-    allow_private_base_url, secret_ref, config, status, created_at, updated_at)
+    allow_private_base_url, suppress_native_notifications, secret_ref, config, status, created_at, updated_at)
 SELECT $1, b.id, b.tenant_root_id, $2::connector_type,
     $3, $4, $5,
-    $6, $7, $8, now(), now()
+    $6,
+    $7, $8, $9, now(), now()
 FROM business b
-WHERE b.id = $9::uuid
-  AND EXISTS (SELECT 1 FROM secret s WHERE s.id = $6 AND s.business_id = b.id)
-RETURNING id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, secret_ref, config, status, last_reconciled_at, created_at, updated_at
+WHERE b.id = $10::uuid
+  AND EXISTS (SELECT 1 FROM secret s WHERE s.id = $7 AND s.business_id = b.id)
+RETURNING id, business_id, tenant_root_id, type, display_name, base_url, allow_private_base_url, suppress_native_notifications, secret_ref, config, status, last_reconciled_at, created_at, updated_at
 `
 
 type InsertConnectorParams struct {
-	ID                  uuid.UUID     `json:"id"`
-	Type                ConnectorType `json:"type"`
-	DisplayName         string        `json:"display_name"`
-	BaseUrl             string        `json:"base_url"`
-	AllowPrivateBaseUrl bool          `json:"allow_private_base_url"`
-	SecretRef           uuid.UUID     `json:"secret_ref"`
-	Config              []byte        `json:"config"`
-	Status              string        `json:"status"`
-	BusinessID          uuid.UUID     `json:"business_id"`
+	ID                          uuid.UUID     `json:"id"`
+	Type                        ConnectorType `json:"type"`
+	DisplayName                 string        `json:"display_name"`
+	BaseUrl                     string        `json:"base_url"`
+	AllowPrivateBaseUrl         bool          `json:"allow_private_base_url"`
+	SuppressNativeNotifications bool          `json:"suppress_native_notifications"`
+	SecretRef                   uuid.UUID     `json:"secret_ref"`
+	Config                      []byte        `json:"config"`
+	Status                      string        `json:"status"`
+	BusinessID                  uuid.UUID     `json:"business_id"`
 }
 
 // InsertConnector derives tenant_root_id from the RLS-visible business AND requires secret_ref to
@@ -156,6 +159,7 @@ func (q *Queries) InsertConnector(ctx context.Context, arg InsertConnectorParams
 		arg.DisplayName,
 		arg.BaseUrl,
 		arg.AllowPrivateBaseUrl,
+		arg.SuppressNativeNotifications,
 		arg.SecretRef,
 		arg.Config,
 		arg.Status,
@@ -170,6 +174,7 @@ func (q *Queries) InsertConnector(ctx context.Context, arg InsertConnectorParams
 		&i.DisplayName,
 		&i.BaseUrl,
 		&i.AllowPrivateBaseUrl,
+		&i.SuppressNativeNotifications,
 		&i.SecretRef,
 		&i.Config,
 		&i.Status,

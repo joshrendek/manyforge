@@ -23,7 +23,7 @@ func TestAddNoteEnqueuesInternalOutboundOpForConnectorLinkedTicket(t *testing.T)
 
 	linkedID := uuid.New()
 	seedTicket(ctx, t, tdb, rt, linkedID, "open", "normal", "Linked", nil, nil, -1*time.Hour)
-	linkTicketToConnector(ctx, t, tdb, rt, linkedID, "JIRA-9")
+	linkTicketToConnector(ctx, t, tdb, rt, linkedID, "JIRA-9", false)
 
 	plainID := uuid.New()
 	seedTicket(ctx, t, tdb, rt, plainID, "open", "normal", "Plain", nil, nil, -1*time.Hour)

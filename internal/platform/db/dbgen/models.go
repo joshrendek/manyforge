@@ -627,19 +627,20 @@ type BusinessClosure struct {
 }
 
 type Connector struct {
-	ID                  uuid.UUID          `json:"id"`
-	BusinessID          uuid.UUID          `json:"business_id"`
-	TenantRootID        uuid.UUID          `json:"tenant_root_id"`
-	Type                ConnectorType      `json:"type"`
-	DisplayName         string             `json:"display_name"`
-	BaseUrl             string             `json:"base_url"`
-	AllowPrivateBaseUrl bool               `json:"allow_private_base_url"`
-	SecretRef           uuid.UUID          `json:"secret_ref"`
-	Config              []byte             `json:"config"`
-	Status              string             `json:"status"`
-	LastReconciledAt    pgtype.Timestamptz `json:"last_reconciled_at"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
+	ID                          uuid.UUID          `json:"id"`
+	BusinessID                  uuid.UUID          `json:"business_id"`
+	TenantRootID                uuid.UUID          `json:"tenant_root_id"`
+	Type                        ConnectorType      `json:"type"`
+	DisplayName                 string             `json:"display_name"`
+	BaseUrl                     string             `json:"base_url"`
+	AllowPrivateBaseUrl         bool               `json:"allow_private_base_url"`
+	SuppressNativeNotifications bool               `json:"suppress_native_notifications"`
+	SecretRef                   uuid.UUID          `json:"secret_ref"`
+	Config                      []byte             `json:"config"`
+	Status                      string             `json:"status"`
+	LastReconciledAt            pgtype.Timestamptz `json:"last_reconciled_at"`
+	CreatedAt                   time.Time          `json:"created_at"`
+	UpdatedAt                   time.Time          `json:"updated_at"`
 }
 
 type ConnectorOutboundOp struct {
