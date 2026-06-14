@@ -22,9 +22,16 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
-// knownProviders is the closed set accepted at the service boundary (mirrors the
-// ai_provider enum). Keep in lockstep with migration 0025.
-var knownProviders = map[string]bool{"anthropic": true, "openai": true, "ollama": true, "vllm": true}
+// knownProviders is the closed set accepted at the service boundary. Keyed off the
+// generated dbgen.AiProvider* constants (which track the ai_provider PG enum, migration
+// 0025) so adding a provider to the enum + sqlc regen surfaces a new constant to add here
+// rather than a silently-untracked string. TestKnownProvidersTrackEnum pins coverage.
+var knownProviders = map[string]bool{
+	string(dbgen.AiProviderAnthropic): true,
+	string(dbgen.AiProviderOpenai):    true,
+	string(dbgen.AiProviderOllama):    true,
+	string(dbgen.AiProviderVllm):      true,
+}
 
 // credentialDB is the minimal DB surface this service needs — satisfied by the
 // real *db.DB. Declared as an interface so unit tests can omit it.
