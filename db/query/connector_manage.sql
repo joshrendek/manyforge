@@ -41,6 +41,7 @@ UPDATE connector SET
     display_name = COALESCE(sqlc.narg('display_name'), display_name),
     config       = COALESCE(sqlc.narg('config'), config),
     status       = COALESCE(sqlc.narg('status'), status),
+    suppress_native_notifications = COALESCE(sqlc.narg('suppress_native_notifications'), suppress_native_notifications),
     updated_at   = now()
 WHERE id = sqlc.arg('id') AND business_id = sqlc.arg('business_id')
 RETURNING *;

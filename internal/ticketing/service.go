@@ -338,9 +338,11 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 
 		// US4 outbound: a reply on a connector-linked ticket records a pending outbound op
 		// in THIS tx (the source write), for the OutboundDispatcher to post to the external
-		// system. Additive to the email enqueue below — email is NOT suppressed (see plan D2).
-		// The ownership/linkage predicate lives in the SQL (INSERT…SELECT … WHERE business_id
-		// = $ AND connector_id IS NOT NULL); the Go guard just avoids a no-op round-trip.
+		// system. The ownership/linkage predicate lives in the SQL (INSERT…SELECT … WHERE
+		// business_id = $ AND connector_id IS NOT NULL); the Go guard just avoids a no-op
+		// round-trip. By default the native email below ALSO fires (both-notify); a connector
+		// that opts into single-channel delivery suppresses it (a7j.8).
+		suppressNativeEmail := false
 		if tk.ConnectorID.Valid {
 			if oerr := q.EnqueueOutboundComment(ctx, dbgen.EnqueueOutboundCommentParams{
 				ID:         ticketID,         // $1 = ticket id
@@ -350,6 +352,17 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 				BusinessID: businessID,       // ownership predicate
 			}); oerr != nil {
 				return oerr
+			}
+			// Read the connector's single-channel preference (RLS-visible to this member's
+			// principal). A vanished connector (ErrNoRows) defaults to sending the email.
+			conn, cerr := q.GetConnector(ctx, dbgen.GetConnectorParams{
+				ID: uuid.UUID(tk.ConnectorID.Bytes), BusinessID: businessID,
+			})
+			if cerr != nil && !errors.Is(cerr, pgx.ErrNoRows) {
+				return cerr
+			}
+			if cerr == nil {
+				suppressNativeEmail = conn.SuppressNativeNotifications
 			}
 		}
 
@@ -368,20 +381,24 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 		}
 
 		// Outbox event — the worker builds the threaded Mail and dispatches it. The
-		// reply_token signs the TICKET id so an inbound reply threads back (R4).
-		replyToken := SignReplyToken(ticketID, s.ReplyTokenKey)
-		if eerr := events.Enqueue(ctx, tx, tk.TenantRootID, events.TopicTicketReplied, map[string]any{
-			"message_row_id": msgID,
-			"ticket_id":      ticketID,
-			"business_id":    businessID,
-			"recipient":      recipient,
-			"subject":        replySubject(tk.Subject),
-			"rfc_message_id": rfcMessageID,
-			"in_reply_to":    inReplyTo,
-			"references":     refs,
-			"reply_token":    replyToken,
-		}); eerr != nil {
-			return eerr
+		// reply_token signs the TICKET id so an inbound reply threads back (R4). Skipped
+		// when the linked connector opts into single-channel delivery (a7j.8): the external
+		// system is the sole notification channel, so the native email would double-notify.
+		if !suppressNativeEmail {
+			replyToken := SignReplyToken(ticketID, s.ReplyTokenKey)
+			if eerr := events.Enqueue(ctx, tx, tk.TenantRootID, events.TopicTicketReplied, map[string]any{
+				"message_row_id": msgID,
+				"ticket_id":      ticketID,
+				"business_id":    businessID,
+				"recipient":      recipient,
+				"subject":        replySubject(tk.Subject),
+				"rfc_message_id": rfcMessageID,
+				"in_reply_to":    inReplyTo,
+				"references":     refs,
+				"reply_token":    replyToken,
+			}); eerr != nil {
+				return eerr
+			}
 		}
 
 		out = toMessage(row, nil)

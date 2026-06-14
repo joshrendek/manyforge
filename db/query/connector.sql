@@ -21,9 +21,10 @@ DELETE FROM secret WHERE id = $1 AND business_id = $2;
 -- foreign secret → zero rows.
 -- name: InsertConnector :one
 INSERT INTO connector (id, business_id, tenant_root_id, type, display_name, base_url,
-    allow_private_base_url, secret_ref, config, status, created_at, updated_at)
+    allow_private_base_url, suppress_native_notifications, secret_ref, config, status, created_at, updated_at)
 SELECT sqlc.arg('id'), b.id, b.tenant_root_id, sqlc.arg('type')::connector_type,
     sqlc.arg('display_name'), sqlc.arg('base_url'), sqlc.arg('allow_private_base_url'),
+    sqlc.arg('suppress_native_notifications'),
     sqlc.arg('secret_ref'), sqlc.arg('config'), sqlc.arg('status'), now(), now()
 FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid

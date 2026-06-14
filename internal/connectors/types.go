@@ -19,14 +19,15 @@ type Credential struct {
 
 // CreateConnectorInput is the caller-supplied connector-create request.
 type CreateConnectorInput struct {
-	Type                string
-	DisplayName         string
-	BaseURL             string
-	AllowPrivateBaseURL bool
-	Email               string
-	APIToken            string
-	WebhookSecret       string
-	Config              map[string]any
+	Type                        string
+	DisplayName                 string
+	BaseURL                     string
+	AllowPrivateBaseURL         bool
+	SuppressNativeNotifications bool // when true, connector-linked replies skip the native email
+	Email                       string
+	APIToken                    string
+	WebhookSecret               string
+	Config                      map[string]any
 }
 
 // ResolvedConnector is a connector with its credential unsealed, returned by Resolve.

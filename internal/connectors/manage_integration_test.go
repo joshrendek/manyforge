@@ -97,6 +97,61 @@ func TestManageUpdate(t *testing.T) {
 	}
 }
 
+// a7j.8: suppress_native_notifications round-trips through Create + Get, and is updatable
+// via PATCH with COALESCE preserve semantics (an omitted flag keeps the stored value).
+func TestManageSuppressNativeNotifications(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil)
+
+	// Create with the flag on → Get reflects it.
+	in := jiraInput()
+	in.SuppressNativeNotifications = true
+	id, err := svc.Create(ctx, seed.principalID, seed.businessID, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	v, err := svc.Get(ctx, seed.principalID, seed.businessID, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !v.SuppressNativeNotifications {
+		t.Fatal("create with suppress=true: Get returned false")
+	}
+
+	// PATCH that omits the flag (display_name only) preserves it (COALESCE narg).
+	name := "Renamed"
+	v, err = svc.Update(ctx, seed.principalID, seed.businessID, id, UpdateConnectorInput{DisplayName: &name})
+	if err != nil {
+		t.Fatalf("update name: %v", err)
+	}
+	if !v.SuppressNativeNotifications {
+		t.Fatal("update omitting suppress: flag was not preserved")
+	}
+
+	// PATCH that sets the flag off → reflected.
+	off := false
+	v, err = svc.Update(ctx, seed.principalID, seed.businessID, id, UpdateConnectorInput{SuppressNativeNotifications: &off})
+	if err != nil {
+		t.Fatalf("update suppress off: %v", err)
+	}
+	if v.SuppressNativeNotifications {
+		t.Fatal("update suppress=false: flag still true")
+	}
+
+	// Default (omitted at create) is false.
+	id2, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInputForHost("https://other.atlassian.net"))
+	if err != nil {
+		t.Fatalf("create default: %v", err)
+	}
+	v2, err := svc.Get(ctx, seed.principalID, seed.businessID, id2)
+	if err != nil {
+		t.Fatalf("get default: %v", err)
+	}
+	if v2.SuppressNativeNotifications {
+		t.Fatal("default suppress should be false")
+	}
+}
+
 func TestManageRotateCredential(t *testing.T) {
 	ctx, tdb, seed := startConn(t)
 	svc := newConnService(t, tdb, nil) // nil Verifier: rotation skips live verify (mirrors Create)

@@ -27,18 +27,19 @@ type ConnectorHealth struct {
 // ConnectorView is a connector as returned to management callers. It deliberately carries
 // NO credential fields (email/api_token/webhook_secret) — credentials are write-only.
 type ConnectorView struct {
-	ID                  string
-	BusinessID          string
-	Type                string
-	DisplayName         string
-	BaseURL             string
-	AllowPrivateBaseURL bool
-	Config              map[string]any
-	Status              string
-	LastReconciledAt    *string // RFC3339, nil if never reconciled
-	CreatedAt           string
-	UpdatedAt           string
-	Health              ConnectorHealth
+	ID                          string
+	BusinessID                  string
+	Type                        string
+	DisplayName                 string
+	BaseURL                     string
+	AllowPrivateBaseURL         bool
+	SuppressNativeNotifications bool
+	Config                      map[string]any
+	Status                      string
+	LastReconciledAt            *string // RFC3339, nil if never reconciled
+	CreatedAt                   string
+	UpdatedAt                   string
+	Health                      ConnectorHealth
 }
 
 // healthState derives the rollup pill from status + failure counts. A disabled connector is
@@ -73,18 +74,19 @@ func connectorToView(row dbgen.Connector, h ConnectorHealth) ConnectorView {
 	}
 	h.State = healthState(row.Status, h.FailedOutboundOps)
 	return ConnectorView{
-		ID:                  row.ID.String(),
-		BusinessID:          row.BusinessID.String(),
-		Type:                string(row.Type),
-		DisplayName:         row.DisplayName,
-		BaseURL:             row.BaseUrl,
-		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
-		Config:              cfg,
-		Status:              row.Status,
-		LastReconciledAt:    lastRec,
-		CreatedAt:           row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:           row.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		Health:              h,
+		ID:                          row.ID.String(),
+		BusinessID:                  row.BusinessID.String(),
+		Type:                        string(row.Type),
+		DisplayName:                 row.DisplayName,
+		BaseURL:                     row.BaseUrl,
+		AllowPrivateBaseURL:         row.AllowPrivateBaseUrl,
+		SuppressNativeNotifications: row.SuppressNativeNotifications,
+		Config:                      cfg,
+		Status:                      row.Status,
+		LastReconciledAt:            lastRec,
+		CreatedAt:                   row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:                   row.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Health:                      h,
 	}
 }
 
@@ -179,9 +181,10 @@ func auditConnector(ctx context.Context, tx pgx.Tx, businessID, principalID, con
 // type are intentionally absent — they are immutable (identity). An empty non-nil config
 // pointer replaces config with {}.
 type UpdateConnectorInput struct {
-	DisplayName *string
-	Config      *map[string]any
-	Status      *string // "enabled" | "disabled"
+	DisplayName                 *string
+	Config                      *map[string]any
+	Status                      *string // "enabled" | "disabled"
+	SuppressNativeNotifications *bool   // nil = preserve
 }
 
 func validateUpdate(in UpdateConnectorInput) error {
@@ -203,6 +206,7 @@ func (s *Service) Update(ctx context.Context, principalID, businessID, connector
 	params := dbgen.UpdateConnectorParams{ID: connectorID, BusinessID: businessID}
 	params.DisplayName = in.DisplayName
 	params.Status = in.Status
+	params.SuppressNativeNotifications = in.SuppressNativeNotifications
 	if in.Config != nil {
 		cfg := *in.Config
 		if cfg == nil {
@@ -229,7 +233,8 @@ func (s *Service) Update(ctx context.Context, principalID, businessID, connector
 		}
 		h = ConnectorHealth{LinkedTicketCount: hr.LinkedTicketCount, PendingOutboundOps: hr.PendingOps, FailedOutboundOps: hr.FailedOps, LastError: hr.LastError}
 		return auditConnector(ctx, tx, businessID, principalID, connectorID, "connector.updated",
-			map[string]any{"display_name_changed": in.DisplayName != nil, "config_changed": in.Config != nil, "status": in.Status})
+			map[string]any{"display_name_changed": in.DisplayName != nil, "config_changed": in.Config != nil, "status": in.Status,
+				"suppress_native_notifications_changed": in.SuppressNativeNotifications != nil})
 	})
 	if err != nil {
 		return ConnectorView{}, mapErr(err)
