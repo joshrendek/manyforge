@@ -64,6 +64,17 @@ import { Connector, ConnectorsService } from '../../core/connectors.service';
         </div>
       }
 
+      @if (mode !== 'rotate') {
+        <div class="mf-field" style="flex:1 1 100%">
+          <label for="conn-suppress-native" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input id="conn-suppress-native" type="checkbox" data-testid="conn-suppress-native"
+                   [(ngModel)]="suppressNativeNotifications" name="suppress_native_notifications" [disabled]="submitting()" />
+            Suppress native email notifications
+          </label>
+          <span style="color:var(--mf-text-faint);font-size:var(--mf-fs-xs)">When enabled, replies on this connector's tickets are mirrored to the external system only — no native email is sent.</span>
+        </div>
+      }
+
       @if (mode !== 'edit') {
         <div class="mf-field" style="flex:1 1 200px">
           <label for="conn-email">Email</label>
@@ -116,6 +127,7 @@ export class ConnectorFormComponent implements OnInit {
   email = '';
   apiToken = '';
   webhookSecret = '';
+  suppressNativeNotifications = false;
 
   submitting = signal(false);
   error = signal('');
@@ -125,6 +137,7 @@ export class ConnectorFormComponent implements OnInit {
       this.displayName = this.connector.display_name;
       this.projectKey = (this.connector.config['project_key'] as string) ?? '';
       this.issueType = (this.connector.config['issue_type'] as string) ?? '';
+      this.suppressNativeNotifications = this.connector.suppress_native_notifications;
     }
   }
 
@@ -144,12 +157,14 @@ export class ConnectorFormComponent implements OnInit {
       obs = this.api.update(this.businessId, this.connectorId, {
         display_name: this.displayName.trim(),
         config: this.buildConfig(),
+        suppress_native_notifications: this.suppressNativeNotifications,
       });
     } else if (this.mode === 'create') {
       obs = this.api.create(this.businessId, {
         type: this.type(),
         display_name: this.displayName.trim(),
         base_url: this.baseUrl.trim(),
+        suppress_native_notifications: this.suppressNativeNotifications,
         email: this.email.trim(),
         api_token: this.apiToken,
         webhook_secret: this.webhookSecret || undefined,
@@ -190,6 +205,7 @@ export class ConnectorFormComponent implements OnInit {
     this.email = '';
     this.apiToken = '';
     this.webhookSecret = '';
+    this.suppressNativeNotifications = false;
   }
 
   private describe(e: HttpErrorResponse): string {
