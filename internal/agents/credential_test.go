@@ -5,7 +5,25 @@ import (
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/platform/crypto"
+	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 )
+
+// knownProviders must stay in lockstep with the ai_provider PG enum (manyforge-uc2):
+// every generated dbgen.AiProvider* constant is accepted, and the set size matches so a
+// new enum value (new constant) that isn't added here fails loudly.
+func TestKnownProvidersTrackEnum(t *testing.T) {
+	want := []dbgen.AiProvider{
+		dbgen.AiProviderAnthropic, dbgen.AiProviderOpenai, dbgen.AiProviderOllama, dbgen.AiProviderVllm,
+	}
+	for _, p := range want {
+		if !knownProviders[string(p)] {
+			t.Errorf("ai_provider enum value %q not accepted by knownProviders", p)
+		}
+	}
+	if len(knownProviders) != len(want) {
+		t.Errorf("knownProviders has %d entries, want %d — a new ai_provider enum value needs adding here and to this test", len(knownProviders), len(want))
+	}
+}
 
 func newTestSealer(t *testing.T) *crypto.Sealer {
 	t.Helper()
