@@ -328,6 +328,35 @@ func TestListUpdatedSince_Paginates(t *testing.T) {
 	}
 }
 
+// a7j.12: a pathological upstream that returns a full non-empty page with a perpetually
+// inflated count never satisfies the natural termination (len(ids) >= count). The absolute
+// page cap must bound the loop so reconcile can't spin forever.
+func TestListUpdatedSince_StopsAtPageCap(t *testing.T) {
+	orig := maxSearchPages
+	maxSearchPages = 3
+	defer func() { maxSearchPages = orig }()
+
+	var reqs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reqs++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"id":1}],"count":1000000}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "ops@acme.test", "tok", "secret", srv.Client())
+	ids, err := c.ListUpdatedSince(context.Background(), time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ListUpdatedSince: %v", err)
+	}
+	if reqs != 3 {
+		t.Errorf("made %d requests, want exactly maxSearchPages=3 (loop must be bounded)", reqs)
+	}
+	if len(ids) != 3 {
+		t.Errorf("collected %d ids, want 3 (one per capped page)", len(ids))
+	}
+}
+
 // zendeskSig computes the header value Zendesk sends: base64(HMAC-SHA256(secret, ts+body)).
 func zendeskSig(secret, ts string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
