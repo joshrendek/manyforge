@@ -123,10 +123,12 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 		return err
 	}
 
-	// Step 6: build snapshot JSON.
+	// Step 6: build snapshot JSON. status/priority/subject are read back on the next sync
+	// to detect both-changed conflicts (manyforge-a7j.9); updated_at is informational.
 	snapshot, _ := json.Marshal(map[string]any{
 		"status":     iss.Status,
 		"priority":   iss.Priority,
+		"subject":    iss.Title,
 		"updated_at": iss.UpdatedAt,
 	})
 

@@ -10,6 +10,7 @@ package connectors
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,52 @@ import (
 
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 )
+
+// syncIssueFull calls sync_inbound_external_issue with explicit subject/status/priority and a
+// caller-supplied snapshot, so a test can drive a specific field's both-changed conflict path
+// (manyforge-a7j.9). Mirrors how inbound_sync.go builds the snapshot.
+func syncIssueFull(t *testing.T, ctx context.Context, db *appdb.DB, connID uuid.UUID, extID, subject, status, priority string, snap map[string]any) uuid.UUID {
+	t.Helper()
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("syncIssueFull: marshal snapshot: %v", err)
+	}
+	var id uuid.UUID
+	if err := db.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, syncIssueSQL,
+			connID, extID, "https://jira.example.com/browse/"+extID,
+			subject, status, priority, "", "", time.Now().UTC(), raw,
+		).Scan(&id)
+	}); err != nil {
+		t.Fatalf("syncIssueFull(%q): %v", extID, err)
+	}
+	return id
+}
+
+// conflictAuditNewValue returns the newest conflict audit's new_value JSON as text.
+func conflictAuditNewValue(t *testing.T, ctx context.Context, super *pgxpool.Pool, ticketID uuid.UUID) string {
+	t.Helper()
+	var v string
+	if err := super.QueryRow(ctx,
+		`SELECT new_value::text FROM audit_entry
+		   WHERE target_id=$1 AND action='connector.conflict.resolved'
+		   ORDER BY created_at DESC LIMIT 1`,
+		ticketID,
+	).Scan(&v); err != nil {
+		t.Fatalf("conflictAuditNewValue: %v", err)
+	}
+	return v
+}
+
+// conflictTicketField returns a scalar text column of the ticket via the superuser pool.
+func conflictTicketField(t *testing.T, ctx context.Context, super *pgxpool.Pool, ticketID uuid.UUID, col string) string {
+	t.Helper()
+	var s string
+	if err := super.QueryRow(ctx, `SELECT `+col+`::text FROM ticket WHERE id=$1`, ticketID).Scan(&s); err != nil {
+		t.Fatalf("conflictTicketField(%q): %v", col, err)
+	}
+	return s
+}
 
 // syncIssueConflict calls sync_inbound_external_issue with a snapshot that carries the
 // external status in snapshot->>'status', matching how inbound_sync.go builds the snapshot.
@@ -116,5 +163,68 @@ func TestInboundConflictAudited(t *testing.T) {
 	syncIssueConflict(t, ctx, tdb.App, connID, "JIRA-100", "Done")
 	if n := conflictAuditCount(t, ctx, tdb.Super, ticketID, "connector.conflict.resolved"); n != 1 {
 		t.Fatalf("conflict audits after clean sync = %d, want still 1", n)
+	}
+}
+
+// a7j.9: priority (not just status) both-changed is detected + audited, external wins.
+func TestInboundConflictAudited_Priority(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil)
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	// First sync: external priority "High" → native high; snapshot carries priority. Status is
+	// held constant ("To Do") across both syncs so ONLY priority can conflict.
+	ticketID := syncIssueFull(t, ctx, tdb.App, connID, "JIRA-P1", "Issue P", "To Do", "High",
+		map[string]any{"status": "To Do", "priority": "High", "subject": "Issue P"})
+
+	// Operator locally lowers priority (diverges from the snapshot's "High").
+	mustExecSuper(t, ctx, tdb.Super, `UPDATE ticket SET priority='low' WHERE id=$1`, ticketID)
+
+	// Second sync: external priority "Highest" → urgent (differs from snapshot). Both changed.
+	syncIssueFull(t, ctx, tdb.App, connID, "JIRA-P1", "Issue P", "To Do", "Highest",
+		map[string]any{"status": "To Do", "priority": "Highest", "subject": "Issue P"})
+
+	if n := conflictAuditCount(t, ctx, tdb.Super, ticketID, "connector.conflict.resolved"); n != 1 {
+		t.Fatalf("conflict audits = %d, want 1 (priority both-changed)", n)
+	}
+	if got := conflictAuditNewValue(t, ctx, tdb.Super, ticketID); !strings.Contains(got, "external_priority") {
+		t.Fatalf("audit new_value = %q, want it to record external_priority", got)
+	}
+	if p := conflictTicketField(t, ctx, tdb.Super, ticketID, "priority"); p != "urgent" {
+		t.Fatalf("priority = %q, want urgent (external wins)", p)
+	}
+}
+
+// a7j.9: subject (free text) both-changed is detected + audited, external wins.
+func TestInboundConflictAudited_Subject(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+	svc := newConnService(t, tdb, nil)
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	// First sync: subject "Original"; snapshot carries subject. Status held constant.
+	ticketID := syncIssueFull(t, ctx, tdb.App, connID, "JIRA-S1", "Original", "To Do", "",
+		map[string]any{"status": "To Do", "subject": "Original"})
+
+	// Operator locally renames the ticket (diverges from the snapshot's "Original").
+	mustExecSuper(t, ctx, tdb.Super, `UPDATE ticket SET subject='Locally Edited' WHERE id=$1`, ticketID)
+
+	// Second sync: external subject "Renamed Externally" (differs from snapshot). Both changed.
+	syncIssueFull(t, ctx, tdb.App, connID, "JIRA-S1", "Renamed Externally", "To Do", "",
+		map[string]any{"status": "To Do", "subject": "Renamed Externally"})
+
+	if n := conflictAuditCount(t, ctx, tdb.Super, ticketID, "connector.conflict.resolved"); n != 1 {
+		t.Fatalf("conflict audits = %d, want 1 (subject both-changed)", n)
+	}
+	if got := conflictAuditNewValue(t, ctx, tdb.Super, ticketID); !strings.Contains(got, "external_subject") {
+		t.Fatalf("audit new_value = %q, want it to record external_subject", got)
+	}
+	if s := conflictTicketField(t, ctx, tdb.Super, ticketID, "subject"); s != "Renamed Externally" {
+		t.Fatalf("subject = %q, want \"Renamed Externally\" (external wins)", s)
 	}
 }
