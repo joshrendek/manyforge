@@ -62,6 +62,23 @@ type Options struct {
 	AllowPrivate  bool // permits RFC1918 + IPv6 ULA; metadata stays blocked
 }
 
+// vettedDialAddr checks every resolved IP against the dialer policy and returns the
+// host:port to dial. It picks the FIRST resolved IP so the connection lands on an
+// address we vetted (avoids a TOCTOU re-resolution between check and dial). An empty
+// ips slice is an error: LookupIPAddr normally errors when it resolves nothing, but
+// that guarantee is soft — an empty, non-error result would otherwise panic on ips[0].
+func vettedDialAddr(ips []net.IPAddr, host, port string, o Options) (string, error) {
+	if len(ips) == 0 {
+		return "", fmt.Errorf("no addresses resolved for host %s", host)
+	}
+	for _, ip := range ips {
+		if blockedWith(ip.IP, o.AllowLoopback, o.AllowPrivate) {
+			return "", fmt.Errorf("blocked address %s for host %s", ip.IP, host)
+		}
+	}
+	return net.JoinHostPort(ips[0].IP.String(), port), nil
+}
+
 // NewClientWithOptions builds a guarded client configured by o. See Options for the
 // available trust flags; the zero-value Options is the fully locked-down posture.
 func NewClientWithOptions(timeout time.Duration, o Options) *http.Client {
@@ -76,14 +93,11 @@ func NewClientWithOptions(timeout time.Duration, o Options) *http.Client {
 			if err != nil {
 				return nil, err
 			}
-			for _, ip := range ips {
-				if blockedWith(ip.IP, o.AllowLoopback, o.AllowPrivate) {
-					return nil, fmt.Errorf("blocked address %s for host %s", ip.IP, host)
-				}
+			target, err := vettedDialAddr(ips, host, port, o)
+			if err != nil {
+				return nil, err
 			}
-			// Dial the first resolved IP directly so we connect to the
-			// address we vetted (avoids a TOCTOU re-resolution).
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+			return dialer.DialContext(ctx, network, target)
 		},
 	}}
 }
