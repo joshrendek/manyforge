@@ -738,6 +738,16 @@ type McpServer struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type McpToolPolicy struct {
+	McpServerID  uuid.UUID `json:"mcp_server_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	ToolName     string    `json:"tool_name"`
+	Effect       int16     `json:"effect"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type Membership struct {
 	ID           uuid.UUID   `json:"id"`
 	PrincipalID  uuid.UUID   `json:"principal_id"`

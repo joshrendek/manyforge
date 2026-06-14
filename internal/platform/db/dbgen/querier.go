@@ -115,6 +115,7 @@ type Querier interface {
 	// DeleteMCPServer deletes an MCP server by (id, business_id).
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams) (int64, error)
+	DeleteMCPToolPolicy(ctx context.Context, arg DeleteMCPToolPolicyParams) (int64, error)
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
@@ -198,6 +199,9 @@ type Querier interface {
 	// businesses; the explicit business_id is defense in depth. pgx.ErrNoRows ⇒ the
 	// service maps to ErrNotFound (unknown / other-business / unauthorized are all 404).
 	GetEmailDomain(ctx context.Context, arg GetEmailDomainParams) (EmailDomain, error)
+	// GetEnabledMCPServerByID resolves one enabled server by id under RLS (+ explicit business_id).
+	// Used by the tool-discovery endpoint to connect. pgx.ErrNoRows => ErrNotFound (no oracle).
+	GetEnabledMCPServerByID(ctx context.Context, arg GetEnabledMCPServerByIDParams) (McpServer, error)
 	// GetEnabledMCPServerByName fetches a single enabled MCP server by (business_id, name).
 	// Used by ApprovalExecutor to resolve the server for an approved mcp: tool call.
 	// RLS scopes rows to the caller's authorized businesses; the explicit business_id is
@@ -208,6 +212,7 @@ type Querier interface {
 	// predicate. RLS scopes rows to the caller's authorized businesses; the explicit
 	// business_id is defense in depth. pgx.ErrNoRows => ErrNotFound.
 	GetMCPServerByID(ctx context.Context, arg GetMCPServerByIDParams) (McpServer, error)
+	GetMCPToolPolicy(ctx context.Context, arg GetMCPToolPolicyParams) (McpToolPolicy, error)
 	// ---- Member role management (T063) ----
 	// The target principal's direct membership at a business. RLS scopes this to the
 	// caller's authorized subtree, so an admin can read members of a business they
@@ -408,6 +413,7 @@ type Querier interface {
 	// ListMCPServers lists all MCP servers for a business, ordered by name for a
 	// stable, deterministic result.
 	ListMCPServers(ctx context.Context, businessID uuid.UUID) ([]McpServer, error)
+	ListMCPToolPolicies(ctx context.Context, arg ListMCPToolPoliciesParams) ([]McpToolPolicy, error)
 	// ---- ticket messages ----
 	// ListMessages is the first page of a ticket's thread, oldest first, matching the
 	// SC-010 ticket_message(ticket_id, created_at) index. Scoped to (ticket_id,
@@ -463,6 +469,9 @@ type Querier interface {
 	// but only rows strictly after the cursor tuple (last_message_at, id) in the
 	// (DESC, DESC) order. The row-value comparison rides the same composite index.
 	ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]ListTicketsAfterRow, error)
+	// Run-path: the discovery loop reads this under the AGENT principal (RLS scopes it to the
+	// agent's business) to classify discovered tools.
+	ListToolPoliciesByServer(ctx context.Context, mcpServerID uuid.UUID) ([]ListToolPoliciesByServerRow, error)
 	// Idempotency claim: flip approved -> executed iff still approved. Zero rows means a
 	// prior delivery already executed it (or it was denied) -> the executor skips.
 	MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExecutedParams) (ApprovalItem, error)
@@ -569,6 +578,11 @@ type Querier interface {
 	// updated_at but NEVER last_message_at — triage is not a message. Scoped to
 	// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
 	UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatusParams) error
+	// MCP per-tool effect policy (manyforge-k0d). Every query runs in the caller's RLS principal
+	// context AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement).
+	// Derives (business_id, tenant_root_id) from the RLS-visible mcp_server row, so an invisible or
+	// foreign server yields no row → pgx.ErrNoRows → 404 (no oracle). Upsert on (mcp_server_id, tool_name).
+	UpsertMCPToolPolicy(ctx context.Context, arg UpsertMCPToolPolicyParams) (McpToolPolicy, error)
 	// ValidateMCPServerIDs returns the subset of the given UUIDs that exist and
 	// are owned by the given business. Used by the agent service to validate
 	// allowed_mcp_servers before persisting an agent.
