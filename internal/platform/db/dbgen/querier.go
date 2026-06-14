@@ -350,7 +350,6 @@ type Querier interface {
 	// tuple (cur_created_at, cur_id) is passed as a far-future sentinel for page 1. RLS
 	// (under WithPrincipal) scopes to the caller's businesses; business_id+agent_id narrow.
 	ListAgentRuns(ctx context.Context, arg ListAgentRunsParams) ([]AgentRun, error)
-	ListAgentRunsByAgent(ctx context.Context, arg ListAgentRunsByAgentParams) ([]AgentRun, error)
 	// ListAgents lists all agents for a business, ordered by name for a stable result.
 	ListAgents(ctx context.Context, businessID uuid.UUID) ([]Agent, error)
 	// NOTE: the outbound delivery-state path (delivery_state read, system inbound
