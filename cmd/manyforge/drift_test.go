@@ -85,7 +85,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		accounting:      agents.NewAccountingHandler(nil),
 		approvals:       agents.NewApprovalHandler(nil),
 		agentsApprove:   noop,
-		mcp:             agents.NewMCPServerHandler(nil),
+		mcp:             agents.NewMCPServerHandler(nil, agents.NewMCPToolPolicyHandler(nil, nil)),
 		mcpConfigure:    noop,
 	})
 

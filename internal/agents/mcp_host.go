@@ -169,6 +169,37 @@ func (h *MCPHost) policiesFor(ctx context.Context, principalID, businessID, serv
 	return pm
 }
 
+// DiscoveredToolDef is one tool advertised by a live server (for the admin discovery endpoint).
+type DiscoveredToolDef struct {
+	Name        string
+	Description string
+}
+
+// DiscoverServerToolDefs best-effort lists one server's tools for the admin UI. A missing/foreign
+// server is an error (→ 404). A reachable-but-failing server returns (nil, false, nil) so the UI
+// can still edit policies by typed name. Does NOT consult the policy (the handler annotates).
+func (h *MCPHost) DiscoverServerToolDefs(ctx context.Context, principalID, businessID, serverID uuid.UUID) ([]DiscoveredToolDef, bool, error) {
+	server, err := h.Servers.ResolveEnabledByID(ctx, principalID, businessID, serverID)
+	if err != nil {
+		return nil, false, err // ErrNotFound → 404
+	}
+	client := h.Connect(server.URL, server.AuthHeader)
+	if err := client.Initialize(ctx); err != nil {
+		h.Logger.WarnContext(ctx, "agent.mcp.discover_unreachable", "server_id", serverID, "err", err)
+		return nil, false, nil
+	}
+	defs, err := client.ListTools(ctx)
+	if err != nil {
+		h.Logger.WarnContext(ctx, "agent.mcp.discover_listfail", "server_id", serverID, "err", err)
+		return nil, false, nil
+	}
+	out := make([]DiscoveredToolDef, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, DiscoveredToolDef{Name: d.Name, Description: d.Description})
+	}
+	return out, true, nil
+}
+
 // discoverServerTools connects to a single server and lists its tools. Any error
 // is returned to the caller (DiscoverTools) which decides whether to fail-open.
 func (h *MCPHost) discoverServerTools(ctx context.Context, server ResolvedMCPServer, policyMap map[string]EffectClass) ([]Tool, error) {
