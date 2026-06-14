@@ -346,6 +346,34 @@ func TestListUpdatedSince_Paginates(t *testing.T) {
 	}
 }
 
+// a7j.12: a pathological upstream that always returns a non-empty page plus a fresh
+// nextPageToken never signals "last page". The absolute page cap must bound the loop.
+func TestListUpdatedSince_StopsAtPageCap(t *testing.T) {
+	orig := maxSearchPages
+	maxSearchPages = 3
+	defer func() { maxSearchPages = orig }()
+
+	var reqs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reqs++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"issues":[{"key":"PROJ-1","fields":{"updated":"2026-06-01T10:30:00.000+0000"}}],"nextPageToken":"more"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user@example.com", "test-api-token", "secret", srv.Client())
+	keys, err := c.ListUpdatedSince(context.Background(), time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ListUpdatedSince: %v", err)
+	}
+	if reqs != 3 {
+		t.Errorf("made %d requests, want exactly maxSearchPages=3 (loop must be bounded)", reqs)
+	}
+	if len(keys) != 3 {
+		t.Errorf("collected %d keys, want 3 (one per capped page)", len(keys))
+	}
+}
+
 // A connector with a configured project_key must scope the JQL to that project so
 // inbound reconcile does not pull every project the token can see.
 func TestListUpdatedSince_ScopedToProject(t *testing.T) {

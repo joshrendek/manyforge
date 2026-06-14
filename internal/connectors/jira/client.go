@@ -245,6 +245,13 @@ func (c *client) TransitionStatus(ctx context.Context, externalID, status string
 // an updated issue.
 const searchPageSize = 100
 
+// maxSearchPages bounds ListUpdatedSince so a pathological/malicious upstream that returns
+// non-empty pages while perpetually issuing a nextPageToken cannot loop forever (defense-in-
+// depth; reconcile is idempotent, so a truncated sweep is safe — the next run resumes).
+// ~100k issues at searchPageSize=100, far above any real reconcile window. A var so tests
+// can lower it.
+var maxSearchPages = 1000
+
 // ListUpdatedSince returns the keys of issues updated at or after since (reconcile),
 // paging through ALL results via the new JQL search endpoint
 // (GET /rest/api/3/search/jql). The legacy /rest/api/3/search was removed by
@@ -267,6 +274,7 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 
 	var keys []string
 	nextPageToken := ""
+	pageCount := 0
 	for {
 		searchURL := base.JoinPath("rest", "api", "3", "search", "jql")
 		q := url.Values{}
@@ -290,6 +298,12 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 		// The new API signals "no more pages" by omitting nextPageToken. Stop on an
 		// empty token, or an empty page (defensive — a page with a token but no issues).
 		if page.NextPageToken == "" || len(page.Issues) == 0 {
+			break
+		}
+		pageCount++
+		if pageCount >= maxSearchPages {
+			slog.Default().WarnContext(ctx, "jira: ListUpdatedSince hit page cap; truncating sweep (next reconcile resumes)",
+				"max_pages", maxSearchPages, "keys_so_far", len(keys))
 			break
 		}
 		nextPageToken = page.NextPageToken
