@@ -4,7 +4,7 @@ const profile = { id: '1', email: 'a@b.c', display_name: 'A', email_verified: tr
 const biz = { items: [{ id: 'b1', parent_id: null, tenant_root_id: 'b1', name: 'Acme', status: 'active', is_tenant_root: true }], next_cursor: null };
 const connector = {
   id: 'c1', business_id: 'b1', type: 'jira', display_name: 'Acme Jira', base_url: 'https://acme.atlassian.net',
-  allow_private_base_url: false, config: {}, status: 'enabled', last_reconciled_at: null,
+  allow_private_base_url: false, suppress_native_notifications: false, config: {}, status: 'enabled', last_reconciled_at: null,
   created_at: '2026-06-12T00:00:00Z', updated_at: '2026-06-12T00:00:00Z',
   health: { state: 'healthy', linked_ticket_count: 2, pending_outbound_ops: 0, failed_outbound_ops: 0, last_error: null },
 };
@@ -41,6 +41,29 @@ test('connectors: create a connector', async ({ page }) => {
   await page.getByTestId('conn-api-token').fill('tok');
   await page.getByTestId('connector-form-submit').click();
   await expect(page.getByTestId('connector-name')).toContainText('Acme Jira');
+});
+
+test('connectors: create with suppress-native checkbox sends the flag (a7j.8)', async ({ page }) => {
+  await auth(page);
+  let body: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/businesses/b1/connectors', (r) => {
+    if (r.request().method() === 'POST') {
+      body = r.request().postDataJSON() as Record<string, unknown>;
+      return r.fulfill({ status: 201, json: { ...connector, suppress_native_notifications: true } });
+    }
+    return r.fulfill({ json: { items: body ? [connector] : [] } });
+  });
+  await page.goto('/connectors');
+  await page.getByTestId('connector-add-toggle').click();
+  await page.getByTestId('conn-display-name').fill('Acme Jira');
+  await page.getByTestId('conn-base-url').fill('https://acme.atlassian.net');
+  await page.getByTestId('conn-suppress-native').check();
+  await page.getByTestId('conn-email').fill('a@b.c');
+  await page.getByTestId('conn-api-token').fill('tok');
+  await page.getByTestId('connector-form-submit').click();
+  await expect(page.getByTestId('connector-name')).toContainText('Acme Jira');
+  expect(body).not.toBeNull();
+  expect(body!['suppress_native_notifications']).toBe(true);
 });
 
 test('connectors: test action shows a toast', async ({ page }) => {
