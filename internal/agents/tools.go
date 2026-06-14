@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/ticketing"
@@ -260,7 +261,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	add := func(t Tool) { reg.tools[t.Name] = t }
 
 	add(Tool{
-		Name: "read_ticket", Effect: EffectRead, RequiredPerm: "tickets.read",
+		Name: "read_ticket", Effect: EffectRead, RequiredPerm: authz.PermTicketsRead,
 		Description: "Read a support ticket's fields (subject, status, priority, requester).",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -279,7 +280,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "read_thread", Effect: EffectRead, RequiredPerm: "tickets.read",
+		Name: "read_thread", Effect: EffectRead, RequiredPerm: authz.PermTicketsRead,
 		Description: "Read the message thread (conversation) of a ticket.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -306,7 +307,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_status", Effect: EffectReversible, RequiredPerm: "tickets.write",
+		Name: "set_status", Effect: EffectReversible, RequiredPerm: authz.PermTicketsWrite,
 		Description: "Set a ticket's status. One of: new, open, pending, solved, closed.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"status":{"type":"string","enum":["new","open","pending","solved","closed"]}},"required":["ticket_id","status"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -326,7 +327,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_priority", Effect: EffectReversible, RequiredPerm: "tickets.write",
+		Name: "set_priority", Effect: EffectReversible, RequiredPerm: authz.PermTicketsWrite,
 		Description: "Set a ticket's priority. One of: low, normal, high, urgent.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"priority":{"type":"string","enum":["low","normal","high","urgent"]}},"required":["ticket_id","priority"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -346,7 +347,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_tags", Effect: EffectReversible, RequiredPerm: "tickets.write",
+		Name: "set_tags", Effect: EffectReversible, RequiredPerm: authz.PermTicketsWrite,
 		Description: "Replace a ticket's tags with the given list (empty list clears all tags).",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"tags":{"type":"array","items":{"type":"string"}}},"required":["ticket_id","tags"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -363,7 +364,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "set_assignee", Effect: EffectReversible, RequiredPerm: "tickets.assign",
+		Name: "set_assignee", Effect: EffectReversible, RequiredPerm: authz.PermTicketsAssign,
 		Description: "Assign the ticket to a member (by principal id), or unassign with null.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"assignee":{"type":["string","null"],"format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -382,7 +383,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	})
 
 	add(Tool{
-		Name: "draft_reply", Effect: EffectExternal, RequiredPerm: "tickets.reply",
+		Name: "draft_reply", Effect: EffectExternal, RequiredPerm: authz.PermTicketsReply,
 		Description: "Compose an outbound reply to the requester. Sends email on execution.",
 		SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"body_text":{"type":"string","minLength":1}},"required":["ticket_id","body_text"],"additionalProperties":false}`,
 		Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -411,7 +412,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 	// are absent from the registry and the binary boots without them.
 	if conn != nil {
 		add(Tool{
-			Name: "read_external_ticket", Effect: EffectRead, RequiredPerm: "connectors.read",
+			Name: "read_external_ticket", Effect: EffectRead, RequiredPerm: authz.PermConnectorsRead,
 			Description: "Read the external issue (Jira/Zendesk) linked to a support ticket.",
 			SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"}},"required":["ticket_id"],"additionalProperties":false}`,
 			Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -428,7 +429,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 		})
 
 		add(Tool{
-			Name: "add_external_comment", Effect: EffectExternal, RequiredPerm: "connectors.write",
+			Name: "add_external_comment", Effect: EffectExternal, RequiredPerm: authz.PermConnectorsWrite,
 			Description: "Add a comment to the external issue (Jira/Zendesk) linked to a support ticket. Records an internal note first, then enqueues the external write.",
 			SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"body_text":{"type":"string","minLength":1}},"required":["ticket_id","body_text"],"additionalProperties":false}`,
 			Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
@@ -456,7 +457,7 @@ func NewToolRegistry(svc ticketSvc, conn ConnectorGateway) *ToolRegistry {
 		})
 
 		add(Tool{
-			Name: "transition_external_status", Effect: EffectExternal, RequiredPerm: "connectors.write",
+			Name: "transition_external_status", Effect: EffectExternal, RequiredPerm: authz.PermConnectorsWrite,
 			Description: "Transition the external issue (Jira/Zendesk) linked to a support ticket to a new status.",
 			SchemaJSON:  `{"type":"object","properties":{"ticket_id":{"type":"string","format":"uuid"},"status":{"type":"string","minLength":1}},"required":["ticket_id","status"],"additionalProperties":false}`,
 			Invoke: func(ctx context.Context, pid, bid uuid.UUID, raw json.RawMessage) (string, error) {
