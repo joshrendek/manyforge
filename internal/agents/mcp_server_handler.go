@@ -29,11 +29,15 @@ var _ mcpServerCRUD = (*MCPServerService)(nil)
 // MCPServerHandler exposes MCP server CRUD over HTTP. Mounted behind the
 // agents.configure RequirePermission gate (so a lacking perm / invisible business
 // is a no-oracle 404).
-type MCPServerHandler struct{ svc mcpServerCRUD }
+type MCPServerHandler struct {
+	svc    mcpServerCRUD
+	policy *MCPToolPolicyHandler // manyforge-k0d: optional nested per-tool policy routes
+}
 
-// NewMCPServerHandler builds an MCP server HTTP handler.
-func NewMCPServerHandler(svc mcpServerCRUD) *MCPServerHandler {
-	return &MCPServerHandler{svc: svc}
+// NewMCPServerHandler builds an MCP server HTTP handler. policy may be nil (no nested
+// per-tool policy routes).
+func NewMCPServerHandler(svc mcpServerCRUD, policy *MCPToolPolicyHandler) *MCPServerHandler {
+	return &MCPServerHandler{svc: svc, policy: policy}
 }
 
 // ProtectedRoutes mounts authenticated MCP server endpoints under a business.
@@ -41,9 +45,14 @@ func (h *MCPServerHandler) ProtectedRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/mcp_servers", func(r chi.Router) {
 		r.Get("/", h.listMCPServers)
 		r.Post("/", h.createMCPServer)
-		r.Get("/{serverID}", h.getMCPServer)
-		r.Patch("/{serverID}", h.updateMCPServer)
-		r.Delete("/{serverID}", h.deleteMCPServer)
+		r.Route("/{serverID}", func(r chi.Router) {
+			r.Get("/", h.getMCPServer)
+			r.Patch("/", h.updateMCPServer)
+			r.Delete("/", h.deleteMCPServer)
+			if h.policy != nil {
+				h.policy.Mount(r)
+			}
+		})
 	})
 }
 

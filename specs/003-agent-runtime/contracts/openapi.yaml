@@ -146,6 +146,94 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/mcp_servers/{serverID}/tools:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: serverID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: discoverMCPServerTools
+      summary: Best-effort live discovery of a server's tools, annotated with their effect policy
+      description: >
+        Connects to the server and lists its tools, annotating each with the effect the
+        agent would see (read | reversible from a per-tool policy, else external — the
+        fail-closed default). reachable=false means the server could not be contacted;
+        the policy may still be edited by typed tool name. A foreign/unknown server is 404.
+      responses:
+        "200":
+          description: Discovered tools with their effect policy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reachable: { type: boolean }
+                  tools:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        description: { type: string }
+                        effect: { type: string, enum: [read, reversible, external] }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/mcp_servers/{serverID}/tool_policies:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: serverID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listMCPToolPolicies
+      summary: List the persisted per-tool effect policies for a server
+      responses:
+        "200":
+          description: Persisted tool policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tool_name: { type: string }
+                        effect: { type: string, enum: [read, reversible] }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/mcp_servers/{serverID}/tool_policies/{toolName}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: serverID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: toolName, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: setMCPToolPolicy
+      summary: Set a tool's effect policy (promote to read/reversible)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [effect]
+              properties:
+                effect: { type: string, enum: [read, reversible] }
+      responses:
+        "200":
+          description: Policy set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tool_name: { type: string }
+                  effect: { type: string, enum: [read, reversible] }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: clearMCPToolPolicy
+      summary: Clear a tool's effect policy (revert to external default)
+      responses:
+        "204": { description: Cleared }
+        "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/agents/{agentID}/runs:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
