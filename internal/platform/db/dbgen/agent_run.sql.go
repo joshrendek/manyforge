@@ -253,53 +253,6 @@ func (q *Queries) ListAgentRuns(ctx context.Context, arg ListAgentRunsParams) ([
 	return items, nil
 }
 
-const listAgentRunsByAgent = `-- name: ListAgentRunsByAgent :many
-SELECT id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id, status, tokens_in, tokens_out, cost_cents, correlation_id, error, trigger_dedup_key, created_at, updated_at FROM agent_run WHERE agent_id = $1 AND business_id = $2 ORDER BY created_at DESC LIMIT $3
-`
-
-type ListAgentRunsByAgentParams struct {
-	AgentID    uuid.UUID `json:"agent_id"`
-	BusinessID uuid.UUID `json:"business_id"`
-	Limit      int32     `json:"limit"`
-}
-
-func (q *Queries) ListAgentRunsByAgent(ctx context.Context, arg ListAgentRunsByAgentParams) ([]AgentRun, error) {
-	rows, err := q.db.Query(ctx, listAgentRunsByAgent, arg.AgentID, arg.BusinessID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []AgentRun
-	for rows.Next() {
-		var i AgentRun
-		if err := rows.Scan(
-			&i.ID,
-			&i.AgentID,
-			&i.BusinessID,
-			&i.TenantRootID,
-			&i.Trigger,
-			&i.TargetType,
-			&i.TargetID,
-			&i.Status,
-			&i.TokensIn,
-			&i.TokensOut,
-			&i.CostCents,
-			&i.CorrelationID,
-			&i.Error,
-			&i.TriggerDedupKey,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const updateAgentRunProgress = `-- name: UpdateAgentRunProgress :one
 UPDATE agent_run
 SET status = $1::text,
