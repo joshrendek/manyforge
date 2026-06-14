@@ -57,12 +57,13 @@ func TestApprovalRespNeverExposesArgs(t *testing.T) {
 func TestApprovalsRouteGatedByApprovePermission(t *testing.T) {
 	src := mustRead(t, "../../cmd/manyforge/main.go")
 
-	// Pin 1: agentsApprove is bound to the "agents.approve" permission string.
+	// Pin 1: agentsApprove is bound to the agents.approve permission (authz.PermAgentsApprove
+	// since manyforge-xxe; TestPin_PermConstantsMatchSeededCatalog pins the constant→SQL key).
 	// Whitespace-tolerant and scoped to the load-bearing tokens, so gofmt re-aligning
 	// the struct literal (e.g. a longer-named sibling field) or renaming the local
 	// resolver vars never false-fails this pin.
-	if !regexp.MustCompile(`agentsApprove:\s+httpx\.RequirePermission\([^)]*"agents\.approve"`).MatchString(src) {
-		t.Error(`main.go: agentsApprove must be wired as httpx.RequirePermission(..., "agents.approve", ...) — permission gate removed or permission string changed?`)
+	if !regexp.MustCompile(`agentsApprove:\s+httpx\.RequirePermission\([^)]*authz\.PermAgentsApprove`).MatchString(src) {
+		t.Error(`main.go: agentsApprove must be wired as httpx.RequirePermission(..., authz.PermAgentsApprove, ...) — permission gate removed or permission constant changed?`)
 	}
 
 	// Pin 2: the approvals route group applies h.agentsApprove before mounting routes.
