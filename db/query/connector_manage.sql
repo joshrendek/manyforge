@@ -30,6 +30,12 @@ SELECT
 -- fields (NULL narg) are preserved via COALESCE. base_url and type are intentionally NOT
 -- updatable (they are part of the connector's identity). No matching row → no row returned
 -- → pgx.ErrNoRows → 404 (no oracle). status is written as text exactly like InsertConnector.
+--
+-- NOTE (manyforge-a7j.7): if base_url or allow_private_base_url ever become mutable here (or
+-- via a new UpdateConnectorCredential query), the service MUST re-run validateBaseURL on the
+-- new value AND re-audit the trust grant — create-time validation (credential.go) alone is
+-- insufficient once these are mutable, or an update silently bypasses the SSRF/trust checks.
+-- Pinned in internal/security_regression/connector_credential_update_pin_test.go.
 -- name: UpdateConnector :one
 UPDATE connector SET
     display_name = COALESCE(sqlc.narg('display_name'), display_name),
