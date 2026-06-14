@@ -9,7 +9,7 @@ import { ConnectorsListComponent } from './list';
 const biz = { items: [{ id: 'b1', parent_id: null, tenant_root_id: 'b1', name: 'Acme', status: 'active', is_tenant_root: true }] };
 const connectors = {
   items: [
-    { id: 'c1', business_id: 'b1', type: 'jira', display_name: 'Acme Jira', base_url: 'https://acme.atlassian.net', allow_private_base_url: false, config: {}, status: 'enabled', last_reconciled_at: null, created_at: '2026-06-12T00:00:00Z', updated_at: '2026-06-12T00:00:00Z', health: { state: 'degraded', linked_ticket_count: 3, pending_outbound_ops: 0, failed_outbound_ops: 1, last_error: 'HTTP 500' } },
+    { id: 'c1', business_id: 'b1', type: 'jira', display_name: 'Acme Jira', base_url: 'https://acme.atlassian.net', allow_private_base_url: false, suppress_native_notifications: false, config: {}, status: 'enabled', last_reconciled_at: null, created_at: '2026-06-12T00:00:00Z', updated_at: '2026-06-12T00:00:00Z', health: { state: 'degraded', linked_ticket_count: 3, pending_outbound_ops: 0, failed_outbound_ops: 1, last_error: 'HTTP 500' } },
   ],
 };
 

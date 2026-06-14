@@ -17,6 +17,7 @@ export interface Connector {
   display_name: string;
   base_url: string;
   allow_private_base_url: boolean;
+  suppress_native_notifications: boolean;
   config: Record<string, unknown>;
   status: string;
   last_reconciled_at: string | null;
@@ -30,6 +31,7 @@ export interface CreateConnectorBody {
   display_name: string;
   base_url: string;
   allow_private_base_url?: boolean;
+  suppress_native_notifications?: boolean;
   email: string;
   api_token: string;
   webhook_secret?: string;
@@ -40,6 +42,7 @@ export interface UpdateConnectorBody {
   display_name?: string;
   config?: Record<string, unknown>;
   status?: 'enabled' | 'disabled';
+  suppress_native_notifications?: boolean;
 }
 
 export interface RotateCredentialBody {

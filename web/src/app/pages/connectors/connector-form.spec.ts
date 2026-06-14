@@ -66,6 +66,7 @@ describe('ConnectorFormComponent', () => {
     comp.connector = {
       id: 'c1', business_id: 'b1', type: 'jira', display_name: 'Acme Jira',
       base_url: 'https://acme.atlassian.net', allow_private_base_url: false,
+      suppress_native_notifications: false,
       config: { project_key: 'PROJ', issue_type: 'Bug' },
       status: 'enabled', last_reconciled_at: null,
       created_at: '2026-06-12T00:00:00Z', updated_at: '2026-06-12T00:00:00Z',
