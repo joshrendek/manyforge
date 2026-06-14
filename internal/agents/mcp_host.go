@@ -19,6 +19,15 @@ type mcpServerResolver interface {
 	// ResolveEnabledByName fetches a single enabled server by name under RLS.
 	// Used by InvokeMCPTool to resolve the server for an approved mcp: tool call.
 	ResolveEnabledByName(ctx context.Context, principalID, businessID uuid.UUID, name string) (ResolvedMCPServer, error)
+	// ResolveEnabledByID fetches a single enabled server by id under RLS. Used by the
+	// admin tool-discovery endpoint (manyforge-k0d).
+	ResolveEnabledByID(ctx context.Context, principalID, businessID, serverID uuid.UUID) (ResolvedMCPServer, error)
+}
+
+// toolPolicyResolver lets discovery reclassify specific MCP tools (manyforge-k0d). A nil
+// resolver (or a lookup error) leaves every tool at the fail-closed EffectExternal default.
+type toolPolicyResolver interface {
+	ListToolPoliciesByServer(ctx context.Context, principalID, businessID, serverID uuid.UUID) (map[string]EffectClass, error)
 }
 
 // MCPHost discovers tools from the agent's allowed MCP servers at run start,
@@ -27,6 +36,8 @@ type mcpServerResolver interface {
 // with whatever succeeded.
 type MCPHost struct {
 	Servers mcpServerResolver
+	// Policies supplies per-tool effect overrides at discovery (manyforge-k0d); nil = all External.
+	Policies toolPolicyResolver
 	// Connect builds a ClientLike from a server URL and auth header. The prod
 	// wiring passes a factory backed by the loopback-aware guarded transport;
 	// tests inject a factory that returns a *mcp.MockClient.
@@ -53,7 +64,8 @@ func (h *MCPHost) DiscoverTools(ctx context.Context, principalID, businessID uui
 	var tools []Tool
 	var failures []DiscoveryFailure
 	for _, server := range servers {
-		discovered, err := h.discoverServerTools(ctx, server)
+		policyMap := h.policiesFor(ctx, principalID, businessID, server.ID)
+		discovered, err := h.discoverServerTools(ctx, server, policyMap)
 		if err != nil {
 			h.Logger.WarnContext(ctx, "agent.mcp.discovery_failed",
 				"server_id", server.ID,
@@ -142,9 +154,24 @@ func (h *MCPHost) InvokeMCPTool(ctx context.Context, principalID, businessID uui
 	return res.Content, false, nil
 }
 
+// policiesFor best-effort loads the per-tool effect overrides for one server. Any error (or a
+// nil resolver) returns nil, so discovery proceeds with every tool at the External default —
+// the policy can only RELAX from External, never make discovery fail-open.
+func (h *MCPHost) policiesFor(ctx context.Context, principalID, businessID, serverID uuid.UUID) map[string]EffectClass {
+	if h.Policies == nil {
+		return nil
+	}
+	pm, err := h.Policies.ListToolPoliciesByServer(ctx, principalID, businessID, serverID)
+	if err != nil {
+		h.Logger.WarnContext(ctx, "agent.mcp.policy_lookup_failed", "server_id", serverID, "err", err)
+		return nil
+	}
+	return pm
+}
+
 // discoverServerTools connects to a single server and lists its tools. Any error
 // is returned to the caller (DiscoverTools) which decides whether to fail-open.
-func (h *MCPHost) discoverServerTools(ctx context.Context, server ResolvedMCPServer) ([]Tool, error) {
+func (h *MCPHost) discoverServerTools(ctx context.Context, server ResolvedMCPServer, policyMap map[string]EffectClass) ([]Tool, error) {
 	client := h.Connect(server.URL, server.AuthHeader)
 
 	if err := client.Initialize(ctx); err != nil {
@@ -168,11 +195,18 @@ func (h *MCPHost) discoverServerTools(ctx context.Context, server ResolvedMCPSer
 			schemaJSON = string(capturedDef.InputSchema)
 		}
 
+		// manyforge-k0d: External is the fail-closed default; an explicit per-business policy may
+		// promote this tool to Read/Reversible (the only values the policy table can store).
+		effect := EffectExternal
+		if pe, ok := policyMap[capturedDef.Name]; ok {
+			effect = pe
+		}
+
 		tools = append(tools, Tool{
 			Name:         "mcp:" + capturedServer.Name + ":" + capturedDef.Name,
 			Description:  capturedDef.Description,
 			SchemaJSON:   schemaJSON,
-			Effect:       EffectExternal,
+			Effect:       effect,
 			RequiredPerm: "mcp.invoke",
 			Invoke: func(ctx context.Context, pid, bid uuid.UUID, args json.RawMessage) (string, error) {
 				idemHint := ""
