@@ -32,17 +32,19 @@ func TestPin_MCPServerRLS(t *testing.T) {
 	}
 }
 
-// TestPin_MCPToolsDefaultExternal pins that MCP-discovered tools are registered with
-// Effect=EffectExternal and RequiredPerm="mcp.invoke" (mcp_host.go). If either is dropped,
-// MCP tool calls bypass the autonomy gate (approval-required) or bypass RBAC.
+// TestPin_MCPToolsDefaultExternal pins the fail-closed default: a discovered MCP tool starts at
+// EffectExternal and requires mcp.invoke. manyforge-k0d lets an explicit per-business policy
+// promote a tool to Read/Reversible, so the assertion is now "default is External (the var init),
+// override is explicit" — never "every MCP tool is unconditionally External".
 func TestPin_MCPToolsDefaultExternal(t *testing.T) {
 	host := mustRead(t, "../agents/mcp_host.go")
 	for _, frag := range []string{
-		`Effect:       EffectExternal`,
-		`RequiredPerm: "mcp.invoke"`,
+		`effect := EffectExternal`,   // the fail-closed default
+		`RequiredPerm: "mcp.invoke"`, // stays RBAC-gated
+		`Effect:       effect`,       // the tool takes the (defaulted/overridden) effect
 	} {
 		if !strings.Contains(host, frag) {
-			t.Errorf("mcp_host.go: missing registration fragment %q — MCP tools must be External and require mcp.invoke to stay gate-enforced", frag)
+			t.Errorf("mcp_host.go: missing fragment %q — MCP tools must default to External and require mcp.invoke", frag)
 		}
 	}
 }
