@@ -52,6 +52,14 @@ type AgentRunStore struct{ DB agentRunDB }
 
 func validTrigger(t string) bool { return t == "event" || t == "manual" }
 
+// targetTypeTicket is the only run target the system understands today. agent_run.target_type
+// is free-text at the DB layer (unlike trigger, which has a CHECK); validTargetType is the
+// service-boundary allowlist that keeps it consistent without a migration. Blast radius is
+// nil today (parameterized SQL + string compare), so this is correctness/clarity, not a fix.
+const targetTypeTicket = "ticket"
+
+func validTargetType(t string) bool { return t == targetTypeTicket }
+
 func validStatus(s string) bool {
 	switch s {
 	case RunQueued, RunRunning, RunAwaitingApproval, RunSucceeded, RunFailed:
@@ -64,6 +72,9 @@ func validStatus(s string) bool {
 func (s *AgentRunStore) CreateRun(ctx context.Context, principalID, businessID, agentID uuid.UUID, trigger, correlationID string, targetType *string, targetID *uuid.UUID) (AgentRun, error) {
 	if !validTrigger(trigger) {
 		return AgentRun{}, fmt.Errorf("agents: invalid trigger %q: %w", trigger, errs.ErrValidation)
+	}
+	if targetType != nil && !validTargetType(*targetType) {
+		return AgentRun{}, fmt.Errorf("agents: invalid target_type %q: %w", *targetType, errs.ErrValidation)
 	}
 	var row dbgen.AgentRun
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -86,6 +97,9 @@ func (s *AgentRunStore) CreateRun(ctx context.Context, principalID, businessID, 
 // dedupKey (the triggering ticket_message id). created=false means a prior at-least-once
 // delivery already enqueued this (agent, dedupKey) — a benign replay; the caller skips it.
 func (s *AgentRunStore) CreateEventRun(ctx context.Context, agentPrincipalID, businessID, agentID uuid.UUID, dedupKey string, targetType *string, targetID *uuid.UUID) (created bool, err error) {
+	if targetType != nil && !validTargetType(*targetType) {
+		return false, fmt.Errorf("agents: invalid target_type %q: %w", *targetType, errs.ErrValidation)
+	}
 	e := s.DB.WithPrincipal(ctx, agentPrincipalID, func(tx pgx.Tx) error {
 		_, ie := dbgen.New(tx).CreateEventAgentRun(ctx, dbgen.CreateEventAgentRunParams{
 			ID: uuid.New(), AgentID: agentID, BusinessID: businessID,

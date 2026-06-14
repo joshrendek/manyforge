@@ -34,6 +34,17 @@ func TestValidTrigger(t *testing.T) {
 	}
 }
 
+func TestValidTargetType(t *testing.T) {
+	if !validTargetType("ticket") {
+		t.Fatal(`"ticket" should be valid`)
+	}
+	for _, bad := range []string{"", "plot", "Ticket", "tickets"} {
+		if validTargetType(bad) {
+			t.Fatalf("%q must be rejected", bad)
+		}
+	}
+}
+
 func TestValidStatus(t *testing.T) {
 	for _, ok := range []string{RunQueued, RunRunning, RunAwaitingApproval, RunSucceeded, RunFailed} {
 		if !validStatus(ok) {
@@ -67,5 +78,21 @@ func TestCreateRunRejectsBadTriggerWithoutDB(t *testing.T) {
 
 	if _, err := s.CreateRun(ctx, uuid.New(), uuid.New(), uuid.New(), "cron", "corr-1", nil, nil); !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("bad trigger → %v, want ErrValidation", err)
+	}
+}
+
+// CreateRun and CreateEventRun reject an unknown target_type before any DB access — a
+// zero-value store (DB nil) must not panic. Trigger is valid so validation reaches the
+// target_type check.
+func TestCreateRunRejectsBadTargetTypeWithoutDB(t *testing.T) {
+	s := &AgentRunStore{} // DB nil: any DB access would panic
+	ctx := context.Background()
+	bad := "plot"
+
+	if _, err := s.CreateRun(ctx, uuid.New(), uuid.New(), uuid.New(), "manual", "corr-1", &bad, nil); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("CreateRun bad target_type → %v, want ErrValidation", err)
+	}
+	if _, err := s.CreateEventRun(ctx, uuid.New(), uuid.New(), uuid.New(), "dedup-1", &bad, nil); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("CreateEventRun bad target_type → %v, want ErrValidation", err)
 	}
 }
