@@ -52,6 +52,13 @@ const bodyLimit = 8 << 20 // 8 MiB
 // searchPageSize is the per-request page size for the paginated Zendesk search.
 const searchPageSize = 100
 
+// maxSearchPages bounds ListUpdatedSince so a pathological/malicious upstream that returns
+// non-empty pages while perpetually inflating Count cannot loop forever (defense-in-depth;
+// reconcile is idempotent, so a truncated sweep is safe — the next run resumes). ~100k
+// tickets at searchPageSize=100, far above any real reconcile window. A var so tests can
+// lower it.
+var maxSearchPages = 1000
+
 // zendeskStatuses is the closed set of valid Zendesk ticket statuses (clamps the target
 // before any write, mirroring Jira's transition-name lookup).
 var zendeskStatuses = map[string]bool{
@@ -338,6 +345,11 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 			ids = append(ids, strconv.FormatInt(r.ID, 10))
 		}
 		if len(pageResp.Results) == 0 || len(ids) >= pageResp.Count {
+			break
+		}
+		if page >= maxSearchPages {
+			slog.Default().WarnContext(ctx, "zendesk: ListUpdatedSince hit page cap; truncating sweep (next reconcile resumes)",
+				"max_pages", maxSearchPages, "ids_so_far", len(ids))
 			break
 		}
 		page++
