@@ -39,6 +39,13 @@ func validateBaseURL(raw string, allowPrivate bool) error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return fmt.Errorf("connectors: base_url must be a valid http(s) URL: %w", errs.ErrValidation)
 	}
+	// Plaintext http is permitted ONLY for trusted on-prem connectors — the same trust flag
+	// that unlocks private/loopback hosts. A public connector over http would expose the API
+	// token in transit, so require https otherwise. (Dial-time netsafe stays the load-bearing
+	// SSRF control; this is defense-in-depth, framework-wide for Jira + Zendesk.)
+	if u.Scheme == "http" && !allowPrivate {
+		return fmt.Errorf("connectors: base_url must use https unless allow_private_base_url is set: %w", errs.ErrValidation)
+	}
 	if ip := net.ParseIP(u.Hostname()); ip != nil {
 		if netsafe.IsBlocked(ip, netsafe.Options{AllowLoopback: allowPrivate, AllowPrivate: allowPrivate}) {
 			return fmt.Errorf("connectors: base_url %q is a blocked address: %w", raw, errs.ErrValidation)
