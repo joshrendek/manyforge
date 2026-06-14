@@ -566,6 +566,33 @@ func TestRun_ExternalToolDeniedWithoutPerm(t *testing.T) {
 	}
 }
 
+// TestRun_TransitionDeniedWithoutPerm — perms map lacks connectors.write: the RBAC gate
+// denies transition_external_status; no EnqueueTransition, no approval; audited "denied".
+// Companion to TestRun_ExternalToolDeniedWithoutPerm so BOTH write tools are pinned
+// fail-closed against a missing connectors.write (manyforge-q9c).
+func TestRun_TransitionDeniedWithoutPerm(t *testing.T) {
+	tid := uuid.New()
+	prov := ai.NewMockProvider(
+		toolUse("c1", "transition_external_status", `{"ticket_id":"`+tid.String()+`","status":"Done"}`),
+		finalText("ok"),
+	)
+	fgw := &fakeConnectorGateway{}
+	eng, aud, ap := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, fgw))
+	run, _ := eng.run(context.Background(), uuid.New(), loadedAgent("transition_external_status"), "manual", nil, nil)
+	if fgw.enqueueTransitionCalled {
+		t.Fatal("RBAC-denied tool must NOT call EnqueueTransition")
+	}
+	if len(ap.created) != 0 {
+		t.Fatalf("RBAC-denied tool must NOT create an approval; got %v", ap.created)
+	}
+	if !containsDecision(aud.actions, "denied") {
+		t.Fatalf("RBAC-denied tool must be audited denied; actions=%v", aud.actions)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("status=%s want succeeded (deny is non-fatal)", run.Status)
+	}
+}
+
 // TestRun_ReadExternalRunsInline — read_external_ticket (EffectRead) executes inline
 // in ModeAssist (reads never queue); gateway ReadTicketExternal called once.
 func TestRun_ReadExternalRunsInline(t *testing.T) {
