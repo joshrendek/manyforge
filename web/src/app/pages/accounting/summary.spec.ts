@@ -128,6 +128,19 @@ describe('AccountingSummaryComponent (Task 22 UI redesign)', () => {
     expect(q('[data-testid="agent-budget-pct"]')).not.toBeNull();
   });
 
+  it('budget hint is hidden for this_month and shown for other windows (deo.7)', () => {
+    boot();
+    // Default window is this_month → budget % pills are populated, so no hint.
+    expect(q('[data-testid="budget-hint"]')).toBeNull();
+    // Switching to last_month reloads; budget % is unavailable, so the hint explains it.
+    fixture.componentInstance.setWindow('last_month');
+    mock.expectOne((req) => req.url.includes('/accounting')).flush(summaryData);
+    fixture.detectChanges();
+    const hint = q('[data-testid="budget-hint"]');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toContain('current month');
+  });
+
   it('back-to-dashboard link is present in header actions', () => {
     boot();
     expect(q('[data-testid="back-to-dashboard"]')).not.toBeNull();
