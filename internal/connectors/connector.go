@@ -6,12 +6,11 @@ import (
 	"time"
 )
 
-// Outbox topics for the sync engine. The connectors package owns them (mirroring how
-// agents owns TopicAgentApproved). US3 subscribes a connector-sync handler to these.
-const (
-	TopicConnectorInboundSync  = "connector.inbound.sync"
-	TopicConnectorOutboundSync = "connector.outbound.sync"
-)
+// TopicConnectorInboundSync is the outbox topic for the inbound sync engine. The
+// connectors package owns it (mirroring how agents owns TopicAgentApproved); US3
+// subscribes a connector-sync handler to it. (Outbound work routes through the
+// connector_outbound_op poller, not an outbox topic — see manyforge-a7j.10.)
+const TopicConnectorInboundSync = "connector.inbound.sync"
 
 // ExternalComment is one comment on an external issue.
 type ExternalComment struct {
