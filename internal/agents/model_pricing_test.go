@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -57,6 +58,20 @@ func TestLoadModelRegistryWrapsWithTxError(t *testing.T) {
 	}
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("LoadModelRegistry error = %v, want it to wrap %v", err, sentinel)
+	}
+}
+
+// The empty-catalog branch: WithTx succeeds but the catalog yields zero models (an
+// unseeded deploy). The loader must fail loudly, not silently return an empty registry.
+// The zero-value stub returns nil from WithTx without registering any row, modelling
+// exactly that state (reg.Len()==0).
+func TestLoadModelRegistryEmptyCatalogFailsLoudly(t *testing.T) {
+	_, err := LoadModelRegistry(context.Background(), stubModelPricingDB{})
+	if err == nil {
+		t.Fatal("LoadModelRegistry with empty catalog = nil error, want a fail-loud error")
+	}
+	if !strings.Contains(err.Error(), "empty or unseeded") {
+		t.Fatalf("error = %v, want it to name the empty/unseeded catalog", err)
 	}
 }
 
