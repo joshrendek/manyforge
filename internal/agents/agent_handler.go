@@ -311,7 +311,8 @@ func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]modelResp, 0, len(models))
 	for _, m := range models {
-		out = append(out, modelResp{Provider: m.Provider, ModelID: m.ModelID})
+		// modelResp is the JSON-tagged view of ModelInfo (identical shape).
+		out = append(out, modelResp(m))
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
