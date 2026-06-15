@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,6 +29,23 @@ const (
 	EffectExternal                        // leaves the tenant boundary (send email)
 	EffectIrreversible                    // destructive (delete/merge/billing)
 )
+
+// String renders the effect class for API/metadata responses. An unknown class
+// is "unknown" (fail-closed — matches the gate's unknown-class-to-approval rule).
+func (e EffectClass) String() string {
+	switch e {
+	case EffectRead:
+		return "read"
+	case EffectReversible:
+		return "reversible"
+	case EffectExternal:
+		return "external"
+	case EffectIrreversible:
+		return "irreversible"
+	default:
+		return "unknown"
+	}
+}
 
 // idemKeyCtx is the context key under which an approval id rides into a tool's Invoke
 // so a write tool (draft_reply) can dedup its external side effect on execution.
@@ -83,6 +101,17 @@ func (r *ToolRegistry) Names() []string {
 	for n := range r.tools {
 		out = append(out, n)
 	}
+	return out
+}
+
+// All returns every registered tool, sorted by name, for metadata/listing.
+// (Get/Names remain the hot-path accessors; All is for the read-only API.)
+func (r *ToolRegistry) All() []Tool {
+	out := make([]Tool, 0, len(r.tools))
+	for _, t := range r.tools {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
