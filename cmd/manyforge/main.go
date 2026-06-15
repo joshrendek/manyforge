@@ -154,7 +154,21 @@ func main() {
 	// trigger + run status are gated by agents.run. Cost uses the AI model registry,
 	// keyed on the resolved model id. The credential service resolves the agent's BYO
 	// provider key into an SSRF-guarded transport at run start.
-	credSvc := &agents.CredentialService{DB: database}
+	// Agent BYO-credential sealing. Optional: with no AI master key the credential
+	// HTTP surface is disabled (handler left nil, like connectors), and the run
+	// engine cannot resolve BYO keys. Set MANYFORGE_AI_MASTER_KEY where credentials are used.
+	var aiSealer *mfcrypto.Sealer
+	if len(cfg.AIMasterKey) > 0 {
+		s, serr := mfcrypto.NewSealer(cfg.AIMasterKey)
+		if serr != nil {
+			logger.Error("init AI credential sealer", "err", serr)
+			os.Exit(1)
+		}
+		aiSealer = s
+	} else {
+		logger.Warn("MANYFORGE_AI_MASTER_KEY unset; AI provider credential sealing disabled (BYO key creation/resolution will fail)")
+	}
+	credSvc := &agents.CredentialService{DB: database, Sealer: aiSealer}
 	aiReg, err := agents.LoadModelRegistry(ctx, database)
 	if err != nil {
 		logger.Error("load model registry", "err", err)

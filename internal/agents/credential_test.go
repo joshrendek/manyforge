@@ -1,11 +1,16 @@
 package agents
 
 import (
+	"context"
 	"crypto/rand"
+	"errors"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 // knownProviders must stay in lockstep with the ai_provider PG enum (manyforge-uc2):
@@ -83,6 +88,23 @@ func TestResolveRowCarriesAllowPrivate(t *testing.T) {
 	}
 	if !got.AllowPrivateBaseURL {
 		t.Fatal("AllowPrivateBaseURL did not round-trip through resolveRow")
+	}
+}
+
+// TestCreateNilSealerReturnsErrorNotPanic pins the run-engine-reachable nil-sealer
+// path (MANYFORGE_AI_MASTER_KEY unset): Create with a non-empty API key must return a
+// clean ErrValidation, never a nil-pointer panic. The sealAPIKey guard fires before any
+// DB access on the create path, so a nil DB is fine here (no DB call is reached).
+func TestCreateNilSealerReturnsErrorNotPanic(t *testing.T) {
+	svc := &CredentialService{Sealer: nil} // DB nil: guard fires before any DB use
+	_, err := svc.Create(context.Background(), uuid.New(), uuid.New(), CreateCredentialInput{
+		Provider: "anthropic", APIKey: "sk-x", DefaultModel: "m",
+	})
+	if err == nil {
+		t.Fatal("Create with nil sealer + non-empty API key must return an error, got nil")
+	}
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("want errs.ErrValidation, got %v", err)
 	}
 }
 
