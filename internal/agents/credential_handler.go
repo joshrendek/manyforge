@@ -39,7 +39,9 @@ func (h *CredentialHandler) ProtectedRoutes(r chi.Router) {
 }
 
 func credBusinessID(r *http.Request) (uuid.UUID, error) { return uuid.Parse(chi.URLParam(r, "id")) }
-func credPathID(r *http.Request) (uuid.UUID, error)     { return uuid.Parse(chi.URLParam(r, "credentialID")) }
+func credPathID(r *http.Request) (uuid.UUID, error) {
+	return uuid.Parse(chi.URLParam(r, "credentialID"))
+}
 
 // credentialResp is the non-secret response DTO. CRITICAL: there is no api_key /
 // sealed_key_ref field — the secret is write-only.
