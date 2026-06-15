@@ -363,6 +363,49 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/ai_credentials:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listAICredentials
+      summary: List AI-provider credentials for a business
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/AICredential" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createAICredential
+      summary: Create an AI-provider credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAICredentialRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AICredential" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/ai_credentials/{credentialID}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: credentialID, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: deleteAICredential
+      summary: Delete an AI-provider credential
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/approvals/{approvalID}/deny:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -615,3 +658,32 @@ components:
         tokens_out: { type: integer }
         cost_cents: { type: integer }
         budget_pct: { type: integer, nullable: true }
+    AICredential:
+      type: object
+      description: Non-secret view of a stored AI-provider credential. The API key is write-only and never returned.
+      required: [id, business_id, provider, default_model, allow_private_base_url]
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm] }
+        base_url: { type: string }
+        default_model: { type: string }
+        allow_private_base_url: { type: boolean }
+        created_at: { type: string }
+        updated_at: { type: string }
+    CreateAICredentialRequest:
+      type: object
+      required: [provider, api_key, default_model]
+      properties:
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm] }
+        api_key:
+          type: string
+          writeOnly: true
+          description: Write-only. Sealed at rest, never returned.
+        base_url:
+          type: string
+          description: Optional. For openai-compatible / self-host endpoints.
+        default_model: { type: string }
+        allow_private_base_url:
+          type: boolean
+          description: Opt-in to a loopback/RFC1918 base_url (SSRF trust grant).
