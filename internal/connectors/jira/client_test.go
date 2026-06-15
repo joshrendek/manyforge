@@ -402,6 +402,35 @@ func TestListUpdatedSince_ScopedToProject(t *testing.T) {
 
 // ── VerifyWebhook ────────────────────────────────────────────────────────────
 
+// VerifyAuth probes GET /rest/api/3/myself; 2xx → nil, non-2xx (bad credential) → ErrUpstream.
+func TestVerifyAuth(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accountId":"abc","emailAddress":"a@b.c"}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "user@example.com", "tok", "secret", srv.Client())
+	if err := c.VerifyAuth(context.Background()); err != nil {
+		t.Fatalf("VerifyAuth: %v", err)
+	}
+	if gotPath != "/rest/api/3/myself" {
+		t.Errorf("path = %q, want /rest/api/3/myself", gotPath)
+	}
+}
+
+func TestVerifyAuth_RejectsBadCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "user@example.com", "bad", "secret", srv.Client())
+	if err := c.VerifyAuth(context.Background()); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("VerifyAuth on 401 = %v, want ErrUpstream", err)
+	}
+}
+
 func TestVerifyWebhook_Valid(t *testing.T) {
 	const secret = "my-webhook-secret"
 	body := loadGolden(t, "webhook_issue_updated.json")

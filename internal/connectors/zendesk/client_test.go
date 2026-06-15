@@ -365,6 +365,35 @@ func zendeskSig(secret, ts string, body []byte) string {
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
+// VerifyAuth probes GET /api/v2/users/me.json; 2xx → nil, non-2xx (bad credential) → ErrUpstream.
+func TestVerifyAuth(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"user":{"id":1,"email":"a@b.c"}}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "ops@acme.test", "tok", "secret", srv.Client())
+	if err := c.VerifyAuth(context.Background()); err != nil {
+		t.Fatalf("VerifyAuth: %v", err)
+	}
+	if gotPath != "/api/v2/users/me.json" {
+		t.Errorf("path = %q, want /api/v2/users/me.json", gotPath)
+	}
+}
+
+func TestVerifyAuth_RejectsBadCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL, "ops@acme.test", "bad", "secret", srv.Client())
+	if err := c.VerifyAuth(context.Background()); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("VerifyAuth on 401 = %v, want ErrUpstream", err)
+	}
+}
+
 func TestVerifyWebhook_Valid(t *testing.T) {
 	secret := "whsec-123"
 	ts := "1718000000"

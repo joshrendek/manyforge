@@ -294,6 +294,10 @@ func main() {
 		connReg = connectors.NewRegistry(connSvc)
 		connReg.Register("jira", jira.NewFactory(60*time.Second))
 		connReg.Register("zendesk", zendesk.NewFactory(60*time.Second))
+		// Live credential verifier (registry-backed): makes create, credential rotation, and
+		// the connector Test action perform a real auth probe instead of "verification
+		// unavailable" (manyforge — connector Test verifier).
+		connSvc.Verify = connectors.NewRegistryVerifier(connReg)
 		connWebhookH = connectors.NewWebhookHandler(database, connSealer, connReg, logger)
 		connManageH = connectors.NewHandler(connSvc)
 		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
