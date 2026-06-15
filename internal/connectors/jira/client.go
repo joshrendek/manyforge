@@ -311,6 +311,18 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 	return keys, nil
 }
 
+// VerifyAuth confirms the stored credential authenticates against this Jira site via a
+// cheap, side-effect-free GET /rest/api/3/myself. Returns nil on 2xx; a non-2xx (e.g. a
+// 401/403 from a bad email/token) returns ErrUpstream — the body is never surfaced. Backs
+// the connector Test action and create/rotate-time credential verification.
+func (c *client) VerifyAuth(ctx context.Context) error {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return fmt.Errorf("jira: invalid base_url: %w", ErrUpstream)
+	}
+	return c.doJSON(ctx, http.MethodGet, base.JoinPath("rest", "api", "3", "myself").String(), nil, nil)
+}
+
 // VerifyWebhook checks the X-Hub-Signature header (sha256=<hex>) against the
 // HMAC-SHA256 of the body using the per-connector webhook secret.
 // Returns ErrBadSig if the signature is missing, malformed, or does not match.

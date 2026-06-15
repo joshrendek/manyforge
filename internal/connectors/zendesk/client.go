@@ -357,6 +357,18 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 	return ids, nil
 }
 
+// VerifyAuth confirms the stored credential authenticates against this Zendesk site via a
+// cheap, side-effect-free GET /api/v2/users/me.json. Returns nil on 2xx; a non-2xx (e.g. a
+// 401/403 from a bad email/token) returns ErrUpstream — the body is never surfaced. Backs
+// the connector Test action and create/rotate-time credential verification.
+func (c *client) VerifyAuth(ctx context.Context) error {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return fmt.Errorf("zendesk: invalid base_url: %w", ErrUpstream)
+	}
+	return c.doJSON(ctx, http.MethodGet, base.JoinPath("api", "v2", "users", "me.json").String(), nil, nil)
+}
+
 // VerifyWebhook checks the X-Zendesk-Webhook-Signature header (base64 of
 // HMAC-SHA256(secret, timestamp + body)) using the per-connector webhook secret and the
 // X-Zendesk-Webhook-Signature-Timestamp header. Fails closed: an unconfigured secret, a
