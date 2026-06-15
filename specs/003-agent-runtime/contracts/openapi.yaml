@@ -42,6 +42,32 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/agents/tools:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listAgentTools
+      summary: List the tool catalog available to agents (read-only descriptors)
+      responses:
+        "200":
+          description: Tool catalog
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentToolList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/agents/models:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listAgentModels
+      summary: List the model catalog available to agents
+      responses:
+        "200":
+          description: Model catalog
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentModelList" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/agents/{agentID}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -493,6 +519,36 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/Agent" }
+    AgentTool:
+      type: object
+      description: A read-only tool descriptor; the catalog of tools an agent may be allowed.
+      required: [name, description, effect, required_perm]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        effect: { type: string }
+        required_perm: { type: string }
+    AgentToolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AgentTool" }
+    AgentModel:
+      type: object
+      description: A model the agent runtime can be configured to use.
+      required: [provider, model_id]
+      properties:
+        provider: { type: string }
+        model_id: { type: string }
+    AgentModelList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AgentModel" }
     CreateAgentRequest:
       type: object
       required: [name, provider, model]
