@@ -169,6 +169,12 @@ func main() {
 		logger.Warn("MANYFORGE_AI_MASTER_KEY unset; AI provider credential sealing disabled (BYO key creation/resolution will fail)")
 	}
 	credSvc := &agents.CredentialService{DB: database, Sealer: aiSealer}
+	// Credential HTTP surface is only mounted when the AI sealer is configured —
+	// without it, Create would return a config error. Mirrors the connectors nil-guard.
+	var credH *agents.CredentialHandler
+	if aiSealer != nil {
+		credH = agents.NewCredentialHandler(credSvc)
+	}
 	aiReg, err := agents.LoadModelRegistry(ctx, database)
 	if err != nil {
 		logger.Error("load model registry", "err", err)
@@ -505,6 +511,7 @@ func main() {
 		ticketsDelete:   httpx.RequirePermission(database, permResolve, authz.PermTicketsDelete, businessIDFromPath),
 		inboxManage:     httpx.RequirePermission(database, permResolve, authz.PermInboxManage, businessIDFromPath),
 		agents:          agentH,
+		credentials:     credH,
 		agentsConfigure:  httpx.RequirePermission(database, permResolve, authz.PermAgentsConfigure, businessIDFromPath),
 		agentRuns:        agentRunH,
 		agentsRun:       httpx.RequirePermission(database, permResolve, authz.PermAgentsRun, businessIDFromPath),
@@ -678,6 +685,10 @@ type apiHandlers struct {
 
 	// agents is the US2 agent-definition CRUD handler (Spec 003).
 	agents *agents.Handler
+	// credentials is the AI-provider credential CRUD handler (Phase 1 of the
+	// agent-management UI). Nil when MANYFORGE_AI_MASTER_KEY is unset; the mount
+	// block guards on nil so the route group is not registered in that case.
+	credentials *agents.CredentialHandler
 	// agentsConfigure gates the US2 agent-definition CRUD slice on the
 	// agents.configure permission, same RLS-bound 404-on-lacking-perm shape as the
 	// other groups.
@@ -800,6 +811,14 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				ag.Use(h.agentsConfigure)
 				h.agents.ProtectedRoutes(ag)
 			})
+			// AI-provider credential slice: create/list/delete BYO provider keys,
+			// gated on agents.configure (same permission as agent-definition CRUD).
+			if h.credentials != nil {
+				pr.Group(func(cg chi.Router) {
+					cg.Use(h.agentsConfigure)
+					h.credentials.ProtectedRoutes(cg)
+				})
+			}
 			// US3 agent-run slice: manual trigger + run status under a business's agent,
 			// gated on agents.run (migration-0029 catalog). The engine runs AS the agent
 			// principal; same RLS-bound 404-on-lacking-perm semantics as the other groups.
