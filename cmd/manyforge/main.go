@@ -334,6 +334,15 @@ func main() {
 		logger.Warn("MANYFORGE_CONNECTOR_MASTER_KEY unset; external connectors disabled (no Jira webhook/sync)")
 	}
 
+	// Late-wire the agent handler's read-only metadata endpoints (/agents/tools,
+	// /agents/models). The registry is built from the same inputs as the engine's
+	// (ticketSvc + the resolved connGateway); only descriptors are read, never
+	// invoked. The model catalog reads model_pricing via WithTx (no RLS).
+	agentH.SetMetadata(
+		agents.NewToolRegistry(ticketSvc, connGateway),
+		&agents.ModelCatalog{DB: database},
+	)
+
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,
 	// so no event is drained without a handler. The in-process SMTP receiver
