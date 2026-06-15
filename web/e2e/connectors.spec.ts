@@ -18,7 +18,7 @@ async function auth(page: import('@playwright/test').Page) {
 test('connectors: renders list with health pill', async ({ page }) => {
   await auth(page);
   await page.route('**/api/v1/businesses/b1/connectors', (r) => r.fulfill({ json: { items: [connector] } }));
-  await page.goto('/connectors');
+  await page.goto('/credentials/connector');
   await expect(page.getByTestId('connector-name')).toContainText('Acme Jira');
   await expect(page.getByTestId('connector-health')).toContainText('Healthy');
 });
@@ -33,7 +33,7 @@ test('connectors: create a connector', async ({ page }) => {
     }
     return r.fulfill({ json: { items: created ? [connector] : [] } });
   });
-  await page.goto('/connectors');
+  await page.goto('/credentials/connector');
   await page.getByTestId('connector-add-toggle').click();
   await page.getByTestId('conn-display-name').fill('Acme Jira');
   await page.getByTestId('conn-base-url').fill('https://acme.atlassian.net');
@@ -53,7 +53,7 @@ test('connectors: create with suppress-native checkbox sends the flag (a7j.8)', 
     }
     return r.fulfill({ json: { items: body ? [connector] : [] } });
   });
-  await page.goto('/connectors');
+  await page.goto('/credentials/connector');
   await page.getByTestId('connector-add-toggle').click();
   await page.getByTestId('conn-display-name').fill('Acme Jira');
   await page.getByTestId('conn-base-url').fill('https://acme.atlassian.net');
@@ -70,7 +70,7 @@ test('connectors: test action shows a toast', async ({ page }) => {
   await auth(page);
   await page.route('**/api/v1/businesses/b1/connectors', (r) => r.fulfill({ json: { items: [connector] } }));
   await page.route('**/api/v1/businesses/b1/connectors/c1/test', (r) => r.fulfill({ json: { ok: true, detail: 'ok' } }));
-  await page.goto('/connectors');
+  await page.goto('/credentials/connector');
   await page.getByTestId('connector-test').click();
   await expect(page.getByTestId('toast')).toContainText(/OK/i);
 });
@@ -82,7 +82,7 @@ test('connectors: delete asks to confirm then removes the row', async ({ page })
     if (r.request().method() === 'DELETE') return r.fulfill({ status: 204, body: '' });
     return r.fulfill({ json: connector });
   });
-  await page.goto('/connectors');
+  await page.goto('/credentials/connector');
   await page.getByTestId('connector-delete').click();
   await expect(page.getByTestId('connector-delete-confirm')).toContainText('Detaches 2');
   await page.getByTestId('connector-delete-yes').click();
