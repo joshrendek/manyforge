@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -62,6 +63,39 @@ type ResolvedCredential struct {
 	BaseURL             string
 	Model               string
 	AllowPrivateBaseURL bool
+}
+
+// CredentialView is the safe, key-free projection of a stored credential for
+// list/management surfaces. It intentionally carries NO sealed_key_ref / API key —
+// only the metadata a caller needs to display and manage a credential.
+type CredentialView struct {
+	ID                  uuid.UUID
+	BusinessID          uuid.UUID
+	Provider            string
+	BaseURL             string
+	DefaultModel        string
+	AllowPrivateBaseURL bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+// credViewFromRow projects a dbgen row into a key-free CredentialView,
+// dereferencing the nullable base_url to "" when absent.
+func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
+	base := ""
+	if row.BaseUrl != nil {
+		base = *row.BaseUrl
+	}
+	return CredentialView{
+		ID:                  row.ID,
+		BusinessID:          row.BusinessID,
+		Provider:            string(row.Provider),
+		BaseURL:             base,
+		DefaultModel:        row.DefaultModel,
+		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
 }
 
 // storedCredential is the unsealed-at-rest shape (mirrors the dbgen row; defined
@@ -141,14 +175,14 @@ func (s *CredentialService) resolveRow(row storedCredential) (ResolvedCredential
 	return out, nil
 }
 
-// Create seals the API key and inserts the credential, returning its id.
-func (s *CredentialService) Create(ctx context.Context, principalID, businessID uuid.UUID, in CreateCredentialInput) (uuid.UUID, error) {
+// Create seals the API key and inserts the credential, returning a key-free view.
+func (s *CredentialService) Create(ctx context.Context, principalID, businessID uuid.UUID, in CreateCredentialInput) (CredentialView, error) {
 	if err := s.validate(in); err != nil {
-		return uuid.Nil, err
+		return CredentialView{}, err
 	}
 	ref, err := s.sealAPIKey(in.APIKey)
 	if err != nil {
-		return uuid.Nil, err
+		return CredentialView{}, err
 	}
 	id := uuid.New()
 	var refArg *string
@@ -159,8 +193,9 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 	if in.BaseURL != "" {
 		baseArg = &in.BaseURL
 	}
+	var row dbgen.AiProviderCredential
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		if _, qerr := dbgen.New(tx).InsertAIProviderCredential(ctx, dbgen.InsertAIProviderCredentialParams{
+		r, qerr := dbgen.New(tx).InsertAIProviderCredential(ctx, dbgen.InsertAIProviderCredentialParams{
 			ID:                  id,
 			BusinessID:          businessID,
 			Provider:            dbgen.AiProvider(in.Provider),
@@ -168,9 +203,11 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 			BaseUrl:             baseArg,
 			DefaultModel:        in.DefaultModel,
 			AllowPrivateBaseUrl: in.AllowPrivateBaseURL,
-		}); qerr != nil {
+		})
+		if qerr != nil {
 			return qerr
 		}
+		row = r
 		// Trusting a private/loopback endpoint is a security-sensitive grant — audit it
 		// in the SAME tx as the insert so there is never a trusted credential without
 		// its trail (atomicity invariant).
@@ -190,9 +227,50 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 		return nil
 	})
 	if err != nil {
-		return uuid.Nil, mapCredErr(err)
+		return CredentialView{}, mapCredErr(err)
 	}
-	return id, nil
+	return credViewFromRow(row), nil
+}
+
+// List returns all credentials for a business as key-free views, ordered by
+// provider. RLS scopes rows to the caller's authorized businesses, so a principal
+// without membership on businessID sees an empty list. Always non-nil.
+func (s *CredentialService) List(ctx context.Context, principalID, businessID uuid.UUID) ([]CredentialView, error) {
+	var rows []dbgen.AiProviderCredential
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, qerr := dbgen.New(tx).ListAIProviderCredentials(ctx, businessID)
+		rows = r
+		return qerr
+	})
+	if err != nil {
+		return nil, mapCredErr(err)
+	}
+	out := make([]CredentialView, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, credViewFromRow(row))
+	}
+	return out, nil
+}
+
+// Delete removes the (id, business_id) credential. Rows-affected 0 (unknown id,
+// or an id the caller's RLS scope can't see) maps to ErrNotFound — no oracle.
+func (s *CredentialService) Delete(ctx context.Context, principalID, businessID, credentialID uuid.UUID) error {
+	var affected int64
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		n, qerr := dbgen.New(tx).DeleteAIProviderCredential(ctx, dbgen.DeleteAIProviderCredentialParams{
+			ID:         credentialID,
+			BusinessID: businessID,
+		})
+		affected = n
+		return qerr
+	})
+	if err != nil {
+		return mapCredErr(err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("agents: credential not found: %w", errs.ErrNotFound)
+	}
+	return nil
 }
 
 // Resolve fetches + unseals the credential for (business, provider).

@@ -28,15 +28,19 @@ func TestCredentialCRUDRoundTrip(t *testing.T) {
 
 	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
 
-	id, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+	view, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
 		Provider: "anthropic", APIKey: "sk-live", DefaultModel: "claude-sonnet-4-6",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if id == uuid.Nil {
+	if view.ID == uuid.Nil {
 		t.Fatal("create returned nil id")
 	}
+	if view.Provider != "anthropic" {
+		t.Fatalf("create view provider = %q, want anthropic", view.Provider)
+	}
+	id := view.ID
 
 	got, err := svc.Resolve(ctx, ten.principalID, ten.businessID, "anthropic")
 	if err != nil {
@@ -90,13 +94,14 @@ func TestCredentialTrustGrantAudited(t *testing.T) {
 	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
 
 	// A trusted self-host credential writes exactly one trust-grant audit row, atomically.
-	id, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+	view, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
 		Provider: "ollama", DefaultModel: "llama3",
 		BaseURL: "http://127.0.0.1:11434/v1", AllowPrivateBaseURL: true,
 	})
 	if err != nil {
 		t.Fatalf("create trusted: %v", err)
 	}
+	id := view.ID
 	var n int
 	if err := tdb.Super.QueryRow(ctx,
 		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND action='ai_credential.created' AND decision='trust_private_base_url'`,
@@ -122,7 +127,7 @@ func TestCredentialTrustGrantAudited(t *testing.T) {
 	}
 
 	// A non-trusted credential writes NO trust-grant row.
-	id2, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+	view2, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
 		Provider: "openai", DefaultModel: "gpt-4o", BaseURL: "https://api.example.com/v1",
 	})
 	if err != nil {
@@ -130,7 +135,7 @@ func TestCredentialTrustGrantAudited(t *testing.T) {
 	}
 	if err := tdb.Super.QueryRow(ctx,
 		`SELECT count(*) FROM audit_entry WHERE target_id=$1 AND decision='trust_private_base_url'`,
-		id2).Scan(&n); err != nil {
+		view2.ID).Scan(&n); err != nil {
 		t.Fatalf("count untrusted audit: %v", err)
 	}
 	if n != 0 {
