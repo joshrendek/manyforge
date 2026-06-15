@@ -42,6 +42,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/credentials/ai/list').then((m) => m.AICredentialsListComponent),
   },
   {
+    path: 'agents',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/agents/list').then((m) => m.AgentsListComponent),
+  },
+  {
     path: 'credentials/connector',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/connectors/list').then((m) => m.ConnectorsListComponent),
