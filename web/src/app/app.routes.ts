@@ -32,7 +32,17 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/approvals/queue').then((m) => m.ApprovalsQueueComponent),
   },
   {
-    path: 'connectors',
+    path: 'credentials',
+    pathMatch: 'full',
+    redirectTo: 'credentials/ai',
+  },
+  {
+    path: 'credentials/ai',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/credentials/ai/list').then((m) => m.AICredentialsListComponent),
+  },
+  {
+    path: 'credentials/connector',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/connectors/list').then((m) => m.ConnectorsListComponent),
   },

@@ -4,7 +4,8 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', route: '/dashboard', testid: 'nav-dashboard' },
   { label: 'Support', route: '/support', testid: 'nav-support' },
   { label: 'Approvals', route: '/approvals', testid: 'nav-approvals' },
-  { label: 'Connectors', route: '/connectors', testid: 'nav-connectors' },
+  { label: 'Connectors', route: '/credentials/connector', testid: 'nav-connectors' },
+  { label: 'AI Credentials', route: '/credentials/ai', testid: 'nav-ai-credentials' },
   { label: 'MCP', route: '/mcp', testid: 'nav-mcp' },
   { label: 'Accounting', route: '/accounting', testid: 'nav-accounting' },
 ];

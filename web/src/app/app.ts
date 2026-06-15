@@ -41,7 +41,7 @@ export class App implements OnInit, OnDestroy {
     const hasBiz = !!this.currentBusiness.businessId();
     return NAV_ITEMS.map((item) => {
       if (item.route === '/approvals' && hasBiz && approvals > 0) return { ...item, badge: approvals };
-      if (item.route === '/connectors' && hasBiz && degraded > 0) return { ...item, badge: degraded };
+      if (item.route === '/credentials/connector' && hasBiz && degraded > 0) return { ...item, badge: degraded };
       return item;
     });
   });
