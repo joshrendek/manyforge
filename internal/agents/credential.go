@@ -147,9 +147,14 @@ func validateBaseURL(raw string, allowPrivate bool) error {
 }
 
 // sealAPIKey returns an opaque sealed ref for a plaintext key ("" ⇒ no ref).
+// A non-empty key with a nil Sealer (MANYFORGE_AI_MASTER_KEY unset) → clean
+// validation error, never a nil-pointer panic — mirrors MCPServerService.sealAuth.
 func (s *CredentialService) sealAPIKey(plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil
+	}
+	if s.Sealer == nil {
+		return "", fmt.Errorf("agents: AI master key not configured (cannot seal api key): %w", errs.ErrValidation)
 	}
 	ref, err := s.Sealer.Seal([]byte(plaintext))
 	if err != nil {
@@ -166,6 +171,11 @@ func (s *CredentialService) resolveRow(row storedCredential) (ResolvedCredential
 	}
 	out.AllowPrivateBaseURL = row.AllowPrivateBaseURL
 	if row.SealedKeyRef != nil && *row.SealedKeyRef != "" {
+		// A sealed key with a nil Sealer (master key unset since the row was written)
+		// → clean validation error, never a nil-pointer panic on Open.
+		if s.Sealer == nil {
+			return ResolvedCredential{}, fmt.Errorf("agents: AI master key not configured (cannot unseal api key): %w", errs.ErrValidation)
+		}
 		key, err := s.Sealer.Open(*row.SealedKeyRef)
 		if err != nil {
 			return ResolvedCredential{}, fmt.Errorf("agents: unseal api key: %w", err)

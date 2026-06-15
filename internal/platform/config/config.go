@@ -70,6 +70,12 @@ type Config struct {
 	// and MCP servers without auth can still be created. An explicitly-set-but-wrong-
 	// length key is a hard config error caught here.
 	MCPMasterKey []byte
+	// AIMasterKey is the at-rest master key for sealing agent BYO provider credentials
+	// (API keys). Supplied via MANYFORGE_AI_MASTER_KEY as base64 or hex; the decoded
+	// value MUST be 32 bytes (AES-256). Nil/empty when unset — the credential HTTP
+	// surface is disabled and the run engine cannot resolve BYO keys; the server still
+	// boots. An explicitly-set-but-wrong-length key is a hard config error caught here.
+	AIMasterKey []byte
 	// MCPAllowLoopback permits the outbound MCP HTTP client to dial loopback
 	// addresses. Default false (locked-secure); set true only for local dev MCP servers.
 	MCPAllowLoopback bool
@@ -192,6 +198,13 @@ func Load() (Config, error) {
 	// silently disables MCP bearer-token protection.
 	if cfg.MCPMasterKey, err = envKey32("MANYFORGE_MCP_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_MCP_MASTER_KEY: %w", err)
+	}
+
+	// AI master key (agent BYO credentials): unset ⇒ nil (no error, credential surface
+	// disabled); set-but-not-32-bytes-after-decode ⇒ hard error so a misconfigured key
+	// never silently disables BYO provider-key sealing.
+	if cfg.AIMasterKey, err = envKey32("MANYFORGE_AI_MASTER_KEY"); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_AI_MASTER_KEY: %w", err)
 	}
 
 	// Agent runtime (US6): permit loopback MCP servers in dev; default false (locked-secure).
