@@ -28,16 +28,32 @@ var _ agentCRUD = (*AgentService)(nil)
 // Handler exposes agent-definition CRUD over HTTP. Mounted behind the
 // agents.configure RequirePermission gate (so a lacking perm / invisible business
 // is a no-oracle 404).
-type Handler struct{ svc agentCRUD }
+type Handler struct {
+	svc    agentCRUD
+	tools  toolLister  // optional, late-wired via SetMetadata; backs /agents/tools
+	models modelLister // optional, late-wired via SetMetadata; backs /agents/models
+}
 
 // NewHandler builds an agents HTTP handler.
 func NewHandler(svc agentCRUD) *Handler { return &Handler{svc: svc} }
+
+// SetMetadata late-wires the tool registry + model catalog that back the
+// /agents/tools and /agents/models read endpoints. Optional — so plain
+// NewHandler(svc) keeps working.
+func (h *Handler) SetMetadata(tools toolLister, models modelLister) {
+	h.tools = tools
+	h.models = models
+}
 
 // ProtectedRoutes mounts authenticated agent endpoints under a business.
 func (h *Handler) ProtectedRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/agents", func(r chi.Router) {
 		r.Get("/", h.listAgents)
 		r.Post("/", h.createAgent)
+		// Static routes must be registered before /{agentID} (chi matches static
+		// segments before params, so "tools"/"models" never hit the agent lookup).
+		r.Get("/tools", h.listTools)
+		r.Get("/models", h.listModels)
 		r.Get("/{agentID}", h.getAgent)
 		r.Patch("/{agentID}", h.updateAgent)
 		r.Delete("/{agentID}", h.deleteAgent)
@@ -250,4 +266,52 @@ func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// toolResp is the metadata projection of a tool for the agent form's tool picker.
+type toolResp struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Effect       string `json:"effect"`
+	RequiredPerm string `json:"required_perm,omitempty"`
+}
+
+// modelResp is the metadata projection of a catalog model for the model picker.
+type modelResp struct {
+	Provider string `json:"provider"`
+	ModelID  string `json:"model_id"`
+}
+
+// listTools returns the catalog of tools available to agents. Nil-guarded: a
+// plain NewHandler(svc) without SetMetadata returns 404 here.
+func (h *Handler) listTools(w http.ResponseWriter, r *http.Request) {
+	if h.tools == nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	all := h.tools.All()
+	out := make([]toolResp, 0, len(all))
+	for _, t := range all {
+		out = append(out, toolResp{Name: t.Name, Description: t.Description, Effect: t.Effect.String(), RequiredPerm: t.RequiredPerm})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// listModels returns the catalog of models available to agents. Nil-guarded: a
+// plain NewHandler(svc) without SetMetadata returns 404 here.
+func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
+	if h.models == nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	models, err := h.models.ListModels(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := make([]modelResp, 0, len(models))
+	for _, m := range models {
+		out = append(out, modelResp{Provider: m.Provider, ModelID: m.ModelID})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
