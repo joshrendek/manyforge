@@ -27,6 +27,12 @@ type keyset struct {
 // never a 500 or an injection vector.
 const cursorContacts = "c"
 
+// cursorCompanies binds a companies cursor to CompanyService.List. The key is the
+// (non-unique) company.name; the trailing UUID disambiguates ties. A distinct kind from
+// cursorContacts means a contacts cursor cannot be replayed against the companies endpoint
+// (and vice versa) — decodeCursor rejects a kind mismatch as a validation error.
+const cursorCompanies = "co"
+
 // sep delimits the token's three fields. The textual key may itself contain sep (it is
 // a contact.primary_email today, but the helper is general), so decodeCursor recovers
 // the trailing UUID via LastIndex(sep) rather than a fixed-arity split — any embedded
@@ -68,3 +74,6 @@ func decodeCursor(kind, token string) (keyset, error) {
 
 func encodeContactCursor(k keyset) string              { return encodeCursor(cursorContacts, k) }
 func decodeContactCursor(token string) (keyset, error) { return decodeCursor(cursorContacts, token) }
+
+func encodeCompanyCursor(k keyset) string              { return encodeCursor(cursorCompanies, k) }
+func decodeCompanyCursor(token string) (keyset, error) { return decodeCursor(cursorCompanies, token) }
