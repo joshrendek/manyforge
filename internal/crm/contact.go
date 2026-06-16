@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -176,6 +177,81 @@ func (s *ContactService) SoftDelete(ctx context.Context, principalID, businessID
 			return gerr // ErrNoRows ⇒ ErrNotFound via mapErr
 		}
 		return q.SoftDeleteContact(ctx, dbgen.SoftDeleteContactParams{ID: id, TenantRootID: tenantRoot})
+	})
+	return mapErr(err)
+}
+
+// ResolveOrCreateByEmail is the idempotent get-or-create used by the principal-less
+// inbound-email path (Task 9): it runs in the CALLER's tx (no WithPrincipal — the inbox
+// seam already holds a tx and carries no principal) and takes tenantRootID explicitly
+// rather than resolving it from a business. A new (tenant_root_id, primary_email) inserts;
+// a live duplicate returns the existing row (InsertContactByEmail's ON CONFLICT), so the
+// seam never creates a duplicate contact for a recurring sender.
+//
+// Caller MUST pass a trusted tenantRootID (never derived from untrusted inbound headers)
+// and run on a tx whose RLS principal is already set or an RLS-exempt path; this method
+// performs no tenant resolution or principal binding of its own.
+func (s *ContactService) ResolveOrCreateByEmail(ctx context.Context, tx pgx.Tx, tenantRootID uuid.UUID, email string, displayName *string, companyID *uuid.UUID) (Contact, error) {
+	if email == "" {
+		return Contact{}, fmt.Errorf("crm: primary_email required: %w", errs.ErrValidation)
+	}
+	q := dbgen.New(tx)
+	row, err := q.InsertContactByEmail(ctx, dbgen.InsertContactByEmailParams{
+		ID:           uuid.New(),
+		TenantRootID: tenantRootID,
+		PrimaryEmail: email,
+		DisplayName:  displayName,
+		CompanyID:    db.PGUUIDPtr(companyID),
+	})
+	if err != nil {
+		return Contact{}, mapErr(err)
+	}
+	return toContact(row), nil
+}
+
+// Merge folds the loser contact into the winner: every requester pointing at the loser is
+// re-pointed to the winner, the loser is soft-deleted, and a contact.merged audit row is
+// written — all inside one WithPrincipal tx (no TOCTOU window). Both contacts are loaded +
+// validated to live in the URL business's tenant first, so a cross-tenant merge (a loser
+// from another tenant) collapses to ErrNotFound (no existence oracle). Merging a contact
+// into itself is rejected up front as ErrValidation.
+//
+// TODO(phase-b): also re-point activity_entry rows; optional: adopt loser's company_id
+// when winner has none. (Phase A merge does requesters + soft-delete + audit only.)
+func (s *ContactService) Merge(ctx context.Context, principalID, businessID, winnerID, loserID uuid.UUID) error {
+	if winnerID == loserID {
+		return fmt.Errorf("crm: cannot merge a contact into itself: %w", errs.ErrValidation)
+	}
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		tenantRoot, terr := resolveTenantRoot(ctx, q, businessID)
+		if terr != nil {
+			return terr
+		}
+		// Both contacts must be live in this tenant (no cross-tenant merge).
+		if _, gerr := q.GetContact(ctx, dbgen.GetContactParams{ID: winnerID, TenantRootID: tenantRoot}); gerr != nil {
+			return gerr // ErrNoRows ⇒ ErrNotFound via mapErr
+		}
+		if _, gerr := q.GetContact(ctx, dbgen.GetContactParams{ID: loserID, TenantRootID: tenantRoot}); gerr != nil {
+			return gerr
+		}
+		if rerr := q.RepointRequesters(ctx, dbgen.RepointRequestersParams{
+			WinnerID: db.PGUUID(winnerID),
+			LoserID:  db.PGUUID(loserID),
+		}); rerr != nil {
+			return rerr
+		}
+		if derr := q.SoftDeleteContact(ctx, dbgen.SoftDeleteContactParams{ID: loserID, TenantRootID: tenantRoot}); derr != nil {
+			return derr
+		}
+		return audit.Write(ctx, tx, audit.Entry{
+			TenantRootID:     &tenantRoot,
+			ActorPrincipalID: &principalID,
+			Action:           "contact.merged",
+			TargetType:       ptr("contact"),
+			TargetID:         &winnerID,
+			NewValue:         map[string]any{"winner_id": winnerID, "loser_id": loserID},
+		})
 	})
 	return mapErr(err)
 }
