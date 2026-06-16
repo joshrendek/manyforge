@@ -6,13 +6,14 @@ import {
 } from '../../core/agents.service';
 import { AIProvider } from '../../core/ai-credentials.service';
 
-const SELF_HOST: AIProvider[] = ['ollama', 'vllm'];
+// Providers whose models are NOT in the model_pricing catalog → free-text model entry.
+const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter'];
 
 // Agent create/edit form. Standalone, template-driven, mirrors connector-form/credential-form.
 // On init it loads tools()/models()/mcpServers() to populate the pickers. Provider is immutable
 // on edit (disabled select, omitted from the PATCH). Model is a provider-filtered dropdown for
-// catalog providers (anthropic/openai) and a free-text input for self-host (ollama/vllm). Budget
-// is shown in dollars and sent as cents.
+// catalog providers (anthropic/openai) and a free-text input for providers whose models aren't in
+// the model_pricing catalog (ollama/vllm/openrouter). Budget is shown in dollars and sent as cents.
 @Component({
   selector: 'app-agent-form',
   imports: [FormsModule],
@@ -31,15 +32,16 @@ const SELF_HOST: AIProvider[] = ['ollama', 'vllm'];
           <option value="openai">OpenAI</option>
           <option value="ollama">Ollama (self-host)</option>
           <option value="vllm">vLLM (self-host)</option>
+          <option value="openrouter">OpenRouter</option>
         </select>
         @if (mode === 'edit') { <small class="mf-hint">Provider can't change after creation.</small> }
       </div>
 
       <div class="mf-field">
         <label for="ag-model">Model</label>
-        @if (isSelfHost()) {
+        @if (isFreeTextModel()) {
           <input id="ag-model" class="mf-input" type="text" data-testid="agent-model-text" name="model"
-                 [(ngModel)]="model" placeholder="e.g. llama3.1:70b" />
+                 [(ngModel)]="model" placeholder="e.g. llama3.1:70b or anthropic/claude-3.5-sonnet" />
         } @else {
           <select id="ag-model" class="mf-select" data-testid="agent-model-select" name="model" [(ngModel)]="model">
             <option value="" disabled>Choose a model…</option>
@@ -143,7 +145,7 @@ export class AgentFormComponent implements OnInit {
   error = signal('');
 
   modelsForProvider = computed(() => this.allModels().filter((m) => m.provider === this.provider()));
-  isSelfHost = computed(() => SELF_HOST.includes(this.provider()));
+  isFreeTextModel = computed(() => FREE_TEXT_MODEL_PROVIDERS.includes(this.provider()));
 
   ngOnInit(): void {
     this.api.tools(this.businessId).subscribe({ next: (r) => this.tools.set(r.items ?? []), error: () => {} });
