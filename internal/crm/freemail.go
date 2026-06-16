@@ -5,7 +5,7 @@ import "strings"
 // freeEmailDomains is the denylist of public/free mailbox providers. A sender on one of
 // these domains must NOT auto-create a company (every gmail.com sender would otherwise
 // collapse into one bogus "gmail.com" company); the inbound seam excludes them via
-// IsFreeEmailDomain before calling CompanyService.ResolveOrCreateByDomain.
+// IsFreeEmailDomain before the crm_link_inbound_sender DEFINER upserts a company.
 var freeEmailDomains = map[string]struct{}{
 	"gmail.com": {}, "googlemail.com": {}, "outlook.com": {}, "hotmail.com": {},
 	"live.com": {}, "msn.com": {}, "yahoo.com": {}, "ymail.com": {}, "icloud.com": {},

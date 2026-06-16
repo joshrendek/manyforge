@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
@@ -170,48 +169,6 @@ func TestCompanyDeleteDetachesContacts(t *testing.T) {
 	}
 	if got.CompanyID != nil {
 		t.Fatalf("contact company_id = %v, want nil (detached)", got.CompanyID)
-	}
-}
-
-// TestResolveOrCreateByDomainIsIdempotent verifies the partial-unique upsert: resolving
-// the same domain twice returns the same company id (no duplicate). ResolveOrCreateByDomain
-// is principal-less and runs in the caller's tx; here WithPrincipal supplies the RLS-bound
-// tx and the trusted tenant_root_id.
-func TestResolveOrCreateByDomainIsIdempotent(t *testing.T) {
-	ctx := context.Background()
-	tdb, err := testdb.Start(ctx)
-	if err != nil {
-		t.Fatalf("start testdb: %v", err)
-	}
-	defer tdb.Close(ctx)
-
-	seed := seedCRMTenant(ctx, t, tdb)
-	svc := &crm.CompanyService{DB: tdb.App}
-
-	var first, second crm.Company
-	if err := tdb.App.WithPrincipal(ctx, seed.principalID, func(tx pgx.Tx) error {
-		var rerr error
-		first, rerr = svc.ResolveOrCreateByDomain(ctx, tx, seed.tenantRootID, "acme.com")
-		if rerr != nil {
-			return rerr
-		}
-		second, rerr = svc.ResolveOrCreateByDomain(ctx, tx, seed.tenantRootID, "acme.com")
-		return rerr
-	}); err != nil {
-		t.Fatalf("ResolveOrCreateByDomain: %v", err)
-	}
-	if first.ID == uuid.Nil {
-		t.Fatalf("ResolveOrCreateByDomain: nil id")
-	}
-	if first.ID != second.ID {
-		t.Fatalf("ResolveOrCreateByDomain not idempotent: first %s, second %s", first.ID, second.ID)
-	}
-	if first.Domain == nil || *first.Domain != "acme.com" {
-		t.Fatalf("ResolveOrCreateByDomain: domain = %v, want acme.com", first.Domain)
-	}
-	// Default name is the domain (caller can rename later).
-	if first.Name != "acme.com" {
-		t.Fatalf("ResolveOrCreateByDomain: name = %q, want acme.com (default)", first.Name)
 	}
 }
 
