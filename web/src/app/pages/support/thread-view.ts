@@ -13,6 +13,8 @@ import {
   TicketStatus,
 } from '../../core/ticket.service';
 import { AuthService, Profile } from '../../core/auth.service';
+import { Agent, AgentsService } from '../../core/agents.service';
+import { ToastService } from '../../ui/toast/toast.service';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { StatusPill } from '../../ui/status-pill/status-pill';
 import { Spinner } from '../../ui/spinner/spinner';
@@ -206,6 +208,41 @@ import { ticketStatusTone, ticketPriorityTone } from '../../ui/status';
                   Assign
                 </button>
               </div>
+            </div>
+
+            <div class="mf-field triage-field">
+              <label>Run agent</label>
+              @if (enabledAgents().length === 0) {
+                <span class="mf-hint" data-testid="run-agent-none"
+                  >No enabled agents for this business.</span
+                >
+              } @else {
+                <div class="assignee-row" data-testid="run-agent-control">
+                  @if (enabledAgents().length > 1) {
+                    <select
+                      class="mf-select"
+                      data-testid="run-agent-select"
+                      aria-label="Choose an agent"
+                      [disabled]="running()"
+                      [ngModel]="selectedAgentId()"
+                      (ngModelChange)="selectedAgentId.set($event)"
+                    >
+                      @for (a of enabledAgents(); track a.id) {
+                        <option [value]="a.id">{{ a.name }}</option>
+                      }
+                    </select>
+                  }
+                  <button
+                    type="button"
+                    class="mf-btn mf-btn-primary mf-btn-sm"
+                    data-testid="run-agent-btn"
+                    [disabled]="running() || !selectedAgentId()"
+                    (click)="runAgent()"
+                  >
+                    {{ running() ? 'Starting…' : 'Run agent' }}
+                  </button>
+                </div>
+              }
             </div>
 
             @if (triageError()) {
@@ -616,9 +653,16 @@ export class ThreadViewComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private api = inject(TicketService);
   private auth = inject(AuthService);
+  private agents = inject(AgentsService);
+  private toast = inject(ToastService);
 
   private businessId = '';
   private ticketId = '';
+
+  // Run-agent control (manual trigger against this ticket).
+  enabledAgents = signal<Agent[]>([]);
+  selectedAgentId = signal<string>('');
+  running = signal(false);
 
   ticket = signal<Ticket | null>(null);
   messages = signal<TicketMessage[]>([]);
@@ -667,6 +711,16 @@ export class ThreadViewComponent implements OnInit {
     if (this.businessId) {
       this.api.listAssignableMembers(this.businessId).subscribe({
         next: (p) => this.members.set(p.items ?? []),
+        error: () => {},
+      });
+      // Best-effort: populates the run-agent control with the business's enabled
+      // agents. A failure just leaves the control showing the no-agents hint.
+      this.agents.list(this.businessId).subscribe({
+        next: (r) => {
+          const enabled = (r.items ?? []).filter((a) => a.enabled);
+          this.enabledAgents.set(enabled);
+          if (enabled.length > 0) this.selectedAgentId.set(enabled[0].id);
+        },
         error: () => {},
       });
     }
@@ -811,6 +865,40 @@ export class ThreadViewComponent implements OnInit {
     const next = id === '' ? null : id;
     if (next === (t.assignee_principal_id ?? null)) return;
     this.patch({ assignee_principal_id: next });
+  }
+
+  // ── Run agent ──────────────────────────────────────────────────────────────
+
+  // Fire-and-forget: an immediate toast, then an outcome toast when the (synchronous)
+  // run returns. The running flag only guards against a double-click before the first
+  // response lands. Actions auto-apply or land in /approvals per the agent's autonomy mode.
+  runAgent(): void {
+    const agentId = this.selectedAgentId();
+    if (this.running() || !agentId) return;
+    this.running.set(true);
+    this.toast.success('Agent started — it will act on this ticket in the background.');
+    this.agents
+      .run(this.businessId, agentId, { target_type: 'ticket', target_id: this.ticketId })
+      .subscribe({
+        next: (run) => {
+          this.running.set(false);
+          if (run.status === 'awaiting_approval') {
+            this.toast.success('Agent finished — proposed actions are waiting in Approvals.');
+          } else if (run.status === 'failed') {
+            this.toast.error('Agent run failed.');
+          } else {
+            this.toast.success('Agent finished.');
+          }
+        },
+        error: (e: HttpErrorResponse) => {
+          this.running.set(false);
+          this.toast.error(
+            e.status === 403 || e.status === 404
+              ? "You don't have access to run agents."
+              : 'Could not start the agent run.',
+          );
+        },
+      });
   }
 
   // Central triage mutation: PATCH, then reflect the returned Ticket (no stale

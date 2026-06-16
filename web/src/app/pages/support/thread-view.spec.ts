@@ -2,8 +2,10 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, provideRouter } from '@angular/router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssignableMember, Page, Ticket, TicketMessage } from '../../core/ticket.service';
+import { Agent } from '../../core/agents.service';
+import { ToastService } from '../../ui/toast/toast.service';
 import { ThreadViewComponent } from './thread-view';
 
 // Component-level coverage for the US3 triage controls. We drive the real
@@ -44,6 +46,27 @@ function makeTicket(over: Partial<Ticket> = {}): Ticket {
 
 const emptyPage: Page<TicketMessage> = { items: [], next_cursor: null };
 
+function makeAgent(over: Partial<Agent> = {}): Agent {
+  return {
+    id: 'a1',
+    business_id: biz,
+    principal_id: 'p1',
+    name: 'Agent',
+    provider: 'anthropic',
+    model: 'claude-opus-4-8',
+    system_prompt: '',
+    allowed_tools: [],
+    autonomy_mode: 1,
+    enabled: true,
+    monthly_budget_cents: 0,
+    allowed_mcp_servers: [],
+    retriage_on_reply: false,
+    created_at: '',
+    updated_at: '',
+    ...over,
+  } as Agent;
+}
+
 describe('ThreadViewComponent triage (US3)', () => {
   let fixture: ComponentFixture<ThreadViewComponent>;
   let cmp: ThreadViewComponent;
@@ -51,10 +74,10 @@ describe('ThreadViewComponent triage (US3)', () => {
 
   // Bring the component to a loaded state: flush /me, the ticket, and its
   // (empty) message thread, leaving the triage controls live.
-  function loadWith(t: Ticket, members: AssignableMember[] = []): void {
+  function loadWith(t: Ticket, members: AssignableMember[] = [], agents: Agent[] = []): void {
     fixture = TestBed.createComponent(ThreadViewComponent);
     cmp = fixture.componentInstance;
-    fixture.detectChanges(); // ngOnInit fires /me + assignable-members + getTicket
+    fixture.detectChanges(); // ngOnInit fires /me + assignable-members + agents + getTicket
 
     mock.expectOne('/api/v1/me').flush({
       id: myPid,
@@ -66,6 +89,7 @@ describe('ThreadViewComponent triage (US3)', () => {
     mock
       .expectOne(`/api/v1/businesses/${biz}/assignable-members`)
       .flush({ items: members, next_cursor: null });
+    mock.expectOne(`/api/v1/businesses/${biz}/agents`).flush({ items: agents });
     mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`).flush(t);
     mock
       .expectOne((r) => r.url === `/api/v1/businesses/${biz}/tickets/${tid}/messages`)
@@ -268,6 +292,106 @@ describe('ThreadViewComponent triage (US3)', () => {
     );
     expect(cmp.triageError()).toBe("You don't have access to do that.");
   });
+
+  // ── Run-agent control ───────────────────────────────────────────────────────
+
+  it('shows the run-agent control with a button when there is one enabled agent', () => {
+    loadWith(makeTicket({}), [], [makeAgent({ id: 'a1', name: 'Triage Bot', enabled: true })]);
+    expect(fixture.nativeElement.querySelector('[data-testid="run-agent-btn"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="run-agent-select"]')).toBeFalsy();
+  });
+
+  it('shows the no-agents hint when there are no enabled agents', () => {
+    loadWith(makeTicket({}), [], [makeAgent({ id: 'a1', enabled: false })]);
+    expect(fixture.nativeElement.querySelector('[data-testid="run-agent-none"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="run-agent-btn"]')).toBeFalsy();
+  });
+
+  it('shows a picker when there are multiple enabled agents', () => {
+    loadWith(
+      makeTicket({}),
+      [],
+      [makeAgent({ id: 'a1', enabled: true }), makeAgent({ id: 'a2', enabled: true })],
+    );
+    expect(fixture.nativeElement.querySelector('[data-testid="run-agent-select"]')).toBeTruthy();
+  });
+
+  // A terminal run body for the runs POST; override the status per branch.
+  function runBody(status: string) {
+    return {
+      id: 'run1',
+      agent_id: 'a1',
+      trigger: 'manual',
+      status,
+      tokens_in: 0,
+      tokens_out: 0,
+      cost_cents: 0,
+      correlation_id: 'c1',
+    };
+  }
+
+  it('runAgent POSTs the runs endpoint with the ticket target and toasts the outcome', () => {
+    loadWith(makeTicket({}), [], [makeAgent({ id: 'a1', enabled: true })]);
+    // Spy on the shared (providedIn:'root') ToastService the component uses.
+    const toast = TestBed.inject(ToastService);
+    const success = vi.spyOn(toast, 'success');
+    const error = vi.spyOn(toast, 'error');
+
+    cmp.runAgent();
+    // Immediate fire-and-forget "started" toast fires before the response lands.
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('Agent started'));
+
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/agents/a1/runs`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ target_type: 'ticket', target_id: tid });
+    req.flush(runBody('awaiting_approval'));
+
+    // Outcome toast maps awaiting_approval → the Approvals message.
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('Approvals'));
+    expect(error).not.toHaveBeenCalled();
+    // running flag cleared after response
+    expect(cmp.running()).toBe(false);
+  });
+
+  it('runAgent toasts the finished message when the run succeeds', () => {
+    loadWith(makeTicket({}), [], [makeAgent({ id: 'a1', enabled: true })]);
+    const toast = TestBed.inject(ToastService);
+    const success = vi.spyOn(toast, 'success');
+    const error = vi.spyOn(toast, 'error');
+
+    cmp.runAgent();
+    mock.expectOne(`/api/v1/businesses/${biz}/agents/a1/runs`).flush(runBody('succeeded'));
+
+    expect(success).toHaveBeenCalledWith('Agent finished.');
+    expect(error).not.toHaveBeenCalled();
+    expect(cmp.running()).toBe(false);
+  });
+
+  it('runAgent toasts an error when the run fails', () => {
+    loadWith(makeTicket({}), [], [makeAgent({ id: 'a1', enabled: true })]);
+    const toast = TestBed.inject(ToastService);
+    const error = vi.spyOn(toast, 'error');
+
+    cmp.runAgent();
+    mock.expectOne(`/api/v1/businesses/${biz}/agents/a1/runs`).flush(runBody('failed'));
+
+    expect(error).toHaveBeenCalledWith('Agent run failed.');
+    expect(cmp.running()).toBe(false);
+  });
+
+  it('runAgent surfaces a no-access error on 404', () => {
+    loadWith(makeTicket({}), [], [makeAgent({ id: 'a1', enabled: true })]);
+    const toast = TestBed.inject(ToastService);
+    const error = vi.spyOn(toast, 'error');
+
+    cmp.runAgent();
+    mock
+      .expectOne(`/api/v1/businesses/${biz}/agents/a1/runs`)
+      .flush({ code: 'NOT_FOUND' }, { status: 404, statusText: 'Not Found' });
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("don't have access"));
+    expect(cmp.running()).toBe(false);
+  });
 });
 
 // Task 20 UI-redesign render coverage. Drives the real component against a mock
@@ -300,7 +424,7 @@ describe('ThreadViewComponent (Task 20 UI redesign)', () => {
     members: AssignableMember[] = [],
   ): void {
     fixture = TestBed.createComponent(ThreadViewComponent);
-    fixture.detectChanges(); // ngOnInit → /me + assignable-members + getTicket
+    fixture.detectChanges(); // ngOnInit → /me + assignable-members + agents + getTicket
     mock.expectOne('/api/v1/me').flush({
       id: myPid,
       email: 'me@x.test',
@@ -311,6 +435,7 @@ describe('ThreadViewComponent (Task 20 UI redesign)', () => {
     mock
       .expectOne(`/api/v1/businesses/${biz}/assignable-members`)
       .flush({ items: members, next_cursor: null });
+    mock.expectOne(`/api/v1/businesses/${biz}/agents`).flush({ items: [] });
     mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`).flush(t);
     mock
       .expectOne((r) => r.url === `/api/v1/businesses/${biz}/tickets/${tid}/messages`)
