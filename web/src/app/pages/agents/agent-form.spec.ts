@@ -75,4 +75,12 @@ describe('AgentFormComponent', () => {
     c.provider.set('anthropic');
     expect(c.modelsForProvider().map((m) => m.model_id)).toEqual(['claude-opus-4-8']);
   });
+
+  it('uses the free-text model input for openrouter (not the catalog dropdown)', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('openrouter');
+    expect(c.isFreeTextModel()).toBe(true);
+    c.onProviderChange('anthropic');
+    expect(c.isFreeTextModel()).toBe(false);
+  });
 });
