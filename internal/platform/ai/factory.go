@@ -11,6 +11,10 @@ import (
 // configurable when it constructs the gateway at startup; US1b uses a constant.
 const defaultRequestTimeout = 60 * time.Second
 
+// openRouterBaseURL is OpenRouter's OpenAI-compatible API base, used when an
+// openrouter credential leaves base_url empty.
+const openRouterBaseURL = "https://openrouter.ai/api/v1"
+
 // Provider name constants — mirror agents.knownProviders and the ai_provider PG
 // enum (migration 0025). Keep in lockstep; see manyforge-uc2.
 const (
@@ -18,6 +22,8 @@ const (
 	ProviderOpenAI    = "openai"
 	ProviderOllama    = "ollama"
 	ProviderVLLM      = "vllm"
+
+	ProviderOpenRouter = "openrouter"
 )
 
 // Credential is the minimal resolved credential the factory needs to build a
@@ -54,6 +60,12 @@ func New(cred Credential) (Provider, error) {
 			return nil, fmt.Errorf("ai: provider %q requires a base_url: %w", cred.Provider, ErrBadRequest)
 		}
 		return NewOpenAICompatProvider(cred.APIKey, cred.BaseURL, cred.Model, hc), nil
+	case ProviderOpenRouter:
+		base := cred.BaseURL
+		if base == "" {
+			base = openRouterBaseURL
+		}
+		return NewOpenAICompatProvider(cred.APIKey, base, cred.Model, hc), nil
 	default:
 		return nil, fmt.Errorf("ai: unknown provider %q: %w", cred.Provider, ErrBadRequest)
 	}
