@@ -102,6 +102,11 @@ type Querier interface {
 	// row is deleted first (it FKs the principal), then the principal. rows-affected (the
 	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
 	DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error)
+	// DeleteCompany hard-deletes a company scoped to (id, tenant_root_id) (companies carry no
+	// PII / soft-delete column; the contact.company_id FK is nullable and ON DELETE is
+	// unspecified, so the service detaches/repoints contacts before calling — enforced at the
+	// service layer).
+	DeleteCompany(ctx context.Context, arg DeleteCompanyParams) error
 	// DeleteConnectorOutboundOps cascades the outbound op queue for a connector.
 	DeleteConnectorOutboundOps(ctx context.Context, connectorID uuid.UUID) (int64, error)
 	// DeleteConnectorRow removes the connector row, scoped to (id, business_id). Run AFTER the
@@ -194,11 +199,21 @@ type Querier interface {
 	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	// GetCompany loads a single company scoped to (id, tenant_root_id) — the ownership
+	// predicate. pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
+	GetCompany(ctx context.Context, arg GetCompanyParams) (Company, error)
 	// GetConnector fetches one connector scoped to (id, business); foreign/unknown id → no row (→ not-found).
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	// GetConnectorHealth returns the same aggregates for a single connector (used by Get). The
 	// caller has already confirmed ownership via GetConnector; RLS still scopes the subqueries.
 	GetConnectorHealth(ctx context.Context, connectorID pgtype.UUID) (GetConnectorHealthRow, error)
+	// GetContact loads a single live contact scoped to (id, tenant_root_id) — the ownership
+	// predicate. deleted_at IS NULL excludes soft-deleted rows; pgx.ErrNoRows ⇒ ErrNotFound
+	// (foreign-tenant / unknown / deleted all collapse to one no-oracle 404 shape).
+	GetContact(ctx context.Context, arg GetContactParams) (Contact, error)
+	// GetContactByEmail looks up a live contact by (tenant_root_id, primary_email) — the
+	// dedup probe before InsertContactByEmail / requester linkage.
+	GetContactByEmail(ctx context.Context, arg GetContactByEmailParams) (Contact, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
 	// GetEmailDomain loads a single email domain scoped to (id, business_id) — the
@@ -281,10 +296,46 @@ type Querier interface {
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	// ---- companies ----
+	// InsertCompany creates a company unconditionally (no upsert).
+	InsertCompany(ctx context.Context, arg InsertCompanyParams) (Company, error)
 	// InsertConnector derives tenant_root_id from the RLS-visible business AND requires secret_ref to
 	// belong to the SAME business (defense-in-depth beyond the same-tenant FK). Unknown business or
 	// foreign secret → zero rows.
 	InsertConnector(ctx context.Context, arg InsertConnectorParams) (Connector, error)
+	// CRM read/write queries (spec 005, Task 3). contact + company are tenant-wide tables
+	// keyed on tenant_root_id (NOT business-scoped) — a contact/company is shared across
+	// every business in the tenant tree (the CRM lives above the support-desk seam). Every
+	// query runs inside the caller's RLS principal context (db.WithPrincipal); in addition,
+	// every id-taking query also filters on tenant_root_id, pushing the ownership predicate
+	// into SQL (dual enforcement) so a foreign-tenant id matches zero rows ⇒ ErrNotFound
+	// (no existence oracle). The generated methods are consumed by ContactService/CompanyService
+	// (Tasks 4-6).
+	//
+	// INSERTs pass id + created_at/updated_at explicitly (id = $1, timestamps = now()),
+	// matching the dominant repo convention (db/query/account.sql, tenancy.sql, etc.) rather
+	// than relying on column DEFAULTs — db/schema.sql (sqlc's input) carries no DEFAULTs even
+	// though migration 0057 does, so explicit values keep the two from diverging.
+	//
+	// Keyset pagination follows ticketing.sql: a first-page query (no cursor) plus an *After
+	// continuation that compares the full row-value (sort_col, id) tuple so non-unique sort
+	// keys (company.name, and contact.primary_email under soft-delete reuse) never skip or
+	// duplicate rows at a tie boundary. lim is the clamped limit + 1 so the service detects
+	// a further page. The partial-index ON CONFLICT clauses mirror the partial UNIQUE indexes
+	// from migration 0057 (contact_tenant_email_uq WHERE deleted_at IS NULL,
+	// company_tenant_domain_uq WHERE domain IS NOT NULL) so Postgres can infer the arbiter.
+	// ---- contacts ----
+	// InsertContact creates a contact unconditionally (no upsert) — used when the caller
+	// already knows the contact is new. Conflicts on the partial unique index surface as
+	// an error the service maps to ErrConflict.
+	InsertContact(ctx context.Context, arg InsertContactParams) (Contact, error)
+	// InsertContactByEmail is the idempotent get-or-create for inbound requester linkage:
+	// insert a new contact, or on conflict against the live (tenant_root_id, primary_email)
+	// partial unique index, return the existing row, filling display_name only if it was
+	// NULL. The supplied id is used only on the insert path; on conflict the existing row is
+	// updated and the id arg is ignored. ON CONFLICT target mirrors contact_tenant_email_uq
+	// (partial WHERE deleted_at IS NULL).
+	InsertContactByEmail(ctx context.Context, arg InsertContactByEmailParams) (Contact, error)
 	// ---- inbound_address ----
 	// InsertCustomInboundAddress creates a kind='custom' inbound address bound to an
 	// email_domain that MUST be owned by the business AND verified — both enforced in
@@ -391,6 +442,13 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// ListCompanies is the first (unkeyed) page of a tenant's companies, ordered by name
+	// for a stable keyset.
+	ListCompanies(ctx context.Context, arg ListCompaniesParams) ([]Company, error)
+	// ListCompaniesAfter is the keyset continuation: rows strictly after the cursor tuple
+	// (name, id) in the (ASC, ASC) order. The row-value comparison avoids the skip/dupe a
+	// single-column name > cursor would cause on the non-unique company.name.
+	ListCompaniesAfter(ctx context.Context, arg ListCompaniesAfterParams) ([]Company, error)
 	// ListConnectorHealth returns per-connector sync-health aggregates for a business in one
 	// round-trip (avoids N+1). Counts run under the caller's RLS context. last_error is the
 	// most-recent failed outbound op's stored reason (already redacted at write time).
@@ -399,6 +457,13 @@ type Querier interface {
 	// business_id predicate scope this to the caller's tenant. Credentials are NOT joined —
 	// only the connector row (which holds no plaintext secret, just secret_ref).
 	ListConnectors(ctx context.Context, businessID uuid.UUID) ([]Connector, error)
+	// ListContacts is the first (unkeyed) page of a tenant's live contacts, ordered by
+	// primary_email for a stable keyset.
+	ListContacts(ctx context.Context, arg ListContactsParams) ([]Contact, error)
+	// ListContactsAfter is the keyset continuation: rows strictly after the cursor tuple
+	// (primary_email, id) in the (ASC, ASC) order. The row-value comparison avoids the
+	// skip/dupe a single-column primary_email > cursor would cause at a tie boundary.
+	ListContactsAfter(ctx context.Context, arg ListContactsAfterParams) ([]Contact, error)
 	// ListEmailDomains is the first (unkeyed) page of a business's email domains, oldest
 	// first for a stable keyset. lim is the clamped limit + 1 so the service detects a
 	// further page.
@@ -445,6 +510,9 @@ type Querier interface {
 	ListRequesters(ctx context.Context, arg ListRequestersParams) ([]Requester, error)
 	// ListRequestersAfter is the keyset continuation: rows strictly after (first_seen_at, id).
 	ListRequestersAfter(ctx context.Context, arg ListRequestersAfterParams) ([]Requester, error)
+	// ListRequestersForContact returns every requester currently pointing at a contact —
+	// the merge/repoint enumeration. Requester is business-scoped; RLS scopes the visible set.
+	ListRequestersForContact(ctx context.Context, contactID pgtype.UUID) ([]Requester, error)
 	// Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
 	// this to roles the caller may see; the predicate narrows to one tenant.
 	ListTenantRoles(ctx context.Context, tenantRootID pgtype.UUID) ([]ListTenantRolesRow, error)
@@ -523,6 +591,16 @@ type Querier interface {
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
 	RenameBusiness(ctx context.Context, arg RenameBusinessParams) error
+	// RepointRequesters moves every requester from the losing contact to the winning one
+	// during a contact merge (runs in the same tx as the loser's soft-delete). Scoped by
+	// contact_id, whose tenant ownership the service validates before calling.
+	RepointRequesters(ctx context.Context, arg RepointRequestersParams) error
+	// ResolveCompanyByDomain is the idempotent get-or-create by domain for inbound
+	// auto-association: insert a new company, or on conflict against the (tenant_root_id,
+	// domain) partial unique index (domain IS NOT NULL) return the existing row. The supplied
+	// id is used only on the insert path; on conflict the existing row is updated and the id
+	// arg is ignored. ON CONFLICT target mirrors company_tenant_domain_uq.
+	ResolveCompanyByDomain(ctx context.Context, arg ResolveCompanyByDomainParams) (Company, error)
 	// Cuts off every live session for a principal (account delete, T077).
 	RevokeAllRefreshForPrincipal(ctx context.Context, principalID uuid.UUID) error
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)
@@ -545,6 +623,10 @@ type Querier interface {
 	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error
 	SoftDeleteBusiness(ctx context.Context, id uuid.UUID) error
+	// SoftDeleteContact stamps deleted_at (never a hard DELETE — Principle VI), scoped to
+	// (id, tenant_root_id). Idempotent: an already-deleted / foreign-tenant row matches zero
+	// rows, so the service maps pgx.ErrNoRows ⇒ ErrNotFound.
+	SoftDeleteContact(ctx context.Context, arg SoftDeleteContactParams) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	// UpdateAgent partially updates an agent (PATCH): COALESCE(narg, col) preserves any
 	// field the caller omitted (narg NULL = absent). provider is immutable (not settable
@@ -552,6 +634,10 @@ type Querier interface {
 	UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error)
 	// Final/intermediate state write. status + token/cost totals + optional error.
 	UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRunProgressParams) (AgentRun, error)
+	// UpdateCompany is a partial update: NULL nargs preserve the current value via COALESCE.
+	// NOTE: COALESCE cannot clear domain to NULL (a NULL narg is read as "unchanged", not
+	// "detach") — acceptable for Phase A. Scoped to (id, tenant_root_id).
+	UpdateCompany(ctx context.Context, arg UpdateCompanyParams) (Company, error)
 	// UpdateConnector applies a partial (PATCH) change scoped to (id, business_id). Omitted
 	// fields (NULL narg) are preserved via COALESCE. base_url and type are intentionally NOT
 	// updatable (they are part of the connector's identity). No matching row → no row returned
@@ -563,6 +649,12 @@ type Querier interface {
 	// insufficient once these are mutable, or an update silently bypasses the SSRF/trust checks.
 	// Pinned in internal/security_regression/connector_credential_update_pin_test.go.
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
+	// UpdateContact is a partial update: a NULL narg preserves the current column value via
+	// COALESCE. NOTE: COALESCE cannot clear company_id to NULL (a NULL narg is read as
+	// "unchanged", not "detach") — acceptable for Phase A; detach is a future query if needed.
+	// Touches updated_at; scoped to a live row (id, tenant_root_id, deleted_at IS NULL) so a
+	// soft-deleted / foreign-tenant id matches zero rows ⇒ ErrNotFound.
+	UpdateContact(ctx context.Context, arg UpdateContactParams) (Contact, error)
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
 	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error
