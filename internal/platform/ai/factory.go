@@ -31,9 +31,9 @@ const (
 // import) so internal/platform/ai stays free of any internal/agents dependency
 // (agents imports ai, not the reverse).
 type Credential struct {
-	Provider            string // anthropic | openai | ollama | vllm
+	Provider            string // anthropic | openai | ollama | vllm | openrouter
 	APIKey              string // plaintext, in-memory only
-	BaseURL             string // required for openai-compat/self-host; ignored for anthropic default
+	BaseURL             string // required for openai-compat/self-host; optional (defaulted) for anthropic/openrouter
 	Model               string // default model
 	AllowPrivateBaseURL bool   // self-host opt-in: permit a loopback/RFC1918 base_url for THIS credential
 }
@@ -45,8 +45,8 @@ type Credential struct {
 // Provider-name -> transport mapping (keep in sync with agents.knownProviders /
 // the ai_provider PG enum — see manyforge-uc2):
 //
-//	anthropic                 -> AnthropicProvider
-//	openai | ollama | vllm    -> OpenAICompatProvider
+//	anthropic                            -> AnthropicProvider
+//	openai | ollama | vllm | openrouter  -> OpenAICompatProvider (openrouter defaults base_url)
 func New(cred Credential) (Provider, error) {
 	hc := netsafe.NewClientWithOptions(defaultRequestTimeout, netsafe.Options{
 		AllowLoopback: cred.AllowPrivateBaseURL,
