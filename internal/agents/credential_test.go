@@ -19,6 +19,7 @@ import (
 func TestKnownProvidersTrackEnum(t *testing.T) {
 	want := []dbgen.AiProvider{
 		dbgen.AiProviderAnthropic, dbgen.AiProviderOpenai, dbgen.AiProviderOllama, dbgen.AiProviderVllm,
+		dbgen.AiProviderOpenrouter,
 	}
 	for _, p := range want {
 		if !knownProviders[string(p)] {
@@ -148,5 +149,15 @@ func TestValidateBaseURL(t *testing.T) {
 				t.Fatalf("want ok, got %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateOpenRouterBaseURLOptional(t *testing.T) {
+	s := &CredentialService{} // validate() touches no DB/sealer fields
+	if err := s.validate(CreateCredentialInput{Provider: "openrouter", DefaultModel: "anthropic/claude-3.5-sonnet"}); err != nil {
+		t.Fatalf("openrouter empty base_url should be valid, got %v", err)
+	}
+	if err := s.validate(CreateCredentialInput{Provider: "openai", DefaultModel: "gpt-5"}); err == nil {
+		t.Fatal("openai with empty base_url must still be rejected")
 	}
 }

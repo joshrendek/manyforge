@@ -28,10 +28,11 @@ import (
 // 0025) so adding a provider to the enum + sqlc regen surfaces a new constant to add here
 // rather than a silently-untracked string. TestKnownProvidersTrackEnum pins coverage.
 var knownProviders = map[string]bool{
-	string(dbgen.AiProviderAnthropic): true,
-	string(dbgen.AiProviderOpenai):    true,
-	string(dbgen.AiProviderOllama):    true,
-	string(dbgen.AiProviderVllm):      true,
+	string(dbgen.AiProviderAnthropic):  true,
+	string(dbgen.AiProviderOpenai):     true,
+	string(dbgen.AiProviderOllama):     true,
+	string(dbgen.AiProviderVllm):       true,
+	string(dbgen.AiProviderOpenrouter): true,
 }
 
 // credentialDB is the minimal DB surface this service needs — satisfied by the
@@ -116,9 +117,9 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 	if in.DefaultModel == "" {
 		return fmt.Errorf("agents: default_model required: %w", errs.ErrValidation)
 	}
-	// openai-compat providers (openai/ollama/vllm) route through a base_url; require
-	// it at the boundary so a missing one is a clean 400, not a later factory error.
-	if in.Provider != "anthropic" && in.BaseURL == "" {
+	// openai-compat providers (openai/ollama/vllm) route through a caller-supplied base_url;
+	// anthropic and openrouter have a default base_url, so theirs is optional.
+	if in.Provider != "anthropic" && in.Provider != "openrouter" && in.BaseURL == "" {
 		return fmt.Errorf("agents: base_url required for provider %q: %w", in.Provider, errs.ErrValidation)
 	}
 	if in.BaseURL != "" {
