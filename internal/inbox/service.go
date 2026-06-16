@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/events"
@@ -233,6 +234,24 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 		}
 		if scMessage.Valid {
 			out.MessageID = uuid.UUID(scMessage.Bytes)
+		}
+
+		// Spec 005 Phase A: link the sender to a tenant-wide CRM contact (resolve-or-
+		// create by email) and, when the domain is a real company (not a free-email
+		// provider), to a company (resolve-or-create by domain), then set the just-
+		// upserted requester's contact_id. This runs principal-less in the SAME tx, so
+		// it goes through the SECURITY DEFINER crm_link_inbound_sender (a plain INSERT
+		// into the RLS-protected contact/company tables would be blocked: no
+		// current_principal() => empty authorized_tenants => WITH CHECK fails). A link
+		// failure propagates so the whole ingest tx rolls back. The requester upsert
+		// happened inside ingest_inbound_message above, so the row exists for the link.
+		var companyDomain any // nil => SQL NULL (no company)
+		if d := crm.DomainFromEmail(senderEmail); d != "" && !crm.IsFreeEmailDomain(d) {
+			companyDomain = d
+		}
+		if _, err := tx.Exec(ctx, `SELECT crm_link_inbound_sender($1,$2,$3,$4,$5)`,
+			r.businessID, r.tenantRootID, senderEmail, senderName, companyDomain); err != nil {
+			return fmt.Errorf("inbox: crm link inbound sender: %w", err)
 		}
 
 		// FR-018/SC-011: a suppressed mail-loop auto-reply is an accepted no-op — the
