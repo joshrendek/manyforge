@@ -41,6 +41,17 @@ describe('CredentialFormComponent', () => {
     expect(saved).toBe(true);
   });
 
+  it('prefills the OpenRouter base URL when openrouter is selected', () => {
+    const c = fixture.componentInstance;
+    expect(c.baseUrl).toBe('');
+    c.onProviderChange('openrouter');
+    expect(c.provider()).toBe('openrouter');
+    expect(c.baseUrl).toBe('https://openrouter.ai/api/v1');
+    // switching away to a provider that needs an explicit base_url clears the auto-filled default
+    c.onProviderChange('openai');
+    expect(c.baseUrl).toBe('');
+  });
+
   it('maps a 400 to a "Rejected:" message', () => {
     const c = fixture.componentInstance;
     c.provider.set('openai');
