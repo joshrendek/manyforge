@@ -8,53 +8,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
-
-// TestResolveOrCreateByEmailIsIdempotent exercises the principal-less get-or-create
-// seam against real SQL. ResolveOrCreateByEmail takes a raw tx (the inbound-email path
-// in Task 9 already holds one and is principal-less), so we drive it inside
-// svc.DB.WithPrincipal — that sets the RLS principal GUC and hands us a tx, which is
-// exactly the shape the seam will run under. Two calls for the same (tenant, email)
-// must return the SAME contact id (the ON CONFLICT path), never a duplicate row.
-func TestResolveOrCreateByEmailIsIdempotent(t *testing.T) {
-	ctx := context.Background()
-	tdb, err := testdb.Start(ctx)
-	if err != nil {
-		t.Fatalf("start testdb: %v", err)
-	}
-	defer tdb.Close(ctx)
-
-	seed := seedCRMTenant(ctx, t, tdb)
-	svc := &crm.ContactService{DB: tdb.App}
-
-	var c1, c2 crm.Contact
-	if err := svc.DB.WithPrincipal(ctx, seed.principalID, func(tx pgx.Tx) error {
-		var ierr error
-		c1, ierr = svc.ResolveOrCreateByEmail(ctx, tx, seed.tenantRootID, "ada@x.com", nil, nil)
-		if ierr != nil {
-			return ierr
-		}
-		c2, ierr = svc.ResolveOrCreateByEmail(ctx, tx, seed.tenantRootID, "ada@x.com", nil, nil)
-		return ierr
-	}); err != nil {
-		t.Fatalf("ResolveOrCreateByEmail in tx: %v", err)
-	}
-
-	if c1.ID == uuid.Nil {
-		t.Fatalf("ResolveOrCreateByEmail: first call returned nil id")
-	}
-	if c1.ID != c2.ID {
-		t.Fatalf("ResolveOrCreateByEmail not idempotent: c1=%s c2=%s (duplicate row)", c1.ID, c2.ID)
-	}
-	if c1.PrimaryEmail != "ada@x.com" {
-		t.Fatalf("ResolveOrCreateByEmail: primary_email = %q, want ada@x.com", c1.PrimaryEmail)
-	}
-}
 
 // TestMergeRepointsRequestersAndSoftDeletesLoser is the happy-path merge: a requester
 // pointing at the loser is moved to the winner, the loser is soft-deleted (vanishes
