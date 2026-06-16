@@ -84,6 +84,31 @@ func TestFactoryAllowPrivateBaseURL(t *testing.T) {
 	}
 }
 
+func TestNew_OpenRouterDefaultsBaseURL(t *testing.T) {
+	p, err := New(Credential{Provider: ProviderOpenRouter, APIKey: "k", Model: "anthropic/claude-3.5-sonnet"})
+	if err != nil {
+		t.Fatalf("openrouter empty base_url should be ok, got %v", err)
+	}
+	oc, ok := p.(*OpenAICompatProvider)
+	if !ok {
+		t.Fatalf("want the openai-compat provider, got %T", p)
+	}
+	if oc.baseURL != openRouterBaseURL {
+		t.Fatalf("baseURL = %q, want %q", oc.baseURL, openRouterBaseURL)
+	}
+}
+
+func TestNew_OpenRouterRespectsCustomBaseURL(t *testing.T) {
+	p, err := New(Credential{Provider: ProviderOpenRouter, APIKey: "k", Model: "m", BaseURL: "https://gw.example/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oc := p.(*OpenAICompatProvider)
+	if oc.baseURL != "https://gw.example/v1" {
+		t.Fatalf("baseURL = %q, want custom", oc.baseURL)
+	}
+}
+
 func TestFactoryWiresNonNilClient(t *testing.T) {
 	anth, err := New(Credential{Provider: ProviderAnthropic, APIKey: "k", Model: "m"})
 	if err != nil {
