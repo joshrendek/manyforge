@@ -113,7 +113,7 @@ type GetContactByEmailParams struct {
 }
 
 // GetContactByEmail looks up a live contact by (tenant_root_id, primary_email) — the
-// dedup probe before InsertContactByEmail / requester linkage.
+// dedup probe before requester linkage.
 func (q *Queries) GetContactByEmail(ctx context.Context, arg GetContactByEmailParams) (Contact, error) {
 	row := q.db.QueryRow(ctx, getContactByEmail, arg.TenantRootID, arg.PrimaryEmail)
 	var i Contact
@@ -208,50 +208,6 @@ type InsertContactParams struct {
 // an error the service maps to ErrConflict.
 func (q *Queries) InsertContact(ctx context.Context, arg InsertContactParams) (Contact, error) {
 	row := q.db.QueryRow(ctx, insertContact,
-		arg.ID,
-		arg.TenantRootID,
-		arg.PrimaryEmail,
-		arg.DisplayName,
-		arg.CompanyID,
-	)
-	var i Contact
-	err := row.Scan(
-		&i.ID,
-		&i.TenantRootID,
-		&i.PrimaryEmail,
-		&i.DisplayName,
-		&i.CompanyID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const insertContactByEmail = `-- name: InsertContactByEmail :one
-INSERT INTO contact (id, tenant_root_id, primary_email, display_name, company_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
-ON CONFLICT (tenant_root_id, primary_email) WHERE deleted_at IS NULL
-DO UPDATE SET display_name = COALESCE(contact.display_name, EXCLUDED.display_name), updated_at = now()
-RETURNING id, tenant_root_id, primary_email, display_name, company_id, created_at, updated_at, deleted_at
-`
-
-type InsertContactByEmailParams struct {
-	ID           uuid.UUID   `json:"id"`
-	TenantRootID uuid.UUID   `json:"tenant_root_id"`
-	PrimaryEmail string      `json:"primary_email"`
-	DisplayName  *string     `json:"display_name"`
-	CompanyID    pgtype.UUID `json:"company_id"`
-}
-
-// InsertContactByEmail is the idempotent get-or-create for inbound requester linkage:
-// insert a new contact, or on conflict against the live (tenant_root_id, primary_email)
-// partial unique index, return the existing row, filling display_name only if it was
-// NULL. The supplied id is used only on the insert path; on conflict the existing row is
-// updated and the id arg is ignored. ON CONFLICT target mirrors contact_tenant_email_uq
-// (partial WHERE deleted_at IS NULL).
-func (q *Queries) InsertContactByEmail(ctx context.Context, arg InsertContactByEmailParams) (Contact, error) {
-	row := q.db.QueryRow(ctx, insertContactByEmail,
 		arg.ID,
 		arg.TenantRootID,
 		arg.PrimaryEmail,
@@ -512,45 +468,6 @@ type RepointRequestersParams struct {
 func (q *Queries) RepointRequesters(ctx context.Context, arg RepointRequestersParams) error {
 	_, err := q.db.Exec(ctx, repointRequesters, arg.WinnerID, arg.LoserID)
 	return err
-}
-
-const resolveCompanyByDomain = `-- name: ResolveCompanyByDomain :one
-INSERT INTO company (id, tenant_root_id, name, domain, created_at, updated_at)
-VALUES ($1, $2, $3, $4, now(), now())
-ON CONFLICT (tenant_root_id, domain) WHERE domain IS NOT NULL
-DO UPDATE SET updated_at = now()
-RETURNING id, tenant_root_id, name, domain, created_at, updated_at
-`
-
-type ResolveCompanyByDomainParams struct {
-	ID           uuid.UUID `json:"id"`
-	TenantRootID uuid.UUID `json:"tenant_root_id"`
-	Name         string    `json:"name"`
-	Domain       *string   `json:"domain"`
-}
-
-// ResolveCompanyByDomain is the idempotent get-or-create by domain for inbound
-// auto-association: insert a new company, or on conflict against the (tenant_root_id,
-// domain) partial unique index (domain IS NOT NULL) return the existing row. The supplied
-// id is used only on the insert path; on conflict the existing row is updated and the id
-// arg is ignored. ON CONFLICT target mirrors company_tenant_domain_uq.
-func (q *Queries) ResolveCompanyByDomain(ctx context.Context, arg ResolveCompanyByDomainParams) (Company, error) {
-	row := q.db.QueryRow(ctx, resolveCompanyByDomain,
-		arg.ID,
-		arg.TenantRootID,
-		arg.Name,
-		arg.Domain,
-	)
-	var i Company
-	err := row.Scan(
-		&i.ID,
-		&i.TenantRootID,
-		&i.Name,
-		&i.Domain,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const softDeleteContact = `-- name: SoftDeleteContact :exec

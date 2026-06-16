@@ -76,23 +76,10 @@ UPDATE contact SET deleted_at = now(), updated_at = now()
 WHERE id = $1 AND tenant_root_id = $2 AND deleted_at IS NULL;
 
 -- GetContactByEmail looks up a live contact by (tenant_root_id, primary_email) — the
--- dedup probe before InsertContactByEmail / requester linkage.
+-- dedup probe before requester linkage.
 -- name: GetContactByEmail :one
 SELECT * FROM contact
 WHERE tenant_root_id = $1 AND primary_email = $2 AND deleted_at IS NULL;
-
--- InsertContactByEmail is the idempotent get-or-create for inbound requester linkage:
--- insert a new contact, or on conflict against the live (tenant_root_id, primary_email)
--- partial unique index, return the existing row, filling display_name only if it was
--- NULL. The supplied id is used only on the insert path; on conflict the existing row is
--- updated and the id arg is ignored. ON CONFLICT target mirrors contact_tenant_email_uq
--- (partial WHERE deleted_at IS NULL).
--- name: InsertContactByEmail :one
-INSERT INTO contact (id, tenant_root_id, primary_email, display_name, company_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
-ON CONFLICT (tenant_root_id, primary_email) WHERE deleted_at IS NULL
-DO UPDATE SET display_name = COALESCE(contact.display_name, EXCLUDED.display_name), updated_at = now()
-RETURNING *;
 
 -- ListRequestersForContact returns every requester currently pointing at a contact —
 -- the merge/repoint enumeration. Requester is business-scoped; RLS scopes the visible set.
@@ -162,15 +149,3 @@ WHERE company_id = $1 AND tenant_root_id = $2;
 -- immediately before this delete — otherwise an in-use company would raise SQLSTATE 23503.
 -- name: DeleteCompany :exec
 DELETE FROM company WHERE id = $1 AND tenant_root_id = $2;
-
--- ResolveCompanyByDomain is the idempotent get-or-create by domain for inbound
--- auto-association: insert a new company, or on conflict against the (tenant_root_id,
--- domain) partial unique index (domain IS NOT NULL) return the existing row. The supplied
--- id is used only on the insert path; on conflict the existing row is updated and the id
--- arg is ignored. ON CONFLICT target mirrors company_tenant_domain_uq.
--- name: ResolveCompanyByDomain :one
-INSERT INTO company (id, tenant_root_id, name, domain, created_at, updated_at)
-VALUES ($1, $2, $3, $4, now(), now())
-ON CONFLICT (tenant_root_id, domain) WHERE domain IS NOT NULL
-DO UPDATE SET updated_at = now()
-RETURNING *;

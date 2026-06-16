@@ -25,7 +25,8 @@ type CompanyService struct {
 
 // Create inserts a new company. Name is required (ErrValidation); Domain is optional. A
 // second company with the same live (tenant_root_id, domain) violates the partial unique
-// index → ErrConflict (no upsert here; that is ResolveOrCreateByDomain's job).
+// index → ErrConflict (no upsert here; the inbound-email path upserts via the
+// crm_link_inbound_sender SECURITY DEFINER function instead).
 func (s *CompanyService) Create(ctx context.Context, principalID, businessID uuid.UUID, in CompanyInput) (Company, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return Company{}, fmt.Errorf("crm: name required: %w", errs.ErrValidation)
@@ -186,37 +187,6 @@ func (s *CompanyService) Delete(ctx context.Context, principalID, businessID, id
 		return q.DeleteCompany(ctx, dbgen.DeleteCompanyParams{ID: id, TenantRootID: tenantRoot})
 	})
 	return mapErr(err)
-}
-
-// ResolveOrCreateByDomain is the idempotent get-or-create by domain used by the
-// principal-less inbound-email path (Task 9): it runs in the CALLER's tx (no WithPrincipal —
-// the inbox seam already holds a tx and carries no principal) and takes tenantRootID
-// explicitly rather than resolving it from a business. A new (tenant_root_id, domain)
-// inserts with name defaulted to the domain (the user can rename later); a live duplicate
-// returns the existing row (ResolveCompanyByDomain's ON CONFLICT against
-// company_tenant_domain_uq), so the seam never creates a duplicate company for a recurring
-// sender domain.
-//
-// Caller MUST have already excluded free-email domains via IsFreeEmailDomain (otherwise
-// every gmail.com sender collapses into one bogus company), MUST pass a trusted
-// tenantRootID (never derived from untrusted inbound headers), and MUST run on a tx whose
-// RLS principal is already set or an RLS-exempt path; this method performs no tenant
-// resolution or principal binding of its own.
-func (s *CompanyService) ResolveOrCreateByDomain(ctx context.Context, tx pgx.Tx, tenantRootID uuid.UUID, domain string) (Company, error) {
-	if domain == "" {
-		return Company{}, fmt.Errorf("crm: domain required: %w", errs.ErrValidation)
-	}
-	q := dbgen.New(tx)
-	row, err := q.ResolveCompanyByDomain(ctx, dbgen.ResolveCompanyByDomainParams{
-		ID:           uuid.New(),
-		TenantRootID: tenantRootID,
-		Name:         domain, // default name = domain; user can rename later
-		Domain:       &domain,
-	})
-	if err != nil {
-		return Company{}, mapErr(err)
-	}
-	return toCompany(row), nil
 }
 
 // toCompany maps a dbgen.Company row onto the API view.

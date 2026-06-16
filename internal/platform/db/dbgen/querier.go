@@ -217,7 +217,7 @@ type Querier interface {
 	// (foreign-tenant / unknown / deleted all collapse to one no-oracle 404 shape).
 	GetContact(ctx context.Context, arg GetContactParams) (Contact, error)
 	// GetContactByEmail looks up a live contact by (tenant_root_id, primary_email) — the
-	// dedup probe before InsertContactByEmail / requester linkage.
+	// dedup probe before requester linkage.
 	GetContactByEmail(ctx context.Context, arg GetContactByEmailParams) (Contact, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
@@ -334,13 +334,6 @@ type Querier interface {
 	// already knows the contact is new. Conflicts on the partial unique index surface as
 	// an error the service maps to ErrConflict.
 	InsertContact(ctx context.Context, arg InsertContactParams) (Contact, error)
-	// InsertContactByEmail is the idempotent get-or-create for inbound requester linkage:
-	// insert a new contact, or on conflict against the live (tenant_root_id, primary_email)
-	// partial unique index, return the existing row, filling display_name only if it was
-	// NULL. The supplied id is used only on the insert path; on conflict the existing row is
-	// updated and the id arg is ignored. ON CONFLICT target mirrors contact_tenant_email_uq
-	// (partial WHERE deleted_at IS NULL).
-	InsertContactByEmail(ctx context.Context, arg InsertContactByEmailParams) (Contact, error)
 	// ---- inbound_address ----
 	// InsertCustomInboundAddress creates a kind='custom' inbound address bound to an
 	// email_domain that MUST be owned by the business AND verified — both enforced in
@@ -600,12 +593,6 @@ type Querier interface {
 	// during a contact merge (runs in the same tx as the loser's soft-delete). Scoped by
 	// contact_id, whose tenant ownership the service validates before calling.
 	RepointRequesters(ctx context.Context, arg RepointRequestersParams) error
-	// ResolveCompanyByDomain is the idempotent get-or-create by domain for inbound
-	// auto-association: insert a new company, or on conflict against the (tenant_root_id,
-	// domain) partial unique index (domain IS NOT NULL) return the existing row. The supplied
-	// id is used only on the insert path; on conflict the existing row is updated and the id
-	// arg is ignored. ON CONFLICT target mirrors company_tenant_domain_uq.
-	ResolveCompanyByDomain(ctx context.Context, arg ResolveCompanyByDomainParams) (Company, error)
 	// Cuts off every live session for a principal (account delete, T077).
 	RevokeAllRefreshForPrincipal(ctx context.Context, principalID uuid.UUID) error
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)

@@ -90,3 +90,79 @@ func TestIngestLinksContactAndCompany(t *testing.T) {
 		t.Errorf("company count for gmail.com = %d, want 0 (free-email domain must not create a company)", n)
 	}
 }
+
+// TestIngestRecurringSenderDoesNotDuplicateOrOverwrite pins the crm_link_inbound_sender
+// DEFINER's ON CONFLICT … DO UPDATE SET … = COALESCE(existing, EXCLUDED) branches for a
+// repeat sender. A second message from the SAME address (ada@acme.com) but a DIFFERENT
+// display name ("Ada L" vs "Ada Lovelace"), with a distinct subject/message-id, must:
+//   - NOT create a second contact (ON CONFLICT against the (tenant, email) partial unique
+//     index resolves to the existing row);
+//   - NOT overwrite the existing display_name (COALESCE keeps the first non-NULL "Ada
+//     Lovelace" — EXCLUDED.display_name is only used when the existing value is NULL);
+//   - NOT create a second acme.com company (COALESCE on company_id keeps the link); and
+//   - leave the (deduped) requester's contact_id pointing at the one contact.
+func TestIngestRecurringSenderDoesNotDuplicateOrOverwrite(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	ten := seedIngestTenant(ctx, t, tdb)
+	svc := newIngestService(ctx, t, tdb)
+
+	// First message: establishes the contact ("Ada Lovelace"), the acme.com company,
+	// and the requester linkage.
+	if _, err := svc.Ingest(ctx, rawTo(ten.address, "Ada Lovelace <ada@acme.com>", "first question", "rs-1@example.com", "", "hello")); err != nil {
+		t.Fatalf("first ingest (Ada Lovelace): %v", err)
+	}
+	// Second message: SAME address, DIFFERENT display name, distinct subject + message-id.
+	if _, err := svc.Ingest(ctx, rawTo(ten.address, "Ada L <ada@acme.com>", "second question", "rs-2@example.com", "", "again")); err != nil {
+		t.Fatalf("second ingest (Ada L): %v", err)
+	}
+
+	// Exactly one contact for the address (no duplicate from the second ingest).
+	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM contact WHERE tenant_root_id=$1 AND primary_email='ada@acme.com'", ten.tenantRootID); n != 1 {
+		t.Fatalf("contact count for ada@acme.com = %d, want 1 (recurring sender must not duplicate)", n)
+	}
+
+	var contactID, companyID uuid.UUID
+	var contactCompany *uuid.UUID
+	var displayName *string
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id, company_id, display_name FROM contact WHERE tenant_root_id=$1 AND primary_email='ada@acme.com'`,
+		ten.tenantRootID).Scan(&contactID, &contactCompany, &displayName); err != nil {
+		t.Fatalf("load contact for ada@acme.com: %v", err)
+	}
+	// COALESCE(contact.display_name, EXCLUDED.display_name): the existing non-NULL name wins.
+	if displayName == nil || *displayName != "Ada Lovelace" {
+		t.Errorf("contact display_name = %v, want \"Ada Lovelace\" (COALESCE must not overwrite the existing name)", displayName)
+	}
+
+	// Exactly one acme.com company (no duplicate), and the contact still points to it.
+	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM company WHERE tenant_root_id=$1 AND domain='acme.com'", ten.tenantRootID); n != 1 {
+		t.Fatalf("company count for acme.com = %d, want 1 (recurring sender domain must not duplicate)", n)
+	}
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id FROM company WHERE tenant_root_id=$1 AND domain='acme.com'`,
+		ten.tenantRootID).Scan(&companyID); err != nil {
+		t.Fatalf("load company for acme.com: %v", err)
+	}
+	// COALESCE(contact.company_id, EXCLUDED.company_id): the existing link is preserved.
+	if contactCompany == nil || *contactCompany != companyID {
+		t.Errorf("contact.company_id = %v, want %s (the acme.com company; COALESCE must keep the link)", contactCompany, companyID)
+	}
+
+	// The (deduped) requester still carries contact_id = the one contact.
+	var reqContact *uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT contact_id FROM requester WHERE tenant_root_id=$1 AND email='ada@acme.com'`,
+		ten.tenantRootID).Scan(&reqContact); err != nil {
+		t.Fatalf("load requester for ada@acme.com: %v", err)
+	}
+	if reqContact == nil || *reqContact != contactID {
+		t.Errorf("requester.contact_id = %v, want %s (the linked contact)", reqContact, contactID)
+	}
+}
