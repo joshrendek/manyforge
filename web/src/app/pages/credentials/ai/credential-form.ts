@@ -3,6 +3,8 @@ import { Component, EventEmitter, Input, Output, inject, signal } from '@angular
 import { FormsModule } from '@angular/forms';
 import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai-credentials.service';
 
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
 // AI credential create form. Standalone, template-driven. The API key is write-only
 // (type=password, never prefilled). base_url + allow_private_base_url are ALWAYS visible
 // with helper text (design decision: not conditional on provider) so an operator can point
@@ -15,11 +17,12 @@ import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai
       <div class="mf-field">
         <label for="cred-provider">Provider</label>
         <select id="cred-provider" class="mf-select" data-testid="cred-provider"
-                [ngModel]="provider()" (ngModelChange)="provider.set($event)" name="provider" [disabled]="submitting()">
+                [ngModel]="provider()" (ngModelChange)="onProviderChange($event)" name="provider" [disabled]="submitting()">
           <option value="anthropic">Anthropic</option>
           <option value="openai">OpenAI</option>
           <option value="ollama">Ollama (self-host)</option>
           <option value="vllm">vLLM (self-host)</option>
+          <option value="openrouter">OpenRouter</option>
         </select>
       </div>
 
@@ -40,7 +43,7 @@ import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai
         <label for="cred-base-url">Base URL <span class="mf-hint">(optional)</span></label>
         <input id="cred-base-url" class="mf-input" type="text" data-testid="cred-base-url"
                name="base_url" [(ngModel)]="baseUrl" placeholder="https://… (openai-compatible / self-host only)" [disabled]="submitting()" />
-        <small class="mf-hint">Only needed for OpenAI-compatible or self-hosted (Ollama/vLLM) endpoints. Leave blank for the provider default.</small>
+        <small class="mf-hint">Defaulted for OpenRouter. Needed for OpenAI-compatible or self-hosted (Ollama/vLLM) endpoints; leave blank for the provider default.</small>
       </div>
 
       <label class="mf-field" data-testid="cred-allow-private-wrap"
@@ -82,6 +85,18 @@ export class CredentialFormComponent {
 
   valid(): boolean {
     return this.apiKey.trim().length > 0 && this.defaultModel.trim().length > 0;
+  }
+
+  onProviderChange(p: AIProvider): void {
+    // OpenRouter has one canonical OpenAI-compatible base URL — prefill it so the user
+    // just pastes a key. Only auto-manage base_url between blank and that default, so a
+    // custom value the user typed for another provider isn't clobbered.
+    if (p === 'openrouter' && this.baseUrl === '') {
+      this.baseUrl = OPENROUTER_BASE_URL;
+    } else if (this.provider() === 'openrouter' && this.baseUrl === OPENROUTER_BASE_URL) {
+      this.baseUrl = '';
+    }
+    this.provider.set(p);
   }
 
   submit(): void {

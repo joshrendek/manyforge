@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
-export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm';
+export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter';
 
 // Read shape: no api_key — the secret is write-only.
 export interface AICredential {
