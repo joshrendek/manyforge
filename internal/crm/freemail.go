@@ -6,6 +6,10 @@ import "strings"
 // these domains must NOT auto-create a company (every gmail.com sender would otherwise
 // collapse into one bogus "gmail.com" company); the inbound seam excludes them via
 // IsFreeEmailDomain before the crm_link_inbound_sender DEFINER upserts a company.
+//
+// CROSS-REF: migrations/0060_crm_backfill.up.sql hardcodes a copy of this exact list for
+// its ONE-TIME backfill of pre-existing requesters. This Go list is the live authority for
+// all new inbound mail; if the set ever changes, update the 0060 SQL copy to match.
 var freeEmailDomains = map[string]struct{}{
 	"gmail.com": {}, "googlemail.com": {}, "outlook.com": {}, "hotmail.com": {},
 	"live.com": {}, "msn.com": {}, "yahoo.com": {}, "ymail.com": {}, "icloud.com": {},
