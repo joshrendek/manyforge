@@ -383,10 +383,7 @@ func (h *Handler) createCompany(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errValidation("name required"))
 		return
 	}
-	c, err := h.companies.Create(r.Context(), pid, bid, CompanyInput{
-		Name:   body.Name,
-		Domain: body.Domain,
-	})
+	c, err := h.companies.Create(r.Context(), pid, bid, CompanyInput(body))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

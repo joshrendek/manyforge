@@ -1,0 +1,301 @@
+openapi: 3.1.0
+info:
+  title: manyforge CRM API
+  version: 0.1.0
+  description: >
+    Spec 005 — CRM Contacts & Companies (Phase A). Business-bound contact and
+    company CRUD plus contact merge, split into a read slice (gated by the
+    crm.read permission) and a write slice (gated by crm.write). Authorization and
+    existence are indistinguishable — a lacking permission or an invisible business
+    returns the same 404 as an unknown id (no existence oracle). Ownership is
+    enforced by the service-layer tenant_root_id predicate under RLS.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /businesses/{id}/contacts:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listContacts
+      summary: List contacts for a business (keyset paginated)
+      description: Requires the crm.read permission at {id}.
+      parameters:
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 200 }, description: "page size; non-positive -> default, server caps at 200" }
+      responses:
+        "200":
+          description: A page of contacts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createContact
+      summary: Create a contact
+      description: Requires the crm.write permission at {id}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateContact" }
+      responses:
+        "201":
+          description: Created contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/contacts/{cid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: cid, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getContact
+      summary: Get one contact
+      description: Requires the crm.read permission at {id}.
+      responses:
+        "200":
+          description: Contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateContact
+      summary: Partially update a contact
+      description: >
+        Requires the crm.write permission at {id}. Omit a field to leave it
+        unchanged (set-or-preserve). primary_email is immutable on update. company_id
+        can be set or preserved but cannot be nulled in Phase A — sending null/empty
+        preserves the current value rather than clearing the association.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateContact" }
+      responses:
+        "200":
+          description: Updated contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteContact
+      summary: Soft-delete a contact
+      description: Requires the crm.write permission at {id}.
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/contacts/{cid}/merge:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: cid, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: mergeContact
+      summary: Merge a loser contact into the winner ({cid})
+      description: >
+        Requires the crm.write permission at {id}. The loser (body) folds into the
+        winner ({cid}). A bad/empty loser_id is a 400; a self-merge is a 400; an
+        unknown/foreign loser or winner returns the same 404 as an unknown id (no
+        existence oracle).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MergeRequest" }
+      responses:
+        "200":
+          description: Merge succeeded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MergeResult" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/companies:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listCompanies
+      summary: List companies for a business (keyset paginated)
+      description: Requires the crm.read permission at {id}.
+      parameters:
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 200 }, description: "page size; non-positive -> default, server caps at 200" }
+      responses:
+        "200":
+          description: A page of companies
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompanyList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createCompany
+      summary: Create a company
+      description: Requires the crm.write permission at {id}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCompany" }
+      responses:
+        "201":
+          description: Created company
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Company" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /businesses/{id}/companies/{coid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: coid, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getCompany
+      summary: Get one company
+      description: Requires the crm.read permission at {id}.
+      responses:
+        "200":
+          description: Company
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Company" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateCompany
+      summary: Partially update a company
+      description: >
+        Requires the crm.write permission at {id}. Omit a field (or send an empty
+        name) to leave it unchanged (set-or-preserve).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCompany" }
+      responses:
+        "200":
+          description: Updated company
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Company" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteCompany
+      summary: Delete a company
+      description: Requires the crm.write permission at {id}.
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    NotFound:
+      description: Not found (also returned for lacking permission / invisible business — no oracle)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Invalid request body
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Conflict (e.g. a duplicate primary_email / company domain in the business)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    Contact:
+      type: object
+      required: [id, tenant_root_id, primary_email, display_name, company_id, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        primary_email: { type: string }
+        display_name: { type: string, nullable: true }
+        company_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ContactList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Contact" }
+        next_cursor: { type: string, nullable: true }
+    CreateContact:
+      type: object
+      required: [primary_email]
+      properties:
+        primary_email: { type: string, minLength: 1 }
+        display_name: { type: string, nullable: true }
+        company_id: { type: string, format: uuid, nullable: true }
+    UpdateContact:
+      type: object
+      description: >
+        Partial update — omit a field to leave it unchanged. primary_email is
+        immutable on update. company_id is set-or-preserve and cannot be nulled in
+        Phase A.
+      properties:
+        display_name: { type: string, nullable: true }
+        company_id: { type: string, format: uuid, nullable: true }
+    Company:
+      type: object
+      required: [id, tenant_root_id, name, domain, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        name: { type: string }
+        domain: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CompanyList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Company" }
+        next_cursor: { type: string, nullable: true }
+    CreateCompany:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        domain: { type: string, nullable: true }
+    UpdateCompany:
+      type: object
+      description: Partial update — omit a field (or send an empty name) to leave it unchanged.
+      properties:
+        name: { type: string, minLength: 1 }
+        domain: { type: string, nullable: true }
+    MergeRequest:
+      type: object
+      required: [loser_id]
+      properties:
+        loser_id: { type: string, format: uuid }
+    MergeResult:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [merged] }
