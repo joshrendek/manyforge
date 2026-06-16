@@ -27,6 +27,7 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/jira"
 	"github.com/manyforge/manyforge/internal/connectors/zendesk"
+	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
@@ -143,6 +144,14 @@ func main() {
 	businessIDFromPath := func(r *http.Request) (uuid.UUID, error) {
 		return uuid.Parse(chi.URLParam(r, "id"))
 	}
+
+	// Spec 005 CRM: tenant-wide contacts + companies. Both services run inside
+	// db.WithPrincipal (RLS) and push the tenant_root_id ownership predicate into SQL.
+	// The handler carries db+permResolve for symmetry with ticketing; CRM has no
+	// conditional handler-side gate (read/write groups are gated by crm.read/crm.write).
+	crmContacts := &crm.ContactService{DB: database}
+	crmCompanies := &crm.CompanyService{DB: database}
+	crmH := crm.NewHandler(crmContacts, crmCompanies, database, permResolve)
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
@@ -532,6 +541,9 @@ func main() {
 		connWebhookH:     connWebhookH,
 		connectors:       connManageH,
 		connectorsManage: httpx.RequirePermission(database, permResolve, authz.PermConnectorsManage, businessIDFromPath),
+		crm:              crmH,
+		crmRead:          httpx.RequirePermission(database, permResolve, authz.PermCRMRead, businessIDFromPath),
+		crmWrite:         httpx.RequirePermission(database, permResolve, authz.PermCRMWrite, businessIDFromPath),
 	})
 
 	srv := &http.Server{
@@ -735,6 +747,15 @@ type apiHandlers struct {
 	// mcpConfigure gates the US6 MCP server slice on the agents.configure permission
 	// (same gate as the agent-definition CRUD — no new permission needed).
 	mcpConfigure func(http.Handler) http.Handler
+
+	// crm is the Spec 005 CRM handler: tenant-wide contacts + companies CRUD + contact
+	// merge under a business.
+	crm *crm.Handler
+	// crmRead / crmWrite gate the CRM read slice (crm.read) and write slice (crm.write)
+	// respectively (migration catalog), same RLS-bound 404-on-lacking-perm semantics as
+	// the other groups.
+	crmRead  func(http.Handler) http.Handler
+	crmWrite func(http.Handler) http.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -862,6 +883,18 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 					h.connectors.ProtectedRoutes(cg)
 				})
 			}
+			// Spec 005 CRM read slice: contacts + companies list/get, gated on crm.read.
+			// Same RLS-bound 404-on-lacking-perm semantics as the other groups.
+			pr.Group(func(cr chi.Router) {
+				cr.Use(h.crmRead)
+				h.crm.ReadRoutes(cr)
+			})
+			// Spec 005 CRM write slice: contacts + companies create/update/delete +
+			// contact merge, gated on crm.write. Same RLS-bound 404-on-lacking-perm semantics.
+			pr.Group(func(cw chi.Router) {
+				cw.Use(h.crmWrite)
+				h.crm.WriteRoutes(cw)
+			})
 		})
 	})
 }
