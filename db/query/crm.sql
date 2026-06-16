@@ -148,10 +148,18 @@ UPDATE company SET
 WHERE id = sqlc.arg('id') AND tenant_root_id = sqlc.arg('tenant_root_id')
 RETURNING *;
 
+-- DetachContactsFromCompany nulls out company_id on every contact pointing at a company,
+-- scoped to (company_id, tenant_root_id). The contact.company_id → company FK is NO ACTION
+-- (restrict), so a company with contacts cannot be hard-deleted until they are detached;
+-- the service runs this in the same tx immediately before DeleteCompany. Touches updated_at.
+-- name: DetachContactsFromCompany :exec
+UPDATE contact SET company_id = NULL, updated_at = now()
+WHERE company_id = $1 AND tenant_root_id = $2;
+
 -- DeleteCompany hard-deletes a company scoped to (id, tenant_root_id) (companies carry no
--- PII / soft-delete column; the contact.company_id FK is nullable and ON DELETE is
--- unspecified, so the service detaches/repoints contacts before calling — enforced at the
--- service layer).
+-- PII / soft-delete column). The contact.company_id → company FK is NO ACTION (restrict),
+-- so the service nulls out contacts' company_id (DetachContactsFromCompany) in the same tx
+-- immediately before this delete — otherwise an in-use company would raise SQLSTATE 23503.
 -- name: DeleteCompany :exec
 DELETE FROM company WHERE id = $1 AND tenant_root_id = $2;
 

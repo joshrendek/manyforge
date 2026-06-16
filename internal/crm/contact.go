@@ -282,11 +282,13 @@ func toContact(c dbgen.Contact) Contact {
 	}
 }
 
-// mapErr converts a query/closure error into a stable service-layer sentinel.
-// pgx.ErrNoRows → ErrNotFound (no oracle). SQLSTATE 23505 (unique violation, e.g. a
-// duplicate live primary_email) → ErrConflict. ErrValidation (a malformed cursor or a
-// missing email) is preserved. Everything else is wrapped so the HTTP layer logs it
-// server-side and surfaces a generic 500.
+// mapErr converts a query/closure error into a stable service-layer sentinel (shared by
+// ContactService and CompanyService). pgx.ErrNoRows → ErrNotFound (no oracle). SQLSTATE
+// 23505 (unique violation, e.g. a duplicate live primary_email or company domain) → ErrConflict.
+// SQLSTATE 23503 (foreign-key violation) → ErrConflict as defense-in-depth: services detach
+// FK references before deleting, but a residual reference must not leak as a generic 500.
+// ErrValidation (a malformed cursor or a missing required field) is preserved. Everything
+// else is wrapped so the HTTP layer logs it server-side and surfaces a generic 500.
 func mapErr(err error) error {
 	var pgErr *pgconn.PgError
 	switch {
@@ -295,7 +297,9 @@ func mapErr(err error) error {
 	case errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("crm: not found: %w", errs.ErrNotFound)
 	case errors.As(err, &pgErr) && pgErr.Code == "23505":
-		return fmt.Errorf("crm: duplicate contact: %w", errs.ErrConflict)
+		return fmt.Errorf("crm: duplicate: %w", errs.ErrConflict)
+	case errors.As(err, &pgErr) && pgErr.Code == "23503":
+		return fmt.Errorf("crm: foreign key violation: %w", errs.ErrConflict)
 	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrNotFound),
 		errors.Is(err, errs.ErrConflict):
 		return err

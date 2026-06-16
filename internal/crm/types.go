@@ -36,6 +36,26 @@ type ContactInput struct {
 	CompanyID    *uuid.UUID
 }
 
+// Company is the API view of a CRM company. Domain is optional (citext, nullable) and
+// omitted from JSON when nil. Companies are tenant-wide (keyed on tenant_root_id) and
+// carry no PII / soft-delete column — Delete is a hard delete.
+type Company struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Name         string    `json:"name"`
+	Domain       *string   `json:"domain,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// CompanyInput is the create/update payload. On update, Name is sent through a COALESCE
+// narg (NULLIF on empty so an omitted Name preserves the current value) and a nil Domain
+// is preserved (NULL narg read as "unchanged"), so callers send only what they change.
+type CompanyInput struct {
+	Name   string
+	Domain *string
+}
+
 // Page is a keyset-paginated result. NextCursor is an opaque token (nil = last page).
 type Page[T any] struct {
 	Items      []T     `json:"items"`

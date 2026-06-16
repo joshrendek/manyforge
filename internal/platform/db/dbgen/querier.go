@@ -103,9 +103,9 @@ type Querier interface {
 	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
 	DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error)
 	// DeleteCompany hard-deletes a company scoped to (id, tenant_root_id) (companies carry no
-	// PII / soft-delete column; the contact.company_id FK is nullable and ON DELETE is
-	// unspecified, so the service detaches/repoints contacts before calling — enforced at the
-	// service layer).
+	// PII / soft-delete column). The contact.company_id → company FK is NO ACTION (restrict),
+	// so the service nulls out contacts' company_id (DetachContactsFromCompany) in the same tx
+	// immediately before this delete — otherwise an in-use company would raise SQLSTATE 23503.
 	DeleteCompany(ctx context.Context, arg DeleteCompanyParams) error
 	// DeleteConnectorOutboundOps cascades the outbound op queue for a connector.
 	DeleteConnectorOutboundOps(ctx context.Context, connectorID uuid.UUID) (int64, error)
@@ -131,6 +131,11 @@ type Querier interface {
 	// full-set tag replacement. Scoped to (ticket_id, business_id).
 	DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsParams) error
 	DepthFromRoot(ctx context.Context, arg DepthFromRootParams) (int32, error)
+	// DetachContactsFromCompany nulls out company_id on every contact pointing at a company,
+	// scoped to (company_id, tenant_root_id). The contact.company_id → company FK is NO ACTION
+	// (restrict), so a company with contacts cannot be hard-deleted until they are detached;
+	// the service runs this in the same tx immediately before DeleteCompany. Touches updated_at.
+	DetachContactsFromCompany(ctx context.Context, arg DetachContactsFromCompanyParams) error
 	// DetachTicketMessagesFromConnector — same sever for message-level external linkage.
 	DetachTicketMessagesFromConnector(ctx context.Context, connectorID pgtype.UUID) (int64, error)
 	// DetachTicketsFromConnector severs linked tickets on hard-delete: NULL connector_id only,
