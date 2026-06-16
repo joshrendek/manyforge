@@ -1,0 +1,4 @@
+-- Reverse 0056. NOTE: PostgreSQL cannot remove a value from an enum type, so the
+-- 'openrouter' value added to ai_provider PERSISTS after this down-migration. That is
+-- acceptable and matches how every other enum addition in this schema is irreversible.
+-- Nothing references 'openrouter' once the credentials/agents using it are removed.
