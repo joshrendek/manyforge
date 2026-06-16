@@ -49,6 +49,18 @@ export interface ModelDescriptor {
   model_id: string;
 }
 
+export interface AgentRun {
+  id: string;
+  agent_id: string;
+  trigger: string;
+  status: 'queued' | 'running' | 'awaiting_approval' | 'succeeded' | 'failed';
+  tokens_in: number;
+  tokens_out: number;
+  cost_cents: number;
+  correlation_id: string;
+  error?: string;
+}
+
 // Re-export MCPServer for consumers who need it alongside AgentsService.
 export type { MCPServer };
 
@@ -88,5 +100,11 @@ export class AgentsService {
   /** Returns the business's MCP servers for the agent form's server picker. */
   mcpServers(businessId: string): Observable<{ items: MCPServer[] }> {
     return this.mcpSvc.list(businessId);
+  }
+
+  // run triggers a manual agent run; with a ticket target the agent acts on that
+  // ticket. The backend runs it synchronously and returns the terminal run (202).
+  run(businessId: string, agentId: string, body: { target_type: 'ticket'; target_id: string }): Observable<AgentRun> {
+    return this.http.post<AgentRun>(`${this.base(businessId)}/${agentId}/runs`, body);
   }
 }
