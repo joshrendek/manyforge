@@ -1017,3 +1017,134 @@ test('US4: an in-flight Verify leaves the add-domain / add-address forms usable 
   await page.getByTestId('domain-input').fill('another.example');
   await expect(page.getByTestId('add-domain-submit')).toBeEnabled();
 });
+
+// ── In-ticket "Run agent" control ─────────────────────────────────────────────
+//
+// The triage card on the thread view (/support/:businessId/:tid) carries a
+// "Run agent" control (data-testid run-agent-control / run-agent-select /
+// run-agent-btn / run-agent-none). On ngOnInit the component loads the business's
+// enabled agents via GET /businesses/{bid}/agents and filters enabled===true.
+// With a single enabled agent the picker is hidden and the button is enabled
+// (selectedAgentId auto-set to it). Clicking it fires an immediate "started"
+// toast, then POSTs the run to /businesses/{bid}/agents/{aid}/runs and surfaces
+// an outcome toast — for an awaiting_approval run that's the "Approvals" toast.
+// The backend run path is covered by the Go tests; this pins the SPA wiring
+// against a mocked /api/v1 surface (mirrors installThreadStack + the agents.spec
+// agent fixture shape; toast assertions use the app's `toast` testid as in
+// approvals.spec.ts / mcp.spec.ts).
+
+const AGENT_ID = 'agent-1';
+
+// One enabled agent for BIZ_ID, matching the core Agent shape the component reads
+// (it filters on `enabled`). Field shapes mirror web/e2e/agents.spec.ts.
+const enabledAgent = {
+  id: AGENT_ID,
+  business_id: BIZ_ID,
+  principal_id: 'p1',
+  name: 'Triage Bot',
+  provider: 'anthropic',
+  model: 'claude-opus-4-8',
+  system_prompt: '',
+  allowed_tools: [],
+  autonomy_mode: 1,
+  enabled: true,
+  monthly_budget_cents: 0,
+  allowed_mcp_servers: [],
+  retriage_on_reply: false,
+  created_at: '',
+  updated_at: '',
+};
+
+// installRunAgentStack seeds auth + every GET the thread view fires on load — /me,
+// /businesses, assignable-members (empty → picker hidden), the enabled-agents list,
+// the ticket, and its (empty) message thread. Mirrors installThreadStack but adds
+// the NEW /agents route the run-agent control depends on. The run POST is left to
+// the caller (last-registered wins).
+async function installRunAgentStack(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem('mf_access', 'test-access');
+    localStorage.setItem('mf_refresh', 'test-refresh');
+  });
+  await page.route('**/api/v1/me', (route) =>
+    route.fulfill({
+      json: {
+        id: 'u1',
+        email: 'owner@manyforge.test',
+        display_name: 'Owner',
+        email_verified: true,
+        status: 'active',
+      },
+    }),
+  );
+  await page.route('**/api/v1/businesses**', (route) =>
+    route.fulfill({ json: { items: [business], next_cursor: null } }),
+  );
+  // Empty members → the assignee picker stays hidden (not under test here).
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/assignable-members`, (route) =>
+    route.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+  // The NEW enabled-agents load the run-agent control reads (one enabled agent →
+  // picker hidden, button enabled). Registered before the more specific /runs POST.
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/agents`, (route) =>
+    route.fulfill({ json: { items: [enabledAgent] } }),
+  );
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}`, (route) =>
+    route.fulfill({ json: ticket }),
+  );
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets/${TICKET_ID}/messages**`, (route) =>
+    route.fulfill({ json: { items: [], next_cursor: null } }),
+  );
+}
+
+test('run-agent: the control renders in the triage card and a click starts a run with toasts', async ({
+  page,
+}) => {
+  await installRunAgentStack(page);
+
+  // Mock the run POST → an awaiting_approval terminal run (autonomy lands actions
+  // in /approvals), so the outcome toast is the "Approvals" one.
+  let runPosted = false;
+  let runBody: Record<string, unknown> | null = null;
+  await page.route(
+    `**/api/v1/businesses/${BIZ_ID}/agents/${AGENT_ID}/runs`,
+    (route) => {
+      runPosted = true;
+      runBody = route.request().postDataJSON() as Record<string, unknown>;
+      route.fulfill({
+        status: 202,
+        json: {
+          id: 'run1',
+          agent_id: AGENT_ID,
+          trigger: 'manual',
+          status: 'awaiting_approval',
+          tokens_in: 0,
+          tokens_out: 0,
+          cost_cents: 0,
+          correlation_id: 'c1',
+        },
+      });
+    },
+  );
+
+  await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
+  await expect(page.getByTestId('thread-header')).toBeVisible();
+
+  // With exactly one enabled agent: the control + button render, the picker is
+  // hidden, the no-agents hint is absent, and the button is enabled (agent auto-selected).
+  await expect(page.getByTestId('run-agent-control')).toBeVisible();
+  await expect(page.getByTestId('run-agent-btn')).toBeVisible();
+  await expect(page.getByTestId('run-agent-btn')).toBeEnabled();
+  await expect(page.getByTestId('run-agent-select')).toHaveCount(0);
+  await expect(page.getByTestId('run-agent-none')).toHaveCount(0);
+
+  // Click → an immediate "started" toast appears, then (the run resolves
+  // synchronously) the awaiting_approval outcome surfaces the "Approvals" toast.
+  // Both may be on screen at once, so match each toast by its own text.
+  await page.getByTestId('run-agent-btn').click();
+  await expect(page.getByTestId('toast').filter({ hasText: /started/i })).toBeVisible();
+  await expect(page.getByTestId('toast').filter({ hasText: /Approvals/i })).toBeVisible();
+
+  // The run POST carried the ticket target.
+  expect(runPosted).toBe(true);
+  expect(runBody).toEqual({ target_type: 'ticket', target_id: TICKET_ID });
+});
