@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -268,6 +269,28 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 		if out.Duplicate {
 			result = out
 			return nil
+		}
+
+		// Spec 005 Phase B: record the inbound-driven CRM activity timeline entries —
+		// a one-time ticket_created (only when out.Created) and an email_received per
+		// fresh inbound message — anchored on the ticket requester's contact (resolved
+		// inside the function from ticket.requester_id, which crm_link_inbound_sender
+		// just populated). Like the link above this runs principal-less in the SAME tx,
+		// so it goes through the SECURITY DEFINER crm_record_inbound_activity (a plain
+		// INSERT into the RLS-protected activity_entry would be blocked: no
+		// current_principal() => empty authorized_tenants => WITH CHECK fails). A
+		// recording failure propagates so the whole ingest tx rolls back. Guarded on a
+		// ticket existing (a suppressed/unrouted inbound never reaches here); the
+		// function itself no-ops when the requester has no contact_id.
+		if scTicket.Valid {
+			var messageArg any // nil => SQL NULL (no inbound message row to record)
+			if out.MessageID != uuid.Nil {
+				messageArg = out.MessageID
+			}
+			if _, err := tx.Exec(ctx, `SELECT crm_record_inbound_activity($1,$2,$3,$4,$5,$6)`,
+				r.tenantRootID, r.businessID, out.TicketID, messageArg, out.Created, time.Now().UTC()); err != nil {
+				return fmt.Errorf("inbox: crm record inbound activity: %w", err)
+			}
 		}
 
 		// Non-duplicate: NOW write the staged attachment bytes to object storage.
