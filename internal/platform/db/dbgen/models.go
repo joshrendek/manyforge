@@ -511,6 +511,21 @@ type AccountErasure struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type ActivityEntry struct {
+	ID           uuid.UUID   `json:"id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	ContactID    uuid.UUID   `json:"contact_id"`
+	Kind         string      `json:"kind"`
+	OccurredAt   time.Time   `json:"occurred_at"`
+	Actor        *string     `json:"actor"`
+	SourceType   string      `json:"source_type"`
+	SourceID     pgtype.UUID `json:"source_id"`
+	Summary      string      `json:"summary"`
+	Metadata     []byte      `json:"metadata"`
+	CreatedAt    time.Time   `json:"created_at"`
+}
+
 type Agent struct {
 	ID                 uuid.UUID   `json:"id"`
 	BusinessID         uuid.UUID   `json:"business_id"`
