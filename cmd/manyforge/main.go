@@ -115,12 +115,16 @@ func main() {
 	// mirroring how the ingest limiter is built from the ingest knobs. The
 	// ticketing.Service spends a token per Reply; a 429 carries no existence oracle.
 	outboundLimiter := ratelimit.NewTokenBucket(cfg.OutboundRateRPS, cfg.OutboundRateBurst)
+	// Spec 005 Phase B: the ticketing service threads CRM timeline entries (status
+	// change, reply, note) onto its own WithPrincipal tx — atomic with the mutation.
+	crmActivity := &crm.ActivityService{DB: database}
 	ticketSvc := &ticketing.Service{
 		DB:              database,
 		ReplyTokenKey:   cfg.InboundReplyTokenSecret,
 		SystemDomain:    cfg.InboundSystemDomain,
 		OutboundLimiter: outboundLimiter,
 		Suppression:     notify.DBSuppression{DB: database},
+		Activity:        crmActivity,
 	}
 	acctH := account.NewHandler(acctSvc)
 	tenH := tenancy.NewHandler(tenSvc)
@@ -512,30 +516,30 @@ func main() {
 	ingestIPKey := func(r *http.Request) string { return inbox.IPRateLimitKey(ratelimit.ClientIP(r, trusted)) }
 
 	mountAPIRoutes(mux, apiHandlers{
-		account:         acctH,
-		tenancy:         tenH,
-		authz:           authzH,
-		invitations:     invH,
-		ticketing:       ticketH,
-		identity:        identityH,
-		inboxWebhook:    inboxWebhookH,
-		bounce:          bounceH,
-		authLimit:       httpx.RateLimit(authLimiter, ipKey),
-		ingestLimit:     httpx.RateLimit(ingestIPLimiter, ingestIPKey),
-		ticketsRead:     httpx.RequirePermission(database, permResolve, authz.PermTicketsRead, businessIDFromPath),
-		ticketsReply:    httpx.RequirePermission(database, permResolve, authz.PermTicketsReply, businessIDFromPath),
-		ticketsWrite:    httpx.RequirePermission(database, permResolve, authz.PermTicketsWrite, businessIDFromPath),
-		ticketsAssign:   httpx.RequirePermission(database, permResolve, authz.PermTicketsAssign, businessIDFromPath),
-		ticketsDelete:   httpx.RequirePermission(database, permResolve, authz.PermTicketsDelete, businessIDFromPath),
-		inboxManage:     httpx.RequirePermission(database, permResolve, authz.PermInboxManage, businessIDFromPath),
-		agents:          agentH,
-		credentials:     credH,
+		account:          acctH,
+		tenancy:          tenH,
+		authz:            authzH,
+		invitations:      invH,
+		ticketing:        ticketH,
+		identity:         identityH,
+		inboxWebhook:     inboxWebhookH,
+		bounce:           bounceH,
+		authLimit:        httpx.RateLimit(authLimiter, ipKey),
+		ingestLimit:      httpx.RateLimit(ingestIPLimiter, ingestIPKey),
+		ticketsRead:      httpx.RequirePermission(database, permResolve, authz.PermTicketsRead, businessIDFromPath),
+		ticketsReply:     httpx.RequirePermission(database, permResolve, authz.PermTicketsReply, businessIDFromPath),
+		ticketsWrite:     httpx.RequirePermission(database, permResolve, authz.PermTicketsWrite, businessIDFromPath),
+		ticketsAssign:    httpx.RequirePermission(database, permResolve, authz.PermTicketsAssign, businessIDFromPath),
+		ticketsDelete:    httpx.RequirePermission(database, permResolve, authz.PermTicketsDelete, businessIDFromPath),
+		inboxManage:      httpx.RequirePermission(database, permResolve, authz.PermInboxManage, businessIDFromPath),
+		agents:           agentH,
+		credentials:      credH,
 		agentsConfigure:  httpx.RequirePermission(database, permResolve, authz.PermAgentsConfigure, businessIDFromPath),
 		agentRuns:        agentRunH,
-		agentsRun:       httpx.RequirePermission(database, permResolve, authz.PermAgentsRun, businessIDFromPath),
-		accounting:      accountingH,
-		approvals:       approvalH,
-		agentsApprove:   httpx.RequirePermission(database, permResolve, authz.PermAgentsApprove, businessIDFromPath),
+		agentsRun:        httpx.RequirePermission(database, permResolve, authz.PermAgentsRun, businessIDFromPath),
+		accounting:       accountingH,
+		approvals:        approvalH,
+		agentsApprove:    httpx.RequirePermission(database, permResolve, authz.PermAgentsApprove, businessIDFromPath),
 		mcp:              mcpH,
 		mcpConfigure:     httpx.RequirePermission(database, permResolve, authz.PermAgentsConfigure, businessIDFromPath),
 		connWebhookH:     connWebhookH,

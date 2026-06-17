@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -38,6 +39,12 @@ type Service struct {
 	SystemDomain    string                    // outbound mail domain for minted Message-IDs
 	OutboundLimiter ratelimit.Limiter         // nil ⇒ no limit (tests/dev)
 	Suppression     mailer.SuppressionChecker // nil ⇒ no pre-check (worker still gates)
+	// Activity records principal-scoped CRM timeline entries (status change, reply,
+	// note) on the SAME WithPrincipal tx as the ticket mutation — atomic with it. The
+	// triaging/replying principal is authorized for the tenant, so the activity_entry
+	// RLS WITH CHECK passes. nil ⇒ no activity recording (tests/dev): many callers build
+	// a bare &Service{DB: ...} and must not nil-panic; every hook is guarded accordingly.
+	Activity *crm.ActivityService
 }
 
 // ReplyInput is the validated reply payload for Reply.
@@ -380,6 +387,21 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 			return aerr
 		}
 
+		// CRM activity (spec 005 Phase B): record the outbound reply on the contact's
+		// timeline, on THIS tx (atomic with the message insert). source_id is the message
+		// just inserted (msgID). req is already loaded above; reuse its contact_id (skip if
+		// the requester is not contact-linked, or if no Activity service is wired).
+		if cid := pgUUIDPtr(req.ContactID); cid != nil && s.Activity != nil {
+			if rerr := s.Activity.Record(ctx, tx, tk.TenantRootID, crm.ActivityInput{
+				BusinessID: businessID, ContactID: *cid,
+				Kind: "email_sent", OccurredAt: time.Now(),
+				Actor: ptr(principalID.String()), SourceType: "ticket_message", SourceID: &msgID,
+				Summary: "Replied",
+			}); rerr != nil {
+				return rerr
+			}
+		}
+
 		// Outbox event — the worker builds the threaded Mail and dispatches it. The
 		// reply_token signs the TICKET id so an inbound reply threads back (R4). Skipped
 		// when the linked connector opts into single-channel delivery (a7j.8): the external
@@ -511,6 +533,19 @@ func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID
 			return aerr
 		}
 
+		// CRM activity (spec 005 Phase B): record the note on the contact's timeline, on
+		// THIS tx (atomic with the note insert). source_id is the note message (msgID).
+		// Skipped if the requester is not contact-linked, or if no Activity service is wired.
+		if err := s.recordTicketActivity(ctx, tx, q, businessID, ticketID, tk.TenantRootID, recordActivityInput{
+			kind:    "note_added",
+			srcType: "note",
+			srcID:   &msgID,
+			actor:   principalID.String(),
+			summary: "Note added",
+		}); err != nil {
+			return err
+		}
+
 		out = toMessage(row, nil)
 		return nil
 	})
@@ -518,6 +553,56 @@ func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID
 		return Message{}, mapErr(err)
 	}
 	return out, nil
+}
+
+// recordActivityInput carries the variable fields for a single recordTicketActivity
+// call; the contact_id, tenant, and business are resolved/passed by the helper.
+type recordActivityInput struct {
+	kind     string
+	srcType  string
+	srcID    *uuid.UUID
+	actor    string
+	summary  string
+	metadata []byte // nil ⇒ SQL NULL
+}
+
+// recordTicketActivity resolves the ticket's contact (via the requester) and records a
+// CRM activity entry on the SAME tx — atomic with the caller's ticket mutation. It is a
+// no-op when no Activity service is wired (s.Activity == nil; tests/dev) or when the
+// ticket's requester is not contact-linked (contact_id NULL). A Record error propagates
+// so the whole unit of work rolls back. Reply resolves the contact inline (req already
+// loaded); Triage and AddNote use this helper, which re-reads the requester.
+func (s *Service) recordTicketActivity(ctx context.Context, tx pgx.Tx, q *dbgen.Queries, businessID, ticketID, tenantRootID uuid.UUID, in recordActivityInput) error {
+	if s.Activity == nil {
+		return nil
+	}
+	req, rerr := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: ticketID, BusinessID: businessID})
+	if rerr != nil {
+		return rerr
+	}
+	cid := pgUUIDPtr(req.ContactID)
+	if cid == nil {
+		return nil // requester not contact-linked ⇒ nothing to record (no error)
+	}
+	return s.Activity.Record(ctx, tx, tenantRootID, crm.ActivityInput{
+		BusinessID: businessID, ContactID: *cid,
+		Kind: in.kind, OccurredAt: time.Now(),
+		Actor: ptr(in.actor), SourceType: in.srcType, SourceID: in.srcID,
+		Summary: in.summary, Metadata: in.metadata,
+	})
+}
+
+// statusChangeMetadata marshals the old→new status pair plus the ticket id for a
+// ticket_status_changed activity's metadata jsonb. ticket_id is carried here (not in
+// source_id) so the row is dedup-exempt — see the Triage hook for why. A marshal
+// failure (impossible for three strings) yields nil (SQL NULL) rather than failing
+// the unit of work.
+func statusChangeMetadata(oldStatus, newStatus string, ticketID uuid.UUID) []byte {
+	b, err := json.Marshal(map[string]string{"old": oldStatus, "new": newStatus, "ticket_id": ticketID.String()})
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // advanceNewToOpen implements the yqi lifecycle rule (data-model L438): the first
@@ -603,6 +688,28 @@ func (s *Service) Triage(ctx context.Context, principalID, businessID, ticketID 
 			}
 			if aerr := writeStatusAudit(ctx, tx, businessID, tk.TenantRootID, principalID, ticketID, string(tk.Status), *in.Status); aerr != nil {
 				return aerr
+			}
+			// CRM activity (spec 005 Phase B): record the status change on the contact's
+			// timeline, on THIS tx (atomic with the mutation). Skipped if the requester is
+			// not contact-linked, or if no Activity service is wired (tests/dev).
+			//
+			// source_id is intentionally nil. The activity_dedup_idx is partial (WHERE
+			// source_id IS NOT NULL) and InsertActivityEntry is ON CONFLICT DO NOTHING; were
+			// source_id the ticket id, EVERY transition on a ticket would map to the same
+			// (tenant_root_id,'ticket',ticketID,'ticket_status_changed') tuple and only the
+			// first would ever record (open→pending→solved would collapse to one row). Status
+			// changes are recorded ONLY live here (never backfilled — Task 7 backfills
+			// created+message events only), so they need no dedup. A nil source_id lets every
+			// transition insert; the ticket linkage moves into metadata.ticket_id.
+			if err := s.recordTicketActivity(ctx, tx, q, businessID, ticketID, tk.TenantRootID, recordActivityInput{
+				kind:     "ticket_status_changed",
+				srcType:  "ticket",
+				srcID:    nil,
+				actor:    principalID.String(),
+				summary:  fmt.Sprintf("status: %s → %s", string(tk.Status), *in.Status),
+				metadata: statusChangeMetadata(string(tk.Status), *in.Status, ticketID),
+			}); err != nil {
+				return err
 			}
 		}
 
