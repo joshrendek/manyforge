@@ -1,8 +1,9 @@
+import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { Company, Contact, CrmService } from '../../core/crm.service';
+import { ActivityEntry, Company, Contact, CrmService } from '../../core/crm.service';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
 import { ToastService } from '../../ui/toast/toast.service';
@@ -15,7 +16,7 @@ import { ToastService } from '../../ui/toast/toast.service';
 // state, following thread-view's triage-card pattern.
 @Component({
   selector: 'app-contact-detail',
-  imports: [FormsModule, RouterLink, PageHeader, Spinner],
+  imports: [FormsModule, RouterLink, DatePipe, PageHeader, Spinner],
   template: `
     <div class="mf-card" data-testid="contact-detail">
       <mf-page-header title="Contact">
@@ -104,6 +105,27 @@ import { ToastService } from '../../ui/toast/toast.service';
             {{ deleting() ? 'Deleting…' : 'Delete contact' }}
           </button>
         </div>
+
+        <!-- Activity timeline: best-effort load on init; the empty state covers
+             both an empty history and a load failure. -->
+        <div class="mf-card timeline-block" data-testid="contact-activity">
+          <h2 class="block-title">Timeline</h2>
+          @if (activity().length === 0) {
+            <span class="mf-hint" data-testid="activity-empty">No activity yet.</span>
+          } @else {
+            <ul class="timeline" data-testid="activity-timeline">
+              @for (a of activity(); track a.id) {
+                <li class="timeline-row" data-testid="activity-row">
+                  <div class="timeline-head">
+                    <span class="timeline-kind">{{ kindLabel(a.kind) }}</span>
+                    <span class="timeline-when">{{ a.occurred_at | date: 'short' }}</span>
+                  </div>
+                  <p class="timeline-summary">{{ a.summary }}</p>
+                </li>
+              }
+            </ul>
+          }
+        </div>
       }
     </div>
   `,
@@ -142,7 +164,8 @@ import { ToastService } from '../../ui/toast/toast.service';
       }
       .edit-block,
       .merge-block,
-      .delete-block {
+      .delete-block,
+      .timeline-block {
         margin-top: 16px;
         display: flex;
         flex-direction: column;
@@ -152,6 +175,37 @@ import { ToastService } from '../../ui/toast/toast.service';
         font-size: var(--mf-fs-base);
         font-weight: 640;
         margin: 0;
+      }
+      .timeline {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .timeline-row {
+        border-left: 2px solid var(--mf-border);
+        padding: 2px 0 2px 12px;
+      }
+      .timeline-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .timeline-kind {
+        font-size: var(--mf-fs-sm);
+        font-weight: 620;
+      }
+      .timeline-when {
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
+      }
+      .timeline-summary {
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
+        margin: 4px 0 0;
       }
     `,
   ],
@@ -171,6 +225,10 @@ export class ContactDetailComponent implements OnInit {
   // so it can never be selected as its own loser.
   allContacts = signal<Contact[]>([]);
   otherContacts = computed(() => this.allContacts().filter((c) => c.id !== this.id));
+
+  // Activity timeline (best-effort, like the pickers): a load failure simply
+  // leaves it empty and the empty state covers it.
+  activity = signal<ActivityEntry[]>([]);
 
   loading = signal(true);
   error = signal('');
@@ -196,6 +254,12 @@ export class ContactDetailComponent implements OnInit {
         next: (r) => this.allContacts.set(r.items ?? []),
         error: () => {},
       });
+      if (this.id) {
+        this.crm.listActivity(this.businessId, this.id).subscribe({
+          next: (r) => this.activity.set(r.items ?? []),
+          error: () => {},
+        });
+      }
     }
     this.reload();
   }
@@ -279,6 +343,18 @@ export class ContactDetailComponent implements OnInit {
         this.toast.error(this.describeMutation(e, 'Could not delete the contact'));
       },
     });
+  }
+
+  // Human-readable label for an activity kind; unknown kinds fall back to the raw value.
+  kindLabel(kind: string): string {
+    const labels: Record<string, string> = {
+      ticket_created: 'Ticket created',
+      email_received: 'Email received',
+      email_sent: 'Email sent',
+      ticket_status_changed: 'Status changed',
+      note_added: 'Note added',
+    };
+    return labels[kind] ?? kind;
   }
 
   // No-oracle: 403/404 both map to a generic message (mirrors thread-view.ts).
