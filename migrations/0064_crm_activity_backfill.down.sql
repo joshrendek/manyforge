@@ -1,0 +1,1 @@
+-- no-op: a data backfill is not reversibly distinguishable from live-recorded activity rows; nothing to undo.
