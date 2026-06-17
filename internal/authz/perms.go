@@ -24,4 +24,7 @@ const (
 	PermConnectorsRead   = "connectors.read"
 	PermConnectorsWrite  = "connectors.write"
 	PermConnectorsManage = "connectors.manage"
+
+	PermCRMRead  = "crm.read"
+	PermCRMWrite = "crm.write"
 )
