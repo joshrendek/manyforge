@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Company, Contact } from '../../core/crm.service';
+import { ActivityEntry, Company, Contact } from '../../core/crm.service';
 import { ToastService } from '../../ui/toast/toast.service';
 import { ContactDetailComponent } from './contact-detail';
 
@@ -40,21 +40,41 @@ function makeCompany(over: Partial<Company> = {}): Company {
   };
 }
 
+function makeActivity(over: Partial<ActivityEntry> = {}): ActivityEntry {
+  return {
+    id: 'a1',
+    tenant_root_id: 'root',
+    business_id: biz,
+    contact_id: cid,
+    kind: 'ticket_created',
+    occurred_at: '2024-01-02T00:00:00Z',
+    actor: null,
+    source_type: 'ticket',
+    source_id: 't1',
+    summary: 'Opened ticket #1',
+    created_at: '2024-01-02T00:00:00Z',
+    ...over,
+  };
+}
+
 describe('ContactDetailComponent', () => {
   let fixture: ComponentFixture<ContactDetailComponent>;
   let cmp: ContactDetailComponent;
   let mock: HttpTestingController;
 
-  // Bring the component to a loaded state: flush getContact, listCompanies, and
-  // listContacts (the merge picker), leaving the edit + merge controls live.
+  // Bring the component to a loaded state: flush getContact, listCompanies,
+  // listContacts (the merge picker), and listActivity (the timeline), leaving the
+  // edit + merge controls live. Matching is by URL, so flush order is flexible —
+  // but the activity flush must be present on every path that reaches loaded state.
   function loadWith(
     contact: Contact = makeContact(),
     companies: Company[] = [],
     others: Contact[] = [],
+    activity: ActivityEntry[] = [],
   ): void {
     fixture = TestBed.createComponent(ContactDetailComponent);
     cmp = fixture.componentInstance;
-    fixture.detectChanges(); // ngOnInit → getContact + listCompanies + listContacts
+    fixture.detectChanges(); // ngOnInit → getContact + listCompanies + listContacts + listActivity
 
     mock.expectOne(`/api/v1/businesses/${biz}/contacts/${cid}`).flush(contact);
     mock
@@ -64,6 +84,9 @@ describe('ContactDetailComponent', () => {
     mock
       .expectOne(`/api/v1/businesses/${biz}/contacts`)
       .flush({ items: [contact, ...others], next_cursor: null });
+    mock
+      .expectOne(`/api/v1/businesses/${biz}/contacts/${cid}/activity`)
+      .flush({ items: activity, next_cursor: null });
     fixture.detectChanges();
   }
 
@@ -227,5 +250,27 @@ describe('ContactDetailComponent', () => {
     document.documentElement.setAttribute('data-theme', 'dark');
     loadWith();
     expect(q('.mf-card')).toBeTruthy();
+  });
+
+  it('renders one activity-row per timeline entry with a kind label + summary', () => {
+    loadWith(makeContact(), [], [], [
+      makeActivity({ id: 'a1', kind: 'ticket_created', summary: 'Opened ticket #1' }),
+      makeActivity({ id: 'a2', kind: 'email_received', summary: 'Replied to ticket #1' }),
+    ]);
+    expect(q('[data-testid="activity-timeline"]')).toBeTruthy();
+    const rows = fixture.nativeElement.querySelectorAll('[data-testid="activity-row"]');
+    expect(rows.length).toBe(2);
+    const text = (q('[data-testid="activity-timeline"]') as HTMLElement).textContent ?? '';
+    expect(text).toContain('Ticket created');
+    expect(text).toContain('Opened ticket #1');
+    expect(text).toContain('Email received');
+    expect(q('[data-testid="activity-empty"]')).toBeFalsy();
+  });
+
+  it('renders the activity empty state when the timeline is empty', () => {
+    loadWith(makeContact(), [], [], []);
+    expect(q('[data-testid="activity-empty"]')).toBeTruthy();
+    expect(q('[data-testid="activity-timeline"]')).toBeFalsy();
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="activity-row"]').length).toBe(0);
   });
 });

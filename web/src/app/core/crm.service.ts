@@ -25,6 +25,23 @@ export interface Company {
   updated_at: string;
 }
 
+// A single entry in a contact's activity timeline. Snake_case fields mirror the
+// backend ActivityEntry DTO exactly.
+export interface ActivityEntry {
+  id: string;
+  tenant_root_id: string;
+  business_id: string;
+  contact_id: string;
+  kind: string;
+  occurred_at: string;
+  actor: string | null;
+  source_type: string;
+  source_id: string | null;
+  summary: string;
+  metadata?: unknown;
+  created_at: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class CrmService {
   private http = inject(HttpClient);
@@ -77,5 +94,10 @@ export class CrmService {
 
   deleteCompany(businessId: string, id: string): Observable<void> {
     return this.http.delete<void>(`${this.base(businessId)}/companies/${id}`);
+  }
+
+  listActivity(businessId: string, contactId: string, cursor?: string): Observable<Page<ActivityEntry>> {
+    const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    return this.http.get<Page<ActivityEntry>>(`${this.base(businessId)}/contacts/${contactId}/activity${q}`);
   }
 }
