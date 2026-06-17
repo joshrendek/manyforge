@@ -28,7 +28,7 @@ const a1 = {
 const a2 = {
   id: 'act2', tenant_root_id: 'b1', business_id: 'b1', contact_id: 'c1',
   kind: 'email_received', occurred_at: '2026-06-12T09:00:00Z', actor: 'ada@acme.com',
-  source_type: 'email', source_id: 'e1', summary: 'Re: welcome aboard',
+  source_type: 'ticket_message', source_id: 'e1', summary: 'Re: welcome aboard',
   created_at: '2026-06-12T09:00:00Z',
 };
 const activity = { items: [a1, a2], next_cursor: null };
@@ -59,8 +59,9 @@ test('contact detail: renders + merge flow', async ({ page }) => {
     }
     return r.continue();
   });
-  // The detail page also fires the activity GET on load; mock it (more specific
-  // glob, registered before the bare /contacts route) so it never leaks to the network.
+  // The detail page also fires the activity GET on load; mock it (a more specific
+  // glob than the bare /contacts route, so the two never overlap) so it never leaks
+  // to the network.
   await page.route('**/api/v1/businesses/b1/contacts/c1/activity', (r) => r.fulfill({ json: activity }));
   await page.route('**/api/v1/businesses/b1/contacts/c1', (r) => r.fulfill({ json: c1 }));
   await page.route('**/api/v1/businesses/b1/companies', (r) => r.fulfill({ json: companies }));
