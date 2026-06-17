@@ -41,6 +41,7 @@ func TestPin_PermConstantsMatchSeededCatalog(t *testing.T) {
 		authz.PermTicketsAssign, authz.PermTicketsDelete, authz.PermInboxManage,
 		authz.PermAgentsConfigure, authz.PermAgentsRun, authz.PermAgentsApprove,
 		authz.PermConnectorsRead, authz.PermConnectorsWrite, authz.PermConnectorsManage,
+		authz.PermCRMRead, authz.PermCRMWrite,
 	}
 	for _, k := range keys {
 		if !strings.Contains(migrations, "'"+k+"'") {
