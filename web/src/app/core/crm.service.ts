@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
+import { Page } from './ticket.service';
 
 // Contacts and companies are tenant-wide records, but the API is reached through a
 // business-scoped URL (the business resolves the tenant root). Shapes mirror the
@@ -28,53 +29,53 @@ export interface Company {
 export class CrmService {
   private http = inject(HttpClient);
 
-  private base(b: string): string {
-    return `/api/v1/businesses/${b}`;
+  private base(businessId: string): string {
+    return `/api/v1/businesses/${businessId}`;
   }
 
-  listContacts(b: string, cursor?: string): Observable<{ items: Contact[]; next_cursor?: string | null }> {
+  listContacts(businessId: string, cursor?: string): Observable<Page<Contact>> {
     const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-    return this.http.get<{ items: Contact[]; next_cursor?: string | null }>(`${this.base(b)}/contacts${q}`);
+    return this.http.get<Page<Contact>>(`${this.base(businessId)}/contacts${q}`);
   }
 
-  getContact(b: string, id: string): Observable<Contact> {
-    return this.http.get<Contact>(`${this.base(b)}/contacts/${id}`);
+  getContact(businessId: string, id: string): Observable<Contact> {
+    return this.http.get<Contact>(`${this.base(businessId)}/contacts/${id}`);
   }
 
-  createContact(b: string, body: { primary_email: string; display_name?: string }): Observable<Contact> {
-    return this.http.post<Contact>(`${this.base(b)}/contacts`, body);
+  createContact(businessId: string, body: { primary_email: string; display_name?: string }): Observable<Contact> {
+    return this.http.post<Contact>(`${this.base(businessId)}/contacts`, body);
   }
 
-  updateContact(b: string, id: string, body: Partial<{ display_name: string; company_id: string }>): Observable<Contact> {
-    return this.http.patch<Contact>(`${this.base(b)}/contacts/${id}`, body);
+  updateContact(businessId: string, id: string, body: Partial<{ display_name: string; company_id: string }>): Observable<Contact> {
+    return this.http.patch<Contact>(`${this.base(businessId)}/contacts/${id}`, body);
   }
 
-  deleteContact(b: string, id: string): Observable<void> {
-    return this.http.delete<void>(`${this.base(b)}/contacts/${id}`);
+  deleteContact(businessId: string, id: string): Observable<void> {
+    return this.http.delete<void>(`${this.base(businessId)}/contacts/${id}`);
   }
 
-  mergeContact(b: string, winnerId: string, loserId: string): Observable<{ status: string }> {
-    return this.http.post<{ status: string }>(`${this.base(b)}/contacts/${winnerId}/merge`, { loser_id: loserId });
+  mergeContact(businessId: string, winnerId: string, loserId: string): Observable<{ status: string }> {
+    return this.http.post<{ status: string }>(`${this.base(businessId)}/contacts/${winnerId}/merge`, { loser_id: loserId });
   }
 
-  listCompanies(b: string, cursor?: string): Observable<{ items: Company[]; next_cursor?: string | null }> {
+  listCompanies(businessId: string, cursor?: string): Observable<Page<Company>> {
     const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-    return this.http.get<{ items: Company[]; next_cursor?: string | null }>(`${this.base(b)}/companies${q}`);
+    return this.http.get<Page<Company>>(`${this.base(businessId)}/companies${q}`);
   }
 
-  getCompany(b: string, id: string): Observable<Company> {
-    return this.http.get<Company>(`${this.base(b)}/companies/${id}`);
+  getCompany(businessId: string, id: string): Observable<Company> {
+    return this.http.get<Company>(`${this.base(businessId)}/companies/${id}`);
   }
 
-  createCompany(b: string, body: { name: string; domain?: string }): Observable<Company> {
-    return this.http.post<Company>(`${this.base(b)}/companies`, body);
+  createCompany(businessId: string, body: { name: string; domain?: string }): Observable<Company> {
+    return this.http.post<Company>(`${this.base(businessId)}/companies`, body);
   }
 
-  updateCompany(b: string, id: string, body: Partial<{ name: string; domain: string }>): Observable<Company> {
-    return this.http.patch<Company>(`${this.base(b)}/companies/${id}`, body);
+  updateCompany(businessId: string, id: string, body: Partial<{ name: string; domain: string }>): Observable<Company> {
+    return this.http.patch<Company>(`${this.base(businessId)}/companies/${id}`, body);
   }
 
-  deleteCompany(b: string, id: string): Observable<void> {
-    return this.http.delete<void>(`${this.base(b)}/companies/${id}`);
+  deleteCompany(businessId: string, id: string): Observable<void> {
+    return this.http.delete<void>(`${this.base(businessId)}/companies/${id}`);
   }
 }
