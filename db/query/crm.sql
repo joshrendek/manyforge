@@ -149,3 +149,36 @@ WHERE company_id = $1 AND tenant_root_id = $2;
 -- immediately before this delete — otherwise an in-use company would raise SQLSTATE 23503.
 -- name: DeleteCompany :exec
 DELETE FROM company WHERE id = $1 AND tenant_root_id = $2;
+
+-- ---- activity ----
+
+-- InsertActivityEntry is the idempotent recorder (mirrors audit.Write): it takes a tx and a
+-- trusted tenant_root_id, running on an RLS-set (principal-scoped) or RLS-exempt (DEFINER) tx.
+-- source_id-bearing events dedupe on activity_dedup_idx; NULL-source events always insert.
+-- name: InsertActivityEntry :exec
+INSERT INTO activity_entry (id, tenant_root_id, business_id, contact_id, kind, occurred_at, actor, source_type, source_id, summary, metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+ON CONFLICT (tenant_root_id, source_type, source_id, kind) WHERE source_id IS NOT NULL DO NOTHING;
+
+-- ListActivityForContact is the first timeline page: newest-first, tenant+contact scoped.
+-- name: ListActivityForContact :many
+SELECT * FROM activity_entry
+WHERE tenant_root_id = $1 AND contact_id = $2
+ORDER BY occurred_at DESC, id DESC
+LIMIT $3;
+
+-- ListActivityForContactAfter is the keyset continuation. Order is DESC, so the row-value
+-- predicate is strictly-LESS-THAN (occurred_at, id) — the DESC mirror of the Phase A ASC '>'
+-- cursors — avoiding skip/dupe at an occurred_at tie boundary.
+-- name: ListActivityForContactAfter :many
+SELECT * FROM activity_entry
+WHERE tenant_root_id = sqlc.arg('tenant_root_id') AND contact_id = sqlc.arg('contact_id')
+  AND (occurred_at, id) < (sqlc.arg('cur_occurred')::timestamptz, sqlc.arg('cur_id')::uuid)
+ORDER BY occurred_at DESC, id DESC
+LIMIT sqlc.arg('lim');
+
+-- RepointActivityEntries re-points a loser contact's activity to the winner on merge (same
+-- tenant); completes the Phase A merge (which already re-points requesters + soft-deletes loser).
+-- name: RepointActivityEntries :exec
+UPDATE activity_entry SET contact_id = sqlc.arg('winner')
+WHERE contact_id = sqlc.arg('loser') AND tenant_root_id = sqlc.arg('tenant_root_id');

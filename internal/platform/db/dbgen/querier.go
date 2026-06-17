@@ -296,6 +296,11 @@ type Querier interface {
 	// returns no row, so the NOT NULL column rejects the insert → service maps to 404).
 	// Duplicate (business_id, provider) → unique violation → 409.
 	InsertAIProviderCredential(ctx context.Context, arg InsertAIProviderCredentialParams) (AiProviderCredential, error)
+	// ---- activity ----
+	// InsertActivityEntry is the idempotent recorder (mirrors audit.Write): it takes a tx and a
+	// trusted tenant_root_id, running on an RLS-set (principal-scoped) or RLS-exempt (DEFINER) tx.
+	// source_id-bearing events dedupe on activity_dedup_idx; NULL-source events always insert.
+	InsertActivityEntry(ctx context.Context, arg InsertActivityEntryParams) error
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
 	// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
@@ -402,6 +407,12 @@ type Querier interface {
 	// ListAIProviderCredentials lists all credentials for a business, ordered
 	// by provider name for a stable, deterministic result.
 	ListAIProviderCredentials(ctx context.Context, businessID uuid.UUID) ([]AiProviderCredential, error)
+	// ListActivityForContact is the first timeline page: newest-first, tenant+contact scoped.
+	ListActivityForContact(ctx context.Context, arg ListActivityForContactParams) ([]ActivityEntry, error)
+	// ListActivityForContactAfter is the keyset continuation. Order is DESC, so the row-value
+	// predicate is strictly-LESS-THAN (occurred_at, id) — the DESC mirror of the Phase A ASC '>'
+	// cursors — avoiding skip/dupe at an occurred_at tie boundary.
+	ListActivityForContactAfter(ctx context.Context, arg ListActivityForContactAfterParams) ([]ActivityEntry, error)
 	// Keyset-paginated runs for one agent over [from_ts, to_ts), newest first. The cursor
 	// tuple (cur_created_at, cur_id) is passed as a far-future sentinel for page 1. RLS
 	// (under WithPrincipal) scopes to the caller's businesses; business_id+agent_id narrow.
@@ -589,6 +600,9 @@ type Querier interface {
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
 	RenameBusiness(ctx context.Context, arg RenameBusinessParams) error
+	// RepointActivityEntries re-points a loser contact's activity to the winner on merge (same
+	// tenant); completes the Phase A merge (which already re-points requesters + soft-deletes loser).
+	RepointActivityEntries(ctx context.Context, arg RepointActivityEntriesParams) error
 	// RepointRequesters moves every requester from the losing contact to the winning one
 	// during a contact merge (runs in the same tx as the loser's soft-delete). Scoped by
 	// contact_id, whose tenant ownership the service validates before calling.

@@ -7,6 +7,7 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -130,6 +131,48 @@ func (q *Queries) GetContactByEmail(ctx context.Context, arg GetContactByEmailPa
 	return i, err
 }
 
+const insertActivityEntry = `-- name: InsertActivityEntry :exec
+
+INSERT INTO activity_entry (id, tenant_root_id, business_id, contact_id, kind, occurred_at, actor, source_type, source_id, summary, metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+ON CONFLICT (tenant_root_id, source_type, source_id, kind) WHERE source_id IS NOT NULL DO NOTHING
+`
+
+type InsertActivityEntryParams struct {
+	ID           uuid.UUID   `json:"id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	ContactID    uuid.UUID   `json:"contact_id"`
+	Kind         string      `json:"kind"`
+	OccurredAt   time.Time   `json:"occurred_at"`
+	Actor        *string     `json:"actor"`
+	SourceType   string      `json:"source_type"`
+	SourceID     pgtype.UUID `json:"source_id"`
+	Summary      string      `json:"summary"`
+	Metadata     []byte      `json:"metadata"`
+}
+
+// ---- activity ----
+// InsertActivityEntry is the idempotent recorder (mirrors audit.Write): it takes a tx and a
+// trusted tenant_root_id, running on an RLS-set (principal-scoped) or RLS-exempt (DEFINER) tx.
+// source_id-bearing events dedupe on activity_dedup_idx; NULL-source events always insert.
+func (q *Queries) InsertActivityEntry(ctx context.Context, arg InsertActivityEntryParams) error {
+	_, err := q.db.Exec(ctx, insertActivityEntry,
+		arg.ID,
+		arg.TenantRootID,
+		arg.BusinessID,
+		arg.ContactID,
+		arg.Kind,
+		arg.OccurredAt,
+		arg.Actor,
+		arg.SourceType,
+		arg.SourceID,
+		arg.Summary,
+		arg.Metadata,
+	)
+	return err
+}
+
 const insertCompany = `-- name: InsertCompany :one
 
 INSERT INTO company (id, tenant_root_id, name, domain, created_at, updated_at)
@@ -226,6 +269,111 @@ func (q *Queries) InsertContact(ctx context.Context, arg InsertContactParams) (C
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const listActivityForContact = `-- name: ListActivityForContact :many
+SELECT id, tenant_root_id, business_id, contact_id, kind, occurred_at, actor, source_type, source_id, summary, metadata, created_at FROM activity_entry
+WHERE tenant_root_id = $1 AND contact_id = $2
+ORDER BY occurred_at DESC, id DESC
+LIMIT $3
+`
+
+type ListActivityForContactParams struct {
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	ContactID    uuid.UUID `json:"contact_id"`
+	Limit        int32     `json:"limit"`
+}
+
+// ListActivityForContact is the first timeline page: newest-first, tenant+contact scoped.
+func (q *Queries) ListActivityForContact(ctx context.Context, arg ListActivityForContactParams) ([]ActivityEntry, error) {
+	rows, err := q.db.Query(ctx, listActivityForContact, arg.TenantRootID, arg.ContactID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActivityEntry
+	for rows.Next() {
+		var i ActivityEntry
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantRootID,
+			&i.BusinessID,
+			&i.ContactID,
+			&i.Kind,
+			&i.OccurredAt,
+			&i.Actor,
+			&i.SourceType,
+			&i.SourceID,
+			&i.Summary,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActivityForContactAfter = `-- name: ListActivityForContactAfter :many
+SELECT id, tenant_root_id, business_id, contact_id, kind, occurred_at, actor, source_type, source_id, summary, metadata, created_at FROM activity_entry
+WHERE tenant_root_id = $1 AND contact_id = $2
+  AND (occurred_at, id) < ($3::timestamptz, $4::uuid)
+ORDER BY occurred_at DESC, id DESC
+LIMIT $5
+`
+
+type ListActivityForContactAfterParams struct {
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	ContactID    uuid.UUID `json:"contact_id"`
+	CurOccurred  time.Time `json:"cur_occurred"`
+	CurID        uuid.UUID `json:"cur_id"`
+	Lim          int32     `json:"lim"`
+}
+
+// ListActivityForContactAfter is the keyset continuation. Order is DESC, so the row-value
+// predicate is strictly-LESS-THAN (occurred_at, id) — the DESC mirror of the Phase A ASC '>'
+// cursors — avoiding skip/dupe at an occurred_at tie boundary.
+func (q *Queries) ListActivityForContactAfter(ctx context.Context, arg ListActivityForContactAfterParams) ([]ActivityEntry, error) {
+	rows, err := q.db.Query(ctx, listActivityForContactAfter,
+		arg.TenantRootID,
+		arg.ContactID,
+		arg.CurOccurred,
+		arg.CurID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActivityEntry
+	for rows.Next() {
+		var i ActivityEntry
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantRootID,
+			&i.BusinessID,
+			&i.ContactID,
+			&i.Kind,
+			&i.OccurredAt,
+			&i.Actor,
+			&i.SourceType,
+			&i.SourceID,
+			&i.Summary,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCompanies = `-- name: ListCompanies :many
@@ -450,6 +598,24 @@ func (q *Queries) ListRequestersForContact(ctx context.Context, contactID pgtype
 		return nil, err
 	}
 	return items, nil
+}
+
+const repointActivityEntries = `-- name: RepointActivityEntries :exec
+UPDATE activity_entry SET contact_id = $1
+WHERE contact_id = $2 AND tenant_root_id = $3
+`
+
+type RepointActivityEntriesParams struct {
+	Winner       uuid.UUID `json:"winner"`
+	Loser        uuid.UUID `json:"loser"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// RepointActivityEntries re-points a loser contact's activity to the winner on merge (same
+// tenant); completes the Phase A merge (which already re-points requesters + soft-deletes loser).
+func (q *Queries) RepointActivityEntries(ctx context.Context, arg RepointActivityEntriesParams) error {
+	_, err := q.db.Exec(ctx, repointActivityEntries, arg.Winner, arg.Loser, arg.TenantRootID)
+	return err
 }
 
 const repointRequesters = `-- name: RepointRequesters :exec
