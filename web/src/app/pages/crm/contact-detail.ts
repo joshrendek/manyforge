@@ -73,24 +73,28 @@ import { ToastService } from '../../ui/toast/toast.service';
              merge into this one; on success the loser is gone, so we return to the list. -->
         <div class="mf-card merge-block" data-testid="contact-merge">
           <h2 class="block-title">Merge another contact into this one</h2>
-          <div class="mf-filters">
-            <div class="mf-field" style="flex:1 1 260px">
-              <label for="cd-merge">Contact to merge (loser)</label>
-              <select id="cd-merge" class="mf-select" name="loser" data-testid="contact-merge-select"
-                      [(ngModel)]="selectedLoserId">
-                <option value="">Choose a contact…</option>
-                @for (o of otherContacts(); track o.id) {
-                  <option [value]="o.id">{{ o.primary_email }}</option>
-                }
-              </select>
+          @if (otherContacts().length === 0) {
+            <span class="mf-hint" data-testid="contact-merge-none">No other contacts to merge.</span>
+          } @else {
+            <div class="mf-filters">
+              <div class="mf-field" style="flex:1 1 260px">
+                <label for="cd-merge">Contact to merge (loser)</label>
+                <select id="cd-merge" class="mf-select" name="loser" data-testid="contact-merge-select"
+                        [(ngModel)]="selectedLoserId">
+                  <option value="">Choose a contact…</option>
+                  @for (o of otherContacts(); track o.id) {
+                    <option [value]="o.id">{{ o.primary_email }}</option>
+                  }
+                </select>
+              </div>
+              <div style="display:flex;align-items:flex-end">
+                <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="contact-merge-btn"
+                        [disabled]="!selectedLoserId || merging()" (click)="merge()">
+                  {{ merging() ? 'Merging…' : 'Merge selected into this contact' }}
+                </button>
+              </div>
             </div>
-            <div style="display:flex;align-items:flex-end">
-              <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="contact-merge-btn"
-                      [disabled]="!selectedLoserId || merging()" (click)="merge()">
-                {{ merging() ? 'Merging…' : 'Merge selected into this contact' }}
-              </button>
-            </div>
-          </div>
+          }
         </div>
 
         <!-- Delete block. -->
