@@ -218,7 +218,6 @@ describe('ContactDetailComponent', () => {
 
   it('renders a back link to the contacts list', () => {
     loadWith();
-    const link = q('[data-testid="contact-detail"] a') as HTMLAnchorElement;
     // The back link points at /crm/contacts.
     const back = fixture.nativeElement.querySelector('a[href="/crm/contacts"]') as HTMLAnchorElement;
     expect(back).toBeTruthy();
