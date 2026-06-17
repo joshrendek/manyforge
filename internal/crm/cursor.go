@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -32,6 +33,13 @@ const cursorContacts = "c"
 // cursorContacts means a contacts cursor cannot be replayed against the companies endpoint
 // (and vice versa) — decodeCursor rejects a kind mismatch as a validation error.
 const cursorCompanies = "co"
+
+// cursorActivity binds an activity-timeline cursor to ActivityService.ListForContact.
+// Unlike the textual contact/company sort keys, the activity sort is (occurred_at, id)
+// DESC, so the keyset key carries occurred_at formatted as RFC3339Nano; the service
+// parses it back to a time.Time for the strictly-less-than continuation. A distinct kind
+// means a contacts/companies cursor cannot be replayed against this endpoint.
+const cursorActivity = "a"
 
 // sep delimits the token's three fields. The textual key may itself contain sep (it is
 // a contact.primary_email today, but the helper is general), so decodeCursor recovers
@@ -77,3 +85,24 @@ func decodeContactCursor(token string) (keyset, error) { return decodeCursor(cur
 
 func encodeCompanyCursor(k keyset) string              { return encodeCursor(cursorCompanies, k) }
 func decodeCompanyCursor(token string) (keyset, error) { return decodeCursor(cursorCompanies, token) }
+
+// encodeActivityCursor mints an activity cursor from the last row's (occurred_at, id).
+// occurred_at is formatted as RFC3339Nano so the keyset's string key round-trips to the
+// exact instant the *After continuation compares against.
+func encodeActivityCursor(occurredAt time.Time, id uuid.UUID) string {
+	return encodeCursor(cursorActivity, keyset{key: occurredAt.UTC().Format(time.RFC3339Nano), id: id})
+}
+
+// decodeActivityCursor parses an activity cursor back into (occurred_at, id). A malformed
+// token or an unparseable occurred_at is a validation error (→ 400), never a 500.
+func decodeActivityCursor(token string) (time.Time, uuid.UUID, error) {
+	k, err := decodeCursor(cursorActivity, token)
+	if err != nil {
+		return time.Time{}, uuid.Nil, err
+	}
+	occurredAt, perr := time.Parse(time.RFC3339Nano, k.key)
+	if perr != nil {
+		return time.Time{}, uuid.Nil, fmt.Errorf("invalid cursor: %w", errs.ErrValidation)
+	}
+	return occurredAt, k.id, nil
+}
