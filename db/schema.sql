@@ -1,7 +1,7 @@
 -- sqlc schema input: TABLE definitions only, mirroring migrations/ (the runtime
 -- source of truth). Triggers, RLS policies, roles, and functions live in the
 -- migrations and are intentionally excluded here so sqlc's parser stays happy.
--- Keep this in sync with migrations/0001..0016 when table shapes change.
+-- Keep this in sync with migrations/0001..0057 when table shapes change.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 
@@ -199,7 +199,8 @@ CREATE TABLE requester (
     created_at     timestamptz NOT NULL,
     updated_at     timestamptz NOT NULL,
     UNIQUE (tenant_root_id, email),
-    UNIQUE (id, tenant_root_id)
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (contact_id, tenant_root_id) REFERENCES contact (id, tenant_root_id)
 );
 
 CREATE TABLE ticket (
@@ -524,3 +525,30 @@ CREATE TABLE connector_outbound_op (
     FOREIGN KEY (ticket_id, tenant_root_id) REFERENCES ticket (id, tenant_root_id)
 );
 CREATE INDEX connector_outbound_op_business_idx ON connector_outbound_op (business_id, tenant_root_id);
+
+-- Spec 005 CRM: tenant-wide contacts + companies (migrations/0057).
+CREATE TABLE company (
+    id             uuid PRIMARY KEY,
+    tenant_root_id uuid NOT NULL,
+    name           text NOT NULL,
+    domain         citext,
+    created_at     timestamptz NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    UNIQUE (id, tenant_root_id)
+);
+CREATE UNIQUE INDEX company_tenant_domain_uq ON company (tenant_root_id, domain) WHERE domain IS NOT NULL;
+
+CREATE TABLE contact (
+    id             uuid PRIMARY KEY,
+    tenant_root_id uuid NOT NULL,
+    primary_email  citext NOT NULL,
+    display_name   text,
+    company_id     uuid,
+    created_at     timestamptz NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    deleted_at     timestamptz,
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (company_id, tenant_root_id) REFERENCES company (id, tenant_root_id)
+);
+CREATE UNIQUE INDEX contact_tenant_email_uq ON contact (tenant_root_id, primary_email) WHERE deleted_at IS NULL;
+CREATE INDEX contact_company_idx ON contact (company_id, tenant_root_id);

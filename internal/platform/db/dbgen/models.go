@@ -627,6 +627,15 @@ type BusinessClosure struct {
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 }
 
+type Company struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Name         string    `json:"name"`
+	Domain       *string   `json:"domain"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type Connector struct {
 	ID                          uuid.UUID          `json:"id"`
 	BusinessID                  uuid.UUID          `json:"business_id"`
@@ -679,6 +688,17 @@ type ConnectorWebhookDelivery struct {
 	ConnectorID        uuid.UUID `json:"connector_id"`
 	ExternalDeliveryID string    `json:"external_delivery_id"`
 	ReceivedAt         time.Time `json:"received_at"`
+}
+
+type Contact struct {
+	ID           uuid.UUID          `json:"id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	PrimaryEmail string             `json:"primary_email"`
+	DisplayName  *string            `json:"display_name"`
+	CompanyID    pgtype.UUID        `json:"company_id"`
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type EmailDomain struct {
