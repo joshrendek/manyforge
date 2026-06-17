@@ -155,7 +155,7 @@ func main() {
 	// conditional handler-side gate (read/write groups are gated by crm.read/crm.write).
 	crmContacts := &crm.ContactService{DB: database}
 	crmCompanies := &crm.CompanyService{DB: database}
-	crmH := crm.NewHandler(crmContacts, crmCompanies, database, permResolve)
+	crmH := crm.NewHandler(crmContacts, crmCompanies, crmActivity, database, permResolve)
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
