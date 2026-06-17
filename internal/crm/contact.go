@@ -182,15 +182,14 @@ func (s *ContactService) SoftDelete(ctx context.Context, principalID, businessID
 	return mapErr(err)
 }
 
-// Merge folds the loser contact into the winner: every requester pointing at the loser is
-// re-pointed to the winner, the loser is soft-deleted, and a contact.merged audit row is
-// written — all inside one WithPrincipal tx (no TOCTOU window). Both contacts are loaded +
-// validated to live in the URL business's tenant first, so a cross-tenant merge (a loser
-// from another tenant) collapses to ErrNotFound (no existence oracle). Merging a contact
+// Merge folds the loser contact into the winner: every requester and activity_entry pointing
+// at the loser is re-pointed to the winner, the loser is soft-deleted, and a contact.merged
+// audit row is written — all inside one WithPrincipal tx (no TOCTOU window). Both contacts are
+// loaded + validated to live in the URL business's tenant first, so a cross-tenant merge (a
+// loser from another tenant) collapses to ErrNotFound (no existence oracle). Merging a contact
 // into itself is rejected up front as ErrValidation.
 //
-// TODO(phase-b): also re-point activity_entry rows; optional: adopt loser's company_id
-// when winner has none. (Phase A merge does requesters + soft-delete + audit only.)
+// Optional future work: adopt the loser's company_id when the winner has none.
 func (s *ContactService) Merge(ctx context.Context, principalID, businessID, winnerID, loserID uuid.UUID) error {
 	if winnerID == loserID {
 		return fmt.Errorf("crm: cannot merge a contact into itself: %w", errs.ErrValidation)
@@ -213,6 +212,13 @@ func (s *ContactService) Merge(ctx context.Context, principalID, businessID, win
 			LoserID:  db.PGUUID(loserID),
 		}); rerr != nil {
 			return rerr
+		}
+		if aerr := q.RepointActivityEntries(ctx, dbgen.RepointActivityEntriesParams{
+			Winner:       winnerID,
+			Loser:        loserID,
+			TenantRootID: tenantRoot,
+		}); aerr != nil {
+			return aerr
 		}
 		if derr := q.SoftDeleteContact(ctx, dbgen.SoftDeleteContactParams{ID: loserID, TenantRootID: tenantRoot}); derr != nil {
 			return derr

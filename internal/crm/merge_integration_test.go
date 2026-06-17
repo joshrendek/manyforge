@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -89,6 +90,64 @@ func TestMergeRepointsRequestersAndSoftDeletesLoser(t *testing.T) {
 	if n < 1 {
 		t.Fatalf("audit rows for contact.merged (actor=%s, winner=%s, loser=%s) = %d, want >= 1",
 			pid, winner.ID, loser.ID, n)
+	}
+}
+
+// TestMergeRepointsActivity proves the merge re-points the loser's activity_entry rows to the
+// winner (Phase B completion). An activity entry is recorded on the loser, the merge runs, and
+// the row is read back by id: its contact_id must now be the winner.
+func TestMergeRepointsActivity(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	defer tdb.Close(ctx)
+
+	seed := seedCRMTenant(ctx, t, tdb)
+	pid, biz, root := seed.principalID, seed.businessID, seed.tenantRootID
+	svc := &crm.ContactService{DB: tdb.App}
+
+	winner, err := svc.Create(ctx, pid, biz, crm.ContactInput{PrimaryEmail: "winner-act@example.com"})
+	if err != nil {
+		t.Fatalf("Create winner: %v", err)
+	}
+	loser, err := svc.Create(ctx, pid, biz, crm.ContactInput{PrimaryEmail: "loser-act@example.com"})
+	if err != nil {
+		t.Fatalf("Create loser: %v", err)
+	}
+
+	// Record an activity entry on the LOSER via a real principal-scoped Record (mirrors a
+	// caller already inside a WithPrincipal unit of work).
+	actSvc := &crm.ActivityService{DB: tdb.App}
+	recordActivity(ctx, t, tdb, actSvc, pid, root, crm.ActivityInput{
+		BusinessID: biz,
+		ContactID:  loser.ID,
+		Kind:       "note.created",
+		OccurredAt: time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC),
+		SourceType: "manual",
+		Summary:    "note on loser",
+	})
+
+	// Capture the activity row id (single row for the loser) before the merge.
+	var actID uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id FROM activity_entry WHERE contact_id = $1`, loser.ID).Scan(&actID); err != nil {
+		t.Fatalf("read seeded activity_entry id: %v", err)
+	}
+
+	if err := svc.Merge(ctx, pid, biz, winner.ID, loser.ID); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	// The activity entry now points at the winner.
+	var gotContact uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT contact_id FROM activity_entry WHERE id = $1`, actID).Scan(&gotContact); err != nil {
+		t.Fatalf("read activity_entry contact_id: %v", err)
+	}
+	if gotContact != winner.ID {
+		t.Fatalf("activity_entry repointed to %s, want winner %s", gotContact, winner.ID)
 	}
 }
 
