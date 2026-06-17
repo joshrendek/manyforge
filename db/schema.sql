@@ -553,7 +553,7 @@ CREATE TABLE contact (
 CREATE UNIQUE INDEX contact_tenant_email_uq ON contact (tenant_root_id, primary_email) WHERE deleted_at IS NULL;
 CREATE INDEX contact_company_idx ON contact (company_id, tenant_root_id);
 
--- Spec 005 CRM Phase B: tenant-wide activity timeline (migrations/0061).
+-- Spec 005 CRM Phase B: tenant-wide activity timeline (migrations/0062).
 CREATE TABLE activity_entry (
     id             uuid PRIMARY KEY,
     tenant_root_id uuid NOT NULL,
