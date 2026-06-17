@@ -47,6 +47,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/agents/list').then((m) => m.AgentsListComponent),
   },
   {
+    path: 'crm/contacts',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/crm/contacts-list').then((m) => m.ContactsListComponent),
+  },
+  {
     path: 'credentials/connector',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/connectors/list').then((m) => m.ConnectorsListComponent),
