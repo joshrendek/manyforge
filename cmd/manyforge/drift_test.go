@@ -88,7 +88,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		agentsApprove:   noop,
 		mcp:             agents.NewMCPServerHandler(nil, agents.NewMCPToolPolicyHandler(nil, nil)),
 		mcpConfigure:    noop,
-		crm:             crm.NewHandler(&crm.ContactService{}, &crm.CompanyService{}, nil, nil),
+		crm:             crm.NewHandler(&crm.ContactService{}, &crm.CompanyService{}, &crm.ActivityService{}, nil, nil),
 		crmRead:         noop,
 		crmWrite:        noop,
 	})
