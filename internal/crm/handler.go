@@ -1,6 +1,7 @@
 package crm
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,13 +25,14 @@ import (
 type Handler struct {
 	contacts  *ContactService
 	companies *CompanyService
+	activity  *ActivityService
 	db        *db.DB
 	resolve   httpx.PermissionResolver
 }
 
-// NewHandler builds a CRM HTTP handler over the contact + company services.
-func NewHandler(c *ContactService, co *CompanyService, database *db.DB, resolve httpx.PermissionResolver) *Handler {
-	return &Handler{contacts: c, companies: co, db: database, resolve: resolve}
+// NewHandler builds a CRM HTTP handler over the contact + company + activity services.
+func NewHandler(c *ContactService, co *CompanyService, a *ActivityService, database *db.DB, resolve httpx.PermissionResolver) *Handler {
+	return &Handler{contacts: c, companies: co, activity: a, db: database, resolve: resolve}
 }
 
 // ReadRoutes mounts the authenticated read endpoints. The caller wraps these with
@@ -39,6 +41,7 @@ func NewHandler(c *ContactService, co *CompanyService, database *db.DB, resolve 
 func (h *Handler) ReadRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/contacts", h.listContacts)
 	r.Get("/businesses/{id}/contacts/{cid}", h.getContact)
+	r.Get("/businesses/{id}/contacts/{cid}/activity", h.listActivity)
 	r.Get("/businesses/{id}/companies", h.listCompanies)
 	r.Get("/businesses/{id}/companies/{coid}", h.getCompany)
 }
@@ -109,6 +112,21 @@ type companyResp struct {
 	UpdatedAt    string  `json:"updated_at"`
 }
 
+type activityResp struct {
+	ID           string          `json:"id"`
+	TenantRootID string          `json:"tenant_root_id"`
+	BusinessID   string          `json:"business_id"`
+	ContactID    string          `json:"contact_id"`
+	Kind         string          `json:"kind"`
+	OccurredAt   string          `json:"occurred_at"`
+	Actor        *string         `json:"actor"`
+	SourceType   string          `json:"source_type"`
+	SourceID     *string         `json:"source_id"`
+	Summary      string          `json:"summary"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt    string          `json:"created_at"`
+}
+
 const rfc3339 = "2006-01-02T15:04:05.999999999Z07:00"
 
 func toContactResp(c Contact) contactResp {
@@ -131,6 +149,23 @@ func toCompanyResp(c Company) companyResp {
 		Domain:       c.Domain,
 		CreatedAt:    c.CreatedAt.UTC().Format(rfc3339),
 		UpdatedAt:    c.UpdatedAt.UTC().Format(rfc3339),
+	}
+}
+
+func toActivityResp(a ActivityEntry) activityResp {
+	return activityResp{
+		ID:           a.ID.String(),
+		TenantRootID: a.TenantRootID.String(),
+		BusinessID:   a.BusinessID.String(),
+		ContactID:    a.ContactID.String(),
+		Kind:         a.Kind,
+		OccurredAt:   a.OccurredAt.UTC().Format(rfc3339),
+		Actor:        a.Actor,
+		SourceType:   a.SourceType,
+		SourceID:     uuidStrPtr(a.SourceID),
+		Summary:      a.Summary,
+		Metadata:     a.Metadata,
+		CreatedAt:    a.CreatedAt.UTC().Format(rfc3339),
 	}
 }
 
@@ -181,6 +216,37 @@ func (h *Handler) getContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toContactResp(c))
+}
+
+// listActivity returns a keyset page of a contact's activity timeline, newest-first.
+// Reads both the {id} business and {cid} contact path params; an unknown/foreign id
+// collapses to ErrNotFound in the service (no existence oracle), mirroring getContact.
+func (h *Handler) listActivity(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	cid, err := pathUUID(r, "cid")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	page, err := h.activity.ListForContact(r.Context(), pid, bid, cid, r.URL.Query().Get("cursor"), parseLimit(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items := make([]activityResp, 0, len(page.Items))
+	for _, a := range page.Items {
+		items = append(items, toActivityResp(a))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": page.NextCursor})
 }
 
 func (h *Handler) createContact(w http.ResponseWriter, r *http.Request) {

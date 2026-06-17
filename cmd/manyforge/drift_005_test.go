@@ -9,7 +9,7 @@ import (
 )
 
 // inScope005Ops is the COMPLETE set of spec-005 CRM operations served by the router
-// (contact read + write CRUD + merge, company read + write CRUD).
+// (contact read + write CRUD + merge + activity timeline, company read + write CRUD).
 // Each entry is asserted both ways by TestOpenAPIDrift005 — present in the router AND
 // documented in the 005 contract.
 var inScope005Ops = []string{
@@ -18,6 +18,7 @@ var inScope005Ops = []string{
 	"GET /businesses/{}/contacts/{}",
 	"PATCH /businesses/{}/contacts/{}",
 	"DELETE /businesses/{}/contacts/{}",
+	"GET /businesses/{}/contacts/{}/activity",
 	"POST /businesses/{}/contacts/{}/merge",
 	"GET /businesses/{}/companies",
 	"POST /businesses/{}/companies",

@@ -3,8 +3,9 @@ info:
   title: manyforge CRM API
   version: 0.1.0
   description: >
-    Spec 005 — CRM Contacts & Companies (Phase A). Business-bound contact and
-    company CRUD plus contact merge, split into a read slice (gated by the
+    Spec 005 — CRM Contacts & Companies. Phase A: business-bound contact and
+    company CRUD plus contact merge. Phase B: the per-contact activity timeline
+    (read-only, keyset paginated, newest-first). Split into a read slice (gated by the
     crm.read permission) and a write slice (gated by crm.write). Authorization and
     existence are indistinguishable — a lacking permission or an invisible business
     returns the same 404 as an unknown id (no existence oracle). Ownership is
@@ -117,6 +118,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MergeResult" }
         "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/contacts/{cid}/activity:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: cid, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listContactActivity
+      summary: List a contact's activity timeline (keyset paginated, newest-first)
+      description: >
+        Requires the crm.read permission at {id}. Returns the contact's activity
+        entries (emails, ticket transitions, notes) ordered newest-first by
+        (occurred_at, id). An unknown/foreign contact or business returns the same
+        404 as an unknown id (no existence oracle).
+      parameters:
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 200 }, description: "page size; non-positive -> default, server caps at 200" }
+      responses:
+        "200":
+          description: A page of activity entries
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivityList" }
         "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/companies:
     parameters:
@@ -299,3 +322,27 @@ components:
       required: [status]
       properties:
         status: { type: string, enum: [merged] }
+    ActivityEntry:
+      type: object
+      required: [id, tenant_root_id, business_id, contact_id, kind, occurred_at, actor, source_type, source_id, summary, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        kind: { type: string }
+        occurred_at: { type: string, format: date-time }
+        actor: { type: string, nullable: true }
+        source_type: { type: string }
+        source_id: { type: string, format: uuid, nullable: true }
+        summary: { type: string }
+        metadata: { description: "raw JSON blob passed through verbatim; omitted when empty" }
+        created_at: { type: string, format: date-time }
+    ActivityList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ActivityEntry" }
+        next_cursor: { type: string, nullable: true }
