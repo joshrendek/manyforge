@@ -9,6 +9,7 @@
 package crm
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,6 +55,40 @@ type Company struct {
 type CompanyInput struct {
 	Name   string
 	Domain *string
+}
+
+// ActivityEntry is the API view of a single activity-timeline row (spec 005 Phase B).
+// An entry records something that happened to a contact (an email arrived, a ticket
+// opened, a note was written). Actor/SourceID are optional and omitted from JSON when
+// nil; Metadata is a raw JSON blob passed through verbatim (omitted when empty).
+type ActivityEntry struct {
+	ID           uuid.UUID       `json:"id"`
+	TenantRootID uuid.UUID       `json:"tenant_root_id"`
+	BusinessID   uuid.UUID       `json:"business_id"`
+	ContactID    uuid.UUID       `json:"contact_id"`
+	Kind         string          `json:"kind"`
+	OccurredAt   time.Time       `json:"occurred_at"`
+	Actor        *string         `json:"actor,omitempty"`
+	SourceType   string          `json:"source_type"`
+	SourceID     *uuid.UUID      `json:"source_id,omitempty"`
+	Summary      string          `json:"summary"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// ActivityInput is the record payload. SourceID-bearing events dedupe on
+// (tenant_root_id, source_type, source_id, kind); a nil SourceID always inserts.
+// Metadata is passed through to the jsonb column verbatim (nil ⇒ SQL NULL).
+type ActivityInput struct {
+	BusinessID uuid.UUID
+	ContactID  uuid.UUID
+	Kind       string
+	OccurredAt time.Time
+	Actor      *string
+	SourceType string
+	SourceID   *uuid.UUID
+	Summary    string
+	Metadata   []byte
 }
 
 // Page is a keyset-paginated result. NextCursor is an opaque token (nil = last page).
