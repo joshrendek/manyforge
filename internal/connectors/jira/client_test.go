@@ -268,8 +268,15 @@ func TestListUpdatedSince(t *testing.T) {
 		if !strings.Contains(jql, "updated >= ") {
 			t.Errorf("ListUpdatedSince: jql = %q, missing 'updated >= '", jql)
 		}
-		if !strings.Contains(jql, "2026-06-01") {
-			t.Errorf("ListUpdatedSince: jql = %q, missing '2026-06-01'", jql)
+		// manyforge-7kf: a non-zero `since` MUST produce a timezone-independent relative
+		// bound (updated >= "-Nm"), never a UTC absolute datetime. Jira reads a bare datetime
+		// literal in the account's timezone, so a UTC absolute silently drops issues for
+		// accounts behind UTC — the incremental sweep then returns nothing forever.
+		if !strings.Contains(jql, `updated >= "-`) || !strings.Contains(jql, `m"`) {
+			t.Errorf("ListUpdatedSince: jql = %q, want relative bound like updated >= \"-Nm\"", jql)
+		}
+		if strings.Contains(jql, "2026-06-01") {
+			t.Errorf("ListUpdatedSince: jql = %q must NOT embed a UTC absolute date (TZ bug)", jql)
 		}
 		if r.URL.Query().Get("fields") != "updated" {
 			t.Errorf("ListUpdatedSince: fields = %q, want 'updated'", r.URL.Query().Get("fields"))
@@ -298,6 +305,31 @@ func TestListUpdatedSince(t *testing.T) {
 		if k != want[i] {
 			t.Errorf("keys[%d] = %q, want %q", i, k, want[i])
 		}
+	}
+}
+
+// manyforge-7kf: the full-pull path (since == zero, used by "Sync now") must keep an
+// ancient ABSOLUTE lower bound so it fetches everything regardless of timezone — only the
+// incremental path uses the relative "-Nm" form. Guards the path that currently works.
+func TestListUpdatedSince_FullPullUsesAbsoluteBound(t *testing.T) {
+	searchBody := loadGolden(t, "search_updated.json")
+	var gotJQL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotJQL = r.URL.Query().Get("jql")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(searchBody)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user@example.com", "test-api-token", "secret", srv.Client())
+	if _, err := c.ListUpdatedSince(context.Background(), time.Time{}); err != nil {
+		t.Fatalf("ListUpdatedSince(zero): %v", err)
+	}
+	if !strings.Contains(gotJQL, "1970-01-01") {
+		t.Errorf("full-pull jql = %q, want ancient absolute bound (1970-01-01)", gotJQL)
+	}
+	if strings.Contains(gotJQL, `"-`) {
+		t.Errorf("full-pull jql = %q must NOT use a relative bound", gotJQL)
 	}
 }
 
