@@ -334,7 +334,13 @@ func main() {
 		connWebhookH = connectors.NewWebhookHandler(database, connSealer, connReg, logger)
 		connManageH = connectors.NewHandler(connSvc)
 		inboundSyncSub = &connectors.InboundSyncSubscriber{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger}
-		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: 5 * time.Minute}
+		// StaleAfter is the per-connector minimum re-poll interval; Every is just the scan
+		// tick. At StaleAfter=1m a new external issue auto-syncs within ~1–2m on the polling
+		// path (vs ~5–6m before). Webhooks (connWebhookH) remain the real-time path in prod;
+		// polling is the backstop, so this mainly helps webhook-less environments (e.g. a
+		// localhost dev where Jira Cloud can't reach the webhook endpoint). Lower ⇒ more
+		// external-API calls per connector. (manyforge-7kf)
+		connReconciler = &connectors.Reconciler{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: time.Minute, StaleAfter: time.Minute}
 		connManageH.SetSyncTrigger(connReconciler) // wire the "Sync now" endpoint to the reconciler
 		outboundDispatcher = &connectors.OutboundDispatcher{DB: database, Sealer: connSealer, Registry: connReg, Logger: logger, Every: 15 * time.Second, Batch: 20, StaleAfter: 5 * time.Minute}
 		// Assign the gateway and rebuild the tool registry for both the Engine and
