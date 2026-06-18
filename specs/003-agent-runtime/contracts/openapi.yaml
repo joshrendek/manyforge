@@ -501,6 +501,12 @@ components:
         model: { type: string }
         system_prompt: { type: string }
         allowed_tools: { type: array, items: { type: string } }
+        web_allowed_domains:
+          type: array
+          items: { type: string }
+          description: >-
+            Opt-in domain allowlist scoping the OpenRouter web_fetch server tool.
+            Empty (default) means web fetching is not enabled for the agent.
         autonomy_mode: { type: integer, enum: [1, 2, 3] }
         enabled: { type: boolean }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647 }
@@ -558,6 +564,12 @@ components:
         model: { type: string, minLength: 1 }
         system_prompt: { type: string }
         allowed_tools: { type: array, items: { type: string } }
+        web_allowed_domains:
+          type: array
+          items: { type: string }
+          description: >-
+            Opt-in domain allowlist scoping the OpenRouter web_fetch server tool.
+            Empty (default) means web fetching is not enabled for the agent.
         autonomy_mode: { type: integer, enum: [1, 2, 3], default: 1 }
         enabled: { type: boolean, default: true }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647, default: 0 }
@@ -575,6 +587,12 @@ components:
         model: { type: string, minLength: 1 }
         system_prompt: { type: string }
         allowed_tools: { type: array, items: { type: string } }
+        web_allowed_domains:
+          type: array
+          items: { type: string }
+          description: >-
+            Opt-in domain allowlist scoping the OpenRouter web_fetch server tool.
+            Empty (default) means web fetching is not enabled for the agent.
         autonomy_mode: { type: integer, enum: [1, 2, 3] }
         enabled: { type: boolean }
         monthly_budget_cents: { type: integer, minimum: 0, maximum: 2147483647 }

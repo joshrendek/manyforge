@@ -543,6 +543,7 @@ type Agent struct {
 	UpdatedAt          time.Time   `json:"updated_at"`
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	RetriageOnReply    bool        `json:"retriage_on_reply"`
+	WebAllowedDomains  []string    `json:"web_allowed_domains"`
 }
 
 type AgentRun struct {
