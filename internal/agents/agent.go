@@ -52,6 +52,7 @@ type Agent struct {
 	MonthlyBudgetCents int
 	AllowedMCPServers  []uuid.UUID
 	RetriageOnReply    bool
+	WebAllowedDomains  []string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -68,12 +69,14 @@ type CreateAgentInput struct {
 	MonthlyBudgetCents int
 	AllowedMCPServers  []uuid.UUID
 	RetriageOnReply    bool
+	WebAllowedDomains  []string
 }
 
 // UpdateAgentInput is a partial (PATCH) update — nil fields are left unchanged.
 // Provider is intentionally absent: it is immutable after creation.
 // AllowedMCPServers nil = absent (preserve current value); non-nil = replace
-// (empty non-nil slice clears to {}).
+// (empty non-nil slice clears to {}). WebAllowedDomains follows the same
+// tri-state convention as AllowedTools/AllowedMCPServers.
 type UpdateAgentInput struct {
 	Name               *string
 	Model              *string
@@ -84,6 +87,7 @@ type UpdateAgentInput struct {
 	MonthlyBudgetCents *int
 	AllowedMCPServers  *[]uuid.UUID
 	RetriageOnReply    *bool
+	WebAllowedDomains  *[]string
 }
 
 func validateCreateAgent(in CreateAgentInput) error {
@@ -131,6 +135,10 @@ func toAgent(r dbgen.Agent) Agent {
 	if mcpServers == nil {
 		mcpServers = []uuid.UUID{}
 	}
+	webDomains := r.WebAllowedDomains
+	if webDomains == nil {
+		webDomains = []string{}
+	}
 	return Agent{
 		ID: r.ID, BusinessID: r.BusinessID, PrincipalID: r.PrincipalID,
 		Name: r.Name, Provider: string(r.Provider), Model: r.Model,
@@ -139,6 +147,7 @@ func toAgent(r dbgen.Agent) Agent {
 		MonthlyBudgetCents: int(r.MonthlyBudgetCents),
 		AllowedMCPServers:  mcpServers,
 		RetriageOnReply:    r.RetriageOnReply,
+		WebAllowedDomains:  webDomains,
 		CreatedAt:          r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -165,6 +174,10 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 	if mcpServers == nil {
 		mcpServers = []uuid.UUID{}
 	}
+	webDomains := in.WebAllowedDomains
+	if webDomains == nil {
+		webDomains = []string{}
+	}
 	agentID := uuid.New()
 	agentPrincipalID := uuid.New()
 	var row dbgen.Agent
@@ -190,6 +203,7 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 			MonthlyBudgetCents: int32(in.MonthlyBudgetCents),
 			AllowedMcpServers:  mcpServers,
 			RetriageOnReply:    in.RetriageOnReply,
+			WebAllowedDomains:  webDomains,
 			BusinessID:         businessID,
 		})
 		if aerr != nil {
@@ -289,6 +303,11 @@ func (s *AgentService) Update(ctx context.Context, principalID, businessID, agen
 	// value); non-nil pointer = replace (empty non-nil slice clears to {}).
 	if in.AllowedMCPServers != nil {
 		params.AllowedMcpServers = *in.AllowedMCPServers
+	}
+	// WebAllowedDomains: nil pointer = absent (COALESCE preserves current value);
+	// non-nil pointer = replace (empty non-nil slice clears to {}).
+	if in.WebAllowedDomains != nil {
+		params.WebAllowedDomains = *in.WebAllowedDomains
 	}
 	params.RetriageOnReply = in.RetriageOnReply
 	var row dbgen.Agent

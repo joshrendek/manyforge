@@ -335,6 +335,7 @@ CREATE TABLE agent (
     updated_at           timestamptz NOT NULL,
     allowed_mcp_servers  uuid[] NOT NULL,
     retriage_on_reply    boolean NOT NULL,
+    web_allowed_domains  text[] NOT NULL,
     UNIQUE (business_id, name),
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
