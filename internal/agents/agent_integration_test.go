@@ -30,6 +30,7 @@ func TestAgentCRUDRoundTrip(t *testing.T) {
 		Name: "Triage Bot", Provider: "anthropic", Model: "claude-sonnet-4-5",
 		SystemPrompt: "Be helpful.", AllowedTools: []string{"get_ticket", "set_priority"},
 		AutonomyMode: 1, Enabled: true, MonthlyBudgetCents: 5000,
+		WebAllowedDomains: []string{"docs.sysward.com"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -39,6 +40,9 @@ func TestAgentCRUDRoundTrip(t *testing.T) {
 	}
 	if created.Provider != "anthropic" || created.AutonomyMode != 1 || len(created.AllowedTools) != 2 {
 		t.Fatalf("Create round-trip mismatch: %+v", created)
+	}
+	if len(created.WebAllowedDomains) != 1 || created.WebAllowedDomains[0] != "docs.sysward.com" {
+		t.Fatalf("Create web_allowed_domains mismatch: %+v", created.WebAllowedDomains)
 	}
 
 	// The created principal is a kind='agent' principal homed at the business.
@@ -58,6 +62,9 @@ func TestAgentCRUDRoundTrip(t *testing.T) {
 	if err != nil || got.Name != "Triage Bot" {
 		t.Fatalf("Get: %+v err=%v", got, err)
 	}
+	if len(got.WebAllowedDomains) != 1 || got.WebAllowedDomains[0] != "docs.sysward.com" {
+		t.Fatalf("Get web_allowed_domains did not round-trip: %+v", got.WebAllowedDomains)
+	}
 
 	// List
 	list, err := svc.List(ctx, seed.principalID, seed.businessID)
@@ -65,7 +72,7 @@ func TestAgentCRUDRoundTrip(t *testing.T) {
 		t.Fatalf("List: %d items err=%v", len(list), err)
 	}
 
-	// Update (PATCH semantics: only model + enabled; name/tools preserved)
+	// Update (PATCH semantics: only model + enabled; name/tools/web_domains preserved)
 	model := "claude-opus-4-1"
 	enabled := false
 	upd, err := svc.Update(ctx, seed.principalID, seed.businessID, created.ID, UpdateAgentInput{
@@ -76,6 +83,21 @@ func TestAgentCRUDRoundTrip(t *testing.T) {
 	}
 	if upd.Model != "claude-opus-4-1" || upd.Enabled || upd.Name != "Triage Bot" || len(upd.AllowedTools) != 2 {
 		t.Fatalf("Update did not apply PATCH semantics: %+v", upd)
+	}
+	if len(upd.WebAllowedDomains) != 1 || upd.WebAllowedDomains[0] != "docs.sysward.com" {
+		t.Fatalf("Update did not preserve web_allowed_domains: %+v", upd.WebAllowedDomains)
+	}
+
+	// Update web_allowed_domains (replace semantics: non-nil pointer = replace).
+	newDomains := []string{"api.sysward.com", "status.sysward.com"}
+	upd2, err := svc.Update(ctx, seed.principalID, seed.businessID, created.ID, UpdateAgentInput{
+		WebAllowedDomains: &newDomains,
+	})
+	if err != nil {
+		t.Fatalf("Update domains: %v", err)
+	}
+	if len(upd2.WebAllowedDomains) != 2 || upd2.WebAllowedDomains[0] != "api.sysward.com" || upd2.WebAllowedDomains[1] != "status.sysward.com" {
+		t.Fatalf("Update did not replace web_allowed_domains: %+v", upd2.WebAllowedDomains)
 	}
 
 	// Duplicate name → conflict
