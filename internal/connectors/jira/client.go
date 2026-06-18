@@ -252,6 +252,10 @@ const searchPageSize = 100
 // can lower it.
 var maxSearchPages = 1000
 
+// reconcileOverlapMinutes pads the incremental sweep window so an issue updated right on a
+// poll boundary isn't dropped; the idempotent upsert dedupes the re-fetched overlap.
+const reconcileOverlapMinutes = 2
+
 // ListUpdatedSince returns the keys of issues updated at or after since (reconcile),
 // paging through ALL results via the new JQL search endpoint
 // (GET /rest/api/3/search/jql). The legacy /rest/api/3/search was removed by
@@ -262,14 +266,30 @@ func (c *client) ListUpdatedSince(ctx context.Context, since time.Time) ([]strin
 	if err != nil {
 		return nil, fmt.Errorf("jira: invalid base_url: %w", ErrUpstream)
 	}
-	// Format as Jira expects: "2006-01-02 15:04"
-	ts := since.UTC().Format("2006-01-02 15:04")
+	// Build the lower time bound. Jira evaluates a bare datetime literal in the
+	// AUTHENTICATED ACCOUNT's timezone, NOT UTC — so a UTC-formatted absolute `since`
+	// silently shifts the window by the account's UTC offset. For accounts behind UTC
+	// (e.g. the Americas) that pushes the bound into the future, so the incremental query
+	// returns NOTHING and freshly-updated issues never sync until a full pull (the cause of
+	// manyforge-7kf). Use Jira's timezone-independent relative-time syntax instead:
+	// "-Nm" = updated within the last N minutes, a duration evaluated against Jira's own
+	// clock (also immune to host/Jira clock skew). N spans since→now plus an overlap buffer.
+	// A zero `since` (the "Sync now" full pull) keeps an ancient absolute bound so it still
+	// fetches everything. The bound is an integer or a fixed literal — injection-safe.
+	updatedBound := `updated >= "1970-01-01"`
+	if !since.IsZero() {
+		mins := int(time.Since(since).Minutes()) + reconcileOverlapMinutes
+		if mins < reconcileOverlapMinutes {
+			mins = reconcileOverlapMinutes
+		}
+		updatedBound = fmt.Sprintf(`updated >= "-%dm"`, mins)
+	}
 	// Scope to the connector's project when configured (config.project_key) so inbound
 	// reconcile only pulls that project, not every project the token can see. The key is
 	// validated against a strict pattern to stay injection-safe inside the JQL.
-	jql := fmt.Sprintf(`updated >= "%s" ORDER BY updated ASC`, ts)
+	jql := updatedBound + ` ORDER BY updated ASC`
 	if pk := c.projectKey; pk != "" && projectKeyRe.MatchString(pk) {
-		jql = fmt.Sprintf(`project = "%s" AND updated >= "%s" ORDER BY updated ASC`, pk, ts)
+		jql = fmt.Sprintf(`project = "%s" AND %s ORDER BY updated ASC`, pk, updatedBound)
 	}
 
 	var keys []string
