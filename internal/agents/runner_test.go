@@ -593,6 +593,123 @@ func TestRun_TransitionDeniedWithoutPerm(t *testing.T) {
 	}
 }
 
+// --- Task 3: web_fetch/web_search → OpenRouter server tools ---
+
+// TestRun_WebFetchRoutedToServerTools pins the interception: for an OpenRouter agent,
+// web_fetch (with web_allowed_domains) is routed to req.ServerTools (NOT the gated
+// toolDefs/allow set), while a normal function tool (draft_reply) stays gated.
+func TestRun_WebFetchRoutedToServerTools(t *testing.T) {
+	prov := ai.NewMockProvider(finalText("done"))
+	store := &fakeRunStore{}
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	ag := loadedAgent("web_fetch", "draft_reply")
+	ag.Provider = "openrouter"
+	ag.WebAllowedDomains = []string{"docs.sysward.com"}
+
+	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reqs := prov.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("provider was never called")
+	}
+	req := reqs[0]
+
+	// (a) ServerTools carries the scoped web_fetch.
+	if len(req.ServerTools) != 1 {
+		t.Fatalf("ServerTools len=%d want 1; got %+v", len(req.ServerTools), req.ServerTools)
+	}
+	st := req.ServerTools[0]
+	if st.Type != "openrouter:web_fetch" {
+		t.Fatalf("ServerTool type=%q want openrouter:web_fetch", st.Type)
+	}
+	if len(st.AllowedDomains) != 1 || st.AllowedDomains[0] != "docs.sysward.com" {
+		t.Fatalf("ServerTool domains=%v want [docs.sysward.com]", st.AllowedDomains)
+	}
+
+	// (a cont.) draft_reply stays a gated function tool; web_fetch must NOT.
+	var sawDraft, sawFetch bool
+	for _, td := range req.Tools {
+		if td.Name == "draft_reply" {
+			sawDraft = true
+		}
+		if td.Name == "web_fetch" {
+			sawFetch = true
+		}
+	}
+	if !sawDraft {
+		t.Fatalf("draft_reply must remain in gated Tools; got %+v", req.Tools)
+	}
+	if sawFetch {
+		t.Fatal("web_fetch must NOT appear in the gated Tools (it is a server tool)")
+	}
+}
+
+// TestRun_WebFetchSkippedWhenNoDomains is the SAFETY GUARD: web_fetch without
+// web_allowed_domains must NOT enable an unscoped server-side fetch.
+func TestRun_WebFetchSkippedWhenNoDomains(t *testing.T) {
+	prov := ai.NewMockProvider(finalText("done"))
+	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	ag := loadedAgent("web_fetch")
+	ag.Provider = "openrouter"
+	ag.WebAllowedDomains = nil
+
+	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reqs := prov.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("provider was never called")
+	}
+	if len(reqs[0].ServerTools) != 0 {
+		t.Fatalf("web_fetch without domains must NOT enable a server tool; got %+v", reqs[0].ServerTools)
+	}
+}
+
+// TestRun_ServerToolsOnlyForOpenRouter — a non-openrouter agent never gets ServerTools
+// built (even with domains set), keeping the path clean for anthropic/openai/etc.
+func TestRun_ServerToolsOnlyForOpenRouter(t *testing.T) {
+	prov := ai.NewMockProvider(finalText("done"))
+	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	ag := loadedAgent("web_fetch")
+	ag.Provider = "anthropic"
+	ag.WebAllowedDomains = []string{"docs.sysward.com"}
+
+	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reqs := prov.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("provider was never called")
+	}
+	if len(reqs[0].ServerTools) != 0 {
+		t.Fatalf("non-openrouter agent must get NO ServerTools; got %+v", reqs[0].ServerTools)
+	}
+}
+
+// TestRun_WebSearchRoutedToServerTools — web_search needs no domains; it routes to a
+// ServerTool with type openrouter:web_search and empty AllowedDomains.
+func TestRun_WebSearchRoutedToServerTools(t *testing.T) {
+	prov := ai.NewMockProvider(finalText("done"))
+	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	ag := loadedAgent("web_search")
+	ag.Provider = "openrouter"
+
+	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reqs := prov.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("provider was never called")
+	}
+	if len(reqs[0].ServerTools) != 1 || reqs[0].ServerTools[0].Type != "openrouter:web_search" {
+		t.Fatalf("web_search must route to one openrouter:web_search ServerTool; got %+v", reqs[0].ServerTools)
+	}
+	if len(reqs[0].ServerTools[0].AllowedDomains) != 0 {
+		t.Fatalf("web_search ServerTool must carry no domains; got %v", reqs[0].ServerTools[0].AllowedDomains)
+	}
+}
+
 // TestRun_ReadExternalRunsInline — read_external_ticket (EffectRead) executes inline
 // in ModeAssist (reads never queue); gateway ReadTicketExternal called once.
 func TestRun_ReadExternalRunsInline(t *testing.T) {
