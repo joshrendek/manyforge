@@ -192,10 +192,36 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 
 	allow := map[string]bool{}
 	var toolDefs []ai.ToolDef
+	// serverTools are provider-executed (server-side, read-only) tools — NOT agent-invoked
+	// function tools. They must never enter allow[]/toolDefs (which feed the RBAC/approval
+	// gate); routing them there would expose them to "tool not permitted" / approval paths.
+	// Only OpenRouter executes them today; the ai layer no-ops them elsewhere, but we skip
+	// building them for non-OpenRouter agents to keep the request clean.
+	var serverTools []ai.ServerToolDef
+	openRouter := ag.Provider == ai.ProviderOpenRouter
 	for _, name := range ag.AllowedTools {
-		if t, ok := e.Tools.Get(name); ok {
-			allow[name] = true
-			toolDefs = append(toolDefs, ai.ToolDef{Name: t.Name, Description: t.Description, Schema: json.RawMessage(t.SchemaJSON)})
+		switch name {
+		case "web_fetch":
+			if !openRouter {
+				continue
+			}
+			// SAFETY GUARD: never enable an UNSCOPED fetch. web_fetch is only routed when
+			// the agent has at least one allowed domain; otherwise it is skipped.
+			if len(ag.WebAllowedDomains) == 0 {
+				slog.DebugContext(ctx, "agent run: web_fetch requested without web_allowed_domains — skipping (unscoped fetch not allowed)", "agent_id", ag.ID)
+				continue
+			}
+			serverTools = append(serverTools, ai.ServerToolDef{Type: "openrouter:web_fetch", AllowedDomains: ag.WebAllowedDomains})
+		case "web_search":
+			if !openRouter {
+				continue
+			}
+			serverTools = append(serverTools, ai.ServerToolDef{Type: "openrouter:web_search"})
+		default:
+			if t, ok := e.Tools.Get(name); ok {
+				allow[name] = true
+				toolDefs = append(toolDefs, ai.ToolDef{Name: t.Name, Description: t.Description, Schema: json.RawMessage(t.SchemaJSON)})
+			}
 		}
 	}
 
@@ -241,7 +267,7 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 		if iter >= limits.MaxIterations {
 			return finish(RunFailed, "max_iterations exceeded", tokIn, tokOut, costCents)
 		}
-		req := ai.Request{Model: model, System: ag.SystemPrompt, Messages: msgs, Tools: toolDefs, MaxTokens: limits.MaxOutputTokens, Temperature: limits.Temperature}
+		req := ai.Request{Model: model, System: ag.SystemPrompt, Messages: msgs, Tools: toolDefs, ServerTools: serverTools, MaxTokens: limits.MaxOutputTokens, Temperature: limits.Temperature}
 		resp, cErr := prov.Complete(loopCtx, req)
 		if cErr != nil {
 			if errors.Is(cErr, context.DeadlineExceeded) {
