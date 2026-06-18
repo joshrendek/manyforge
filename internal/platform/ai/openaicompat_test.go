@@ -32,12 +32,16 @@ func TestBuildOpenAIRequest(t *testing.T) {
 		},
 	}
 
-	out := buildOpenAIRequest(req, "gpt-4o")
+	out := buildOpenAIRequest(req, "gpt-4o", ProviderOpenAI)
 
 	if out.Model != "gpt-4o" || out.MaxTokens != 512 {
 		t.Fatalf("scalars wrong: %+v", out)
 	}
-	if len(out.Tools) != 1 || out.Tools[0].Type != "function" || out.Tools[0].Function.Name != "get_ticket" || string(out.Tools[0].Function.Parameters) != `{"type":"object"}` {
+	if len(out.Tools) != 1 {
+		t.Fatalf("want 1 tool, got %+v", out.Tools)
+	}
+	ft, ok := out.Tools[0].(openAITool)
+	if !ok || ft.Type != "function" || ft.Function.Name != "get_ticket" || string(ft.Function.Parameters) != `{"type":"object"}` {
 		t.Fatalf("tools wrong: %+v", out.Tools)
 	}
 	// system message is prepended
@@ -177,7 +181,7 @@ func TestOpenAIComplete_GoldenRoundTrip(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", srv.Client())
+			p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", ProviderOpenAI, srv.Client())
 			resp, err := p.Complete(context.Background(), Request{
 				Model: "gpt-4o", MaxTokens: 256,
 				Messages: []Message{{Role: RoleUser, Text: "hi"}},
@@ -208,7 +212,7 @@ func TestOpenAIComplete_NoKeyOmitsAuth(t *testing.T) {
 		_, _ = w.Write(golden)
 	}))
 	defer srv.Close()
-	p := NewOpenAICompatProvider("", srv.URL+"/v1", "llama3", srv.Client())
+	p := NewOpenAICompatProvider("", srv.URL+"/v1", "llama3", ProviderOllama, srv.Client())
 	if _, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -234,7 +238,7 @@ func TestOpenAIComplete_ErrorMapping(t *testing.T) {
 				_, _ = io.WriteString(w, tc.body)
 			}))
 			defer srv.Close()
-			p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", srv.Client())
+			p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", ProviderOpenAI, srv.Client())
 			_, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("%s: status %d -> err %v, want Is(%v)", tc.name, tc.status, err, tc.want)
@@ -244,8 +248,163 @@ func TestOpenAIComplete_ErrorMapping(t *testing.T) {
 }
 
 func TestOpenAIName(t *testing.T) {
-	if NewOpenAICompatProvider("k", "http://x/v1", "m", http.DefaultClient).Name() != "openai-compat" {
+	if NewOpenAICompatProvider("k", "http://x/v1", "m", ProviderOpenAI, http.DefaultClient).Name() != "openai-compat" {
 		t.Fatal("Name() != openai-compat")
+	}
+}
+
+// toolsFromBody marshals a built request, re-decodes its "tools" array as a list
+// of generic maps, and returns them so server-tool shapes can be inspected.
+func toolsFromBody(t *testing.T, out openAIReq) []map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	var decoded struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	return decoded.Tools
+}
+
+func findToolType(tools []map[string]any, typ string) (map[string]any, bool) {
+	for _, tl := range tools {
+		if tl["type"] == typ {
+			return tl, true
+		}
+	}
+	return nil, false
+}
+
+func TestBuildOpenAIRequest_ServerTools_OpenRouterWebFetch(t *testing.T) {
+	req := Request{
+		Model:     "openrouter/auto",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: RoleUser, Text: "look it up"}},
+		ServerTools: []ServerToolDef{
+			{Type: "openrouter:web_fetch", AllowedDomains: []string{"docs.sysward.com"}},
+		},
+	}
+	out := buildOpenAIRequest(req, "openrouter/auto", ProviderOpenRouter)
+	tools := toolsFromBody(t, out)
+	tl, ok := findToolType(tools, "openrouter:web_fetch")
+	if !ok {
+		t.Fatalf("web_fetch tool not emitted: %+v", tools)
+	}
+	params, ok := tl["parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("parameters missing/not object: %+v", tl)
+	}
+	domains, ok := params["allowed_domains"].([]any)
+	if !ok || len(domains) != 1 || domains[0] != "docs.sysward.com" {
+		t.Fatalf("allowed_domains wrong: %+v", params)
+	}
+}
+
+func TestBuildOpenAIRequest_ServerTools_NotEmittedForNonOpenRouter(t *testing.T) {
+	req := Request{
+		Model:     "gpt-4o",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: RoleUser, Text: "look it up"}},
+		ServerTools: []ServerToolDef{
+			{Type: "openrouter:web_fetch", AllowedDomains: []string{"docs.sysward.com"}},
+		},
+	}
+	for _, provider := range []string{ProviderOpenAI, ProviderOllama, ProviderVLLM} {
+		t.Run(provider, func(t *testing.T) {
+			out := buildOpenAIRequest(req, "m", provider)
+			tools := toolsFromBody(t, out)
+			if _, ok := findToolType(tools, "openrouter:web_fetch"); ok {
+				t.Fatalf("provider %q must NOT emit openrouter server tool: %+v", provider, tools)
+			}
+		})
+	}
+}
+
+func TestBuildOpenAIRequest_ServerTools_WithFunctionTools(t *testing.T) {
+	req := Request{
+		Model:     "openrouter/auto",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: RoleUser, Text: "x"}},
+		Tools: []ToolDef{{
+			Name: "get_ticket", Description: "fetch a ticket",
+			Schema: json.RawMessage(`{"type":"object"}`),
+		}},
+		ServerTools: []ServerToolDef{
+			{Type: "openrouter:web_fetch", AllowedDomains: []string{"docs.sysward.com"}},
+		},
+	}
+	out := buildOpenAIRequest(req, "openrouter/auto", ProviderOpenRouter)
+	tools := toolsFromBody(t, out)
+	// function tool present, shape unchanged (nested "function" object).
+	fn, ok := findToolType(tools, "function")
+	if !ok {
+		t.Fatalf("function tool missing: %+v", tools)
+	}
+	fnObj, ok := fn["function"].(map[string]any)
+	if !ok || fnObj["name"] != "get_ticket" {
+		t.Fatalf("function tool shape changed: %+v", fn)
+	}
+	// server tool also present, and has NO nested "function" object.
+	wf, ok := findToolType(tools, "openrouter:web_fetch")
+	if !ok {
+		t.Fatalf("web_fetch tool missing: %+v", tools)
+	}
+	if _, has := wf["function"]; has {
+		t.Fatalf("server tool must not have a function object: %+v", wf)
+	}
+}
+
+func TestBuildOpenAIRequest_ServerTools_WebSearch(t *testing.T) {
+	req := Request{
+		Model:     "openrouter/auto",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: RoleUser, Text: "x"}},
+		ServerTools: []ServerToolDef{
+			{Type: "openrouter:web_search"},
+		},
+	}
+	out := buildOpenAIRequest(req, "openrouter/auto", ProviderOpenRouter)
+	tools := toolsFromBody(t, out)
+	tl, ok := findToolType(tools, "openrouter:web_search")
+	if !ok {
+		t.Fatalf("web_search tool not emitted: %+v", tools)
+	}
+	params, ok := tl["parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("parameters missing: %+v", tl)
+	}
+	if params["engine"] != "auto" {
+		t.Fatalf("engine wrong: %+v", params)
+	}
+	if mr, ok := params["max_results"].(float64); !ok || mr != 5 {
+		t.Fatalf("max_results wrong: %+v", params)
+	}
+}
+
+func TestBuildOpenAIRequest_ServerTools_WebFetchEmptyDomainsOmitted(t *testing.T) {
+	req := Request{
+		Model:     "openrouter/auto",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: RoleUser, Text: "x"}},
+		ServerTools: []ServerToolDef{
+			{Type: "openrouter:web_fetch"},
+		},
+	}
+	out := buildOpenAIRequest(req, "openrouter/auto", ProviderOpenRouter)
+	tools := toolsFromBody(t, out)
+	tl, ok := findToolType(tools, "openrouter:web_fetch")
+	if !ok {
+		t.Fatalf("web_fetch tool not emitted: %+v", tools)
+	}
+	// emitted, but WITHOUT allowed_domains when empty.
+	if params, ok := tl["parameters"].(map[string]any); ok {
+		if _, has := params["allowed_domains"]; has {
+			t.Fatalf("empty AllowedDomains must omit allowed_domains: %+v", params)
+		}
 	}
 }
 
@@ -257,7 +416,7 @@ func TestOpenAIComplete_DoesNotLeakUpstreamBody(t *testing.T) {
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, `{"error":{"message":"`+secret+`","type":"x"}}`)
 		}))
-		p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", srv.Client())
+		p := NewOpenAICompatProvider("sk-test", srv.URL+"/v1", "gpt-4o", ProviderOpenAI, srv.Client())
 		_, err := p.Complete(context.Background(), Request{MaxTokens: 16, Messages: []Message{{Role: RoleUser, Text: "x"}}})
 		srv.Close()
 		if err == nil {

@@ -19,7 +19,11 @@ type openAIReq struct {
 	MaxTokens   int             `json:"max_tokens,omitempty"`
 	Temperature float64         `json:"temperature"` // sent as-is; unset (0) => deterministic. US3 sets per agent. manyforge-4po
 	Messages    []openAIMessage `json:"messages"`
-	Tools       []openAITool    `json:"tools,omitempty"`
+	// Tools is HETEROGENEOUS: function tools (openAITool, with a nested
+	// "function" object) and OpenRouter server tools (openAIServerTool, with a
+	// "parameters" object and no "function"). Each element serializes in its own
+	// raw shape; function-tool JSON is byte-identical to the pre-server-tool form.
+	Tools []any `json:"tools,omitempty"`
 }
 
 type openAITool struct {
@@ -29,6 +33,14 @@ type openAITool struct {
 		Description string          `json:"description,omitempty"`
 		Parameters  json.RawMessage `json:"parameters"`
 	} `json:"function"`
+}
+
+// openAIServerTool is the raw wire shape for an OpenRouter provider-executed tool
+// (web_fetch / web_search). It carries a "type" and an optional "parameters"
+// object — and deliberately NO "function" object. Emitted ONLY for OpenRouter.
+type openAIServerTool struct {
+	Type       string         `json:"type"`
+	Parameters map[string]any `json:"parameters,omitempty"`
 }
 
 type openAIMessage struct {
@@ -48,8 +60,10 @@ type openAIToolCall struct {
 }
 
 // buildOpenAIRequest maps the common Request onto the chat/completions wire
-// format. model overrides req.Model when req.Model is empty.
-func buildOpenAIRequest(req Request, model string) openAIReq {
+// format. model overrides req.Model when req.Model is empty. providerName is the
+// credential provider ("openai"/"ollama"/"vllm"/"openrouter"); OpenRouter server
+// tools are emitted ONLY when providerName == "openrouter".
+func buildOpenAIRequest(req Request, model, providerName string) openAIReq {
 	out := openAIReq{Model: model, MaxTokens: req.MaxTokens, Temperature: req.Temperature}
 	for _, td := range req.Tools {
 		var t openAITool
@@ -58,6 +72,14 @@ func buildOpenAIRequest(req Request, model string) openAIReq {
 		t.Function.Description = td.Description
 		t.Function.Parameters = td.Schema
 		out.Tools = append(out.Tools, t)
+	}
+	// OpenRouter provider-executed (server) tools go in the SAME tools array, in
+	// their raw shape. NEVER emit them for other providers — they would reject an
+	// unknown tool type.
+	if providerName == ProviderOpenRouter {
+		for _, st := range req.ServerTools {
+			out.Tools = append(out.Tools, buildServerTool(st))
+		}
 	}
 	if req.System != "" {
 		out.Messages = append(out.Messages, openAIMessage{Role: "system", Content: req.System})
@@ -88,6 +110,30 @@ func buildOpenAIRequest(req Request, model string) openAIReq {
 		}
 	}
 	return out
+}
+
+// buildServerTool maps a ServerToolDef onto OpenRouter's raw tool wire shape:
+//
+//	openrouter:web_fetch  -> {"type":"openrouter:web_fetch","parameters":{"allowed_domains":[...]}}
+//	                         (allowed_domains omitted when AllowedDomains is empty)
+//	openrouter:web_search -> {"type":"openrouter:web_search","parameters":{"engine":"auto","max_results":5}}
+//	<other>               -> {"type":"<type>"} (forward-compat, no parameters)
+func buildServerTool(st ServerToolDef) openAIServerTool {
+	switch st.Type {
+	case "openrouter:web_fetch":
+		t := openAIServerTool{Type: st.Type}
+		if len(st.AllowedDomains) > 0 {
+			t.Parameters = map[string]any{"allowed_domains": st.AllowedDomains}
+		}
+		return t
+	case "openrouter:web_search":
+		return openAIServerTool{
+			Type:       st.Type,
+			Parameters: map[string]any{"engine": "auto", "max_results": 5},
+		}
+	default:
+		return openAIServerTool{Type: st.Type}
+	}
 }
 
 // openAIResp is the top-level chat/completions response envelope. Only the
@@ -146,20 +192,26 @@ func openAIFinish(raw string) FinishReason {
 // (OpenAI, Ollama, vLLM). baseURL is USER-SUPPLIED for self-host, so production
 // callers MUST inject an SSRF-guarded netsafe client (see factory.New).
 type OpenAICompatProvider struct {
-	apiKey     string
-	baseURL    string // includes the version segment, e.g. https://api.openai.com/v1
-	model      string
-	httpClient *http.Client
+	apiKey  string
+	baseURL string // includes the version segment, e.g. https://api.openai.com/v1
+	model   string
+	// providerName is the credential provider name ("openai"/"ollama"/"vllm"/
+	// "openrouter"), set for ALL openai-compat providers. It gates OpenRouter
+	// server-tool injection; it is NOT the transport name returned by Name().
+	providerName string
+	httpClient   *http.Client
 }
 
 // NewOpenAICompatProvider builds a provider. hc nil -> http.DefaultClient
 // (callers SHOULD pass netsafe.NewClient or a test client). An empty apiKey
-// omits the Authorization header (Ollama / vLLM).
-func NewOpenAICompatProvider(apiKey, baseURL, model string, hc *http.Client) *OpenAICompatProvider {
+// omits the Authorization header (Ollama / vLLM). providerName is the credential
+// provider ("openai"/"ollama"/"vllm"/"openrouter") — used to gate OpenRouter
+// server-tool injection.
+func NewOpenAICompatProvider(apiKey, baseURL, model, providerName string, hc *http.Client) *OpenAICompatProvider {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	return &OpenAICompatProvider{apiKey: apiKey, baseURL: baseURL, model: model, httpClient: hc}
+	return &OpenAICompatProvider{apiKey: apiKey, baseURL: baseURL, model: model, providerName: providerName, httpClient: hc}
 }
 
 // Name returns the transport family ("openai-compat") shared by OpenAI/Ollama/vLLM.
@@ -173,7 +225,7 @@ func (p *OpenAICompatProvider) Complete(ctx context.Context, req Request) (Respo
 	if model == "" {
 		model = p.model
 	}
-	payload, err := json.Marshal(buildOpenAIRequest(req, model))
+	payload, err := json.Marshal(buildOpenAIRequest(req, model, p.providerName))
 	if err != nil {
 		return Response{}, fmt.Errorf("ai/openai: marshal: %w", ErrBadRequest)
 	}

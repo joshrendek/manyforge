@@ -59,13 +59,13 @@ func New(cred Credential) (Provider, error) {
 		if cred.BaseURL == "" {
 			return nil, fmt.Errorf("ai: provider %q requires a base_url: %w", cred.Provider, ErrBadRequest)
 		}
-		return NewOpenAICompatProvider(cred.APIKey, cred.BaseURL, cred.Model, hc), nil
+		return NewOpenAICompatProvider(cred.APIKey, cred.BaseURL, cred.Model, cred.Provider, hc), nil
 	case ProviderOpenRouter:
 		base := cred.BaseURL
 		if base == "" {
 			base = openRouterBaseURL
 		}
-		return NewOpenAICompatProvider(cred.APIKey, base, cred.Model, hc), nil
+		return NewOpenAICompatProvider(cred.APIKey, base, cred.Model, cred.Provider, hc), nil
 	default:
 		return nil, fmt.Errorf("ai: unknown provider %q: %w", cred.Provider, ErrBadRequest)
 	}
