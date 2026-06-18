@@ -64,7 +64,7 @@ func TestRecordOpenAIFixture(t *testing.T) {
 	if key == "" || base == "" {
 		t.Skip("OPENAI_API_KEY / OPENAI_BASE_URL not set")
 	}
-	p := NewOpenAICompatProvider(key, base, "gpt-4o", nil)
+	p := NewOpenAICompatProvider(key, base, "gpt-4o", ProviderOpenAI, nil)
 	resp, err := p.Complete(context.Background(), Request{
 		Model: "gpt-4o", MaxTokens: 64,
 		Messages: []Message{{Role: RoleUser, Text: "Say hello in one short sentence."}},
@@ -87,7 +87,7 @@ func TestRecordOllamaFixture(t *testing.T) {
 	if base == "" {
 		t.Skip("OLLAMA_BASE_URL not set")
 	}
-	p := NewOpenAICompatProvider("", base, "llama3.1", nil)
+	p := NewOpenAICompatProvider("", base, "llama3.1", ProviderOllama, nil)
 	resp, err := p.Complete(context.Background(), Request{
 		Model: "llama3.1", MaxTokens: 64,
 		Messages: []Message{{Role: RoleUser, Text: "Say hello in one short sentence."}},
@@ -110,7 +110,7 @@ func TestRecordVLLMFixture(t *testing.T) {
 	if base == "" {
 		t.Skip("VLLM_BASE_URL not set")
 	}
-	p := NewOpenAICompatProvider("", base, "meta-llama/Llama-3.1-8B-Instruct", nil)
+	p := NewOpenAICompatProvider("", base, "meta-llama/Llama-3.1-8B-Instruct", ProviderVLLM, nil)
 	resp, err := p.Complete(context.Background(), Request{
 		Model: "meta-llama/Llama-3.1-8B-Instruct", MaxTokens: 64,
 		Messages: []Message{{Role: RoleUser, Text: "Say hello in one short sentence."}},

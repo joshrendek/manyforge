@@ -58,14 +58,23 @@ type Message struct {
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
 }
 
+// ServerToolDef is a provider-executed (server-side) tool — currently OpenRouter's
+// web_fetch/web_search. Unlike ToolDef (a function the agent invokes), these run at the
+// provider; the model calls them and results return inline. Only emitted for OpenRouter.
+type ServerToolDef struct {
+	Type           string   // e.g. "openrouter:web_fetch", "openrouter:web_search"
+	AllowedDomains []string // web_fetch domain scope (empty = unset)
+}
+
 // Request is a single completion call.
 type Request struct {
-	Model       string    `json:"model"`
-	System      string    `json:"system,omitempty"`
-	Messages    []Message `json:"messages"`
-	Tools       []ToolDef `json:"tools,omitempty"`
-	MaxTokens   int       `json:"max_tokens"`
-	Temperature float64   `json:"temperature"`
+	Model       string          `json:"model"`
+	System      string          `json:"system,omitempty"`
+	Messages    []Message       `json:"messages"`
+	Tools       []ToolDef       `json:"tools,omitempty"`
+	ServerTools []ServerToolDef `json:"server_tools,omitempty"`
+	MaxTokens   int             `json:"max_tokens"`
+	Temperature float64         `json:"temperature"`
 }
 
 // Usage is token accounting for one call.
