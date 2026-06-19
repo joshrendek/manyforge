@@ -88,7 +88,7 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 
 	issueURL := base.JoinPath("rest", "api", "3", "issue", externalID)
 	q := issueURL.Query()
-	q.Set("fields", "summary,status,priority,reporter,updated")
+	q.Set("fields", "summary,status,priority,reporter,updated,description")
 	issueURL.RawQuery = q.Encode()
 
 	var issueResp jiraIssueResponse
@@ -111,7 +111,10 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 		Priority:      issueResp.Fields.Priority.Name,
 		ReporterEmail: issueResp.Fields.Reporter.EmailAddress,
 		ReporterName:  issueResp.Fields.Reporter.DisplayName,
-		UpdatedAt:     issueResp.Fields.Updated.Time,
+		// description is ADF (same shape as comment bodies); extract plain text. A null/absent
+		// description yields "" (extractADFText's fallback handles the `null` literal).
+		Description: extractADFText(issueResp.Fields.Description),
+		UpdatedAt:   issueResp.Fields.Updated.Time,
 	}
 
 	for _, c := range commResp.Comments {
@@ -523,7 +526,12 @@ type jiraIssueResponse struct {
 			EmailAddress string `json:"emailAddress"`
 			DisplayName  string `json:"displayName"`
 		} `json:"reporter"`
-		Updated jiraTime `json:"updated"`
+		// Description is the issue's main body in ADF (same encoding as a comment body),
+		// or a plain string on older API versions, or null when absent. extractADFText
+		// handles all three; a null/absent description yields "" (its fallback handles the
+		// `null` literal).
+		Description json.RawMessage `json:"description"`
+		Updated     jiraTime        `json:"updated"`
 	} `json:"fields"`
 }
 
