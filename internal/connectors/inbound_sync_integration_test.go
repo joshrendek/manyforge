@@ -44,6 +44,101 @@ func buildInboundSyncEvent(t *testing.T, connectorID uuid.UUID, externalID strin
 	}
 }
 
+// TestInboundSyncOrdersMessagesChronologically (manyforge-4d1) pins that the description + each
+// comment land with their REAL external timestamps as ticket_message.created_at — not the shared
+// reconcile-transaction now() — so the thread (ORDER BY created_at ASC, id ASC) sorts
+// chronologically even when comments arrive out of order in the fetch slice.
+func TestInboundSyncOrdersMessagesChronologically(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+
+	sharedSealer := newTestSealer(t)
+	svc := &Service{DB: tdb.App, Vault: secrets.NewVault(sharedSealer), Verify: nil}
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	// Distinct, well-separated timestamps. The description is oldest (issue created first); the
+	// comments are intentionally listed NEWEST-FIRST in the slice (c_new before c_old) so a test
+	// that merely preserved insertion order would still sort them wrong.
+	tCreated := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	tOld := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	tNew := time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC)
+
+	issue := ExternalIssue{
+		ExternalID:    "JIRA-7",
+		URL:           "https://acme.atlassian.net/browse/JIRA-7",
+		Title:         "Ordering bug",
+		Status:        "Open",
+		Priority:      "Normal",
+		ReporterEmail: "reporter@acme.test",
+		ReporterName:  "R",
+		Description:   "the original request",
+		CreatedAt:     tCreated,
+		UpdatedAt:     tNew,
+		Comments: []ExternalComment{
+			{ExternalID: "c_new", Author: "A", Body: "later reply", CreatedAt: tNew},
+			{ExternalID: "c_old", Author: "B", Body: "earlier reply", CreatedAt: tOld},
+		},
+	}
+	reg := NewRegistry(svc)
+	reg.Register("jira", func(rc ResolvedConnector) (TicketingConnector, error) {
+		return &fakeConnector{issue: issue}, nil
+	})
+	sub := &InboundSyncSubscriber{DB: tdb.App, Sealer: sharedSealer, Registry: reg, Logger: slog.Default()}
+
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, buildInboundSyncEvent(t, connID, "JIRA-7", seed.businessID))
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// Each inbound message carries its real timestamp (PG stores microseconds; compare on equality
+	// after truncating the seed to micros).
+	wantAt := map[string]time.Time{
+		"JIRA-7:description": tCreated,
+		"c_old":              tOld,
+		"c_new":              tNew,
+	}
+	for extID, want := range wantAt {
+		var got time.Time
+		if err := tdb.Super.QueryRow(ctx,
+			`SELECT created_at FROM ticket_message WHERE connector_id=$1 AND external_id=$2`,
+			connID, extID).Scan(&got); err != nil {
+			t.Fatalf("read created_at for %q: %v", extID, err)
+		}
+		if !got.UTC().Equal(want.UTC()) {
+			t.Fatalf("message %q created_at = %s, want %s (real external timestamp, not now())", extID, got.UTC(), want.UTC())
+		}
+	}
+
+	// The thread sorts chronologically: description (09:00) → c_old (10:00) → c_new (11:00).
+	rows, err := tdb.Super.Query(ctx,
+		`SELECT external_id FROM ticket_message WHERE connector_id=$1 AND direction='inbound'
+		   ORDER BY created_at ASC, id ASC`, connID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	defer rows.Close()
+	var order []string
+	for rows.Next() {
+		var ext string
+		if err := rows.Scan(&ext); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		order = append(order, ext)
+	}
+	want := []string{"JIRA-7:description", "c_old", "c_new"}
+	if len(order) != len(want) {
+		t.Fatalf("thread order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("thread order = %v, want %v (chronological)", order, want)
+		}
+	}
+}
+
 // TestInboundSyncSubscriber verifies the full subscriber flow: fetch → upsert → idempotent.
 func TestInboundSyncSubscriber(t *testing.T) {
 	ctx, tdb, seed := startConn(t)
