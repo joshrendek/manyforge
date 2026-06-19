@@ -122,8 +122,10 @@ func TestFetchIssue(t *testing.T) {
 			if r.URL.Path != "/rest/api/3/issue/PROJ-42" {
 				t.Errorf("FetchIssue issue: unexpected path %q", r.URL.Path)
 			}
-			if q := r.URL.Query().Get("fields"); q != "summary,status,priority,reporter,updated" {
-				t.Errorf("FetchIssue: fields query = %q", q)
+			// The fields query MUST request the issue description — otherwise a
+			// description-only issue syncs with no body (the bug this fixes).
+			if q := r.URL.Query().Get("fields"); q != "summary,status,priority,reporter,updated,description" {
+				t.Errorf("FetchIssue: fields query = %q, want it to include description", q)
 			}
 			_, _ = w.Write(issueBody)
 		}
@@ -154,6 +156,11 @@ func TestFetchIssue(t *testing.T) {
 	if issue.ReporterName != "Alice Smith" {
 		t.Errorf("ReporterName = %q, want Alice Smith", issue.ReporterName)
 	}
+	// The ADF description body must be extracted to plain text and surfaced as
+	// ExternalIssue.Description (synced downstream as the first inbound message).
+	if !strings.Contains(issue.Description, "tap the login button") {
+		t.Errorf("Description = %q, want extracted ADF text containing 'tap the login button'", issue.Description)
+	}
 	if issue.UpdatedAt.IsZero() {
 		t.Error("UpdatedAt is zero")
 	}
@@ -177,6 +184,32 @@ func TestFetchIssue(t *testing.T) {
 	}
 	if c1.CreatedAt.IsZero() {
 		t.Error("Comments[0].CreatedAt is zero")
+	}
+}
+
+// TestFetchIssue_MissingDescription asserts a null/absent description decodes to an empty
+// Description (no body) rather than erroring — so the downstream "first inbound message"
+// sync is simply skipped for issues with no description.
+func TestFetchIssue_MissingDescription(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/comment"):
+			_, _ = w.Write([]byte(`{"comments":[]}`))
+		default:
+			// description is null (a real Jira shape for an issue with no body).
+			_, _ = w.Write([]byte(`{"key":"PROJ-9","fields":{"summary":"no body","status":{"name":"Open"},"priority":{"name":"Low"},"reporter":{"emailAddress":"x@y.z","displayName":"X"},"description":null,"updated":"2026-06-01T10:30:00.000+0000"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "user@example.com", "tok", "secret", srv.Client())
+	issue, err := c.FetchIssue(context.Background(), "PROJ-9")
+	if err != nil {
+		t.Fatalf("FetchIssue: %v", err)
+	}
+	if issue.Description != "" {
+		t.Errorf("Description = %q, want empty for a null description", issue.Description)
 	}
 }
 

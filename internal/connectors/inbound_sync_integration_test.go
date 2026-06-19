@@ -184,6 +184,92 @@ func TestInboundSyncSubscriber(t *testing.T) {
 	}
 }
 
+// TestInboundSyncDescriptionAsFirstMessage verifies the fix for the description bug: an
+// issue carrying a Description (the original request body) produces an INBOUND ticket_message
+// whose body == the description, keyed by the synthetic "<ExternalID>:description" external_id —
+// and a second sync does NOT duplicate it (idempotent via the comment DEFINER's dedupe).
+func TestInboundSyncDescriptionAsFirstMessage(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+
+	sharedSealer := newTestSealer(t)
+	vault := secrets.NewVault(sharedSealer)
+	svc := &Service{DB: tdb.App, Vault: vault, Verify: nil}
+
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	const descBody = "The whole bug report lives in the description, with no comments."
+	// An issue with a Description and NO comments — the exact case the bug stranded
+	// (subject only, no inbound body).
+	issue := ExternalIssue{
+		ExternalID:    "JIRA-DESC",
+		URL:           "https://acme.atlassian.net/browse/JIRA-DESC",
+		Title:         "Description-only issue",
+		Status:        "In Progress",
+		Priority:      "High",
+		ReporterEmail: "reporter@acme.test",
+		ReporterName:  "R",
+		Description:   descBody,
+		UpdatedAt:     time.Now().UTC().Add(-10 * time.Minute),
+	}
+	reg := NewRegistry(svc)
+	reg.Register("jira", func(rc ResolvedConnector) (TicketingConnector, error) {
+		return &fakeConnector{issue: issue}, nil
+	})
+
+	sub := &InboundSyncSubscriber{
+		DB:       tdb.App,
+		Sealer:   sharedSealer,
+		Registry: reg,
+		Logger:   slog.Default(),
+	}
+
+	ev := buildInboundSyncEvent(t, connID, "JIRA-DESC", seed.businessID)
+
+	// --- First Handle: the description becomes the first inbound message. ---
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, ev)
+	}); err != nil {
+		t.Fatalf("first Handle: %v", err)
+	}
+
+	const descExternalID = "JIRA-DESC:description"
+	var gotBody string
+	var msgCount int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*), max(body_text) FROM ticket_message
+		   WHERE connector_id=$1 AND direction='inbound' AND external_id=$2`,
+		connID, descExternalID,
+	).Scan(&msgCount, &gotBody); err != nil {
+		t.Fatalf("count description message: %v", err)
+	}
+	if msgCount != 1 {
+		t.Fatalf("want exactly 1 inbound description message (external_id=%q), got %d", descExternalID, msgCount)
+	}
+	if gotBody != descBody {
+		t.Fatalf("description message body = %q, want %q", gotBody, descBody)
+	}
+
+	// --- Second Handle (same event): idempotent — still exactly ONE description message. ---
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return sub.Handle(ctx, tx, ev)
+	}); err != nil {
+		t.Fatalf("second Handle (idempotent): %v", err)
+	}
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT COUNT(*) FROM ticket_message
+		   WHERE connector_id=$1 AND direction='inbound' AND external_id=$2`,
+		connID, descExternalID,
+	).Scan(&msgCount); err != nil {
+		t.Fatalf("count description message after 2nd Handle: %v", err)
+	}
+	if msgCount != 1 {
+		t.Fatalf("idempotent: want 1 description message, got %d (dedupe broken)", msgCount)
+	}
+}
+
 // TestInboundSyncStatusChange verifies that when the external issue changes status on a
 // subsequent sync, the ticket is updated (external-wins) and the snapshot is updated.
 func TestInboundSyncStatusChange(t *testing.T) {
