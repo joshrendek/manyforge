@@ -281,6 +281,105 @@ func TestPostComment_Public(t *testing.T) {
 	}
 }
 
+// ── TransitionStatus ─────────────────────────────────────────────────────────
+
+// jiraTransitionsRouter builds a test server emulating the two transition endpoints plus the
+// lightweight ?fields=status issue GET. transitions is the JSON array body returned by
+// GET .../transitions; currentStatus is the status name returned by GET .../issue/{key}.
+// It records whether a transition POST happened and the id it carried.
+func jiraTransitionsRouter(t *testing.T, transitions, currentStatus string, posted *bool, postedID *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/transitions") && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"transitions":` + transitions + `}`))
+		case strings.HasSuffix(r.URL.Path, "/transitions") && r.Method == http.MethodPost:
+			*posted = true
+			var body struct {
+				Transition struct {
+					ID string `json:"id"`
+				} `json:"transition"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			*postedID = body.Transition.ID
+			w.WriteHeader(http.StatusNoContent)
+		default: // GET .../issue/{key}?fields=status
+			_, _ = w.Write([]byte(`{"key":"PROJ-1","fields":{"status":{"name":"` + currentStatus + `"}}}`))
+		}
+	}))
+}
+
+// TestTransitionStatus_Success pins the existing happy path: a transition whose target status
+// matches is POSTed by id. (Characterization — must keep passing through the idempotency fix.)
+func TestTransitionStatus_Success(t *testing.T) {
+	var posted bool
+	var postedID string
+	srv := jiraTransitionsRouter(t,
+		`[{"id":"21","name":"Start Progress","to":{"name":"In Progress"}},{"id":"31","name":"Resolve","to":{"name":"Done"}}]`,
+		"In Progress", &posted, &postedID)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "agent@example.com", "tok", "secret", srv.Client())
+	if err := c.TransitionStatus(context.Background(), "PROJ-1", "Done"); err != nil {
+		t.Fatalf("TransitionStatus: %v", err)
+	}
+	if !posted {
+		t.Fatal("expected a transition POST, none happened")
+	}
+	if postedID != "31" {
+		t.Errorf("posted transition id = %q, want 31", postedID)
+	}
+}
+
+// TestTransitionStatus_AlreadyInTargetStatus_NoOp pins manyforge-zal: Jira lists only the
+// transitions valid FROM the current status, so an issue ALREADY in the target status has no
+// transition that reaches it. That must be an idempotent no-op (return nil, no POST) rather than
+// a hard failure — otherwise an agent re-issuing "→Done" on an already-Done issue creates a
+// permanently-failed outbound op that pins the connector to "degraded" (manyforge-xfj).
+func TestTransitionStatus_AlreadyInTargetStatus_NoOp(t *testing.T) {
+	var posted bool
+	var postedID string
+	// No transition reaches "Done", and the issue is already in "Done".
+	srv := jiraTransitionsRouter(t,
+		`[{"id":"21","name":"Start Progress","to":{"name":"In Progress"}}]`,
+		"Done", &posted, &postedID)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "agent@example.com", "tok", "secret", srv.Client())
+	if err := c.TransitionStatus(context.Background(), "PROJ-1", "Done"); err != nil {
+		t.Fatalf("already-in-target TransitionStatus must be a no-op, got error: %v", err)
+	}
+	if posted {
+		t.Error("no transition POST should happen when the issue is already in the target status")
+	}
+}
+
+// TestTransitionStatus_NoTransitionDifferentStatus_StaysLoud guards the boundary of the
+// idempotency fix: a genuine misconfiguration (no transition reaches the target AND the issue is
+// NOT already there — e.g. the workflow names it "Resolved", not "Done") must stay a loud
+// ErrUpstream error, never be silently swallowed.
+func TestTransitionStatus_NoTransitionDifferentStatus_StaysLoud(t *testing.T) {
+	var posted bool
+	var postedID string
+	srv := jiraTransitionsRouter(t,
+		`[{"id":"21","name":"Start Progress","to":{"name":"In Progress"}}]`,
+		"In Progress", &posted, &postedID)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "agent@example.com", "tok", "secret", srv.Client())
+	err := c.TransitionStatus(context.Background(), "PROJ-1", "Done")
+	if err == nil {
+		t.Fatal("expected a loud error when no transition reaches the target and the issue is not already there")
+	}
+	if !errors.Is(err, ErrUpstream) {
+		t.Errorf("err = %v, want wrapped ErrUpstream", err)
+	}
+	if posted {
+		t.Error("no transition POST should happen when no matching transition exists")
+	}
+}
+
 // ── ListUpdatedSince ─────────────────────────────────────────────────────────
 
 func TestListUpdatedSince(t *testing.T) {
