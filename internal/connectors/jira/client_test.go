@@ -124,8 +124,8 @@ func TestFetchIssue(t *testing.T) {
 			}
 			// The fields query MUST request the issue description — otherwise a
 			// description-only issue syncs with no body (the bug this fixes).
-			if q := r.URL.Query().Get("fields"); q != "summary,status,priority,reporter,updated,description" {
-				t.Errorf("FetchIssue: fields query = %q, want it to include description", q)
+			if q := r.URL.Query().Get("fields"); q != "summary,status,priority,reporter,updated,created,description" {
+				t.Errorf("FetchIssue: fields query = %q, want it to include created+description", q)
 			}
 			_, _ = w.Write(issueBody)
 		}
@@ -163,6 +163,11 @@ func TestFetchIssue(t *testing.T) {
 	}
 	if issue.UpdatedAt.IsZero() {
 		t.Error("UpdatedAt is zero")
+	}
+	// The issue's `created` time is threaded through to the description's inbound message so it
+	// sorts chronologically against comments (manyforge-4d1).
+	if issue.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero (issue `created` not parsed)")
 	}
 	if !strings.HasSuffix(issue.URL, "/browse/PROJ-42") {
 		t.Errorf("URL = %q, want suffix /browse/PROJ-42", issue.URL)

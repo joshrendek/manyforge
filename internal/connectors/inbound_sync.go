@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -155,27 +156,26 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 	// readable inbound message — without it the agent/UI see only the subject. Reuses the
 	// comment DEFINER with a stable synthetic external_id (<ExternalID>:description) so it's
 	// deduped on every reconcile and can never collide with a numeric Jira comment id.
-	// NOTE: ordering relative to comments is not guaranteed yet — all inbound rows in a
-	// reconcile share the transaction's now() created_at, so the description does not reliably
-	// sort first against comments (only the description-only case is unambiguous). Threading
-	// real per-message timestamps through the DEFINER is a separate follow-up.
+	// The issue's created time is threaded through as the message created_at so the description
+	// sorts first against the comments by real time, not the shared reconcile now() (manyforge-4d1).
 	if iss.Description != "" {
 		var descMsgID pgtype.UUID
 		if err := tx.QueryRow(ctx,
-			`SELECT sync_inbound_external_comment($1,$2,$3,$4)`,
-			ticketID, p.ConnectorID, iss.ExternalID+":description", iss.Description,
+			`SELECT sync_inbound_external_comment($1,$2,$3,$4,$5)`,
+			ticketID, p.ConnectorID, iss.ExternalID+":description", iss.Description, inboundCreatedAt(iss.CreatedAt),
 		).Scan(&descMsgID); err != nil {
 			return err
 		}
 		// descMsgID.Valid==false means dedupe (already synced) — that is fine.
 	}
 
-	// Step 8b: append-only comment upsert (dedupe via connector_id+external_id).
+	// Step 8b: append-only comment upsert (dedupe via connector_id+external_id). Each comment's
+	// real created time is threaded through so the thread sorts chronologically (manyforge-4d1).
 	for _, c := range iss.Comments {
 		var msgID pgtype.UUID
 		if err := tx.QueryRow(ctx,
-			`SELECT sync_inbound_external_comment($1,$2,$3,$4)`,
-			ticketID, p.ConnectorID, c.ExternalID, c.Body,
+			`SELECT sync_inbound_external_comment($1,$2,$3,$4,$5)`,
+			ticketID, p.ConnectorID, c.ExternalID, c.Body, inboundCreatedAt(c.CreatedAt),
 		).Scan(&msgID); err != nil {
 			return err
 		}
@@ -186,6 +186,13 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 		"connector_id", p.ConnectorID, "external_id", p.ExternalID,
 		"ticket_id", ticketID, "comments", len(iss.Comments))
 	return nil
+}
+
+// inboundCreatedAt maps an external timestamp to the sync_inbound_external_comment p_created_at
+// argument. A zero time (the connector didn't expose one) becomes SQL NULL so the DEFINER's
+// COALESCE(p_created_at, now()) falls back to the insert time (manyforge-4d1).
+func inboundCreatedAt(t time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: t, Valid: !t.IsZero()}
 }
 
 func (s *InboundSyncSubscriber) logger() *slog.Logger {
