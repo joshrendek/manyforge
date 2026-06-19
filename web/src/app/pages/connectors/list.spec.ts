@@ -79,6 +79,57 @@ describe('ConnectorsListComponent', () => {
     expect(toastSvc.toasts().some((t) => t.message.includes('Sync started'))).toBe(true);
   });
 
+  it('shows retry/dismiss buttons for a degraded connector and retry POSTs then reloads', () => {
+    const f = mount();
+    const el: HTMLElement = f.nativeElement;
+    const toastSvc = TestBed.inject(ToastService);
+    // failed_outbound_ops=1 → buttons present, with the count.
+    const retryBtn = el.querySelector('[data-testid="connector-retry-failed"]') as HTMLButtonElement;
+    expect(retryBtn).toBeTruthy();
+    expect(retryBtn.textContent).toContain('1');
+    expect(el.querySelector('[data-testid="connector-dismiss-failed"]')).toBeTruthy();
+
+    retryBtn.click();
+    const req = mock.expectOne('/api/v1/businesses/b1/connectors/c1/failed-ops/retry');
+    expect(req.request.method).toBe('POST');
+    req.flush({ retried: 1 });
+    // reload() re-fetches the list; the connector is now healthy with no failed ops.
+    mock.expectOne('/api/v1/businesses/b1/connectors').flush({
+      items: [{ ...connectors.items[0], health: { ...connectors.items[0].health, state: 'healthy', failed_outbound_ops: 0, pending_outbound_ops: 1, last_error: null } }],
+    });
+    f.detectChanges();
+    expect(toastSvc.toasts().some((t) => t.message.includes('Re-enqueued 1'))).toBe(true);
+    // Health recovered → the retry button is gone.
+    expect(el.querySelector('[data-testid="connector-retry-failed"]')).toBeNull();
+  });
+
+  it('dismiss button POSTs to /failed-ops/dismiss and reloads', () => {
+    const f = mount();
+    const toastSvc = TestBed.inject(ToastService);
+    (f.nativeElement.querySelector('[data-testid="connector-dismiss-failed"]') as HTMLButtonElement).click();
+    const req = mock.expectOne('/api/v1/businesses/b1/connectors/c1/failed-ops/dismiss');
+    expect(req.request.method).toBe('POST');
+    req.flush({ dismissed: 1 });
+    mock.expectOne('/api/v1/businesses/b1/connectors').flush({
+      items: [{ ...connectors.items[0], health: { ...connectors.items[0].health, state: 'healthy', failed_outbound_ops: 0 } }],
+    });
+    f.detectChanges();
+    expect(toastSvc.toasts().some((t) => t.message.includes('Dismissed 1'))).toBe(true);
+  });
+
+  it('hides retry/dismiss when there are no failed ops', () => {
+    const f = TestBed.createComponent(ConnectorsListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/connectors').flush({
+      items: [{ ...connectors.items[0], health: { ...connectors.items[0].health, state: 'healthy', failed_outbound_ops: 0 } }],
+    });
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('[data-testid="connector-retry-failed"]')).toBeNull();
+    expect(f.nativeElement.querySelector('[data-testid="connector-dismiss-failed"]')).toBeNull();
+  });
+
   it('edit button toggles the edit form, and rotate button closes it', () => {
     const f = mount();
     const el: HTMLElement = f.nativeElement;

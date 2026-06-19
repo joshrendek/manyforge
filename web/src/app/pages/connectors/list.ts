@@ -83,6 +83,10 @@ import { ConnectorFormComponent } from './connector-form';
                 <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-delete-no" (click)="confirmDeleteId.set('')">Cancel</button>
                 <button class="mf-btn mf-btn-danger mf-btn-sm" data-testid="connector-delete-yes" (click)="remove(c)">Delete</button>
               } @else {
+                @if (c.health.failed_outbound_ops > 0) {
+                  <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-retry-failed" (click)="retryFailed(c)">Retry failed ({{ c.health.failed_outbound_ops }})</button>
+                  <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-dismiss-failed" (click)="dismissFailed(c)">Dismiss</button>
+                }
                 <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-test" (click)="test(c)">Test</button>
                 <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-toggle" (click)="toggle(c)">
                   {{ c.status === 'enabled' ? 'Disable' : 'Enable' }}
@@ -217,6 +221,29 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
     this.api.sync(this.businessId(), c.id).subscribe({
       next: () => this.toast.success('Sync started'),
       error: () => this.toast.error('Sync failed'),
+    });
+  }
+
+  // retryFailed / dismissFailed clear a connector stuck in 'degraded' after transient failures
+  // (xfj): retry re-enqueues failed ops for the dispatcher, dismiss acknowledges them. Both reload
+  // so the health pill + the buttons (gated on failed_outbound_ops) refresh.
+  retryFailed(c: Connector): void {
+    this.api.retryFailedOps(this.businessId(), c.id).subscribe({
+      next: (r) => {
+        this.toast.success(`Re-enqueued ${r.retried} failed op(s)`);
+        this.reload();
+      },
+      error: (e: HttpErrorResponse) => this.toast.error(e.status === 404 ? 'Not found' : 'Retry failed'),
+    });
+  }
+
+  dismissFailed(c: Connector): void {
+    this.api.dismissFailedOps(this.businessId(), c.id).subscribe({
+      next: (r) => {
+        this.toast.success(`Dismissed ${r.dismissed} failed op(s)`);
+        this.reload();
+      },
+      error: (e: HttpErrorResponse) => this.toast.error(e.status === 404 ? 'Not found' : 'Dismiss failed'),
     });
   }
 
