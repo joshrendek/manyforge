@@ -128,6 +128,44 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TestResult' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/connectors/{cid}/failed-ops/retry:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/ConnectorID'
+    post:
+      tags: [Connectors]
+      operationId: retryConnectorFailedOps
+      summary: Re-enqueue the connector's failed outbound ops (failed → pending) so the dispatcher retries them
+      responses:
+        '200':
+          description: Number of failed ops re-enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  retried: { type: integer, format: int64 }
+                required: [retried]
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/connectors/{cid}/failed-ops/dismiss:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/ConnectorID'
+    post:
+      tags: [Connectors]
+      operationId: dismissConnectorFailedOps
+      summary: Acknowledge the connector's failed outbound ops (failed → dismissed) without retrying, clearing degraded
+      responses:
+        '200':
+          description: Number of failed ops dismissed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dismissed: { type: integer, format: int64 }
+                required: [dismissed]
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }

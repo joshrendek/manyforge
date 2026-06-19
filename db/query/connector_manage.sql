@@ -26,6 +26,26 @@ SELECT
     (SELECT count(*) FROM connector_outbound_op o WHERE o.connector_id = sqlc.arg('connector_id') AND o.status = 'failed')::bigint AS failed_ops,
     (SELECT o.last_error FROM connector_outbound_op o WHERE o.connector_id = sqlc.arg('connector_id') AND o.status = 'failed' ORDER BY o.updated_at DESC LIMIT 1) AS last_error;
 
+-- RetryFailedOps re-enqueues a connector's terminally-failed outbound ops for another dispatch
+-- attempt: failed → pending, attempts reset to 0 (the maxOutboundAttempts cap starts fresh) and
+-- last_error cleared. The dispatcher only claims status='pending', so this is the sole exit from
+-- the terminal 'failed' state (manyforge-xfj). Scoped to (connector_id, business_id) — RLS plus
+-- an explicit business_id predicate — so a foreign/unknown connector matches zero rows. Returns
+-- the number of ops re-enqueued (0 is valid: nothing was failed).
+-- name: RetryFailedOps :execrows
+UPDATE connector_outbound_op
+SET status = 'pending', attempts = 0, last_error = NULL, updated_at = now()
+WHERE connector_id = sqlc.arg('connector_id') AND business_id = sqlc.arg('business_id') AND status = 'failed';
+
+-- DismissFailedOps acknowledges a connector's failed outbound ops without retrying: failed →
+-- dismissed (a terminal, non-degrading state kept for audit/forensics). Health counts
+-- status='failed', so dismissing clears 'degraded' (manyforge-xfj). Same (connector_id,
+-- business_id) scoping as RetryFailedOps. Returns the number dismissed.
+-- name: DismissFailedOps :execrows
+UPDATE connector_outbound_op
+SET status = 'dismissed', updated_at = now()
+WHERE connector_id = sqlc.arg('connector_id') AND business_id = sqlc.arg('business_id') AND status = 'failed';
+
 -- UpdateConnector applies a partial (PATCH) change scoped to (id, business_id). Omitted
 -- fields (NULL narg) are preserved via COALESCE. base_url and type are intentionally NOT
 -- updatable (they are part of the connector's identity). No matching row → no row returned
