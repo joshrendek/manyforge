@@ -633,6 +633,14 @@ func main() {
 		}
 	}()
 
+	// Agent-run reaper (67i): a run is set 'running' then executes a loop capped at 120s; if the
+	// worker goroutine dies (restart/crash) the row is stuck 'running' forever and any "agent
+	// working" indicator would lie. Reap, every 2m, runs whose updated_at is older than 10m (well
+	// above the 120s cap, so a live run is never reaped). Staleness-based — not a startup
+	// reap-all — so it stays correct under the horizontal scaling the drainer already anticipates.
+	agentReaper := &agents.Reaper{DB: database, Logger: logger, Every: 2 * time.Minute, StaleAfter: 10 * time.Minute}
+	go agentReaper.Run(workerCtx)
+
 	// In-process inbound SMTP receiver (US1). Started ONLY when MANYFORGE_SMTP_ADDR
 	// is set; in dev it is empty and the receiver is disabled. STARTTLS is
 	// opportunistic — no cert is configured here, so the listener runs plaintext
