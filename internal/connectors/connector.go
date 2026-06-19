@@ -29,8 +29,13 @@ type ExternalIssue struct {
 	Priority      string
 	ReporterEmail string // maps to requester (deduped by email); empty if the external system hides it
 	ReporterName  string // optional display name; empty is fine
-	Comments      []ExternalComment
-	UpdatedAt     time.Time
+	// Description is the issue's main body (the Jira `description` / Zendesk first comment).
+	// It is synced as an inbound ticket_message (the original request body) so the agent/UI
+	// see the original request text — not just the subject. Empty when the external system
+	// has none.
+	Description string
+	Comments    []ExternalComment
+	UpdatedAt   time.Time
 }
 
 // ExternalIssueDraft is the minimal payload to create a new external issue (US4 outbound).

@@ -23,6 +23,21 @@
       "displayName": "Alice Smith",
       "active": true
     },
+    "description": {
+      "version": 1,
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Steps to reproduce: tap the login button on a phone and nothing happens."
+            }
+          ]
+        }
+      ]
+    },
     "updated": "2026-06-01T10:30:00.000+0000"
   }
 }
