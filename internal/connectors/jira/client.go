@@ -230,6 +230,21 @@ func (c *client) TransitionStatus(ctx context.Context, externalID, status string
 		}
 	}
 	if transitionID == "" {
+		// Jira lists only transitions valid FROM the issue's current status, so an issue that is
+		// ALREADY in the target status has no transition reaching it. Treat that as an idempotent
+		// no-op rather than a hard failure — otherwise an agent re-issuing "→Done" on an
+		// already-Done issue creates a permanently-failed outbound op that pins the connector to
+		// "degraded" (manyforge-zal / manyforge-xfj). A genuine name mismatch or missing workflow
+		// path (current status != target) is a real misconfiguration and stays a loud error.
+		current, cerr := c.currentStatus(ctx, externalID)
+		if cerr != nil {
+			return cerr
+		}
+		if strings.EqualFold(current, status) {
+			slog.Default().DebugContext(ctx, "jira: issue already in target status; skipping transition",
+				"issue", externalID, "status", status)
+			return nil
+		}
 		return fmt.Errorf("jira: no transition found for status %q: %w", status, ErrUpstream)
 	}
 
@@ -241,6 +256,26 @@ func (c *client) TransitionStatus(ctx context.Context, externalID, status string
 	}
 
 	return c.doJSON(ctx, http.MethodPost, transURL.String(), payload, nil)
+}
+
+// currentStatus fetches just the issue's current status name via a lightweight ?fields=status
+// GET. Used by TransitionStatus to distinguish an already-in-target no-op from a genuine
+// missing-transition error. Callers validate externalID before reaching here.
+func (c *client) currentStatus(ctx context.Context, externalID string) (string, error) {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("jira: invalid base_url: %w", ErrUpstream)
+	}
+	issueURL := base.JoinPath("rest", "api", "3", "issue", externalID)
+	q := issueURL.Query()
+	q.Set("fields", "status")
+	issueURL.RawQuery = q.Encode()
+
+	var resp jiraIssueResponse
+	if err := c.doJSON(ctx, http.MethodGet, issueURL.String(), nil, &resp); err != nil {
+		return "", err
+	}
+	return resp.Fields.Status.Name, nil
 }
 
 // searchPageSize is the per-request page size for the paginated search. Jira's
