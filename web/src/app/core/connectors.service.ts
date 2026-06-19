@@ -90,6 +90,15 @@ export class ConnectorsService {
   sync(businessId: string, id: string): Observable<{ status: string }> {
     return this.http.post<{ status: string }>(`${this.base(businessId)}/${id}/sync`, {});
   }
+  // retryFailedOps re-enqueues the connector's failed outbound ops (failed → pending) so the
+  // dispatcher retries them; dismissFailedOps acknowledges them (failed → dismissed). Both clear
+  // a connector stuck in 'degraded' after transient failures (xfj).
+  retryFailedOps(businessId: string, id: string): Observable<{ retried: number }> {
+    return this.http.post<{ retried: number }>(`${this.base(businessId)}/${id}/failed-ops/retry`, {});
+  }
+  dismissFailedOps(businessId: string, id: string): Observable<{ dismissed: number }> {
+    return this.http.post<{ dismissed: number }>(`${this.base(businessId)}/${id}/failed-ops/dismiss`, {});
+  }
   refreshCount(businessId: string): void {
     this.list(businessId).subscribe({ error: () => this.degradedCount.set(0) });
   }
