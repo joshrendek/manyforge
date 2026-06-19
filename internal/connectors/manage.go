@@ -335,6 +335,55 @@ func (s *Service) Delete(ctx context.Context, principalID, businessID, connector
 	}))
 }
 
+// failedOpsAction is the shared scaffold for the two failed-op recovery mutations (xfj). In one
+// tx it: confirms ownership via GetConnector (scoped to id + business_id — unknown/foreign id →
+// ErrNoRows → ErrNotFound, no oracle), runs the supplied bulk mutation over the connector's
+// failed ops, then writes a same-tx audit row recording how many were affected. The ownership
+// gate MUST precede the mutation: the mutation is business-scoped but would silently match 0 rows
+// for a connector the caller can't see, so without the gate an unowned id would look like a 0-op
+// success instead of a 404. Returns the number of ops the mutation touched.
+func (s *Service) failedOpsAction(ctx context.Context, principalID, businessID, connectorID uuid.UUID, action string, mutate func(q *dbgen.Queries) (int64, error)) (int64, error) {
+	var n int64
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		if _, gerr := q.GetConnector(ctx, dbgen.GetConnectorParams{ID: connectorID, BusinessID: businessID}); gerr != nil {
+			return gerr // pgx.ErrNoRows → ErrNotFound
+		}
+		c, merr := mutate(q)
+		if merr != nil {
+			return merr
+		}
+		n = c
+		return auditConnector(ctx, tx, businessID, principalID, connectorID, action,
+			map[string]any{"failed_ops_affected": c})
+	})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return n, nil
+}
+
+// RetryFailedOps re-enqueues all of the connector's terminally-failed outbound ops (failed →
+// pending, attempts reset, last_error cleared) so the dispatcher claims them again — the sole
+// exit from the terminal 'failed' state that otherwise pins a connector 'degraded' forever
+// (xfj). Unknown/foreign id → ErrNotFound. Returns the count re-enqueued (0 is valid).
+func (s *Service) RetryFailedOps(ctx context.Context, principalID, businessID, connectorID uuid.UUID) (int64, error) {
+	return s.failedOpsAction(ctx, principalID, businessID, connectorID, "connector.failed_ops_retried",
+		func(q *dbgen.Queries) (int64, error) {
+			return q.RetryFailedOps(ctx, dbgen.RetryFailedOpsParams{ConnectorID: connectorID, BusinessID: businessID})
+		})
+}
+
+// DismissFailedOps marks all of the connector's failed outbound ops dismissed (failed →
+// dismissed), clearing 'degraded' without retrying while preserving the rows for audit (xfj).
+// Same ownership gate + audit as RetryFailedOps. Returns the count dismissed (0 is valid).
+func (s *Service) DismissFailedOps(ctx context.Context, principalID, businessID, connectorID uuid.UUID) (int64, error) {
+	return s.failedOpsAction(ctx, principalID, businessID, connectorID, "connector.failed_ops_dismissed",
+		func(q *dbgen.Queries) (int64, error) {
+			return q.DismissFailedOps(ctx, dbgen.DismissFailedOpsParams{ConnectorID: connectorID, BusinessID: businessID})
+		})
+}
+
 // RotateCredential seals a new credential bundle and atomically swaps the connector's
 // secret_ref, deleting the old sealed secret — mirroring Create's seal/audit discipline.
 // When a Verifier is wired, the NEW credential is live-verified BEFORE the tx; a credential

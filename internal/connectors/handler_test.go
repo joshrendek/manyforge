@@ -30,8 +30,12 @@ type fakeManageSvc struct {
 	getErr    error
 	updateOut ConnectorView
 	rotateErr error
-	testOut   TestResult
-	deleteErr error
+	testOut    TestResult
+	deleteErr  error
+	retryOut   int64
+	retryErr   error
+	dismissOut int64
+	dismissErr error
 }
 
 func (f *fakeManageSvc) Create(_ context.Context, _, _ uuid.UUID, in CreateConnectorInput) (uuid.UUID, error) {
@@ -54,6 +58,12 @@ func (f *fakeManageSvc) Test(_ context.Context, _, _, _ uuid.UUID) (TestResult, 
 	return f.testOut, nil
 }
 func (f *fakeManageSvc) Delete(_ context.Context, _, _, _ uuid.UUID) error { return f.deleteErr }
+func (f *fakeManageSvc) RetryFailedOps(_ context.Context, _, _, _ uuid.UUID) (int64, error) {
+	return f.retryOut, f.retryErr
+}
+func (f *fakeManageSvc) DismissFailedOps(_ context.Context, _, _, _ uuid.UUID) (int64, error) {
+	return f.dismissOut, f.dismissErr
+}
 
 // newConnTestRing builds an in-memory Ed25519 key ring (no DB / no network) — copied verbatim
 // from internal/agents/agent_handler_test.go (newAgentTestRing), renamed agent→connector.
@@ -314,6 +324,63 @@ func TestSyncNow_AuthorizesThenTriggers202(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("ReconcileOne was not called")
+	}
+}
+
+func TestRetryFailedOps_ReturnsCount(t *testing.T) {
+	bid := uuid.New()
+	cid := uuid.New()
+	h := NewHandler(&fakeManageSvc{retryOut: 3})
+	rr := serveConnBody(t, h, http.MethodPost, "/businesses/"+bid.String()+"/connectors/"+cid.String()+"/failed-ops/retry", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Retried int64 `json:"retried"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Retried != 3 {
+		t.Fatalf("retried = %d, want 3", out.Retried)
+	}
+}
+
+func TestDismissFailedOps_ReturnsCount(t *testing.T) {
+	bid := uuid.New()
+	cid := uuid.New()
+	h := NewHandler(&fakeManageSvc{dismissOut: 2})
+	rr := serveConnBody(t, h, http.MethodPost, "/businesses/"+bid.String()+"/connectors/"+cid.String()+"/failed-ops/dismiss", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Dismissed int64 `json:"dismissed"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Dismissed != 2 {
+		t.Fatalf("dismissed = %d, want 2", out.Dismissed)
+	}
+}
+
+func TestRetryFailedOps_UnownedIs404(t *testing.T) {
+	bid := uuid.New()
+	cid := uuid.New()
+	h := NewHandler(&fakeManageSvc{retryErr: errs.ErrNotFound})
+	rr := serveConnBody(t, h, http.MethodPost, "/businesses/"+bid.String()+"/connectors/"+cid.String()+"/failed-ops/retry", "")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+}
+
+func TestFailedOps_BadConnectorUUIDIs404(t *testing.T) {
+	bid := uuid.New()
+	h := NewHandler(&fakeManageSvc{})
+	rr := serveConnBody(t, h, http.MethodPost, "/businesses/"+bid.String()+"/connectors/not-a-uuid/failed-ops/dismiss", "")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (no oracle on malformed id)", rr.Code)
 	}
 }
 

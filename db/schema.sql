@@ -504,7 +504,7 @@ CREATE TABLE connector_webhook_delivery (
 CREATE INDEX connector_webhook_delivery_business_idx ON connector_webhook_delivery (business_id, tenant_root_id);
 
 CREATE TYPE connector_outbound_op_type   AS ENUM ('comment', 'create_issue', 'transition');
-CREATE TYPE connector_outbound_op_status AS ENUM ('pending', 'in_progress', 'done', 'failed');
+CREATE TYPE connector_outbound_op_status AS ENUM ('pending', 'in_progress', 'done', 'failed', 'dismissed');
 
 CREATE TABLE connector_outbound_op (
     id             uuid PRIMARY KEY,
