@@ -24,7 +24,7 @@ import (
 
 const (
 	syncIssueSQL   = `SELECT sync_inbound_external_issue($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
-	syncCommentSQL = `SELECT sync_inbound_external_comment($1,$2,$3,$4)`
+	syncCommentSQL = `SELECT sync_inbound_external_comment($1,$2,$3,$4,$5)`
 )
 
 func TestInboundDefiner(t *testing.T) {
@@ -147,10 +147,11 @@ func TestInboundDefiner(t *testing.T) {
 	var msgID1 pgtype.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, syncCommentSQL,
-			ticketID,             // $1 p_ticket_id
-			connID,               // $2 p_connector_id
-			commentExternalID,    // $3 p_external_id
-			"First comment body", // $4 p_body
+			ticketID,              // $1 p_ticket_id
+			connID,                // $2 p_connector_id
+			commentExternalID,     // $3 p_external_id
+			"First comment body",  // $4 p_body
+			pgtype.Timestamptz{},  // $5 p_created_at NULL → now()
 		).Scan(&msgID1)
 	}); err != nil {
 		t.Fatalf("first SyncInboundExternalComment: %v", err)
@@ -179,6 +180,7 @@ func TestInboundDefiner(t *testing.T) {
 			connID,
 			commentExternalID, // same external_id → dedupe
 			"Duplicate comment body",
+			pgtype.Timestamptz{}, // $5 p_created_at NULL → now()
 		).Scan(&msgID2)
 	}); err != nil {
 		t.Fatalf("second SyncInboundExternalComment: %v", err)

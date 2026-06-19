@@ -36,6 +36,11 @@ type ExternalIssue struct {
 	Description string
 	Comments    []ExternalComment
 	UpdatedAt   time.Time
+	// CreatedAt is the issue's creation time, threaded through to the description's inbound
+	// ticket_message.created_at so the description sorts chronologically against the comments
+	// (manyforge-4d1). Zero when the external system doesn't expose it → the DEFINER falls back
+	// to now().
+	CreatedAt time.Time
 }
 
 // ExternalIssueDraft is the minimal payload to create a new external issue (US4 outbound).

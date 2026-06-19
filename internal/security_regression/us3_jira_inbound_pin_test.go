@@ -575,11 +575,11 @@ func TestUS3_TenantIsolation(t *testing.T) {
 	// Cross-tenant attack: tenant A's connA + tenant B's ticketB.
 	// The DEFINER derives (business_id, tenant_root_id) from connA (→ bizA),
 	// but ticketB belongs to bizB → composite FK violation.
-	const syncCommentSQL = `SELECT sync_inbound_external_comment($1,$2,$3,$4)`
+	const syncCommentSQL = `SELECT sync_inbound_external_comment($1,$2,$3,$4,$5)`
 	var msgID pgtype.UUID
 	crossErr := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, syncCommentSQL,
-			ticketB, connA, "X-CROSS-1", "cross-tenant attack",
+			ticketB, connA, "X-CROSS-1", "cross-tenant attack", pgtype.Timestamptz{}, // p_created_at NULL → now()
 		).Scan(&msgID)
 	})
 	if crossErr == nil {
@@ -604,7 +604,7 @@ func TestUS3_TenantIsolation(t *testing.T) {
 	var legitMsgID pgtype.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, syncCommentSQL,
-			ticketB, connB, "X-LEGIT-1", "legitimate same-tenant comment",
+			ticketB, connB, "X-LEGIT-1", "legitimate same-tenant comment", pgtype.Timestamptz{}, // p_created_at NULL → now()
 		).Scan(&legitMsgID)
 	}); err != nil {
 		t.Fatalf("MF-004-TENANT-ISOLATION: legitimate same-tenant comment failed (over-blocking): %v", err)

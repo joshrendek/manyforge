@@ -372,8 +372,8 @@ func TestAgentGatedCommentE2E(t *testing.T) {
 	var dedupMsgID pgtype.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			`SELECT sync_inbound_external_comment($1,$2,$3,$4)`,
-			ticketID, connID, "C-E2E-COMM-1", "please close this ticket",
+			`SELECT sync_inbound_external_comment($1,$2,$3,$4,$5)`,
+			ticketID, connID, "C-E2E-COMM-1", "please close this ticket", pgtype.Timestamptz{},
 		).Scan(&dedupMsgID)
 	}); err != nil {
 		t.Fatalf("sync_inbound_external_comment (dedup attempt): %v", err)

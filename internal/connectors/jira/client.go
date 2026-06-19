@@ -88,7 +88,7 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 
 	issueURL := base.JoinPath("rest", "api", "3", "issue", externalID)
 	q := issueURL.Query()
-	q.Set("fields", "summary,status,priority,reporter,updated,description")
+	q.Set("fields", "summary,status,priority,reporter,updated,created,description")
 	issueURL.RawQuery = q.Encode()
 
 	var issueResp jiraIssueResponse
@@ -115,6 +115,7 @@ func (c *client) FetchIssue(ctx context.Context, externalID string) (connectors.
 		// description yields "" (extractADFText's fallback handles the `null` literal).
 		Description: extractADFText(issueResp.Fields.Description),
 		UpdatedAt:   issueResp.Fields.Updated.Time,
+		CreatedAt:   issueResp.Fields.Created.Time,
 	}
 
 	for _, c := range commResp.Comments {
@@ -567,6 +568,7 @@ type jiraIssueResponse struct {
 		// `null` literal).
 		Description json.RawMessage `json:"description"`
 		Updated     jiraTime        `json:"updated"`
+		Created     jiraTime        `json:"created"`
 	} `json:"fields"`
 }
 
