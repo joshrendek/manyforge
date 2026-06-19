@@ -143,6 +143,11 @@ type Querier interface {
 	// CHECK(connector_id IS NULL OR external_id IS NOT NULL) — the NULL-connector clause passes.
 	// Scoped by connector_id (a globally-unique uuid the caller already confirmed it owns).
 	DetachTicketsFromConnector(ctx context.Context, connectorID pgtype.UUID) (int64, error)
+	// DismissFailedOps acknowledges a connector's failed outbound ops without retrying: failed →
+	// dismissed (a terminal, non-degrading state kept for audit/forensics). Health counts
+	// status='failed', so dismissing clears 'degraded' (manyforge-xfj). Same (connector_id,
+	// business_id) scoping as RetryFailedOps. Returns the number dismissed.
+	DismissFailedOps(ctx context.Context, arg DismissFailedOpsParams) (int64, error)
 	// Effective permissions for a principal at a business: the union of permissions
 	// from every grant the principal holds on the business or any non-archived
 	// ancestor (downward-only inheritance, FR-010). The locked Owner role is handled
@@ -607,6 +612,13 @@ type Querier interface {
 	// during a contact merge (runs in the same tx as the loser's soft-delete). Scoped by
 	// contact_id, whose tenant ownership the service validates before calling.
 	RepointRequesters(ctx context.Context, arg RepointRequestersParams) error
+	// RetryFailedOps re-enqueues a connector's terminally-failed outbound ops for another dispatch
+	// attempt: failed → pending, attempts reset to 0 (the maxOutboundAttempts cap starts fresh) and
+	// last_error cleared. The dispatcher only claims status='pending', so this is the sole exit from
+	// the terminal 'failed' state (manyforge-xfj). Scoped to (connector_id, business_id) — RLS plus
+	// an explicit business_id predicate — so a foreign/unknown connector matches zero rows. Returns
+	// the number of ops re-enqueued (0 is valid: nothing was failed).
+	RetryFailedOps(ctx context.Context, arg RetryFailedOpsParams) (int64, error)
 	// Cuts off every live session for a principal (account delete, T077).
 	RevokeAllRefreshForPrincipal(ctx context.Context, principalID uuid.UUID) error
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)

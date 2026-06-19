@@ -23,6 +23,8 @@ type manageCRUD interface {
 	RotateCredential(ctx context.Context, principalID, businessID, connectorID uuid.UUID, in RotateCredentialInput) error
 	Test(ctx context.Context, principalID, businessID, connectorID uuid.UUID) (TestResult, error)
 	Delete(ctx context.Context, principalID, businessID, connectorID uuid.UUID) error
+	RetryFailedOps(ctx context.Context, principalID, businessID, connectorID uuid.UUID) (int64, error)
+	DismissFailedOps(ctx context.Context, principalID, businessID, connectorID uuid.UUID) (int64, error)
 }
 
 var _ manageCRUD = (*Service)(nil)
@@ -58,6 +60,8 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 		r.Put("/{cid}/credential", h.rotate)
 		r.Post("/{cid}/test", h.test)
 		r.Post("/{cid}/sync", h.syncNow)
+		r.Post("/{cid}/failed-ops/retry", h.retryFailedOps)
+		r.Post("/{cid}/failed-ops/dismiss", h.dismissFailedOps)
 		r.Delete("/{cid}", h.delete)
 	})
 }
@@ -309,6 +313,47 @@ func (h *Handler) syncNow(w http.ResponseWriter, r *http.Request) {
 		_ = h.sync.ReconcileOne(bg, cid)
 	}()
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "sync_started"})
+}
+
+// retryFailedOps re-enqueues the connector's failed outbound ops (failed → pending). Ownership is
+// enforced in the service (GetConnector gate → 404 if not the caller's). Returns the count
+// re-enqueued as {"retried": n}. (xfj — recovery from the otherwise-permanent 'degraded' state.)
+func (h *Handler) retryFailedOps(w http.ResponseWriter, r *http.Request) {
+	pid, bid, ok := h.ctxIDs(w, r)
+	if !ok {
+		return
+	}
+	cid, err := connPathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	n, err := h.svc.RetryFailedOps(r.Context(), pid, bid, cid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"retried": n})
+}
+
+// dismissFailedOps marks the connector's failed outbound ops dismissed (failed → dismissed),
+// clearing 'degraded' without retrying. Same ownership gate. Returns {"dismissed": n}.
+func (h *Handler) dismissFailedOps(w http.ResponseWriter, r *http.Request) {
+	pid, bid, ok := h.ctxIDs(w, r)
+	if !ok {
+		return
+	}
+	cid, err := connPathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	n, err := h.svc.DismissFailedOps(r.Context(), pid, bid, cid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"dismissed": n})
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {

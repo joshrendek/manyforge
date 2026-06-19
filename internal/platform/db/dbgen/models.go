@@ -65,6 +65,7 @@ const (
 	ConnectorOutboundOpStatusInProgress ConnectorOutboundOpStatus = "in_progress"
 	ConnectorOutboundOpStatusDone       ConnectorOutboundOpStatus = "done"
 	ConnectorOutboundOpStatusFailed     ConnectorOutboundOpStatus = "failed"
+	ConnectorOutboundOpStatusDismissed  ConnectorOutboundOpStatus = "dismissed"
 )
 
 func (e *ConnectorOutboundOpStatus) Scan(src interface{}) error {

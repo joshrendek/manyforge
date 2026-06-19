@@ -122,6 +122,29 @@ func (q *Queries) DetachTicketsFromConnector(ctx context.Context, connectorID pg
 	return result.RowsAffected(), nil
 }
 
+const dismissFailedOps = `-- name: DismissFailedOps :execrows
+UPDATE connector_outbound_op
+SET status = 'dismissed', updated_at = now()
+WHERE connector_id = $1 AND business_id = $2 AND status = 'failed'
+`
+
+type DismissFailedOpsParams struct {
+	ConnectorID uuid.UUID `json:"connector_id"`
+	BusinessID  uuid.UUID `json:"business_id"`
+}
+
+// DismissFailedOps acknowledges a connector's failed outbound ops without retrying: failed →
+// dismissed (a terminal, non-degrading state kept for audit/forensics). Health counts
+// status='failed', so dismissing clears 'degraded' (manyforge-xfj). Same (connector_id,
+// business_id) scoping as RetryFailedOps. Returns the number dismissed.
+func (q *Queries) DismissFailedOps(ctx context.Context, arg DismissFailedOpsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, dismissFailedOps, arg.ConnectorID, arg.BusinessID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getConnectorHealth = `-- name: GetConnectorHealth :one
 SELECT
     (SELECT count(*) FROM ticket t WHERE t.connector_id = $1)::bigint AS linked_ticket_count,
@@ -308,6 +331,31 @@ type RelinkReadoptedMessagesParams struct {
 func (q *Queries) RelinkReadoptedMessages(ctx context.Context, arg RelinkReadoptedMessagesParams) error {
 	_, err := q.db.Exec(ctx, relinkReadoptedMessages, arg.ConnectorID, arg.BusinessID, arg.TicketIds)
 	return err
+}
+
+const retryFailedOps = `-- name: RetryFailedOps :execrows
+UPDATE connector_outbound_op
+SET status = 'pending', attempts = 0, last_error = NULL, updated_at = now()
+WHERE connector_id = $1 AND business_id = $2 AND status = 'failed'
+`
+
+type RetryFailedOpsParams struct {
+	ConnectorID uuid.UUID `json:"connector_id"`
+	BusinessID  uuid.UUID `json:"business_id"`
+}
+
+// RetryFailedOps re-enqueues a connector's terminally-failed outbound ops for another dispatch
+// attempt: failed → pending, attempts reset to 0 (the maxOutboundAttempts cap starts fresh) and
+// last_error cleared. The dispatcher only claims status='pending', so this is the sole exit from
+// the terminal 'failed' state (manyforge-xfj). Scoped to (connector_id, business_id) — RLS plus
+// an explicit business_id predicate — so a foreign/unknown connector matches zero rows. Returns
+// the number of ops re-enqueued (0 is valid: nothing was failed).
+func (q *Queries) RetryFailedOps(ctx context.Context, arg RetryFailedOpsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, retryFailedOps, arg.ConnectorID, arg.BusinessID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const rotateConnectorSecretRef = `-- name: RotateConnectorSecretRef :one
