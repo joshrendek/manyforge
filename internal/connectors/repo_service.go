@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
@@ -57,7 +58,23 @@ func (s *RepoConnectorService) Create(ctx context.Context, principalID, business
 			Status:              "enabled",
 			BusinessID:          businessID,
 		})
-		return perr
+		if perr != nil {
+			return perr
+		}
+		tt := "repo_connector"
+		entry := audit.Entry{
+			BusinessID:       &businessID,
+			ActorPrincipalID: &principalID,
+			Action:           "repo_connector.created",
+			TargetType:       &tt,
+			TargetID:         &id,
+			Inputs:           map[string]any{"type": in.Type, "base_url": in.BaseURL, "repo": in.Repo},
+		}
+		if in.AllowPrivateBaseURL {
+			dec := "trust_private_base_url"
+			entry.Decision = &dec
+		}
+		return audit.Write(ctx, tx, entry)
 	})
 	if err != nil {
 		return uuid.Nil, mapRepoErr(err)
@@ -122,6 +139,9 @@ func validateRepoConnector(in CreateRepoConnectorInput) error {
 	}
 	if in.Repo == "" {
 		return fmt.Errorf("repo_connectors: repo required: %w", errs.ErrValidation)
+	}
+	if !strings.Contains(in.Repo, "/") {
+		return fmt.Errorf("repo_connector: repo must be owner/name: %w", errs.ErrValidation)
 	}
 	if in.APIToken == "" {
 		return fmt.Errorf("repo_connectors: api_token required: %w", errs.ErrValidation)

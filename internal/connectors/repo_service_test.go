@@ -55,6 +55,11 @@ func TestRepoConnectorValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "bad repo",
+			mutate:  func(in *CreateRepoConnectorInput) { in.Repo = "noslash" },
+			wantErr: true,
+		},
+		{
 			name:    "non-http scheme",
 			mutate:  func(in *CreateRepoConnectorInput) { in.BaseURL = "ftp://github.com" },
 			wantErr: true,
