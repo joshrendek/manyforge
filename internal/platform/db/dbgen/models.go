@@ -870,6 +870,22 @@ type RefreshToken struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type RepoConnector struct {
+	ID                  uuid.UUID `json:"id"`
+	BusinessID          uuid.UUID `json:"business_id"`
+	TenantRootID        uuid.UUID `json:"tenant_root_id"`
+	Type                string    `json:"type"`
+	DisplayName         string    `json:"display_name"`
+	BaseUrl             string    `json:"base_url"`
+	Repo                string    `json:"repo"`
+	AllowPrivateBaseUrl bool      `json:"allow_private_base_url"`
+	SecretRef           uuid.UUID `json:"secret_ref"`
+	Config              []byte    `json:"config"`
+	Status              string    `json:"status"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
 type Requester struct {
 	ID           uuid.UUID   `json:"id"`
 	BusinessID   uuid.UUID   `json:"business_id"`

@@ -575,3 +575,23 @@ CREATE TABLE activity_entry (
 CREATE INDEX activity_contact_time_idx  ON activity_entry (contact_id, occurred_at DESC, id DESC);
 CREATE INDEX activity_business_time_idx ON activity_entry (business_id, occurred_at DESC);
 CREATE UNIQUE INDEX activity_dedup_idx ON activity_entry (tenant_root_id, source_type, source_id, kind) WHERE source_id IS NOT NULL;
+
+-- Spec 007 code-review agent: per-business GitHub repo connector (migrations/0070).
+CREATE TABLE repo_connector (
+    id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id            uuid NOT NULL,
+    tenant_root_id         uuid NOT NULL,
+    type                   text NOT NULL DEFAULT 'github',
+    display_name           text NOT NULL,
+    base_url               text NOT NULL,
+    repo                   text NOT NULL,
+    allow_private_base_url boolean NOT NULL DEFAULT false,
+    secret_ref             uuid NOT NULL,
+    config                 jsonb NOT NULL DEFAULT '{}'::jsonb,
+    status                 text NOT NULL DEFAULT 'enabled',
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    updated_at             timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    CONSTRAINT repo_connector_type_chk CHECK (type IN ('github'))
+);
