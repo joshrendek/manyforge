@@ -133,6 +133,18 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 		"updated_at": iss.UpdatedAt,
 	})
 
+	// Whether this ticket already exists BEFORE the upsert below creates/updates it. Used to
+	// suppress re-triage on the first-import comment backlog (uk7): on import the agent already
+	// triages the whole ticket via the ticket.created event, so only comments that arrive on an
+	// already-existing ticket should emit message.received. Read via DEFINER — the worker is
+	// principal-less and RLS hides `ticket`.
+	var ticketExisted bool
+	if err := tx.QueryRow(ctx,
+		`SELECT connector_ticket_exists($1,$2)`, p.ConnectorID, p.ExternalID,
+	).Scan(&ticketExisted); err != nil {
+		return err
+	}
+
 	// Step 7: external-wins upsert of requester + ticket + sync_state.
 	var ticketID uuid.UUID
 	if err := tx.QueryRow(ctx,
@@ -171,6 +183,10 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 
 	// Step 8b: append-only comment upsert (dedupe via connector_id+external_id). Each comment's
 	// real created time is threaded through so the thread sorts chronologically (manyforge-4d1).
+	// A comment that inserts a NEW message on an already-existing ticket emits message.received so
+	// the opt-in ReplyRetriageTrigger can wake (uk7); the first-import backlog (ticketExisted=false)
+	// is suppressed, and a deduped comment (msgID invalid — e.g. an agent's own echoed-back reply)
+	// emits nothing.
 	for _, c := range iss.Comments {
 		var msgID pgtype.UUID
 		if err := tx.QueryRow(ctx,
@@ -179,7 +195,15 @@ func (s *InboundSyncSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.
 		).Scan(&msgID); err != nil {
 			return err
 		}
-		// msgID.Valid==false means dedupe (already seen) — that is fine.
+		if msgID.Valid && ticketExisted {
+			if err := events.Enqueue(ctx, tx, tenantRoot, events.TopicMessageReceived, map[string]any{
+				"ticket_id":   ticketID,
+				"business_id": bizID,
+				"message_id":  uuid.UUID(msgID.Bytes),
+			}); err != nil {
+				return err
+			}
+		}
 	}
 
 	s.logger().InfoContext(ctx, "connectors/inbound_sync: synced",
