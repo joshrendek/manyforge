@@ -1,11 +1,15 @@
 package github
 
 import (
+	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/connectors"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 func newStubClient(t *testing.T, h http.HandlerFunc) *client {
@@ -46,10 +50,16 @@ func TestFetchPR_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 404")
 	}
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("expected errs.ErrNotFound, got %v", err)
+	}
 }
 
 func TestPostReview(t *testing.T) {
 	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tkn" {
+			t.Errorf("missing or incorrect auth header")
+		}
 		w.WriteHeader(201)
 		w.Write([]byte(`{"id":7,"html_url":"http://x/7"}`))
 	})
@@ -69,14 +79,28 @@ func TestCloneURL_Public(t *testing.T) {
 }
 
 func TestBasicAuthHeader(t *testing.T) {
-	h := BasicAuthHeader("mytoken")
+	token := "mytoken"
+	h := BasicAuthHeader(token)
 	// Should start with "AUTHORIZATION: basic "
 	if len(h) == 0 {
 		t.Fatal("empty header")
 	}
-	// Just check prefix
 	const prefix = "AUTHORIZATION: basic "
+	if !strings.HasPrefix(h, prefix) {
+		t.Fatalf("header missing prefix: %q", h)
+	}
 	if len(h) <= len(prefix) {
 		t.Fatalf("header too short: %q", h)
+	}
+
+	// Decode and verify the base64 payload
+	base64Part := h[len(prefix):]
+	decoded, err := base64.StdEncoding.DecodeString(base64Part)
+	if err != nil {
+		t.Fatalf("failed to decode base64: %v", err)
+	}
+	expected := "x-access-token:" + token
+	if string(decoded) != expected {
+		t.Fatalf("payload mismatch: got %q, want %q", string(decoded), expected)
 	}
 }
