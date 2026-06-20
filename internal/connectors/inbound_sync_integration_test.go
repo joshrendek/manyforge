@@ -139,6 +139,91 @@ func TestInboundSyncOrdersMessagesChronologically(t *testing.T) {
 	}
 }
 
+// TestInboundSyncReTriageEmitsForNewCommentsOnly (manyforge-uk7) pins that a NEW external comment
+// arriving on an ALREADY-EXISTING connector ticket emits a message.received outbox event (so the
+// opt-in ReplyRetriageTrigger can wake), while the backlog of comments present at FIRST IMPORT
+// does NOT (the agent already triages the whole ticket from the ticket.created event).
+func TestInboundSyncReTriageEmitsForNewCommentsOnly(t *testing.T) {
+	ctx, tdb, seed := startConn(t)
+
+	sharedSealer := newTestSealer(t)
+	svc := &Service{DB: tdb.App, Vault: secrets.NewVault(sharedSealer), Verify: nil}
+	connID, err := svc.Create(ctx, seed.principalID, seed.businessID, jiraInput())
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+
+	// `issue` is captured by reference by the factory closure, so mutating it between Handle calls
+	// changes what the next FetchIssue returns.
+	issue := ExternalIssue{
+		ExternalID:    "JIRA-9",
+		URL:           "https://acme.atlassian.net/browse/JIRA-9",
+		Title:         "Re-triage bug",
+		Status:        "Open",
+		Priority:      "Normal",
+		ReporterEmail: "reporter@acme.test",
+		ReporterName:  "R",
+		Description:   "the original request",
+		CreatedAt:     time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC),
+		Comments: []ExternalComment{
+			{ExternalID: "b1", Author: "A", Body: "backlog comment", CreatedAt: time.Date(2026, 2, 1, 9, 30, 0, 0, time.UTC)},
+		},
+	}
+	reg := NewRegistry(svc)
+	reg.Register("jira", func(rc ResolvedConnector) (TicketingConnector, error) {
+		return &fakeConnector{issue: issue}, nil
+	})
+	sub := &InboundSyncSubscriber{DB: tdb.App, Sealer: sharedSealer, Registry: reg, Logger: slog.Default()}
+	ev := buildInboundSyncEvent(t, connID, "JIRA-9", seed.businessID)
+
+	// --- First sync: CREATE the ticket. The backlog comment (b1) must NOT emit message.received. ---
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error { return sub.Handle(ctx, tx, ev) }); err != nil {
+		t.Fatalf("first Handle: %v", err)
+	}
+	var nReceived int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM outbox WHERE tenant_root_id=$1 AND topic='message.received'`,
+		seed.businessID).Scan(&nReceived); err != nil {
+		t.Fatalf("count message.received after import: %v", err)
+	}
+	if nReceived != 0 {
+		t.Fatalf("import backlog must NOT emit message.received, got %d", nReceived)
+	}
+
+	// --- A genuinely new comment (b2) arrives on the now-existing ticket. ---
+	issue.Comments = append(issue.Comments, ExternalComment{
+		ExternalID: "b2", Author: "B", Body: "a new customer reply", CreatedAt: time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC),
+	})
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error { return sub.Handle(ctx, tx, ev) }); err != nil {
+		t.Fatalf("second Handle: %v", err)
+	}
+
+	// Exactly one message.received, for b2 (b1 deduped → no emit), payload shaped for ReplyRetriageTrigger.
+	var b2MsgID uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id FROM ticket_message WHERE connector_id=$1 AND external_id='b2'`, connID).Scan(&b2MsgID); err != nil {
+		t.Fatalf("read b2 message id: %v", err)
+	}
+	var payTicket, payBusiness, payMessage string
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*) OVER (), payload->>'ticket_id', payload->>'business_id', payload->>'message_id'
+		   FROM outbox WHERE tenant_root_id=$1 AND topic='message.received'`,
+		seed.businessID).Scan(&nReceived, &payTicket, &payBusiness, &payMessage); err != nil {
+		t.Fatalf("read message.received payload: %v", err)
+	}
+	if nReceived != 1 {
+		t.Fatalf("want exactly 1 message.received (b2 only), got %d", nReceived)
+	}
+	if payMessage != b2MsgID.String() {
+		t.Fatalf("message.received message_id = %q, want b2 ticket_message id %q", payMessage, b2MsgID)
+	}
+	if payBusiness != seed.businessID.String() {
+		t.Fatalf("message.received business_id = %q, want %q", payBusiness, seed.businessID)
+	}
+	_ = payTicket
+}
+
 // TestInboundSyncSubscriber verifies the full subscriber flow: fetch → upsert → idempotent.
 func TestInboundSyncSubscriber(t *testing.T) {
 	ctx, tdb, seed := startConn(t)
