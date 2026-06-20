@@ -258,6 +258,7 @@ type Querier interface {
 	// The kind ('human'|'agent') of a principal; ownership may pass only to a human.
 	GetPrincipalKind(ctx context.Context, id uuid.UUID) (string, error)
 	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
+	GetRepoConnector(ctx context.Context, id uuid.UUID) (RepoConnector, error)
 	// GetRequester loads a single requester scoped to (id, business_id) — the
 	// ownership predicate. pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
 	GetRequester(ctx context.Context, arg GetRequesterParams) (Requester, error)
@@ -396,6 +397,7 @@ type Querier interface {
 	// approval execution conflicts on the partial UNIQUE index and inserts no second row
 	// (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
+	InsertRepoConnector(ctx context.Context, arg InsertRepoConnectorParams) (RepoConnector, error)
 	// InsertSecret seals-then-stores: caller passes a pre-generated id + the sealed ciphertext.
 	// tenant_root_id is derived from the (RLS-visible) business, so an invisible business inserts zero rows.
 	InsertSecret(ctx context.Context, arg InsertSecretParams) (Secret, error)
