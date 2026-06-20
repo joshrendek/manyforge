@@ -15,6 +15,7 @@ CREATE TABLE repo_connector (
     updated_at             timestamptz NOT NULL DEFAULT now(),
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (secret_ref, tenant_root_id) REFERENCES secret (id, tenant_root_id),
     CONSTRAINT repo_connector_type_chk CHECK (type IN ('github'))
 );
 
