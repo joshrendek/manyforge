@@ -1,15 +1,15 @@
-# Handoff — manyforge @ master — 2026-06-19 ~19:45 UTC
+# Handoff — manyforge @ master — 2026-06-19 ~21:50 UTC
 
 ## ⚠️ Before you clear
 - **Uncommitted:** none of consequence. `HANDOFF.md` (this file) is the only tracked edit; commit it if you want it versioned. Untracked noise (`.pair/`, `crm-*.png`, `xfj-*.png` screenshots, scattered `CLAUDE.md` memory files) is pre-existing / artifacts — ignore.
-- **Unpushed:** none. `master == origin/master == dc0bea6`.
-- **Still running:** DB **:55432** (ssh tunnel, dev DB **@ migration 68**) · Go backend `manyforge` **:8081** (air, running the new code incl. the agent-run reaper) · Angular `ng serve` **:4300**.
+- **Unpushed:** none. `master == origin/master == 42d49e1` (+ this handoff commit).
+- **Still running:** DB **:55432** (ssh tunnel, dev DB **@ migration 69**) · Go backend `manyforge` **:8081** (air, running the new code incl. the agent-run reaper) · Angular `ng serve` **:4300**.
 
 ## State (≤3 sentences)
-Shipped all three open items from the prior handoff, each its own commit(s) on master and pushed: **xfj** (connector failed-op retry/dismiss — backend + Angular, browser-verified), **67i** (reaper for orphaned `running` agent runs), **4d1** (real chronological ordering of inbound connector messages). Dev DB migrated to **68** and the backend is healthy. bd `xfj`/`67i`/`4d1` are all **closed**.
+Cleared the whole connector/agent bug-and-followup cluster, each its own commit(s) on master and pushed: **xfj** (failed-op retry/dismiss, browser-verified), **67i** (reaper for orphaned `running` runs), **4d1** (chronological inbound ordering), **edq** (verified the connector ticket.created auto-trigger already shipped via migration 0061 → closed), **uk7** (re-triage agents on NEW external comments, backlog-suppressed). Dev DB migrated to **69**; backend healthy. bd `xfj`/`67i`/`4d1`/`edq`/`uk7` all **closed**.
 
 ## Resume here
-Pick the next item off `bd ready`. Leftover from the prior handoff's backlog (none started this session): **`uk7`** (P3 re-triage), **`4d1` is done**, epics `7ml`/`saz` (Spec 007/006), `edq`/`nwr`/`yhe` (CRM/auto-trigger, in_progress). No half-done work to resume.
+No half-done work. Pick from `bd ready`: **`3jt`** (P3, RSA-2048 DKIM fallback — email infra, different domain), epics **`7ml`** (Spec 007 coding/review agents) / **`saz`** (Spec 006 feedback boards), in-progress CRM epics **`nwr`/`yhe`**, or P4 MCP follow-ups (`wex`/`bq7`/`dvv`). The connector/agent area is in good shape — next work is a fresh domain or an epic that wants its own plan.
 
 ## Run & verify
 - **Go** (`export PATH="$HOME/go/bin:$PATH"`): `go build ./...` · `make test` (unit) · `make lint` (vet+staticcheck) · `go test -tags contract ./cmd/...` (openapi drift) · integration `go test -tags integration -p 1 ./internal/<pkg>/...` (testcontainers; Docker required). sqlc = the **v1.27.0 bottle** `/opt/homebrew/Cellar/sqlc/1.27.0/bin/sqlc generate` (global v1.31.1 re-churns everything).
@@ -31,9 +31,9 @@ Pick the next item off `bd ready`. Leftover from the prior handoff's backlog (no
 - **4d1** threads `p_created_at` through the comment DEFINER; `COALESCE(p_created_at, now())` preserves old behaviour for connectors that don't expose a timestamp (Go passes `pgtype.Timestamptz{}` = NULL).
 
 ## Next steps
-1. `bd ready` → next unit of work. 2. Consider surfacing a real "agent working" badge now that run status is honest (optional polish on 67i). 3. Drain the older epics (`edq`/`nwr`/`yhe`, `7ml`/`saz`).
+1. `bd ready` → next unit of work (likely a fresh domain — `3jt` DKIM — or plan an epic). 2. Optional polish: surface a real "agent working" badge now that run status is honest (67i made it trustworthy). 3. uk7 re-triage is opt-in per agent via `retriage_on_reply` (default off) — flip it on a dev agent to see connector comments wake the agent.
 
 ## Pointers
-- **bd:** `xfj`/`67i`/`4d1` closed this session. Open/in-progress: `uk7`, `7ml`, `saz`, `edq`, `nwr`, `yhe`.
-- **Key files this session:** connectors retry/dismiss — `internal/connectors/{manage.go,handler.go}`, `db/query/connector_manage.sql`, migration 0066, `web/src/app/pages/connectors/list.ts` + `core/connectors.service.ts`. Reaper — `internal/agents/reaper.go`, migration 0067, `cmd/manyforge/main.go` (wiring after the drainer goroutine). Inbound ordering — `internal/connectors/{inbound_sync.go,connector.go}`, `internal/connectors/jira/client.go`, migration 0068.
+- **bd:** `xfj`/`67i`/`4d1`/`edq`/`uk7` closed this session. Ready/in-progress: `3jt`, `7ml`, `saz`, `nwr`, `yhe`, `wex`/`bq7`/`dvv`.
+- **Key files this session:** retry/dismiss — `internal/connectors/{manage.go,handler.go}`, `db/query/connector_manage.sql`, migration 0066, `web/src/app/pages/connectors/list.ts` + `core/connectors.service.ts`. Reaper — `internal/agents/reaper.go`, migration 0067, `cmd/manyforge/main.go` (after the drainer goroutine). Inbound ordering — `internal/connectors/{inbound_sync.go,connector.go}`, `internal/connectors/jira/client.go`, migration 0068. Re-triage on comments — `internal/connectors/inbound_sync.go` (emits `message.received` for new comments on existing tickets), migration 0069 (`connector_ticket_exists`); consumed by `internal/agents/reply_trigger.go` (`ReplyRetriageTrigger`, opt-in `retriage_on_reply` + hourly cap, migration 0052).
 - Resume: `/handoff resume`.
