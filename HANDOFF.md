@@ -2,7 +2,7 @@
 
 ## ⚠️ Before you clear
 - **Uncommitted:** none of consequence. `HANDOFF.md` (this file) is the only tracked edit; commit it if you want it versioned. Untracked noise (`.pair/`, `crm-*.png`, `xfj-*.png` screenshots, scattered `CLAUDE.md` memory files) is pre-existing / artifacts — ignore.
-- **Unpushed:** none. `master == origin/master == 42d49e1` (+ this handoff commit).
+- **Unpushed:** none. `master == origin/master == cd7bfb7` (this file may show as a 1-commit diff after you commit the latest handoff edit).
 - **Still running:** DB **:55432** (ssh tunnel, dev DB **@ migration 69**) · Go backend `manyforge` **:8081** (air, running the new code incl. the agent-run reaper) · Angular `ng serve` **:4300**.
 
 ## State (≤3 sentences)
