@@ -21,3 +21,21 @@ func TestRepoConnectorHasNoWriteCapability(t *testing.T) {
 		}
 	}
 }
+
+// MF007-PIN-2: the sandbox must be read-only + drop caps + force the egress proxy.
+// If any of these fragments disappear from docker.go the sandbox isolation guarantee
+// is silently broken — this test makes that a CI failure.
+func TestSandboxRunArgsPinned(t *testing.T) {
+	src := mustRead(t, "../agents/coding/sandbox/docker.go")
+	for _, frag := range []string{
+		`"--read-only"`,
+		`"--cap-drop", "ALL"`,
+		`:/work:ro`,
+		`HTTPS_PROXY=`,
+		`"--network"`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("sandbox hardening fragment %q missing from docker.go — was isolation weakened?", frag)
+		}
+	}
+}
