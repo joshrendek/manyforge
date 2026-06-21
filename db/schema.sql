@@ -596,3 +596,24 @@ CREATE TABLE repo_connector (
     FOREIGN KEY (secret_ref, tenant_root_id) REFERENCES secret (id, tenant_root_id),
     CONSTRAINT repo_connector_type_chk CHECK (type IN ('github'))
 );
+
+-- Spec 007 code-review agent: one review of one PR, linked to an agent_run (migrations/0071).
+CREATE TABLE code_review (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id        uuid NOT NULL,
+    tenant_root_id     uuid NOT NULL,
+    agent_run_id       uuid,
+    repo_connector_id  uuid NOT NULL,
+    pr_number          integer NOT NULL,
+    head_sha           text NOT NULL DEFAULT '',
+    status             text NOT NULL DEFAULT 'pending',
+    summary            text NOT NULL DEFAULT '',
+    findings           jsonb NOT NULL DEFAULT '[]'::jsonb,
+    external_review_ref text NOT NULL DEFAULT '',
+    posted_at          timestamptz,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    CONSTRAINT code_review_status_chk CHECK (status IN ('pending','running','succeeded','failed'))
+);
