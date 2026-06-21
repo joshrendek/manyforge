@@ -57,11 +57,12 @@ type CodeReviewService struct {
 	// Clone is the injectable seam for cloning a repo at a specific SHA.
 	// Defaults to coding.CloneAtSHA when nil (set at call time). Tests inject
 	// a fake that just creates the directory without needing a real git server.
-	Clone func(ctx context.Context, cloneURL, authHeader, sha, destDir string) error
+	// The allowPrivate parameter mirrors rc.AllowPrivateBaseURL from the connector.
+	Clone func(ctx context.Context, cloneURL, authHeader, sha, destDir string, allowPrivate bool) error
 }
 
 // cloneFn returns the effective clone function (injectable seam or real default).
-func (s *CodeReviewService) cloneFn() func(ctx context.Context, cloneURL, authHeader, sha, destDir string) error {
+func (s *CodeReviewService) cloneFn() func(ctx context.Context, cloneURL, authHeader, sha, destDir string, allowPrivate bool) error {
 	if s.Clone != nil {
 		return s.Clone
 	}
@@ -135,6 +136,10 @@ func (s *CodeReviewService) Trigger(
 	if err != nil {
 		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
 	}
+	if pr.State != "open" {
+		return s.fail(ctx, principalID, businessID, crID, prNumber,
+			fmt.Errorf("coding: pull request not open: %w", errs.ErrValidation))
+	}
 
 	// 6. Set up per-run directories and clone the PR head.
 	runDir := filepath.Join(s.WorkRoot, crID.String())
@@ -149,7 +154,7 @@ func (s *CodeReviewService) Trigger(
 	defer func() { _ = os.RemoveAll(runDir) }() // always clean up regardless of outcome
 
 	authHeader := github.BasicAuthHeader(rc.Credential.APIToken)
-	if err := s.cloneFn()(ctx, conn.CloneURL(), authHeader, pr.HeadSHA, checkout); err != nil {
+	if err := s.cloneFn()(ctx, conn.CloneURL(), authHeader, pr.HeadSHA, checkout, rc.AllowPrivateBaseURL); err != nil {
 		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
 	}
 

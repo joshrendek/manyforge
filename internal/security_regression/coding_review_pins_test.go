@@ -62,3 +62,25 @@ func TestSandboxEnvNoHostInheritance(t *testing.T) {
 		t.Fatal("service.go must not pass host environment into the sandbox spec")
 	}
 }
+
+// MF007-PIN-5: clone hardening — token scope, SSRF guard, minimal git env.
+// These fragments in clone.go are load-bearing security controls:
+//   - http.followRedirects=false: prevents token leakage via redirect to attacker host
+//   - GIT_TERMINAL_PROMPT=0: prevents git from prompting for credentials
+//   - GIT_CONFIG_GLOBAL: overrides any host-level git config that could alter behavior
+//   - netsafe.: confirms the SSRF pre-check against the clone URL is present
+//
+// Removing any of these fails CI loudly (MF007-C1, MF007-I1, MF007-I2).
+func TestCloneHardeningPinned(t *testing.T) {
+	src := mustRead(t, "../agents/coding/clone.go")
+	for _, frag := range []string{
+		`http.followRedirects=false`,
+		`GIT_TERMINAL_PROMPT=0`,
+		`GIT_CONFIG_GLOBAL`,
+		`netsafe.`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("clone hardening fragment %q missing from clone.go — was the security control removed?", frag)
+		}
+	}
+}
