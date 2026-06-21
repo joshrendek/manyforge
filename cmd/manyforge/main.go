@@ -23,6 +23,8 @@ import (
 
 	"github.com/manyforge/manyforge/internal/account"
 	"github.com/manyforge/manyforge/internal/agents"
+	"github.com/manyforge/manyforge/internal/agents/coding"
+	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/jira"
@@ -353,6 +355,41 @@ func main() {
 		logger.Warn("MANYFORGE_CONNECTOR_MASTER_KEY unset; external connectors disabled (no Jira webhook/sync)")
 	}
 
+	// Spec 007 code-review sandbox (slice 1). RepoConnectorService uses the same
+	// connector sealer vault as the connector stack when available; falls back to a
+	// nil vault when MANYFORGE_CONNECTOR_MASTER_KEY is unset (repo-connector creation
+	// will fail at runtime, but the server still boots for environments that don't
+	// need code review). The egress infra setup is non-fatal: a missing Docker daemon
+	// (CI / no-Docker dev) logs a warning and coding reviews fail at run time only.
+	var codingH *coding.Handler
+	{
+		var connVault *secrets.Vault
+		if len(cfg.ConnectorMasterKey) > 0 {
+			connSealer, serr := mfcrypto.NewSealer(cfg.ConnectorMasterKey)
+			if serr != nil {
+				// Already validated in the connector block above; won't happen here.
+				logger.Error("init connector sealer (coding)", "err", serr)
+				os.Exit(1)
+			}
+			connVault = secrets.NewVault(connSealer)
+		}
+		repoSvc := &connectors.RepoConnectorService{DB: database, Vault: connVault}
+		egressAllow := strings.Split(cfg.SandboxEgressAllow, ",")
+		if err := sandbox.EnsureEgressInfra(ctx, cfg.EgressProxyImage, egressAllow); err != nil {
+			logger.Warn("sandbox egress infra unavailable; coding reviews will fail at run time", "err", err)
+		}
+		codingSvc := &coding.CodeReviewService{
+			DB:       database,
+			Repos:    repoSvc,
+			Sandbox:  sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr),
+			Creds:    &coding.AgentCredResolver{Agents: agentSvc, Credentials: credSvc},
+			Image:    cfg.SandboxImage,
+			WorkRoot: cfg.SandboxWorkRoot,
+			Timeout:  5 * time.Minute,
+		}
+		codingH = &coding.Handler{RepoSvc: repoSvc, ReviewSvc: codingSvc}
+	}
+
 	// Late-wire the agent handler's read-only metadata endpoints (/agents/tools,
 	// /agents/models). The registry is built from the same inputs as the engine's
 	// (ticketSvc + the resolved connGateway); only descriptors are read, never
@@ -554,6 +591,7 @@ func main() {
 		crm:              crmH,
 		crmRead:          httpx.RequirePermission(database, permResolve, authz.PermCRMRead, businessIDFromPath),
 		crmWrite:         httpx.RequirePermission(database, permResolve, authz.PermCRMWrite, businessIDFromPath),
+		codingReviews:    codingH,
 	})
 
 	srv := &http.Server{
@@ -774,6 +812,11 @@ type apiHandlers struct {
 	// the other groups.
 	crmRead  func(http.Handler) http.Handler
 	crmWrite func(http.Handler) http.Handler
+
+	// codingReviews is the Spec 007 code-review handler: repo-connector creation +
+	// code-review trigger/get under a business, gated by RequireAuth only (no
+	// additional permission gate in slice 1 — scoped by RLS + principal/business pair).
+	codingReviews *coding.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -913,6 +956,14 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				cw.Use(h.crmWrite)
 				h.crm.WriteRoutes(cw)
 			})
+			// Spec 007 code-review slice: repo-connector create + code-review trigger/get,
+			// gated by RequireAuth (the pr group middleware). No additional permission gate
+			// in slice 1 — RLS + the principal/business pair bound in every service call
+			// are the ownership predicate. Guard on nil so a zero-value apiHandlers (as
+			// used by the OpenAPI-drift contract test) does not panic.
+			if h.codingReviews != nil {
+				h.codingReviews.ProtectedRoutes(pr)
+			}
 		})
 	})
 }
