@@ -20,6 +20,7 @@ import (
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
 // CodeReview is the service-layer view of a code_review row.
@@ -53,6 +54,13 @@ type CodeReviewService struct {
 	Image    string        // opencode sandbox image tag
 	WorkRoot string        // host temp root for per-run checkouts; must be writable
 	Timeout  time.Duration // sandbox wall-clock cap (0 = 10 min default)
+
+	// EgressAllow is the boot-static set of provider hosts the sandbox egress
+	// proxy permits (from MANYFORGE_SANDBOX_EGRESS_ALLOW). The proxy is shared and
+	// long-lived, so Trigger validates the run's provider host against this set
+	// up front and fails with ErrValidation rather than launching a sandbox the
+	// proxy will silently egress-block (manyforge-0qj). Same matcher the proxy uses.
+	EgressAllow netsafe.HostAllowlist
 
 	// Clone is the injectable seam for cloning a repo at a specific SHA.
 	// Defaults to coding.CloneAtSHA when nil (set at call time). Tests inject
@@ -105,6 +113,14 @@ func (s *CodeReviewService) Trigger(
 	}
 	if cred.Host() == "" {
 		return CodeReview{}, fmt.Errorf("coding: agent has no usable AI credential: %w", errs.ErrValidation)
+	}
+	// The sandbox egress proxy is shared and boot-static; a provider host outside
+	// its allowlist would be silently CONNECT-blocked, so reject it up front with a
+	// clear, actionable error instead of launching a doomed sandbox (manyforge-0qj).
+	if !s.EgressAllow.Allows(cred.Host()) {
+		return CodeReview{}, fmt.Errorf(
+			"coding: provider host %q is not in the sandbox egress allowlist (add it to MANYFORGE_SANDBOX_EGRESS_ALLOW): %w",
+			cred.Host(), errs.ErrValidation)
 	}
 
 	// 4. Insert pending code_review + audit "agent.coding.review.requested" in one tx.

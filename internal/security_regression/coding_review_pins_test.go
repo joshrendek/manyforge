@@ -84,3 +84,31 @@ func TestCloneHardeningPinned(t *testing.T) {
 		}
 	}
 }
+
+// MF007-PIN-6 (manyforge-0qj): the sandbox egress proxy is shared and boot-static,
+// so the service must validate a run's provider host against the SAME allowlist the
+// proxy enforces, up front, returning ErrValidation. Two halves are pinned:
+//  1. service.go performs the pre-flight check (EgressAllow.Allows + ErrValidation);
+//  2. the proxy (enforcer) and the service (validator) share netsafe's matcher and
+//     neither carries a private copy — a divergent copy is exactly how the validator
+//     and enforcer would drift back into silent egress blocking.
+func TestEgressAllowlistValidationPinned(t *testing.T) {
+	svc := mustRead(t, "../agents/coding/service.go")
+	for _, frag := range []string{
+		`EgressAllow`,
+		`.Allows(cred.Host())`,
+		`errs.ErrValidation`,
+	} {
+		if !strings.Contains(svc, frag) {
+			t.Fatalf("service.go missing egress pre-flight fragment %q — was the manyforge-0qj guard removed?", frag)
+		}
+	}
+
+	proxy := mustRead(t, "../../cmd/mf-egress-proxy/main.go")
+	if !strings.Contains(proxy, "netsafe.ParseHostAllowlist") || !strings.Contains(proxy, ".Allows(") {
+		t.Fatal("cmd/mf-egress-proxy/main.go must enforce egress via netsafe's shared matcher (netsafe.ParseHostAllowlist + .Allows)")
+	}
+	if strings.Contains(proxy, "func allowed(") {
+		t.Fatal("cmd/mf-egress-proxy/main.go defines a private allow-matcher — it must share netsafe's so the validator/enforcer can't drift (manyforge-0qj)")
+	}
+}

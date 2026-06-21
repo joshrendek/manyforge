@@ -6,25 +6,15 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
-func allowed(set map[string]bool, hostport string) bool {
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		host = h
-	}
-	return set[host] || set[hostport]
-}
-
 func main() {
-	allow := map[string]bool{}
-	for h := range strings.SplitSeq(os.Getenv("EGRESS_ALLOW"), ",") {
-		if h = strings.TrimSpace(h); h != "" {
-			allow[h] = true
-		}
-	}
+	// The allowlist matcher is shared with the code-review service's pre-flight
+	// validation (internal/agents/coding) so the enforcer and validator can't drift.
+	allow := netsafe.ParseHostAllowlist(os.Getenv("EGRESS_ALLOW"))
 	addr := os.Getenv("LISTEN")
 	if addr == "" {
 		addr = ":8080"
@@ -34,7 +24,7 @@ func main() {
 			http.Error(w, "only CONNECT supported", http.StatusMethodNotAllowed)
 			return
 		}
-		if !allowed(allow, r.Host) {
+		if !allow.Allows(r.Host) {
 			http.Error(w, "egress not allowed", http.StatusForbidden)
 			return
 		}
