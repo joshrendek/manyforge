@@ -209,7 +209,7 @@ type Querier interface {
 	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
-	GetCodeReview(ctx context.Context, id uuid.UUID) (CodeReview, error)
+	GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (CodeReview, error)
 	// GetCompany loads a single company scoped to (id, tenant_root_id) — the ownership
 	// predicate. pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
 	GetCompany(ctx context.Context, arg GetCompanyParams) (Company, error)
