@@ -20,7 +20,7 @@ func allowed(set map[string]bool, hostport string) bool {
 
 func main() {
 	allow := map[string]bool{}
-	for _, h := range strings.Split(os.Getenv("EGRESS_ALLOW"), ",") {
+	for h := range strings.SplitSeq(os.Getenv("EGRESS_ALLOW"), ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			allow[h] = true
 		}
