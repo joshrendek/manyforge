@@ -15,6 +15,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/account"
 	"github.com/manyforge/manyforge/internal/agents"
+	"github.com/manyforge/manyforge/internal/agents/coding"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/inbox"
@@ -91,6 +92,8 @@ func apiRoutes(t *testing.T) map[string]bool {
 		crm:             crm.NewHandler(&crm.ContactService{}, &crm.CompanyService{}, &crm.ActivityService{}, nil, nil),
 		crmRead:         noop,
 		crmWrite:        noop,
+		codingReviews:   &coding.Handler{},
+		connectorsManage: noop,
 	})
 
 	routes := map[string]bool{}
@@ -179,6 +182,19 @@ func spec005Routes(t *testing.T) map[string]bool {
 	return specRoutesFrom(t, p)
 }
 
+// spec007Routes returns the operations declared in the spec-007 contract, or an
+// empty set if the contract file does not yet exist (so the untagged drift test does
+// not fail before the file is committed; the contract-tagged drift_007_test enforces
+// the full two-way check once the file is present).
+func spec007Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	p := specPath("specs", "007-coding-review-agents", "contracts", "openapi.yaml")
+	if _, err := os.Stat(p); err != nil {
+		return map[string]bool{}
+	}
+	return specRoutesFrom(t, p)
+}
+
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
 // operation served but documented in NEITHER spec. Param-name and trailing-slash
@@ -213,6 +229,11 @@ func TestOpenAPIDrift(t *testing.T) {
 	for op := range spec005 {
 		documented[op] = true
 	}
+	spec007 := spec007Routes(t)
+	spec007Available := len(spec007) > 0
+	for op := range spec007 {
+		documented[op] = true
+	}
 
 	var missing, undocumented []string
 	for op := range spec001 {
@@ -237,6 +258,13 @@ func TestOpenAPIDrift(t *testing.T) {
 			// Once that file exists spec005Available is true and these routes must be
 			// documented (the strict two-way check is owned by Task 8's contract test).
 			if !spec005Available && (strings.Contains(op, "/contacts") || strings.Contains(op, "/companies")) {
+				continue
+			}
+			// Likewise skip the spec-007 code-review surface (/repo-connectors,
+			// /code-reviews) until specs/007-coding-review-agents/contracts/openapi.yaml
+			// is committed. Once that file exists spec007Available is true and these
+			// routes must be documented (the strict two-way check is TestOpenAPIDrift007).
+			if !spec007Available && (strings.Contains(op, "/repo-connectors") || strings.Contains(op, "/code-reviews")) {
 				continue
 			}
 			undocumented = append(undocumented, op)
