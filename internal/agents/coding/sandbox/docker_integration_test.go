@@ -110,6 +110,19 @@ func TestSandboxIsolation(t *testing.T) {
 		t.Fatalf("egress was not blocked: stdout=%s", res.Stdout)
 	}
 
+	// 5. HTTPS CONNECT-path egress to a non-allowlisted host is refused.
+	// wget uses HTTP CONNECT to tunnel TLS through the proxy; the proxy must deny
+	// the tunnel for non-allowlisted hosts just as it denies plain HTTP.
+	res, _ = r.Run(ctx, SandboxSpec{
+		Image:       "manyforge/sandbox-stub:test",
+		ReadOnlyDir: ro,
+		OutputDir:   out,
+		Cmd:         []string{"sh", "-c", "wget -T 5 -q -O- https://example.com >/dev/null 2>&1 && echo REACHED || echo BLOCKED"},
+	})
+	if !strings.Contains(string(res.Stdout), "BLOCKED") {
+		t.Fatalf("HTTPS egress was not blocked: stdout=%s", res.Stdout)
+	}
+
 	// 4. /out is writable and the file appears on the host.
 	res, _ = r.Run(ctx, SandboxSpec{
 		Image:       "manyforge/sandbox-stub:test",
