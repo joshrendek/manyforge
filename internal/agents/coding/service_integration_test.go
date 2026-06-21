@@ -25,6 +25,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
@@ -249,6 +250,8 @@ func buildService(
 		WorkRoot: t.TempDir(),
 		Timeout:  30 * time.Second,
 		Clone:    fakeClone,
+		// fakeCred resolves to api.anthropic.com; allow it so the egress pre-flight passes.
+		EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com"),
 	}
 }
 
