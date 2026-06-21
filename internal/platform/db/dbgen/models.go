@@ -644,6 +644,23 @@ type BusinessClosure struct {
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 }
 
+type CodeReview struct {
+	ID                uuid.UUID          `json:"id"`
+	BusinessID        uuid.UUID          `json:"business_id"`
+	TenantRootID      uuid.UUID          `json:"tenant_root_id"`
+	AgentRunID        pgtype.UUID        `json:"agent_run_id"`
+	RepoConnectorID   uuid.UUID          `json:"repo_connector_id"`
+	PrNumber          int32              `json:"pr_number"`
+	HeadSha           string             `json:"head_sha"`
+	Status            string             `json:"status"`
+	Summary           string             `json:"summary"`
+	Findings          []byte             `json:"findings"`
+	ExternalReviewRef string             `json:"external_review_ref"`
+	PostedAt          pgtype.Timestamptz `json:"posted_at"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+}
+
 type Company struct {
 	ID           uuid.UUID `json:"id"`
 	TenantRootID uuid.UUID `json:"tenant_root_id"`

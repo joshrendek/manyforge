@@ -209,6 +209,7 @@ type Querier interface {
 	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	GetCodeReview(ctx context.Context, id uuid.UUID) (CodeReview, error)
 	// GetCompany loads a single company scoped to (id, tenant_root_id) — the ownership
 	// predicate. pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
 	GetCompany(ctx context.Context, arg GetCompanyParams) (Company, error)
@@ -312,6 +313,7 @@ type Querier interface {
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
+	InsertCodeReview(ctx context.Context, arg InsertCodeReviewParams) (CodeReview, error)
 	// ---- companies ----
 	// InsertCompany creates a company unconditionally (no upsert).
 	InsertCompany(ctx context.Context, arg InsertCompanyParams) (Company, error)
@@ -654,6 +656,7 @@ type Querier interface {
 	UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error)
 	// Final/intermediate state write. status + token/cost totals + optional error.
 	UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRunProgressParams) (AgentRun, error)
+	UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeReviewResultParams) (CodeReview, error)
 	// UpdateCompany is a partial update: NULL nargs preserve the current value via COALESCE.
 	// NOTE: COALESCE cannot clear domain to NULL (a NULL narg is read as "unchanged", not
 	// "detach") — acceptable for Phase A. Scoped to (id, tenant_root_id).
