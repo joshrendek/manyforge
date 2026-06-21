@@ -5,8 +5,13 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"time"
 )
+
+var envKeyRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+func validEnvKey(k string) bool { return envKeyRe.MatchString(k) }
 
 // DockerRunner implements SandboxRunner via the docker CLI.
 type DockerRunner struct {
@@ -50,6 +55,9 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 	}
 	// ONLY allowlisted run-scoped secrets/config — no host env passthrough.
 	for k, v := range spec.Env {
+		if !validEnvKey(k) {
+			return SandboxResult{}, fmt.Errorf("sandbox: invalid env key %q", k)
+		}
 		args = append(args, "-e", k+"="+v)
 	}
 	args = append(args, spec.Image)
