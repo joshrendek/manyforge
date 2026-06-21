@@ -200,7 +200,8 @@ func (r *malformedFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (
 }
 
 // fakeClone is the injectable clone seam: just creates destDir and a placeholder file.
-func fakeClone(_ context.Context, _, _, _, destDir string) error {
+// The allowPrivate parameter is accepted but ignored — no real network is involved.
+func fakeClone(_ context.Context, _, _, _, destDir string, _ bool) error {
 	if err := os.MkdirAll(destDir, 0o700); err != nil {
 		return fmt.Errorf("fake clone: mkdir: %w", err)
 	}
