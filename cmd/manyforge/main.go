@@ -813,9 +813,9 @@ type apiHandlers struct {
 	crmRead  func(http.Handler) http.Handler
 	crmWrite func(http.Handler) http.Handler
 
-	// codingReviews is the Spec 007 code-review handler: repo-connector creation +
-	// code-review trigger/get under a business, gated by RequireAuth only (no
-	// additional permission gate in slice 1 — scoped by RLS + principal/business pair).
+	// codingReviews is the Spec 007 code-review handler: repo-connector creation gated
+	// by connectorsManage (connectors.manage), code-review trigger/get gated by
+	// agentsRun (agents.run). Same RLS-bound 404-on-lacking-perm semantics.
 	codingReviews *coding.Handler
 }
 
@@ -956,13 +956,19 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				cw.Use(h.crmWrite)
 				h.crm.WriteRoutes(cw)
 			})
-			// Spec 007 code-review slice: repo-connector create + code-review trigger/get,
-			// gated by RequireAuth (the pr group middleware). No additional permission gate
-			// in slice 1 — RLS + the principal/business pair bound in every service call
-			// are the ownership predicate. Guard on nil so a zero-value apiHandlers (as
-			// used by the OpenAPI-drift contract test) does not panic.
+			// Spec 007 code-review slice: repo-connector create gated on connectors.manage,
+			// code-review trigger/get gated on agents.run — same RLS-bound 404-on-lacking-perm
+			// semantics as the other permission groups. Guard on nil so a zero-value
+			// apiHandlers (as used by the OpenAPI-drift contract test) does not panic.
 			if h.codingReviews != nil {
-				h.codingReviews.ProtectedRoutes(pr)
+				pr.Group(func(cg chi.Router) {
+					cg.Use(h.connectorsManage)
+					h.codingReviews.RepoConnectorRoutes(cg)
+				})
+				pr.Group(func(ag chi.Router) {
+					ag.Use(h.agentsRun)
+					h.codingReviews.CodeReviewRoutes(ag)
+				})
 			}
 		})
 	})
