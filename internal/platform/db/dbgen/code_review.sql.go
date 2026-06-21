@@ -13,11 +13,16 @@ import (
 )
 
 const getCodeReview = `-- name: GetCodeReview :one
-SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at FROM code_review WHERE id = $1::uuid
+SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
 
-func (q *Queries) GetCodeReview(ctx context.Context, id uuid.UUID) (CodeReview, error) {
-	row := q.db.QueryRow(ctx, getCodeReview, id)
+type GetCodeReviewParams struct {
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+func (q *Queries) GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (CodeReview, error) {
+	row := q.db.QueryRow(ctx, getCodeReview, arg.ID, arg.BusinessID)
 	var i CodeReview
 	err := row.Scan(
 		&i.ID,
