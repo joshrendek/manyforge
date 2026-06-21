@@ -39,3 +39,26 @@ func TestSandboxRunArgsPinned(t *testing.T) {
 		}
 	}
 }
+
+// MF007-PIN-3: review posting is intentionally ungated — the service must NOT route
+// the post through the approval queue (no CreatePending / approval in service.go).
+func TestReviewPostingIsUngated(t *testing.T) {
+	src := mustRead(t, "../agents/coding/service.go")
+	for _, banned := range []string{"CreatePending", "ApprovalPending", "awaiting_approval"} {
+		if strings.Contains(src, banned) {
+			t.Fatalf("service.go references %q — review posting must stay ungated/advisory", banned)
+		}
+	}
+	if !strings.Contains(src, "PostReview") {
+		t.Fatal("service.go must post the review directly")
+	}
+}
+
+// MF007-PIN-4: only allowlisted run-scoped secrets enter the sandbox Env — the service
+// must build Env from the resolved LLM credential, never from os.Environ()/host.
+func TestSandboxEnvNoHostInheritance(t *testing.T) {
+	src := mustRead(t, "../agents/coding/service.go")
+	if strings.Contains(src, "os.Environ()") {
+		t.Fatal("service.go must not pass host environment into the sandbox spec")
+	}
+}

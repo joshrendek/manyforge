@@ -146,7 +146,7 @@ func (s *CodeReviewService) Trigger(
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
 	}
-	defer os.RemoveAll(runDir) // always clean up regardless of outcome
+	defer func() { _ = os.RemoveAll(runDir) }() // always clean up regardless of outcome
 
 	authHeader := github.BasicAuthHeader(rc.Credential.APIToken)
 	if err := s.cloneFn()(ctx, conn.CloneURL(), authHeader, pr.HeadSHA, checkout); err != nil {

@@ -24,7 +24,7 @@ func TestFetchPR(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer tkn" {
 			t.Errorf("missing auth header")
 		}
-		w.Write([]byte(`{"number":42,"title":"x","state":"open","merged":false,"head":{"sha":"abc","ref":"feat"},"base":{"ref":"main"}}`))
+		_, _ = w.Write([]byte(`{"number":42,"title":"x","state":"open","merged":false,"head":{"sha":"abc","ref":"feat"},"base":{"ref":"main"}}`))
 	})
 	pr, err := c.FetchPR(t.Context(), 42)
 	if err != nil || pr.HeadSHA != "abc" || pr.State != "open" {
@@ -34,7 +34,7 @@ func TestFetchPR(t *testing.T) {
 
 func TestFetchPR_Merged(t *testing.T) {
 	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"number":1,"title":"y","state":"closed","merged":true,"head":{"sha":"def","ref":"feat"},"base":{"ref":"main"}}`))
+		_, _ = w.Write([]byte(`{"number":1,"title":"y","state":"closed","merged":true,"head":{"sha":"def","ref":"feat"},"base":{"ref":"main"}}`))
 	})
 	pr, err := c.FetchPR(t.Context(), 1)
 	if err != nil || pr.State != "merged" {
@@ -61,7 +61,7 @@ func TestPostReview(t *testing.T) {
 			t.Errorf("missing or incorrect auth header")
 		}
 		w.WriteHeader(201)
-		w.Write([]byte(`{"id":7,"html_url":"http://x/7"}`))
+		_, _ = w.Write([]byte(`{"id":7,"html_url":"http://x/7"}`))
 	})
 	ref, err := c.PostReview(t.Context(), 42, connectors.Review{Body: "hi"})
 	if err != nil || ref.ExternalID != "7" {

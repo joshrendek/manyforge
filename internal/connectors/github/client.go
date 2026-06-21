@@ -50,7 +50,7 @@ func (c *client) FetchPR(ctx context.Context, prNumber int) (connectors.PullRequ
 	if err != nil {
 		return connectors.PullRequest{}, fmt.Errorf("github: fetch pr: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return connectors.PullRequest{}, fmt.Errorf("github: pr %d: %w", prNumber, errs.ErrNotFound)
@@ -111,7 +111,7 @@ func (c *client) PostReview(ctx context.Context, prNumber int, r connectors.Revi
 	if err != nil {
 		return connectors.ReviewRef{}, fmt.Errorf("github: post review: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return connectors.ReviewRef{}, fmt.Errorf("github: pr %d: %w", prNumber, errs.ErrNotFound)

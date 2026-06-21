@@ -46,16 +46,16 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		hj, ok := w.(http.Hijacker)
 		if !ok {
-			dst.Close()
+			_ = dst.Close()
 			return
 		}
 		src, _, err := hj.Hijack()
 		if err != nil {
-			dst.Close()
+			_ = dst.Close()
 			return
 		}
-		go func() { io.Copy(dst, src); dst.Close() }()
-		go func() { io.Copy(src, dst); src.Close() }()
+		go func() { _, _ = io.Copy(dst, src); _ = dst.Close() }()
+		go func() { _, _ = io.Copy(src, dst); _ = src.Close() }()
 	}
 	srv := &http.Server{Addr: addr, Handler: http.HandlerFunc(h)}
 	log.Printf("mf-egress-proxy listening on %s allow=%v", addr, allow)
