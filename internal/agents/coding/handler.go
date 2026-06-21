@@ -21,15 +21,28 @@ type Handler struct {
 	ReviewSvc *CodeReviewService
 }
 
-// ProtectedRoutes mounts the code-review endpoints under a business.
-func (h *Handler) ProtectedRoutes(r chi.Router) {
+// RepoConnectorRoutes mounts the repo-connector creation endpoint. Gate with
+// connectorsManage (connectors.manage) before mounting.
+func (h *Handler) RepoConnectorRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/repo-connectors", func(r chi.Router) {
 		r.Post("/", h.createRepoConnector)
 	})
+}
+
+// CodeReviewRoutes mounts the code-review trigger and get endpoints. Gate with
+// agentsRun (agents.run) before mounting.
+func (h *Handler) CodeReviewRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/code-reviews", func(r chi.Router) {
 		r.Post("/", h.triggerReview)
 		r.Get("/{reviewID}", h.getReview)
 	})
+}
+
+// ProtectedRoutes mounts all code-review endpoints under a business. Used by
+// tests that want the full surface without per-slice permission middleware.
+func (h *Handler) ProtectedRoutes(r chi.Router) {
+	h.RepoConnectorRoutes(r)
+	h.CodeReviewRoutes(r)
 }
 
 func codingBusinessID(r *http.Request) (uuid.UUID, error) {
