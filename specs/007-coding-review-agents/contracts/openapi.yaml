@@ -1,0 +1,203 @@
+openapi: 3.1.0
+info:
+  title: manyforge Coding & Review API
+  version: 0.1.0
+  description: Spec 007 slice 1 — repo-connector registration and code-review trigger/get.
+
+paths:
+  /businesses/{id}/repo-connectors:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: createRepoConnector
+      summary: Register a GitHub repo connector
+      description: >
+        Creates a repo-connector record that binds a GitHub repository to a
+        business. Gated by connectors.manage. Returns 201 with the new
+        connector's id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRepoConnectorInput'
+      responses:
+        "201":
+          description: Repo connector created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IDResponse'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: Business not found or caller lacks connectors.manage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /businesses/{id}/code-reviews:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: triggerCodeReview
+      summary: Trigger a code review of a pull request
+      description: >
+        Enqueues a code-review run for the given PR using the specified agent
+        and repo connector. Gated by agents.run. Returns 202 with the review
+        record's id and initial status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerCodeReviewInput'
+      responses:
+        "202":
+          description: Code review accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodeReviewAccepted'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: Business, agent, or repo connector not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /businesses/{id}/code-reviews/{reviewID}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: reviewID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getCodeReview
+      summary: Get a code review record
+      description: >
+        Returns the current state of a code-review run (status, review URL if
+        complete, findings summary). Gated by agents.run.
+      responses:
+        "200":
+          description: Code review record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodeReview'
+        "404":
+          description: Code review not found or caller lacks agents.run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    CreateRepoConnectorInput:
+      type: object
+      required:
+        - repo_url
+      properties:
+        repo_url:
+          type: string
+          description: HTTPS URL of the GitHub repository
+        token:
+          type: string
+          description: Optional GitHub personal access token or app token
+
+    TriggerCodeReviewInput:
+      type: object
+      required:
+        - agent_id
+        - repo_connector_id
+        - pr_number
+      properties:
+        agent_id:
+          type: string
+          format: uuid
+        repo_connector_id:
+          type: string
+          format: uuid
+        pr_number:
+          type: integer
+          minimum: 1
+
+    IDResponse:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+
+    CodeReviewAccepted:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        review_url:
+          type: string
+          nullable: true
+
+    CodeReview:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        review_url:
+          type: string
+          nullable: true
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
