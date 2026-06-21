@@ -337,11 +337,12 @@ func codingAudit(
 }
 
 // opencodeCmd returns the sandbox command argv for the opencode runner.
-// Task 14 pins the exact command; for now we use a placeholder that exercises
-// the env injection path end-to-end.
-func opencodeCmd(model string) []string {
-	_ = model // model is injected via LLM_MODEL env var
-	return []string{"opencode", "run", "--output", "/out/review.json"}
+// The real image ENTRYPOINT (/usr/local/bin/review) drives the full
+// opencode invocation and writes /out/review.json, so no additional Cmd
+// args are required.  model is injected via the LLM_MODEL env var; the
+// entrypoint's opencode.json uses {env:LLM_MODEL} substitution.
+func opencodeCmd(_ string) []string {
+	return []string{} // ENTRYPOINT runs the review; no extra Cmd needed
 }
 
 // ptr returns a pointer to the given string value.
