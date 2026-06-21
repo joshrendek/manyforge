@@ -19,4 +19,4 @@ WHERE id = sqlc.arg('id')::uuid
 RETURNING *;
 
 -- name: GetCodeReview :one
-SELECT * FROM code_review WHERE id = sqlc.arg('id')::uuid;
+SELECT * FROM code_review WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid;
