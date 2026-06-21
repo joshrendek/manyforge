@@ -97,6 +97,22 @@ type Config struct {
 	AgentWallClock          time.Duration // MANYFORGE_AGENT_WALL_CLOCK (default 120s)
 	AgentTemperature        float64       // MANYFORGE_AGENT_TEMPERATURE (default 0.0; deterministic)
 	AgentRetriageCapPerHour int           // MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR (default 5; per-ticket/agent reply re-triage cap)
+
+	// Spec 007 code-review sandbox (slice 1).
+	// SandboxImage is the opencode review sandbox Docker image.
+	// Default: manyforge/opencode-sandbox:dev.
+	SandboxImage string
+	// EgressProxyImage is the allowlisting egress proxy Docker image.
+	// Default: manyforge/egress-proxy:dev.
+	EgressProxyImage string
+	// SandboxEgressAllow is a comma-separated list of provider hostnames the
+	// sandbox is allowed to reach through the egress proxy.
+	// Default: api.anthropic.com,openrouter.ai,api.openai.com.
+	SandboxEgressAllow string
+	// SandboxWorkRoot is the host-side directory used for per-run checkouts.
+	// MUST be a path visible inside the Docker VM (on Colima/Mac that means
+	// under $HOME, NOT /tmp). Default: $HOME/.cache/manyforge/sandbox.
+	SandboxWorkRoot string
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -239,6 +255,18 @@ func Load() (Config, error) {
 	if cfg.AgentRetriageCapPerHour, err = envInt("MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR", 5); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_AGENT_RETRIAGE_CAP_PER_HOUR: %w", err)
 	}
+
+	// Spec 007 sandbox defaults. SandboxWorkRoot must be bind-mountable into the
+	// Docker VM: on Colima/Mac only paths under $HOME are mirrored into the VM,
+	// so we default to $HOME/.cache/manyforge/sandbox (never os.TempDir()/tmp).
+	cfg.SandboxImage = env("MANYFORGE_SANDBOX_IMAGE", "manyforge/opencode-sandbox:dev")
+	cfg.EgressProxyImage = env("MANYFORGE_EGRESS_PROXY_IMAGE", "manyforge/egress-proxy:dev")
+	cfg.SandboxEgressAllow = env("MANYFORGE_SANDBOX_EGRESS_ALLOW", "api.anthropic.com,openrouter.ai,api.openai.com")
+	sandboxWorkRootDefault := "/tmp/mf-sandbox" // fallback only; overridden below when $HOME is available
+	if home, herr := os.UserHomeDir(); herr == nil {
+		sandboxWorkRootDefault = home + "/.cache/manyforge/sandbox"
+	}
+	cfg.SandboxWorkRoot = env("MANYFORGE_SANDBOX_WORK_ROOT", sandboxWorkRootDefault)
 
 	return cfg, nil
 }
