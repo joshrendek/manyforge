@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,6 +17,19 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
+
+// RepoConnectorSummary is the public (credential-free) view of a repo connector
+// returned by List. It intentionally omits secret_ref and any APIToken field.
+type RepoConnectorSummary struct {
+	ID                  string
+	Type                string
+	DisplayName         string
+	BaseURL             string
+	Repo                string
+	AllowPrivateBaseURL bool
+	Status              string
+	CreatedAt           time.Time
+}
 
 // RepoConnectorService creates + resolves per-business repo connectors with
 // their credential (APIToken) sealed in the vault. Mirrors connectors.Service.
@@ -147,6 +161,55 @@ func validateRepoConnector(in CreateRepoConnectorInput) error {
 		return fmt.Errorf("repo_connectors: api_token required: %w", errs.ErrValidation)
 	}
 	return nil
+}
+
+// List returns all repo connectors for the given business, newest-first.
+// The returned summaries contain NO credential or secret_ref fields.
+// Cross-tenant or missing data → ErrNotFound via RLS enforcement.
+func (s *RepoConnectorService) List(ctx context.Context, principalID, businessID uuid.UUID) ([]RepoConnectorSummary, error) {
+	var out []RepoConnectorSummary
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		rows, err := dbgen.New(tx).ListRepoConnectors(ctx, businessID)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			out = append(out, RepoConnectorSummary{
+				ID:                  r.ID.String(),
+				Type:                r.Type,
+				DisplayName:         r.DisplayName,
+				BaseURL:             r.BaseUrl,
+				Repo:                r.Repo,
+				AllowPrivateBaseURL: r.AllowPrivateBaseUrl,
+				Status:              r.Status,
+				CreatedAt:           r.CreatedAt,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+	return out, nil
+}
+
+// Delete removes a single repo connector by id, scoped to the business (RLS +
+// explicit business_id predicate). Returns ErrNotFound when the connector does
+// not exist, belongs to a different tenant, or was already deleted.
+func (s *RepoConnectorService) Delete(ctx context.Context, principalID, businessID, id uuid.UUID) error {
+	return mapRepoErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		n, err := dbgen.New(tx).DeleteRepoConnector(ctx, dbgen.DeleteRepoConnectorParams{
+			ID:         id,
+			BusinessID: businessID,
+		})
+		if err != nil {
+			return fmt.Errorf("connectors: delete repo connector: %w", err)
+		}
+		if n == 0 {
+			return errs.ErrNotFound
+		}
+		return nil
+	}))
 }
 
 // mapRepoErr converts DB/sentinel errors to stable service sentinels.
