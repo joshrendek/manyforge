@@ -98,7 +98,7 @@ func (h *Handler) triggerReview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrValidation)
 		return
 	}
-	cr, err := h.ReviewSvc.Trigger(r.Context(), pid, bid, agentID, rcID, in.PRNumber)
+	cr, err := h.ReviewSvc.Enqueue(r.Context(), pid, bid, agentID, rcID, in.PRNumber)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -5,14 +5,11 @@ package coding
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -157,7 +154,7 @@ func startGitHubStub(t *testing.T, prJSON []byte) (*httptest.Server, *githubStub
 			stub.postCount.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprintf(w, `{"id": 42, "html_url": "https://github.com/o/r/pull/1#pullrequestreview-42"}`)
+			_, _ = w.Write([]byte(`{"id": 42, "html_url": "https://github.com/o/r/pull/1#pullrequestreview-42"}`))
 			return
 		}
 		http.NotFound(w, r)
@@ -177,16 +174,9 @@ type validFakeRunner struct {
 }
 
 func (r *validFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	doc := FindingsDoc{
-		Summary: r.summary,
-		Findings: []connectors.Finding{
-			{File: "main.go", Line: nil, Severity: "warning", Title: "Example finding", Detail: "detail here"},
-		},
-	}
-	raw, _ := json.Marshal(doc)
-	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), raw, 0o600); err != nil {
-		return sandbox.SandboxResult{}, fmt.Errorf("fake runner: write review.json: %w", err)
-	}
+	// This runner is retained for future Task-7 async e2e use but is not invoked
+	// by Enqueue (which only queues pending rows). See TestCodeReviewTrigger subtests.
+	_ = spec
 	return sandbox.SandboxResult{ExitCode: 0}, nil
 }
 
@@ -194,9 +184,7 @@ func (r *validFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sand
 type malformedFakeRunner struct{}
 
 func (r *malformedFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte("not json {{{ broken"), 0o600); err != nil {
-		return sandbox.SandboxResult{}, fmt.Errorf("malformed fake runner: write review.json: %w", err)
-	}
+	_ = spec
 	return sandbox.SandboxResult{ExitCode: 0}, nil
 }
 
@@ -204,7 +192,7 @@ func (r *malformedFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (
 // The allowPrivate parameter is accepted but ignored — no real network is involved.
 func fakeClone(_ context.Context, _, _, _, destDir string, _ bool) error {
 	if err := os.MkdirAll(destDir, 0o700); err != nil {
-		return fmt.Errorf("fake clone: mkdir: %w", err)
+		return err
 	}
 	return os.WriteFile(destDir+"/README.md", []byte("fake repo\n"), 0o600)
 }
@@ -214,7 +202,7 @@ func fakeClone(_ context.Context, _, _, _, destDir string, _ bool) error {
 // ---------------------------------------------------------------------------
 
 // codingEnv bundles a shared sealer + the RepoConnectorService + CodeReviewService
-// so secrets sealed at connector creation can be opened at Trigger time.
+// so secrets sealed at connector creation can be opened at Enqueue time.
 type codingEnv struct {
 	Sealer *crypto.Sealer
 	Repos  *connectors.RepoConnectorService
@@ -295,7 +283,7 @@ func TestCodeReviewTrigger(t *testing.T) {
 		"base": {"ref": "main"}
 	}`)
 
-	srv, stub := startGitHubStub(t, prJSON)
+	srv, _ := startGitHubStub(t, prJSON)
 
 	// Agent ID — used by FakeCredResolver (which ignores it, returns canned cred).
 	agentID := uuid.New()
@@ -308,122 +296,33 @@ func TestCodeReviewTrigger(t *testing.T) {
 	}}
 
 	t.Run("succeeded", func(t *testing.T) {
-		env := newCodingEnv(t, tdb)
-		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
-
-		summary := "Overall the PR looks good with minor issues."
-		runner := &validFakeRunner{summary: summary}
-		svc := buildService(t, tdb, env, runner, fakeCred)
-
-		postsBefore := stub.postCount.Load()
-
-		cr, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
-		if err != nil {
-			t.Fatalf("Trigger: unexpected error: %v", err)
-		}
-
-		// 1. Status == "succeeded" and non-empty ReviewURL.
-		if cr.Status != "succeeded" {
-			t.Errorf("Status: want %q, got %q", "succeeded", cr.Status)
-		}
-		if cr.ReviewURL == "" {
-			t.Error("ReviewURL must be non-empty on success")
-		}
-
-		// 2. Exactly one POST to GitHub reviews with the summary in body.
-		postsAfter := stub.postCount.Load()
-		if postsAfter-postsBefore != 1 {
-			t.Errorf("expected 1 POST to /reviews, got %d", postsAfter-postsBefore)
-		}
-		if len(stub.reviewPosts) > 0 {
-			lastBody := stub.reviewPosts[len(stub.reviewPosts)-1]
-			var posted map[string]any
-			if err := json.Unmarshal(lastBody, &posted); err != nil {
-				t.Errorf("review POST body not JSON: %v", err)
-			}
-			// The body field must contain the summary text.
-			bodyField, _ := posted["body"].(string)
-			if bodyField == "" {
-				t.Error("review POST body.body must be non-empty")
-			}
-		}
-
-		// 3. Get() shows status succeeded, posted_at set, findings persisted.
-		got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
-		if err != nil {
-			t.Fatalf("Get: %v", err)
-		}
-		if got.Status != "succeeded" {
-			t.Errorf("Get().Status: want succeeded, got %q", got.Status)
-		}
-
-		// Verify posted_at is set via Super.
-		var postedAt *time.Time
-		if err := tdb.Super.QueryRow(ctx,
-			"SELECT posted_at FROM code_review WHERE id=$1", cr.ID).Scan(&postedAt); err != nil {
-			t.Fatalf("read posted_at: %v", err)
-		}
-		if postedAt == nil {
-			t.Error("posted_at must be set after success")
-		}
-
-		// Verify findings persisted.
-		var findingsRaw []byte
-		if err := tdb.Super.QueryRow(ctx,
-			"SELECT findings FROM code_review WHERE id=$1", cr.ID).Scan(&findingsRaw); err != nil {
-			t.Fatalf("read findings: %v", err)
-		}
-		var findings []connectors.Finding
-		if err := json.Unmarshal(findingsRaw, &findings); err != nil {
-			t.Fatalf("unmarshal findings: %v", err)
-		}
-		if len(findings) == 0 {
-			t.Error("findings must be non-empty after success")
-		}
+		// After the Trigger→Enqueue split, Enqueue inserts a pending row and returns
+		// immediately without running the pipeline. The synchronous end-to-end
+		// assertions (status=succeeded, posted review, findings persisted) are
+		// deferred to the async worker integration test (Task 7, manyforge-elo).
+		t.Skip("async e2e rebuilt in Task 7 once the worker lands (manyforge-elo)")
 	})
 
 	t.Run("malformed_json_marks_failed", func(t *testing.T) {
-		env := newCodingEnv(t, tdb)
-		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
-
-		runner := &malformedFakeRunner{}
-		svc := buildService(t, tdb, env, runner, fakeCred)
-
-		postsBefore := stub.postCount.Load()
-
-		_, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
-		if err == nil {
-			t.Fatal("Trigger with malformed JSON must return error")
-		}
-
-		// No POST to GitHub must have occurred.
-		postsAfter := stub.postCount.Load()
-		if postsAfter != postsBefore {
-			t.Errorf("expected no POST to /reviews on failure, got %d new posts", postsAfter-postsBefore)
-		}
-
-		// Verify via the DB that the code_review for this connector is "failed".
-		var status string
-		if err := tdb.Super.QueryRow(ctx,
-			"SELECT status FROM code_review WHERE repo_connector_id=$1 ORDER BY created_at DESC LIMIT 1",
-			connID).Scan(&status); err != nil {
-			t.Fatalf("read status: %v", err)
-		}
-		if status != "failed" {
-			t.Errorf("status after malformed JSON: want failed, got %q", status)
-		}
+		// After the Trigger→Enqueue split, Enqueue does not invoke the sandbox, so
+		// the malformed-JSON path (which happens inside runJob) cannot be exercised
+		// synchronously. Rebuilt in the async worker integration test (Task 7).
+		t.Skip("async e2e rebuilt in Task 7 once the worker lands (manyforge-elo)")
 	})
 
 	t.Run("rls_cross_tenant_get_not_found", func(t *testing.T) {
 		env := newCodingEnv(t, tdb)
 		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
 
-		runner := &validFakeRunner{summary: "RLS test summary."}
-		svc := buildService(t, tdb, env, runner, fakeCred)
+		svc := buildService(t, tdb, env, &validFakeRunner{}, fakeCred)
 
-		cr, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		// Enqueue inserts a pending row; that's sufficient to exercise RLS on Get.
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
 		if err != nil {
-			t.Fatalf("Trigger: %v", err)
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if cr.Status != "pending" {
+			t.Errorf("Enqueue status: want %q, got %q", "pending", cr.Status)
 		}
 
 		// Seed a second independent tenant.
@@ -437,52 +336,47 @@ func TestCodeReviewTrigger(t *testing.T) {
 	})
 
 	t.Run("two_runs_malformed_second_no_extra_post", func(t *testing.T) {
-		// A full successful run then a malformed-JSON run. The second run must
-		// return an error, mark status=failed, and produce zero new POSTs.
+		// After Trigger→Enqueue split: Enqueue only inserts pending rows; pipeline
+		// execution (and malformed-JSON failure path) moves to runJob in the worker.
+		// The multi-run pipeline assertions are rebuilt in Task 7 (manyforge-elo).
+		t.Skip("async e2e rebuilt in Task 7 once the worker lands (manyforge-elo)")
+	})
+
+	t.Run("enqueue_inserts_pending_row", func(t *testing.T) {
+		// New integration subtest: verifies Enqueue inserts a pending row with the
+		// correct principal_id and agent_id — assertions the old synchronous subtests
+		// skipped over because they called Trigger synchronously.
 		env := newCodingEnv(t, tdb)
 		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
+		svc := buildService(t, tdb, env, &validFakeRunner{}, fakeCred)
 
-		// First run: successful.
-		runner1 := &validFakeRunner{summary: "First run good."}
-		svc := buildService(t, tdb, env, runner1, fakeCred)
-		if _, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1); err != nil {
-			t.Fatalf("first Trigger: %v", err)
-		}
-
-		// Second run: malformed JSON.
-		postsBefore := stub.postCount.Load()
-		runner2 := &malformedFakeRunner{}
-		svc2 := buildService(t, tdb, env, runner2, fakeCred)
-		_, err := svc2.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
-		if err == nil {
-			t.Fatal("second Trigger with malformed JSON must error")
-		}
-
-		// Verify Get on the failed run via the DB (we need the ID).
-		var crID uuid.UUID
-		var status string
-		if err := tdb.Super.QueryRow(ctx,
-			`SELECT id, status FROM code_review WHERE repo_connector_id=$1
-			 ORDER BY created_at DESC LIMIT 1`, connID).Scan(&crID, &status); err != nil {
-			t.Fatalf("read latest code_review: %v", err)
-		}
-		if status != "failed" {
-			t.Errorf("second run status: want failed, got %q", status)
-		}
-
-		// Verify no new POST.
-		postsAfter := stub.postCount.Load()
-		if postsAfter != postsBefore {
-			t.Errorf("second (failing) run posted %d unexpected reviews", postsAfter-postsBefore)
-		}
-
-		// Get() on the failed code_review via the service must succeed (row exists).
-		got, err := svc2.Get(ctx, seed.principalID, seed.businessID, crID)
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
 		if err != nil {
-			t.Fatalf("Get on failed code_review: %v", err)
+			t.Fatalf("Enqueue: %v", err)
 		}
-		if got.Status != "failed" {
-			t.Errorf("Get().Status on failed review: want failed, got %q", got.Status)
+		if cr.Status != "pending" {
+			t.Errorf("Enqueue status: want %q, got %q", "pending", cr.Status)
+		}
+		if cr.PRNumber != 1 {
+			t.Errorf("Enqueue PRNumber: want 1, got %d", cr.PRNumber)
+		}
+
+		// Verify the row is in the DB with status=pending, correct principal+agent.
+		var dbStatus string
+		var dbPrincipal, dbAgent uuid.UUID
+		if err := tdb.Super.QueryRow(ctx,
+			`SELECT status, principal_id, agent_id FROM code_review WHERE id=$1`, cr.ID,
+		).Scan(&dbStatus, &dbPrincipal, &dbAgent); err != nil {
+			t.Fatalf("read code_review: %v", err)
+		}
+		if dbStatus != "pending" {
+			t.Errorf("DB status: want pending, got %q", dbStatus)
+		}
+		if dbPrincipal != seed.principalID {
+			t.Errorf("DB principal_id: want %v, got %v", seed.principalID, dbPrincipal)
+		}
+		if dbAgent != agentID {
+			t.Errorf("DB agent_id: want %v, got %v", agentID, dbAgent)
 		}
 	})
 }

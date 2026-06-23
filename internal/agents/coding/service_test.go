@@ -15,7 +15,7 @@ import (
 )
 
 // fakeRepos is a minimal repoResolver returning a valid GitHub connector so
-// Trigger reaches the egress pre-flight check without needing a DB.
+// Enqueue reaches the egress pre-flight check without needing a DB.
 type fakeRepos struct {
 	rc  connectors.ResolvedRepoConnector
 	err error
@@ -25,7 +25,7 @@ func (f *fakeRepos) Resolve(_ context.Context, _, _, _ uuid.UUID) (connectors.Re
 	return f.rc, f.err
 }
 
-// errFakeDB is returned by fakeServiceDB.WithPrincipal so a Trigger that gets
+// errFakeDB is returned by fakeServiceDB.WithPrincipal so an Enqueue that gets
 // past the egress pre-flight stops deterministically at the first DB step.
 var errFakeDB = errors.New("fake db reached")
 
@@ -58,7 +58,7 @@ func TestTriggerRejectsHostOutsideEgressAllowlist(t *testing.T) {
 		// DB intentionally nil: the check MUST fire before any DB write.
 	}
 
-	_, err := svc.Trigger(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), 1)
+	_, err := svc.Enqueue(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), 1)
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("disallowed host: want ErrValidation, got %v", err)
 	}
@@ -78,11 +78,85 @@ func TestTriggerAllowsHostInEgressAllowlist(t *testing.T) {
 		EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com,openrouter.ai"),
 	}
 
-	_, err := svc.Trigger(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), 1)
+	_, err := svc.Enqueue(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), 1)
 	if errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("allowed host must not be rejected by the egress gate, got ErrValidation: %v", err)
 	}
 	if !errors.Is(err, errFakeDB) {
 		t.Fatalf("expected control flow to reach the DB insert (errFakeDB), got %v", err)
+	}
+}
+
+// TestEnqueueDoesNotRunSandbox verifies that Enqueue never touches the sandbox:
+// even when the egress gate passes and the DB insert is hit, the SandboxRunner
+// must not be called. The fakeServiceDB short-circuits at the insert boundary,
+// which is the correct termination point for a no-sandbox Enqueue path.
+func TestEnqueueDoesNotRunSandbox(t *testing.T) {
+	runner := &sandbox.FakeRunner{}
+	svc := &CodeReviewService{
+		DB:          fakeServiceDB{},
+		Repos:       githubRepos(),
+		Sandbox:     runner,
+		Creds:       &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}},
+		EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com"),
+	}
+
+	_, err := svc.Enqueue(context.Background(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), 1)
+	// errFakeDB is expected — we hit the DB step.
+	if !errors.Is(err, errFakeDB) {
+		t.Fatalf("expected errFakeDB from the DB insert step, got %v", err)
+	}
+	// Sandbox must never have been invoked.
+	if runner.Last.Image != "" {
+		t.Error("Enqueue must NOT invoke the sandbox runner; it only queues a pending row")
+	}
+}
+
+// TestReviewURLConstructedFromConnectorAndRef covers the pure helper directly.
+// Format: https://github.com/{repo}/pull/{pr}#pullrequestreview-{ref}
+func TestReviewURLConstructedFromConnectorAndRef(t *testing.T) {
+	cases := []struct {
+		name        string
+		repo        string
+		pr          int
+		externalRef string
+		want        string
+	}{
+		{
+			name:        "populated",
+			repo:        "owner/repo",
+			pr:          5,
+			externalRef: "42",
+			want:        "https://github.com/owner/repo/pull/5#pullrequestreview-42",
+		},
+		{
+			name:        "empty_repo_returns_empty",
+			repo:        "",
+			pr:          5,
+			externalRef: "42",
+			want:        "",
+		},
+		{
+			name:        "empty_ref_returns_empty",
+			repo:        "owner/repo",
+			pr:          5,
+			externalRef: "",
+			want:        "",
+		},
+		{
+			name:        "both_empty_returns_empty",
+			repo:        "",
+			pr:          0,
+			externalRef: "",
+			want:        "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := reviewURL(tc.repo, tc.pr, tc.externalRef)
+			if got != tc.want {
+				t.Errorf("reviewURL(%q, %d, %q) = %q; want %q", tc.repo, tc.pr, tc.externalRef, got, tc.want)
+			}
+		})
 	}
 }
