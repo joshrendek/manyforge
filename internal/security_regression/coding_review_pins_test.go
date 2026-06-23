@@ -121,11 +121,12 @@ func TestEgressAllowlistValidationPinned(t *testing.T) {
 func TestSandboxRunDirPermsPinned(t *testing.T) {
 	src := mustRead(t, "../agents/coding/service.go")
 	for _, frag := range []string{
+		`os.Chmod(s.WorkRoot, 0o700)`, // shield: world-perm leaves unreachable by other local users
 		`os.Chmod(checkout, 0o755)`,
 		`os.Chmod(outDir, 0o777)`,
 	} {
 		if !strings.Contains(src, frag) {
-			t.Fatalf("service.go missing run-dir perm %q — a capless sandbox can't access /work or /out on Linux", frag)
+			t.Fatalf("service.go missing run-dir perm %q — a capless sandbox can't access /work or /out on Linux (or the 0700 WorkRoot shield was dropped)", frag)
 		}
 	}
 }
