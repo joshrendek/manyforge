@@ -35,11 +35,15 @@ LIMIT 200;
 -- path; the worker is a system process). Runnable = pending past run_after OR a
 -- running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
 -- multiple workers claim disjoint rows.
+-- ClaimCodeReviews atomically leases up to 'limit' runnable rows ACROSS tenants
+-- (system path; the worker is a system process). Runnable = pending past run_after
+-- OR a running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
+-- multiple workers claim disjoint rows.
 -- name: ClaimCodeReviews :many
 UPDATE code_review SET
   status = 'running',
   attempts = attempts + 1,
-  lease_expires_at = now() + make_interval(secs => $1::int),
+  lease_expires_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::int),
   updated_at = now()
 WHERE id IN (
   SELECT id FROM code_review
@@ -47,7 +51,7 @@ WHERE id IN (
      OR (status = 'running' AND lease_expires_at < now())
   ORDER BY created_at
   FOR UPDATE SKIP LOCKED
-  LIMIT $2::int
+  LIMIT sqlc.arg('limit')::int
 )
 RETURNING id, business_id, principal_id, agent_id, repo_connector_id, pr_number, attempts;
 
@@ -55,17 +59,17 @@ RETURNING id, business_id, principal_id, agent_id, repo_connector_id, pr_number,
 -- name: RequeueCodeReview :exec
 UPDATE code_review SET
   status = 'pending',
-  run_after = now() + make_interval(secs => $2::int),
+  run_after = now() + make_interval(secs => sqlc.arg('run_after_seconds')::int),
   lease_expires_at = NULL,
-  last_error = $3,
+  last_error = sqlc.arg('last_error'),
   updated_at = now()
-WHERE id = $1;
+WHERE id = sqlc.arg('id');
 
 -- FailCodeReview marks a row terminally failed (max attempts exhausted).
 -- name: FailCodeReview :exec
 UPDATE code_review SET
   status = 'failed',
   lease_expires_at = NULL,
-  last_error = $2,
+  last_error = sqlc.arg('last_error'),
   updated_at = now()
-WHERE id = $1;
+WHERE id = sqlc.arg('id');

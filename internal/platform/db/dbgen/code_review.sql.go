@@ -31,8 +31,8 @@ RETURNING id, business_id, principal_id, agent_id, repo_connector_id, pr_number,
 `
 
 type ClaimCodeReviewsParams struct {
-	Column1 int32 `json:"column_1"`
-	Column2 int32 `json:"column_2"`
+	LeaseSeconds int32 `json:"lease_seconds"`
+	Limit        int32 `json:"limit"`
 }
 
 type ClaimCodeReviewsRow struct {
@@ -49,8 +49,12 @@ type ClaimCodeReviewsRow struct {
 // path; the worker is a system process). Runnable = pending past run_after OR a
 // running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
 // multiple workers claim disjoint rows.
+// ClaimCodeReviews atomically leases up to 'limit' runnable rows ACROSS tenants
+// (system path; the worker is a system process). Runnable = pending past run_after
+// OR a running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
+// multiple workers claim disjoint rows.
 func (q *Queries) ClaimCodeReviews(ctx context.Context, arg ClaimCodeReviewsParams) ([]ClaimCodeReviewsRow, error) {
-	rows, err := q.db.Query(ctx, claimCodeReviews, arg.Column1, arg.Column2)
+	rows, err := q.db.Query(ctx, claimCodeReviews, arg.LeaseSeconds, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -81,19 +85,19 @@ const failCodeReview = `-- name: FailCodeReview :exec
 UPDATE code_review SET
   status = 'failed',
   lease_expires_at = NULL,
-  last_error = $2,
+  last_error = $1,
   updated_at = now()
-WHERE id = $1
+WHERE id = $2
 `
 
 type FailCodeReviewParams struct {
-	ID        uuid.UUID `json:"id"`
 	LastError string    `json:"last_error"`
+	ID        uuid.UUID `json:"id"`
 }
 
 // FailCodeReview marks a row terminally failed (max attempts exhausted).
 func (q *Queries) FailCodeReview(ctx context.Context, arg FailCodeReviewParams) error {
-	_, err := q.db.Exec(ctx, failCodeReview, arg.ID, arg.LastError)
+	_, err := q.db.Exec(ctx, failCodeReview, arg.LastError, arg.ID)
 	return err
 }
 
@@ -244,22 +248,22 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 const requeueCodeReview = `-- name: RequeueCodeReview :exec
 UPDATE code_review SET
   status = 'pending',
-  run_after = now() + make_interval(secs => $2::int),
+  run_after = now() + make_interval(secs => $1::int),
   lease_expires_at = NULL,
-  last_error = $3,
+  last_error = $2,
   updated_at = now()
-WHERE id = $1
+WHERE id = $3
 `
 
 type RequeueCodeReviewParams struct {
-	ID        uuid.UUID `json:"id"`
-	Column2   int32     `json:"column_2"`
-	LastError string    `json:"last_error"`
+	RunAfterSeconds int32     `json:"run_after_seconds"`
+	LastError       string    `json:"last_error"`
+	ID              uuid.UUID `json:"id"`
 }
 
 // RequeueCodeReview returns a row to pending after a retriable failure.
 func (q *Queries) RequeueCodeReview(ctx context.Context, arg RequeueCodeReviewParams) error {
-	_, err := q.db.Exec(ctx, requeueCodeReview, arg.ID, arg.Column2, arg.LastError)
+	_, err := q.db.Exec(ctx, requeueCodeReview, arg.RunAfterSeconds, arg.LastError, arg.ID)
 	return err
 }
 

@@ -37,6 +37,10 @@ type Querier interface {
 	// path; the worker is a system process). Runnable = pending past run_after OR a
 	// running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
 	// multiple workers claim disjoint rows.
+	// ClaimCodeReviews atomically leases up to 'limit' runnable rows ACROSS tenants
+	// (system path; the worker is a system process). Runnable = pending past run_after
+	// OR a running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
+	// multiple workers claim disjoint rows.
 	ClaimCodeReviews(ctx context.Context, arg ClaimCodeReviewsParams) ([]ClaimCodeReviewsRow, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
