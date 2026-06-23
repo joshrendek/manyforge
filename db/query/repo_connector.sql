@@ -11,3 +11,16 @@ RETURNING *;
 
 -- name: GetRepoConnector :one
 SELECT * FROM repo_connector WHERE id = sqlc.arg('id')::uuid;
+
+-- ListRepoConnectors returns the caller's connectors (RLS-scoped). NEVER selects
+-- secret_ref — the UI must not receive any credential handle.
+-- name: ListRepoConnectors :many
+SELECT id, business_id, type, display_name, base_url, repo, allow_private_base_url, status, created_at
+FROM repo_connector
+WHERE business_id = $1
+ORDER BY created_at DESC;
+
+-- DeleteRepoConnector removes one connector scoped to the business (RLS + explicit
+-- predicate). Cascades to its code_review rows via the existing FK.
+-- name: DeleteRepoConnector :execrows
+DELETE FROM repo_connector WHERE id = $1 AND business_id = $2;

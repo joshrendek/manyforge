@@ -7,13 +7,98 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimCodeReviews = `-- name: ClaimCodeReviews :many
+UPDATE code_review SET
+  status = 'running',
+  attempts = attempts + 1,
+  lease_expires_at = now() + make_interval(secs => $1::int),
+  updated_at = now()
+WHERE id IN (
+  SELECT id FROM code_review
+  WHERE (status = 'pending' AND run_after <= now())
+     OR (status = 'running' AND lease_expires_at < now())
+  ORDER BY created_at
+  FOR UPDATE SKIP LOCKED
+  LIMIT $2::int
+)
+RETURNING id, business_id, principal_id, agent_id, repo_connector_id, pr_number, attempts
+`
+
+type ClaimCodeReviewsParams struct {
+	Column1 int32 `json:"column_1"`
+	Column2 int32 `json:"column_2"`
+}
+
+type ClaimCodeReviewsRow struct {
+	ID              uuid.UUID   `json:"id"`
+	BusinessID      uuid.UUID   `json:"business_id"`
+	PrincipalID     pgtype.UUID `json:"principal_id"`
+	AgentID         pgtype.UUID `json:"agent_id"`
+	RepoConnectorID uuid.UUID   `json:"repo_connector_id"`
+	PrNumber        int32       `json:"pr_number"`
+	Attempts        int32       `json:"attempts"`
+}
+
+// ClaimCodeReviews atomically leases up to $2 runnable rows ACROSS tenants (system
+// path; the worker is a system process). Runnable = pending past run_after OR a
+// running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
+// multiple workers claim disjoint rows.
+func (q *Queries) ClaimCodeReviews(ctx context.Context, arg ClaimCodeReviewsParams) ([]ClaimCodeReviewsRow, error) {
+	rows, err := q.db.Query(ctx, claimCodeReviews, arg.Column1, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimCodeReviewsRow
+	for rows.Next() {
+		var i ClaimCodeReviewsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.PrincipalID,
+			&i.AgentID,
+			&i.RepoConnectorID,
+			&i.PrNumber,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const failCodeReview = `-- name: FailCodeReview :exec
+UPDATE code_review SET
+  status = 'failed',
+  lease_expires_at = NULL,
+  last_error = $2,
+  updated_at = now()
+WHERE id = $1
+`
+
+type FailCodeReviewParams struct {
+	ID        uuid.UUID `json:"id"`
+	LastError string    `json:"last_error"`
+}
+
+// FailCodeReview marks a row terminally failed (max attempts exhausted).
+func (q *Queries) FailCodeReview(ctx context.Context, arg FailCodeReviewParams) error {
+	_, err := q.db.Exec(ctx, failCodeReview, arg.ID, arg.LastError)
+	return err
+}
+
 const getCodeReview = `-- name: GetCodeReview :one
-SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
+SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
 
 type GetCodeReviewParams struct {
@@ -39,17 +124,23 @@ func (q *Queries) GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (C
 		&i.PostedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrincipalID,
+		&i.AgentID,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LeaseExpiresAt,
+		&i.LastError,
 	)
 	return i, err
 }
 
 const insertCodeReview = `-- name: InsertCodeReview :one
-INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, created_at, updated_at)
+INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, principal_id, agent_id, created_at, updated_at)
 SELECT $1, b.id, b.tenant_root_id, $2, $3,
-    $4, 'pending', now(), now()
+    $4, 'pending', $5, $6, now(), now()
 FROM business b
-WHERE b.id = $5::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at
+WHERE b.id = $7::uuid
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error
 `
 
 type InsertCodeReviewParams struct {
@@ -57,6 +148,8 @@ type InsertCodeReviewParams struct {
 	AgentRunID      pgtype.UUID `json:"agent_run_id"`
 	RepoConnectorID uuid.UUID   `json:"repo_connector_id"`
 	PrNumber        int32       `json:"pr_number"`
+	PrincipalID     pgtype.UUID `json:"principal_id"`
+	AgentID         pgtype.UUID `json:"agent_id"`
 	BusinessID      uuid.UUID   `json:"business_id"`
 }
 
@@ -66,6 +159,8 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		arg.AgentRunID,
 		arg.RepoConnectorID,
 		arg.PrNumber,
+		arg.PrincipalID,
+		arg.AgentID,
 		arg.BusinessID,
 	)
 	var i CodeReview
@@ -84,8 +179,88 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		&i.PostedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrincipalID,
+		&i.AgentID,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LeaseExpiresAt,
+		&i.LastError,
 	)
 	return i, err
+}
+
+const listCodeReviews = `-- name: ListCodeReviews :many
+SELECT id, repo_connector_id, pr_number, status, summary, findings,
+       external_review_ref, created_at, posted_at
+FROM code_review
+WHERE business_id = $1
+ORDER BY created_at DESC
+LIMIT 200
+`
+
+type ListCodeReviewsRow struct {
+	ID                uuid.UUID          `json:"id"`
+	RepoConnectorID   uuid.UUID          `json:"repo_connector_id"`
+	PrNumber          int32              `json:"pr_number"`
+	Status            string             `json:"status"`
+	Summary           string             `json:"summary"`
+	Findings          []byte             `json:"findings"`
+	ExternalReviewRef string             `json:"external_review_ref"`
+	CreatedAt         time.Time          `json:"created_at"`
+	PostedAt          pgtype.Timestamptz `json:"posted_at"`
+}
+
+// ListCodeReviews returns the business's reviews newest-first for the history UI.
+func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]ListCodeReviewsRow, error) {
+	rows, err := q.db.Query(ctx, listCodeReviews, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCodeReviewsRow
+	for rows.Next() {
+		var i ListCodeReviewsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoConnectorID,
+			&i.PrNumber,
+			&i.Status,
+			&i.Summary,
+			&i.Findings,
+			&i.ExternalReviewRef,
+			&i.CreatedAt,
+			&i.PostedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requeueCodeReview = `-- name: RequeueCodeReview :exec
+UPDATE code_review SET
+  status = 'pending',
+  run_after = now() + make_interval(secs => $2::int),
+  lease_expires_at = NULL,
+  last_error = $3,
+  updated_at = now()
+WHERE id = $1
+`
+
+type RequeueCodeReviewParams struct {
+	ID        uuid.UUID `json:"id"`
+	Column2   int32     `json:"column_2"`
+	LastError string    `json:"last_error"`
+}
+
+// RequeueCodeReview returns a row to pending after a retriable failure.
+func (q *Queries) RequeueCodeReview(ctx context.Context, arg RequeueCodeReviewParams) error {
+	_, err := q.db.Exec(ctx, requeueCodeReview, arg.ID, arg.Column2, arg.LastError)
+	return err
 }
 
 const updateCodeReviewResult = `-- name: UpdateCodeReviewResult :one
@@ -96,9 +271,10 @@ UPDATE code_review SET
     findings = $4,
     external_review_ref = $5,
     posted_at = $6,
+    lease_expires_at = NULL,
     updated_at = now()
 WHERE id = $7::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error
 `
 
 type UpdateCodeReviewResultParams struct {
@@ -137,6 +313,12 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		&i.PostedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrincipalID,
+		&i.AgentID,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LeaseExpiresAt,
+		&i.LastError,
 	)
 	return i, err
 }

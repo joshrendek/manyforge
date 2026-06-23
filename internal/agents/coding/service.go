@@ -132,6 +132,8 @@ func (s *CodeReviewService) Trigger(
 			RepoConnectorID: repoConnectorID,
 			PrNumber:        int32(prNumber),
 			BusinessID:      businessID,
+			PrincipalID:     pgtype.UUID{Bytes: principalID, Valid: true},
+			AgentID:         pgtype.UUID{Bytes: agentID, Valid: true},
 		}); ierr != nil {
 			return ierr
 		}

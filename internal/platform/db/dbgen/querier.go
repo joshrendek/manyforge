@@ -33,6 +33,11 @@ type Querier interface {
 	// BumpTicketActivity touches the denormalized last_message_at/updated_at after a
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
+	// ClaimCodeReviews atomically leases up to $2 runnable rows ACROSS tenants (system
+	// path; the worker is a system process). Runnable = pending past run_after OR a
+	// running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
+	// multiple workers claim disjoint rows.
+	ClaimCodeReviews(ctx context.Context, arg ClaimCodeReviewsParams) ([]ClaimCodeReviewsRow, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
 	// sealed credential blob for the principal-less webhook handler to build the typed connector
@@ -124,6 +129,9 @@ type Querier interface {
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
+	// DeleteRepoConnector removes one connector scoped to the business (RLS + explicit
+	// predicate). Cascades to its code_review rows via the existing FK.
+	DeleteRepoConnector(ctx context.Context, arg DeleteRepoConnectorParams) (int64, error)
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
 	// DeleteSecret removes one secret scoped to (id, business); :execrows lets the caller detect a no-op delete.
 	DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error)
@@ -182,6 +190,8 @@ type Querier interface {
 	// The caller's own grants (data portability). RLS scopes business/role joins to
 	// what the caller may already see; their own memberships are always visible.
 	ExportMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ExportMembershipsForPrincipalRow, error)
+	// FailCodeReview marks a row terminally failed (max attempts exhausted).
+	FailCodeReview(ctx context.Context, arg FailCodeReviewParams) error
 	// NOTE (manyforge-deo.11): there is intentionally NO UpdateAIProviderCredential query
 	// yet. When one is added it MUST include allow_private_base_url (and the service must
 	// re-validate it via validateBaseURL and re-audit the trust grant) — otherwise an update
@@ -460,6 +470,8 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// ListCodeReviews returns the business's reviews newest-first for the history UI.
+	ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]ListCodeReviewsRow, error)
 	// ListCompanies is the first (unkeyed) page of a tenant's companies, ordered by name
 	// for a stable keyset.
 	ListCompanies(ctx context.Context, arg ListCompaniesParams) ([]Company, error)
@@ -521,6 +533,9 @@ type Querier interface {
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
+	// ListRepoConnectors returns the caller's connectors (RLS-scoped). NEVER selects
+	// secret_ref — the UI must not receive any credential handle.
+	ListRepoConnectors(ctx context.Context, businessID uuid.UUID) ([]ListRepoConnectorsRow, error)
 	// ---- requesters ----
 	// ListRequesters is the first page of a business's requesters, ordered by
 	// first_seen_at for a stable keyset. The optional email facet is an exact
@@ -616,6 +631,8 @@ type Querier interface {
 	// during a contact merge (runs in the same tx as the loser's soft-delete). Scoped by
 	// contact_id, whose tenant ownership the service validates before calling.
 	RepointRequesters(ctx context.Context, arg RepointRequestersParams) error
+	// RequeueCodeReview returns a row to pending after a retriable failure.
+	RequeueCodeReview(ctx context.Context, arg RequeueCodeReviewParams) error
 	// RetryFailedOps re-enqueues a connector's terminally-failed outbound ops for another dispatch
 	// attempt: failed → pending, attempts reset to 0 (the maxOutboundAttempts cap starts fresh) and
 	// last_error cleared. The dispatcher only claims status='pending', so this is the sole exit from
