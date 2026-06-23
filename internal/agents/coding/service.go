@@ -161,10 +161,24 @@ func (s *CodeReviewService) Trigger(
 	runDir := filepath.Join(s.WorkRoot, crID.String())
 	checkout := filepath.Join(runDir, "checkout")
 	outDir := filepath.Join(runDir, "out")
-	if err := os.MkdirAll(checkout, 0o700); err != nil {
+	// The sandbox runs with --cap-drop ALL, which strips CAP_DAC_OVERRIDE: even the
+	// container's root must obey filesystem permission bits. These per-run dirs are
+	// owned by the host server user, but the container process runs as a different
+	// uid — so the read-only /work mount must be world-readable/traversable (0755)
+	// and the /out mount world-writable (0777), or opencode can neither read the
+	// checkout nor write findings. Chmod explicitly to defeat the process umask.
+	// (Colima remaps bind-mount ownership and hides this; native Linux preserves it
+	// — see TestSandboxIsolation, which pins both halves.)
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
 		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
 	}
-	if err := os.MkdirAll(outDir, 0o700); err != nil {
+	if err := os.Chmod(checkout, 0o755); err != nil {
+		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
+	}
+	if err := os.MkdirAll(outDir, 0o777); err != nil {
+		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
+	}
+	if err := os.Chmod(outDir, 0o777); err != nil {
 		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
 	}
 	defer func() { _ = os.RemoveAll(runDir) }() // always clean up regardless of outcome

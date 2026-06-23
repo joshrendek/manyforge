@@ -46,6 +46,15 @@ func sandboxTempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The sandbox runs with --cap-drop ALL (no CAP_DAC_OVERRIDE), so even
+	// container-root obeys DAC bits. os.MkdirTemp creates 0700; on native Linux the
+	// container uid differs from the host owner and could neither read /work nor
+	// write /out. Make per-run dirs world-accessible — mirrors the perms
+	// CodeReviewService applies to real run dirs. (Colima remaps ownership and masks
+	// this; native Linux CI does not.)
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	return dir
 }
@@ -95,6 +104,19 @@ func TestSandboxIsolation(t *testing.T) {
 	})
 	if !strings.Contains(string(res.Stdout), "READONLY") {
 		t.Fatalf("checkout was writable: %s", res.Stdout)
+	}
+
+	// 2b. /work IS readable — opencode must read the checkout. On native Linux a
+	// 0700 host dir owned by a different uid would be unreadable by the capless
+	// container (--cap-drop ALL); this pins that /work is world-readable/traversable.
+	res, _ = r.Run(ctx, SandboxSpec{
+		Image:       "manyforge/sandbox-stub:test",
+		ReadOnlyDir: ro,
+		OutputDir:   out,
+		Cmd:         []string{"sh", "-c", "cat /work/code.txt"},
+	})
+	if !strings.Contains(string(res.Stdout), "secret-code") {
+		t.Fatalf("/work not readable by sandbox: stdout=%s stderr=%s", res.Stdout, res.Stderr)
 	}
 
 	// 3. Direct egress to a non-allowlisted host is refused.

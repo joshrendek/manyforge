@@ -112,3 +112,20 @@ func TestEgressAllowlistValidationPinned(t *testing.T) {
 		t.Fatal("cmd/mf-egress-proxy/main.go defines a private allow-matcher — it must share netsafe's so the validator/enforcer can't drift (manyforge-0qj)")
 	}
 }
+
+// MF007-PIN-7: the sandbox runs with --cap-drop ALL (no CAP_DAC_OVERRIDE), so the
+// container — a different uid than the host server — can only read the /work mount
+// and write the /out mount if the per-run host dirs are world-accessible. service.go
+// MUST create checkout 0o755 and out 0o777; a silent regression to 0o700 breaks every
+// real review on native Linux (Colima masks it via bind-mount ownership remapping).
+func TestSandboxRunDirPermsPinned(t *testing.T) {
+	src := mustRead(t, "../agents/coding/service.go")
+	for _, frag := range []string{
+		`os.Chmod(checkout, 0o755)`,
+		`os.Chmod(outDir, 0o777)`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("service.go missing run-dir perm %q — a capless sandbox can't access /work or /out on Linux", frag)
+		}
+	}
+}
