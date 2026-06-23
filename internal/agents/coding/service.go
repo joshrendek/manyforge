@@ -161,14 +161,27 @@ func (s *CodeReviewService) Trigger(
 	runDir := filepath.Join(s.WorkRoot, crID.String())
 	checkout := filepath.Join(runDir, "checkout")
 	outDir := filepath.Join(runDir, "out")
+	// Defense in depth: shield the per-run dirs from other local users by making
+	// WorkRoot 0700 owned by the server user. The leaf /work and /out below are
+	// world-accessible so the capless container can reach them, but a 0700 ancestor
+	// means no other local user can traverse in. (The docker daemon resolves the
+	// bind-mount source as root, so the 0700 ancestor never blocks the container.)
+	if err := os.MkdirAll(s.WorkRoot, 0o700); err != nil {
+		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
+	}
+	if err := os.Chmod(s.WorkRoot, 0o700); err != nil {
+		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
+	}
 	// The sandbox runs with --cap-drop ALL, which strips CAP_DAC_OVERRIDE: even the
-	// container's root must obey filesystem permission bits. These per-run dirs are
+	// container's root must obey filesystem permission bits. The per-run dirs are
 	// owned by the host server user, but the container process runs as a different
 	// uid — so the read-only /work mount must be world-readable/traversable (0755)
 	// and the /out mount world-writable (0777), or opencode can neither read the
 	// checkout nor write findings. Chmod explicitly to defeat the process umask.
 	// (Colima remaps bind-mount ownership and hides this; native Linux preserves it
-	// — see TestSandboxIsolation, which pins both halves.)
+	// — see TestSandboxIsolation, which pins both halves.) The 0700 WorkRoot above
+	// keeps these world-perms unreachable by other local users. A future hardening
+	// is `--user <host-uid>` so 0700 leaves suffice and no world-perms are needed.
 	if err := os.MkdirAll(checkout, 0o755); err != nil {
 		return s.fail(ctx, principalID, businessID, crID, prNumber, err)
 	}
