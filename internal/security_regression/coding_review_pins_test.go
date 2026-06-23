@@ -8,6 +8,55 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors"
 )
 
+// MF007-PIN-8: ListRepoConnectors SQL must not SELECT secret_ref (credential handle
+// must not reach the list response). The public summary type (RepoConnectorSummary)
+// must contain no field whose name contains "Token", "Secret", or "APIKey".
+// coding.CodeReview is verified via source-level check to avoid import cycles.
+func TestNoSecretProjection(t *testing.T) {
+	// Source-level: ListRepoConnectors SQL must not SELECT secret_ref.
+	sql := mustRead(t, "../../db/query/repo_connector.sql")
+	if idx := strings.Index(sql, "ListRepoConnectors"); idx >= 0 {
+		block := sql[idx:]
+		if selectIdx := strings.Index(block, "SELECT"); selectIdx >= 0 {
+			fromBlock := block[selectIdx:]
+			if endIdx := strings.Index(fromBlock, ";\n"); endIdx >= 0 {
+				fromBlock = fromBlock[:endIdx]
+			}
+			if strings.Contains(fromBlock, "secret_ref") {
+				t.Fatal("ListRepoConnectors SELECT includes secret_ref — credential handle must not reach the list response (MF007-PIN-8)")
+			}
+		}
+	}
+
+	// Reflection: RepoConnectorSummary must have no Token/Secret/APIKey field.
+	banned := []string{"Token", "Secret", "APIKey"}
+	checkNoSecretFields := func(name string, typ reflect.Type) {
+		for i := 0; i < typ.NumField(); i++ {
+			fname := typ.Field(i).Name
+			for _, b := range banned {
+				if strings.Contains(fname, b) {
+					t.Fatalf("%s has field %q containing banned substring %q — credential must not leak through list/summary types (MF007-PIN-8)", name, fname, b)
+				}
+			}
+		}
+	}
+	checkNoSecretFields("RepoConnectorSummary", reflect.TypeOf(connectors.RepoConnectorSummary{}))
+
+	// Source-level: coding.CodeReview struct must have no Token/Secret/APIKey field.
+	svcSrc := mustRead(t, "../agents/coding/service.go")
+	if crIdx := strings.Index(svcSrc, "type CodeReview struct {"); crIdx >= 0 {
+		block := svcSrc[crIdx:]
+		if endIdx := strings.Index(block, "\n}"); endIdx >= 0 {
+			block = block[:endIdx]
+		}
+		for _, b := range banned {
+			if strings.Contains(block, b) {
+				t.Fatalf("coding.CodeReview struct contains field with banned substring %q — credential must not leak (MF007-PIN-8)", b)
+			}
+		}
+	}
+}
+
 // MF007-PIN-1: the slice-1 repo connector must expose no code-write capability.
 func TestRepoConnectorHasNoWriteCapability(t *testing.T) {
 	typ := reflect.TypeOf((*connectors.RepoConnector)(nil)).Elem()

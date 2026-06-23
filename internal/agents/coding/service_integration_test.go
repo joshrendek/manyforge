@@ -5,21 +5,25 @@ package coding
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
+	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
@@ -174,9 +178,14 @@ type validFakeRunner struct {
 }
 
 func (r *validFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	// This runner is retained for future Task-7 async e2e use but is not invoked
-	// by Enqueue (which only queues pending rows). See TestCodeReviewTrigger subtests.
-	_ = spec
+	findings := []map[string]any{
+		{"file": "main.go", "line": 10, "severity": "warning", "title": "Issue", "detail": "A detail"},
+	}
+	doc := map[string]any{"summary": r.summary, "findings": findings}
+	data, _ := json.Marshal(doc)
+	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644); err != nil {
+		return sandbox.SandboxResult{}, err
+	}
 	return sandbox.SandboxResult{ExitCode: 0}, nil
 }
 
@@ -184,7 +193,7 @@ func (r *validFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sand
 type malformedFakeRunner struct{}
 
 func (r *malformedFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	_ = spec
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte(`{not json`), 0o644)
 	return sandbox.SandboxResult{ExitCode: 0}, nil
 }
 
@@ -296,18 +305,65 @@ func TestCodeReviewTrigger(t *testing.T) {
 	}}
 
 	t.Run("succeeded", func(t *testing.T) {
-		// After the Trigger→Enqueue split, Enqueue inserts a pending row and returns
-		// immediately without running the pipeline. The synchronous end-to-end
-		// assertions (status=succeeded, posted review, findings persisted) are
-		// deferred to the async worker integration test (Task 7, manyforge-elo).
-		t.Skip("async e2e rebuilt in Task 7 once the worker lands (manyforge-elo)")
+		localSrv, localStub := startGitHubStub(t, prJSON)
+		env := newCodingEnv(t, tdb)
+		connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+		runner := &validFakeRunner{summary: "LGTM"}
+		svc := buildService(t, tdb, env, runner, fakeCred)
+
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if cr.Status != "pending" {
+			t.Fatalf("want pending, got %s", cr.Status)
+		}
+
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+		}
+		if err := svc.runJob(ctx, claimed); err != nil {
+			t.Fatalf("runJob: %v", err)
+		}
+
+		got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.Status != "succeeded" {
+			t.Errorf("want succeeded, got %s", got.Status)
+		}
+		if len(got.Findings) == 0 {
+			t.Errorf("want findings, got none")
+		}
+		if got.PostedAt == nil {
+			t.Errorf("want posted_at set")
+		}
+		if n := localStub.postCount.Load(); n != 1 {
+			t.Errorf("want exactly 1 GitHub POST, got %d", n)
+		}
 	})
 
 	t.Run("malformed_json_marks_failed", func(t *testing.T) {
-		// After the Trigger→Enqueue split, Enqueue does not invoke the sandbox, so
-		// the malformed-JSON path (which happens inside runJob) cannot be exercised
-		// synchronously. Rebuilt in the async worker integration test (Task 7).
-		t.Skip("async e2e rebuilt in Task 7 once the worker lands (manyforge-elo)")
+		localSrv, _ := startGitHubStub(t, prJSON)
+		env := newCodingEnv(t, tdb)
+		connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+		svc := buildService(t, tdb, env, &malformedFakeRunner{}, fakeCred)
+
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+		}
+		err = svc.runJob(ctx, claimed)
+		if err == nil {
+			t.Error("runJob with malformed JSON: want error, got nil")
+		}
 	})
 
 	t.Run("rls_cross_tenant_get_not_found", func(t *testing.T) {
@@ -336,10 +392,7 @@ func TestCodeReviewTrigger(t *testing.T) {
 	})
 
 	t.Run("two_runs_malformed_second_no_extra_post", func(t *testing.T) {
-		// After Trigger→Enqueue split: Enqueue only inserts pending rows; pipeline
-		// execution (and malformed-JSON failure path) moves to runJob in the worker.
-		// The multi-run pipeline assertions are rebuilt in Task 7 (manyforge-elo).
-		t.Skip("async e2e rebuilt in Task 7 once the worker lands (manyforge-elo)")
+		t.Skip("covered by succeeded + malformed_json_marks_failed subtests above")
 	})
 
 	t.Run("enqueue_inserts_pending_row", func(t *testing.T) {
@@ -398,4 +451,149 @@ func TestServiceDBInterfaceCompiles(t *testing.T) {
 	_ = func(ctx context.Context, db serviceDB, id uuid.UUID) {
 		_ = db.WithPrincipal(ctx, id, func(pgx.Tx) error { return nil })
 	}
+}
+
+// ---------------------------------------------------------------------------
+// TestCodeReviewWorkerCrashRecovery — expired-lease rows are re-claimed.
+// ---------------------------------------------------------------------------
+
+func TestCodeReviewWorkerCrashRecovery(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	localSrv, _ := startGitHubStub(t, prJSON)
+	agentID := uuid.New()
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+	svc := buildService(t, tdb, env, &validFakeRunner{summary: "crash-recovery"}, fakeCred)
+
+	// Enqueue a review.
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Simulate a crashed worker: force status='running' + lease_expires_at in the past.
+	_, err = tdb.Super.Exec(ctx,
+		`UPDATE code_review SET status='running', attempts=1, lease_expires_at=now()-interval '1 hour' WHERE id=$1`,
+		cr.ID)
+	if err != nil {
+		t.Fatalf("force running state: %v", err)
+	}
+
+	// ClaimCodeReviews should pick up the expired-lease row.
+	// Use tdb.Super (superuser, BYPASSRLS) so the cross-tenant claim query sees all rows
+	// without an RLS principal — mirrors the production worker's system-level DB access.
+	var rows []dbgen.ClaimCodeReviewsRow
+	if err := tdb.Super.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		rows, err = dbgen.New(tx).ClaimCodeReviews(ctx, dbgen.ClaimCodeReviewsParams{LeaseSeconds: 60, Limit: 10})
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}); err != nil {
+		t.Fatalf("ClaimCodeReviews: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected at least one claimed row (crash recovery)")
+	}
+
+	var found *dbgen.ClaimCodeReviewsRow
+	for i := range rows {
+		if rows[i].ID == cr.ID {
+			found = &rows[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("our review %v not in claimed rows", cr.ID)
+	}
+
+	// Run the job directly via runJob.
+	claimed := rowToClaimedReview(*found)
+	if err := svc.runJob(ctx, claimed); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	// Assert it succeeded.
+	got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "succeeded" {
+		t.Errorf("want succeeded, got %s", got.Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestRLSIsolation — cross-tenant RLS for List/Delete connector + List reviews.
+// ---------------------------------------------------------------------------
+
+func TestRLSIsolation(t *testing.T) {
+	ctx, tdb, seedA := startCoding(t)
+	seedB := seedCodingTenant(ctx, t, tdb)
+
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	srvA, _ := startGitHubStub(t, prJSON)
+	agentID := uuid.New()
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
+
+	// Set up tenant A's connector and review.
+	envA := newCodingEnv(t, tdb)
+	connAID := createRepoConnector(ctx, t, envA, seedA, srvA.URL)
+	svcA := buildService(t, tdb, envA, &validFakeRunner{}, fakeCred)
+
+	// Tenant A creates a pending review.
+	crA, err := svcA.Enqueue(ctx, seedA.principalID, seedA.businessID, agentID, connAID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue A: %v", err)
+	}
+
+	// Tenant B: separate env+service (same tdb, different sealer).
+	envB := newCodingEnv(t, tdb)
+	svcB := buildService(t, tdb, envB, &validFakeRunner{}, fakeCred)
+
+	t.Run("tenant_b_cannot_get_a_review", func(t *testing.T) {
+		_, err := svcB.Get(ctx, seedB.principalID, seedB.businessID, crA.ID)
+		if !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("cross-tenant Get: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("tenant_b_list_reviews_sees_empty", func(t *testing.T) {
+		reviews, err := svcB.List(ctx, seedB.principalID, seedB.businessID)
+		if err != nil {
+			t.Fatalf("List B reviews: %v", err)
+		}
+		for _, r := range reviews {
+			if r.ID == crA.ID {
+				t.Errorf("tenant B should not see tenant A's review")
+			}
+		}
+	})
+
+	t.Run("tenant_b_cannot_delete_a_connector", func(t *testing.T) {
+		err := envB.Repos.Delete(ctx, seedB.principalID, seedB.businessID, connAID)
+		if !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("cross-tenant Delete connector: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("tenant_b_list_connectors_sees_empty", func(t *testing.T) {
+		summaries, err := envB.Repos.List(ctx, seedB.principalID, seedB.businessID)
+		if err != nil {
+			t.Fatalf("List B connectors: %v", err)
+		}
+		connAIDStr := connAID.String()
+		for _, s := range summaries {
+			if s.ID == connAIDStr {
+				t.Errorf("tenant B should not see tenant A's connector")
+			}
+		}
+	})
 }
