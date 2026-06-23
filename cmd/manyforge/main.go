@@ -362,6 +362,7 @@ func main() {
 	// need code review). The egress infra setup is non-fatal: a missing Docker daemon
 	// (CI / no-Docker dev) logs a warning and coding reviews fail at run time only.
 	var codingH *coding.Handler
+	var codingSvc *coding.CodeReviewService
 	{
 		var connVault *secrets.Vault
 		if len(cfg.ConnectorMasterKey) > 0 {
@@ -378,7 +379,7 @@ func main() {
 		if err := sandbox.EnsureEgressInfra(ctx, cfg.EgressProxyImage, egressAllow); err != nil {
 			logger.Warn("sandbox egress infra unavailable; coding reviews will fail at run time", "err", err)
 		}
-		codingSvc := &coding.CodeReviewService{
+		codingSvc = &coding.CodeReviewService{
 			DB:       database,
 			Repos:    repoSvc,
 			Sandbox:  sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr),
@@ -607,6 +608,20 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	go outboxWorker.Run(workerCtx)
+
+	// Spec 007 code-review worker: polls the code_review queue and runs pending jobs
+	// as the owning principal (RLS re-entered inside runJob). The claim/requeue/fail
+	// queries run cross-tenant WITHOUT RLS via AppDBAdapter.WithTx — the same
+	// principal-less path the outbox worker uses for system operations.
+	// NOTE: ClaimCodeReviews' lease-expiry reclaim IS the boot reconcile — rows
+	// whose lease expired while the server was down are automatically reclaimed on
+	// the next tick, so no separate startup sweep is needed.
+	crWorker := &coding.CodeReviewWorker{
+		DB:     &coding.AppDBAdapter{DB: database},
+		Svc:    codingSvc,
+		Logger: logger,
+	}
+	go crWorker.Run(workerCtx)
 
 	// Spec 004 reconcile poller: periodically lists connectors past their stale window
 	// and enqueues connector.inbound.sync events for externally-updated issues.

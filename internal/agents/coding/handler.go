@@ -21,19 +21,22 @@ type Handler struct {
 	ReviewSvc *CodeReviewService
 }
 
-// RepoConnectorRoutes mounts the repo-connector creation endpoint. Gate with
-// connectorsManage (connectors.manage) before mounting.
+// RepoConnectorRoutes mounts the repo-connector creation, list, and delete
+// endpoints. Gate with connectorsManage (connectors.manage) before mounting.
 func (h *Handler) RepoConnectorRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/repo-connectors", func(r chi.Router) {
 		r.Post("/", h.createRepoConnector)
+		r.Get("/", h.listRepoConnectors)
+		r.Delete("/{rcID}", h.deleteRepoConnector)
 	})
 }
 
-// CodeReviewRoutes mounts the code-review trigger and get endpoints. Gate with
-// agentsRun (agents.run) before mounting.
+// CodeReviewRoutes mounts the code-review trigger, list, and get endpoints.
+// Gate with agentsRun (agents.run) before mounting.
 func (h *Handler) CodeReviewRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/code-reviews", func(r chi.Router) {
 		r.Post("/", h.triggerReview)
+		r.Get("/", h.listReviews)
 		r.Get("/{reviewID}", h.getReview)
 	})
 }
@@ -130,4 +133,65 @@ func (h *Handler) getReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, cr)
+}
+
+func (h *Handler) listRepoConnectors(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	items, err := h.RepoSvc.List(r.Context(), pid, bid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) deleteRepoConnector(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	rcID, err := uuid.Parse(chi.URLParam(r, "rcID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err := h.RepoSvc.Delete(r.Context(), pid, bid, rcID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) listReviews(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	items, err := h.ReviewSvc.List(r.Context(), pid, bid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }

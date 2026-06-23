@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 )
 
@@ -208,3 +210,42 @@ func rowToClaimedReview(r dbgen.ClaimCodeReviewsRow) ClaimedReview {
 // This blank identifier keeps the import from being pruned if the compiler
 // inlines the struct layout; the real usage is in rowToClaimedReview above.
 var _ pgtype.UUID
+
+// AppDBAdapter adapts *appdb.DB to the systemDB interface required by
+// CodeReviewWorker. All three methods run WITHOUT an RLS principal context
+// (WithTx, not WithPrincipal) because claim/requeue/fail are cross-tenant
+// system operations — exactly the same pattern the outbox worker uses.
+//
+// Usage in main.go:
+//
+//	crWorker := &coding.CodeReviewWorker{DB: &coding.AppDBAdapter{DB: database}, ...}
+type AppDBAdapter struct {
+	DB *appdb.DB
+}
+
+// ClaimCodeReviews runs the cross-tenant claim query without RLS.
+func (a *AppDBAdapter) ClaimCodeReviews(ctx context.Context, arg dbgen.ClaimCodeReviewsParams) ([]dbgen.ClaimCodeReviewsRow, error) {
+	var rows []dbgen.ClaimCodeReviewsRow
+	if err := a.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		rows, err = dbgen.New(tx).ClaimCodeReviews(ctx, arg)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// RequeueCodeReview resets a row to pending after a retriable failure.
+func (a *AppDBAdapter) RequeueCodeReview(ctx context.Context, arg dbgen.RequeueCodeReviewParams) error {
+	return a.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return dbgen.New(tx).RequeueCodeReview(ctx, arg)
+	})
+}
+
+// FailCodeReview marks a row terminally failed (max attempts exhausted).
+func (a *AppDBAdapter) FailCodeReview(ctx context.Context, arg dbgen.FailCodeReviewParams) error {
+	return a.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return dbgen.New(tx).FailCodeReview(ctx, arg)
+	})
+}
