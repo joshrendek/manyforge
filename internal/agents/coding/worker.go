@@ -11,29 +11,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
-	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 )
 
 // systemDB is the minimal cross-tenant DB surface required by CodeReviewWorker.
-// The claim, requeue, and fail queries run WITHOUT RLS (system path); per-row
-// runJob re-enters WithPrincipal internally via CodeReviewService.
+// Claim/requeue/fail run principal-less (system path): the worker is a system
+// process with no manyforge.principal_id GUC. Because code_review has RLS ENABLEd
+// (migrations/0071) and the app connects as manyforge_app (NOSUPERUSER NOBYPASSRLS),
+// a principal-less UPDATE would be RLS-blocked. So these methods route through the
+// SECURITY DEFINER functions claim_code_reviews / requeue_code_review /
+// fail_code_review (migrations/0073), whose owner bypasses RLS — exactly the
+// pattern the outbox drain uses (claim_outbox_batch, migrations/0016).
 //
-// On the real path, satisfy this interface with a thin wrapper around *appdb.DB
-// that calls dbgen.New(tx) inside WithTx closures. In unit tests, inject a
-// struct that returns a scripted claim batch and records requeue/fail calls.
+// On the real path, satisfy this with *AppDBAdapter (raw pgx inside DB.WithTx).
+// In unit tests, inject a struct that returns a scripted claim batch and records
+// requeue/fail calls.
 type systemDB interface {
-	// ClaimCodeReviews atomically leases up to limit pending/expired rows across
-	// all tenants (system-path query, no RLS set).
-	ClaimCodeReviews(ctx context.Context, arg dbgen.ClaimCodeReviewsParams) ([]dbgen.ClaimCodeReviewsRow, error)
+	// ClaimCodeReviews atomically leases up to limit runnable rows across all
+	// tenants via the claim_code_reviews SECURITY DEFINER function.
+	ClaimCodeReviews(ctx context.Context, leaseSeconds, limit int) ([]ClaimedReview, error)
 	// RequeueCodeReview resets a row to pending after a retriable failure.
-	RequeueCodeReview(ctx context.Context, arg dbgen.RequeueCodeReviewParams) error
+	RequeueCodeReview(ctx context.Context, id uuid.UUID, delaySeconds int, lastError string) error
 	// FailCodeReview marks a row terminally failed (max attempts exhausted).
-	FailCodeReview(ctx context.Context, arg dbgen.FailCodeReviewParams) error
+	FailCodeReview(ctx context.Context, id uuid.UUID, lastError string) error
 }
 
 // CodeReviewWorker polls the code_review queue and runs pending jobs.
-// It is a system-level process: claim queries run WITHOUT RLS (cross-tenant);
-// each job's heavy pipeline runs under the owning principal via
+// It is a system-level process: claim/requeue/fail run principal-less through the
+// SECURITY DEFINER queue functions (cross-tenant, RLS-bypassing by owner); each
+// job's heavy pipeline runs under the owning principal via
 // CodeReviewService.runJob, which calls WithPrincipal internally.
 type CodeReviewWorker struct {
 	// DB is the system/cross-tenant DB handle used for claim/requeue/fail.
@@ -114,20 +119,16 @@ func (w *CodeReviewWorker) Run(ctx context.Context) {
 
 // tick claims one batch and processes each row.
 func (w *CodeReviewWorker) tick(ctx context.Context, runJob func(context.Context, ClaimedReview) error) {
-	rows, err := w.DB.ClaimCodeReviews(ctx, dbgen.ClaimCodeReviewsParams{
-		LeaseSeconds: int32(w.LeaseSeconds),
-		Limit:        int32(w.Batch),
-	})
+	jobs, err := w.DB.ClaimCodeReviews(ctx, w.LeaseSeconds, w.Batch)
 	if err != nil {
 		w.Logger.ErrorContext(ctx, "code review claim failed", "err", err)
 		return
 	}
-	if len(rows) == 0 {
+	if len(jobs) == 0 {
 		return
 	}
-	w.Logger.InfoContext(ctx, "code review batch claimed", "count", len(rows))
-	for _, row := range rows {
-		job := rowToClaimedReview(row)
+	w.Logger.InfoContext(ctx, "code review batch claimed", "count", len(jobs))
+	for _, job := range jobs {
 		w.processOne(ctx, job, runJob)
 	}
 }
@@ -162,11 +163,7 @@ func (w *CodeReviewWorker) processOne(
 	if job.Attempts < w.MaxAttempts {
 		w.Logger.WarnContext(ctx, "code review job failed; requeueing",
 			"id", job.ID, "attempts", job.Attempts, "max_attempts", w.MaxAttempts, "err", jobErr)
-		if rerr := w.DB.RequeueCodeReview(ctx, dbgen.RequeueCodeReviewParams{
-			ID:              job.ID,
-			RunAfterSeconds: 30,
-			LastError:       jobErr.Error(),
-		}); rerr != nil {
+		if rerr := w.DB.RequeueCodeReview(ctx, job.ID, 30, jobErr.Error()); rerr != nil {
 			w.Logger.ErrorContext(ctx, "code review requeue failed", "id", job.ID, "err", rerr)
 		}
 		return
@@ -174,47 +171,16 @@ func (w *CodeReviewWorker) processOne(
 
 	w.Logger.ErrorContext(ctx, "code review job exhausted max attempts; failing terminally",
 		"id", job.ID, "attempts", job.Attempts, "max_attempts", w.MaxAttempts, "err", jobErr)
-	if ferr := w.DB.FailCodeReview(ctx, dbgen.FailCodeReviewParams{
-		ID:        job.ID,
-		LastError: jobErr.Error(),
-	}); ferr != nil {
+	if ferr := w.DB.FailCodeReview(ctx, job.ID, jobErr.Error()); ferr != nil {
 		w.Logger.ErrorContext(ctx, "code review fail-terminal write failed", "id", job.ID, "err", ferr)
 	}
 }
 
-// rowToClaimedReview maps a dbgen.ClaimCodeReviewsRow (with pgtype.UUID fields)
-// into a ClaimedReview (with plain uuid.UUID fields).
-// A NULL principal_id or agent_id is mapped to uuid.Nil (safe: runJob will
-// re-resolve and fail with a clear error rather than executing with a nil UUID).
-func rowToClaimedReview(r dbgen.ClaimCodeReviewsRow) ClaimedReview {
-	principalID := uuid.Nil
-	if r.PrincipalID.Valid {
-		principalID = r.PrincipalID.Bytes
-	}
-	agentID := uuid.Nil
-	if r.AgentID.Valid {
-		agentID = r.AgentID.Bytes
-	}
-	return ClaimedReview{
-		ID:              r.ID,
-		BusinessID:      r.BusinessID,
-		PrincipalID:     principalID,
-		AgentID:         agentID,
-		RepoConnectorID: r.RepoConnectorID,
-		PRNumber:        int(r.PrNumber),
-		Attempts:        int(r.Attempts),
-	}
-}
-
-// pgtype is used via dbgen.ClaimCodeReviewsRow (PrincipalID, AgentID pgtype.UUID).
-// This blank identifier keeps the import from being pruned if the compiler
-// inlines the struct layout; the real usage is in rowToClaimedReview above.
-var _ pgtype.UUID
-
 // AppDBAdapter adapts *appdb.DB to the systemDB interface required by
 // CodeReviewWorker. All three methods run WITHOUT an RLS principal context
-// (WithTx, not WithPrincipal) because claim/requeue/fail are cross-tenant
-// system operations — exactly the same pattern the outbox worker uses.
+// (WithTx, not WithPrincipal) and call the code_review queue's SECURITY DEFINER
+// functions (migrations/0073), whose owner bypasses RLS — exactly the same pattern
+// the outbox worker uses for its principal-less drain.
 //
 // Usage in main.go:
 //
@@ -223,29 +189,82 @@ type AppDBAdapter struct {
 	DB *appdb.DB
 }
 
-// ClaimCodeReviews runs the cross-tenant claim query without RLS.
-func (a *AppDBAdapter) ClaimCodeReviews(ctx context.Context, arg dbgen.ClaimCodeReviewsParams) ([]dbgen.ClaimCodeReviewsRow, error) {
-	var rows []dbgen.ClaimCodeReviewsRow
+// ClaimCodeReviews runs the cross-tenant claim via the claim_code_reviews
+// SECURITY DEFINER function (RLS bypassed by the function owner).
+func (a *AppDBAdapter) ClaimCodeReviews(ctx context.Context, leaseSeconds, limit int) ([]ClaimedReview, error) {
+	var out []ClaimedReview
 	if err := a.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		var err error
-		rows, err = dbgen.New(tx).ClaimCodeReviews(ctx, arg)
-		return err
+		rows, err := tx.Query(ctx,
+			`SELECT id, business_id, principal_id, agent_id, repo_connector_id, pr_number, attempts
+			   FROM claim_code_reviews($1, $2)`,
+			leaseSeconds, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id, businessID, repoConnectorID uuid.UUID
+				principalID, agentID            pgtype.UUID
+				prNumber, attempts              int32
+			)
+			if err := rows.Scan(&id, &businessID, &principalID, &agentID,
+				&repoConnectorID, &prNumber, &attempts); err != nil {
+				return err
+			}
+			out = append(out, claimedReviewFromRow(
+				id, businessID, principalID, agentID, repoConnectorID, prNumber, attempts))
+		}
+		return rows.Err()
 	}); err != nil {
 		return nil, err
 	}
-	return rows, nil
+	return out, nil
 }
 
-// RequeueCodeReview resets a row to pending after a retriable failure.
-func (a *AppDBAdapter) RequeueCodeReview(ctx context.Context, arg dbgen.RequeueCodeReviewParams) error {
+// RequeueCodeReview resets a row to pending after a retriable failure via the
+// requeue_code_review SECURITY DEFINER function.
+func (a *AppDBAdapter) RequeueCodeReview(ctx context.Context, id uuid.UUID, delaySeconds int, lastError string) error {
 	return a.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return dbgen.New(tx).RequeueCodeReview(ctx, arg)
+		_, err := tx.Exec(ctx, "SELECT requeue_code_review($1, $2, $3)", id, delaySeconds, lastError)
+		return err
 	})
 }
 
-// FailCodeReview marks a row terminally failed (max attempts exhausted).
-func (a *AppDBAdapter) FailCodeReview(ctx context.Context, arg dbgen.FailCodeReviewParams) error {
+// FailCodeReview marks a row terminally failed via the fail_code_review SECURITY
+// DEFINER function (max attempts exhausted).
+func (a *AppDBAdapter) FailCodeReview(ctx context.Context, id uuid.UUID, lastError string) error {
 	return a.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return dbgen.New(tx).FailCodeReview(ctx, arg)
+		_, err := tx.Exec(ctx, "SELECT fail_code_review($1, $2)", id, lastError)
+		return err
 	})
+}
+
+// claimedReviewFromRow maps a claim_code_reviews result row (with pgtype.UUID for
+// the nullable principal_id/agent_id columns) into a ClaimedReview. A NULL
+// principal_id or agent_id maps to uuid.Nil (safe: runJob re-resolves and fails
+// with a clear error rather than executing with a nil UUID).
+func claimedReviewFromRow(
+	id, businessID uuid.UUID,
+	principalID, agentID pgtype.UUID,
+	repoConnectorID uuid.UUID,
+	prNumber, attempts int32,
+) ClaimedReview {
+	pid := uuid.Nil
+	if principalID.Valid {
+		pid = principalID.Bytes
+	}
+	aid := uuid.Nil
+	if agentID.Valid {
+		aid = agentID.Bytes
+	}
+	return ClaimedReview{
+		ID:              id,
+		BusinessID:      businessID,
+		PrincipalID:     pid,
+		AgentID:         aid,
+		RepoConnectorID: repoConnectorID,
+		PRNumber:        int(prNumber),
+		Attempts:        int(attempts),
+	}
 }

@@ -13,94 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimCodeReviews = `-- name: ClaimCodeReviews :many
-UPDATE code_review SET
-  status = 'running',
-  attempts = attempts + 1,
-  lease_expires_at = now() + make_interval(secs => $1::int),
-  updated_at = now()
-WHERE id IN (
-  SELECT id FROM code_review
-  WHERE (status = 'pending' AND run_after <= now())
-     OR (status = 'running' AND lease_expires_at < now())
-  ORDER BY created_at
-  FOR UPDATE SKIP LOCKED
-  LIMIT $2::int
-)
-RETURNING id, business_id, principal_id, agent_id, repo_connector_id, pr_number, attempts
-`
-
-type ClaimCodeReviewsParams struct {
-	LeaseSeconds int32 `json:"lease_seconds"`
-	Limit        int32 `json:"limit"`
-}
-
-type ClaimCodeReviewsRow struct {
-	ID              uuid.UUID   `json:"id"`
-	BusinessID      uuid.UUID   `json:"business_id"`
-	PrincipalID     pgtype.UUID `json:"principal_id"`
-	AgentID         pgtype.UUID `json:"agent_id"`
-	RepoConnectorID uuid.UUID   `json:"repo_connector_id"`
-	PrNumber        int32       `json:"pr_number"`
-	Attempts        int32       `json:"attempts"`
-}
-
-// ClaimCodeReviews atomically leases up to $2 runnable rows ACROSS tenants (system
-// path; the worker is a system process). Runnable = pending past run_after OR a
-// running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
-// multiple workers claim disjoint rows.
-// ClaimCodeReviews atomically leases up to 'limit' runnable rows ACROSS tenants
-// (system path; the worker is a system process). Runnable = pending past run_after
-// OR a running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
-// multiple workers claim disjoint rows.
-func (q *Queries) ClaimCodeReviews(ctx context.Context, arg ClaimCodeReviewsParams) ([]ClaimCodeReviewsRow, error) {
-	rows, err := q.db.Query(ctx, claimCodeReviews, arg.LeaseSeconds, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ClaimCodeReviewsRow
-	for rows.Next() {
-		var i ClaimCodeReviewsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.BusinessID,
-			&i.PrincipalID,
-			&i.AgentID,
-			&i.RepoConnectorID,
-			&i.PrNumber,
-			&i.Attempts,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const failCodeReview = `-- name: FailCodeReview :exec
-UPDATE code_review SET
-  status = 'failed',
-  lease_expires_at = NULL,
-  last_error = $1,
-  updated_at = now()
-WHERE id = $2
-`
-
-type FailCodeReviewParams struct {
-	LastError string    `json:"last_error"`
-	ID        uuid.UUID `json:"id"`
-}
-
-// FailCodeReview marks a row terminally failed (max attempts exhausted).
-func (q *Queries) FailCodeReview(ctx context.Context, arg FailCodeReviewParams) error {
-	_, err := q.db.Exec(ctx, failCodeReview, arg.LastError, arg.ID)
-	return err
-}
-
 const getCodeReview = `-- name: GetCodeReview :one
 SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
@@ -243,28 +155,6 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 		return nil, err
 	}
 	return items, nil
-}
-
-const requeueCodeReview = `-- name: RequeueCodeReview :exec
-UPDATE code_review SET
-  status = 'pending',
-  run_after = now() + make_interval(secs => $1::int),
-  lease_expires_at = NULL,
-  last_error = $2,
-  updated_at = now()
-WHERE id = $3
-`
-
-type RequeueCodeReviewParams struct {
-	RunAfterSeconds int32     `json:"run_after_seconds"`
-	LastError       string    `json:"last_error"`
-	ID              uuid.UUID `json:"id"`
-}
-
-// RequeueCodeReview returns a row to pending after a retriable failure.
-func (q *Queries) RequeueCodeReview(ctx context.Context, arg RequeueCodeReviewParams) error {
-	_, err := q.db.Exec(ctx, requeueCodeReview, arg.RunAfterSeconds, arg.LastError, arg.ID)
-	return err
 }
 
 const updateCodeReviewResult = `-- name: UpdateCodeReviewResult :one

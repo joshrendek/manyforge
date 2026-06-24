@@ -31,45 +31,10 @@ WHERE business_id = $1
 ORDER BY created_at DESC
 LIMIT 200;
 
--- ClaimCodeReviews atomically leases up to $2 runnable rows ACROSS tenants (system
--- path; the worker is a system process). Runnable = pending past run_after OR a
--- running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
--- multiple workers claim disjoint rows.
--- ClaimCodeReviews atomically leases up to 'limit' runnable rows ACROSS tenants
--- (system path; the worker is a system process). Runnable = pending past run_after
--- OR a running row whose lease expired (crash recovery). FOR UPDATE SKIP LOCKED lets
--- multiple workers claim disjoint rows.
--- name: ClaimCodeReviews :many
-UPDATE code_review SET
-  status = 'running',
-  attempts = attempts + 1,
-  lease_expires_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::int),
-  updated_at = now()
-WHERE id IN (
-  SELECT id FROM code_review
-  WHERE (status = 'pending' AND run_after <= now())
-     OR (status = 'running' AND lease_expires_at < now())
-  ORDER BY created_at
-  FOR UPDATE SKIP LOCKED
-  LIMIT sqlc.arg('limit')::int
-)
-RETURNING id, business_id, principal_id, agent_id, repo_connector_id, pr_number, attempts;
-
--- RequeueCodeReview returns a row to pending after a retriable failure.
--- name: RequeueCodeReview :exec
-UPDATE code_review SET
-  status = 'pending',
-  run_after = now() + make_interval(secs => sqlc.arg('run_after_seconds')::int),
-  lease_expires_at = NULL,
-  last_error = sqlc.arg('last_error'),
-  updated_at = now()
-WHERE id = sqlc.arg('id');
-
--- FailCodeReview marks a row terminally failed (max attempts exhausted).
--- name: FailCodeReview :exec
-UPDATE code_review SET
-  status = 'failed',
-  lease_expires_at = NULL,
-  last_error = sqlc.arg('last_error'),
-  updated_at = now()
-WHERE id = sqlc.arg('id');
+-- NOTE: claim/requeue/fail are NOT sqlc queries. The CodeReviewWorker is a system
+-- process that runs principal-less (no manyforge.principal_id GUC), but code_review
+-- has RLS ENABLEd (0071) and the app connects as manyforge_app (NOBYPASSRLS), so a
+-- principal-less UPDATE here would be RLS-blocked. Those three operations therefore
+-- go through the SECURITY DEFINER functions claim_code_reviews / requeue_code_review
+-- / fail_code_review (migrations/0073), called via raw pgx in worker.go's
+-- AppDBAdapter — exactly the outbox drain pattern (claim_outbox_batch, 0016).

@@ -1,6 +1,7 @@
 package security_regression
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -159,6 +160,31 @@ func TestEgressAllowlistValidationPinned(t *testing.T) {
 	}
 	if strings.Contains(proxy, "func allowed(") {
 		t.Fatal("cmd/mf-egress-proxy/main.go defines a private allow-matcher — it must share netsafe's so the validator/enforcer can't drift (manyforge-0qj)")
+	}
+}
+
+// MF007-PIN-9 (manyforge-elo): the CodeReviewWorker claims principal-less (no
+// manyforge.principal_id), but code_review has RLS ENABLEd (0071) and the app role
+// manyforge_app is NOBYPASSRLS, so a raw claim is RLS-blocked (authorized_businesses(NULL)
+// = EMPTY). The claim/requeue/fail therefore MUST go through SECURITY DEFINER
+// functions with a pinned search_path (migrations/0073), mirroring the outbox drain.
+// If the migration loses SECURITY DEFINER or the search_path pin, the worker either
+// claims zero rows in prod (RLS block) or becomes search_path-hijackable — this test
+// makes either regression a CI failure.
+func TestMF007PIN9(t *testing.T) {
+	matches, err := filepath.Glob("../../migrations/0073_*.up.sql")
+	if err != nil {
+		t.Fatalf("glob 0073 migration: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("migrations/0073_*.up.sql not found — the principal-less claim DEFINER migration is missing (MF007-PIN-9)")
+	}
+	src := mustRead(t, matches[0])
+	if !strings.Contains(src, "SECURITY DEFINER") {
+		t.Fatalf("%s missing SECURITY DEFINER — the principal-less claim would be RLS-blocked in prod (MF007-PIN-9)", matches[0])
+	}
+	if !strings.Contains(src, "SET search_path") {
+		t.Fatalf("%s missing SET search_path — SECURITY DEFINER functions must pin search_path against hijack (MF007-PIN-9)", matches[0])
 	}
 }
 

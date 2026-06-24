@@ -18,12 +18,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
-	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
@@ -482,28 +480,21 @@ func TestCodeReviewWorkerCrashRecovery(t *testing.T) {
 	}
 
 	// ClaimCodeReviews should pick up the expired-lease row.
-	// Use tdb.Super (superuser, BYPASSRLS) so the cross-tenant claim query sees all rows
-	// without an RLS principal — mirrors the production worker's system-level DB access.
-	var rows []dbgen.ClaimCodeReviewsRow
-	if err := tdb.Super.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
-		tx, err := conn.Begin(ctx)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-		rows, err = dbgen.New(tx).ClaimCodeReviews(ctx, dbgen.ClaimCodeReviewsParams{LeaseSeconds: 60, Limit: 10})
-		if err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
-	}); err != nil {
+	// Claim under tdb.App (the real RLS-subject manyforge_app role) via AppDBAdapter
+	// — the exact production path. The claim goes through the claim_code_reviews
+	// SECURITY DEFINER function (migrations/0073), whose owner bypasses RLS, so the
+	// principal-less system worker can still see rows across tenants. (A raw sqlc
+	// UPDATE under tdb.App would be RLS-blocked — that was the production bug.)
+	adapter := &AppDBAdapter{DB: tdb.App}
+	rows, err := adapter.ClaimCodeReviews(ctx, 60, 10)
+	if err != nil {
 		t.Fatalf("ClaimCodeReviews: %v", err)
 	}
 	if len(rows) == 0 {
 		t.Fatal("expected at least one claimed row (crash recovery)")
 	}
 
-	var found *dbgen.ClaimCodeReviewsRow
+	var found *ClaimedReview
 	for i := range rows {
 		if rows[i].ID == cr.ID {
 			found = &rows[i]
@@ -515,8 +506,7 @@ func TestCodeReviewWorkerCrashRecovery(t *testing.T) {
 	}
 
 	// Run the job directly via runJob.
-	claimed := rowToClaimedReview(*found)
-	if err := svc.runJob(ctx, claimed); err != nil {
+	if err := svc.runJob(ctx, *found); err != nil {
 		t.Fatalf("runJob: %v", err)
 	}
 

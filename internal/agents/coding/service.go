@@ -36,8 +36,8 @@ type CodeReview struct {
 	PostedAt      *time.Time
 }
 
-// ClaimedReview is the typed representation of a dbgen.ClaimCodeReviewsRow,
-// with UUIDs unwrapped from pgtype. The background worker maps the dbgen row
+// ClaimedReview is the typed representation of a claim_code_reviews result row,
+// with UUIDs unwrapped from pgtype. The background worker maps the claimed row
 // into this struct and passes it to runJob so no secrets travel in the queue row.
 type ClaimedReview struct {
 	ID              uuid.UUID
@@ -172,7 +172,7 @@ func (s *CodeReviewService) Enqueue(
 // runJob executes the heavy code-review pipeline for a claimed row.
 // It re-resolves the connector and credential under job.PrincipalID/BusinessID —
 // NO secrets come from the queue row itself. Called by the background worker
-// (Task 5) after claiming a pending row via dbgen.ClaimCodeReviews.
+// (Task 5) after claiming a pending row via the claim_code_reviews function.
 func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error {
 	// Re-resolve connector under the owning principal (no secrets in the queue row).
 	rc, err := s.Repos.Resolve(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID)

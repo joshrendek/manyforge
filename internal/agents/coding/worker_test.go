@@ -10,52 +10,53 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-
-	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 )
 
 // fakeSystemDB implements systemDB for unit tests. It returns a scripted claim
 // batch from ClaimCodeReviews and records Requeue/Fail calls for assertion.
 type fakeSystemDB struct {
-	claims []dbgen.ClaimCodeReviewsRow
+	claims []ClaimedReview
 	// recorded calls
-	requeueCalls []dbgen.RequeueCodeReviewParams
-	failCalls    []dbgen.FailCodeReviewParams
+	requeueCalls []requeueCall
+	failCalls    []failCall
 }
 
-func (f *fakeSystemDB) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	// We don't actually use a transaction in the fake — the fn is never called;
-	// instead ClaimCodeReviews is called directly. Return nil to signal "ok".
-	return nil
+type requeueCall struct {
+	id           uuid.UUID
+	delaySeconds int
+	lastError    string
 }
 
-func (f *fakeSystemDB) ClaimCodeReviews(ctx context.Context, arg dbgen.ClaimCodeReviewsParams) ([]dbgen.ClaimCodeReviewsRow, error) {
+type failCall struct {
+	id        uuid.UUID
+	lastError string
+}
+
+func (f *fakeSystemDB) ClaimCodeReviews(ctx context.Context, leaseSeconds, limit int) ([]ClaimedReview, error) {
 	rows := f.claims
 	f.claims = nil // drain so the loop doesn't re-claim on the next tick
 	return rows, nil
 }
 
-func (f *fakeSystemDB) RequeueCodeReview(ctx context.Context, arg dbgen.RequeueCodeReviewParams) error {
-	f.requeueCalls = append(f.requeueCalls, arg)
+func (f *fakeSystemDB) RequeueCodeReview(ctx context.Context, id uuid.UUID, delaySeconds int, lastError string) error {
+	f.requeueCalls = append(f.requeueCalls, requeueCall{id: id, delaySeconds: delaySeconds, lastError: lastError})
 	return nil
 }
 
-func (f *fakeSystemDB) FailCodeReview(ctx context.Context, arg dbgen.FailCodeReviewParams) error {
-	f.failCalls = append(f.failCalls, arg)
+func (f *fakeSystemDB) FailCodeReview(ctx context.Context, id uuid.UUID, lastError string) error {
+	f.failCalls = append(f.failCalls, failCall{id: id, lastError: lastError})
 	return nil
 }
 
-// makeRow builds a ClaimCodeReviewsRow with all UUIDs filled.
-func makeRow(attempts int32) dbgen.ClaimCodeReviewsRow {
-	return dbgen.ClaimCodeReviewsRow{
+// makeRow builds a ClaimedReview with all UUIDs filled.
+func makeRow(attempts int) ClaimedReview {
+	return ClaimedReview{
 		ID:              uuid.New(),
 		BusinessID:      uuid.New(),
-		PrincipalID:     pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		AgentID:         pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		PrincipalID:     uuid.New(),
+		AgentID:         uuid.New(),
 		RepoConnectorID: uuid.New(),
-		PrNumber:        42,
+		PRNumber:        42,
 		Attempts:        attempts,
 	}
 }
@@ -88,7 +89,7 @@ func runOnce(w *CodeReviewWorker) {
 // Fail is called.
 func TestWorkerSuccess(t *testing.T) {
 	db := &fakeSystemDB{
-		claims: []dbgen.ClaimCodeReviewsRow{makeRow(1)},
+		claims: []ClaimedReview{makeRow(1)},
 	}
 	var called atomic.Bool
 	w := makeWorker(db, func(ctx context.Context, job ClaimedReview) error {
@@ -112,7 +113,7 @@ func TestWorkerSuccess(t *testing.T) {
 // attempts < MaxAttempts, RequeueCodeReview is called (not Fail).
 func TestWorkerRequeueOnFailureUnderMax(t *testing.T) {
 	row := makeRow(1) // attempts=1 < MaxAttempts=3
-	db := &fakeSystemDB{claims: []dbgen.ClaimCodeReviewsRow{row}}
+	db := &fakeSystemDB{claims: []ClaimedReview{row}}
 	w := makeWorker(db, func(ctx context.Context, job ClaimedReview) error {
 		return errors.New("transient error")
 	})
@@ -124,8 +125,8 @@ func TestWorkerRequeueOnFailureUnderMax(t *testing.T) {
 	if len(db.failCalls) != 0 {
 		t.Fatalf("expected 0 fail calls, got %d", len(db.failCalls))
 	}
-	if db.requeueCalls[0].ID != row.ID {
-		t.Errorf("requeue called with wrong ID: got %v want %v", db.requeueCalls[0].ID, row.ID)
+	if db.requeueCalls[0].id != row.ID {
+		t.Errorf("requeue called with wrong ID: got %v want %v", db.requeueCalls[0].id, row.ID)
 	}
 }
 
@@ -133,7 +134,7 @@ func TestWorkerRequeueOnFailureUnderMax(t *testing.T) {
 // attempts == MaxAttempts, FailCodeReview is called (not Requeue).
 func TestWorkerFailOnMaxAttempts(t *testing.T) {
 	row := makeRow(3) // attempts=3 == MaxAttempts=3
-	db := &fakeSystemDB{claims: []dbgen.ClaimCodeReviewsRow{row}}
+	db := &fakeSystemDB{claims: []ClaimedReview{row}}
 	w := makeWorker(db, func(ctx context.Context, job ClaimedReview) error {
 		return errors.New("final failure")
 	})
@@ -145,8 +146,8 @@ func TestWorkerFailOnMaxAttempts(t *testing.T) {
 	if len(db.requeueCalls) != 0 {
 		t.Fatalf("expected 0 requeue calls, got %d", len(db.requeueCalls))
 	}
-	if db.failCalls[0].ID != row.ID {
-		t.Errorf("fail called with wrong ID: got %v want %v", db.failCalls[0].ID, row.ID)
+	if db.failCalls[0].id != row.ID {
+		t.Errorf("fail called with wrong ID: got %v want %v", db.failCalls[0].id, row.ID)
 	}
 }
 
@@ -175,7 +176,7 @@ func TestWorkerCtxCancelStopsLoop(t *testing.T) {
 // crashing the worker.
 func TestWorkerPanicRecovery(t *testing.T) {
 	row := makeRow(1) // attempts=1 < MaxAttempts=3 → requeue expected
-	db := &fakeSystemDB{claims: []dbgen.ClaimCodeReviewsRow{row}}
+	db := &fakeSystemDB{claims: []ClaimedReview{row}}
 	w := makeWorker(db, func(ctx context.Context, job ClaimedReview) error {
 		panic("simulated panic in runJob")
 	})
@@ -193,7 +194,7 @@ func TestWorkerPanicRecovery(t *testing.T) {
 // TestWorkerMultipleRowsInBatch verifies that the worker processes all rows
 // in a claim batch independently.
 func TestWorkerMultipleRowsInBatch(t *testing.T) {
-	rows := []dbgen.ClaimCodeReviewsRow{
+	rows := []ClaimedReview{
 		makeRow(1), // will succeed
 		makeRow(2), // will fail → requeue (attempts=2 < 3)
 		makeRow(3), // will fail → fail  (attempts=3 == MaxAttempts)
