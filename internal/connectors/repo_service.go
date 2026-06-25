@@ -21,14 +21,14 @@ import (
 // RepoConnectorSummary is the public (credential-free) view of a repo connector
 // returned by List. It intentionally omits secret_ref and any APIToken field.
 type RepoConnectorSummary struct {
-	ID                  string
-	Type                string
-	DisplayName         string
-	BaseURL             string
-	Repo                string
-	AllowPrivateBaseURL bool
-	Status              string
-	CreatedAt           time.Time
+	ID                  string    `json:"id"`
+	Type                string    `json:"type"`
+	DisplayName         string    `json:"display_name"`
+	BaseURL             string    `json:"base_url"`
+	Repo                string    `json:"repo"`
+	AllowPrivateBaseURL bool      `json:"allow_private_base_url"`
+	Status              string    `json:"status"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // RepoConnectorService creates + resolves per-business repo connectors with

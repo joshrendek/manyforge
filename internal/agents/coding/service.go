@@ -25,15 +25,15 @@ import (
 
 // CodeReview is the service-layer view of a code_review row.
 type CodeReview struct {
-	ID            uuid.UUID
-	Status        string
-	Summary       string
-	ReviewURL     string
-	PRNumber      int
-	Findings      []connectors.Finding
-	FindingsCount int
-	CreatedAt     time.Time
-	PostedAt      *time.Time
+	ID            uuid.UUID          `json:"id"`
+	Status        string             `json:"status"`
+	Summary       string             `json:"summary"`
+	ReviewURL     string             `json:"review_url"`
+	PRNumber      int                `json:"pr_number"`
+	Findings      []connectors.Finding `json:"findings"`
+	FindingsCount int                `json:"findings_count"`
+	CreatedAt     time.Time          `json:"created_at"`
+	PostedAt      *time.Time         `json:"posted_at"`
 }
 
 // ClaimedReview is the typed representation of a claim_code_reviews result row,
