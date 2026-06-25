@@ -433,7 +433,13 @@ describe('CodeReviewListComponent', () => {
       mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
       f.detectChanges();
 
-      setTriggerForm(f, 'ag1', 'c1', 7);
+      const setTriggerForm = (agentId: string, connectorId: string, prNumber: number) => {
+        f.componentInstance.triggerForm.agent_id = agentId;
+        f.componentInstance.triggerForm.repo_connector_id = connectorId;
+        f.componentInstance.triggerForm.pr_number = prNumber;
+      };
+
+      setTriggerForm('ag1', 'c1', 7);
       f.componentInstance.triggerReview();
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({ id: 'r3', status: 'pending', review_url: '' });
       f.detectChanges();
