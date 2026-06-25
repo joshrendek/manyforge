@@ -227,6 +227,9 @@ export class CodeReviewListComponent implements OnInit {
   reviews = signal<CodeReview[]>([]);
   agents = signal<Agent[]>([]);
   loading = signal(false);
+  // pending counts the in-flight init loads (connectors/reviews/agents) so the
+  // spinner only clears once ALL have settled — see reload()/settle().
+  private pending = signal(0);
   error = signal('');
   connectorsError = signal('');
   showAdd = signal(false);
@@ -283,44 +286,59 @@ export class CodeReviewListComponent implements OnInit {
   reload(): void {
     if (!this.businessId()) return;
     const biz = this.businessId();
+
+    // The three loads are independent — one failing must not cancel the others
+    // (so no forkJoin). Track them with a pending-counter so the spinner only
+    // clears once ALL three have settled, regardless of order or per-call error.
     this.loading.set(true);
+    this.pending.set(3);
 
     this.api.listConnectors(biz).subscribe({
       next: (r) => {
-        if (this.businessId() !== biz) return;
-        this.connectors.set(r.items ?? []);
-        this.connectorsError.set('');
-        this.loading.set(false);
+        if (this.businessId() === biz) {
+          this.connectors.set(r.items ?? []);
+          this.connectorsError.set('');
+        }
+        this.settle();
       },
       error: () => {
-        if (this.businessId() !== biz) return;
-        this.connectors.set([]);
-        this.connectorsError.set('Could not load connectors');
-        this.loading.set(false);
+        if (this.businessId() === biz) {
+          this.connectors.set([]);
+          this.connectorsError.set('Could not load connectors');
+        }
+        this.settle();
       },
     });
 
     this.api.listReviews(biz).subscribe({
       next: (r) => {
-        if (this.businessId() !== biz) return;
-        this.reviews.set(r.items ?? []);
+        if (this.businessId() === biz) this.reviews.set(r.items ?? []);
+        this.settle();
       },
       error: () => {
-        if (this.businessId() !== biz) return;
-        this.reviews.set([]);
+        if (this.businessId() === biz) this.reviews.set([]);
+        this.settle();
       },
     });
 
     this.agentsSvc.list(biz).subscribe({
       next: (r) => {
-        if (this.businessId() !== biz) return;
-        this.agents.set(r.items ?? []);
+        if (this.businessId() === biz) this.agents.set(r.items ?? []);
+        this.settle();
       },
       error: () => {
-        if (this.businessId() !== biz) return;
-        this.agents.set([]);
+        if (this.businessId() === biz) this.agents.set([]);
+        this.settle();
       },
     });
+  }
+
+  // settle decrements the pending-load counter and clears the spinner once all
+  // in-flight loads have finished (counter reaches 0).
+  private settle(): void {
+    const remaining = this.pending() - 1;
+    this.pending.set(remaining);
+    if (remaining <= 0) this.loading.set(false);
   }
 
   cancelAdd(): void {
@@ -417,16 +435,19 @@ export class CodeReviewListComponent implements OnInit {
     });
   }
 
+  // reloadConnectors refreshes only the connectors table (after an add). It toggles
+  // the spinner for UX consistency with the init/error paths in reload().
   private reloadConnectors(): void {
     if (!this.businessId()) return;
     const biz = this.businessId();
+    this.loading.set(true);
     this.api.listConnectors(biz).subscribe({
       next: (r) => {
-        if (this.businessId() !== biz) return;
-        this.connectors.set(r.items ?? []);
+        if (this.businessId() === biz) this.connectors.set(r.items ?? []);
+        this.loading.set(false);
       },
       error: () => {
-        if (this.businessId() !== biz) return;
+        this.loading.set(false);
       },
     });
   }

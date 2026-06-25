@@ -98,20 +98,7 @@ describe('CodeReviewListComponent', () => {
     (el.querySelector('[data-testid="connector-add-toggle"]') as HTMLButtonElement).click();
     f.detectChanges();
 
-    // Fill in required fields.
-    const nameInput = el.querySelector('[data-testid="connector-form-display-name"]') as HTMLInputElement;
-    const repoInput = el.querySelector('[data-testid="connector-form-repo"]') as HTMLInputElement;
-    const tokenInput = el.querySelector('[data-testid="connector-form-api-token"]') as HTMLInputElement;
-
-    nameInput.value = 'My Connector';
-    nameInput.dispatchEvent(new Event('input'));
-    repoInput.value = 'acme/new';
-    repoInput.dispatchEvent(new Event('input'));
-    tokenInput.value = 'ghp_test';
-    tokenInput.dispatchEvent(new Event('input'));
-    f.detectChanges();
-
-    // Update the component model directly via ngModel binding.
+    // Set the ngModel-bound form model directly.
     f.componentInstance.addForm.display_name = 'My Connector';
     f.componentInstance.addForm.repo = 'acme/new';
     f.componentInstance.addForm.api_token = 'ghp_test';
@@ -186,6 +173,44 @@ describe('CodeReviewListComponent', () => {
     f.componentInstance.triggerForm.repo_connector_id = connectorId;
     f.componentInstance.triggerForm.pr_number = prNumber;
   }
+
+  it('cr-submit is disabled until agent, connector, and PR number are all set', async () => {
+    const f = mount();
+    const el: HTMLElement = f.nativeElement;
+    const submit = () => el.querySelector('[data-testid="cr-submit"]') as HTMLButtonElement;
+
+    // Drive the real form controls (set value + fire the event ngModel listens for)
+    // so model<->view stay consistent. Auto change-detection lets the [(ngModel)]
+    // write-backs settle asynchronously, avoiding the NG0100 check-no-changes trip.
+    f.autoDetectChanges(true);
+    const setSelect = async (testid: string, value: string) => {
+      const sel = el.querySelector(`[data-testid="${testid}"]`) as HTMLSelectElement;
+      sel.value = Array.from(sel.options).find((o) => o.value.includes(value))?.value ?? value;
+      sel.dispatchEvent(new Event('change'));
+      await f.whenStable();
+    };
+    const setNumber = async (testid: string, value: string) => {
+      const inp = el.querySelector(`[data-testid="${testid}"]`) as HTMLInputElement;
+      inp.value = value;
+      inp.dispatchEvent(new Event('input'));
+      await f.whenStable();
+    };
+
+    // Nothing selected → disabled.
+    expect(submit().disabled).toBe(true);
+
+    // Only agent → still disabled.
+    await setSelect('cr-agent', 'ag1');
+    expect(submit().disabled).toBe(true);
+
+    // Agent + connector but no PR number → still disabled.
+    await setSelect('cr-connector', 'c1');
+    expect(submit().disabled).toBe(true);
+
+    // All three filled → enabled.
+    await setNumber('cr-pr-number', '42');
+    expect(submit().disabled).toBe(false);
+  });
 
   it('Review-a-PR submit calls trigger with the selected agent, connector, and PR number', () => {
     const f = mount();
