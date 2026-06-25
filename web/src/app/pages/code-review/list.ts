@@ -1,7 +1,8 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { Agent, AgentsService } from '../../core/agents.service';
 import { BusinessService } from '../../core/business.service';
 import {
@@ -15,13 +16,17 @@ import { Business } from '../../core/tree';
 import { EmptyState } from '../../ui/empty-state/empty-state';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
+import { StatusPill } from '../../ui/status-pill/status-pill';
 import { ToastService } from '../../ui/toast/toast.service';
+import { runStatusTone } from '../../ui/status';
 
 // Code Review page: manage GitHub repo connectors per business, trigger a PR review,
-// and show a minimal history list. History polling + detail view are Task 4.
+// and show the review history with live polling. While any review is pending/running,
+// listReviews is polled every 3 s; polling stops when all rows are terminal (succeeded/
+// failed) and is always cleared in ngOnDestroy to prevent leaks.
 @Component({
   selector: 'app-code-review-list',
-  imports: [DatePipe, FormsModule, PageHeader, EmptyState, Spinner],
+  imports: [DatePipe, FormsModule, PageHeader, EmptyState, Spinner, StatusPill],
   template: `
     <div class="mf-card" data-testid="code-review-page">
       <mf-page-header title="Code Review" subtitle="GitHub PR reviews powered by your agents">
@@ -187,7 +192,8 @@ import { ToastService } from '../../ui/toast/toast.service';
         </p>
       }
 
-      <!-- Minimal history list (full table + polling deferred to Task 4) -->
+      <!-- History: live-polling review list. Polling runs every 3 s while any row is
+           pending/running and stops automatically when all rows are terminal. -->
       @if (reviews().length) {
         <h3 style="margin:24px 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
           Recent Reviews
@@ -196,12 +202,17 @@ import { ToastService } from '../../ui/toast/toast.service';
           <div class="mf-tr mf-th">
             <span style="width:80px">PR #</span>
             <span style="flex:1">Status</span>
+            <span style="width:80px">Findings</span>
             <span style="flex:1">Created</span>
           </div>
           @for (r of reviews(); track r.id) {
-            <div class="mf-tr" data-testid="review-row" [attr.data-review-id]="r.id">
+            <div class="mf-tr" data-testid="review-row" [attr.data-review-id]="r.id"
+                 style="cursor:pointer" (click)="openDetail(r)">
               <span style="width:80px">#{{ r.pr_number }}</span>
-              <span style="flex:1">{{ r.status }}</span>
+              <span style="flex:1">
+                <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" />
+              </span>
+              <span style="width:80px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
             </div>
           }
@@ -214,12 +225,18 @@ import { ToastService } from '../../ui/toast/toast.service';
     </div>
   `,
 })
-export class CodeReviewListComponent implements OnInit {
+export class CodeReviewListComponent implements OnInit, OnDestroy {
   private bizApi = inject(BusinessService);
   private api = inject(CodeReviewService);
   private agentsSvc = inject(AgentsService);
   private current = inject(CurrentBusinessService);
   private toast = inject(ToastService);
+  private router = inject(Router);
+
+  readonly reviewTone = runStatusTone;
+
+  // Polling: fires every 3 s while any review is pending/running.
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
 
   businesses = signal<Business[]>([]);
   businessId = signal<string>('');
@@ -272,7 +289,49 @@ export class CodeReviewListComponent implements OnInit {
     });
   }
 
+  ngOnDestroy(): void {
+    this.stopPolling();
+  }
+
+  // Returns true when at least one review is in a non-terminal state.
+  private hasNonTerminal(): boolean {
+    return this.reviews().some((r) => r.status === 'pending' || r.status === 'running');
+  }
+
+  private startPolling(): void {
+    if (this.pollTimer !== undefined) return; // already running
+    this.pollTimer = setInterval(() => this.pollReviews(), 3000);
+  }
+
+  private stopPolling(): void {
+    if (this.pollTimer !== undefined) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+  }
+
+  private pollReviews(): void {
+    if (!this.businessId()) return;
+    const biz = this.businessId();
+    this.api.listReviews(biz).subscribe({
+      next: (r) => {
+        if (this.businessId() !== biz) return;
+        this.reviews.set(r.items ?? []);
+        if (!this.hasNonTerminal()) this.stopPolling();
+      },
+      error: () => {
+        // On poll error, keep polling — transient network issue should not stop updates.
+      },
+    });
+  }
+
+  // Navigate to the detail page for a review row click.
+  openDetail(r: CodeReview): void {
+    void this.router.navigate(['/code-review', this.businessId(), r.id]);
+  }
+
   selectBusiness(id: string): void {
+    this.stopPolling();
     this.businessId.set(id);
     this.current.set(id);
     this.confirmDeleteConnectorId.set('');
@@ -312,7 +371,10 @@ export class CodeReviewListComponent implements OnInit {
 
     this.api.listReviews(biz).subscribe({
       next: (r) => {
-        if (this.businessId() === biz) this.reviews.set(r.items ?? []);
+        if (this.businessId() === biz) {
+          this.reviews.set(r.items ?? []);
+          if (this.hasNonTerminal()) this.startPolling();
+        }
         this.settle();
       },
       error: () => {
@@ -423,6 +485,8 @@ export class CodeReviewListComponent implements OnInit {
         };
         this.reviews.update((xs) => [optimistic, ...xs]);
         this.triggerForm = { agent_id: '', repo_connector_id: '', pr_number: null };
+        // Start polling immediately so the new pending row refreshes to its real state.
+        this.startPolling();
       },
       error: (e: HttpErrorResponse) => {
         this.triggering.set(false);

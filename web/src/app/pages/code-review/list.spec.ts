@@ -2,7 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastService } from '../../ui/toast/toast.service';
 import { CodeReviewListComponent } from './list';
 
@@ -302,5 +302,164 @@ describe('CodeReviewListComponent', () => {
     f.detectChanges();
 
     expect(toastSvc.toasts().some((t) => t.message.includes('deleted'))).toBe(true);
+  });
+
+  // ── History rendering ─────────────────────────────────────────────────────────
+
+  it('renders a review-row for each review in the history', () => {
+    // Mount with one pending review already in the list.
+    const f = TestBed.createComponent(CodeReviewListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
+    mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+      items: [{
+        id: 'r1', status: 'succeeded', summary: '', review_url: '', pr_number: 7,
+        findings: [], findings_count: 3, created_at: '2026-06-20T12:00:00Z', posted_at: null,
+      }],
+    });
+    mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
+    f.detectChanges();
+
+    const rows = f.nativeElement.querySelectorAll('[data-testid="review-row"]');
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain('7');  // PR number
+    expect(rows[0].textContent).toContain('3');  // findings_count
+  });
+
+  // ── History + polling (fake timers scoped to this nested describe) ────────────
+
+  describe('polling', () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    /** Mount with a single pending review already returned from the server. */
+    function mountWithPendingReview() {
+      const f = TestBed.createComponent(CodeReviewListComponent);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses').flush(biz);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+        items: [{
+          id: 'r1', status: 'pending', summary: '', review_url: '', pr_number: 7,
+          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
+        }],
+      });
+      mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
+      f.detectChanges();
+      return f;
+    }
+
+    it('polls listReviews again after the interval when a pending review is present', () => {
+      const f = mountWithPendingReview();
+
+      // Advance by 3 s — the poll timer should fire and issue another GET.
+      vi.advanceTimersByTime(3000);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+        items: [{
+          id: 'r1', status: 'pending', summary: '', review_url: '', pr_number: 7,
+          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
+        }],
+      });
+      f.detectChanges();
+
+      // Still pending — one more tick.
+      vi.advanceTimersByTime(3000);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+        items: [{
+          id: 'r1', status: 'running', summary: '', review_url: '', pr_number: 7,
+          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
+        }],
+      });
+      f.detectChanges();
+      expect(f.componentInstance.reviews()[0].status).toBe('running');
+    });
+
+    it('stops polling once all reviews reach a terminal state (succeeded)', () => {
+      const f = mountWithPendingReview();
+
+      // First poll tick — still pending.
+      vi.advanceTimersByTime(3000);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+        items: [{
+          id: 'r1', status: 'pending', summary: '', review_url: '', pr_number: 7,
+          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
+        }],
+      });
+      f.detectChanges();
+
+      // Second poll tick — now succeeded (terminal).
+      vi.advanceTimersByTime(3000);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+        items: [{
+          id: 'r1', status: 'succeeded', summary: 'All good', review_url: '',
+          pr_number: 7, findings: [], findings_count: 0,
+          created_at: '2026-06-20T12:00:00Z', posted_at: '2026-06-20T12:01:00Z',
+        }],
+      });
+      f.detectChanges();
+      expect(f.componentInstance.reviews()[0].status).toBe('succeeded');
+
+      // Advance further — polling has stopped so NO more HTTP calls should occur.
+      vi.advanceTimersByTime(9000);
+      mock.expectNone('/api/v1/businesses/b1/code-reviews');
+    });
+
+    it('does not poll when initial reviews list is empty (all terminal)', () => {
+      // mount() flushes an empty reviews response — no polling should start.
+      const f = TestBed.createComponent(CodeReviewListComponent);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses').flush(biz);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({ items: [] });
+      mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
+      f.detectChanges();
+
+      vi.advanceTimersByTime(9000);
+      mock.expectNone('/api/v1/businesses/b1/code-reviews');
+    });
+
+    it('starts polling after a successful trigger with an optimistic pending row', () => {
+      // Start with empty reviews list → no polling.
+      const f = TestBed.createComponent(CodeReviewListComponent);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses').flush(biz);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({ items: [] });
+      mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
+      f.detectChanges();
+
+      setTriggerForm(f, 'ag1', 'c1', 7);
+      f.componentInstance.triggerReview();
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({ id: 'r3', status: 'pending', review_url: '' });
+      f.detectChanges();
+
+      // The optimistic row is pending → polling should now be active.
+      vi.advanceTimersByTime(3000);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+        items: [{
+          id: 'r3', status: 'succeeded', summary: '', review_url: 'https://github.com/pr/1',
+          pr_number: 7, findings: [], findings_count: 0,
+          created_at: '2026-06-20T12:00:00Z', posted_at: null,
+        }],
+      });
+      f.detectChanges();
+
+      // Now terminal — no further polls.
+      vi.advanceTimersByTime(6000);
+      mock.expectNone('/api/v1/businesses/b1/code-reviews');
+    });
+
+    it('cleans up the poll timer on ngOnDestroy', () => {
+      const f = mountWithPendingReview();
+      f.destroy();
+      // Timer cleared — no more requests after destroy.
+      vi.advanceTimersByTime(9000);
+      mock.expectNone('/api/v1/businesses/b1/code-reviews');
+    });
   });
 });
