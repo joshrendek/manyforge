@@ -118,8 +118,12 @@ test('code-review: trigger a review and watch it complete', async ({ page }) => 
   //   2nd → first poll after POST  → [pending]  (polling continues)
   //   3rd → second poll            → [succeeded] (polling stops)
   let listGetCount = 0;
+  let postFired = false;
+  let postBody: Record<string, unknown> | null = null;
   await page.route('**/api/v1/businesses/b1/code-reviews', (r) => {
     if (r.request().method() === 'POST') {
+      postFired = true;
+      postBody = r.request().postDataJSON() as Record<string, unknown>;
       return r.fulfill({
         status: 202,
         json: { id: 'r1', status: 'pending', review_url: '' },
@@ -159,6 +163,14 @@ test('code-review: trigger a review and watch it complete', async ({ page }) => 
   //    response arrived and startPolling() registered the 3-s interval.
   // -----------------------------------------------------------------------
   await expect(page.getByTestId('review-row')).toContainText('pending');
+
+  // The pending row must come from the trigger POST — not from the GET
+  // counter advancing on its own. Assert the POST fired with the right body.
+  expect(postFired).toBe(true);
+  expect(postBody).not.toBeNull();
+  expect(postBody!['agent_id']).toBe('a1');
+  expect(postBody!['repo_connector_id']).toBe('c1');
+  expect(postBody!['pr_number']).toBe(5);
 
   // -----------------------------------------------------------------------
   // 4. Wait for the real poll interval (3 s × 2 cycles + margin) to fire.
