@@ -52,11 +52,15 @@ type ResolvedRepoConnector struct {
 	Credential          Credential // reuses connectors.Credential (APIToken used as the GitHub token)
 }
 
+// CreateRepoConnectorInput is decoded directly from the request body by the
+// repo-connector create handler, so its json tags ARE the API contract — they
+// must be snake_case to match the OpenAPI spec + the web client (manyforge-elo:
+// untagged fields silently rejected snake_case bodies with "display_name required").
 type CreateRepoConnectorInput struct {
-	Type                string
-	DisplayName         string
-	BaseURL             string
-	Repo                string
-	AllowPrivateBaseURL bool
-	APIToken            string
+	Type                string `json:"type"`
+	DisplayName         string `json:"display_name"`
+	BaseURL             string `json:"base_url"`
+	Repo                string `json:"repo"`
+	AllowPrivateBaseURL bool   `json:"allow_private_base_url"`
+	APIToken            string `json:"api_token"`
 }
