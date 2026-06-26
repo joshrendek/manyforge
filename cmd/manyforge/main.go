@@ -402,6 +402,9 @@ func main() {
 		agents.NewToolRegistry(ticketSvc, connGateway),
 		&agents.ModelCatalog{DB: database},
 	)
+	// Live per-provider model catalog (OpenRouter) for the agent form's typeahead.
+	// Fetched through the SSRF-safe netsafe client; cached in-process.
+	agentH.SetProviderModels(&agents.OpenRouterModels{HTTP: netsafe.NewClient(15 * time.Second)})
 
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,

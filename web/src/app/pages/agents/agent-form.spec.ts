@@ -76,11 +76,32 @@ describe('AgentFormComponent', () => {
     expect(c.modelsForProvider().map((m) => m.model_id)).toEqual(['claude-opus-4-8']);
   });
 
-  it('uses the free-text model input for openrouter (not the catalog dropdown)', () => {
+  it('shows an OpenRouter typeahead populated from the live provider catalog', () => {
     const c = fixture.componentInstance;
     c.onProviderChange('openrouter');
+    http.expectOne('/api/v1/businesses/b1/agents/provider-models/openrouter').flush({
+      items: [
+        { provider: 'openrouter', model_id: 'openai/gpt-4o' },
+        { provider: 'openrouter', model_id: 'anthropic/claude-3-haiku' },
+      ],
+    });
+    fixture.detectChanges();
+
     expect(c.isFreeTextModel()).toBe(true);
+    expect(c.isOpenRouter()).toBe(true);
+    expect(c.openrouterModels().map((m) => m.model_id)).toEqual(['openai/gpt-4o', 'anthropic/claude-3-haiku']);
+
+    // the input is a typeahead bound to the datalist of live models
+    const el = fixture.nativeElement as HTMLElement;
+    const input = el.querySelector('[data-testid="agent-model-text"]') as HTMLInputElement;
+    expect(input.getAttribute('list')).toBe('openrouter-models');
+    const opts = el.querySelectorAll('[data-testid="openrouter-model-options"] option');
+    expect(opts.length).toBe(2);
+    expect((opts[0] as HTMLOptionElement).value).toBe('openai/gpt-4o');
+
+    // switching away clears the list and triggers no further fetch
     c.onProviderChange('anthropic');
     expect(c.isFreeTextModel()).toBe(false);
+    expect(c.openrouterModels().length).toBe(0);
   });
 });
