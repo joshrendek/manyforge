@@ -665,6 +665,10 @@ type CodeReview struct {
 	RunAfter          time.Time          `json:"run_after"`
 	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
 	LastError         string             `json:"last_error"`
+	Model             string             `json:"model"`
+	TokensIn          int32              `json:"tokens_in"`
+	TokensOut         int32              `json:"tokens_out"`
+	CostCents         int64              `json:"cost_cents"`
 }
 
 type Company struct {

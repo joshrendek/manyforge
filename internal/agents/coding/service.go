@@ -31,8 +31,10 @@ type CodeReview struct {
 	Summary       string             `json:"summary"`
 	ReviewURL     string             `json:"review_url"`
 	PRNumber      int                `json:"pr_number"`
+	Model         string             `json:"model"`      // model snapshot used for this review
 	Findings      []connectors.Finding `json:"findings"`
 	FindingsCount int                `json:"findings_count"`
+	CostCents     int64              `json:"cost_cents"` // LLM cost of the run (0 until usage capture lands)
 	CreatedAt     time.Time          `json:"created_at"`
 	PostedAt      *time.Time         `json:"posted_at"`
 }
@@ -150,6 +152,9 @@ func (s *CodeReviewService) Enqueue(
 			BusinessID:      businessID,
 			PrincipalID:     pgtype.UUID{Bytes: principalID, Valid: true},
 			AgentID:         pgtype.UUID{Bytes: agentID, Valid: true},
+			// Snapshot the resolved model so the history shows which model produced
+			// each review even after the agent's model changes later.
+			Model: cred.Model,
 		}); ierr != nil {
 			return ierr
 		}
@@ -374,8 +379,10 @@ func (s *CodeReviewService) List(ctx context.Context, principalID, businessID uu
 				Status:        r.Status,
 				Summary:       r.Summary,
 				PRNumber:      int(r.PrNumber),
+				Model:         r.Model,
 				Findings:      findings,
 				FindingsCount: len(findings),
+				CostCents:     r.CostCents,
 				CreatedAt:     r.CreatedAt,
 				PostedAt:      postedAt,
 				// ReviewURL intentionally empty in List — populated in Get only.
@@ -430,8 +437,10 @@ func (s *CodeReviewService) Get(ctx context.Context, principalID, businessID, id
 			Status:        row.Status,
 			Summary:       row.Summary,
 			PRNumber:      int(row.PrNumber),
+			Model:         row.Model,
 			Findings:      findings,
 			FindingsCount: len(findings),
+			CostCents:     row.CostCents,
 			CreatedAt:     row.CreatedAt,
 			PostedAt:      postedAt,
 		}

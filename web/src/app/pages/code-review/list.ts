@@ -200,20 +200,23 @@ import { runStatusTone } from '../../ui/status';
         </h3>
         <div class="mf-table" data-testid="reviews-table">
           <div class="mf-tr mf-th">
-            <span style="width:80px">PR #</span>
-            <span style="flex:1">Status</span>
-            <span style="width:80px">Findings</span>
-            <span style="flex:1">Created</span>
+            <span style="width:64px">PR #</span>
+            <span style="width:104px">Status</span>
+            <span style="flex:1">Model</span>
+            <span style="width:72px">Findings</span>
+            <span style="width:150px">Created</span>
           </div>
           @for (r of reviews(); track r.id) {
             <div class="mf-tr" data-testid="review-row" [attr.data-review-id]="r.id"
                  style="cursor:pointer" (click)="openDetail(r)">
-              <span style="width:80px">#{{ r.pr_number }}</span>
-              <span style="flex:1">
+              <span style="width:64px">#{{ r.pr_number }}</span>
+              <span style="width:104px">
                 <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" />
               </span>
-              <span style="width:80px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
-              <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
+              <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    data-testid="review-model" [title]="r.model">{{ r.model || '—' }}</span>
+              <span style="width:72px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
+              <span style="width:150px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
             </div>
           }
         </div>
@@ -478,8 +481,10 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
           summary: '',
           review_url: resp.review_url,
           pr_number: this.triggerForm.pr_number!,
+          model: this.agents().find((a) => a.id === this.triggerForm.agent_id)?.model ?? '',
           findings: [],
           findings_count: 0,
+          cost_cents: 0,
           created_at: new Date().toISOString(),
           posted_at: null,
         };

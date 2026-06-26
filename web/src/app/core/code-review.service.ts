@@ -40,8 +40,10 @@ export interface CodeReview {
   summary: string;
   review_url: string;
   pr_number: number;
+  model: string;
   findings: Finding[];
   findings_count: number;
+  cost_cents: number;
   created_at: string;
   posted_at: string | null;
 }

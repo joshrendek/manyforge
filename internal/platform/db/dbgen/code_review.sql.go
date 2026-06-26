@@ -14,7 +14,7 @@ import (
 )
 
 const getCodeReview = `-- name: GetCodeReview :one
-SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
+SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
 
 type GetCodeReviewParams struct {
@@ -46,17 +46,21 @@ func (q *Queries) GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (C
 		&i.RunAfter,
 		&i.LeaseExpiresAt,
 		&i.LastError,
+		&i.Model,
+		&i.TokensIn,
+		&i.TokensOut,
+		&i.CostCents,
 	)
 	return i, err
 }
 
 const insertCodeReview = `-- name: InsertCodeReview :one
-INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, principal_id, agent_id, created_at, updated_at)
+INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, principal_id, agent_id, model, created_at, updated_at)
 SELECT $1, b.id, b.tenant_root_id, $2, $3,
-    $4, 'pending', $5, $6, now(), now()
+    $4, 'pending', $5, $6, $7, now(), now()
 FROM business b
-WHERE b.id = $7::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error
+WHERE b.id = $8::uuid
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents
 `
 
 type InsertCodeReviewParams struct {
@@ -66,6 +70,7 @@ type InsertCodeReviewParams struct {
 	PrNumber        int32       `json:"pr_number"`
 	PrincipalID     pgtype.UUID `json:"principal_id"`
 	AgentID         pgtype.UUID `json:"agent_id"`
+	Model           string      `json:"model"`
 	BusinessID      uuid.UUID   `json:"business_id"`
 }
 
@@ -77,6 +82,7 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		arg.PrNumber,
 		arg.PrincipalID,
 		arg.AgentID,
+		arg.Model,
 		arg.BusinessID,
 	)
 	var i CodeReview
@@ -101,13 +107,17 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		&i.RunAfter,
 		&i.LeaseExpiresAt,
 		&i.LastError,
+		&i.Model,
+		&i.TokensIn,
+		&i.TokensOut,
+		&i.CostCents,
 	)
 	return i, err
 }
 
 const listCodeReviews = `-- name: ListCodeReviews :many
 SELECT id, repo_connector_id, pr_number, status, summary, findings,
-       external_review_ref, created_at, posted_at
+       external_review_ref, created_at, posted_at, model, cost_cents
 FROM code_review
 WHERE business_id = $1
 ORDER BY created_at DESC
@@ -124,6 +134,8 @@ type ListCodeReviewsRow struct {
 	ExternalReviewRef string             `json:"external_review_ref"`
 	CreatedAt         time.Time          `json:"created_at"`
 	PostedAt          pgtype.Timestamptz `json:"posted_at"`
+	Model             string             `json:"model"`
+	CostCents         int64              `json:"cost_cents"`
 }
 
 // ListCodeReviews returns the business's reviews newest-first for the history UI.
@@ -146,6 +158,8 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 			&i.ExternalReviewRef,
 			&i.CreatedAt,
 			&i.PostedAt,
+			&i.Model,
+			&i.CostCents,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +182,7 @@ UPDATE code_review SET
     lease_expires_at = NULL,
     updated_at = now()
 WHERE id = $7::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents
 `
 
 type UpdateCodeReviewResultParams struct {
@@ -213,6 +227,10 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		&i.RunAfter,
 		&i.LeaseExpiresAt,
 		&i.LastError,
+		&i.Model,
+		&i.TokensIn,
+		&i.TokensOut,
+		&i.CostCents,
 	)
 	return i, err
 }

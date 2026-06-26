@@ -292,6 +292,11 @@ components:
           type: string
         pr_number:
           type: integer
+        model:
+          type: string
+        cost_cents:
+          type: integer
+          format: int64
         findings:
           type: array
           items:
