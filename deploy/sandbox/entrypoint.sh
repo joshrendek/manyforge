@@ -25,22 +25,27 @@ cd /tmp/src
 # providers.<provider>.apiKey (plus the matching *_API_KEY env). MVP targets
 # OpenRouter (the dogfood provider). TODO(manyforge-2nd): generalize to
 # anthropic/openai by inspecting LLM_BASE_URL.
+# The provider API key is passed ONLY via the env var (opencode-ai reads
+# OPENROUTER_API_KEY) — it is NOT written into the on-disk config, so the reviewed
+# code (which opencode reads from the cwd) can't contain the key. (Egress is still
+# restricted to the LLM host, so even a prompt-injected read of the env can't
+# exfiltrate it; redacting the key from review output is a tracked hardening.)
 export OPENROUTER_API_KEY="$LLM_API_KEY"
+
 # opencode-ai v0.0.55 does NOT read OPENCODE_CONFIG; Viper loads ".opencode.json"
-# from fixed paths ($HOME, $XDG_CONFIG_HOME/opencode, and the cwd). Write it to BOTH
-# $HOME and the cwd so it is found regardless. (Without this, opencode silently uses
-# its DEFAULT model — claude-3.7-sonnet — instead of the configured one.)
-OC_CONFIG='{
+# from fixed paths ($HOME, $XDG_CONFIG_HOME/opencode, the cwd). Write it ONLY to
+# $HOME (= /tmp, OUTSIDE the reviewed cwd /tmp/src) so the config never lands inside
+# the directory opencode reviews. (Without a found config, opencode silently uses its
+# DEFAULT model instead of the configured one.)
+printf '%s\n' '{
   "data": { "directory": "/tmp/.opencode" },
-  "providers": { "openrouter": { "apiKey": "'"${LLM_API_KEY}"'", "disabled": false } },
+  "providers": { "openrouter": { "disabled": false } },
   "agents": {
     "coder":  { "model": "openrouter.'"${LLM_MODEL}"'", "maxTokens": 4000 },
     "task":   { "model": "openrouter.'"${LLM_MODEL}"'", "maxTokens": 4000 },
     "title":  { "model": "openrouter.'"${LLM_MODEL}"'", "maxTokens": 80 }
   }
-}'
-printf '%s\n' "$OC_CONFIG" > "$HOME/.opencode.json"
-printf '%s\n' "$OC_CONFIG" > ./.opencode.json
+}' > "$HOME/.opencode.json"
 
 PROMPT='Review all code in the current project for bugs, security issues, and code-quality problems.
 Output ONLY a single JSON object to stdout — no prose, no markdown fences, no explanation —
