@@ -1,7 +1,6 @@
 package coding
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -66,9 +65,3 @@ func TestParseFindings_StripsSandboxPrefix(t *testing.T) {
 	}
 }
 
-func TestRenderMarkdown(t *testing.T) {
-	md := RenderMarkdown(FindingsDoc{Summary: "S"})
-	if md == "" || !strings.Contains(md, "Automated code review") {
-		t.Fatalf("render missing header: %s", md)
-	}
-}

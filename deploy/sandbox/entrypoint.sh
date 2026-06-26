@@ -79,10 +79,19 @@ printf '%s\n' '{
   }
 }' > "$OPENCODE_CONFIG"
 
-PROMPT='Review all code in the current project for bugs, security issues, and code-quality problems.
+# Scope the review to the PR's changed files when the runner supplied the list
+# (/out/review_files.txt, one repo-relative path per line). This keeps findings on
+# the diff so they can be posted as inline comments. Absent/empty → whole-repo review.
+SCOPE='Review all code in the current project for bugs, security issues, and code-quality problems.'
+if [ -s /out/review_files.txt ]; then
+  FILES=$(tr '\n' ' ' < /out/review_files.txt)
+  SCOPE="Review ONLY these files changed in this pull request (paths are relative to the project root): ${FILES}
+Report each finding's line number from the CURRENT version of the file. Do not report issues in files outside this list."
+fi
+PROMPT="${SCOPE}
 Output ONLY a single JSON object to stdout — no prose, no markdown fences, no explanation —
 matching exactly this schema:
-{"summary": string, "findings": [{"file": string, "line": number|null, "severity": "info"|"warning"|"error", "title": string, "detail": string}]}'
+{\"summary\": string, \"findings\": [{\"file\": string, \"line\": number|null, \"severity\": \"info\"|\"warning\"|\"error\", \"title\": string, \"detail\": string}]}"
 
 # `opencode run` executes a single prompt headlessly (no TUI) and prints the
 # assistant's final text to stdout → review.json. -m pins the model

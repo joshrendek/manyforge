@@ -256,6 +256,21 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
 	}
 
+	// Fetch the PR diff's commentable (new-side) lines. Used to (a) scope the
+	// sandbox review to the changed files and (b) post findings as inline diff
+	// comments. Best-effort: on failure `changed` is empty and the review degrades
+	// to a single whole-repo summary comment (the pre-inline behavior).
+	changed, cerr := conn.ChangedLines(ctx, prNumber)
+	if cerr != nil {
+		changed = nil
+	}
+	// Scope the review to the changed files by writing their paths where the
+	// entrypoint reads them (/out/review_files.txt). Absent → whole-repo review.
+	if len(changed) > 0 {
+		_ = os.WriteFile(filepath.Join(outDir, "review_files.txt"),
+			[]byte(strings.Join(changedFilePaths(changed), "\n")), 0o644)
+	}
+
 	// Audit sandbox invocation, then run opencode in the isolated sandbox.
 	_ = s.auditStep(ctx, principalID, businessID, crID,
 		"agent.coding.opencode.invoked",
@@ -295,13 +310,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 			fmt.Errorf("%w%s", err, sandboxStderrTail(outDir)))
 	}
 
-	// Post the review to the PR (intentionally ungated — advisory only).
-	body := RenderMarkdown(doc)
-	ref, err := conn.PostReview(ctx, prNumber, connectors.Review{
-		Summary:  doc.Summary,
-		Findings: doc.Findings,
-		Body:     body,
-	})
+	// Post the review to the PR (intentionally ungated — advisory only). Findings on
+	// changed lines become inline diff comments; the rest land in the summary body.
+	review := buildReview(doc, changed, pr.HeadSHA)
+	ref, err := conn.PostReview(ctx, prNumber, review)
 	if err != nil {
 		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
 	}

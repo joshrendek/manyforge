@@ -90,11 +90,77 @@ func (c *client) FetchPR(ctx context.Context, prNumber int) (connectors.PullRequ
 	}, nil
 }
 
-// PostReview posts a review comment to the given pull request.
-// A 404 maps to errs.ErrNotFound; other non-2xx become generic errors.
+// changedFilesPageCap bounds pagination of the PR files endpoint (100/page) so a
+// pathological PR can't drive unbounded requests; 20 pages = 2000 files.
+const changedFilesPageCap = 20
+
+// ChangedLines fetches the PR's changed files and returns, per new-version path,
+// the set of new-side line numbers that are part of the diff (valid inline-comment
+// targets). A 404 maps to errs.ErrNotFound; other non-2xx become generic errors.
+func (c *client) ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error) {
+	out := map[string]map[int]bool{}
+	for page := 1; page <= changedFilesPageCap; page++ {
+		url := fmt.Sprintf("%s/repos/%s/pulls/%d/files?per_page=100&page=%d", c.apiBase, c.repo, prNumber, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("github: build pr files request: %w", err)
+		}
+		req.Header.Set("Authorization", c.authHeader())
+		req.Header.Set("Accept", "application/vnd.github+json")
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("github: fetch pr files: %w", err)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("github: pr %d: %w", prNumber, errs.ErrNotFound)
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("github: fetch pr files status %d", resp.StatusCode)
+		}
+		var files []struct {
+			Filename string `json:"filename"`
+			Patch    string `json:"patch"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&files)
+		_ = resp.Body.Close()
+		if derr != nil {
+			return nil, fmt.Errorf("github: decode pr files: %w", derr)
+		}
+		for _, f := range files {
+			out[f.Filename] = commentableLines(f.Patch)
+		}
+		if len(files) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// PostReview posts a review to the given pull request: a summary body plus any
+// inline diff comments. A 404 maps to errs.ErrNotFound; other non-2xx become
+// generic errors.
 func (c *client) PostReview(ctx context.Context, prNumber int, r connectors.Review) (connectors.ReviewRef, error) {
 	url := fmt.Sprintf("%s/repos/%s/pulls/%d/reviews", c.apiBase, c.repo, prNumber)
-	payload, err := json.Marshal(map[string]any{"event": "COMMENT", "body": r.Body})
+	reviewBody := map[string]any{"event": "COMMENT", "body": r.Body}
+	if r.CommitID != "" {
+		reviewBody["commit_id"] = r.CommitID
+	}
+	if len(r.Comments) > 0 {
+		comments := make([]map[string]any, 0, len(r.Comments))
+		for _, cm := range r.Comments {
+			comments = append(comments, map[string]any{
+				"path": cm.Path,
+				"line": cm.Line,
+				"side": "RIGHT",
+				"body": cm.Body,
+			})
+		}
+		reviewBody["comments"] = comments
+	}
+	payload, err := json.Marshal(reviewBody)
 	if err != nil {
 		return connectors.ReviewRef{}, fmt.Errorf("github: marshal review: %w", err)
 	}

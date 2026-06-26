@@ -10,7 +10,14 @@ type RepoConnector interface {
 	FetchPR(ctx context.Context, prNumber int) (PullRequest, error)
 	// CloneURL returns the https clone URL for the repo (host-side clone uses header auth).
 	CloneURL() string
-	// PostReview posts a single review (summary + findings) to the pull request. Advisory only.
+	// ChangedLines returns, per changed file path (new-version path), the set of
+	// new-side line numbers that are part of the PR diff and therefore valid
+	// targets for inline review comments. Files with no commentable lines (binary,
+	// pure deletions) still appear with an empty set so callers can scope a review
+	// to the changed file list.
+	ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error)
+	// PostReview posts a single review (summary + optional inline comments) to the
+	// pull request. Advisory only.
 	PostReview(ctx context.Context, prNumber int, r Review) (ReviewRef, error)
 }
 
@@ -31,10 +38,21 @@ type Finding struct {
 	Detail   string `json:"detail"`
 }
 
+// ReviewComment is a single inline review comment anchored to a line of the PR
+// diff (new/RIGHT side). Line must be a commentable line (see ChangedLines) or
+// the host rejects the entire review.
+type ReviewComment struct {
+	Path string
+	Line int
+	Body string
+}
+
 type Review struct {
 	Summary  string
 	Findings []Finding
-	Body     string // rendered markdown body actually posted
+	Body     string          // rendered markdown body actually posted (summary + any non-inline findings)
+	CommitID string          // head SHA the inline comments anchor to (optional)
+	Comments []ReviewComment // inline diff comments (optional)
 }
 
 type ReviewRef struct {

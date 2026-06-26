@@ -66,26 +66,3 @@ func ParseFindings(raw []byte) (FindingsDoc, error) {
 	}
 	return doc, nil
 }
-
-func RenderMarkdown(doc FindingsDoc) string {
-	var b strings.Builder
-	b.WriteString("## 🤖 Automated code review\n\n")
-	b.WriteString(doc.Summary)
-	b.WriteString("\n\n")
-	if len(doc.Findings) == 0 {
-		b.WriteString("_No specific findings._\n")
-		return b.String()
-	}
-	b.WriteString(fmt.Sprintf("### Findings (%d)\n\n", len(doc.Findings)))
-	for _, f := range doc.Findings {
-		loc := f.File
-		if f.Line != nil {
-			loc = fmt.Sprintf("%s:%d", f.File, *f.Line)
-		}
-		b.WriteString(fmt.Sprintf("- **[%s]** `%s` — %s\n", strings.ToUpper(f.Severity), loc, f.Title))
-		if strings.TrimSpace(f.Detail) != "" {
-			b.WriteString("  " + f.Detail + "\n")
-		}
-	}
-	return b.String()
-}
