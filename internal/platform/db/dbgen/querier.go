@@ -77,6 +77,12 @@ type Querier interface {
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
 	// yet see (no membership at insert time). The caller builds the result from inputs.
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) error
+	// Records a COMPLETED code-review run as an agent_run so ReviewBot usage shows up
+	// in accounting (AccountingSummaryByAgent sums agent_run by agent over a window).
+	// trigger/target_type are free-text at the DB layer (no CHECK, unlike the Go
+	// CreateRun validators); tenant_root_id is derived from the RLS-visible agent so a
+	// foreign/invisible agent yields no row.
+	CreateCodeReviewAgentRun(ctx context.Context, arg CreateCodeReviewAgentRunParams) (uuid.UUID, error)
 	// Idempotent event-triggered run. Dedups on (agent_id, trigger_dedup_key) -- the conflict
 	// target matches the partial unique index -- so an at-least-once redelivery of
 	// ticket.created creates at most one run per agent. ON CONFLICT DO NOTHING => 0 rows =>
