@@ -90,6 +90,29 @@ func TestSandboxRunArgsPinned(t *testing.T) {
 	}
 }
 
+// MF007-PIN-10 (manyforge-ht8): the sst/opencode entrypoint must run the review
+// agent READ-ONLY — its opencode permission profile denies edit/bash/webfetch so a
+// prompt-injected review can neither mutate the checkout nor exfiltrate via a fetch
+// tool. And the provider API key is written to opencode's auth.json under the
+// tmpfs data dir (XDG_DATA_HOME), OUTSIDE the reviewed cwd /tmp/src — never into the
+// checkout opencode reads. If these disappear from entrypoint.sh the agent silently
+// gains write/exec/network capability or leaks the key into reviewable files.
+func TestSandboxEntrypointReadOnlyPinned(t *testing.T) {
+	src := mustRead(t, "../../deploy/sandbox/entrypoint.sh")
+	for _, frag := range []string{
+		`"edit": "deny"`,
+		`"bash": "deny"`,
+		`"webfetch": "deny"`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("entrypoint.sh missing read-only permission %q — was the review agent allowed to mutate/exfiltrate? (MF007-PIN-10)", frag)
+		}
+	}
+	if !strings.Contains(src, `"$XDG_DATA_HOME/opencode/auth.json"`) {
+		t.Fatal("entrypoint.sh must write the API key to auth.json under XDG_DATA_HOME (tmpfs, outside the reviewed cwd /tmp/src) (MF007-PIN-10)")
+	}
+}
+
 // MF007-PIN-3: review posting is intentionally ungated — the service must NOT route
 // the post through the approval queue (no CreatePending / approval in service.go).
 func TestReviewPostingIsUngated(t *testing.T) {
