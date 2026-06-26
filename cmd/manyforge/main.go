@@ -363,6 +363,10 @@ func main() {
 	// (CI / no-Docker dev) logs a warning and coding reviews fail at run time only.
 	var codingH *coding.Handler
 	var codingSvc *coding.CodeReviewService
+	// Shared live OpenRouter catalog: models for the agent form's typeahead AND
+	// pricing for code-review cost accounting. Fetched via the SSRF-safe netsafe
+	// client; cached in-process.
+	orModels := &agents.OpenRouterModels{HTTP: netsafe.NewClient(15 * time.Second)}
 	{
 		var connVault *secrets.Vault
 		if len(cfg.ConnectorMasterKey) > 0 {
@@ -390,6 +394,7 @@ func main() {
 			// Same allowlist that boots the egress proxy above — Trigger validates the
 			// run's provider host against it up front (manyforge-0qj).
 			EgressAllow: netsafe.ParseHostAllowlist(cfg.SandboxEgressAllow),
+			Pricing:     orModels,
 		}
 		codingH = &coding.Handler{RepoSvc: repoSvc, ReviewSvc: codingSvc}
 	}
@@ -404,7 +409,7 @@ func main() {
 	)
 	// Live per-provider model catalog (OpenRouter) for the agent form's typeahead.
 	// Fetched through the SSRF-safe netsafe client; cached in-process.
-	agentH.SetProviderModels(&agents.OpenRouterModels{HTTP: netsafe.NewClient(15 * time.Second)})
+	agentH.SetProviderModels(orModels)
 
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,

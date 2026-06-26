@@ -38,7 +38,9 @@ FROM alpine:3.20
 # ripgrep + fzf: opencode uses them for code search and degrades without them.
 # git: VCS-aware tooling over the checkout. ca-certificates: TLS egress to the LLM.
 # libstdc++ + libgcc: the Bun-compiled opencode binary links them on musl.
-RUN apk add --no-cache ca-certificates git ripgrep fzf libstdc++ libgcc
+# sqlite: the entrypoint reads opencode's session DB after the run to capture token
+# usage for cost accounting.
+RUN apk add --no-cache ca-certificates git ripgrep fzf libstdc++ libgcc sqlite
 
 # Copy the opencode binary from the downloader stage and fail the build loudly if
 # it can't even report its version (catches a wrong arch / missing runtime lib).

@@ -13,6 +13,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createCodeReviewAgentRun = `-- name: CreateCodeReviewAgentRun :one
+INSERT INTO agent_run (id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id,
+                       status, tokens_in, tokens_out, cost_cents, correlation_id, created_at, updated_at)
+SELECT $1::uuid, a.id, a.business_id, a.tenant_root_id,
+       'code_review', 'code_review', $2::uuid,
+       $3::text, $4::int, $5::int,
+       $6::bigint, $7::text, now(), now()
+FROM agent a
+WHERE a.id = $8::uuid AND a.business_id = $9::uuid
+RETURNING id
+`
+
+type CreateCodeReviewAgentRunParams struct {
+	ID            uuid.UUID `json:"id"`
+	TargetID      uuid.UUID `json:"target_id"`
+	Status        string    `json:"status"`
+	TokensIn      int32     `json:"tokens_in"`
+	TokensOut     int32     `json:"tokens_out"`
+	CostCents     int64     `json:"cost_cents"`
+	CorrelationID string    `json:"correlation_id"`
+	AgentID       uuid.UUID `json:"agent_id"`
+	BusinessID    uuid.UUID `json:"business_id"`
+}
+
+// Records a COMPLETED code-review run as an agent_run so ReviewBot usage shows up
+// in accounting (AccountingSummaryByAgent sums agent_run by agent over a window).
+// trigger/target_type are free-text at the DB layer (no CHECK, unlike the Go
+// CreateRun validators); tenant_root_id is derived from the RLS-visible agent so a
+// foreign/invisible agent yields no row.
+func (q *Queries) CreateCodeReviewAgentRun(ctx context.Context, arg CreateCodeReviewAgentRunParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createCodeReviewAgentRun,
+		arg.ID,
+		arg.TargetID,
+		arg.Status,
+		arg.TokensIn,
+		arg.TokensOut,
+		arg.CostCents,
+		arg.CorrelationID,
+		arg.AgentID,
+		arg.BusinessID,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getCodeReview = `-- name: GetCodeReview :one
 SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
@@ -179,9 +225,13 @@ UPDATE code_review SET
     findings = $4,
     external_review_ref = $5,
     posted_at = $6,
+    tokens_in = $7,
+    tokens_out = $8,
+    cost_cents = $9,
+    agent_run_id = $10,
     lease_expires_at = NULL,
     updated_at = now()
-WHERE id = $7::uuid
+WHERE id = $11::uuid
 RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents
 `
 
@@ -192,6 +242,10 @@ type UpdateCodeReviewResultParams struct {
 	Findings          []byte             `json:"findings"`
 	ExternalReviewRef string             `json:"external_review_ref"`
 	PostedAt          pgtype.Timestamptz `json:"posted_at"`
+	TokensIn          int32              `json:"tokens_in"`
+	TokensOut         int32              `json:"tokens_out"`
+	CostCents         int64              `json:"cost_cents"`
+	AgentRunID        pgtype.UUID        `json:"agent_run_id"`
 	ID                uuid.UUID          `json:"id"`
 }
 
@@ -203,6 +257,10 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		arg.Findings,
 		arg.ExternalReviewRef,
 		arg.PostedAt,
+		arg.TokensIn,
+		arg.TokensOut,
+		arg.CostCents,
+		arg.AgentRunID,
 		arg.ID,
 	)
 	var i CodeReview

@@ -51,6 +51,29 @@ func TestOpenRouterModels_ParsesAndScopesProvider(t *testing.T) {
 	}
 }
 
+func TestOpenRouterModels_CostCents(t *testing.T) {
+	// gemini-2.5-pro pricing: $1.25/Mtok in, $10/Mtok out (per-token strings).
+	payload := `{"data":[{"id":"google/gemini-2.5-pro","pricing":{"prompt":"0.00000125","completion":"0.00001"}}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+	o := &OpenRouterModels{HTTP: srv.Client(), URL: srv.URL, TTL: time.Hour}
+	ctx := context.Background()
+
+	// 1M in @ $1.25/Mtok = 125c; 1M out @ $10/Mtok = 1000c → 1125c total.
+	if c, err := o.CostCents(ctx, "openrouter", "google/gemini-2.5-pro", 1_000_000, 1_000_000); err != nil || c != 1125 {
+		t.Fatalf("cost = %d (err %v), want 1125", c, err)
+	}
+	// Unknown model and non-openrouter provider → 0, no error (review never blocked on pricing).
+	if c, err := o.CostCents(ctx, "openrouter", "no/such-model", 1000, 1000); err != nil || c != 0 {
+		t.Fatalf("unknown model cost = %d (err %v), want 0", c, err)
+	}
+	if c, err := o.CostCents(ctx, "anthropic", "x", 1, 1); err != nil || c != 0 {
+		t.Fatalf("non-openrouter cost = %d (err %v), want 0", c, err)
+	}
+}
+
 func TestOpenRouterModels_Caches(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

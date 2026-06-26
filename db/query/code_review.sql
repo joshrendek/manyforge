@@ -14,10 +14,30 @@ UPDATE code_review SET
     findings = sqlc.arg('findings'),
     external_review_ref = sqlc.arg('external_review_ref'),
     posted_at = sqlc.narg('posted_at'),
+    tokens_in = sqlc.arg('tokens_in'),
+    tokens_out = sqlc.arg('tokens_out'),
+    cost_cents = sqlc.arg('cost_cents'),
+    agent_run_id = sqlc.narg('agent_run_id'),
     lease_expires_at = NULL,
     updated_at = now()
 WHERE id = sqlc.arg('id')::uuid
 RETURNING *;
+
+-- name: CreateCodeReviewAgentRun :one
+-- Records a COMPLETED code-review run as an agent_run so ReviewBot usage shows up
+-- in accounting (AccountingSummaryByAgent sums agent_run by agent over a window).
+-- trigger/target_type are free-text at the DB layer (no CHECK, unlike the Go
+-- CreateRun validators); tenant_root_id is derived from the RLS-visible agent so a
+-- foreign/invisible agent yields no row.
+INSERT INTO agent_run (id, agent_id, business_id, tenant_root_id, trigger, target_type, target_id,
+                       status, tokens_in, tokens_out, cost_cents, correlation_id, created_at, updated_at)
+SELECT sqlc.arg('id')::uuid, a.id, a.business_id, a.tenant_root_id,
+       'code_review', 'code_review', sqlc.arg('target_id')::uuid,
+       sqlc.arg('status')::text, sqlc.arg('tokens_in')::int, sqlc.arg('tokens_out')::int,
+       sqlc.arg('cost_cents')::bigint, sqlc.arg('correlation_id')::text, now(), now()
+FROM agent a
+WHERE a.id = sqlc.arg('agent_id')::uuid AND a.business_id = sqlc.arg('business_id')::uuid
+RETURNING id;
 
 -- name: GetCodeReview :one
 SELECT * FROM code_review WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid;

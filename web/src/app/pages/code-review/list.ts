@@ -200,23 +200,26 @@ import { runStatusTone } from '../../ui/status';
         </h3>
         <div class="mf-table" data-testid="reviews-table">
           <div class="mf-tr mf-th">
-            <span style="width:64px">PR #</span>
-            <span style="width:104px">Status</span>
+            <span style="width:56px">PR #</span>
+            <span style="width:96px">Status</span>
             <span style="flex:1">Model</span>
-            <span style="width:72px">Findings</span>
-            <span style="width:150px">Created</span>
+            <span style="width:64px">Findings</span>
+            <span style="width:72px">Cost</span>
+            <span style="width:132px">Created</span>
           </div>
           @for (r of reviews(); track r.id) {
             <div class="mf-tr" data-testid="review-row" [attr.data-review-id]="r.id"
                  style="cursor:pointer" (click)="openDetail(r)">
-              <span style="width:64px">#{{ r.pr_number }}</span>
-              <span style="width:104px">
+              <span style="width:56px">#{{ r.pr_number }}</span>
+              <span style="width:96px">
                 <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" />
               </span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     data-testid="review-model" [title]="r.model">{{ r.model || '—' }}</span>
-              <span style="width:72px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
-              <span style="width:150px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
+              <span style="width:64px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
+              <span style="width:72px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)"
+                    data-testid="review-cost">{{ formatCost(r.cost_cents) }}</span>
+              <span style="width:132px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
             </div>
           }
         </div>
@@ -326,6 +329,11 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
         // On poll error, keep polling — transient network issue should not stop updates.
       },
     });
+  }
+
+  // Formats LLM cost cents as USD; 0 (not yet priced / unpriceable) shows as a dash.
+  formatCost(cents: number): string {
+    return cents ? '$' + (cents / 100).toFixed(2) : '—';
   }
 
   // Navigate to the detail page for a review row click.

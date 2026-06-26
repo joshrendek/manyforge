@@ -96,4 +96,21 @@ matching exactly this schema:
 # `opencode run` executes a single prompt headlessly (no TUI) and prints the
 # assistant's final text to stdout → review.json. -m pins the model
 # (belt-and-suspenders with the config default). NO_COLOR strips ANSI escapes.
+# Capture opencode's exit code so usage capture below can't mask a failed review.
+set +e
 NO_COLOR=1 opencode run -m "$MODEL" "$PROMPT" > /out/review.json 2> /out/stderr.log
+rc=$?
+set -e
+
+# Capture token usage for cost accounting. opencode persists a session row with
+# running token totals to a SQLite DB under XDG_DATA_HOME; opencode's own cost is 0
+# for a custom OpenRouter slug, so the host prices it from these counts. Best-effort:
+# any failure leaves /out/usage.json absent and the host records 0.
+DB=$(ls -t "$XDG_DATA_HOME"/opencode/opencode*.db 2>/dev/null | head -1)
+if [ -n "$DB" ]; then
+  sqlite3 -json "$DB" \
+    "SELECT tokens_input AS input, tokens_output AS output, tokens_reasoning AS reasoning FROM session ORDER BY time_created DESC LIMIT 1;" \
+    > /out/usage.json 2>/dev/null || true
+fi
+
+exit "$rc"

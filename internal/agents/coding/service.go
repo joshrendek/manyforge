@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,13 @@ type repoResolver interface {
 	Resolve(ctx context.Context, principalID, businessID, id uuid.UUID) (connectors.ResolvedRepoConnector, error)
 }
 
+// CostEstimator prices a run from its token counts. Implemented by
+// *agents.OpenRouterModels (live OpenRouter pricing). Returns 0 (no error) for
+// providers/models it can't price, so usage capture never fails a review.
+type CostEstimator interface {
+	CostCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error)
+}
+
 // CodeReviewService orchestrates the code-review agent lifecycle.
 // Enqueue performs cheap validation and inserts a pending row.
 // runJob (called by the background worker) runs the heavy pipeline:
@@ -82,6 +90,11 @@ type CodeReviewService struct {
 	// up front and fails with ErrValidation rather than launching a sandbox the
 	// proxy will silently egress-block (manyforge-0qj). Same matcher the proxy uses.
 	EgressAllow netsafe.HostAllowlist
+
+	// Pricing estimates the LLM cost of a run from its token counts (opencode
+	// reports 0 cost for a custom OpenRouter slug, so the host prices it). Optional —
+	// when nil, reviews record 0 cost. Satisfied by *agents.OpenRouterModels.
+	Pricing CostEstimator
 
 	// Clone is the injectable seam for cloning a repo at a specific SHA.
 	// Defaults to coding.CloneAtSHA when nil (set at call time). Tests inject
@@ -323,12 +336,42 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
 	}
 
-	// Finalize: UpdateCodeReviewResult (succeeded) + audit "agent.coding.review.posted" in one tx.
+	// Capture LLM token usage (the entrypoint extracts it from opencode's session
+	// DB into /out/usage.json) and price it via OpenRouter's catalog — opencode
+	// reports 0 cost for a custom slug. Reasoning tokens bill at the output rate.
+	// All best-effort: missing usage/pricing → zero, never fails the review.
+	usage := readSandboxUsage(outDir)
+	tokensIn := clampInt32(usage.Input)
+	tokensOut := clampInt32(usage.Output + usage.Reasoning)
+	var costCents int64
+	if s.Pricing != nil {
+		if c, perr := s.Pricing.CostCents(ctx, cred.Provider, cred.Model, int64(tokensIn), int64(tokensOut)); perr == nil {
+			costCents = c
+		}
+	}
+
+	// Finalize in one tx: record the run as an agent_run (so ReviewBot shows in
+	// accounting), stamp tokens/cost + the run link on the review, and audit.
 	findingsJSON, _ := json.Marshal(doc.Findings)
 	postedAt := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 
 	if err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		_, uerr := dbgen.New(tx).UpdateCodeReviewResult(ctx, dbgen.UpdateCodeReviewResultParams{
+		q := dbgen.New(tx)
+		runID, rerr := q.CreateCodeReviewAgentRun(ctx, dbgen.CreateCodeReviewAgentRunParams{
+			ID:            uuid.New(),
+			AgentID:       job.AgentID,
+			BusinessID:    businessID,
+			TargetID:      crID,
+			Status:        "succeeded",
+			TokensIn:      tokensIn,
+			TokensOut:     tokensOut,
+			CostCents:     costCents,
+			CorrelationID: crID.String(),
+		})
+		if rerr != nil {
+			return rerr
+		}
+		_, uerr := q.UpdateCodeReviewResult(ctx, dbgen.UpdateCodeReviewResultParams{
 			ID:                crID,
 			Status:            "succeeded",
 			HeadSha:           pr.HeadSHA,
@@ -336,6 +379,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 			Findings:          findingsJSON,
 			ExternalReviewRef: ref.ExternalID,
 			PostedAt:          postedAt,
+			TokensIn:          tokensIn,
+			TokensOut:         tokensOut,
+			CostCents:         costCents,
+			AgentRunID:        pgtype.UUID{Bytes: runID, Valid: true},
 		})
 		if uerr != nil {
 			return uerr
@@ -343,7 +390,8 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		return audit.Write(ctx, tx, codingAudit(businessID, principalID, crID,
 			"agent.coding.review.posted",
 			nil,
-			map[string]any{"review_url": ref.URL, "findings": len(doc.Findings)},
+			map[string]any{"review_url": ref.URL, "findings": len(doc.Findings),
+				"tokens_in": tokensIn, "tokens_out": tokensOut, "cost_cents": costCents},
 			ptr("posted"),
 		))
 	}); err != nil {
@@ -560,6 +608,41 @@ func reviewURL(repo string, pr int, externalRef string) string {
 		return ""
 	}
 	return fmt.Sprintf("https://github.com/%s/pull/%d#pullrequestreview-%s", repo, pr, externalRef)
+}
+
+// sandboxUsage is the token usage the entrypoint extracts from opencode's session
+// DB into /out/usage.json (sqlite3 -json output: a one-element array).
+type sandboxUsage struct {
+	Input     int64 `json:"input"`
+	Output    int64 `json:"output"`
+	Reasoning int64 `json:"reasoning"`
+}
+
+// readSandboxUsage reads /out/usage.json. Best-effort: missing/empty/garbage → zero
+// usage (a review is never failed for lack of usage data).
+func readSandboxUsage(outDir string) sandboxUsage {
+	b, err := os.ReadFile(filepath.Join(outDir, "usage.json"))
+	if err != nil {
+		return sandboxUsage{}
+	}
+	var rows []sandboxUsage
+	if jerr := json.Unmarshal(b, &rows); jerr != nil || len(rows) == 0 {
+		return sandboxUsage{}
+	}
+	return rows[0]
+}
+
+// clampInt32 bounds a token count to a non-negative int32 (the agent_run/code_review
+// token columns are int4) — defends against a garbage usage value.
+func clampInt32(n int64) int32 {
+	switch {
+	case n < 0:
+		return 0
+	case n > math.MaxInt32:
+		return math.MaxInt32
+	default:
+		return int32(n)
+	}
 }
 
 // sandboxStderrTail returns a short tail of the sandbox's /out/stderr.log for the

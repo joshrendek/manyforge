@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -31,7 +33,14 @@ type OpenRouterModels struct {
 
 	mu        sync.Mutex
 	cache     []ModelInfo
+	prices    map[string]orPrice // model_id → per-token USD pricing, filled by the same fetch
 	fetchedAt time.Time
+}
+
+// orPrice is one model's OpenRouter pricing in USD per token.
+type orPrice struct {
+	inPerTok  float64
+	outPerTok float64
 }
 
 func (o *OpenRouterModels) ttl() time.Duration {
@@ -58,42 +67,85 @@ func (o *OpenRouterModels) ProviderModels(ctx context.Context, provider string) 
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.cache != nil && time.Since(o.fetchedAt) < o.ttl() {
-		return o.cache, nil
+	if err := o.load(ctx); err != nil {
+		return nil, err
 	}
+	return o.cache, nil
+}
 
+// CostCents estimates the USD-cents cost of a run from its token counts and the
+// model's live OpenRouter pricing. Non-openrouter providers and models not in the
+// catalog return 0 (no error) so usage capture never fails a review — an
+// unpriceable run is recorded as 0 cost rather than blocking. tokensOut should
+// include reasoning tokens (OpenRouter bills those at the completion rate).
+func (o *OpenRouterModels) CostCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error) {
+	if provider != "openrouter" {
+		return 0, nil
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.load(ctx); err != nil {
+		return 0, err
+	}
+	p, ok := o.prices[model]
+	if !ok {
+		return 0, nil
+	}
+	usd := float64(tokensIn)*p.inPerTok + float64(tokensOut)*p.outPerTok
+	cents := int64(math.Round(usd * 100))
+	if cents < 0 {
+		cents = 0
+	}
+	return cents, nil
+}
+
+// load fetches and caches the OpenRouter catalog (models + pricing). Caller MUST
+// hold o.mu. No-op within the TTL.
+func (o *OpenRouterModels) load(ctx context.Context) error {
+	if o.cache != nil && time.Since(o.fetchedAt) < o.ttl() {
+		return nil
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.url(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("openrouter models: build request: %w", err)
+		return fmt.Errorf("openrouter models: build request: %w", err)
 	}
 	resp, err := o.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("openrouter models: fetch: %w", err)
+		return fmt.Errorf("openrouter models: fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("openrouter models: upstream status %d", resp.StatusCode)
+		return fmt.Errorf("openrouter models: upstream status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20)) // cap at 8MiB
 	if err != nil {
-		return nil, fmt.Errorf("openrouter models: read body: %w", err)
+		return fmt.Errorf("openrouter models: read body: %w", err)
 	}
 	var doc struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Pricing struct {
+				Prompt     string `json:"prompt"`
+				Completion string `json:"completion"`
+			} `json:"pricing"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("openrouter models: parse: %w", err)
+		return fmt.Errorf("openrouter models: parse: %w", err)
 	}
 	out := make([]ModelInfo, 0, len(doc.Data))
+	prices := make(map[string]orPrice, len(doc.Data))
 	for _, m := range doc.Data {
 		if m.ID == "" {
 			continue
 		}
 		out = append(out, ModelInfo{Provider: "openrouter", ModelID: m.ID})
+		in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)      // "" → 0
+		outp, _ := strconv.ParseFloat(m.Pricing.Completion, 64) // "" → 0
+		prices[m.ID] = orPrice{inPerTok: in, outPerTok: outp}
 	}
 	o.cache = out
+	o.prices = prices
 	o.fetchedAt = time.Now()
-	return out, nil
+	return nil
 }

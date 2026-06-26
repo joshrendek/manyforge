@@ -317,7 +317,7 @@ describe('CodeReviewListComponent', () => {
       items: [{
         id: 'r1', status: 'succeeded', summary: '', review_url: '', pr_number: 7,
         model: 'google/gemini-2.5-pro',
-        findings: [], findings_count: 3, cost_cents: 0,
+        findings: [], findings_count: 3, cost_cents: 825,
         created_at: '2026-06-20T12:00:00Z', posted_at: null,
       }],
     });
@@ -331,6 +331,9 @@ describe('CodeReviewListComponent', () => {
     // The model used for the review is shown in its own column.
     const modelCell = rows[0].querySelector('[data-testid="review-model"]');
     expect(modelCell?.textContent).toContain('google/gemini-2.5-pro');
+    // Cost is rendered as USD from cents.
+    const costCell = rows[0].querySelector('[data-testid="review-cost"]');
+    expect(costCell?.textContent).toContain('$8.25');
   });
 
   // ── History + polling (fake timers scoped to this nested describe) ────────────
