@@ -45,7 +45,7 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 		"--memory", "2g",                     // memory cap
 		"-v", spec.ReadOnlyDir + ":/work:ro", // checkout read-only
 		"-v", spec.OutputDir + ":/out:rw",    // findings output writable
-		"--tmpfs", "/tmp:rw,size=256m",       // writable /tmp for tools
+		"--tmpfs", "/tmp:rw,size=1g",         // writable /tmp: opencode copies the checkout here + its .opencode data dir
 		"-w", "/work",
 		// force ALL egress through the allowlisting proxy:
 		"-e", "HTTPS_PROXY=" + d.ProxyAddr,

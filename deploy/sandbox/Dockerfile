@@ -18,20 +18,17 @@ RUN apk add --no-cache curl tar ca-certificates && \
 # ── runtime image ──────────────────────────────────────────────────────────────
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates git
+# ripgrep + fzf: opencode warns and degrades search without them. git for the
+# checkout copy / any VCS-aware tooling. ca-certificates for the TLS egress.
+RUN apk add --no-cache ca-certificates git ripgrep fzf
 
 # Copy the opencode binary from the downloader stage.
 COPY --from=downloader /usr/local/bin/opencode /usr/local/bin/opencode
 
-# Provider config: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL are substituted at
-# runtime via opencode's {env:VAR} interpolation.
-COPY deploy/sandbox/opencode.json /etc/opencode/opencode.json
-
-# Entrypoint that invokes opencode and writes /out/review.json.
+# Entrypoint generates the opencode-ai config at runtime (provider/key/model from
+# the injected LLM_* env — opencode-ai v0.0.55 does NOT do {env:} substitution) and
+# invokes opencode, writing /out/review.json.
 COPY deploy/sandbox/entrypoint.sh /usr/local/bin/review
 RUN chmod +x /usr/local/bin/review
-
-# Tell opencode where to find its config (overrides the default ~/.config/opencode/).
-ENV OPENCODE_CONFIG=/etc/opencode/opencode.json
 
 ENTRYPOINT ["/usr/local/bin/review"]

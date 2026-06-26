@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -280,15 +281,18 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
 	}
 
-	// Read and parse findings from /out/review.json.
+	// Read and parse findings from /out/review.json. On failure, surface a short tail
+	// of the sandbox's /out/stderr.log so the review's last_error says WHY opencode
+	// produced nothing/garbage (the entrypoint redirects opencode stderr there).
 	rawFindings, err := os.ReadFile(filepath.Join(outDir, "review.json"))
 	if err != nil {
 		return s.failJob(ctx, principalID, businessID, crID, prNumber,
-			fmt.Errorf("coding: no findings produced (exit %d): %w", res.ExitCode, err))
+			fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, err, sandboxStderrTail(outDir)))
 	}
 	doc, err := ParseFindings(rawFindings)
 	if err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		return s.failJob(ctx, principalID, businessID, crID, prNumber,
+			fmt.Errorf("%w%s", err, sandboxStderrTail(outDir)))
 	}
 
 	// Post the review to the PR (intentionally ungated — advisory only).
@@ -534,6 +538,41 @@ func reviewURL(repo string, pr int, externalRef string) string {
 		return ""
 	}
 	return fmt.Sprintf("https://github.com/%s/pull/%d#pullrequestreview-%s", repo, pr, externalRef)
+}
+
+// sandboxStderrTail returns a short tail of the sandbox's /out/stderr.log for the
+// failure last_error (the entrypoint redirects opencode stderr there). Best-effort;
+// empty when absent. Server-side diagnostic only — last_error is never returned to API clients.
+func sandboxStderrTail(outDir string) string {
+	b, err := os.ReadFile(filepath.Join(outDir, "stderr.log"))
+	if err != nil {
+		return ""
+	}
+	// opencode prints a long usage block after ANY error; keep the meaningful
+	// error lines and drop the usage/spinner noise.
+	var keep []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, "Error") || strings.Contains(t, "Unauthorized") ||
+			strings.Contains(t, "401") || strings.Contains(t, "failed") {
+			keep = append(keep, t)
+		}
+	}
+	s := strings.Join(keep, " ")
+	if s == "" { // fallback: head of the raw log
+		s = strings.TrimSpace(string(b))
+	}
+	const max = 600
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	if s == "" {
+		return ""
+	}
+	return " | sandbox stderr: " + s
 }
 
 // ptr returns a pointer to the given string value.

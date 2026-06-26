@@ -101,10 +101,19 @@ func (r *AgentCredResolver) Resolve(ctx context.Context, principalID, businessID
 		baseURL = defaultBaseURLs[ag.Provider] // "" for providers that require user-supplied base_url
 	}
 
+	// The review model comes from the AGENT's configured model (what the user set on
+	// the code-review agent); the credential supplies the key + base_url, with its
+	// default_model as a fallback when the agent leaves model unset. (Previously this
+	// used the credential's model, so the agent's model field was silently ignored.)
+	model := ag.Model
+	if model == "" {
+		model = rc.Model
+	}
+
 	return AICredential{
 		APIKey:   rc.APIKey,
 		BaseURL:  baseURL,
-		Model:    rc.Model,
+		Model:    model,
 		Provider: ag.Provider,
 	}, nil
 }
