@@ -111,6 +111,8 @@ func ParseFindings(raw []byte) (FindingsDoc, error) {
 	for i := range doc.Findings {
 		// Normalize the sandbox absolute path to repo-relative before validating.
 		doc.Findings[i].File = strings.TrimPrefix(strings.TrimSpace(doc.Findings[i].File), sandboxSrcPrefix)
+		// Normalize severity: models vary on whitespace/case (e.g. " Warning ").
+		doc.Findings[i].Severity = strings.ToLower(strings.TrimSpace(doc.Findings[i].Severity))
 		f := doc.Findings[i]
 		if f.File == "" || f.Title == "" {
 			return FindingsDoc{}, fmt.Errorf("coding: finding %d missing file/title", i)

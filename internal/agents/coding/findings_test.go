@@ -63,6 +63,19 @@ func TestParseFindings_SkipsProseBracesAndExtraFields(t *testing.T) {
 	}
 }
 
+// Local models vary on severity whitespace/case (qwen2.5-coder:7b emitted
+// " warning" with a leading space). ParseFindings normalizes it (manyforge-fqo).
+func TestParseFindings_NormalizesSeverity(t *testing.T) {
+	in := `{"summary":"s","findings":[{"file":"a.go","line":1,"severity":" Warning ","title":"t","detail":"d"}]}`
+	doc, err := ParseFindings([]byte(in))
+	if err != nil {
+		t.Fatalf("expected parse, got %v", err)
+	}
+	if doc.Findings[0].Severity != "warning" {
+		t.Fatalf("severity = %q, want normalized 'warning'", doc.Findings[0].Severity)
+	}
+}
+
 // opencode reviews the checkout copied to /tmp/src (entrypoint cwd), so it reports
 // absolute paths under that prefix. ParseFindings must strip it so findings are
 // repo-relative (for GitHub line links) — manyforge-fqo.
