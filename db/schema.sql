@@ -361,7 +361,8 @@ CREATE TABLE agent_run (
     updated_at     timestamptz NOT NULL,
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
-    FOREIGN KEY (agent_id, tenant_root_id) REFERENCES agent (id, tenant_root_id)
+    FOREIGN KEY (agent_id, tenant_root_id) REFERENCES agent (id, tenant_root_id),
+    CONSTRAINT agent_run_trigger_check CHECK (trigger = ANY (ARRAY['event', 'manual', 'reply', 'code_review']))
 );
 CREATE UNIQUE INDEX agent_run_trigger_dedup_idx
     ON agent_run (agent_id, trigger_dedup_key)
