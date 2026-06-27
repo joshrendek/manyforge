@@ -21,37 +21,92 @@ var validSeverity = map[string]bool{"info": true, "warning": true, "error": true
 // repo-relative (needed for GitHub line links). Keep in sync with entrypoint.sh.
 const sandboxSrcPrefix = "/tmp/src/"
 
-// extractJSONObject returns the outermost {…} object from raw model output. The
-// opencode CLI prints the model's final message, which models routinely wrap in a
-// ```json markdown fence and/or a line of prose, so we locate the object rather
-// than require the whole output to be pure JSON. Returns "" when no object is
-// present (caller treats that as empty output).
-func extractJSONObject(raw string) string {
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start < 0 || end < start {
-		return ""
+// topLevelJSONObjects returns every balanced, top-level {…} region in s, scanning
+// string-aware (braces inside JSON strings don't count). opencode prints the
+// model's final message, which models wrap in markdown fences and/or prose that
+// can itself contain braces (e.g. "the {createReview} fn ..."), so a naive
+// first-{-to-last-} grab picks the wrong object. Returning all candidates lets the
+// caller try each and keep the one that's actually a findings document.
+func topLevelJSONObjects(s string) []string {
+	var out []string
+	depth, start := 0, -1
+	inStr, esc := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 && start >= 0 {
+					out = append(out, s[start:i+1])
+					start = -1
+				}
+			}
+		}
 	}
-	return raw[start : end+1]
+	return out
+}
+
+// snippet returns a short, single-line preview of raw model output for error
+// messages (debuggability of model-compat issues). Server-side only.
+func snippet(raw []byte) string {
+	s := strings.Join(strings.Fields(string(raw)), " ")
+	const max = 280
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	return s
 }
 
 // ParseFindings validates opencode's structured output. Empty/malformed → error
-// (no partial review is ever posted). The model's JSON object is extracted from
-// any surrounding markdown fence/prose first, and finding paths are normalized to
-// repo-relative form.
+// (no partial review is ever posted). It tolerates the ways different models wrap
+// JSON — markdown fences, leading/trailing prose, prose containing braces, and
+// extra/unknown fields — by scanning for balanced {…} candidates and keeping the
+// first that decodes into a findings document with a summary. Finding paths are
+// normalized to repo-relative form.
 func ParseFindings(raw []byte) (FindingsDoc, error) {
-	body := extractJSONObject(string(raw))
-	if body == "" {
-		return FindingsDoc{}, fmt.Errorf("coding: empty findings output")
+	candidates := topLevelJSONObjects(string(raw))
+	if len(candidates) == 0 {
+		return FindingsDoc{}, fmt.Errorf("coding: empty findings output (got: %q)", snippet(raw))
 	}
 	var doc FindingsDoc
-	dec := json.NewDecoder(strings.NewReader(body))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&doc); err != nil {
-		return FindingsDoc{}, fmt.Errorf("coding: malformed findings json: %w", err)
+	var found, anyDecoded bool
+	for _, cand := range candidates {
+		var d FindingsDoc
+		// Lenient decode (no DisallowUnknownFields): models often add extra keys;
+		// an advisory review should not fail on them.
+		if err := json.Unmarshal([]byte(cand), &d); err != nil {
+			continue // a prose brace or non-JSON region — try the next candidate
+		}
+		anyDecoded = true
+		if strings.TrimSpace(d.Summary) != "" {
+			doc, found = d, true
+			break
+		}
 	}
-	if strings.TrimSpace(doc.Summary) == "" {
-		return FindingsDoc{}, fmt.Errorf("coding: findings missing summary")
+	if !found {
+		if anyDecoded {
+			return FindingsDoc{}, fmt.Errorf("coding: findings missing summary (got: %q)", snippet(raw))
+		}
+		return FindingsDoc{}, fmt.Errorf("coding: malformed findings json (got: %q)", snippet(raw))
 	}
 	for i := range doc.Findings {
 		// Normalize the sandbox absolute path to repo-relative before validating.

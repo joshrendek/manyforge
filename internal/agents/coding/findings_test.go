@@ -46,6 +46,23 @@ func TestParseFindings_FencedAndProse(t *testing.T) {
 	}
 }
 
+// Some models (e.g. z-ai/glm-5.2) emit prose that itself contains braces, and/or
+// add extra JSON fields. The old first-{-to-last-} extractor grabbed the prose
+// brace and failed with "invalid character 'c' …". ParseFindings must skip prose
+// braces and tolerate unknown fields, keeping the real findings object (manyforge-fqo).
+func TestParseFindings_SkipsProseBracesAndExtraFields(t *testing.T) {
+	in := "Reviewing the {createReview} helper now.\n" +
+		"```json\n{\"summary\":\"ok\",\"severity_legend\":\"extra\",\"findings\":[" +
+		"{\"file\":\"a.go\",\"line\":3,\"severity\":\"warning\",\"title\":\"t\",\"detail\":\"d\",\"confidence\":0.9}]}\n```"
+	doc, err := ParseFindings([]byte(in))
+	if err != nil {
+		t.Fatalf("expected parse, got %v", err)
+	}
+	if doc.Summary != "ok" || len(doc.Findings) != 1 || doc.Findings[0].File != "a.go" {
+		t.Fatalf("doc=%+v", doc)
+	}
+}
+
 // opencode reviews the checkout copied to /tmp/src (entrypoint cwd), so it reports
 // absolute paths under that prefix. ParseFindings must strip it so findings are
 // repo-relative (for GitHub line links) — manyforge-fqo.
