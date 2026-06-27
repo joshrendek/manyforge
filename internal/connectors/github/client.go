@@ -139,12 +139,68 @@ func (c *client) ChangedLines(ctx context.Context, prNumber int) (map[string]map
 	return out, nil
 }
 
+// reviewMarker is a hidden HTML comment embedded in a review body so a retry can
+// recognise an already-posted review and avoid duplicating it. GitHub renders HTML
+// comments invisibly.
+func reviewMarker(dedupKey string) string {
+	return "<!-- manyforge-review-id: " + dedupKey + " -->"
+}
+
+// findReviewByMarker returns an existing review on the PR whose body carries the
+// marker, if any. Best-effort: a fetch/parse error returns found=false (caller
+// then posts) rather than blocking the review.
+func (c *client) findReviewByMarker(ctx context.Context, prNumber int, marker string) (connectors.ReviewRef, bool) {
+	const pageCap = 10 // 100/page → up to 1000 reviews scanned
+	for page := 1; page <= pageCap; page++ {
+		url := fmt.Sprintf("%s/repos/%s/pulls/%d/reviews?per_page=100&page=%d", c.apiBase, c.repo, prNumber, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return connectors.ReviewRef{}, false
+		}
+		req.Header.Set("Authorization", c.authHeader())
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return connectors.ReviewRef{}, false
+		}
+		var reviews []struct {
+			ID      int64  `json:"id"`
+			Body    string `json:"body"`
+			HTMLURL string `json:"html_url"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&reviews)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || derr != nil {
+			return connectors.ReviewRef{}, false
+		}
+		for _, rv := range reviews {
+			if strings.Contains(rv.Body, marker) {
+				return connectors.ReviewRef{ExternalID: fmt.Sprintf("%d", rv.ID), URL: rv.HTMLURL}, true
+			}
+		}
+		if len(reviews) < 100 {
+			break
+		}
+	}
+	return connectors.ReviewRef{}, false
+}
+
 // PostReview posts a review to the given pull request: a summary body plus any
-// inline diff comments. A 404 maps to errs.ErrNotFound; other non-2xx become
-// generic errors.
+// inline diff comments. When r.DedupKey is set it is idempotent — a hidden marker
+// is embedded in the body and any prior review carrying the same marker is reused
+// instead of posting a duplicate (a worker retry re-runs the whole job).
+// A 404 maps to errs.ErrNotFound; other non-2xx become generic errors.
 func (c *client) PostReview(ctx context.Context, prNumber int, r connectors.Review) (connectors.ReviewRef, error) {
+	postBody := r.Body
+	if r.DedupKey != "" {
+		marker := reviewMarker(r.DedupKey)
+		if ref, found := c.findReviewByMarker(ctx, prNumber, marker); found {
+			return ref, nil // already posted on a prior attempt — don't duplicate
+		}
+		postBody = postBody + "\n\n" + marker
+	}
 	url := fmt.Sprintf("%s/repos/%s/pulls/%d/reviews", c.apiBase, c.repo, prNumber)
-	reviewBody := map[string]any{"event": "COMMENT", "body": r.Body}
+	reviewBody := map[string]any{"event": "COMMENT", "body": postBody}
 	if r.CommitID != "" {
 		reviewBody["commit_id"] = r.CommitID
 	}

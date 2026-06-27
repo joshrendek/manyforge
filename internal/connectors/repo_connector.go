@@ -53,6 +53,11 @@ type Review struct {
 	Body     string          // rendered markdown body actually posted (summary + any non-inline findings)
 	CommitID string          // head SHA the inline comments anchor to (optional)
 	Comments []ReviewComment // inline diff comments (optional)
+	// DedupKey makes posting idempotent. When set, PostReview embeds a hidden
+	// marker carrying it in the review body and, before posting, reuses any
+	// existing review on the PR that already carries the same marker — so a
+	// worker retry of the same review never posts a duplicate.
+	DedupKey string
 }
 
 type ReviewRef struct {

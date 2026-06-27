@@ -330,7 +330,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 
 	// Post the review to the PR (intentionally ungated — advisory only). Findings on
 	// changed lines become inline diff comments; the rest land in the summary body.
+	// DedupKey makes the post idempotent: a worker retry (e.g. a transient sandbox
+	// error, or a finalize failure) re-runs the whole job, but PostReview reuses the
+	// already-posted review instead of duplicating it (manyforge-303).
 	review := buildReview(doc, changed, pr.HeadSHA)
+	review.DedupKey = crID.String()
 	ref, err := conn.PostReview(ctx, prNumber, review)
 	if err != nil {
 		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)

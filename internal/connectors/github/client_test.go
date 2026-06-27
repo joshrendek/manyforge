@@ -128,6 +128,53 @@ func TestPostReviewWithInlineComments(t *testing.T) {
 	}
 }
 
+func TestPostReview_IdempotentReuse(t *testing.T) {
+	var posted bool
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet { // listing existing reviews — one carries the marker
+			_, _ = w.Write([]byte(`[{"id":55,"body":"prior\n\n<!-- manyforge-review-id: cr-1 -->","html_url":"http://x/55"}]`))
+			return
+		}
+		posted = true
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":99,"html_url":"http://x/99"}`))
+	})
+	ref, err := c.PostReview(t.Context(), 42, connectors.Review{Body: "new", DedupKey: "cr-1"})
+	if err != nil {
+		t.Fatalf("err %v", err)
+	}
+	if posted {
+		t.Fatal("must NOT post a duplicate when a review with the marker already exists")
+	}
+	if ref.ExternalID != "55" {
+		t.Fatalf("should reuse existing review 55, got %s", ref.ExternalID)
+	}
+}
+
+func TestPostReview_PostsAndEmbedsMarkerWhenNoMatch(t *testing.T) {
+	var gotBody string
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet { // no existing reviews → must post
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		var b struct {
+			Body string `json:"body"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		gotBody = b.Body
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":77,"html_url":"http://x/77"}`))
+	})
+	ref, err := c.PostReview(t.Context(), 42, connectors.Review{Body: "fresh", DedupKey: "cr-2"})
+	if err != nil || ref.ExternalID != "77" {
+		t.Fatalf("got %+v err %v", ref, err)
+	}
+	if !strings.Contains(gotBody, "<!-- manyforge-review-id: cr-2 -->") {
+		t.Fatalf("posted body must embed the dedup marker, got %q", gotBody)
+	}
+}
+
 func TestCloneURL_Public(t *testing.T) {
 	c := &client{apiBase: "https://api.github.com", repo: "owner/repo"}
 	got := c.CloneURL()
