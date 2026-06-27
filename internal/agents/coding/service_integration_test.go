@@ -35,6 +35,7 @@ import (
 type codingSeed struct {
 	businessID  uuid.UUID
 	principalID uuid.UUID
+	agentID     uuid.UUID // a real agent row (CreateCodeReviewAgentRun derives tenant from it)
 }
 
 func newTestSealerCoding(t *testing.T) *crypto.Sealer {
@@ -62,7 +63,8 @@ func seedCodingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) cod
 	}
 
 	masterID := uuid.New()
-	agentID := uuid.New()
+	agentID := uuid.New()    // the agent's PRINCIPAL id
+	agentRowID := uuid.New() // the agent table row id
 	benignRoleID := uuid.New()
 	ownerAcctID := uuid.New()
 	ownerHumanID := uuid.New()
@@ -96,6 +98,10 @@ func seedCodingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) cod
 			[]any{benignRoleID}},
 		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at) VALUES ($1,$2,$2,$3,now())`,
 			[]any{agentID, masterID, benignRoleID}},
+		// A real agent row so CreateCodeReviewAgentRun (FROM agent WHERE id=…) resolves.
+		{`INSERT INTO agent (id,business_id,tenant_root_id,principal_id,name,provider,model,system_prompt,allowed_tools,autonomy_mode,enabled,monthly_budget_cents,created_at,updated_at,allowed_mcp_servers,retriage_on_reply,web_allowed_domains)
+		  VALUES ($1,$2,$2,$3,'ReviewBot','anthropic','m','',ARRAY[]::text[],3,true,0,now(),now(),ARRAY[]::uuid[],false,ARRAY[]::text[])`,
+			[]any{agentRowID, masterID, agentID}},
 	}
 	for _, s := range stmts {
 		if _, err := tx.Exec(ctx, s.sql, s.args...); err != nil {
@@ -105,7 +111,7 @@ func seedCodingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) cod
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit seed: %v", err)
 	}
-	return codingSeed{businessID: masterID, principalID: agentID}
+	return codingSeed{businessID: masterID, principalID: agentID, agentID: agentRowID}
 }
 
 // startCoding starts a testdb and seeds a tenant. Returns the context, the DB, and the seed.
@@ -193,6 +199,25 @@ type malformedFakeRunner struct{}
 func (r *malformedFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
 	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte(`{not json`), 0o644)
 	return sandbox.SandboxResult{ExitCode: 0}, nil
+}
+
+// malformedWithUsageRunner writes invalid findings JSON (so ParseFindings fails)
+// AND a usage.json — mimicking a run where the model burned tokens before the
+// review failed (manyforge-7n5: a failed-but-billed run must still be accounted).
+type malformedWithUsageRunner struct{}
+
+func (r *malformedWithUsageRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte(`{not json`), 0o644)
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"),
+		[]byte(`[{"input":1000,"output":200,"reasoning":0}]`), 0o644)
+	return sandbox.SandboxResult{ExitCode: 0}, nil
+}
+
+// fixedPricing is a CostEstimator that returns a constant cost regardless of input.
+type fixedPricing struct{ cents int64 }
+
+func (f *fixedPricing) CostCents(_ context.Context, _, _ string, _, _ int64) (int64, error) {
+	return f.cents, nil
 }
 
 // fakeClone is the injectable clone seam: just creates destDir and a placeholder file.
@@ -292,8 +317,8 @@ func TestCodeReviewTrigger(t *testing.T) {
 
 	srv, _ := startGitHubStub(t, prJSON)
 
-	// Agent ID — used by FakeCredResolver (which ignores it, returns canned cred).
-	agentID := uuid.New()
+	// A real seeded agent so the finalize's CreateCodeReviewAgentRun resolves it.
+	agentID := seed.agentID
 
 	fakeCred := &FakeCredResolver{Cred: AICredential{
 		APIKey:   "k",
@@ -433,6 +458,59 @@ func TestCodeReviewTrigger(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestCodeReviewFailureRecordsUsage — a run that burns tokens then fails (e.g.
+// unparseable model output) still records the spend (manyforge-7n5).
+// ---------------------------------------------------------------------------
+
+func TestCodeReviewFailureRecordsUsage(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	localSrv, _ := startGitHubStub(t, prJSON)
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "z-ai/glm-5.2", Provider: "openrouter"}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+	svc := buildService(t, tdb, env, &malformedWithUsageRunner{}, fakeCred)
+	svc.Pricing = &fixedPricing{cents: 204} // mimic the $2.04 glm-5.2 run
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed); err == nil {
+		t.Fatal("want error (malformed findings), got nil")
+	}
+
+	// A failed agent_run must capture the spend so accounting reflects it.
+	var arStatus string
+	var arIn, arOut int32
+	var arCost int64
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT status, tokens_in, tokens_out, cost_cents FROM agent_run WHERE target_id=$1`, cr.ID,
+	).Scan(&arStatus, &arIn, &arOut, &arCost); err != nil {
+		t.Fatalf("expected a failed agent_run recording the spend: %v", err)
+	}
+	if arStatus != "failed" || arIn != 1000 || arOut != 200 || arCost != 204 {
+		t.Fatalf("agent_run = status=%s in=%d out=%d cost=%d; want failed/1000/200/204", arStatus, arIn, arOut, arCost)
+	}
+
+	// The review row must also show the usage/cost (via SetCodeReviewUsage).
+	var rIn, rOut int32
+	var rCost int64
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT tokens_in, tokens_out, cost_cents FROM code_review WHERE id=$1`, cr.ID,
+	).Scan(&rIn, &rOut, &rCost); err != nil {
+		t.Fatalf("read code_review: %v", err)
+	}
+	if rIn != 1000 || rOut != 200 || rCost != 204 {
+		t.Fatalf("code_review usage = in=%d out=%d cost=%d; want 1000/200/204", rIn, rOut, rCost)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Compile-time check: *connectors.RepoConnectorService satisfies repoResolver.
 // ---------------------------------------------------------------------------
 
@@ -459,7 +537,7 @@ func TestCodeReviewWorkerCrashRecovery(t *testing.T) {
 	ctx, tdb, seed := startCoding(t)
 	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
 	localSrv, _ := startGitHubStub(t, prJSON)
-	agentID := uuid.New()
+	agentID := seed.agentID
 	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
 	env := newCodingEnv(t, tdb)
 	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)

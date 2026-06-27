@@ -217,6 +217,32 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 	return items, nil
 }
 
+const setCodeReviewUsage = `-- name: SetCodeReviewUsage :exec
+UPDATE code_review SET tokens_in = $2, tokens_out = $3, cost_cents = $4, updated_at = now()
+WHERE id = $1
+`
+
+type SetCodeReviewUsageParams struct {
+	ID        uuid.UUID `json:"id"`
+	TokensIn  int32     `json:"tokens_in"`
+	TokensOut int32     `json:"tokens_out"`
+	CostCents int64     `json:"cost_cents"`
+}
+
+// Records token usage + cost on the review row WITHOUT touching status/findings.
+// Used on the failure path so a run that burned tokens before failing still shows
+// its cost; the worker's requeue_code_review/fail_code_review own status/last_error/
+// attempts and leave these columns alone.
+func (q *Queries) SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error {
+	_, err := q.db.Exec(ctx, setCodeReviewUsage,
+		arg.ID,
+		arg.TokensIn,
+		arg.TokensOut,
+		arg.CostCents,
+	)
+	return err
+}
+
 const updateCodeReviewResult = `-- name: UpdateCodeReviewResult :one
 UPDATE code_review SET
     status = $1,

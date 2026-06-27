@@ -39,6 +39,14 @@ FROM agent a
 WHERE a.id = sqlc.arg('agent_id')::uuid AND a.business_id = sqlc.arg('business_id')::uuid
 RETURNING id;
 
+-- name: SetCodeReviewUsage :exec
+-- Records token usage + cost on the review row WITHOUT touching status/findings.
+-- Used on the failure path so a run that burned tokens before failing still shows
+-- its cost; the worker's requeue_code_review/fail_code_review own status/last_error/
+-- attempts and leave these columns alone.
+UPDATE code_review SET tokens_in = $2, tokens_out = $3, cost_cents = $4, updated_at = now()
+WHERE id = $1;
+
 -- name: GetCodeReview :one
 SELECT * FROM code_review WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid;
 

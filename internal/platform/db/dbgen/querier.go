@@ -655,6 +655,11 @@ type Querier interface {
 	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
 	// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
 	ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error
+	// Records token usage + cost on the review row WITHOUT touching status/findings.
+	// Used on the failure path so a run that burned tokens before failing still shows
+	// its cost; the worker's requeue_code_review/fail_code_review own status/last_error/
+	// attempts and leave these columns alone.
+	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
 	SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error
 	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error

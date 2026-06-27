@@ -310,8 +310,25 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		Timeout:     s.timeout(),
 	}
 	res, err := s.Sandbox.Run(ctx, spec)
+
+	// Capture LLM token usage + cost as SOON as the sandbox returns — the model may
+	// have burned tokens even when the run ultimately fails (e.g. unparseable output
+	// → ParseFindings error). The entrypoint extracts usage from opencode's session
+	// DB into /out/usage.json; opencode reports 0 cost for a custom slug, so we price
+	// it via OpenRouter's catalog (reasoning tokens bill at the output rate). All
+	// best-effort: missing usage/pricing → zero. Every post-sandbox exit below
+	// records this usage so a failed-but-billed run is still accounted (manyforge-7n5).
+	usage := readSandboxUsage(outDir)
+	tokensIn := clampInt32(usage.Input)
+	tokensOut := clampInt32(usage.Output + usage.Reasoning)
+	var costCents int64
+	if s.Pricing != nil {
+		if c, perr := s.Pricing.CostCents(ctx, cred.Provider, cred.Model, int64(tokensIn), int64(tokensOut)); perr == nil {
+			costCents = c
+		}
+	}
 	if err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)
 	}
 
 	// Read and parse findings from /out/review.json. On failure, surface a short tail
@@ -319,13 +336,14 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	// produced nothing/garbage (the entrypoint redirects opencode stderr there).
 	rawFindings, err := os.ReadFile(filepath.Join(outDir, "review.json"))
 	if err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber,
-			fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, err, sandboxStderrTail(outDir)))
+		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
+			fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, err, sandboxStderrTail(outDir)),
+			tokensIn, tokensOut, costCents)
 	}
 	doc, err := ParseFindings(rawFindings)
 	if err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber,
-			fmt.Errorf("%w%s", err, sandboxStderrTail(outDir)))
+		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
+			fmt.Errorf("%w%s", err, sandboxStderrTail(outDir)), tokensIn, tokensOut, costCents)
 	}
 
 	// Post the review to the PR (intentionally ungated — advisory only). Findings on
@@ -337,21 +355,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	review.DedupKey = crID.String()
 	ref, err := conn.PostReview(ctx, prNumber, review)
 	if err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
-	}
-
-	// Capture LLM token usage (the entrypoint extracts it from opencode's session
-	// DB into /out/usage.json) and price it via OpenRouter's catalog — opencode
-	// reports 0 cost for a custom slug. Reasoning tokens bill at the output rate.
-	// All best-effort: missing usage/pricing → zero, never fails the review.
-	usage := readSandboxUsage(outDir)
-	tokensIn := clampInt32(usage.Input)
-	tokensOut := clampInt32(usage.Output + usage.Reasoning)
-	var costCents int64
-	if s.Pricing != nil {
-		if c, perr := s.Pricing.CostCents(ctx, cred.Provider, cred.Model, int64(tokensIn), int64(tokensOut)); perr == nil {
-			costCents = c
-		}
+		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)
 	}
 
 	// Finalize in one tx: record the run as an agent_run (so ReviewBot shows in
@@ -558,6 +562,47 @@ func (s *CodeReviewService) failJob(
 ) error {
 	_, _ = s.fail(ctx, principalID, businessID, crID, prNumber, cause)
 	return cause
+}
+
+// failJobWithUsage is failJob for post-sandbox failures: it ALSO records the
+// sandbox's token usage — as a failed agent_run (so accounting captures the spend)
+// and on the review row — so a run that burned tokens before failing (e.g.
+// unparseable model output) is still accounted for (manyforge-7n5). Each retry that
+// reaches the sandbox records its own agent_run, so the total across attempts
+// reflects real spend. Recording is best-effort and must never mask the original
+// failure. SetCodeReviewUsage touches only tokens/cost — the worker's requeue/fail
+// owns status/last_error/attempts.
+func (s *CodeReviewService) failJobWithUsage(
+	ctx context.Context,
+	principalID, businessID, agentID, crID uuid.UUID,
+	prNumber int,
+	cause error,
+	tokensIn, tokensOut int32, costCents int64,
+) error {
+	// Mark failed FIRST — fail()'s UpdateCodeReviewResult rewrites the row (and zeros
+	// tokens/cost) — THEN record usage so it survives. The worker's requeue/fail (run
+	// after runJob returns) only touches status/last_error/attempts, so these persist.
+	err := s.failJob(ctx, principalID, businessID, crID, prNumber, cause)
+	_ = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		if _, rerr := q.CreateCodeReviewAgentRun(ctx, dbgen.CreateCodeReviewAgentRunParams{
+			ID:            uuid.New(),
+			AgentID:       agentID,
+			BusinessID:    businessID,
+			TargetID:      crID,
+			Status:        "failed",
+			TokensIn:      tokensIn,
+			TokensOut:     tokensOut,
+			CostCents:     costCents,
+			CorrelationID: crID.String(),
+		}); rerr != nil {
+			return rerr
+		}
+		return q.SetCodeReviewUsage(ctx, dbgen.SetCodeReviewUsageParams{
+			ID: crID, TokensIn: tokensIn, TokensOut: tokensOut, CostCents: costCents,
+		})
+	})
+	return err
 }
 
 // auditStep opens a short transaction to write a standalone audit entry for steps
