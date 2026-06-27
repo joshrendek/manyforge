@@ -82,13 +82,28 @@ printf '%s\n' '{
 # Scope the review to the PR's changed files when the runner supplied the list
 # (/out/review_files.txt, one repo-relative path per line). This keeps findings on
 # the diff so they can be posted as inline comments. Absent/empty → whole-repo review.
-SCOPE='Review all code in the current project for bugs, security issues, and code-quality problems.'
+# Balanced review instructions: real bugs + security first, notable quality issues,
+# no pure-style nits, no invented findings. Severity is defined so the model
+# calibrates consistently. Keep in sync with tools/local-model-eval/run.sh.
+INSTRUCTIONS='You are a senior software engineer reviewing a pull request. Report only genuine problems you are confident about — do NOT invent issues, speculate, or flag pure style/formatting preferences.
+
+Prioritize in this order: (1) bugs and correctness errors (crashes, nil/undefined access, logic errors, race conditions, incorrect results); (2) security vulnerabilities (injection, auth/authorization gaps, secret exposure, unsafe or unbounded input); (3) notable maintainability problems (unhandled errors, resource leaks, missing validation). Skip cosmetic style and formatting.
+
+Set each finding'"'"'s severity to exactly one of:
+- "error": a real bug or security vulnerability causing incorrect behavior, a crash, data loss, or an exploitable condition.
+- "warning": a likely problem or risky pattern that should be fixed (e.g. an unhandled error, a missing bound/validation, a resource leak).
+- "info": a minor but worthwhile maintainability suggestion (never pure style).
+
+Use the real file path and the line number in the current version of the file. Report each distinct issue once. If there are no genuine problems, return an empty findings array.'
+
+SCOPE='Review the code in the current project.'
 if [ -s /out/review_files.txt ]; then
   FILES=$(tr '\n' ' ' < /out/review_files.txt)
   SCOPE="Review ONLY these files changed in this pull request (paths are relative to the project root): ${FILES}
-Report each finding's line number from the CURRENT version of the file. Do not report issues in files outside this list."
+Focus on the changed code; do not report issues in files outside this list."
 fi
-PROMPT="${SCOPE}
+PROMPT="${INSTRUCTIONS}
+${SCOPE}
 Output ONLY a single JSON object to stdout — no prose, no markdown fences, no explanation —
 matching exactly this schema:
 {\"summary\": string, \"findings\": [{\"file\": string, \"line\": number|null, \"severity\": \"info\"|\"warning\"|\"error\", \"title\": string, \"detail\": string}]}"

@@ -20,7 +20,17 @@ REPO="$(cd "$HERE/../.." && pwd)"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 MODELS="${1:-qwen2.5-coder:7b qwen2.5-coder:14b gemma3:12b qwen2.5-coder:32b}"
 
-SYS='You are a senior code reviewer. Review the provided Go files for bugs, security issues, and code-quality problems. Output ONLY a single JSON object — no prose, no markdown fences — matching exactly this schema: {"summary": string, "findings": [{"file": string, "line": number|null, "severity": "info"|"warning"|"error", "title": string, "detail": string}]}'
+# Balanced review instructions — kept in sync with deploy/sandbox/entrypoint.sh.
+SYS='You are a senior software engineer reviewing a pull request. Report only genuine problems you are confident about — do NOT invent issues, speculate, or flag pure style/formatting preferences.
+
+Prioritize in this order: (1) bugs and correctness errors (crashes, nil/undefined access, logic errors, race conditions, incorrect results); (2) security vulnerabilities (injection, auth/authorization gaps, secret exposure, unsafe or unbounded input); (3) notable maintainability problems (unhandled errors, resource leaks, missing validation). Skip cosmetic style and formatting.
+
+Set each finding severity to exactly one of:
+- "error": a real bug or security vulnerability causing incorrect behavior, a crash, data loss, or an exploitable condition.
+- "warning": a likely problem or risky pattern that should be fixed (e.g. an unhandled error, a missing bound/validation, a resource leak).
+- "info": a minor but worthwhile maintainability suggestion (never pure style).
+
+Use the real file path and the line number in the current version of the file. Report each distinct issue once. If there are no genuine problems, return an empty findings array. Review the provided Go file(s) and output ONLY a single JSON object — no prose, no markdown fences — matching exactly this schema: {"summary": string, "findings": [{"file": string, "line": number|null, "severity": "info"|"warning"|"error", "title": string, "detail": string}]}'
 
 SCORER=/tmp/eval-scorer
 echo "building scorer…"
