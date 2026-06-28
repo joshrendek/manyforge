@@ -322,6 +322,12 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 			_ = os.WriteFile(filepath.Join(outDir, "review_files.txt"),
 				[]byte(strings.Join(changedFilePaths(changed), "\n")), 0o644)
 		}
+		// Hand opencode the rendered diff (annotated hunks) as the primary review
+		// scope; it may still open the full files in the read-only checkout for
+		// context. Absent/empty → falls back to review_files.txt (whole-file scope).
+		if payload != "" {
+			_ = os.WriteFile(filepath.Join(outDir, "review_diff.txt"), []byte(payload), 0o644)
+		}
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.opencode.invoked",
 			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": cred.Model},
