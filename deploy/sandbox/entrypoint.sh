@@ -94,10 +94,15 @@ Set each finding'"'"'s severity to exactly one of:
 - "warning": a likely problem or risky pattern that should be fixed (e.g. an unhandled error, a missing bound/validation, a resource leak).
 - "info": a minor but worthwhile maintainability suggestion (never pure style).
 
-Use the real file path and the line number in the current version of the file. Report each distinct issue once. If there are no genuine problems, return an empty findings array.'
+You are given the changed code as unified-diff hunks: each block is headed by "=== <path> ===", and every changed line shows its current-file line number in the left gutter with a +/space marker. Use that real file path and gutter line number in each finding. Report each distinct issue once. If there are no genuine problems, return an empty findings array.'
 
 SCOPE='Review the code in the current project.'
-if [ -s /out/review_files.txt ]; then
+if [ -s /out/review_diff.txt ]; then
+  DIFF=$(cat /out/review_diff.txt)
+  SCOPE="Review ONLY the following changed hunks from this pull request. Each block is headed by '=== <path> ===' and shows the changed lines with their current-file line numbers in the gutter. Cite those gutter line numbers. You MAY open the full files in the project for additional context.
+
+${DIFF}"
+elif [ -s /out/review_files.txt ]; then
   FILES=$(tr '\n' ' ' < /out/review_files.txt)
   SCOPE="Review ONLY these files changed in this pull request (paths are relative to the project root): ${FILES}
 Focus on the changed code; do not report issues in files outside this list."
