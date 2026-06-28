@@ -247,7 +247,114 @@ func TestHandlerGetReview_BadReviewID(t *testing.T) {
 	}
 }
 
-// TestHandlerRoutes_Registered verifies the three routes are actually mounted
+// --- listRepoConnectors ---
+
+func TestHandlerListRepoConnectors_MissingPrincipal(t *testing.T) {
+	ring := newCodingTestRing(t)
+	h := nilHandler()
+	bid := uuid.New()
+	rec := serveCoding(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/repo-connectors",
+		"", // no bearer → RequireAuth returns 401
+		nil,
+	)
+	if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 401 or 404", rec.Code)
+	}
+}
+
+func TestHandlerListRepoConnectors_BadBusinessID(t *testing.T) {
+	ring := newCodingTestRing(t)
+	h := nilHandler()
+	bearer := mintCodingBearer(t, ring, uuid.New())
+	rec := serveCoding(h, ring, http.MethodGet,
+		"/businesses/not-a-uuid/repo-connectors",
+		bearer,
+		nil,
+	)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- deleteRepoConnector ---
+
+func TestHandlerDeleteRepoConnector_MissingPrincipal(t *testing.T) {
+	ring := newCodingTestRing(t)
+	h := nilHandler()
+	bid := uuid.New()
+	rcID := uuid.New()
+	rec := serveCoding(h, ring, http.MethodDelete,
+		"/businesses/"+bid.String()+"/repo-connectors/"+rcID.String(),
+		"", // no bearer
+		nil,
+	)
+	if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 401 or 404", rec.Code)
+	}
+}
+
+func TestHandlerDeleteRepoConnector_BadBusinessID(t *testing.T) {
+	ring := newCodingTestRing(t)
+	h := nilHandler()
+	bearer := mintCodingBearer(t, ring, uuid.New())
+	rcID := uuid.New()
+	rec := serveCoding(h, ring, http.MethodDelete,
+		"/businesses/not-a-uuid/repo-connectors/"+rcID.String(),
+		bearer,
+		nil,
+	)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlerDeleteRepoConnector_BadRCID(t *testing.T) {
+	ring := newCodingTestRing(t)
+	h := nilHandler()
+	bearer := mintCodingBearer(t, ring, uuid.New())
+	bid := uuid.New()
+	rec := serveCoding(h, ring, http.MethodDelete,
+		"/businesses/"+bid.String()+"/repo-connectors/not-a-uuid",
+		bearer,
+		nil,
+	)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- listReviews ---
+
+func TestHandlerListReviews_MissingPrincipal(t *testing.T) {
+	ring := newCodingTestRing(t)
+	h := nilHandler()
+	bid := uuid.New()
+	rec := serveCoding(h, ring, http.MethodGet,
+		"/businesses/"+bid.String()+"/code-reviews",
+		"", // no bearer
+		nil,
+	)
+	if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 401 or 404", rec.Code)
+	}
+}
+
+func TestHandlerListReviews_BadBusinessID(t *testing.T) {
+	ring := newCodingTestRing(t)
+	h := nilHandler()
+	bearer := mintCodingBearer(t, ring, uuid.New())
+	rec := serveCoding(h, ring, http.MethodGet,
+		"/businesses/not-a-uuid/code-reviews",
+		bearer,
+		nil,
+	)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandlerRoutes_Registered verifies all six routes are actually mounted
 // (wrong method → 405, not 404, proves the path matched).
 func TestHandlerRoutes_Registered(t *testing.T) {
 	ring := newCodingTestRing(t)
@@ -260,13 +367,19 @@ func TestHandlerRoutes_Registered(t *testing.T) {
 
 	bid := uuid.New()
 	rid := uuid.New()
+	rcID := uuid.New()
 	bearer := mintCodingBearer(t, ring, uuid.New())
 
 	cases := []struct {
 		method string
 		path   string
 	}{
-		// Wrong-method probe: PUT on a POST-only → 405
+		// Wrong-method probes: PATCH on each route → 405 (path matched, method not).
+		{http.MethodPatch, "/businesses/" + bid.String() + "/repo-connectors"},
+		{http.MethodPatch, "/businesses/" + bid.String() + "/repo-connectors/" + rcID.String()},
+		{http.MethodPatch, "/businesses/" + bid.String() + "/code-reviews"},
+		{http.MethodPatch, "/businesses/" + bid.String() + "/code-reviews/" + rid.String()},
+		// Original POST-only probes kept with PUT.
 		{http.MethodPut, "/businesses/" + bid.String() + "/repo-connectors"},
 		{http.MethodPut, "/businesses/" + bid.String() + "/code-reviews"},
 		{http.MethodPut, "/businesses/" + bid.String() + "/code-reviews/" + rid.String()},

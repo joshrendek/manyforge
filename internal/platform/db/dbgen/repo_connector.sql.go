@@ -7,9 +7,29 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+const deleteRepoConnector = `-- name: DeleteRepoConnector :execrows
+DELETE FROM repo_connector WHERE id = $1 AND business_id = $2
+`
+
+type DeleteRepoConnectorParams struct {
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// DeleteRepoConnector removes one connector scoped to the business (RLS + explicit
+// predicate). Cascades to its code_review rows via the existing FK.
+func (q *Queries) DeleteRepoConnector(ctx context.Context, arg DeleteRepoConnectorParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRepoConnector, arg.ID, arg.BusinessID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
 
 const getRepoConnector = `-- name: GetRepoConnector :one
 SELECT id, business_id, tenant_root_id, type, display_name, base_url, repo, allow_private_base_url, secret_ref, config, status, created_at, updated_at FROM repo_connector WHERE id = $1::uuid
@@ -91,4 +111,55 @@ func (q *Queries) InsertRepoConnector(ctx context.Context, arg InsertRepoConnect
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listRepoConnectors = `-- name: ListRepoConnectors :many
+SELECT id, business_id, type, display_name, base_url, repo, allow_private_base_url, status, created_at
+FROM repo_connector
+WHERE business_id = $1
+ORDER BY created_at DESC
+`
+
+type ListRepoConnectorsRow struct {
+	ID                  uuid.UUID `json:"id"`
+	BusinessID          uuid.UUID `json:"business_id"`
+	Type                string    `json:"type"`
+	DisplayName         string    `json:"display_name"`
+	BaseUrl             string    `json:"base_url"`
+	Repo                string    `json:"repo"`
+	AllowPrivateBaseUrl bool      `json:"allow_private_base_url"`
+	Status              string    `json:"status"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+// ListRepoConnectors returns the caller's connectors (RLS-scoped). NEVER selects
+// secret_ref — the UI must not receive any credential handle.
+func (q *Queries) ListRepoConnectors(ctx context.Context, businessID uuid.UUID) ([]ListRepoConnectorsRow, error) {
+	rows, err := q.db.Query(ctx, listRepoConnectors, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRepoConnectorsRow
+	for rows.Next() {
+		var i ListRepoConnectorsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.Type,
+			&i.DisplayName,
+			&i.BaseUrl,
+			&i.Repo,
+			&i.AllowPrivateBaseUrl,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

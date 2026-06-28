@@ -1,12 +1,62 @@
 package security_regression
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/connectors"
 )
+
+// MF007-PIN-8: ListRepoConnectors SQL must not SELECT secret_ref (credential handle
+// must not reach the list response). The public summary type (RepoConnectorSummary)
+// must contain no field whose name contains "Token", "Secret", or "APIKey".
+// coding.CodeReview is verified via source-level check to avoid import cycles.
+func TestNoSecretProjection(t *testing.T) {
+	// Source-level: ListRepoConnectors SQL must not SELECT secret_ref.
+	sql := mustRead(t, "../../db/query/repo_connector.sql")
+	if idx := strings.Index(sql, "ListRepoConnectors"); idx >= 0 {
+		block := sql[idx:]
+		if selectIdx := strings.Index(block, "SELECT"); selectIdx >= 0 {
+			fromBlock := block[selectIdx:]
+			if endIdx := strings.Index(fromBlock, ";\n"); endIdx >= 0 {
+				fromBlock = fromBlock[:endIdx]
+			}
+			if strings.Contains(fromBlock, "secret_ref") {
+				t.Fatal("ListRepoConnectors SELECT includes secret_ref — credential handle must not reach the list response (MF007-PIN-8)")
+			}
+		}
+	}
+
+	// Reflection: RepoConnectorSummary must have no Token/Secret/APIKey field.
+	banned := []string{"Token", "Secret", "APIKey"}
+	checkNoSecretFields := func(name string, typ reflect.Type) {
+		for i := 0; i < typ.NumField(); i++ {
+			fname := typ.Field(i).Name
+			for _, b := range banned {
+				if strings.Contains(fname, b) {
+					t.Fatalf("%s has field %q containing banned substring %q — credential must not leak through list/summary types (MF007-PIN-8)", name, fname, b)
+				}
+			}
+		}
+	}
+	checkNoSecretFields("RepoConnectorSummary", reflect.TypeOf(connectors.RepoConnectorSummary{}))
+
+	// Source-level: coding.CodeReview struct must have no Token/Secret/APIKey field.
+	svcSrc := mustRead(t, "../agents/coding/service.go")
+	if crIdx := strings.Index(svcSrc, "type CodeReview struct {"); crIdx >= 0 {
+		block := svcSrc[crIdx:]
+		if endIdx := strings.Index(block, "\n}"); endIdx >= 0 {
+			block = block[:endIdx]
+		}
+		for _, b := range banned {
+			if strings.Contains(block, b) {
+				t.Fatalf("coding.CodeReview struct contains field with banned substring %q — credential must not leak (MF007-PIN-8)", b)
+			}
+		}
+	}
+}
 
 // MF007-PIN-1: the slice-1 repo connector must expose no code-write capability.
 func TestRepoConnectorHasNoWriteCapability(t *testing.T) {
@@ -37,6 +87,29 @@ func TestSandboxRunArgsPinned(t *testing.T) {
 		if !strings.Contains(src, frag) {
 			t.Fatalf("sandbox hardening fragment %q missing from docker.go — was isolation weakened?", frag)
 		}
+	}
+}
+
+// MF007-PIN-10 (manyforge-ht8): the sst/opencode entrypoint must run the review
+// agent READ-ONLY — its opencode permission profile denies edit/bash/webfetch so a
+// prompt-injected review can neither mutate the checkout nor exfiltrate via a fetch
+// tool. And the provider API key is written to opencode's auth.json under the
+// tmpfs data dir (XDG_DATA_HOME), OUTSIDE the reviewed cwd /tmp/src — never into the
+// checkout opencode reads. If these disappear from entrypoint.sh the agent silently
+// gains write/exec/network capability or leaks the key into reviewable files.
+func TestSandboxEntrypointReadOnlyPinned(t *testing.T) {
+	src := mustRead(t, "../../deploy/sandbox/entrypoint.sh")
+	for _, frag := range []string{
+		`"edit": "deny"`,
+		`"bash": "deny"`,
+		`"webfetch": "deny"`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("entrypoint.sh missing read-only permission %q — was the review agent allowed to mutate/exfiltrate? (MF007-PIN-10)", frag)
+		}
+	}
+	if !strings.Contains(src, `"$XDG_DATA_HOME/opencode/auth.json"`) {
+		t.Fatal("entrypoint.sh must write the API key to auth.json under XDG_DATA_HOME (tmpfs, outside the reviewed cwd /tmp/src) (MF007-PIN-10)")
 	}
 }
 
@@ -110,6 +183,31 @@ func TestEgressAllowlistValidationPinned(t *testing.T) {
 	}
 	if strings.Contains(proxy, "func allowed(") {
 		t.Fatal("cmd/mf-egress-proxy/main.go defines a private allow-matcher — it must share netsafe's so the validator/enforcer can't drift (manyforge-0qj)")
+	}
+}
+
+// MF007-PIN-9 (manyforge-elo): the CodeReviewWorker claims principal-less (no
+// manyforge.principal_id), but code_review has RLS ENABLEd (0071) and the app role
+// manyforge_app is NOBYPASSRLS, so a raw claim is RLS-blocked (authorized_businesses(NULL)
+// = EMPTY). The claim/requeue/fail therefore MUST go through SECURITY DEFINER
+// functions with a pinned search_path (migrations/0073), mirroring the outbox drain.
+// If the migration loses SECURITY DEFINER or the search_path pin, the worker either
+// claims zero rows in prod (RLS block) or becomes search_path-hijackable — this test
+// makes either regression a CI failure.
+func TestMF007PIN9(t *testing.T) {
+	matches, err := filepath.Glob("../../migrations/0073_*.up.sql")
+	if err != nil {
+		t.Fatalf("glob 0073 migration: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("migrations/0073_*.up.sql not found — the principal-less claim DEFINER migration is missing (MF007-PIN-9)")
+	}
+	src := mustRead(t, matches[0])
+	if !strings.Contains(src, "SECURITY DEFINER") {
+		t.Fatalf("%s missing SECURITY DEFINER — the principal-less claim would be RLS-blocked in prod (MF007-PIN-9)", matches[0])
+	}
+	if !strings.Contains(src, "SET search_path") {
+		t.Fatalf("%s missing SET search_path — SECURITY DEFINER functions must pin search_path against hijack (MF007-PIN-9)", matches[0])
 	}
 }
 

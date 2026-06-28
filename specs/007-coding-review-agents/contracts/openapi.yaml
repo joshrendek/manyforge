@@ -45,6 +45,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    get:
+      operationId: listRepoConnectors
+      summary: List repo connectors for a business
+      description: >
+        Returns credential-free summaries of all repo connectors registered for
+        the business. Gated by connectors.manage.
+      responses:
+        "200":
+          description: List of repo connectors
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RepoConnectorSummary'
+        "404":
+          description: Business not found or caller lacks connectors.manage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /businesses/{id}/repo-connectors/{rcID}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: rcID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: deleteRepoConnector
+      summary: Delete a repo connector
+      description: >
+        Deletes the specified repo connector. Gated by connectors.manage.
+        Returns 204 on success.
+      responses:
+        "204":
+          description: Repo connector deleted
+        "404":
+          description: Repo connector not found or caller lacks connectors.manage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /businesses/{id}/code-reviews:
     parameters:
@@ -54,6 +110,32 @@ paths:
         schema:
           type: string
           format: uuid
+    get:
+      operationId: listCodeReviews
+      summary: List code reviews for a business
+      description: >
+        Returns code review records for the business, newest-first.
+        Gated by agents.run.
+      responses:
+        "200":
+          description: List of code reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CodeReview'
+        "404":
+          description: Business not found or caller lacks agents.run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       operationId: triggerCodeReview
       summary: Trigger a code review of a pull request
@@ -126,14 +208,30 @@ components:
     CreateRepoConnectorInput:
       type: object
       required:
-        - repo_url
+        - type
+        - display_name
+        - base_url
+        - repo
+        - api_token
       properties:
-        repo_url:
+        type:
           type: string
-          description: HTTPS URL of the GitHub repository
-        token:
+          description: Connector type (e.g. "github")
+        display_name:
           type: string
-          description: Optional GitHub personal access token or app token
+          description: Human-readable name for the connector
+        base_url:
+          type: string
+          description: Base URL of the GitHub API or GitHub Enterprise host
+        repo:
+          type: string
+          description: Repository in "owner/name" format
+        api_token:
+          type: string
+          description: GitHub personal access token or app token
+        allow_private_base_url:
+          type: boolean
+          description: Allow non-public (e.g. local/enterprise) base URLs (testing only)
 
     TriggerCodeReviewInput:
       type: object
@@ -190,6 +288,70 @@ components:
         review_url:
           type: string
           nullable: true
+        summary:
+          type: string
+        pr_number:
+          type: integer
+        model:
+          type: string
+        cost_cents:
+          type: integer
+          format: int64
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
+        created_at:
+          type: string
+          format: date-time
+        posted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Finding:
+      type: object
+      properties:
+        file:
+          type: string
+        line:
+          type: integer
+        severity:
+          type: string
+        title:
+          type: string
+        detail:
+          type: string
+
+    RepoConnectorSummary:
+      type: object
+      required:
+        - id
+        - type
+        - display_name
+        - base_url
+        - repo
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        display_name:
+          type: string
+        base_url:
+          type: string
+        repo:
+          type: string
+        allow_private_base_url:
+          type: boolean
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
 
     Error:
       type: object

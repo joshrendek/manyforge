@@ -180,15 +180,19 @@ curl -s "$MANYFORGE_URL/api/v1/businesses/$BID/code-reviews/$REVIEW_ID" \
 Response shape (`CodeReview`):
 ```json
 {
-  "ID": "...",
-  "Status": "succeeded",
-  "Summary": "...",
-  "ReviewURL": "",
-  "PRNumber": 1
+  "id": "...",
+  "status": "succeeded",
+  "summary": "...",
+  "review_url": "",
+  "pr_number": 1,
+  "findings": [],
+  "findings_count": 0,
+  "created_at": "2026-06-25T10:00:00Z",
+  "posted_at": null
 }
 ```
 
-> Note: `ReviewURL` is populated in the `Trigger` response but not re-fetched in `Get`
+> Note: `review_url` is populated in the `Trigger` response but not re-fetched in `Get`
 > (the `ExternalReviewRef` column holds the numeric review ID; construct the URL from the
 > connector config if needed).
 

@@ -16,6 +16,9 @@ var inScope007Ops = []string{
 	"POST /businesses/{}/repo-connectors",
 	"POST /businesses/{}/code-reviews",
 	"GET /businesses/{}/code-reviews/{}",
+	"GET /businesses/{}/repo-connectors",
+	"DELETE /businesses/{}/repo-connectors/{}",
+	"GET /businesses/{}/code-reviews",
 }
 
 // is007Op reports whether a normalized "METHOD /path" belongs to the 007 surface

@@ -111,3 +111,96 @@ func TestRepoConnectorRLSIsolation(t *testing.T) {
 		t.Fatalf("want ErrNotFound for cross-tenant resolve, got %v", err)
 	}
 }
+
+// TestRepoConnectorListDelete covers List (newest-first, no secret field) and Delete
+// (removes one, cross-tenant RLS, already-deleted → ErrNotFound).
+func TestRepoConnectorListDelete(t *testing.T) {
+	ctx, tdb, a := startRepo(t)
+	b := seedConnectorTenant(ctx, t, tdb) // independent tenant B for RLS checks
+
+	svcA := newRepoConnService(t, tdb)
+	svcB := newRepoConnService(t, tdb)
+
+	// --- seed two connectors for tenant A (slight delay so created_at ordering is reliable) ---
+	in1 := repoInput()
+	in1.DisplayName = "Connector One"
+	in1.Repo = "acme/one"
+	idOne, err := svcA.Create(ctx, a.principalID, a.businessID, in1)
+	if err != nil {
+		t.Fatalf("Create connector 1: %v", err)
+	}
+
+	in2 := repoInput()
+	in2.DisplayName = "Connector Two"
+	in2.Repo = "acme/two"
+	idTwo, err := svcA.Create(ctx, a.principalID, a.businessID, in2)
+	if err != nil {
+		t.Fatalf("Create connector 2: %v", err)
+	}
+
+	// --- List returns 2 connectors, newest-first ---
+	list, err := svcA.List(ctx, a.principalID, a.businessID)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("List: want 2 connectors, got %d", len(list))
+	}
+	// Newest (idTwo) must be first.
+	if list[0].ID != idTwo.String() {
+		t.Errorf("List order: want newest (%s) first, got %s", idTwo, list[0].ID)
+	}
+	if list[1].ID != idOne.String() {
+		t.Errorf("List order: want oldest (%s) second, got %s", idOne, list[1].ID)
+	}
+
+	// Assert RepoConnectorSummary carries no credential/secret fields by verifying
+	// the struct fields at compile time — any addition of a secret field would break this.
+	var _ = RepoConnectorSummary{
+		ID: "", Type: "", DisplayName: "", BaseURL: "", Repo: "",
+		AllowPrivateBaseURL: false, Status: "", CreatedAt: list[0].CreatedAt,
+	}
+
+	// --- Delete one → List returns 1 ---
+	if err := svcA.Delete(ctx, a.principalID, a.businessID, idTwo); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	list2, err := svcA.List(ctx, a.principalID, a.businessID)
+	if err != nil {
+		t.Fatalf("List after delete: %v", err)
+	}
+	if len(list2) != 1 {
+		t.Fatalf("List after delete: want 1 connector, got %d", len(list2))
+	}
+	if list2[0].ID != idOne.String() {
+		t.Errorf("List after delete: remaining connector should be %s, got %s", idOne, list2[0].ID)
+	}
+
+	// --- Delete of a foreign (tenant B) id → ErrNotFound ---
+	// Create a connector in tenant B so we have a valid UUID that RLS should deny to A.
+	idB, err := svcB.Create(ctx, b.principalID, b.businessID, repoInput())
+	if err != nil {
+		t.Fatalf("Create connector for tenant B: %v", err)
+	}
+	err = svcA.Delete(ctx, a.principalID, a.businessID, idB)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("Delete of foreign id: want ErrNotFound, got %v", err)
+	}
+
+	// --- Delete of an already-deleted id → ErrNotFound ---
+	err = svcA.Delete(ctx, a.principalID, a.businessID, idTwo)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("Delete of already-deleted id: want ErrNotFound, got %v", err)
+	}
+
+	// --- Tenant B List must NOT see tenant A's connectors (RLS isolation) ---
+	listB, err := svcB.List(ctx, b.principalID, b.businessID)
+	if err != nil {
+		t.Fatalf("List tenant B: %v", err)
+	}
+	for _, s := range listB {
+		if s.ID == idOne.String() || s.ID == idTwo.String() {
+			t.Errorf("RLS leak: tenant B List returned tenant A connector %s", s.ID)
+		}
+	}
+}

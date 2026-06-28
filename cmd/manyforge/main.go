@@ -362,6 +362,11 @@ func main() {
 	// need code review). The egress infra setup is non-fatal: a missing Docker daemon
 	// (CI / no-Docker dev) logs a warning and coding reviews fail at run time only.
 	var codingH *coding.Handler
+	var codingSvc *coding.CodeReviewService
+	// Shared live OpenRouter catalog: models for the agent form's typeahead AND
+	// pricing for code-review cost accounting. Fetched via the SSRF-safe netsafe
+	// client; cached in-process.
+	orModels := &agents.OpenRouterModels{HTTP: netsafe.NewClient(15 * time.Second)}
 	{
 		var connVault *secrets.Vault
 		if len(cfg.ConnectorMasterKey) > 0 {
@@ -378,7 +383,7 @@ func main() {
 		if err := sandbox.EnsureEgressInfra(ctx, cfg.EgressProxyImage, egressAllow); err != nil {
 			logger.Warn("sandbox egress infra unavailable; coding reviews will fail at run time", "err", err)
 		}
-		codingSvc := &coding.CodeReviewService{
+		codingSvc = &coding.CodeReviewService{
 			DB:       database,
 			Repos:    repoSvc,
 			Sandbox:  sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr),
@@ -389,6 +394,7 @@ func main() {
 			// Same allowlist that boots the egress proxy above — Trigger validates the
 			// run's provider host against it up front (manyforge-0qj).
 			EgressAllow: netsafe.ParseHostAllowlist(cfg.SandboxEgressAllow),
+			Pricing:     orModels,
 		}
 		codingH = &coding.Handler{RepoSvc: repoSvc, ReviewSvc: codingSvc}
 	}
@@ -401,6 +407,9 @@ func main() {
 		agents.NewToolRegistry(ticketSvc, connGateway),
 		&agents.ModelCatalog{DB: database},
 	)
+	// Live per-provider model catalog (OpenRouter) for the agent form's typeahead.
+	// Fetched through the SSRF-safe netsafe client; cached in-process.
+	agentH.SetProviderModels(orModels)
 
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,
@@ -607,6 +616,20 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	go outboxWorker.Run(workerCtx)
+
+	// Spec 007 code-review worker: polls the code_review queue and runs pending jobs
+	// as the owning principal (RLS re-entered inside runJob). The claim/requeue/fail
+	// queries run cross-tenant WITHOUT RLS via AppDBAdapter.WithTx — the same
+	// principal-less path the outbox worker uses for system operations.
+	// NOTE: ClaimCodeReviews' lease-expiry reclaim IS the boot reconcile — rows
+	// whose lease expired while the server was down are automatically reclaimed on
+	// the next tick, so no separate startup sweep is needed.
+	crWorker := &coding.CodeReviewWorker{
+		DB:     &coding.AppDBAdapter{DB: database},
+		Svc:    codingSvc,
+		Logger: logger,
+	}
+	go crWorker.Run(workerCtx)
 
 	// Spec 004 reconcile poller: periodically lists connectors past their stale window
 	// and enqueues connector.inbound.sync events for externally-updated issues.

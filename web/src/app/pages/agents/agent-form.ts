@@ -41,7 +41,15 @@ const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter']
         <label for="ag-model">Model</label>
         @if (isFreeTextModel()) {
           <input id="ag-model" class="mf-input" type="text" data-testid="agent-model-text" name="model"
-                 [(ngModel)]="model" placeholder="e.g. llama3.1:70b or anthropic/claude-3.5-sonnet" />
+                 [(ngModel)]="model" [attr.list]="isOpenRouter() ? 'openrouter-models' : null"
+                 placeholder="e.g. llama3.1:70b or openai/gpt-4o" />
+          @if (isOpenRouter()) {
+            <datalist id="openrouter-models" data-testid="openrouter-model-options">
+              @for (m of openrouterModels(); track m.model_id) {
+                <option [value]="m.model_id"></option>
+              }
+            </datalist>
+          }
         } @else {
           <select id="ag-model" class="mf-select" data-testid="agent-model-select" name="model" [(ngModel)]="model">
             <option value="" disabled>Choose a model…</option>
@@ -137,6 +145,7 @@ export class AgentFormComponent implements OnInit {
 
   tools = signal<ToolDescriptor[]>([]);
   allModels = signal<ModelDescriptor[]>([]);
+  openrouterModels = signal<ModelDescriptor[]>([]); // live OpenRouter catalog (typeahead)
   mcpServers = signal<MCPServer[]>([]);
   selectedTools = signal<Set<string>>(new Set());
   selectedMcp = signal<Set<string>>(new Set());
@@ -146,6 +155,7 @@ export class AgentFormComponent implements OnInit {
 
   modelsForProvider = computed(() => this.allModels().filter((m) => m.provider === this.provider()));
   isFreeTextModel = computed(() => FREE_TEXT_MODEL_PROVIDERS.includes(this.provider()));
+  isOpenRouter = computed(() => this.provider() === 'openrouter');
 
   ngOnInit(): void {
     this.api.tools(this.businessId).subscribe({ next: (r) => this.tools.set(r.items ?? []), error: () => {} });
@@ -165,11 +175,26 @@ export class AgentFormComponent implements OnInit {
       this.selectedTools.set(new Set(a.allowed_tools ?? []));
       this.selectedMcp.set(new Set(a.allowed_mcp_servers ?? []));
     }
+    this.loadProviderModelsFor(this.provider());
+  }
+
+  // loadProviderModelsFor fetches a provider's live model catalog (OpenRouter only,
+  // for now) into openrouterModels for the typeahead; clears it for other providers.
+  private loadProviderModelsFor(p: AIProvider): void {
+    if (p !== 'openrouter') {
+      this.openrouterModels.set([]);
+      return;
+    }
+    this.api.providerModels(this.businessId, 'openrouter').subscribe({
+      next: (r) => this.openrouterModels.set(r.items ?? []),
+      error: () => this.openrouterModels.set([]),
+    });
   }
 
   onProviderChange(p: AIProvider): void {
     this.provider.set(p);
     this.model = ''; // reset model when provider changes (catalog list differs)
+    this.loadProviderModelsFor(p);
   }
 
   toggleTool(name: string): void {

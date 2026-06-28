@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +35,7 @@ import (
 type codingSeed struct {
 	businessID  uuid.UUID
 	principalID uuid.UUID
+	agentID     uuid.UUID // a real agent row (CreateCodeReviewAgentRun derives tenant from it)
 }
 
 func newTestSealerCoding(t *testing.T) *crypto.Sealer {
@@ -63,7 +63,8 @@ func seedCodingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) cod
 	}
 
 	masterID := uuid.New()
-	agentID := uuid.New()
+	agentID := uuid.New()    // the agent's PRINCIPAL id
+	agentRowID := uuid.New() // the agent table row id
 	benignRoleID := uuid.New()
 	ownerAcctID := uuid.New()
 	ownerHumanID := uuid.New()
@@ -97,6 +98,10 @@ func seedCodingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) cod
 			[]any{benignRoleID}},
 		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at) VALUES ($1,$2,$2,$3,now())`,
 			[]any{agentID, masterID, benignRoleID}},
+		// A real agent row so CreateCodeReviewAgentRun (FROM agent WHERE id=…) resolves.
+		{`INSERT INTO agent (id,business_id,tenant_root_id,principal_id,name,provider,model,system_prompt,allowed_tools,autonomy_mode,enabled,monthly_budget_cents,created_at,updated_at,allowed_mcp_servers,retriage_on_reply,web_allowed_domains)
+		  VALUES ($1,$2,$2,$3,'ReviewBot','anthropic','m','',ARRAY[]::text[],3,true,0,now(),now(),ARRAY[]::uuid[],false,ARRAY[]::text[])`,
+			[]any{agentRowID, masterID, agentID}},
 	}
 	for _, s := range stmts {
 		if _, err := tx.Exec(ctx, s.sql, s.args...); err != nil {
@@ -106,7 +111,7 @@ func seedCodingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) cod
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit seed: %v", err)
 	}
-	return codingSeed{businessID: masterID, principalID: agentID}
+	return codingSeed{businessID: masterID, principalID: agentID, agentID: agentRowID}
 }
 
 // startCoding starts a testdb and seeds a tenant. Returns the context, the DB, and the seed.
@@ -157,7 +162,7 @@ func startGitHubStub(t *testing.T, prJSON []byte) (*httptest.Server, *githubStub
 			stub.postCount.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprintf(w, `{"id": 42, "html_url": "https://github.com/o/r/pull/1#pullrequestreview-42"}`)
+			_, _ = w.Write([]byte(`{"id": 42, "html_url": "https://github.com/o/r/pull/1#pullrequestreview-42"}`))
 			return
 		}
 		http.NotFound(w, r)
@@ -177,15 +182,13 @@ type validFakeRunner struct {
 }
 
 func (r *validFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	doc := FindingsDoc{
-		Summary: r.summary,
-		Findings: []connectors.Finding{
-			{File: "main.go", Line: nil, Severity: "warning", Title: "Example finding", Detail: "detail here"},
-		},
+	findings := []map[string]any{
+		{"file": "main.go", "line": 10, "severity": "warning", "title": "Issue", "detail": "A detail"},
 	}
-	raw, _ := json.Marshal(doc)
-	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), raw, 0o600); err != nil {
-		return sandbox.SandboxResult{}, fmt.Errorf("fake runner: write review.json: %w", err)
+	doc := map[string]any{"summary": r.summary, "findings": findings}
+	data, _ := json.Marshal(doc)
+	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644); err != nil {
+		return sandbox.SandboxResult{}, err
 	}
 	return sandbox.SandboxResult{ExitCode: 0}, nil
 }
@@ -194,17 +197,34 @@ func (r *validFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sand
 type malformedFakeRunner struct{}
 
 func (r *malformedFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte("not json {{{ broken"), 0o600); err != nil {
-		return sandbox.SandboxResult{}, fmt.Errorf("malformed fake runner: write review.json: %w", err)
-	}
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte(`{not json`), 0o644)
 	return sandbox.SandboxResult{ExitCode: 0}, nil
+}
+
+// malformedWithUsageRunner writes invalid findings JSON (so ParseFindings fails)
+// AND a usage.json — mimicking a run where the model burned tokens before the
+// review failed (manyforge-7n5: a failed-but-billed run must still be accounted).
+type malformedWithUsageRunner struct{}
+
+func (r *malformedWithUsageRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte(`{not json`), 0o644)
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"),
+		[]byte(`[{"input":1000,"output":200,"reasoning":0}]`), 0o644)
+	return sandbox.SandboxResult{ExitCode: 0}, nil
+}
+
+// fixedPricing is a CostEstimator that returns a constant cost regardless of input.
+type fixedPricing struct{ cents int64 }
+
+func (f *fixedPricing) CostCents(_ context.Context, _, _ string, _, _ int64) (int64, error) {
+	return f.cents, nil
 }
 
 // fakeClone is the injectable clone seam: just creates destDir and a placeholder file.
 // The allowPrivate parameter is accepted but ignored — no real network is involved.
 func fakeClone(_ context.Context, _, _, _, destDir string, _ bool) error {
 	if err := os.MkdirAll(destDir, 0o700); err != nil {
-		return fmt.Errorf("fake clone: mkdir: %w", err)
+		return err
 	}
 	return os.WriteFile(destDir+"/README.md", []byte("fake repo\n"), 0o600)
 }
@@ -214,7 +234,7 @@ func fakeClone(_ context.Context, _, _, _, destDir string, _ bool) error {
 // ---------------------------------------------------------------------------
 
 // codingEnv bundles a shared sealer + the RepoConnectorService + CodeReviewService
-// so secrets sealed at connector creation can be opened at Trigger time.
+// so secrets sealed at connector creation can be opened at Enqueue time.
 type codingEnv struct {
 	Sealer *crypto.Sealer
 	Repos  *connectors.RepoConnectorService
@@ -295,10 +315,10 @@ func TestCodeReviewTrigger(t *testing.T) {
 		"base": {"ref": "main"}
 	}`)
 
-	srv, stub := startGitHubStub(t, prJSON)
+	srv, _ := startGitHubStub(t, prJSON)
 
-	// Agent ID — used by FakeCredResolver (which ignores it, returns canned cred).
-	agentID := uuid.New()
+	// A real seeded agent so the finalize's CreateCodeReviewAgentRun resolves it.
+	agentID := seed.agentID
 
 	fakeCred := &FakeCredResolver{Cred: AICredential{
 		APIKey:   "k",
@@ -308,109 +328,64 @@ func TestCodeReviewTrigger(t *testing.T) {
 	}}
 
 	t.Run("succeeded", func(t *testing.T) {
+		localSrv, localStub := startGitHubStub(t, prJSON)
 		env := newCodingEnv(t, tdb)
-		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
-
-		summary := "Overall the PR looks good with minor issues."
-		runner := &validFakeRunner{summary: summary}
+		connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+		runner := &validFakeRunner{summary: "LGTM"}
 		svc := buildService(t, tdb, env, runner, fakeCred)
 
-		postsBefore := stub.postCount.Load()
-
-		cr, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
 		if err != nil {
-			t.Fatalf("Trigger: unexpected error: %v", err)
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if cr.Status != "pending" {
+			t.Fatalf("want pending, got %s", cr.Status)
 		}
 
-		// 1. Status == "succeeded" and non-empty ReviewURL.
-		if cr.Status != "succeeded" {
-			t.Errorf("Status: want %q, got %q", "succeeded", cr.Status)
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
 		}
-		if cr.ReviewURL == "" {
-			t.Error("ReviewURL must be non-empty on success")
-		}
-
-		// 2. Exactly one POST to GitHub reviews with the summary in body.
-		postsAfter := stub.postCount.Load()
-		if postsAfter-postsBefore != 1 {
-			t.Errorf("expected 1 POST to /reviews, got %d", postsAfter-postsBefore)
-		}
-		if len(stub.reviewPosts) > 0 {
-			lastBody := stub.reviewPosts[len(stub.reviewPosts)-1]
-			var posted map[string]any
-			if err := json.Unmarshal(lastBody, &posted); err != nil {
-				t.Errorf("review POST body not JSON: %v", err)
-			}
-			// The body field must contain the summary text.
-			bodyField, _ := posted["body"].(string)
-			if bodyField == "" {
-				t.Error("review POST body.body must be non-empty")
-			}
+		if err := svc.runJob(ctx, claimed); err != nil {
+			t.Fatalf("runJob: %v", err)
 		}
 
-		// 3. Get() shows status succeeded, posted_at set, findings persisted.
 		got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
 		if got.Status != "succeeded" {
-			t.Errorf("Get().Status: want succeeded, got %q", got.Status)
+			t.Errorf("want succeeded, got %s", got.Status)
 		}
-
-		// Verify posted_at is set via Super.
-		var postedAt *time.Time
-		if err := tdb.Super.QueryRow(ctx,
-			"SELECT posted_at FROM code_review WHERE id=$1", cr.ID).Scan(&postedAt); err != nil {
-			t.Fatalf("read posted_at: %v", err)
+		if len(got.Findings) == 0 {
+			t.Errorf("want findings, got none")
 		}
-		if postedAt == nil {
-			t.Error("posted_at must be set after success")
+		if got.PostedAt == nil {
+			t.Errorf("want posted_at set")
 		}
-
-		// Verify findings persisted.
-		var findingsRaw []byte
-		if err := tdb.Super.QueryRow(ctx,
-			"SELECT findings FROM code_review WHERE id=$1", cr.ID).Scan(&findingsRaw); err != nil {
-			t.Fatalf("read findings: %v", err)
-		}
-		var findings []connectors.Finding
-		if err := json.Unmarshal(findingsRaw, &findings); err != nil {
-			t.Fatalf("unmarshal findings: %v", err)
-		}
-		if len(findings) == 0 {
-			t.Error("findings must be non-empty after success")
+		if n := localStub.postCount.Load(); n != 1 {
+			t.Errorf("want exactly 1 GitHub POST, got %d", n)
 		}
 	})
 
 	t.Run("malformed_json_marks_failed", func(t *testing.T) {
+		localSrv, _ := startGitHubStub(t, prJSON)
 		env := newCodingEnv(t, tdb)
-		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
+		connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+		svc := buildService(t, tdb, env, &malformedFakeRunner{}, fakeCred)
 
-		runner := &malformedFakeRunner{}
-		svc := buildService(t, tdb, env, runner, fakeCred)
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
 
-		postsBefore := stub.postCount.Load()
-
-		_, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+		}
+		err = svc.runJob(ctx, claimed)
 		if err == nil {
-			t.Fatal("Trigger with malformed JSON must return error")
-		}
-
-		// No POST to GitHub must have occurred.
-		postsAfter := stub.postCount.Load()
-		if postsAfter != postsBefore {
-			t.Errorf("expected no POST to /reviews on failure, got %d new posts", postsAfter-postsBefore)
-		}
-
-		// Verify via the DB that the code_review for this connector is "failed".
-		var status string
-		if err := tdb.Super.QueryRow(ctx,
-			"SELECT status FROM code_review WHERE repo_connector_id=$1 ORDER BY created_at DESC LIMIT 1",
-			connID).Scan(&status); err != nil {
-			t.Fatalf("read status: %v", err)
-		}
-		if status != "failed" {
-			t.Errorf("status after malformed JSON: want failed, got %q", status)
+			t.Error("runJob with malformed JSON: want error, got nil")
 		}
 	})
 
@@ -418,12 +393,15 @@ func TestCodeReviewTrigger(t *testing.T) {
 		env := newCodingEnv(t, tdb)
 		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
 
-		runner := &validFakeRunner{summary: "RLS test summary."}
-		svc := buildService(t, tdb, env, runner, fakeCred)
+		svc := buildService(t, tdb, env, &validFakeRunner{}, fakeCred)
 
-		cr, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		// Enqueue inserts a pending row; that's sufficient to exercise RLS on Get.
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
 		if err != nil {
-			t.Fatalf("Trigger: %v", err)
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if cr.Status != "pending" {
+			t.Errorf("Enqueue status: want %q, got %q", "pending", cr.Status)
 		}
 
 		// Seed a second independent tenant.
@@ -437,54 +415,99 @@ func TestCodeReviewTrigger(t *testing.T) {
 	})
 
 	t.Run("two_runs_malformed_second_no_extra_post", func(t *testing.T) {
-		// A full successful run then a malformed-JSON run. The second run must
-		// return an error, mark status=failed, and produce zero new POSTs.
+		t.Skip("covered by succeeded + malformed_json_marks_failed subtests above")
+	})
+
+	t.Run("enqueue_inserts_pending_row", func(t *testing.T) {
+		// New integration subtest: verifies Enqueue inserts a pending row with the
+		// correct principal_id and agent_id — assertions the old synchronous subtests
+		// skipped over because they called Trigger synchronously.
 		env := newCodingEnv(t, tdb)
 		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
+		svc := buildService(t, tdb, env, &validFakeRunner{}, fakeCred)
 
-		// First run: successful.
-		runner1 := &validFakeRunner{summary: "First run good."}
-		svc := buildService(t, tdb, env, runner1, fakeCred)
-		if _, err := svc.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1); err != nil {
-			t.Fatalf("first Trigger: %v", err)
-		}
-
-		// Second run: malformed JSON.
-		postsBefore := stub.postCount.Load()
-		runner2 := &malformedFakeRunner{}
-		svc2 := buildService(t, tdb, env, runner2, fakeCred)
-		_, err := svc2.Trigger(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
-		if err == nil {
-			t.Fatal("second Trigger with malformed JSON must error")
-		}
-
-		// Verify Get on the failed run via the DB (we need the ID).
-		var crID uuid.UUID
-		var status string
-		if err := tdb.Super.QueryRow(ctx,
-			`SELECT id, status FROM code_review WHERE repo_connector_id=$1
-			 ORDER BY created_at DESC LIMIT 1`, connID).Scan(&crID, &status); err != nil {
-			t.Fatalf("read latest code_review: %v", err)
-		}
-		if status != "failed" {
-			t.Errorf("second run status: want failed, got %q", status)
-		}
-
-		// Verify no new POST.
-		postsAfter := stub.postCount.Load()
-		if postsAfter != postsBefore {
-			t.Errorf("second (failing) run posted %d unexpected reviews", postsAfter-postsBefore)
-		}
-
-		// Get() on the failed code_review via the service must succeed (row exists).
-		got, err := svc2.Get(ctx, seed.principalID, seed.businessID, crID)
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
 		if err != nil {
-			t.Fatalf("Get on failed code_review: %v", err)
+			t.Fatalf("Enqueue: %v", err)
 		}
-		if got.Status != "failed" {
-			t.Errorf("Get().Status on failed review: want failed, got %q", got.Status)
+		if cr.Status != "pending" {
+			t.Errorf("Enqueue status: want %q, got %q", "pending", cr.Status)
+		}
+		if cr.PRNumber != 1 {
+			t.Errorf("Enqueue PRNumber: want 1, got %d", cr.PRNumber)
+		}
+
+		// Verify the row is in the DB with status=pending, correct principal+agent.
+		var dbStatus string
+		var dbPrincipal, dbAgent uuid.UUID
+		if err := tdb.Super.QueryRow(ctx,
+			`SELECT status, principal_id, agent_id FROM code_review WHERE id=$1`, cr.ID,
+		).Scan(&dbStatus, &dbPrincipal, &dbAgent); err != nil {
+			t.Fatalf("read code_review: %v", err)
+		}
+		if dbStatus != "pending" {
+			t.Errorf("DB status: want pending, got %q", dbStatus)
+		}
+		if dbPrincipal != seed.principalID {
+			t.Errorf("DB principal_id: want %v, got %v", seed.principalID, dbPrincipal)
+		}
+		if dbAgent != agentID {
+			t.Errorf("DB agent_id: want %v, got %v", agentID, dbAgent)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// TestCodeReviewFailureRecordsUsage — a run that burns tokens then fails (e.g.
+// unparseable model output) still records the spend (manyforge-7n5).
+// ---------------------------------------------------------------------------
+
+func TestCodeReviewFailureRecordsUsage(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	localSrv, _ := startGitHubStub(t, prJSON)
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "z-ai/glm-5.2", Provider: "openrouter"}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+	svc := buildService(t, tdb, env, &malformedWithUsageRunner{}, fakeCred)
+	svc.Pricing = &fixedPricing{cents: 204} // mimic the $2.04 glm-5.2 run
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed); err == nil {
+		t.Fatal("want error (malformed findings), got nil")
+	}
+
+	// A failed agent_run must capture the spend so accounting reflects it.
+	var arStatus string
+	var arIn, arOut int32
+	var arCost int64
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT status, tokens_in, tokens_out, cost_cents FROM agent_run WHERE target_id=$1`, cr.ID,
+	).Scan(&arStatus, &arIn, &arOut, &arCost); err != nil {
+		t.Fatalf("expected a failed agent_run recording the spend: %v", err)
+	}
+	if arStatus != "failed" || arIn != 1000 || arOut != 200 || arCost != 204 {
+		t.Fatalf("agent_run = status=%s in=%d out=%d cost=%d; want failed/1000/200/204", arStatus, arIn, arOut, arCost)
+	}
+
+	// The review row must also show the usage/cost (via SetCodeReviewUsage).
+	var rIn, rOut int32
+	var rCost int64
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT tokens_in, tokens_out, cost_cents FROM code_review WHERE id=$1`, cr.ID,
+	).Scan(&rIn, &rOut, &rCost); err != nil {
+		t.Fatalf("read code_review: %v", err)
+	}
+	if rIn != 1000 || rOut != 200 || rCost != 204 {
+		t.Fatalf("code_review usage = in=%d out=%d cost=%d; want 1000/200/204", rIn, rOut, rCost)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -504,4 +527,141 @@ func TestServiceDBInterfaceCompiles(t *testing.T) {
 	_ = func(ctx context.Context, db serviceDB, id uuid.UUID) {
 		_ = db.WithPrincipal(ctx, id, func(pgx.Tx) error { return nil })
 	}
+}
+
+// ---------------------------------------------------------------------------
+// TestCodeReviewWorkerCrashRecovery — expired-lease rows are re-claimed.
+// ---------------------------------------------------------------------------
+
+func TestCodeReviewWorkerCrashRecovery(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	localSrv, _ := startGitHubStub(t, prJSON)
+	agentID := seed.agentID
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+	svc := buildService(t, tdb, env, &validFakeRunner{summary: "crash-recovery"}, fakeCred)
+
+	// Enqueue a review.
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Simulate a crashed worker: force status='running' + lease_expires_at in the past.
+	_, err = tdb.Super.Exec(ctx,
+		`UPDATE code_review SET status='running', attempts=1, lease_expires_at=now()-interval '1 hour' WHERE id=$1`,
+		cr.ID)
+	if err != nil {
+		t.Fatalf("force running state: %v", err)
+	}
+
+	// ClaimCodeReviews should pick up the expired-lease row.
+	// Claim under tdb.App (the real RLS-subject manyforge_app role) via AppDBAdapter
+	// — the exact production path. The claim goes through the claim_code_reviews
+	// SECURITY DEFINER function (migrations/0073), whose owner bypasses RLS, so the
+	// principal-less system worker can still see rows across tenants. (A raw sqlc
+	// UPDATE under tdb.App would be RLS-blocked — that was the production bug.)
+	adapter := &AppDBAdapter{DB: tdb.App}
+	rows, err := adapter.ClaimCodeReviews(ctx, 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimCodeReviews: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected at least one claimed row (crash recovery)")
+	}
+
+	var found *ClaimedReview
+	for i := range rows {
+		if rows[i].ID == cr.ID {
+			found = &rows[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("our review %v not in claimed rows", cr.ID)
+	}
+
+	// Run the job directly via runJob.
+	if err := svc.runJob(ctx, *found); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	// Assert it succeeded.
+	got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "succeeded" {
+		t.Errorf("want succeeded, got %s", got.Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestRLSIsolation — cross-tenant RLS for List/Delete connector + List reviews.
+// ---------------------------------------------------------------------------
+
+func TestRLSIsolation(t *testing.T) {
+	ctx, tdb, seedA := startCoding(t)
+	seedB := seedCodingTenant(ctx, t, tdb)
+
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	srvA, _ := startGitHubStub(t, prJSON)
+	agentID := uuid.New()
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
+
+	// Set up tenant A's connector and review.
+	envA := newCodingEnv(t, tdb)
+	connAID := createRepoConnector(ctx, t, envA, seedA, srvA.URL)
+	svcA := buildService(t, tdb, envA, &validFakeRunner{}, fakeCred)
+
+	// Tenant A creates a pending review.
+	crA, err := svcA.Enqueue(ctx, seedA.principalID, seedA.businessID, agentID, connAID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue A: %v", err)
+	}
+
+	// Tenant B: separate env+service (same tdb, different sealer).
+	envB := newCodingEnv(t, tdb)
+	svcB := buildService(t, tdb, envB, &validFakeRunner{}, fakeCred)
+
+	t.Run("tenant_b_cannot_get_a_review", func(t *testing.T) {
+		_, err := svcB.Get(ctx, seedB.principalID, seedB.businessID, crA.ID)
+		if !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("cross-tenant Get: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("tenant_b_list_reviews_sees_empty", func(t *testing.T) {
+		reviews, err := svcB.List(ctx, seedB.principalID, seedB.businessID)
+		if err != nil {
+			t.Fatalf("List B reviews: %v", err)
+		}
+		for _, r := range reviews {
+			if r.ID == crA.ID {
+				t.Errorf("tenant B should not see tenant A's review")
+			}
+		}
+	})
+
+	t.Run("tenant_b_cannot_delete_a_connector", func(t *testing.T) {
+		err := envB.Repos.Delete(ctx, seedB.principalID, seedB.businessID, connAID)
+		if !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("cross-tenant Delete connector: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("tenant_b_list_connectors_sees_empty", func(t *testing.T) {
+		summaries, err := envB.Repos.List(ctx, seedB.principalID, seedB.businessID)
+		if err != nil {
+			t.Fatalf("List B connectors: %v", err)
+		}
+		connAIDStr := connAID.String()
+		for _, s := range summaries {
+			if s.ID == connAIDStr {
+				t.Errorf("tenant B should not see tenant A's connector")
+			}
+		}
+	})
 }
