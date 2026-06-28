@@ -294,6 +294,15 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	}
 	changed := commentableMap(files)
 	payload, skippedFiles, omittedFiles := assembleDiffPayload(files)
+	// No silent caps: dropped files are surfaced in the review body AND recorded on
+	// the audit trail (binary/too-large → skipped; over-budget → omitted).
+	if len(skippedFiles) > 0 || len(omittedFiles) > 0 {
+		_ = s.auditStep(ctx, principalID, businessID, crID,
+			"agent.coding.review.files_dropped",
+			map[string]any{"skipped": skippedFiles, "omitted": omittedFiles},
+			nil, ptr("executed"),
+		)
+	}
 	// Obtain the findings doc + token usage. Two paths by provider:
 	//   - local (Ollama/vLLM): review host-side via the direct-API path — small
 	//     local models can't drive opencode's agent loop, and the model is on-host
