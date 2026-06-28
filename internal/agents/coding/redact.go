@@ -20,6 +20,11 @@ var secretPatterns = []*regexp.Regexp{
 // first the exact known values (e.g. the LLM key / GitHub token we hold), then a
 // regex scrub of common key shapes for secrets we don't hold. Known values shorter
 // than 8 chars are ignored so a trivial value can't mangle unrelated text.
+//
+// Note: the exact pass matches the RAW value. The GitHub token reaches the clone in
+// a base64-wrapped BasicAuthHeader, so it would not be caught in that form — but it
+// is never echoed by clone errors (the cloneURL carries no creds and git does not
+// print the auth header), so the raw value is the only realistic leak shape.
 func redactSecrets(s string, known ...string) string {
 	for _, k := range known {
 		if len(k) >= 8 {
