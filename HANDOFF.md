@@ -18,11 +18,18 @@ Built via subagent-driven development (6 tasks, each spec+quality reviewed); fin
 whole-branch review = **SHIP**; full gate green incl. coding integration; sandbox image rebuilt.
 
 ## Resume here
-**Optional live dogfood (the one thing NOT done):** trigger Local ReviewBot `6aeb7a46`
-(ollama, qwen2.5-coder:14b) on **PR #6** to see real, in-diff inline comments from the new
-hunk payload. It's outward-facing (posts a real review to GitHub) so it was left for an explicit
-go-ahead. After that, the next `manyforge-fqo` items are #2 (redact LLM key from review output)
-and #3 (provider generality beyond OpenRouter in `entrypoint.sh`).
+**Live dogfood: DONE locally.** Ran the real path (ChangedFiles→assembleDiffPayload→localReview)
+against PR #6's actual 85-file diff with qwen2.5-coder:7b: payload 65383/65536B, 1 skipped
+(binary), 65 omitted (surfaced), hunks rendered with correct gutter line numbers, model returned
+5 findings, 2 cited in-diff lines → would post as inline comments. (qwen 14b was too slow on 16K
+ctx here — >240s; 7b ~140s. For a faster/quality default, prefer 7b locally or raise the timeout.)
+**Still NOT done — GitHub-posting dogfood:** the dev DB was RESEEDED (agent `6aeb7a46`/connector
+`f5edb238` GONE; agent/repo_connector/business tables EMPTY). To post a real review to PR #6 you
+must re-seed (cmd/seeddemo) + create an ollama agent + a repo connector with a real GitHub PAT,
+then `POST /api/v1/businesses/{id}/code-reviews {agent_id,repo_connector_id,pr_number:6}`.
+NOTE: the host-side github client (netsafe) timed out dialing api.github.com in a `go test` —
+`gh`/git work fine; use `gh api .../pulls/6/files` if you need the diff out-of-band.
+Next `manyforge-fqo` items: #2 (redact LLM key from review output), #3 (provider generality).
 
 ## Run & verify
 - Tests (all green as of this handoff): `go test ./internal/agents/coding/... ./internal/connectors/...`;
