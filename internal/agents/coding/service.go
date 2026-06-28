@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +120,13 @@ func (s *CodeReviewService) timeout() time.Duration {
 	return 10 * time.Minute
 }
 
+// localClient is the HTTP client for the host-side local-provider review path. A
+// plain client (allows loopback, which the SSRF-safe netsafe client refuses);
+// localReview enforces a loopback-only base URL so this stays local-only.
+func (s *CodeReviewService) localClient() *http.Client {
+	return &http.Client{Timeout: s.timeout()}
+}
+
 // Enqueue validates the request cheaply (resolve connector, resolve cred, egress
 // pre-flight) and inserts a pending code_review row. It does NOT build the GitHub
 // client, fetch the PR, clone, or touch the sandbox — those run in runJob when the
@@ -148,7 +156,9 @@ func (s *CodeReviewService) Enqueue(
 	// The sandbox egress proxy is shared and boot-static; a provider host outside
 	// its allowlist would be silently CONNECT-blocked, so reject it up front with a
 	// clear, actionable error instead of launching a doomed sandbox (manyforge-0qj).
-	if !s.EgressAllow.Allows(cred.Host()) {
+	// Local providers (Ollama/vLLM) review host-side via the direct-API path — no
+	// sandbox, no egress proxy — so the allowlist check does not apply to them.
+	if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host()) {
 		return CodeReview{}, fmt.Errorf(
 			"coding: provider host %q is not in the sandbox egress allowlist (add it to MANYFORGE_SANDBOX_EGRESS_ALLOW): %w",
 			cred.Host(), errs.ErrValidation)
@@ -282,68 +292,83 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	if cerr != nil {
 		changed = nil
 	}
-	// Scope the review to the changed files by writing their paths where the
-	// entrypoint reads them (/out/review_files.txt). Absent → whole-repo review.
-	if len(changed) > 0 {
-		_ = os.WriteFile(filepath.Join(outDir, "review_files.txt"),
-			[]byte(strings.Join(changedFilePaths(changed), "\n")), 0o644)
-	}
-
-	// Audit sandbox invocation, then run opencode in the isolated sandbox.
-	_ = s.auditStep(ctx, principalID, businessID, crID,
-		"agent.coding.opencode.invoked",
-		map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": cred.Model},
-		nil, ptr("executed"),
-	)
-
-	spec := sandbox.SandboxSpec{
-		Image:       s.Image,
-		ReadOnlyDir: checkout,
-		OutputDir:   outDir,
-		Cmd:         opencodeCmd(cred.Model),
-		Env: map[string]string{
-			"LLM_API_KEY":  cred.APIKey,
-			"LLM_BASE_URL": cred.BaseURL,
-			"LLM_MODEL":    cred.Model,
-		},
-		EgressAllow: []string{cred.Host()},
-		Timeout:     s.timeout(),
-	}
-	res, err := s.Sandbox.Run(ctx, spec)
-
-	// Capture LLM token usage + cost as SOON as the sandbox returns — the model may
-	// have burned tokens even when the run ultimately fails (e.g. unparseable output
-	// → ParseFindings error). The entrypoint extracts usage from opencode's session
-	// DB into /out/usage.json; opencode reports 0 cost for a custom slug, so we price
-	// it via OpenRouter's catalog (reasoning tokens bill at the output rate). All
-	// best-effort: missing usage/pricing → zero. Every post-sandbox exit below
-	// records this usage so a failed-but-billed run is still accounted (manyforge-7n5).
-	usage := readSandboxUsage(outDir)
-	tokensIn := clampInt32(usage.Input)
-	tokensOut := clampInt32(usage.Output + usage.Reasoning)
+	// Obtain the findings doc + token usage. Two paths by provider:
+	//   - local (Ollama/vLLM): review host-side via the direct-API path — small
+	//     local models can't drive opencode's agent loop, and the model is on-host
+	//     so there's nothing to isolate (manyforge-62s). Cost is 0 (local).
+	//   - cloud: opencode in the hardened, egress-restricted sandbox.
+	var doc FindingsDoc
+	var tokensIn, tokensOut int32
 	var costCents int64
-	if s.Pricing != nil {
-		if c, perr := s.Pricing.CostCents(ctx, cred.Provider, cred.Model, int64(tokensIn), int64(tokensOut)); perr == nil {
-			costCents = c
-		}
-	}
-	if err != nil {
-		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)
-	}
 
-	// Read and parse findings from /out/review.json. On failure, surface a short tail
-	// of the sandbox's /out/stderr.log so the review's last_error says WHY opencode
-	// produced nothing/garbage (the entrypoint redirects opencode stderr there).
-	rawFindings, err := os.ReadFile(filepath.Join(outDir, "review.json"))
-	if err != nil {
-		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-			fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, err, sandboxStderrTail(outDir)),
-			tokensIn, tokensOut, costCents)
-	}
-	doc, err := ParseFindings(rawFindings)
-	if err != nil {
-		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-			fmt.Errorf("%w%s", err, sandboxStderrTail(outDir)), tokensIn, tokensOut, costCents)
+	if isLocalProvider(cred.Provider) {
+		_ = s.auditStep(ctx, principalID, businessID, crID,
+			"agent.coding.localreview.invoked",
+			map[string]any{"head_sha": pr.HeadSHA, "model": cred.Model, "base_url": cred.BaseURL},
+			nil, ptr("executed"),
+		)
+		files := readChangedFiles(checkout, changedFilePaths(changed))
+		d, in, out, lerr := localReview(ctx, s.localClient(), cred, files)
+		tokensIn, tokensOut = clampInt32(in), clampInt32(out) // local = no cost
+		if lerr != nil {
+			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, lerr, tokensIn, tokensOut, 0)
+		}
+		doc = d
+	} else {
+		// Scope the review to the changed files by writing their paths where the
+		// entrypoint reads them (/out/review_files.txt). Absent → whole-repo review.
+		if len(changed) > 0 {
+			_ = os.WriteFile(filepath.Join(outDir, "review_files.txt"),
+				[]byte(strings.Join(changedFilePaths(changed), "\n")), 0o644)
+		}
+		_ = s.auditStep(ctx, principalID, businessID, crID,
+			"agent.coding.opencode.invoked",
+			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": cred.Model},
+			nil, ptr("executed"),
+		)
+		spec := sandbox.SandboxSpec{
+			Image:       s.Image,
+			ReadOnlyDir: checkout,
+			OutputDir:   outDir,
+			Cmd:         opencodeCmd(cred.Model),
+			Env: map[string]string{
+				"LLM_API_KEY":  cred.APIKey,
+				"LLM_BASE_URL": cred.BaseURL,
+				"LLM_MODEL":    cred.Model,
+			},
+			EgressAllow: []string{cred.Host()},
+			Timeout:     s.timeout(),
+		}
+		res, rerr := s.Sandbox.Run(ctx, spec)
+
+		// Capture usage as SOON as the sandbox returns — the model may have burned
+		// tokens even when the run ultimately fails (e.g. unparseable output). opencode
+		// reports 0 cost for a custom slug, so we price it via OpenRouter's catalog.
+		// Best-effort: missing usage/pricing → zero. Every exit below records this so a
+		// failed-but-billed run is still accounted (manyforge-7n5).
+		usage := readSandboxUsage(outDir)
+		tokensIn = clampInt32(usage.Input)
+		tokensOut = clampInt32(usage.Output + usage.Reasoning)
+		if s.Pricing != nil {
+			if c, perr := s.Pricing.CostCents(ctx, cred.Provider, cred.Model, int64(tokensIn), int64(tokensOut)); perr == nil {
+				costCents = c
+			}
+		}
+		if rerr != nil {
+			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, rerr, tokensIn, tokensOut, costCents)
+		}
+		rawFindings, ferr := os.ReadFile(filepath.Join(outDir, "review.json"))
+		if ferr != nil {
+			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
+				fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(outDir)),
+				tokensIn, tokensOut, costCents)
+		}
+		d, perr := ParseFindings(rawFindings)
+		if perr != nil {
+			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
+				fmt.Errorf("%w%s", perr, sandboxStderrTail(outDir)), tokensIn, tokensOut, costCents)
+		}
+		doc = d
 	}
 
 	// Post the review to the PR (intentionally ungated — advisory only). Findings on

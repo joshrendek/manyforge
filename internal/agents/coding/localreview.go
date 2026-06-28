@@ -1,0 +1,175 @@
+package coding
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/manyforge/manyforge/internal/platform/errs"
+)
+
+// reviewInstructions is the balanced review prompt. KEEP IN SYNC with the cloud
+// path in deploy/sandbox/entrypoint.sh and the eval harness in
+// tools/local-model-eval/run.sh.
+const reviewInstructions = `You are a senior software engineer reviewing a pull request. Report only genuine problems you are confident about — do NOT invent issues, speculate, or flag pure style/formatting preferences.
+
+Prioritize in this order: (1) bugs and correctness errors (crashes, nil/undefined access, logic errors, race conditions, incorrect results); (2) security vulnerabilities (injection, auth/authorization gaps, secret exposure, unsafe or unbounded input); (3) notable maintainability problems (unhandled errors, resource leaks, missing validation). Skip cosmetic style and formatting.
+
+Set each finding's severity to exactly one of:
+- "error": a real bug or security vulnerability causing incorrect behavior, a crash, data loss, or an exploitable condition.
+- "warning": a likely problem or risky pattern that should be fixed (e.g. an unhandled error, a missing bound/validation, a resource leak).
+- "info": a minor but worthwhile maintainability suggestion (never pure style).
+
+Use the real file path and the line number in the current version of the file. Report each distinct issue once. If there are no genuine problems, return an empty findings array.`
+
+// reviewSchemaLine instructs the model to emit only the findings JSON.
+const reviewSchemaLine = `Review the provided file(s) and output ONLY a single JSON object — no prose, no markdown fences — matching exactly this schema: {"summary": string, "findings": [{"file": string, "line": number|null, "severity": "info"|"warning"|"error", "title": string, "detail": string}]}`
+
+// isLocalProvider reports whether a provider runs on-host (model never leaves the
+// machine), in which case reviews go through the host-side direct-API path instead
+// of the sandbox+opencode path.
+func isLocalProvider(provider string) bool {
+	return provider == "ollama" || provider == "vllm"
+}
+
+const (
+	localReviewMaxFileBytes  = 32 << 10 // skip any single file larger than this
+	localReviewMaxTotalBytes = 48 << 10 // cap total inlined code to fit localReviewNumCtx
+	localReviewNumCtx        = 16384    // Ollama context window; ~48KB code + prompt + output fits
+)
+
+// codeExt is the set of source extensions the local reviewer prioritizes — the
+// inline budget is small, so spend it on code, not data/docs (e.g. .jsonl, .md).
+var codeExt = map[string]bool{
+	".go": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true, ".py": true,
+	".rs": true, ".java": true, ".rb": true, ".c": true, ".h": true, ".cc": true,
+	".cpp": true, ".cs": true, ".kt": true, ".swift": true, ".php": true, ".scala": true,
+	".sql": true, ".sh": true, ".tf": true, ".proto": true,
+}
+
+// readChangedFiles reads the given repo-relative paths from the checkout, skipping
+// unreadable/empty/oversized files and stopping at a total budget. Source files are
+// read first (the budget is small; spend it on code). Path-traversal entries
+// (absolute or escaping the checkout) are ignored.
+func readChangedFiles(checkout string, paths []string) map[string]string {
+	// Stable order, source files first.
+	ordered := append([]string(nil), paths...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		ci, cj := codeExt[strings.ToLower(filepath.Ext(ordered[i]))], codeExt[strings.ToLower(filepath.Ext(ordered[j]))]
+		if ci != cj {
+			return ci // code before non-code
+		}
+		return ordered[i] < ordered[j]
+	})
+	out := make(map[string]string, len(ordered))
+	total := 0
+	for _, p := range ordered {
+		clean := filepath.Clean(p)
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(checkout, clean))
+		if err != nil || len(b) == 0 || len(b) > localReviewMaxFileBytes {
+			continue
+		}
+		if total+len(b) > localReviewMaxTotalBytes {
+			break
+		}
+		out[clean] = string(b)
+		total += len(b)
+	}
+	return out
+}
+
+// isLoopbackHost reports whether h is the local machine — the only host a local
+// provider's base URL may target (a deliberate, narrow exception to the
+// egress-isolation policy: the model is on-host, so the code never leaves it).
+func isLoopbackHost(h string) bool {
+	switch h {
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return true
+	}
+	return false
+}
+
+// localReview POSTs the changed files inline to a local OpenAI-compatible chat
+// endpoint (Ollama/vLLM) and parses the findings with ParseFindings. No
+// sandbox/opencode: small local models can't drive opencode's agent loop, and the
+// model is on-host so there is nothing to isolate. The model gets NO tools
+// (chat→JSON only), so prompt injection can at worst yield bogus advisory
+// findings. Returns (doc, promptTokens, completionTokens, err).
+func localReview(ctx context.Context, client *http.Client, cred AICredential, files map[string]string) (FindingsDoc, int64, int64, error) {
+	if !isLoopbackHost(cred.Host()) {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review base URL must be loopback, got %q: %w", cred.Host(), errs.ErrValidation)
+	}
+	if len(files) == 0 {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: no reviewable files for local review: %w", errs.ErrValidation)
+	}
+
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var user strings.Builder
+	user.WriteString("Files to review:\n")
+	for _, p := range paths {
+		fmt.Fprintf(&user, "\n=== %s ===\n%s\n", p, files[p])
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"model": cred.Model,
+		"messages": []map[string]string{
+			{"role": "system", "content": reviewInstructions + "\n\n" + reviewSchemaLine},
+			{"role": "user", "content": user.String()},
+		},
+		"stream":  false,
+		"options": map[string]any{"temperature": 0, "num_ctx": localReviewNumCtx},
+	})
+
+	url := strings.TrimRight(cred.BaseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: build local review request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cred.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cred.APIKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode/100 != 2 {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local provider status %d", resp.StatusCode)
+	}
+
+	var cc struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &cc); err != nil {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: decode local review response: %w", err)
+	}
+	if len(cc.Choices) == 0 {
+		return FindingsDoc{}, cc.Usage.PromptTokens, cc.Usage.CompletionTokens, fmt.Errorf("coding: local provider returned no choices")
+	}
+	doc, perr := ParseFindings([]byte(cc.Choices[0].Message.Content))
+	return doc, cc.Usage.PromptTokens, cc.Usage.CompletionTokens, perr
+}

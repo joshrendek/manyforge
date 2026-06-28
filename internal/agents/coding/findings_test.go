@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -11,15 +12,30 @@ func TestParseFindings(t *testing.T) {
 		t.Fatalf("good parse failed: %+v %v", doc, err)
 	}
 	bad := []string{
-		``,                                  // empty
-		`not json`,                          // malformed
-		`{"findings":[]}`,                   // missing summary
+		``,         // empty
+		`not json`, // malformed
+		`{}`,       // no findings key + no summary → garbage, not a clean review
 		`{"summary":"s","findings":[{"file":"a","severity":"bad","title":"t"}]}`, // bad severity
 		`{"summary":"s","findings":[{"severity":"info","title":"t"}]}`,           // missing file
 	}
 	for i, b := range bad {
 		if _, err := ParseFindings([]byte(b)); err == nil {
 			t.Fatalf("case %d: expected error, got nil", i)
+		}
+	}
+}
+
+// A clean review (empty findings array) is valid even if the model leaves the
+// summary blank — it must not fail. The summary is defaulted (manyforge-62s: local
+// models like qwen2.5-coder return {"summary":"","findings":[]} on clean code).
+func TestParseFindings_NoIssuesIsValid(t *testing.T) {
+	for _, in := range []string{`{"summary":"","findings":[]}`, `{"findings":[]}`, "```json\n{\"findings\":[]}\n```"} {
+		doc, err := ParseFindings([]byte(in))
+		if err != nil {
+			t.Fatalf("no-issues review %q should parse, got %v", in, err)
+		}
+		if len(doc.Findings) != 0 || strings.TrimSpace(doc.Summary) == "" {
+			t.Fatalf("want 0 findings + defaulted summary, got %+v", doc)
 		}
 	}
 }

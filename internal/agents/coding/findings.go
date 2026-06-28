@@ -97,16 +97,28 @@ func ParseFindings(raw []byte) (FindingsDoc, error) {
 			continue // a prose brace or non-JSON region — try the next candidate
 		}
 		anyDecoded = true
-		if strings.TrimSpace(d.Summary) != "" {
+		// A review is the candidate that has a findings array (even empty = "no
+		// issues found") OR a non-empty summary. A bare {} (no findings key, no
+		// summary) is treated as garbage, not a clean review.
+		if d.Findings != nil || strings.TrimSpace(d.Summary) != "" {
 			doc, found = d, true
 			break
 		}
 	}
 	if !found {
 		if anyDecoded {
-			return FindingsDoc{}, fmt.Errorf("coding: findings missing summary (got: %q)", snippet(raw))
+			return FindingsDoc{}, fmt.Errorf("coding: no findings object in output (got: %q)", snippet(raw))
 		}
 		return FindingsDoc{}, fmt.Errorf("coding: malformed findings json (got: %q)", snippet(raw))
+	}
+	// Models sometimes leave the summary blank on a clean review; default it rather
+	// than fail — a no-issues review is valid and worth posting (advisory).
+	if strings.TrimSpace(doc.Summary) == "" {
+		if len(doc.Findings) == 0 {
+			doc.Summary = "No issues found."
+		} else {
+			doc.Summary = "Code review findings."
+		}
 	}
 	for i := range doc.Findings {
 		// Normalize the sandbox absolute path to repo-relative before validating.
