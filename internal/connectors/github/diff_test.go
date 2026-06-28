@@ -41,3 +41,43 @@ func TestCommentableLines_EmptyOrBinary(t *testing.T) {
 		t.Fatalf("empty patch should yield no lines, got %v", l)
 	}
 }
+
+func TestParseHunks(t *testing.T) {
+	patch := "@@ -1,1 +1,2 @@\n ctx\n+added\n"
+	hs := ParseHunks(patch)
+	if len(hs) != 1 {
+		t.Fatalf("want 1 hunk, got %d", len(hs))
+	}
+	h := hs[0]
+	if h.NewStart != 1 {
+		t.Fatalf("NewStart=%d, want 1", h.NewStart)
+	}
+	if len(h.Lines) != 2 {
+		t.Fatalf("want 2 lines, got %d: %+v", len(h.Lines), h.Lines)
+	}
+	if h.Lines[0] != (DiffLine{NewLineNo: 1, Added: false, Text: "ctx"}) {
+		t.Fatalf("line0=%+v", h.Lines[0])
+	}
+	if h.Lines[1] != (DiffLine{NewLineNo: 2, Added: true, Text: "added"}) {
+		t.Fatalf("line1=%+v", h.Lines[1])
+	}
+}
+
+func TestParseHunks_EmptyOrBinary(t *testing.T) {
+	if ParseHunks("") != nil {
+		t.Fatal("empty patch must yield nil hunks")
+	}
+}
+
+func TestRenderAnnotatedHunks(t *testing.T) {
+	// Format is deterministic ("%5d %s %s\n" per line): right-aligned new-side line
+	// number, a space, the +/space marker, a space, then the text. Assert it exactly.
+	patch := "@@ -1,1 +1,2 @@\n ctx\n+added\n"
+	want := "@@ 1-2 @@\n    1   ctx\n    2 + added\n"
+	if got := RenderAnnotatedHunks(patch); got != want {
+		t.Fatalf("render mismatch:\nwant: %q\ngot:  %q", want, got)
+	}
+	if RenderAnnotatedHunks("") != "" {
+		t.Fatal("empty patch must render empty string")
+	}
+}
