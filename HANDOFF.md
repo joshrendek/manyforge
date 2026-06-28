@@ -1,77 +1,69 @@
-# Handoff — manyforge @ feat/code-review-ui — 2026-06-28 ~13:30 UTC
+# Handoff — manyforge @ feat/code-review-ui — 2026-06-28 ~20:00 UTC
 
 ## ⚠️ Before you clear
-- **Uncommitted:** only this `HANDOFF.md` (rolling note) + pre-existing untracked files
-  (`.beads/CLAUDE.md`, `.pair/`, screenshots, various `CLAUDE.md`). None is code.
+- **Uncommitted:** none code — only pre-existing untracked files (`.beads/CLAUDE.md`,
+  `.pair/`, screenshots, stray `CLAUDE.md`). (`.beads/issues.jsonl` is committed below.)
 - **Unpushed:** none — `feat/code-review-ui` is up to date with origin (PR #6 updated).
 - **Still running (survive this session):** air dev server on **:8081** (`/tmp/mf-air.log`);
   **Ollama** on **:11434** (qwen2.5-coder 7b/14b/32b, gemma3:12b); Docker (Colima):
   `mf-dev` + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt this session.
 
 ## State (≤3 sentences)
-**Diff-based code review (`manyforge-fqo` #1) is COMPLETE and pushed** on `feat/code-review-ui`
-(commits `268fe0d..5c43baf`, PR #6): the agent now sends annotated diff **hunks** (not whole files)
-on both the local host-side and cloud opencode paths, from one shared renderer
-(`github.ParseHunks`/`RenderAnnotatedHunks`); `ChangedLines`→`ChangedFiles` retains the patch;
-64KB budget; skipped(binary)/omitted(over-budget) files surfaced in the review body + audit trail.
-Built via subagent-driven development (6 tasks, each spec+quality reviewed); final opus
-whole-branch review = **SHIP**; full gate green incl. coding integration; sandbox image rebuilt.
+**`manyforge-fqo` is COMPLETE and CLOSED** — all of the code-review-quality follow-ups shipped on
+`feat/code-review-ui` (PR #6): **#1 diff-based review** (annotated hunks on local + cloud,
+`268fe0d..165cfba`), **#2 secret redaction** (`redactSecrets`/`redactDoc` at the stderr-tail +
+model-doc trust boundaries, `MF007-PIN-11`), and **#3 provider generality** (cloud path now
+`openrouter|anthropic|openai` via `LLM_PROVIDER` + a generalized entrypoint), `dd69291..c1156e1`.
+Both efforts passed an opus whole-branch review = **SHIP**; the full gate (unit, vet, lint,
+contract, sec-test, coding integration) is green; the sandbox image is rebuilt.
 
 ## Resume here
-**Live dogfood: DONE locally.** Ran the real path (ChangedFiles→assembleDiffPayload→localReview)
-against PR #6's actual 85-file diff with qwen2.5-coder:7b: payload 65383/65536B, 1 skipped
-(binary), 65 omitted (surfaced), hunks rendered with correct gutter line numbers, model returned
-5 findings, 2 cited in-diff lines → would post as inline comments. (qwen 14b was too slow on 16K
-ctx here — >240s; 7b ~140s. For a faster/quality default, prefer 7b locally or raise the timeout.)
-**Still NOT done — GitHub-posting dogfood:** the dev DB was RESEEDED (agent `6aeb7a46`/connector
-`f5edb238` GONE; agent/repo_connector/business tables EMPTY). To post a real review to PR #6 you
-must re-seed (cmd/seeddemo) + create an ollama agent + a repo connector with a real GitHub PAT,
-then `POST /api/v1/businesses/{id}/code-reviews {agent_id,repo_connector_id,pr_number:6}`.
-NOTE: the host-side github client (netsafe) timed out dialing api.github.com in a `go test` —
-`gh`/git work fine; use `gh api .../pulls/6/files` if you need the diff out-of-band.
-Next `manyforge-fqo` items: #2 (redact LLM key from review output), #3 (provider generality).
+PR #6 is ready to **merge** at your call (squash recommended — it now carries slice-2 + #1 + #2/#3).
+The only thing NOT done is the **GitHub-posting live dogfood**: the dev DB was reseeded (the old
+agent/connector are gone; `agent`/`repo_connector`/`business` tables are EMPTY), so posting a real
+review to PR #6 needs a re-seed (`cmd/seeddemo`) + an ollama agent + a repo connector with a real
+GitHub PAT, then `POST /api/v1/businesses/{id}/code-reviews {agent_id,repo_connector_id,pr_number:6}`.
+(The #1 path was already dogfooded locally against PR #6's real diff — see git history.)
 
 ## Run & verify
-- Tests (all green as of this handoff): `go test ./internal/agents/coding/... ./internal/connectors/...`;
-  `go vet ./...`; `make lint` (golangci 0); `make sec-test`; integration:
-  `go test -tags integration -p 1 ./internal/agents/coding/`; drift: `go test -tags contract ./cmd/...`.
-- Rebuild sandbox image (after any `entrypoint.sh` change):
-  `DOCKER_BUILDKIT=0 docker build --build-arg TARGETARCH=arm64 -f deploy/sandbox/Dockerfile -t manyforge/opencode-sandbox:dev .`
-- SDD ledger for this effort: `.superpowers/sdd/progress.md` (prior slice-2 archived alongside).
+- Tests (all green): `go test ./internal/agents/coding/... ./internal/connectors/...`; `go vet ./...`;
+  `make lint`; `make sec-test`; integration `go test -tags integration -p 1 ./internal/agents/coding/`;
+  drift `go test -tags contract ./cmd/...`.
+- **Rebuild sandbox image (after any `entrypoint.sh` change):**
+  `DOCKER_DEFAULT_PLATFORM=linux/arm64 DOCKER_BUILDKIT=0 docker build --build-arg TARGETARCH=arm64 -f deploy/sandbox/Dockerfile -t manyforge/opencode-sandbox:dev .`
+  — the `DOCKER_DEFAULT_PLATFORM` is REQUIRED on this host (see gotcha).
+- SDD ledgers: `.superpowers/sdd/progress.md` (this = redaction/provider) + `progress-dbr-archive.md` (#1).
 
 ## Gotchas (don't relearn these)
-- **gopls diagnostics lie after edits** — every task this session threw phantom
-  "undefined ParseHunks / does not implement / dbgen.* undefined" diagnostics that were STALE.
-  `go build`/`go test`/`go vet` is the only truth; verify there, ignore the editor squiggles.
-- **`make lint`'s tail can hide the golangci result** — run `golangci-lint run ./...` directly to confirm.
-- **The 3 review-prompt copies must stay in sync:** `internal/agents/coding/localreview.go`
-  (`reviewInstructions`/`reviewSchemaLine`), `deploy/sandbox/entrypoint.sh`, `tools/local-model-eval/run.sh`.
-- **`CreateCodeReviewAgentRun` requires a REAL agent** (INSERT…SELECT FROM agent → no row for a
-  foreign/non-existent agent). Integration tests must seed via `seed.agentID`, not `uuid.New()`
-  (fixed a pre-existing `ErrNoRows` here in `f821a9a`).
+- **Sandbox image rebuild needs `DOCKER_DEFAULT_PLATFORM=linux/arm64`.** The cached `alpine:3.20`
+  is **amd64**, so without it the base resolves amd64, `TARGETARCH` defaults wrong, and the build
+  fails at `RUN opencode --version` (`opencode: not found` — wrong-arch binary). With it, it builds.
+- **gopls diagnostics lie after edits** — phantom `undefined …` / `dbgen.* undefined` /
+  `too many arguments` are STALE. `go build`/`go test`/`go vet` is the only truth.
+- **`make lint` tail can hide the golangci result** — `golangci-lint run ./...` directly to confirm.
+- **3 review-prompt copies stay in sync:** `localreview.go`, `deploy/sandbox/entrypoint.sh`,
+  `tools/local-model-eval/run.sh`.
+- **`CreateCodeReviewAgentRun` needs a REAL agent** (INSERT…SELECT FROM agent → 0 rows for a
+  foreign agent). Integration tests must seed via `seed.agentID`, not `uuid.New()` (see `f821a9a`).
+- **GitHub token is base64-wrapped** in the clone BasicAuthHeader → outside `redactSecrets`'s exact
+  match, but clone errors never echo it (documented in `redact.go`).
 
 ## Decisions & rationale
-- **Annotated hunks, not raw diff:** each changed line is rendered with its real new-side gutter
-  number so the model's `line` citations land in-diff (become inline comments). Render gutter
-  numbers and `commentableLines` both derive from one `ParseHunks` → they always agree.
-- **Cloud path = diff + may read files:** opencode gets `/out/review_diff.txt` and is told it MAY
-  open full files for context (keeps its agentic strength); local path POSTs the hunks directly.
-- **Skip patchless files; cap+truncate over-budget; single call** (multi-call chunking deferred to
-  `manyforge-206`). Nothing dropped silently (body note + `agent.coding.review.files_dropped` audit).
+- **Redaction at two trust boundaries** (sandbox stderr tail → `last_error`/audit; model doc →
+  posted body + stored row), exact known-value + specific key-pattern regex. Opus verified every
+  OTHER error path can't carry the raw secret.
+- **Provider generality** is openrouter/anthropic/openai only (cloud); ollama/vllm stay host-side.
+  No `credresolver` default for openai — it already requires a user-supplied base_url (`ai/factory.go`).
 
 ## Next steps
-1. (Optional) Live-verify on PR #6 with ReviewBot `6aeb7a46`.
-2. `manyforge-fqo` #2: redact the LLM key from review output.
-3. `manyforge-fqo` #3: generalize `entrypoint.sh` provider mapping beyond OpenRouter.
-4. `manyforge-206`: gemini-2.5-pro 504 on large diffs (now smaller via hunks; chunk if still needed).
-5. Merge PR #6 when ready (user's call; squash recommended).
+1. Merge PR #6 (user's call).
+2. (Optional) GitHub-posting dogfood — needs re-seed + a connector PAT (see Resume here).
+3. `manyforge-206`: gemini-2.5-pro 504 on large diffs (now mitigated by smaller hunk payloads; chunk if still needed).
 
 ## Pointers
-- **Spec/plan:** `docs/superpowers/specs/2026-06-28-diff-based-code-review-design.md`,
-  `docs/superpowers/plans/2026-06-28-diff-based-code-review.md`.
-- **Key files:** `internal/connectors/github/diff.go` (parser+renderer), `internal/connectors/{repo_connector.go,github/client.go}`
-  (`ChangedFiles`), `internal/agents/coding/{localreview.go,service.go,review.go}`,
-  `deploy/sandbox/entrypoint.sh`.
-- **IDs:** Local ReviewBot agent `6aeb7a46` (ollama, qwen2.5-coder:14b); cloud ReviewBot `6c252395`
-  (z-ai/glm-5.2); PR #6 (combined slice-2 + diff-based review) → master.
-- **bd:** `bd show manyforge-fqo` (item #1 done; #2/#3 open).
+- **Specs/plans:** `docs/superpowers/specs/2026-06-28-{diff-based-code-review,review-redaction-provider-generality}-design.md`
+  and the matching `docs/superpowers/plans/2026-06-28-*`.
+- **Key files (#2/#3):** `internal/agents/coding/{redact.go,service.go}` (redaction + `sandboxEnv`),
+  `deploy/sandbox/entrypoint.sh` (provider allowlist), `internal/security_regression/mf007_review_redaction_test.go`.
+- **bd:** `manyforge-fqo` CLOSED; epic `manyforge-7ml`. `manyforge-206` open.
+- **PR #6** (slice-2 + #1 + #2/#3) → master.
