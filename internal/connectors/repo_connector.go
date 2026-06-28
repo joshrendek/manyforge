@@ -47,7 +47,7 @@ type Finding struct {
 }
 
 // ReviewComment is a single inline review comment anchored to a line of the PR
-// diff (new/RIGHT side). Line must be a commentable line (see ChangedLines) or
+// diff (new/RIGHT side). Line must be a commentable line (see ChangedFile.Commentable) or
 // the host rejects the entire review.
 type ReviewComment struct {
 	Path string
