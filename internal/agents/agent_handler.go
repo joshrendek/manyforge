@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -29,9 +30,10 @@ var _ agentCRUD = (*AgentService)(nil)
 // agents.configure RequirePermission gate (so a lacking perm / invisible business
 // is a no-oracle 404).
 type Handler struct {
-	svc    agentCRUD
-	tools  toolLister  // optional, late-wired via SetMetadata; backs /agents/tools
-	models modelLister // optional, late-wired via SetMetadata; backs /agents/models
+	svc            agentCRUD
+	tools          toolLister          // optional, late-wired via SetMetadata; backs /agents/tools
+	models         modelLister         // optional, late-wired via SetMetadata; backs /agents/models
+	providerModels providerModelLister // optional, via SetProviderModels; backs /agents/provider-models/{provider} (live, e.g. OpenRouter)
 }
 
 // NewHandler builds an agents HTTP handler.
@@ -45,6 +47,10 @@ func (h *Handler) SetMetadata(tools toolLister, models modelLister) {
 	h.models = models
 }
 
+// SetProviderModels late-wires the live per-provider model catalog (e.g. OpenRouter)
+// backing /agents/provider-models/{provider}. Optional.
+func (h *Handler) SetProviderModels(pl providerModelLister) { h.providerModels = pl }
+
 // ProtectedRoutes mounts authenticated agent endpoints under a business.
 func (h *Handler) ProtectedRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/agents", func(r chi.Router) {
@@ -54,6 +60,7 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 		// segments before params, so "tools"/"models" never hit the agent lookup).
 		r.Get("/tools", h.listTools)
 		r.Get("/models", h.listModels)
+		r.Get("/provider-models/{provider}", h.listProviderModels)
 		r.Get("/{agentID}", h.getAgent)
 		r.Patch("/{agentID}", h.updateAgent)
 		r.Delete("/{agentID}", h.deleteAgent)
@@ -323,6 +330,27 @@ func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
 	for _, m := range models {
 		// modelResp is the JSON-tagged view of ModelInfo (identical shape).
 		out = append(out, modelResp(m))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// listProviderModels returns a provider's LIVE model list (e.g. OpenRouter), for
+// the agent form's typeahead. Degrades gracefully: missing wiring, an unsupported
+// provider, or a fetch error all return an empty {items} (200) so the form falls
+// back to free-text rather than erroring.
+func (h *Handler) listProviderModels(w http.ResponseWriter, r *http.Request) {
+	provider := chi.URLParam(r, "provider")
+	out := []modelResp{}
+	if h.providerModels != nil {
+		models, err := h.providerModels.ProviderModels(r.Context(), provider)
+		if err != nil {
+			slog.WarnContext(r.Context(), "provider models fetch failed; serving empty list",
+				"provider", provider, "err", err)
+		} else {
+			for _, m := range models {
+				out = append(out, modelResp(m))
+			}
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }

@@ -7,6 +7,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Connectors', route: '/credentials/connector', testid: 'nav-connectors' },
   { label: 'AI Credentials', route: '/credentials/ai', testid: 'nav-ai-credentials' },
   { label: 'Agents', route: '/agents', testid: 'nav-agents' },
+  { label: 'Code Review', route: '/code-review', testid: 'nav-code-review' },
   { label: 'Contacts', route: '/crm/contacts', testid: 'nav-crm-contacts' },
   { label: 'Companies', route: '/crm/companies', testid: 'nav-crm-companies' },
   { label: 'MCP', route: '/mcp', testid: 'nav-mcp' },

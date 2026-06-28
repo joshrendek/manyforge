@@ -97,6 +97,12 @@ export class AgentsService {
     return this.http.get<{ items: ModelDescriptor[] }>(`${this.base(businessId)}/models`);
   }
 
+  // providerModels returns a provider's LIVE model catalog (e.g. OpenRouter), for
+  // the model typeahead. The backend degrades to an empty list on fetch failure.
+  providerModels(businessId: string, provider: string): Observable<{ items: ModelDescriptor[] }> {
+    return this.http.get<{ items: ModelDescriptor[] }>(`${this.base(businessId)}/provider-models/${provider}`);
+  }
+
   /** Returns the business's MCP servers for the agent form's server picker. */
   mcpServers(businessId: string): Observable<{ items: MCPServer[] }> {
     return this.mcpSvc.list(businessId);

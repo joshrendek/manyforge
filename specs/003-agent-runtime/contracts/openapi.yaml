@@ -68,6 +68,20 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AgentModelList" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/agents/provider-models/{provider}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: provider, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listAgentProviderModels
+      summary: List a provider's live model catalog (e.g. OpenRouter) for the agent model picker
+      responses:
+        "200":
+          description: Provider model catalog (degrades to an empty list when unavailable)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentModelList" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /businesses/{id}/agents/{agentID}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
