@@ -694,9 +694,9 @@ func sandboxEnv(cred AICredential) map[string]string {
 // opencodeCmd returns the sandbox command argv for the opencode runner.
 // The real image ENTRYPOINT (/usr/local/bin/review) drives the full opencode
 // invocation and writes /out/review.json, so no additional Cmd args are
-// required. The model (LLM_MODEL) and key (LLM_API_KEY) are injected via env;
-// the entrypoint maps them onto sst/opencode's `-m openrouter/<model>` flag and
-// its auth.json respectively.
+// required. The provider (LLM_PROVIDER), model (LLM_MODEL), and key (LLM_API_KEY)
+// are injected via env; the entrypoint maps them onto sst/opencode's
+// `-m <provider>/<model>` flag and its provider-keyed auth.json respectively.
 func opencodeCmd(_ string) []string {
 	return []string{} // ENTRYPOINT runs the review; no extra Cmd needed
 }
