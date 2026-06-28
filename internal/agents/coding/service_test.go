@@ -3,6 +3,9 @@ package coding
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -158,5 +161,21 @@ func TestReviewURLConstructedFromConnectorAndRef(t *testing.T) {
 				t.Errorf("reviewURL(%q, %d, %q) = %q; want %q", tc.repo, tc.pr, tc.externalRef, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSandboxStderrTail_Redacts(t *testing.T) {
+	dir := t.TempDir()
+	secret := "sk-LIVE0123456789abcdefghij"
+	if err := os.WriteFile(filepath.Join(dir, "stderr.log"),
+		[]byte("Error: Unauthorized: bad key "+secret+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tail := sandboxStderrTail(dir, secret)
+	if strings.Contains(tail, secret) {
+		t.Fatalf("secret leaked in stderr tail: %s", tail)
+	}
+	if !strings.Contains(tail, "[REDACTED]") {
+		t.Fatalf("expected redaction marker: %s", tail)
 	}
 }

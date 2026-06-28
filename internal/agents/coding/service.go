@@ -376,13 +376,13 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		rawFindings, ferr := os.ReadFile(filepath.Join(outDir, "review.json"))
 		if ferr != nil {
 			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-				fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(outDir)),
+				fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(outDir, cred.APIKey, rc.Credential.APIToken)),
 				tokensIn, tokensOut, costCents)
 		}
 		d, perr := ParseFindings(rawFindings)
 		if perr != nil {
 			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-				fmt.Errorf("%w%s", perr, sandboxStderrTail(outDir)), tokensIn, tokensOut, costCents)
+				fmt.Errorf("%w%s", perr, sandboxStderrTail(outDir, cred.APIKey, rc.Credential.APIToken)), tokensIn, tokensOut, costCents)
 		}
 		doc = d
 	}
@@ -392,6 +392,9 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	// DedupKey makes the post idempotent: a worker retry (e.g. a transient sandbox
 	// error, or a finalize failure) re-runs the whole job, but PostReview reuses the
 	// already-posted review instead of duplicating it (manyforge-303).
+	// Strip any secret the sandbox/model echoed before it is stored on the review row
+	// or posted to the PR (manyforge-fqo #2).
+	redactDoc(&doc, cred.APIKey, rc.Credential.APIToken)
 	review := buildReview(doc, changed, pr.HeadSHA, skippedFiles, omittedFiles)
 	review.DedupKey = crID.String()
 	ref, err := conn.PostReview(ctx, prNumber, review)
@@ -738,7 +741,7 @@ func clampInt32(n int64) int32 {
 // sandboxStderrTail returns a short tail of the sandbox's /out/stderr.log for the
 // failure last_error (the entrypoint redirects opencode stderr there). Best-effort;
 // empty when absent. Server-side diagnostic only — last_error is never returned to API clients.
-func sandboxStderrTail(outDir string) string {
+func sandboxStderrTail(outDir string, secrets ...string) string {
 	b, err := os.ReadFile(filepath.Join(outDir, "stderr.log"))
 	if err != nil {
 		return ""
@@ -767,7 +770,7 @@ func sandboxStderrTail(outDir string) string {
 	if s == "" {
 		return ""
 	}
-	return " | sandbox stderr: " + s
+	return " | sandbox stderr: " + redactSecrets(s, secrets...)
 }
 
 // ptr returns a pointer to the given string value.
