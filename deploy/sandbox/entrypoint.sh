@@ -9,9 +9,10 @@
 #
 # Environment (injected by the sandbox runner — internal/agents/coding/service.go):
 #   LLM_API_KEY   — provider API key (forwarded only to the allowlisted LLM host)
-#   LLM_BASE_URL  — provider base URL (unused: the built-in openrouter provider
-#                   already knows its endpoint; kept for the host-allowlist derive)
-#   LLM_MODEL     — OpenRouter model slug, e.g. "google/gemini-2.5-pro"
+#   LLM_BASE_URL  — provider base URL (used only to derive the egress-allowlist host;
+#                   opencode's built-in provider already knows its endpoint)
+#   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro" or "claude-3-5-sonnet"
+#   LLM_PROVIDER  — opencode provider id: one of openrouter|anthropic|openai
 set -eu
 
 mkdir -p /out
@@ -42,9 +43,17 @@ export OPENCODE_DISABLE_PRUNE=1
 cp -r /work /tmp/src
 cd /tmp/src
 
-# Model id for the built-in OpenRouter provider is "openrouter/<slug>" — the slug
-# itself contains a slash (e.g. openrouter/google/gemini-2.5-pro).
-MODEL="openrouter/${LLM_MODEL}"
+# Provider selects the opencode built-in SDK (model prefix + auth.json key). Only
+# these three are validated/supported via the sandbox; ollama/vllm use the host-side
+# direct-API path and never reach here.
+case "${LLM_PROVIDER:-}" in
+  openrouter|anthropic|openai) : ;;
+  *) echo "entrypoint: unsupported LLM_PROVIDER='${LLM_PROVIDER:-}'" >&2; exit 2 ;;
+esac
+
+# Model id for a built-in provider is "<provider>/<slug>"; the slug itself may
+# contain a slash (e.g. openrouter/google/gemini-2.5-pro).
+MODEL="${LLM_PROVIDER}/${LLM_MODEL}"
 
 # Credentials: write opencode's auth.json (the file the interactive `/connect`
 # flow produces) so the OpenRouter API key is attached as the Authorization
@@ -53,10 +62,11 @@ MODEL="openrouter/${LLM_MODEL}"
 # the catalog entry and send NO auth header without it (verified empirically,
 # manyforge-ht8). The key lands only in the /tmp tmpfs (ephemeral, OUTSIDE the
 # reviewed cwd /tmp/src); egress is locked to the LLM host so it can't be
-# exfiltrated, and bash/webfetch are denied. OpenRouter keys are [A-Za-z0-9-]
-# (no JSON metacharacters), so direct interpolation is safe.
+# exfiltrated, and bash/webfetch are denied. The provider is a validated enum value
+# and the supported providers' keys are [A-Za-z0-9-] (no JSON metacharacters), so
+# direct interpolation is safe.
 mkdir -p "$XDG_DATA_HOME/opencode"
-printf '{"openrouter":{"type":"api","key":"%s"}}\n' "$LLM_API_KEY" > "$XDG_DATA_HOME/opencode/auth.json"
+printf '{"%s":{"type":"api","key":"%s"}}\n' "$LLM_PROVIDER" "$LLM_API_KEY" > "$XDG_DATA_HOME/opencode/auth.json"
 
 # Write the config OUTSIDE the reviewed cwd (/tmp, not /tmp/src). It sets the
 # default model and a read-only permission profile: deny every mutation/tool,

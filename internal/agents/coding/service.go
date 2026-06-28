@@ -347,11 +347,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 			ReadOnlyDir: checkout,
 			OutputDir:   outDir,
 			Cmd:         opencodeCmd(cred.Model),
-			Env: map[string]string{
-				"LLM_API_KEY":  cred.APIKey,
-				"LLM_BASE_URL": cred.BaseURL,
-				"LLM_MODEL":    cred.Model,
-			},
+			Env:         sandboxEnv(cred),
 			EgressAllow: []string{cred.Host()},
 			Timeout:     s.timeout(),
 		}
@@ -680,6 +676,18 @@ func codingAudit(
 		Inputs:           inputs,
 		Outputs:          outputs,
 		Decision:         decision,
+	}
+}
+
+// sandboxEnv builds the env the opencode entrypoint consumes. LLM_PROVIDER selects
+// the opencode built-in provider (model prefix + auth.json key); LLM_BASE_URL is
+// used only to derive the egress-allowlist host.
+func sandboxEnv(cred AICredential) map[string]string {
+	return map[string]string{
+		"LLM_API_KEY":  cred.APIKey,
+		"LLM_BASE_URL": cred.BaseURL,
+		"LLM_MODEL":    cred.Model,
+		"LLM_PROVIDER": cred.Provider,
 	}
 }
 

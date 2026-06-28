@@ -179,3 +179,11 @@ func TestSandboxStderrTail_Redacts(t *testing.T) {
 		t.Fatalf("expected redaction marker: %s", tail)
 	}
 }
+
+func TestSandboxEnv(t *testing.T) {
+	env := sandboxEnv(AICredential{APIKey: "k", BaseURL: "https://api.openai.com", Model: "gpt-4o", Provider: "openai"})
+	if env["LLM_PROVIDER"] != "openai" || env["LLM_MODEL"] != "gpt-4o" ||
+		env["LLM_API_KEY"] != "k" || env["LLM_BASE_URL"] != "https://api.openai.com" {
+		t.Fatalf("env = %+v", env)
+	}
+}
