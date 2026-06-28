@@ -39,16 +39,7 @@ Lift the hunk-walking logic out of `commentableLines` into a reusable parser, an
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `internal/connectors/github/diff_test.go`. Change the import line `import "testing"` to:
-
-```go
-import (
-	"strings"
-	"testing"
-)
-```
-
-Then append:
+Add to `internal/connectors/github/diff_test.go` (no import change needed — `testing` is already imported, and the assertions below are exact-string so `strings` is not required). Append:
 
 ```go
 func TestParseHunks(t *testing.T) {
@@ -79,25 +70,12 @@ func TestParseHunks_EmptyOrBinary(t *testing.T) {
 }
 
 func TestRenderAnnotatedHunks(t *testing.T) {
+	// Format is deterministic ("%5d %s %s\n" per line): right-aligned new-side line
+	// number, a space, the +/space marker, a space, then the text. Assert it exactly.
 	patch := "@@ -1,1 +1,2 @@\n ctx\n+added\n"
-	out := RenderAnnotatedHunks(patch)
-	for _, want := range []string{"@@ 1-2 @@", "ctx", "added"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("render missing %q:\n%s", want, out)
-		}
-	}
-	// The added line must carry a '+' marker; the context line must not.
-	if !strings.Contains(out, "+ added") && !strings.Contains(out, "+     added") && !strings.Contains(out, "+ "+"added") {
-		// tolerate column-width variation: assert a '+' precedes "added" on its line
-		var plusOnAdded bool
-		for _, line := range strings.Split(out, "\n") {
-			if strings.Contains(line, "added") && strings.Contains(line, "+") {
-				plusOnAdded = true
-			}
-		}
-		if !plusOnAdded {
-			t.Fatalf("added line missing '+' marker:\n%s", out)
-		}
+	want := "@@ 1-2 @@\n    1   ctx\n    2 + added\n"
+	if got := RenderAnnotatedHunks(patch); got != want {
+		t.Fatalf("render mismatch:\nwant: %q\ngot:  %q", want, got)
 	}
 	if RenderAnnotatedHunks("") != "" {
 		t.Fatal("empty patch must render empty string")
@@ -321,9 +299,9 @@ In the `RepoConnector` interface, add `ChangedFiles` directly below the existing
 	ChangedFiles(ctx context.Context, prNumber int) ([]ChangedFile, error)
 ```
 
-- [ ] **Step 4: Implement on the github client**
+- [ ] **Step 4: Implement `ChangedFiles` as the fetch; make `ChangedLines` delegate to it**
 
-In `internal/connectors/github/client.go`, add `ChangedFiles` directly after `ChangedLines` (ends at line 140). It reuses the same paginated fetch shape:
+In `internal/connectors/github/client.go`, replace the existing `ChangedLines` method (lines 97-140) with `ChangedFiles` (the real fetch) plus a thin `ChangedLines` that delegates — so there is exactly one pagination loop (no duplication):
 
 ```go
 // ChangedFiles fetches the PR's changed files and returns, per file, the raw patch
@@ -371,6 +349,20 @@ func (c *client) ChangedFiles(ctx context.Context, prNumber int) ([]connectors.C
 		if len(files) < 100 {
 			break
 		}
+	}
+	return out, nil
+}
+
+// ChangedLines is retained until the service is switched to ChangedFiles (Task 5).
+// It delegates so there is a single fetch path.
+func (c *client) ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error) {
+	files, err := c.ChangedFiles(ctx, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[int]bool, len(files))
+	for _, f := range files {
+		out[f.Path] = f.Commentable
 	}
 	return out, nil
 }
@@ -854,7 +846,7 @@ In the `buildReview` call (now line ~379, with the `nil, nil` from Task 4), pass
 
 In `internal/connectors/repo_connector.go`, delete the `ChangedLines` method and its doc comment from the `RepoConnector` interface (keep `ChangedFiles`).
 
-In `internal/connectors/github/client.go`, delete the entire `ChangedLines` method (lines 97-140), keeping `ChangedFiles`.
+In `internal/connectors/github/client.go`, delete the small delegating `ChangedLines` method added in Task 2, keeping `ChangedFiles`.
 
 In `internal/connectors/github/client_test.go`, delete `TestChangedLines` (lines 73-94).
 
