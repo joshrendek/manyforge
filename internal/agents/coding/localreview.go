@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/manyforge/manyforge/internal/connectors"
+	"github.com/manyforge/manyforge/internal/connectors/github"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
@@ -40,9 +42,9 @@ func isLocalProvider(provider string) bool {
 }
 
 const (
-	localReviewMaxFileBytes  = 32 << 10 // skip any single file larger than this
-	localReviewMaxTotalBytes = 48 << 10 // cap total inlined code to fit localReviewNumCtx
-	localReviewNumCtx        = 16384    // Ollama context window; ~48KB code + prompt + output fits
+	localReviewMaxFileBytes  = 32 << 10 // skip any single file whose rendered hunks exceed this
+	localReviewMaxTotalBytes = 64 << 10 // cap total rendered diff to fit localReviewNumCtx
+	localReviewNumCtx        = 16384    // Ollama context window; ~64KB diff + prompt + output fits
 )
 
 // codeExt is the set of source extensions the local reviewer prioritizes — the
@@ -84,6 +86,50 @@ func readChangedFiles(checkout string, paths []string) map[string]string {
 		}
 		out[clean] = string(b)
 		total += len(b)
+	}
+	return out
+}
+
+// assembleDiffPayload renders the changed files' hunks into the local-review
+// payload: source files first (the budget is small; spend it on code), then
+// path-sorted, stopping at the total budget. It returns the payload plus the paths
+// it could not include — skipped (no usable patch: binary or omitted by GitHub) and
+// omitted (dropped because the budget filled) — so callers can surface them.
+func assembleDiffPayload(files []connectors.ChangedFile) (payload string, skipped, omitted []string) {
+	ordered := append([]connectors.ChangedFile(nil), files...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		ci := codeExt[strings.ToLower(filepath.Ext(ordered[i].Path))]
+		cj := codeExt[strings.ToLower(filepath.Ext(ordered[j].Path))]
+		if ci != cj {
+			return ci // code before non-code
+		}
+		return ordered[i].Path < ordered[j].Path
+	})
+	var b strings.Builder
+	total := 0
+	for _, f := range ordered {
+		rendered := github.RenderAnnotatedHunks(f.Patch)
+		if rendered == "" {
+			skipped = append(skipped, f.Path)
+			continue
+		}
+		block := fmt.Sprintf("\n=== %s ===\n%s", f.Path, rendered)
+		if len(block) > localReviewMaxFileBytes || total+len(block) > localReviewMaxTotalBytes {
+			omitted = append(omitted, f.Path)
+			continue
+		}
+		b.WriteString(block)
+		total += len(block)
+	}
+	return b.String(), skipped, omitted
+}
+
+// commentableMap reduces ChangedFiles to the file→commentable-lines map buildReview
+// needs to place inline comments.
+func commentableMap(files []connectors.ChangedFile) map[string]map[int]bool {
+	out := make(map[string]map[int]bool, len(files))
+	for _, f := range files {
+		out[f.Path] = f.Commentable
 	}
 	return out
 }
