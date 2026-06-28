@@ -31,7 +31,11 @@ func TestCodeReviewClaimUnderAppRole(t *testing.T) {
 
 	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc123","ref":"f"},"base":{"ref":"main"}}`)
 	localSrv, _ := startGitHubStub(t, prJSON)
-	agentID := uuid.New()
+	// Use the REAL seeded agent row (seed.agentID). The success-path finalize records
+	// an agent_run via CreateCodeReviewAgentRun, whose INSERT/SELECT FROM agent yields
+	// no row for a foreign/non-existent agent — a fabricated uuid.New() here made
+	// runJob fail with ErrNoRows on the success path (pre-existing fixture bug).
+	agentID := seed.agentID
 	fakeCred := &FakeCredResolver{Cred: AICredential{
 		APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic",
 	}}
