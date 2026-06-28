@@ -77,6 +77,12 @@ type Querier interface {
 	// applies the SELECT/USING policy to the returned row, which the creator cannot
 	// yet see (no membership at insert time). The caller builds the result from inputs.
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) error
+	// Records a COMPLETED code-review run as an agent_run so ReviewBot usage shows up
+	// in accounting (AccountingSummaryByAgent sums agent_run by agent over a window).
+	// trigger/target_type are free-text at the DB layer (no CHECK, unlike the Go
+	// CreateRun validators); tenant_root_id is derived from the RLS-visible agent so a
+	// foreign/invisible agent yields no row.
+	CreateCodeReviewAgentRun(ctx context.Context, arg CreateCodeReviewAgentRunParams) (uuid.UUID, error)
 	// Idempotent event-triggered run. Dedups on (agent_id, trigger_dedup_key) -- the conflict
 	// target matches the partial unique index -- so an at-least-once redelivery of
 	// ticket.created creates at most one run per agent. ON CONFLICT DO NOTHING => 0 rows =>
@@ -124,6 +130,9 @@ type Querier interface {
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
+	// DeleteRepoConnector removes one connector scoped to the business (RLS + explicit
+	// predicate). Cascades to its code_review rows via the existing FK.
+	DeleteRepoConnector(ctx context.Context, arg DeleteRepoConnectorParams) (int64, error)
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
 	// DeleteSecret removes one secret scoped to (id, business); :execrows lets the caller detect a no-op delete.
 	DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error)
@@ -460,6 +469,8 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	// ListCodeReviews returns the business's reviews newest-first for the history UI.
+	ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]ListCodeReviewsRow, error)
 	// ListCompanies is the first (unkeyed) page of a tenant's companies, ordered by name
 	// for a stable keyset.
 	ListCompanies(ctx context.Context, arg ListCompaniesParams) ([]Company, error)
@@ -521,6 +532,9 @@ type Querier interface {
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
+	// ListRepoConnectors returns the caller's connectors (RLS-scoped). NEVER selects
+	// secret_ref — the UI must not receive any credential handle.
+	ListRepoConnectors(ctx context.Context, businessID uuid.UUID) ([]ListRepoConnectorsRow, error)
 	// ---- requesters ----
 	// ListRequesters is the first page of a business's requesters, ordered by
 	// first_seen_at for a stable keyset. The optional email facet is an exact
@@ -641,6 +655,11 @@ type Querier interface {
 	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
 	// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
 	ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error
+	// Records token usage + cost on the review row WITHOUT touching status/findings.
+	// Used on the failure path so a run that burned tokens before failing still shows
+	// its cost; the worker's requeue_code_review/fail_code_review own status/last_error/
+	// attempts and leave these columns alone.
+	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
 	SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error
 	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error

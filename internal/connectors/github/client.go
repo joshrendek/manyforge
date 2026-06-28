@@ -90,11 +90,137 @@ func (c *client) FetchPR(ctx context.Context, prNumber int) (connectors.PullRequ
 	}, nil
 }
 
-// PostReview posts a review comment to the given pull request.
+// changedFilesPageCap bounds pagination of the PR files endpoint (100/page) so a
+// pathological PR can't drive unbounded requests; 20 pages = 2000 files.
+const changedFilesPageCap = 20
+
+// ChangedFiles fetches the PR's changed files and returns, per file, the raw patch
+// text and the commentable new-side lines. One fetch serves both the diff-based
+// review payload and inline-comment placement. 404 → errs.ErrNotFound.
+func (c *client) ChangedFiles(ctx context.Context, prNumber int) ([]connectors.ChangedFile, error) {
+	var out []connectors.ChangedFile
+	for page := 1; page <= changedFilesPageCap; page++ {
+		url := fmt.Sprintf("%s/repos/%s/pulls/%d/files?per_page=100&page=%d", c.apiBase, c.repo, prNumber, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("github: build pr files request: %w", err)
+		}
+		req.Header.Set("Authorization", c.authHeader())
+		req.Header.Set("Accept", "application/vnd.github+json")
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("github: fetch pr files: %w", err)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("github: pr %d: %w", prNumber, errs.ErrNotFound)
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("github: fetch pr files status %d", resp.StatusCode)
+		}
+		var files []struct {
+			Filename string `json:"filename"`
+			Patch    string `json:"patch"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&files)
+		_ = resp.Body.Close()
+		if derr != nil {
+			return nil, fmt.Errorf("github: decode pr files: %w", derr)
+		}
+		for _, f := range files {
+			out = append(out, connectors.ChangedFile{
+				Path:        f.Filename,
+				Patch:       f.Patch,
+				Commentable: commentableLines(f.Patch),
+			})
+		}
+		if len(files) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// reviewMarker is a hidden HTML comment embedded in a review body so a retry can
+// recognise an already-posted review and avoid duplicating it. GitHub renders HTML
+// comments invisibly.
+func reviewMarker(dedupKey string) string {
+	return "<!-- manyforge-review-id: " + dedupKey + " -->"
+}
+
+// findReviewByMarker returns an existing review on the PR whose body carries the
+// marker, if any. Best-effort: a fetch/parse error returns found=false (caller
+// then posts) rather than blocking the review.
+func (c *client) findReviewByMarker(ctx context.Context, prNumber int, marker string) (connectors.ReviewRef, bool) {
+	const pageCap = 10 // 100/page → up to 1000 reviews scanned
+	for page := 1; page <= pageCap; page++ {
+		url := fmt.Sprintf("%s/repos/%s/pulls/%d/reviews?per_page=100&page=%d", c.apiBase, c.repo, prNumber, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return connectors.ReviewRef{}, false
+		}
+		req.Header.Set("Authorization", c.authHeader())
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return connectors.ReviewRef{}, false
+		}
+		var reviews []struct {
+			ID      int64  `json:"id"`
+			Body    string `json:"body"`
+			HTMLURL string `json:"html_url"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&reviews)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || derr != nil {
+			return connectors.ReviewRef{}, false
+		}
+		for _, rv := range reviews {
+			if strings.Contains(rv.Body, marker) {
+				return connectors.ReviewRef{ExternalID: fmt.Sprintf("%d", rv.ID), URL: rv.HTMLURL}, true
+			}
+		}
+		if len(reviews) < 100 {
+			break
+		}
+	}
+	return connectors.ReviewRef{}, false
+}
+
+// PostReview posts a review to the given pull request: a summary body plus any
+// inline diff comments. When r.DedupKey is set it is idempotent — a hidden marker
+// is embedded in the body and any prior review carrying the same marker is reused
+// instead of posting a duplicate (a worker retry re-runs the whole job).
 // A 404 maps to errs.ErrNotFound; other non-2xx become generic errors.
 func (c *client) PostReview(ctx context.Context, prNumber int, r connectors.Review) (connectors.ReviewRef, error) {
+	postBody := r.Body
+	if r.DedupKey != "" {
+		marker := reviewMarker(r.DedupKey)
+		if ref, found := c.findReviewByMarker(ctx, prNumber, marker); found {
+			return ref, nil // already posted on a prior attempt — don't duplicate
+		}
+		postBody = postBody + "\n\n" + marker
+	}
 	url := fmt.Sprintf("%s/repos/%s/pulls/%d/reviews", c.apiBase, c.repo, prNumber)
-	payload, err := json.Marshal(map[string]any{"event": "COMMENT", "body": r.Body})
+	reviewBody := map[string]any{"event": "COMMENT", "body": postBody}
+	if r.CommitID != "" {
+		reviewBody["commit_id"] = r.CommitID
+	}
+	if len(r.Comments) > 0 {
+		comments := make([]map[string]any, 0, len(r.Comments))
+		for _, cm := range r.Comments {
+			comments = append(comments, map[string]any{
+				"path": cm.Path,
+				"line": cm.Line,
+				"side": "RIGHT",
+				"body": cm.Body,
+			})
+		}
+		reviewBody["comments"] = comments
+	}
+	payload, err := json.Marshal(reviewBody)
 	if err != nil {
 		return connectors.ReviewRef{}, fmt.Errorf("github: marshal review: %w", err)
 	}

@@ -361,7 +361,8 @@ CREATE TABLE agent_run (
     updated_at     timestamptz NOT NULL,
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
-    FOREIGN KEY (agent_id, tenant_root_id) REFERENCES agent (id, tenant_root_id)
+    FOREIGN KEY (agent_id, tenant_root_id) REFERENCES agent (id, tenant_root_id),
+    CONSTRAINT agent_run_trigger_check CHECK (trigger = ANY (ARRAY['event', 'manual', 'reply', 'code_review']))
 );
 CREATE UNIQUE INDEX agent_run_trigger_dedup_idx
     ON agent_run (agent_id, trigger_dedup_key)
@@ -598,6 +599,7 @@ CREATE TABLE repo_connector (
 );
 
 -- Spec 007 code-review agent: one review of one PR, linked to an agent_run (migrations/0071).
+-- Spec 007 slice 2: durable work-queue columns added in migrations/0072.
 CREATE TABLE code_review (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id        uuid NOT NULL,
@@ -613,8 +615,20 @@ CREATE TABLE code_review (
     posted_at          timestamptz,
     created_at         timestamptz NOT NULL DEFAULT now(),
     updated_at         timestamptz NOT NULL DEFAULT now(),
+    principal_id       uuid,
+    agent_id           uuid,
+    attempts           integer NOT NULL DEFAULT 0,
+    run_after          timestamptz NOT NULL DEFAULT now(),
+    lease_expires_at   timestamptz,
+    last_error         text NOT NULL DEFAULT '',
+    model              text NOT NULL DEFAULT '',
+    tokens_in          integer NOT NULL DEFAULT 0,
+    tokens_out         integer NOT NULL DEFAULT 0,
+    cost_cents         bigint NOT NULL DEFAULT 0,
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (repo_connector_id, tenant_root_id) REFERENCES repo_connector (id, tenant_root_id),
     CONSTRAINT code_review_status_chk CHECK (status IN ('pending','running','succeeded','failed'))
 );
+
+CREATE INDEX code_review_claim_idx ON code_review (status, run_after);

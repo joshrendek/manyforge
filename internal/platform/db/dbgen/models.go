@@ -659,6 +659,16 @@ type CodeReview struct {
 	PostedAt          pgtype.Timestamptz `json:"posted_at"`
 	CreatedAt         time.Time          `json:"created_at"`
 	UpdatedAt         time.Time          `json:"updated_at"`
+	PrincipalID       pgtype.UUID        `json:"principal_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	Attempts          int32              `json:"attempts"`
+	RunAfter          time.Time          `json:"run_after"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError         string             `json:"last_error"`
+	Model             string             `json:"model"`
+	TokensIn          int32              `json:"tokens_in"`
+	TokensOut         int32              `json:"tokens_out"`
+	CostCents         int64              `json:"cost_cents"`
 }
 
 type Company struct {
