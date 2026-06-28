@@ -210,3 +210,34 @@ func TestBasicAuthHeader(t *testing.T) {
 		t.Fatalf("payload mismatch: got %q, want %q", string(decoded), expected)
 	}
 }
+
+func TestChangedFiles(t *testing.T) {
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/pulls/42/files") {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[
+			{"filename":"a.go","patch":"@@ -1,1 +1,2 @@\n ctx\n+added\n"},
+			{"filename":"bin.png","patch":""}
+		]`))
+	})
+	got, err := c.ChangedFiles(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("err %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 files, got %d: %+v", len(got), got)
+	}
+	var a connectors.ChangedFile
+	for _, f := range got {
+		if f.Path == "a.go" {
+			a = f
+		}
+	}
+	if a.Patch == "" {
+		t.Fatalf("a.go patch must be retained, got empty")
+	}
+	if !a.Commentable[1] || !a.Commentable[2] {
+		t.Fatalf("a.go lines 1,2 expected commentable; got %v", a.Commentable)
+	}
+}

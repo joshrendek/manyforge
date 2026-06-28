@@ -94,11 +94,11 @@ func (c *client) FetchPR(ctx context.Context, prNumber int) (connectors.PullRequ
 // pathological PR can't drive unbounded requests; 20 pages = 2000 files.
 const changedFilesPageCap = 20
 
-// ChangedLines fetches the PR's changed files and returns, per new-version path,
-// the set of new-side line numbers that are part of the diff (valid inline-comment
-// targets). A 404 maps to errs.ErrNotFound; other non-2xx become generic errors.
-func (c *client) ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error) {
-	out := map[string]map[int]bool{}
+// ChangedFiles fetches the PR's changed files and returns, per file, the raw patch
+// text and the commentable new-side lines. One fetch serves both the diff-based
+// review payload and inline-comment placement. 404 → errs.ErrNotFound.
+func (c *client) ChangedFiles(ctx context.Context, prNumber int) ([]connectors.ChangedFile, error) {
+	var out []connectors.ChangedFile
 	for page := 1; page <= changedFilesPageCap; page++ {
 		url := fmt.Sprintf("%s/repos/%s/pulls/%d/files?per_page=100&page=%d", c.apiBase, c.repo, prNumber, page)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -130,11 +130,29 @@ func (c *client) ChangedLines(ctx context.Context, prNumber int) (map[string]map
 			return nil, fmt.Errorf("github: decode pr files: %w", derr)
 		}
 		for _, f := range files {
-			out[f.Filename] = commentableLines(f.Patch)
+			out = append(out, connectors.ChangedFile{
+				Path:        f.Filename,
+				Patch:       f.Patch,
+				Commentable: commentableLines(f.Patch),
+			})
 		}
 		if len(files) < 100 {
 			break
 		}
+	}
+	return out, nil
+}
+
+// ChangedLines is retained until the service is switched to ChangedFiles (Task 5).
+// It delegates so there is a single fetch path.
+func (c *client) ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error) {
+	files, err := c.ChangedFiles(ctx, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[int]bool, len(files))
+	for _, f := range files {
+		out[f.Path] = f.Commentable
 	}
 	return out, nil
 }

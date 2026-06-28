@@ -16,9 +16,23 @@ type RepoConnector interface {
 	// pure deletions) still appear with an empty set so callers can scope a review
 	// to the changed file list.
 	ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error)
+	// ChangedFiles returns the PR's changed files with patch text and commentable
+	// new-side lines, in one fetch — serving both the diff-based review payload and
+	// inline-comment placement. Files with no patch (binary/too-large) appear with an
+	// empty Patch and empty Commentable set.
+	ChangedFiles(ctx context.Context, prNumber int) ([]ChangedFile, error)
 	// PostReview posts a single review (summary + optional inline comments) to the
 	// pull request. Advisory only.
 	PostReview(ctx context.Context, prNumber int, r Review) (ReviewRef, error)
+}
+
+// ChangedFile is one file of a PR diff: its new-version path, the raw unified-diff
+// patch text (the files[].patch field; "" for binary or GitHub-omitted patches),
+// and the set of new-side line numbers that are valid inline-comment targets.
+type ChangedFile struct {
+	Path        string
+	Patch       string
+	Commentable map[int]bool
 }
 
 type PullRequest struct {
