@@ -21,7 +21,7 @@ func TestBuildReview_SplitsInlineVsBody(t *testing.T) {
 	}
 	changed := map[string]map[int]bool{"a.go": {11: true}}
 
-	rev := buildReview(doc, changed, "sha123")
+	rev := buildReview(doc, changed, "sha123", nil, nil)
 
 	if rev.CommitID != "sha123" {
 		t.Fatalf("commit id = %q", rev.CommitID)
@@ -50,11 +50,23 @@ func TestBuildReview_NoDiffInfoPostsEverythingInBody(t *testing.T) {
 		Summary:  "s",
 		Findings: []connectors.Finding{{File: "a.go", Line: iptr(1), Severity: "info", Title: "t", Detail: "d"}},
 	}
-	rev := buildReview(doc, map[string]map[int]bool{}, "sha")
+	rev := buildReview(doc, map[string]map[int]bool{}, "sha", nil, nil)
 	if len(rev.Comments) != 0 {
 		t.Fatalf("no diff info → expected 0 inline comments, got %d", len(rev.Comments))
 	}
 	if !strings.Contains(rev.Body, "Automated code review") || !strings.Contains(rev.Body, "t") {
 		t.Fatalf("body should contain header + the finding:\n%s", rev.Body)
+	}
+}
+
+func TestBuildReview_NotesSkippedAndOmitted(t *testing.T) {
+	doc := FindingsDoc{Summary: "s"}
+	rev := buildReview(doc, map[string]map[int]bool{}, "sha",
+		[]string{"bin.png"}, []string{"big.go"})
+	if !strings.Contains(rev.Body, "bin.png") || !strings.Contains(rev.Body, "not reviewed") {
+		t.Fatalf("body must note the skipped file:\n%s", rev.Body)
+	}
+	if !strings.Contains(rev.Body, "big.go") || !strings.Contains(rev.Body, "omitted") {
+		t.Fatalf("body must note the omitted file:\n%s", rev.Body)
 	}
 }

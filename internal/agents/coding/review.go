@@ -25,7 +25,7 @@ func changedFilePaths(changed map[string]map[int]bool) []string {
 // (even when no diff info is available — then everything lands in the body, which
 // is the pre-inline behavior). commitID anchors the inline comments to the
 // reviewed head SHA.
-func buildReview(doc FindingsDoc, changed map[string]map[int]bool, commitID string) connectors.Review {
+func buildReview(doc FindingsDoc, changed map[string]map[int]bool, commitID string, skipped, omitted []string) connectors.Review {
 	var comments []connectors.ReviewComment
 	var leftover []connectors.Finding
 	for _, f := range doc.Findings {
@@ -44,7 +44,7 @@ func buildReview(doc FindingsDoc, changed map[string]map[int]bool, commitID stri
 	return connectors.Review{
 		Summary:  doc.Summary,
 		Findings: doc.Findings,
-		Body:     renderReviewBody(doc.Summary, leftover, len(comments)),
+		Body:     renderReviewBody(doc.Summary, leftover, len(comments), skipped, omitted),
 		CommitID: commitID,
 		Comments: comments,
 	}
@@ -64,7 +64,7 @@ func renderInlineComment(f connectors.Finding) string {
 // renderReviewBody renders the top-level review body: header, the model's summary,
 // a note about how many inline comments were posted, and any findings that could
 // not be placed inline (file/line absent from the diff).
-func renderReviewBody(summary string, leftover []connectors.Finding, inlineCount int) string {
+func renderReviewBody(summary string, leftover []connectors.Finding, inlineCount int, skipped, omitted []string) string {
 	var b strings.Builder
 	b.WriteString("## 🤖 Automated code review\n\n")
 	b.WriteString(summary)
@@ -84,6 +84,12 @@ func renderReviewBody(summary string, leftover []connectors.Finding, inlineCount
 				b.WriteString("  " + f.Detail + "\n")
 			}
 		}
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(&b, "\nⓘ %d file(s) not reviewed (binary or too large): %s\n", len(skipped), strings.Join(skipped, ", "))
+	}
+	if len(omitted) > 0 {
+		fmt.Fprintf(&b, "\n⚠ %d file(s) omitted (diff too large for the review budget): %s\n", len(omitted), strings.Join(omitted, ", "))
 	}
 	return b.String()
 }
