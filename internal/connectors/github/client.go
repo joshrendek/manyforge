@@ -143,20 +143,6 @@ func (c *client) ChangedFiles(ctx context.Context, prNumber int) ([]connectors.C
 	return out, nil
 }
 
-// ChangedLines is retained until the service is switched to ChangedFiles (Task 5).
-// It delegates so there is a single fetch path.
-func (c *client) ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error) {
-	files, err := c.ChangedFiles(ctx, prNumber)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]map[int]bool, len(files))
-	for _, f := range files {
-		out[f.Path] = f.Commentable
-	}
-	return out, nil
-}
-
 // reviewMarker is a hidden HTML comment embedded in a review body so a retry can
 // recognise an already-posted review and avoid duplicating it. GitHub renders HTML
 // comments invisibly.

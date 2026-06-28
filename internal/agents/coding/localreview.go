@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,10 +28,10 @@ Set each finding's severity to exactly one of:
 - "warning": a likely problem or risky pattern that should be fixed (e.g. an unhandled error, a missing bound/validation, a resource leak).
 - "info": a minor but worthwhile maintainability suggestion (never pure style).
 
-Use the real file path and the line number in the current version of the file. Report each distinct issue once. If there are no genuine problems, return an empty findings array.`
+You are given the changed code as unified-diff hunks: each block is headed by "=== <path> ===", and every changed line shows its current-file line number in the left gutter with a +/space marker. Use that real file path and gutter line number in each finding. Report each distinct issue once. If there are no genuine problems, return an empty findings array.`
 
 // reviewSchemaLine instructs the model to emit only the findings JSON.
-const reviewSchemaLine = `Review the provided file(s) and output ONLY a single JSON object — no prose, no markdown fences — matching exactly this schema: {"summary": string, "findings": [{"file": string, "line": number|null, "severity": "info"|"warning"|"error", "title": string, "detail": string}]}`
+const reviewSchemaLine = `Review the provided diff hunks and output ONLY a single JSON object — no prose, no markdown fences — matching exactly this schema: {"summary": string, "findings": [{"file": string, "line": number|null, "severity": "info"|"warning"|"error", "title": string, "detail": string}]}`
 
 // isLocalProvider reports whether a provider runs on-host (model never leaves the
 // machine), in which case reviews go through the host-side direct-API path instead
@@ -54,40 +53,6 @@ var codeExt = map[string]bool{
 	".rs": true, ".java": true, ".rb": true, ".c": true, ".h": true, ".cc": true,
 	".cpp": true, ".cs": true, ".kt": true, ".swift": true, ".php": true, ".scala": true,
 	".sql": true, ".sh": true, ".tf": true, ".proto": true,
-}
-
-// readChangedFiles reads the given repo-relative paths from the checkout, skipping
-// unreadable/empty/oversized files and stopping at a total budget. Source files are
-// read first (the budget is small; spend it on code). Path-traversal entries
-// (absolute or escaping the checkout) are ignored.
-func readChangedFiles(checkout string, paths []string) map[string]string {
-	// Stable order, source files first.
-	ordered := append([]string(nil), paths...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		ci, cj := codeExt[strings.ToLower(filepath.Ext(ordered[i]))], codeExt[strings.ToLower(filepath.Ext(ordered[j]))]
-		if ci != cj {
-			return ci // code before non-code
-		}
-		return ordered[i] < ordered[j]
-	})
-	out := make(map[string]string, len(ordered))
-	total := 0
-	for _, p := range ordered {
-		clean := filepath.Clean(p)
-		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(checkout, clean))
-		if err != nil || len(b) == 0 || len(b) > localReviewMaxFileBytes {
-			continue
-		}
-		if total+len(b) > localReviewMaxTotalBytes {
-			break
-		}
-		out[clean] = string(b)
-		total += len(b)
-	}
-	return out
 }
 
 // assembleDiffPayload renders the changed files' hunks into the local-review
@@ -145,43 +110,32 @@ func isLoopbackHost(h string) bool {
 	return false
 }
 
-// localReview POSTs the changed files inline to a local OpenAI-compatible chat
+// localReview POSTs the rendered diff payload to a local OpenAI-compatible chat
 // endpoint (Ollama/vLLM) and parses the findings with ParseFindings. No
 // sandbox/opencode: small local models can't drive opencode's agent loop, and the
 // model is on-host so there is nothing to isolate. The model gets NO tools
-// (chat→JSON only), so prompt injection can at worst yield bogus advisory
-// findings. Returns (doc, promptTokens, completionTokens, err).
-func localReview(ctx context.Context, client *http.Client, cred AICredential, files map[string]string) (FindingsDoc, int64, int64, error) {
+// (chat→JSON only), so prompt injection can at worst yield bogus advisory findings.
+// Returns (doc, promptTokens, completionTokens, err).
+func localReview(ctx context.Context, client *http.Client, cred AICredential, payload string) (FindingsDoc, int64, int64, error) {
 	if !isLoopbackHost(cred.Host()) {
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review base URL must be loopback, got %q: %w", cred.Host(), errs.ErrValidation)
 	}
-	if len(files) == 0 {
-		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: no reviewable files for local review: %w", errs.ErrValidation)
+	if strings.TrimSpace(payload) == "" {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: no reviewable changes for local review: %w", errs.ErrValidation)
 	}
 
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	var user strings.Builder
-	user.WriteString("Files to review:\n")
-	for _, p := range paths {
-		fmt.Fprintf(&user, "\n=== %s ===\n%s\n", p, files[p])
-	}
-
-	payload, _ := json.Marshal(map[string]any{
+	reqBody, _ := json.Marshal(map[string]any{
 		"model": cred.Model,
 		"messages": []map[string]string{
 			{"role": "system", "content": reviewInstructions + "\n\n" + reviewSchemaLine},
-			{"role": "user", "content": user.String()},
+			{"role": "user", "content": "Diff hunks to review:\n" + payload},
 		},
 		"stream":  false,
 		"options": map[string]any{"temperature": 0, "num_ctx": localReviewNumCtx},
 	})
 
 	url := strings.TrimRight(cred.BaseURL, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: build local review request: %w", err)
 	}

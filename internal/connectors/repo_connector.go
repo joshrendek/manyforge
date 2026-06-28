@@ -10,12 +10,6 @@ type RepoConnector interface {
 	FetchPR(ctx context.Context, prNumber int) (PullRequest, error)
 	// CloneURL returns the https clone URL for the repo (host-side clone uses header auth).
 	CloneURL() string
-	// ChangedLines returns, per changed file path (new-version path), the set of
-	// new-side line numbers that are part of the PR diff and therefore valid
-	// targets for inline review comments. Files with no commentable lines (binary,
-	// pure deletions) still appear with an empty set so callers can scope a review
-	// to the changed file list.
-	ChangedLines(ctx context.Context, prNumber int) (map[string]map[int]bool, error)
 	// ChangedFiles returns the PR's changed files with patch text and commentable
 	// new-side lines, in one fetch — serving both the diff-based review payload and
 	// inline-comment placement. Files with no patch (binary/too-large) appear with an

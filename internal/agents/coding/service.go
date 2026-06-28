@@ -284,14 +284,16 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
 	}
 
-	// Fetch the PR diff's commentable (new-side) lines. Used to (a) scope the
-	// sandbox review to the changed files and (b) post findings as inline diff
-	// comments. Best-effort: on failure `changed` is empty and the review degrades
-	// to a single whole-repo summary comment (the pre-inline behavior).
-	changed, cerr := conn.ChangedLines(ctx, prNumber)
+	// Fetch the PR's changed files (patch text + commentable lines) once. Used to
+	// (a) render the diff-based review payload, (b) post findings as inline diff
+	// comments, and (c) scope the sandbox. Best-effort: on failure `files` is nil and
+	// the review degrades (cloud → whole-repo; local → "no reviewable changes").
+	files, cerr := conn.ChangedFiles(ctx, prNumber)
 	if cerr != nil {
-		changed = nil
+		files = nil
 	}
+	changed := commentableMap(files)
+	payload, skippedFiles, omittedFiles := assembleDiffPayload(files)
 	// Obtain the findings doc + token usage. Two paths by provider:
 	//   - local (Ollama/vLLM): review host-side via the direct-API path — small
 	//     local models can't drive opencode's agent loop, and the model is on-host
@@ -307,8 +309,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 			map[string]any{"head_sha": pr.HeadSHA, "model": cred.Model, "base_url": cred.BaseURL},
 			nil, ptr("executed"),
 		)
-		files := readChangedFiles(checkout, changedFilePaths(changed))
-		d, in, out, lerr := localReview(ctx, s.localClient(), cred, files)
+		d, in, out, lerr := localReview(ctx, s.localClient(), cred, payload)
 		tokensIn, tokensOut = clampInt32(in), clampInt32(out) // local = no cost
 		if lerr != nil {
 			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, lerr, tokensIn, tokensOut, 0)
@@ -376,7 +377,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	// DedupKey makes the post idempotent: a worker retry (e.g. a transient sandbox
 	// error, or a finalize failure) re-runs the whole job, but PostReview reuses the
 	// already-posted review instead of duplicating it (manyforge-303).
-	review := buildReview(doc, changed, pr.HeadSHA, nil, nil)
+	review := buildReview(doc, changed, pr.HeadSHA, skippedFiles, omittedFiles)
 	review.DedupKey = crID.String()
 	ref, err := conn.PostReview(ctx, prNumber, review)
 	if err != nil {

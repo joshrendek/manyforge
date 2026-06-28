@@ -70,29 +70,6 @@ func TestPostReview(t *testing.T) {
 	}
 }
 
-func TestChangedLines(t *testing.T) {
-	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.URL.Path, "/pulls/42/files") {
-			t.Errorf("unexpected path %s", r.URL.Path)
-		}
-		// One page, two files (fewer than 100 → no second page fetched).
-		_, _ = w.Write([]byte(`[
-			{"filename":"a.go","patch":"@@ -1,1 +1,2 @@\n ctx\n+added\n"},
-			{"filename":"bin.png","patch":""}
-		]`))
-	})
-	got, err := c.ChangedLines(t.Context(), 42)
-	if err != nil {
-		t.Fatalf("err %v", err)
-	}
-	if !got["a.go"][1] || !got["a.go"][2] {
-		t.Fatalf("a.go lines 1,2 expected commentable; got %v", got["a.go"])
-	}
-	if _, ok := got["bin.png"]; !ok || len(got["bin.png"]) != 0 {
-		t.Fatalf("bin.png should appear with no commentable lines; got %v", got["bin.png"])
-	}
-}
-
 func TestPostReviewWithInlineComments(t *testing.T) {
 	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

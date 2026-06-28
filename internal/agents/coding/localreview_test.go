@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,7 +26,8 @@ func TestLocalReview(t *testing.T) {
 
 	// httptest serves on 127.0.0.1 → passes the loopback gate.
 	cred := AICredential{BaseURL: srv.URL, Model: "qwen2.5-coder:14b", Provider: "ollama", APIKey: "ollama"}
-	doc, in, out, err := localReview(context.Background(), srv.Client(), cred, map[string]string{"service.go": "package x"})
+	payload := "\n=== service.go ===\n@@ 1-1 @@\n    1 + package x\n"
+	doc, in, out, err := localReview(context.Background(), srv.Client(), cred, payload)
 	if err != nil {
 		t.Fatalf("err %v", err)
 	}
@@ -42,20 +41,8 @@ func TestLocalReview(t *testing.T) {
 
 func TestLocalReview_RejectsNonLoopback(t *testing.T) {
 	cred := AICredential{BaseURL: "https://evil.example.com/v1", Model: "m", Provider: "ollama", APIKey: "k"}
-	if _, _, _, err := localReview(context.Background(), http.DefaultClient, cred, map[string]string{"a.go": "x"}); err == nil {
+	if _, _, _, err := localReview(context.Background(), http.DefaultClient, cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n"); err == nil {
 		t.Fatal("local review must reject a non-loopback base URL (SSRF guard)")
-	}
-}
-
-func TestReadChangedFiles(t *testing.T) {
-	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, "cmd"), 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "cmd", "main.go"), []byte("package main"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "empty.go"), []byte(""), 0o644)
-	// Includes path-traversal + absolute + missing entries that must be skipped.
-	files := readChangedFiles(dir, []string{"cmd/main.go", "empty.go", "../escape.go", "/etc/passwd", "missing.go"})
-	if len(files) != 1 || files["cmd/main.go"] != "package main" {
-		t.Fatalf("files=%v", files)
 	}
 }
 
