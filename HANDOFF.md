@@ -1,40 +1,70 @@
-# Handoff — manyforge @ master — 2026-06-20 ~21:00 UTC
+# Handoff — manyforge @ feat/code-review-ui — 2026-06-28 ~13:30 UTC
 
 ## ⚠️ Before you clear
-- **Uncommitted:** none of consequence. Untracked noise only (`.pair/`, `*.png` screenshots, scattered `CLAUDE.md` files) — pre-existing, ignore.
-- **Unpushed:** none. `master == origin/master == 2ddd75b`.
-- **Still running:** DB **:55432** (ssh tunnel, dev DB **@ migration 71**) · Go backend `manyforge` **:8081** (air) · Angular `ng serve` **:4300**. (Bring the sandbox feature up: build the two images — see below — before triggering a real review.)
+- **Uncommitted:** only this `HANDOFF.md` (rolling note) + pre-existing untracked files
+  (`.beads/CLAUDE.md`, `.pair/`, screenshots, various `CLAUDE.md`). None is code.
+- **Unpushed:** none — `feat/code-review-ui` is up to date with origin (PR #6 updated).
+- **Still running (survive this session):** air dev server on **:8081** (`/tmp/mf-air.log`);
+  **Ollama** on **:11434** (qwen2.5-coder 7b/14b/32b, gemma3:12b); Docker (Colima):
+  `mf-dev` + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt this session.
 
 ## State (≤3 sentences)
-Shipped **Spec 007 slice 1 — read-only code-review agent (opencode)**: a GitHub `repo_connector` (vault-sealed PAT), and a `CodeReviewService` that clones a PR head **on the host**, runs **opencode read-only in an ephemeral credential-free Docker sandbox** (only the LLM key inside; egress forced through an allowlisting CONNECT proxy on an `--internal` docker network), validates structured findings, and posts **one PR review automatically** (advisory → ungated). Built subagent-driven over 16 TDD tasks (Task 11 skipped by design — no `agent_run` row; `code_review` is its own lifecycle envelope), all gates green (`make test`/`make lint`/contract/`sec-test` + sandbox-isolation & e2e integration), merged to master and pushed. bd **`zcq` closed**; 3 follow-ups filed.
+**Diff-based code review (`manyforge-fqo` #1) is COMPLETE and pushed** on `feat/code-review-ui`
+(commits `268fe0d..5c43baf`, PR #6): the agent now sends annotated diff **hunks** (not whole files)
+on both the local host-side and cloud opencode paths, from one shared renderer
+(`github.ParseHunks`/`RenderAnnotatedHunks`); `ChangedLines`→`ChangedFiles` retains the patch;
+64KB budget; skipped(binary)/omitted(over-budget) files surfaced in the review body + audit trail.
+Built via subagent-driven development (6 tasks, each spec+quality reviewed); final opus
+whole-branch review = **SHIP**; full gate green incl. coding integration; sandbox image rebuilt.
 
 ## Resume here
-No half-done work on 007 slice 1. The highest-value next step is **validating the REAL opencode invocation end-to-end** (bd follow-up): automated tests use a busybox **stub** sandbox image; the real opencode contract (its `opencode.json` permission keys, `{env:LLM_MODEL}` interpolation, the v0.0.55 pinned binary) is **unverified**. Run `specs/007-coding-review-agents/quickstart.md` against a throwaway repo + real GitHub PAT + real LLM key, then fix `deploy/sandbox/{Dockerfile,opencode.json,entrypoint.sh}` + the service `Env` mapping to opencode's actual contract. Otherwise pick from `bd ready` (epic `7ml` next slices: PR authoring, GitLab, webhook auto-trigger, k8s sandbox backend).
+**Optional live dogfood (the one thing NOT done):** trigger Local ReviewBot `6aeb7a46`
+(ollama, qwen2.5-coder:14b) on **PR #6** to see real, in-diff inline comments from the new
+hunk payload. It's outward-facing (posts a real review to GitHub) so it was left for an explicit
+go-ahead. After that, the next `manyforge-fqo` items are #2 (redact LLM key from review output)
+and #3 (provider generality beyond OpenRouter in `entrypoint.sh`).
 
 ## Run & verify
-- **Go** (`export PATH="$HOME/go/bin:$PATH"`): `make test` · `make lint` · `go test -tags contract ./cmd/...` · `make sec-test` · integration `go test -tags integration -p 1 ./internal/<pkg>/...` (Docker). sqlc = the **v1.27.0 bottle** `/opt/homebrew/Cellar/sqlc/1.27.0/bin/sqlc generate` (global v1.31.1 re-churns).
-- **Sandbox images** (needed for a real review, not for tests): `docker build -f deploy/egress-proxy/Dockerfile -t manyforge/egress-proxy:dev .` and `docker build -f deploy/sandbox/Dockerfile -t manyforge/opencode-sandbox:dev .`
-- **Dev DB** DSN `postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable` (migration **71**).
+- Tests (all green as of this handoff): `go test ./internal/agents/coding/... ./internal/connectors/...`;
+  `go vet ./...`; `make lint` (golangci 0); `make sec-test`; integration:
+  `go test -tags integration -p 1 ./internal/agents/coding/`; drift: `go test -tags contract ./cmd/...`.
+- Rebuild sandbox image (after any `entrypoint.sh` change):
+  `DOCKER_BUILDKIT=0 docker build --build-arg TARGETARCH=arm64 -f deploy/sandbox/Dockerfile -t manyforge/opencode-sandbox:dev .`
+- SDD ledger for this effort: `.superpowers/sdd/progress.md` (prior slice-2 archived alongside).
 
 ## Gotchas (don't relearn these)
-- **Colima sandbox mounts:** only `/Users/...` is mirrored into the Docker VM. `CodeReviewService.WorkRoot` defaults to `$HOME/.cache/manyforge/sandbox` (NOT `/tmp`) for exactly this reason; integration tests use `$HOME/.cache/...` temp dirs, not `t.TempDir()` (=/tmp).
-- **Egress allowlist is BOOT-STATIC** (`MANYFORGE_SANDBOX_EGRESS_ALLOW`, default `api.anthropic.com,openrouter.ai,api.openai.com`). Per-run `spec.EgressAllow` is currently ignored → a review agent on a *custom* provider host is **silently egress-blocked**. Tracked as a bd bug follow-up; fix before supporting custom providers.
-- **Sandbox isolation test** (`internal/agents/coding/sandbox/`, `-tags integration`) builds the proxy+stub images itself and takes ~50s; it's the security gate (no-ambient-creds / read-only `/work` / egress-blocked / `/out` writable) — don't weaken its assertions.
-- **Host-side clone is hardened** (`internal/agents/coding/clone.go`): token via `-c http.extraHeader` with `http.followRedirects=false` + `credential.helper=` (no redirect token-leak), a `netsafe.IsBlocked` pre-clone DNS check (SSRF), and a minimal `Cmd.Env` (no inherited git config/helpers). Pinned by `TestCloneHardeningPinned`. Don't regress these.
-- **Subagent worktree footgun:** one implementer subagent committed into a `.claude/worktrees/agent-*` branch instead of the working branch; caught via the post-task `git worktree list` check and `--ff-only` merged back. Tell implementers to commit on the current branch and verify after each task.
-- **gopls "undefined dbgen method"** after sqlc regen is stale tooling — `go build` is truth.
+- **gopls diagnostics lie after edits** — every task this session threw phantom
+  "undefined ParseHunks / does not implement / dbgen.* undefined" diagnostics that were STALE.
+  `go build`/`go test`/`go vet` is the only truth; verify there, ignore the editor squiggles.
+- **`make lint`'s tail can hide the golangci result** — run `golangci-lint run ./...` directly to confirm.
+- **The 3 review-prompt copies must stay in sync:** `internal/agents/coding/localreview.go`
+  (`reviewInstructions`/`reviewSchemaLine`), `deploy/sandbox/entrypoint.sh`, `tools/local-model-eval/run.sh`.
+- **`CreateCodeReviewAgentRun` requires a REAL agent** (INSERT…SELECT FROM agent → no row for a
+  foreign/non-existent agent). Integration tests must seed via `seed.agentID`, not `uuid.New()`
+  (fixed a pre-existing `ErrNoRows` here in `f821a9a`).
 
 ## Decisions & rationale
-- **Direct orchestration, NOT the LLM `Engine.Run` loop** (user-approved): opencode is the only reviewing LLM; wrapping it in a second manyforge LLM is redundant. `code_review.status` is the lifecycle; `agent_run_id` is a nullable forward-seam (no `agent_run` row this slice).
-- **Review posting is ungated** (advisory; changes no code) — pinned; the autonomy gate is about *mutating the codebase*, not external-vs-internal.
-- **Sandbox holds no repo credential**: ManyForge clones on the host; the sandbox gets only the LLM key + egress to the LLM host. Makes the isolation pin trivially true.
-- **Permissions reuse existing keys**: repo-connector create → `connectors.manage`; code-review trigger/get → `agents.run` (no new perm/migration this slice).
+- **Annotated hunks, not raw diff:** each changed line is rendered with its real new-side gutter
+  number so the model's `line` citations land in-diff (become inline comments). Render gutter
+  numbers and `commentableLines` both derive from one `ParseHunks` → they always agree.
+- **Cloud path = diff + may read files:** opencode gets `/out/review_diff.txt` and is told it MAY
+  open full files for context (keeps its agentic strength); local path POSTs the hunks directly.
+- **Skip patchless files; cap+truncate over-budget; single call** (multi-call chunking deferred to
+  `manyforge-206`). Nothing dropped silently (body note + `agent.coding.review.files_dropped` audit).
 
 ## Next steps
-1. `bd ready` / the 3 new follow-ups: **validate real opencode e2e** (P2), **fix boot-static egress vs per-run allow** (P2 bug), **slice-1 polish** (P3). 2. Then next 007 slice (PR authoring on the proven sandbox, or GitLab / webhook trigger). 3. SDD scratch + reviews are under `.superpowers/sdd/` (git-ignored).
+1. (Optional) Live-verify on PR #6 with ReviewBot `6aeb7a46`.
+2. `manyforge-fqo` #2: redact the LLM key from review output.
+3. `manyforge-fqo` #3: generalize `entrypoint.sh` provider mapping beyond OpenRouter.
+4. `manyforge-206`: gemini-2.5-pro 504 on large diffs (now smaller via hunks; chunk if still needed).
+5. Merge PR #6 when ready (user's call; squash recommended).
 
 ## Pointers
-- **Spec/plan:** `specs/007-coding-review-agents/{spec.md,quickstart.md,contracts/openapi.yaml}` · `docs/superpowers/plans/2026-06-20-007-code-review-agent.md`.
-- **bd:** `zcq` closed; epic `7ml`; 3 open follow-ups (egress bug, opencode-e2e, polish).
-- **Key files:** `internal/connectors/{repo_connector.go,repo_service.go,github/}` · `internal/agents/coding/{service.go,clone.go,findings.go,credresolver.go,handler.go,sandbox/}` · `cmd/mf-egress-proxy/` · `deploy/{egress-proxy,sandbox,sandbox-stub}/` · migrations `0070`/`0071` · pins `internal/security_regression/coding_review_pins_test.go` · drift `cmd/manyforge/drift_007_test.go`.
-- Resume: `/handoff resume`.
+- **Spec/plan:** `docs/superpowers/specs/2026-06-28-diff-based-code-review-design.md`,
+  `docs/superpowers/plans/2026-06-28-diff-based-code-review.md`.
+- **Key files:** `internal/connectors/github/diff.go` (parser+renderer), `internal/connectors/{repo_connector.go,github/client.go}`
+  (`ChangedFiles`), `internal/agents/coding/{localreview.go,service.go,review.go}`,
+  `deploy/sandbox/entrypoint.sh`.
+- **IDs:** Local ReviewBot agent `6aeb7a46` (ollama, qwen2.5-coder:14b); cloud ReviewBot `6c252395`
+  (z-ai/glm-5.2); PR #6 (combined slice-2 + diff-based review) → master.
+- **bd:** `bd show manyforge-fqo` (item #1 done; #2/#3 open).
