@@ -665,3 +665,62 @@ func TestRLSIsolation(t *testing.T) {
 		}
 	})
 }
+
+// recordingRunner captures the SandboxSpec.Env it was invoked with and writes a
+// valid (empty-findings) review.json so the run succeeds.
+type recordingRunner struct{ env map[string]string }
+
+func (r *recordingRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	r.env = spec.Env
+	data, _ := json.Marshal(map[string]any{"summary": "ok", "findings": []any{}})
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644)
+	return sandbox.SandboxResult{ExitCode: 0}, nil
+}
+
+// TestCodeReviewFallbackModelOnRetry: a fresh attempt uses the configured model; a
+// retry (Attempts>=2) drives the sandbox with the provider fallback (manyforge-206).
+func TestCodeReviewFallbackModelOnRetry(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc123","ref":"f"},"base":{"ref":"main"}}`)
+	localSrv, _ := startGitHubStub(t, prJSON)
+	fakeCred := &FakeCredResolver{Cred: AICredential{
+		APIKey: "k", BaseURL: "https://openrouter.ai/api/v1", Model: "google/gemini-2.5-pro", Provider: "openrouter",
+	}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+
+	run := func(attempts int) string {
+		rr := &recordingRunner{}
+		// Build service with openrouter.ai in the egress allowlist.
+		svc := &CodeReviewService{
+			DB:       tdb.App,
+			Repos:    env.Repos,
+			Sandbox:  rr,
+			Creds:    fakeCred,
+			Image:    "opencode:stub",
+			WorkRoot: t.TempDir(),
+			Timeout:  30 * time.Second,
+			Clone:    fakeClone,
+			EgressAllow: netsafe.ParseHostAllowlist("openrouter.ai"),
+		}
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: attempts,
+		}
+		if err := svc.runJob(ctx, claimed); err != nil {
+			t.Fatalf("runJob(attempts=%d): %v", attempts, err)
+		}
+		return rr.env["LLM_MODEL"]
+	}
+
+	if got := run(1); got != "google/gemini-2.5-pro" {
+		t.Fatalf("attempts=1 should use the configured model, got %q", got)
+	}
+	if got := run(2); got != "google/gemini-2.5-flash" {
+		t.Fatalf("attempts=2 should use the fallback model, got %q", got)
+	}
+}

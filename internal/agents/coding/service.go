@@ -230,6 +230,18 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	principalID := job.PrincipalID
 	businessID := job.BusinessID
 
+	// Graceful degradation (manyforge-206): on a retry, switch to a faster
+	// provider-compatible fallback model so a slow model that 504'd (OpenRouter
+	// upstream idle timeout) doesn't just fail again on every attempt.
+	if m := effectiveReviewModel(cred.Provider, cred.Model, job.Attempts); m != cred.Model {
+		_ = s.auditStep(ctx, principalID, businessID, crID,
+			"agent.coding.review.fallback_model",
+			map[string]any{"configured": cred.Model, "fallback": m, "attempt": job.Attempts},
+			nil, ptr("executed"),
+		)
+		cred.Model = m
+	}
+
 	// Fetch PR metadata (host-side, uses the credential).
 	pr, err := conn.FetchPR(ctx, prNumber)
 	if err != nil {
