@@ -202,7 +202,7 @@ func (s *CodeReviewService) Enqueue(
 // It re-resolves the connector and credential under job.PrincipalID/BusinessID —
 // NO secrets come from the queue row itself. Called by the background worker
 // (Task 5) after claiming a pending row via the claim_code_reviews function.
-func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error {
+func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog *Progress) error {
 	// Re-resolve connector under the owning principal (no secrets in the queue row).
 	rc, err := s.Repos.Resolve(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID)
 	if err != nil {
@@ -241,6 +241,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		)
 		cred.Model = m
 	}
+
+	// Live progress: scrub the resolved secrets from any streamed preview, and mark
+	// the first phase. prog is nil for direct (non-worker) callers — all methods no-op.
+	prog.SetSecrets(cred.APIKey, rc.Credential.APIToken)
+	prog.SetPhase("preparing")
 
 	// Fetch PR metadata (host-side, uses the credential).
 	pr, err := conn.FetchPR(ctx, prNumber)
@@ -324,6 +329,8 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	var tokensIn, tokensOut int32
 	var costCents int64
 
+	prog.SetPhase("reviewing")
+
 	if isLocalProvider(cred.Provider) {
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.localreview.invoked",
@@ -405,6 +412,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	redactDoc(&doc, cred.APIKey, rc.Credential.APIToken)
 	review := buildReview(doc, changed, pr.HeadSHA, skippedFiles, omittedFiles)
 	review.DedupKey = crID.String()
+	prog.SetPhase("posting")
 	ref, err := conn.PostReview(ctx, prNumber, review)
 	if err != nil {
 		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)

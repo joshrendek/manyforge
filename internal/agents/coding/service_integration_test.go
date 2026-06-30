@@ -346,7 +346,7 @@ func TestCodeReviewTrigger(t *testing.T) {
 			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
 			AgentID: agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
 		}
-		if err := svc.runJob(ctx, claimed); err != nil {
+		if err := svc.runJob(ctx, claimed, nil); err != nil {
 			t.Fatalf("runJob: %v", err)
 		}
 
@@ -383,7 +383,7 @@ func TestCodeReviewTrigger(t *testing.T) {
 			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
 			AgentID: agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
 		}
-		err = svc.runJob(ctx, claimed)
+		err = svc.runJob(ctx, claimed, nil)
 		if err == nil {
 			t.Error("runJob with malformed JSON: want error, got nil")
 		}
@@ -480,7 +480,7 @@ func TestCodeReviewFailureRecordsUsage(t *testing.T) {
 		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
 		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
 	}
-	if err := svc.runJob(ctx, claimed); err == nil {
+	if err := svc.runJob(ctx, claimed, nil); err == nil {
 		t.Fatal("want error (malformed findings), got nil")
 	}
 
@@ -584,7 +584,7 @@ func TestCodeReviewWorkerCrashRecovery(t *testing.T) {
 	}
 
 	// Run the job directly via runJob.
-	if err := svc.runJob(ctx, *found); err != nil {
+	if err := svc.runJob(ctx, *found, nil); err != nil {
 		t.Fatalf("runJob: %v", err)
 	}
 
@@ -711,7 +711,7 @@ func TestCodeReviewFallbackModelOnRetry(t *testing.T) {
 			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
 			AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: attempts,
 		}
-		if err := svc.runJob(ctx, claimed); err != nil {
+		if err := svc.runJob(ctx, claimed, nil); err != nil {
 			t.Fatalf("runJob(attempts=%d): %v", attempts, err)
 		}
 		return rr.env["LLM_MODEL"]

@@ -33,6 +33,11 @@ type systemDB interface {
 	RequeueCodeReview(ctx context.Context, id uuid.UUID, delaySeconds int, lastError string) error
 	// FailCodeReview marks a row terminally failed (max attempts exhausted).
 	FailCodeReview(ctx context.Context, id uuid.UUID, lastError string) error
+	// RenewLease renews a running row's lease AND persists its progress snapshot via
+	// the renew_code_review_lease SECURITY DEFINER function (migrations/0076). The
+	// status='running' guard makes a renew after terminal a harmless no-op; a nil
+	// progress leaves the column unchanged-as-NULL.
+	RenewLease(ctx context.Context, id uuid.UUID, leaseSeconds int, progress []byte) error
 }
 
 // CodeReviewWorker polls the code_review queue and runs pending jobs.
@@ -58,11 +63,15 @@ type CodeReviewWorker struct {
 	MaxAttempts int
 	// Batch is the number of rows claimed per tick (default 2).
 	Batch int
+	// HeartbeatInterval is how often a running job's lease is renewed and its progress
+	// persisted (default 5s). Must be well under LeaseSeconds so a live job is never
+	// re-claimed.
+	HeartbeatInterval time.Duration
 
 	// runJobSeam is an injectable function seam used by unit tests to override
 	// the real w.Svc.runJob without requiring a live service or DB. On the real
 	// path it is nil and defaults to w.Svc.runJob at first use.
-	runJobSeam func(ctx context.Context, job ClaimedReview) error
+	runJobSeam func(ctx context.Context, job ClaimedReview, prog *Progress) error
 }
 
 // applyDefaults fills zero/unset fields with package defaults.
@@ -79,13 +88,16 @@ func (w *CodeReviewWorker) applyDefaults() {
 	if w.Batch <= 0 {
 		w.Batch = 2
 	}
+	if w.HeartbeatInterval <= 0 {
+		w.HeartbeatInterval = 5 * time.Second
+	}
 	if w.Logger == nil {
 		w.Logger = slog.Default()
 	}
 }
 
 // effectiveRunJob returns the runJobSeam if set, otherwise w.Svc.runJob.
-func (w *CodeReviewWorker) effectiveRunJob() func(ctx context.Context, job ClaimedReview) error {
+func (w *CodeReviewWorker) effectiveRunJob() func(ctx context.Context, job ClaimedReview, prog *Progress) error {
 	if w.runJobSeam != nil {
 		return w.runJobSeam
 	}
@@ -118,7 +130,7 @@ func (w *CodeReviewWorker) Run(ctx context.Context) {
 }
 
 // tick claims one batch and processes each row.
-func (w *CodeReviewWorker) tick(ctx context.Context, runJob func(context.Context, ClaimedReview) error) {
+func (w *CodeReviewWorker) tick(ctx context.Context, runJob func(context.Context, ClaimedReview, *Progress) error) {
 	jobs, err := w.DB.ClaimCodeReviews(ctx, w.LeaseSeconds, w.Batch)
 	if err != nil {
 		w.Logger.ErrorContext(ctx, "code review claim failed", "err", err)
@@ -138,9 +150,30 @@ func (w *CodeReviewWorker) tick(ctx context.Context, runJob func(context.Context
 func (w *CodeReviewWorker) processOne(
 	ctx context.Context,
 	job ClaimedReview,
-	runJob func(context.Context, ClaimedReview) error,
+	runJob func(context.Context, ClaimedReview, *Progress) error,
 ) {
 	var jobErr error
+
+	// Heartbeat: renew the lease + persist progress every HeartbeatInterval while
+	// runJob is in flight, so a job exceeding the base lease is never re-claimed.
+	prog := &Progress{}
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(w.HeartbeatInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if rerr := w.DB.RenewLease(ctx, job.ID, w.LeaseSeconds, prog.Snapshot()); rerr != nil {
+					w.Logger.WarnContext(ctx, "code review lease renew failed", "id", job.ID, "err", rerr)
+				}
+			}
+		}
+	}()
 
 	func() {
 		defer func() {
@@ -150,8 +183,9 @@ func (w *CodeReviewWorker) processOne(
 					"id", job.ID, "attempts", job.Attempts, "panic", r)
 			}
 		}()
-		jobErr = runJob(ctx, job)
+		jobErr = runJob(ctx, job, prog)
 	}()
+	close(stop)
 
 	if jobErr == nil {
 		w.Logger.InfoContext(ctx, "code review job succeeded",
@@ -236,6 +270,16 @@ func (a *AppDBAdapter) RequeueCodeReview(ctx context.Context, id uuid.UUID, dela
 func (a *AppDBAdapter) FailCodeReview(ctx context.Context, id uuid.UUID, lastError string) error {
 	return a.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, "SELECT fail_code_review($1, $2)", id, lastError)
+		return err
+	})
+}
+
+// RenewLease renews a running row's lease and persists its progress snapshot via the
+// renew_code_review_lease SECURITY DEFINER function (RLS bypassed by the function
+// owner). A nil progress is encoded as SQL NULL (jsonb), leaving the column unchanged.
+func (a *AppDBAdapter) RenewLease(ctx context.Context, id uuid.UUID, leaseSeconds int, progress []byte) error {
+	return a.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "SELECT renew_code_review_lease($1, $2, $3)", id, leaseSeconds, progress)
 		return err
 	})
 }
