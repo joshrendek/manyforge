@@ -211,6 +211,32 @@ func TestMF007PIN9(t *testing.T) {
 	}
 }
 
+// MF007-PIN-12 (manyforge-206 follow-on): the lease-renewal heartbeat persists
+// progress + renews the lease principal-less, so it MUST be a SECURITY DEFINER
+// function with a pinned search_path (migrations/0076), exactly like the 0073 claim
+// functions. If 0076 loses SECURITY DEFINER or the search_path pin, the heartbeat
+// either no-ops under RLS in prod (lease never renewed → long jobs re-claimed) or
+// becomes search_path-hijackable — this test makes either regression a CI failure.
+func TestMF007PIN12(t *testing.T) {
+	matches, err := filepath.Glob("../../migrations/0076_*.up.sql")
+	if err != nil {
+		t.Fatalf("glob 0076 migration: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("migrations/0076_*.up.sql not found — the lease-renewal DEFINER migration is missing (MF007-PIN-12)")
+	}
+	src := mustRead(t, matches[0])
+	if !strings.Contains(src, "renew_code_review_lease") {
+		t.Fatalf("%s missing renew_code_review_lease — the heartbeat function (MF007-PIN-12)", matches[0])
+	}
+	if !strings.Contains(src, "SECURITY DEFINER") {
+		t.Fatalf("%s missing SECURITY DEFINER — the principal-less renew would be RLS-blocked in prod (MF007-PIN-12)", matches[0])
+	}
+	if !strings.Contains(src, "SET search_path") {
+		t.Fatalf("%s missing SET search_path — SECURITY DEFINER functions must pin search_path against hijack (MF007-PIN-12)", matches[0])
+	}
+}
+
 // MF007-PIN-7: the sandbox runs with --cap-drop ALL (no CAP_DAC_OVERRIDE), so the
 // container — a different uid than the host server — can only read the /work mount
 // and write the /out mount if the per-run host dirs are world-accessible. service.go
