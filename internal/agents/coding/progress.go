@@ -75,7 +75,9 @@ func (p *Progress) Snapshot() []byte {
 	if p.phase == "" {
 		return nil
 	}
-	preview := redactSecrets(tailBytes(p.rawPartial, previewMaxBytes), p.secrets...)
+	// Redact the FULL buffer BEFORE tail-capping: a secret straddling the cut would
+	// otherwise leave an unredacted fragment in the tail. Still once per snapshot.
+	preview := tailBytes(redactSecrets(p.rawPartial, p.secrets...), previewMaxBytes)
 	b, err := json.Marshal(progressSnapshot{Phase: p.phase, Tokens: p.tokens, Preview: preview})
 	if err != nil {
 		return nil
