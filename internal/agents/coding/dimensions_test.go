@@ -126,10 +126,39 @@ func TestDedupeFindings(t *testing.T) {
 	}
 }
 
-func TestDefaultDimensionsSane(t *testing.T) {
-	dims := defaultDimensions()
+// TestDefaultPanel pins the ZERO-CONFIG default (spec 008): a business that has configured
+// no dimensions gets a SINGLE general lane — the default reviewInstructions, all files, no
+// severity floor — so a default review is byte-for-byte the pre-panel single-agent review
+// (no cost/latency regression). It must NOT be the multi-specialist dimensionCatalog.
+func TestDefaultPanel(t *testing.T) {
+	panel := defaultPanel()
+	if len(panel) != 1 {
+		t.Fatalf("zero-config default must be ONE lane (no cost regression), got %d: %v", len(panel), keysOf(panel))
+	}
+	d := panel[0]
+	if d.Prompt != reviewInstructions {
+		t.Fatal("default lane must use reviewInstructions verbatim so behavior is unchanged")
+	}
+	if len(d.ScopeGlobs) != 0 {
+		t.Fatalf("default lane must review ALL files (no scope), got %v", d.ScopeGlobs)
+	}
+	if !d.Enabled {
+		t.Fatal("default lane must be enabled")
+	}
+	if severityRank(d.MinSeverity) != severityRank("info") {
+		t.Fatalf("default lane must have no severity floor (info) so every finding posts, got %q", d.MinSeverity)
+	}
+	// Catch-all: the default lane must be active for ANY change set.
+	active, _ := activeDimensions(panel, []string{"anything/at/all.xyz"})
+	if len(active) != 1 {
+		t.Fatal("default lane must be active for any changed files")
+	}
+}
+
+func TestDimensionCatalogSane(t *testing.T) {
+	dims := dimensionCatalog()
 	if len(dims) < 4 {
-		t.Fatalf("expected a real default panel, got %d", len(dims))
+		t.Fatalf("expected a real specialist catalog, got %d", len(dims))
 	}
 	seen := map[string]bool{}
 	for _, d := range dims {
@@ -143,7 +172,7 @@ func TestDefaultDimensionsSane(t *testing.T) {
 	}
 	for _, must := range []string{"security", "correctness"} {
 		if !seen[must] {
-			t.Fatalf("default panel must include %q", must)
+			t.Fatalf("dimension catalog must include %q", must)
 		}
 	}
 }
