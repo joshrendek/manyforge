@@ -245,8 +245,11 @@ func reviewResponseFormat() map[string]any {
 // tolerates). Plain output is non-deterministic and occasionally malformed (unescaped
 // quotes from an embedded code snippet), so plain generation is retried in-line a few
 // times (localReviewMaxPlainAttempts) before failing — far cheaper than a worker requeue.
+// prompt is the review instructions used as the system message — a dimension's prompt in
+// the spec-008 panel, or the default reviewInstructions for a single-lane review;
+// reviewSchemaLine is appended so the JSON-only output contract holds for any prompt.
 // Returns (doc, promptTokens, completionTokens, err). prog may be nil (no-op).
-func localReview(ctx context.Context, client *http.Client, cred AICredential, payload string, prog *Progress) (FindingsDoc, int64, int64, error) {
+func localReview(ctx context.Context, client *http.Client, cred AICredential, payload string, prompt string, prog *Progress) (FindingsDoc, int64, int64, error) {
 	if localBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL) {
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review base URL host %q is not an allowed local/private address: %w", cred.Host(), errs.ErrValidation)
 	}
@@ -256,7 +259,7 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 
 	// Attempt 1 constrains with json_schema (Ollama needs it). If it yields parseable
 	// findings we're done; if it's empty (LM Studio) or unparseable, fall through to plain.
-	buf, promptTokens, completionTokens, chunkCount, err := streamLocalReview(ctx, client, cred, payload, true, 0, prog)
+	buf, promptTokens, completionTokens, chunkCount, err := streamLocalReview(ctx, client, cred, payload, prompt, true, 0, prog)
 	if err != nil {
 		return FindingsDoc{}, promptTokens, completionTokens, err
 	}
@@ -278,7 +281,7 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 			slog.Default().InfoContext(ctx, "local review: retrying plain generation after unparseable output",
 				"model", cred.Model, "attempt", attempt+1, "err", lastErr)
 		}
-		buf, promptTokens, completionTokens, chunkCount, err = streamLocalReview(ctx, client, cred, payload, false, temperature, prog)
+		buf, promptTokens, completionTokens, chunkCount, err = streamLocalReview(ctx, client, cred, payload, prompt, false, temperature, prog)
 		if err != nil {
 			return FindingsDoc{}, promptTokens, completionOrChunks(completionTokens, chunkCount), err
 		}
@@ -318,13 +321,14 @@ func streamPreview(content, reasoning string) string {
 // accumulated content plus token usage and the delta-chunk count. When useSchema is
 // true it sends response_format=json_schema (manyforge-6ax); false omits it (the
 // empty-stream fallback path). temperature is passed through so the caller can vary
-// retries. It never parses — the caller decides whether to retry and then parses the
+// retries. prompt is the review instructions placed in the system message (reviewSchemaLine
+// is appended). It never parses — the caller decides whether to retry and then parses the
 // returned buffer.
-func streamLocalReview(ctx context.Context, client *http.Client, cred AICredential, payload string, useSchema bool, temperature float64, prog *Progress) (string, int64, int64, int, error) {
+func streamLocalReview(ctx context.Context, client *http.Client, cred AICredential, payload string, prompt string, useSchema bool, temperature float64, prog *Progress) (string, int64, int64, int, error) {
 	body := map[string]any{
 		"model": cred.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": reviewInstructions + "\n\n" + reviewSchemaLine},
+			{"role": "system", "content": prompt + "\n\n" + reviewSchemaLine},
 			{"role": "user", "content": "Diff hunks to review:\n" + payload},
 		},
 		"stream": true,
