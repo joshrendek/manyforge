@@ -328,13 +328,20 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		files = nil
 	}
 	changed := commentableMap(files)
-	payload, skippedFiles, omittedFiles := assembleDiffPayload(files)
-	// No silent caps: dropped files are surfaced in the review body AND recorded on
-	// the audit trail (binary/too-large → skipped; over-budget → omitted).
-	if len(skippedFiles) > 0 || len(omittedFiles) > 0 {
+	// On-host local providers (Ollama/vLLM) get a tighter diff budget: small models can't
+	// prompt-eval a large diff in reasonable time. Cloud/opencode (capable models) uses the
+	// larger default. Prose/planning docs are filtered out in either case (see assembleDiffPayload).
+	maxTotal := reviewMaxTotalBytes
+	if isLocalProvider(cred.Provider) {
+		maxTotal = localProviderMaxTotalBytes
+	}
+	payload, skippedFiles, omittedFiles, filteredFiles := assembleDiffPayload(files, maxTotal)
+	// No silent caps: dropped files are surfaced in the review body AND recorded on the audit
+	// trail (binary/too-large → skipped; over-budget → omitted; prose/plan docs → filtered).
+	if len(skippedFiles) > 0 || len(omittedFiles) > 0 || len(filteredFiles) > 0 {
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.review.files_dropped",
-			map[string]any{"skipped": skippedFiles, "omitted": omittedFiles},
+			map[string]any{"skipped": skippedFiles, "omitted": omittedFiles, "filtered_docs": filteredFiles},
 			nil, ptr("executed"),
 		)
 	}

@@ -179,23 +179,26 @@ func TestIsLocalProvider(t *testing.T) {
 
 func TestAssembleDiffPayload(t *testing.T) {
 	files := []connectors.ChangedFile{
-		{Path: "doc.md", Patch: "@@ -1,0 +1,1 @@\n+hello\n"},     // non-code → sorts last
-		{Path: "a.go", Patch: "@@ -1,1 +1,2 @@\n ctx\n+added\n"}, // code → first
-		{Path: "bin.png", Patch: ""},                             // no patch → skipped
+		{Path: "config.yaml", Patch: "@@ -1,0 +1,1 @@\n+key: v\n"}, // non-code but reviewable → sorts after code
+		{Path: "a.go", Patch: "@@ -1,1 +1,2 @@\n ctx\n+added\n"},   // code → first
+		{Path: "bin.png", Patch: ""},                              // no patch → skipped
 	}
-	payload, skipped, omitted := assembleDiffPayload(files)
+	payload, skipped, omitted, filtered := assembleDiffPayload(files, reviewMaxTotalBytes)
 	if len(skipped) != 1 || skipped[0] != "bin.png" {
 		t.Fatalf("skipped=%v, want [bin.png]", skipped)
 	}
 	if len(omitted) != 0 {
 		t.Fatalf("omitted=%v, want none", omitted)
 	}
-	ia, id := strings.Index(payload, "=== a.go ==="), strings.Index(payload, "=== doc.md ===")
-	if ia < 0 || id < 0 {
+	if len(filtered) != 0 {
+		t.Fatalf("filtered=%v, want none (no docs in this set)", filtered)
+	}
+	ia, ic := strings.Index(payload, "=== a.go ==="), strings.Index(payload, "=== config.yaml ===")
+	if ia < 0 || ic < 0 {
 		t.Fatalf("payload missing a file header:\n%s", payload)
 	}
-	if ia > id {
-		t.Fatalf("code file must come before non-code; a.go@%d doc.md@%d", ia, id)
+	if ia > ic {
+		t.Fatalf("code file must come before non-code; a.go@%d config.yaml@%d", ia, ic)
 	}
 	if !strings.Contains(payload, "added") {
 		t.Fatalf("payload missing hunk content:\n%s", payload)
@@ -203,10 +206,50 @@ func TestAssembleDiffPayload(t *testing.T) {
 }
 
 func TestAssembleDiffPayload_OmitsOverBudget(t *testing.T) {
-	big := "@@ -1,0 +1,1 @@\n+" + strings.Repeat("x", localReviewMaxTotalBytes) + "\n"
-	_, _, omitted := assembleDiffPayload([]connectors.ChangedFile{{Path: "big.go", Patch: big}})
+	big := "@@ -1,0 +1,1 @@\n+" + strings.Repeat("x", reviewMaxTotalBytes) + "\n"
+	_, _, omitted, _ := assembleDiffPayload([]connectors.ChangedFile{{Path: "big.go", Patch: big}}, reviewMaxTotalBytes)
 	if len(omitted) != 1 || omitted[0] != "big.go" {
 		t.Fatalf("omitted=%v, want [big.go]", omitted)
+	}
+}
+
+func TestIsNonReviewableDoc(t *testing.T) {
+	for _, p := range []string{
+		"docs/superpowers/plans/2026-06-30-frontend-performance.md",
+		"README.md", "notes.markdown", "guide.mdx", "spec.rst", "x.adoc",
+		".beads/issues.jsonl", "frontend/docs/guide.md",
+	} {
+		if !isNonReviewableDoc(p) {
+			t.Errorf("%q should be non-reviewable (prose/plan/tracker)", p)
+		}
+	}
+	for _, p := range []string{
+		"internal/agents/coding/service.go", "frontend/src/app/app.component.ts",
+		"config.yaml", "Dockerfile", "deploy/values.json", "scripts/run.sh",
+		"docsite.go", // "docs" is a filename substring, not a path segment → reviewable
+	} {
+		if isNonReviewableDoc(p) {
+			t.Errorf("%q should be reviewable code/config", p)
+		}
+	}
+}
+
+func TestAssembleDiffPayload_FiltersDocs(t *testing.T) {
+	files := []connectors.ChangedFile{
+		{Path: "internal/svc.go", Patch: "@@ -1,1 +1,2 @@\n ctx\n+code\n"},
+		{Path: "docs/plans/perf.md", Patch: "@@ -1,0 +1,1 @@\n+# big plan doc\n"},
+		{Path: ".beads/issues.jsonl", Patch: "@@ -1,0 +1,1 @@\n+{}\n"},
+		{Path: "config.yaml", Patch: "@@ -1,0 +1,1 @@\n+k: v\n"},
+	}
+	payload, _, _, filtered := assembleDiffPayload(files, reviewMaxTotalBytes)
+	if len(filtered) != 2 {
+		t.Fatalf("filtered=%v, want the .md plan + .beads tracker", filtered)
+	}
+	if strings.Contains(payload, "perf.md") || strings.Contains(payload, "issues.jsonl") {
+		t.Fatalf("prose/plan/tracker docs must NOT reach the review payload:\n%s", payload)
+	}
+	if !strings.Contains(payload, "=== internal/svc.go ===") || !strings.Contains(payload, "=== config.yaml ===") {
+		t.Fatalf("reviewable code/config must be in the payload:\n%s", payload)
 	}
 }
 

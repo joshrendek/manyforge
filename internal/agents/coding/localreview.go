@@ -43,15 +43,18 @@ func isLocalProvider(provider string) bool {
 }
 
 const (
-	localReviewMaxFileBytes  = 48 << 10 // skip any single file whose rendered hunks exceed this
-	localReviewMaxTotalBytes = 96 << 10 // cap total rendered diff to fit localReviewNumCtx (raised: 64KB omitted files on real PRs)
-	// localReviewNumCtx is the REQUESTED model context (~32K tokens ≈ 96KB diff + prompt +
-	// output). CAVEAT: Ollama's OpenAI-compatible /v1/chat/completions endpoint IGNORES
-	// options.num_ctx, so for Ollama the EFFECTIVE window is the server's
-	// OLLAMA_CONTEXT_LENGTH (or model default) — a deployment MUST set OLLAMA_CONTEXT_LENGTH
-	// >= this, or the diff is truncated at load and the larger budget above is wasted.
-	// Providers that honor num_ctx (vLLM; Ollama's native /api/chat) use this directly.
-	// The proper fix (switch local reviews to the num_ctx-honoring path) is tracked separately.
+	reviewMaxFileBytes  = 48 << 10 // skip any single file whose rendered hunks exceed this
+	reviewMaxTotalBytes = 96 << 10 // default total-diff budget (cloud/opencode path — capable models)
+	// localProviderMaxTotalBytes is a TIGHTER total-diff budget for on-host local providers
+	// (Ollama/vLLM). Small models can't prompt-eval a large diff quickly — a ~28K-token diff
+	// wedged ornith:9b for minutes at every context size we tried — so the local path sends far
+	// less. Combined with the isNonReviewableDoc filter (which strips prose/plan files that both
+	// waste this budget and derail weak models), this keeps local reviews fast and code-focused.
+	localProviderMaxTotalBytes = 32 << 10
+	// localReviewNumCtx is the REQUESTED model context. CAVEAT: Ollama's OpenAI-compatible
+	// /v1/chat/completions endpoint IGNORES options.num_ctx, so for Ollama the EFFECTIVE window
+	// is the server's OLLAMA_CONTEXT_LENGTH (or model default). Providers that honor num_ctx
+	// (vLLM; Ollama's native /api/chat) use this directly.
 	localReviewNumCtx = 32768
 )
 
@@ -64,13 +67,42 @@ var codeExt = map[string]bool{
 	".sql": true, ".sh": true, ".tf": true, ".proto": true,
 }
 
-// assembleDiffPayload renders the changed files' hunks into the local-review
-// payload: source files first (the budget is small; spend it on code), then
-// path-sorted, stopping at the total budget. It returns the payload plus the paths
-// it could not include — skipped (no usable patch: binary or omitted by GitHub) and
-// omitted (dropped because the budget filled) — so callers can surface them.
-func assembleDiffPayload(files []connectors.ChangedFile) (payload string, skipped, omitted []string) {
-	ordered := append([]connectors.ChangedFile(nil), files...)
+// isNonReviewableDoc reports whether a changed file is prose / planning / tracking content
+// rather than reviewable code. A code review targets code — feeding it plan/spec/doc markdown
+// or tracker data wastes the token budget and derails weaker local models into acting on the
+// plan instead of reviewing the diff (manyforge-206 dogfood: a 447-line plan doc made
+// ornith:9b hallucinate findings about non-existent files). Non-prose config/data (e.g.
+// .yaml, Dockerfile, .json) is NOT excluded — only prose docs and known tracker paths.
+func isNonReviewableDoc(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown", ".mdx", ".rst", ".adoc":
+		return true
+	}
+	lower := strings.ToLower(path)
+	for _, seg := range []string{"docs/", ".beads/"} {
+		if strings.HasPrefix(lower, seg) || strings.Contains(lower, "/"+seg) {
+			return true
+		}
+	}
+	return false
+}
+
+// assembleDiffPayload renders the changed files' hunks into the review payload. Prose/
+// planning docs are dropped first (isNonReviewableDoc → filtered); the remaining reviewable
+// files are ordered source-first and rendered up to maxTotalBytes (callers pass a tighter
+// budget for on-host local providers). Returns the payload plus the paths it could not
+// include — skipped (no usable patch: binary or omitted by GitHub), omitted (budget filled),
+// and filtered (non-reviewable docs) — so callers can surface them (no silent caps).
+func assembleDiffPayload(files []connectors.ChangedFile, maxTotalBytes int) (payload string, skipped, omitted, filtered []string) {
+	reviewable := make([]connectors.ChangedFile, 0, len(files))
+	for _, f := range files {
+		if isNonReviewableDoc(f.Path) {
+			filtered = append(filtered, f.Path)
+			continue
+		}
+		reviewable = append(reviewable, f)
+	}
+	ordered := append([]connectors.ChangedFile(nil), reviewable...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		ci := codeExt[strings.ToLower(filepath.Ext(ordered[i].Path))]
 		cj := codeExt[strings.ToLower(filepath.Ext(ordered[j].Path))]
@@ -88,14 +120,14 @@ func assembleDiffPayload(files []connectors.ChangedFile) (payload string, skippe
 			continue
 		}
 		block := fmt.Sprintf("\n=== %s ===\n%s", f.Path, rendered)
-		if len(block) > localReviewMaxFileBytes || total+len(block) > localReviewMaxTotalBytes {
+		if len(block) > reviewMaxFileBytes || total+len(block) > maxTotalBytes {
 			omitted = append(omitted, f.Path)
 			continue
 		}
 		b.WriteString(block)
 		total += len(block)
 	}
-	return b.String(), skipped, omitted
+	return b.String(), skipped, omitted, filtered
 }
 
 // commentableMap reduces ChangedFiles to the file→commentable-lines map buildReview
