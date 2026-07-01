@@ -374,6 +374,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		if payload != "" {
 			_ = os.WriteFile(filepath.Join(outDir, "review_diff.txt"), []byte(payload), 0o644)
 		}
+		// Single-source the review prompt: write the SAME instructions the local path uses
+		// (reviewInstructions) where the entrypoint reads them (/out/review_instructions.txt),
+		// so local and cloud share one prompt and prompt changes need no sandbox-image rebuild.
+		// The image's baked INSTRUCTIONS is only a fallback when this file is absent.
+		_ = os.WriteFile(filepath.Join(outDir, "review_instructions.txt"), []byte(reviewInstructions), 0o644)
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.opencode.invoked",
 			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": cred.Model},

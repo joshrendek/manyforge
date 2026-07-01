@@ -237,6 +237,22 @@ func TestMF007PIN12(t *testing.T) {
 	}
 }
 
+// MF007-PIN-13 (manyforge-206 follow-up): the cloud/opencode review prompt must be
+// HOST-PROVIDED at runtime (/out/review_instructions.txt), not only baked into the sandbox
+// image, so local and cloud reviews share ONE prompt (localreview.go reviewInstructions) and
+// a prompt change needs no image rebuild. Pins both halves — the host writes the file, and
+// the entrypoint reads it — so a regression back to baked-only fails CI.
+func TestMF007PIN13(t *testing.T) {
+	svc := mustRead(t, "../agents/coding/service.go")
+	if !strings.Contains(svc, "review_instructions.txt") {
+		t.Fatal("service.go must write /out/review_instructions.txt so the cloud review uses the host prompt, not the baked default (MF007-PIN-13)")
+	}
+	ep := mustRead(t, "../../deploy/sandbox/entrypoint.sh")
+	if !strings.Contains(ep, "/out/review_instructions.txt") {
+		t.Fatal("entrypoint.sh must read /out/review_instructions.txt (host-provided prompt) before falling back to the baked default (MF007-PIN-13)")
+	}
+}
+
 // MF007-PIN-7: the sandbox runs with --cap-drop ALL (no CAP_DAC_OVERRIDE), so the
 // container — a different uid than the host server — can only read the /work mount
 // and write the /out mount if the per-run host dirs are world-accessible. service.go
