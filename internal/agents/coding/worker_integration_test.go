@@ -78,7 +78,7 @@ func TestCodeReviewClaimUnderAppRole(t *testing.T) {
 	}
 
 	// runJob must drive the claimed row to 'succeeded'.
-	if err := svc.runJob(ctx, *found); err != nil {
+	if err := svc.runJob(ctx, *found, nil); err != nil {
 		t.Fatalf("runJob: %v", err)
 	}
 	got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)

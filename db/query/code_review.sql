@@ -53,7 +53,7 @@ SELECT * FROM code_review WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc
 -- ListCodeReviews returns the business's reviews newest-first for the history UI.
 -- name: ListCodeReviews :many
 SELECT id, repo_connector_id, pr_number, status, summary, findings,
-       external_review_ref, created_at, posted_at, model, cost_cents
+       external_review_ref, created_at, posted_at, model, cost_cents, progress
 FROM code_review
 WHERE business_id = $1
 ORDER BY created_at DESC

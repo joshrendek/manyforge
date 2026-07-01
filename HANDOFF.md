@@ -1,69 +1,37 @@
-# Handoff — manyforge @ feat/code-review-ui — 2026-06-28 ~20:00 UTC
+# Handoff — manyforge @ fix/code-review-fallback-model — 2026-07-01 ~16:30 UTC
 
 ## ⚠️ Before you clear
-- **Uncommitted:** none code — only pre-existing untracked files (`.beads/CLAUDE.md`,
-  `.pair/`, screenshots, stray `CLAUDE.md`). (`.beads/issues.jsonl` is committed below.)
-- **Unpushed:** none — `feat/code-review-ui` is up to date with origin (PR #6 updated).
-- **Still running (survive this session):** air dev server on **:8081** (`/tmp/mf-air.log`);
-  **Ollama** on **:11434** (qwen2.5-coder 7b/14b/32b, gemma3:12b); Docker (Colima):
-  `mf-dev` + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt this session.
+- **Uncommitted:** none of this session's code — commit `c2602f1` is pushed (HEAD == origin). Only stray untracked docs remain (scattered `CLAUDE.md`s, `.pair/`, screenshots — not this session's, not code). **Unpushed:** none.
+- **Still running (survive the clear):** air **:8081** (`/tmp/mf-air.log`), ng serve **:4300** (`/tmp/mf-web.log`), **Ollama :11434**, **LM Studio at 192.168.2.241:1234** (external box; OpenAI-compatible, 142k ctx, no key), Docker `mf-dev` Postgres **:55432** + `mf-egress-proxy`.
 
 ## State (≤3 sentences)
-**`manyforge-fqo` is COMPLETE and CLOSED** — all of the code-review-quality follow-ups shipped on
-`feat/code-review-ui` (PR #6): **#1 diff-based review** (annotated hunks on local + cloud,
-`268fe0d..165cfba`), **#2 secret redaction** (`redactSecrets`/`redactDoc` at the stderr-tail +
-model-doc trust boundaries, `MF007-PIN-11`), and **#3 provider generality** (cloud path now
-`openrouter|anthropic|openai` via `LLM_PROVIDER` + a generalized entrypoint), `dd69291..c1156e1`.
-Both efforts passed an opus whole-branch review = **SHIP**; the full gate (unit, vet, lint,
-contract, sec-test, coding integration) is green; the sandbox image is rebuilt.
+The local self-host reviewer now **works end-to-end**: commit `c2602f1` (PR #7) makes local reviews reach a **private-LAN** model (LM Studio), handles reasoning models + LM Studio's json_schema quirk, bounds runaway output, and **keeps a failed review's captured output visible** (the user's explicit ask). **Verified live:** a `vllm` agent pointed at LM Studio ornith-1.0-9b reviewed PR #7 to **`succeeded` with 7 real findings about the actual code** (localreview.go / entrypoint.sh / code_review.sql — no hallucinated paths); the failed-output UI was browser-checked. All gates green; nothing in flight.
 
-## Resume here
-PR #6 is ready to **merge** at your call (squash recommended — it now carries slice-2 + #1 + #2/#3).
-The only thing NOT done is the **GitHub-posting live dogfood**: the dev DB was reseeded (the old
-agent/connector are gone; `agent`/`repo_connector`/`business` tables are EMPTY), so posting a real
-review to PR #6 needs a re-seed (`cmd/seeddemo`) + an ollama agent + a repo connector with a real
-GitHub PAT, then `POST /api/v1/businesses/{id}/code-reviews {agent_id,repo_connector_id,pr_number:6}`.
-(The #1 path was already dogfooded locally against PR #6's real diff — see git history.)
+## Resume here — this unit of work is DONE
+No next step required for manyforge-5ai (closed). If continuing Spec 007, pick a follow-up (see Pointers). If merging: PR #7 is large but complete — `gh pr view 7`.
 
 ## Run & verify
-- Tests (all green): `go test ./internal/agents/coding/... ./internal/connectors/...`; `go vet ./...`;
-  `make lint`; `make sec-test`; integration `go test -tags integration -p 1 ./internal/agents/coding/`;
-  drift `go test -tags contract ./cmd/...`.
-- **Rebuild sandbox image (after any `entrypoint.sh` change):**
-  `DOCKER_DEFAULT_PLATFORM=linux/arm64 DOCKER_BUILDKIT=0 docker build --build-arg TARGETARCH=arm64 -f deploy/sandbox/Dockerfile -t manyforge/opencode-sandbox:dev .`
-  — the `DOCKER_DEFAULT_PLATFORM` is REQUIRED on this host (see gotcha).
-- SDD ledgers: `.superpowers/sdd/progress.md` (this = redaction/provider) + `progress-dbr-archive.md` (#1).
+- **Stack is up.** Restart if needed: air `set -a; . ./.air.env; set +a; nohup air >| /tmp/mf-air.log 2>&1 & disown` (`curl :8081/healthz`); ng `cd web && nohup npx ng serve --proxy-config proxy.conf.json --port 4300 --host 127.0.0.1 >| /tmp/mf-web.log 2>&1 & disown`.
+- Login (fresh JWT each air restart): `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` → `access_token`. Trigger: `POST :8081/api/v1/businesses/7bbeb32e-7c98-4c8f-966b-70acdb440dce/code-reviews {agent_id,repo_connector_id,pr_number}`; poll `GET …/code-reviews/{id}`.
+- Gates (all green as of `c2602f1`): `go build ./...`; `make lint`; `go test ./internal/agents/coding/ ./internal/platform/netsafe/ ./internal/security_regression/`; `go test -tags contract ./cmd/...`; `make sec-test`; `cd web && npx ng test --include='**/code-review/**/*.spec.ts' --watch=false`. **NO Co-Authored-By trailer** (user rule).
+- Browser-verify UI: inject JWT into `localStorage['mf_access']`, then `/code-review/{bizId}/{reviewId}` (Playwright MCP or gstack).
 
 ## Gotchas (don't relearn these)
-- **Sandbox image rebuild needs `DOCKER_DEFAULT_PLATFORM=linux/arm64`.** The cached `alpine:3.20`
-  is **amd64**, so without it the base resolves amd64, `TARGETARCH` defaults wrong, and the build
-  fails at `RUN opencode --version` (`opencode: not found` — wrong-arch binary). With it, it builds.
-- **gopls diagnostics lie after edits** — phantom `undefined …` / `dbgen.* undefined` /
-  `too many arguments` are STALE. `go build`/`go test`/`go vet` is the only truth.
-- **`make lint` tail can hide the golangci result** — `golangci-lint run ./...` directly to confirm.
-- **3 review-prompt copies stay in sync:** `localreview.go`, `deploy/sandbox/entrypoint.sh`,
-  `tools/local-model-eval/run.sh`.
-- **`CreateCodeReviewAgentRun` needs a REAL agent** (INSERT…SELECT FROM agent → 0 rows for a
-  foreign agent). Integration tests must seed via `seed.agentID`, not `uuid.New()` (see `f821a9a`).
-- **GitHub token is base64-wrapped** in the clone BasicAuthHeader → outside `redactSecrets`'s exact
-  match, but clone errors never echo it (documented in `redact.go`).
+- **ornith-1.0-9b is a REASONING model** → streams chain-of-thought in `delta.reasoning_content`, final answer in `delta.content`. localReview shows reasoning in the preview but only parses `content`. [[manyforge-sandbox-dev-gotchas]]
+- **LM Studio returns EMPTY under `response_format=json_schema`** (Ollama NEEDS it) → localReview falls back to plain. LM Studio's **plain** path is non-deterministic and sometimes emits malformed JSON (unescaped quotes from a code snippet) → localReview now retries plain IN-LINE with a temperature bump (`manyforge-87a`, done: PR#7 succeeds on worker attempt 1). Structured output (json_schema/json_object) is unusable — the reasoning model emits reasoning but empty content under a schema.
+- **Credentials resolve per-provider.** The `ollama` cred is `localhost`; the LM Studio agent uses the **`vllm`** provider slot (its own cred `ca7b0b97`, `allow_private_base_url=true`). Both route local via `isLocalProvider`.
+- **Local-review SSRF guard is the INVERSE of netsafe**: netsafe permits public IPs; local review must BLOCK public (it bypasses the egress proxy). Guard allows loopback always + private only with `AllowPrivateBaseURL`; metadata/link-local/public blocked. MF007-PIN-14 pins it.
+- **zsh `noclobber`** → bg log redirects use `>|` not `>`. [[user-zsh-noclobber-bg-logs]]
+- **Editing a `.go` file restarts air mid-review** and orphans the in-flight job → park it (`UPDATE code_review SET status='failed',lease_expires_at=NULL WHERE id=…`). Large PRs on a 9B reasoning model can run minutes; `max_tokens=8192` now bounds it.
+- **Stale gopls** after edits — `go build`/`test` is truth. [[gopls-stale-dbgen-diagnostics]] · **sqlc PINNED v1.27.0** [[sqlc-version-pin-v127]]
 
 ## Decisions & rationale
-- **Redaction at two trust boundaries** (sandbox stderr tail → `last_error`/audit; model doc →
-  posted body + stored row), exact known-value + specific key-pattern regex. Opus verified every
-  OTHER error path can't carry the raw secret.
-- **Provider generality** is openrouter/anthropic/openai only (cloud); ollama/vllm stay host-side.
-  No `credresolver` default for openai — it already requires a user-supplied base_url (`ai/factory.go`).
-
-## Next steps
-1. Merge PR #6 (user's call).
-2. (Optional) GitHub-posting dogfood — needs re-seed + a connector PAT (see Resume here).
-3. `manyforge-206`: gemini-2.5-pro 504 on large diffs (now mitigated by smaller hunk payloads; chunk if still needed).
+- **Reuse the existing `AllowPrivateBaseURL` trust flag + netsafe** rather than hardcoding RFC1918 in `isLoopbackHost` — consistent with `validateBaseURL` (create-time) + `clone.checkCloneURL`, DNS-rebind-aware for literal IPs, backward-compatible (existing `localhost` cred already had the flag).
+- **Failed reviews retain `progress`** (already-redacted preview) and the UI shows it — the raw `last_error` stays server-side (can carry provider/sandbox internals). This narrows `manyforge-byz` ("clear progress on terminal") to **succeeded only**.
+- **`max_tokens=8192`** bounds a reasoning model's output so an attempt fails fast+visibly instead of pinning the worker/GPU for minutes.
 
 ## Pointers
-- **Specs/plans:** `docs/superpowers/specs/2026-06-28-{diff-based-code-review,review-redaction-provider-generality}-design.md`
-  and the matching `docs/superpowers/plans/2026-06-28-*`.
-- **Key files (#2/#3):** `internal/agents/coding/{redact.go,service.go}` (redaction + `sandboxEnv`),
-  `deploy/sandbox/entrypoint.sh` (provider allowlist), `internal/security_regression/mf007_review_redaction_test.go`.
-- **bd:** `manyforge-fqo` CLOSED; epic `manyforge-7ml`. `manyforge-206` open.
-- **PR #6** (slice-2 + #1 + #2/#3) → master.
+- **PR:** #7 OPEN → master. **Commits:** `c2602f1` (local self-host reviewer) + `a5d2c44` (manyforge-87a in-line retry). **bd:** epic `manyforge-7ml` (reopened); done: `manyforge-5ai`, `manyforge-87a`. Open follow-ups: `manyforge-byz` (P3 clear-progress = succeeded-only now), `manyforge-5tr` (P2 Ollama num_ctx), `manyforge-lyv`/`bbi` (P3 polish).
+- **Key files:** `internal/agents/coding/{localreview.go, credresolver.go, worker.go, findings.go, progress.go, service.go}`; `web/src/app/pages/code-review/detail.ts`; `internal/security_regression/coding_review_pins_test.go` (MF007 pins incl. PIN-14).
+- **Dev entities (business Acme `7bbeb32e-7c98-4c8f-966b-70acdb440dce`):** agents — LM Studio ornith(vllm) `2571c371`, ornith:9b(ollama) `4232e921`, qwen2.5-coder:14b(ollama) `6aeb7a46`, ReviewBot(openrouter z-ai/glm-5.2) `6c252395`; creds — vllm(LM Studio) `ca7b0b97`, ollama(localhost) `4431d2f2`, openrouter `fb0993e2`; connectors — joshrendek/manyforge `eb68939b`, bluescripts-net/threat.gg `3d944fdc` (PR #22 is CLOSED). Superuser DB: `docker exec mf-dev psql -U manyforge -d manyforge`.
+- **Screenshot:** `code-review-failed-output-retained.png` (failed-review output-retention, browser-verified).
