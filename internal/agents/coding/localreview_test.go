@@ -1,9 +1,11 @@
 package coding
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -124,6 +126,41 @@ func TestLocalReview_SendsJSONSchemaResponseFormat(t *testing.T) {
 		if !strings.Contains(string(gotBody), want) {
 			t.Fatalf("request body missing %q — JSON output not enforced (manyforge-6ax)\nbody: %s", want, string(gotBody))
 		}
+	}
+}
+
+// TestLocalReview_LogsDroppedFrames pins that an unparseable stream frame is counted
+// and logged (not silently dropped), while valid content after it still parses —
+// addressing the gemini-flagged silent-failure risk in the SSE loop.
+func TestLocalReview_LogsDroppedFrames(t *testing.T) {
+	var logBuf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(orig)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {not valid json\n\n")) // malformed frame — must be logged, not silently dropped
+		good, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": `{"summary":"ok","findings":[]}`}}}})
+		_, _ = w.Write([]byte("data: " + string(good) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "ornith:9b", Provider: "ollama", APIKey: "x"}
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil)
+	if err != nil {
+		t.Fatalf("localReview: %v", err)
+	}
+	if doc.Summary != "ok" {
+		t.Fatalf("valid content after a dropped frame must still parse; doc=%+v", doc)
+	}
+	if !strings.Contains(logBuf.String(), "dropped unparseable stream frames") {
+		t.Fatalf("a dropped frame must be logged (not silent); log=%q", logBuf.String())
 	}
 }
 

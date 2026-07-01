@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -20,16 +21,16 @@ import (
 // reviewInstructions is the balanced review prompt. KEEP IN SYNC with the cloud
 // path in deploy/sandbox/entrypoint.sh and the eval harness in
 // tools/local-model-eval/run.sh.
-const reviewInstructions = `You are a senior software engineer reviewing a pull request. Report only genuine problems you are confident about — do NOT invent issues, speculate, or flag pure style/formatting preferences.
+const reviewInstructions = `You are a senior software engineer reviewing a pull request. Surface every plausible correctness, security, or robustness concern — including ones you are only moderately confident about — and express your confidence through the severity field rather than by staying silent. Do not withhold a real risk because it seems minor or uncertain. Still skip pure style/formatting preferences, and do not fabricate issues with no basis in the code.
 
-Prioritize in this order: (1) bugs and correctness errors (crashes, nil/undefined access, logic errors, race conditions, incorrect results); (2) security vulnerabilities (injection, auth/authorization gaps, secret exposure, unsafe or unbounded input); (3) notable maintainability problems (unhandled errors, resource leaks, missing validation). Skip cosmetic style and formatting.
+Prioritize in this order: (1) bugs and correctness errors (crashes, nil/undefined access, logic errors, race conditions, incorrect results); (2) security vulnerabilities (injection, auth/authorization gaps, secret exposure, unsafe or unbounded input); (3) robustness and maintainability problems (unhandled errors, resource leaks, missing validation, silent failures).
 
-Set each finding's severity to exactly one of:
+Set the severity of each finding to exactly one of:
 - "error": a real bug or security vulnerability causing incorrect behavior, a crash, data loss, or an exploitable condition.
 - "warning": a likely problem or risky pattern that should be fixed (e.g. an unhandled error, a missing bound/validation, a resource leak).
-- "info": a minor but worthwhile maintainability suggestion (never pure style).
+- "info": a plausible concern or worthwhile improvement worth surfacing to the reviewer — when unsure whether something is a real issue, prefer flagging it here rather than omitting it (but never pure style).
 
-You are given the changed code as unified-diff hunks: each block is headed by "=== <path> ===", and every changed line shows its current-file line number in the left gutter with a +/space marker. Use that real file path and gutter line number in each finding. Report each distinct issue once. If there are no genuine problems, return an empty findings array.`
+You are given the changed code as unified-diff hunks: each block is headed by "=== <path> ===", and every changed line shows its current-file line number in the left gutter with a +/space marker. Use that real file path and gutter line number in each finding. Report each distinct issue once. Only return an empty findings array if the diff genuinely contains nothing worth surfacing.`
 
 // reviewSchemaLine instructs the model to emit only the findings JSON.
 const reviewSchemaLine = `Review the provided diff hunks and output ONLY a single JSON object — no prose, no markdown fences — matching exactly this schema: {"summary": string, "findings": [{"file": string, "line": number|null, "severity": "info"|"warning"|"error", "title": string, "detail": string}]}`
@@ -42,9 +43,16 @@ func isLocalProvider(provider string) bool {
 }
 
 const (
-	localReviewMaxFileBytes  = 32 << 10 // skip any single file whose rendered hunks exceed this
-	localReviewMaxTotalBytes = 64 << 10 // cap total rendered diff to fit localReviewNumCtx
-	localReviewNumCtx        = 16384    // Ollama context window; ~64KB diff + prompt + output fits
+	localReviewMaxFileBytes  = 48 << 10 // skip any single file whose rendered hunks exceed this
+	localReviewMaxTotalBytes = 96 << 10 // cap total rendered diff to fit localReviewNumCtx (raised: 64KB omitted files on real PRs)
+	// localReviewNumCtx is the REQUESTED model context (~32K tokens ≈ 96KB diff + prompt +
+	// output). CAVEAT: Ollama's OpenAI-compatible /v1/chat/completions endpoint IGNORES
+	// options.num_ctx, so for Ollama the EFFECTIVE window is the server's
+	// OLLAMA_CONTEXT_LENGTH (or model default) — a deployment MUST set OLLAMA_CONTEXT_LENGTH
+	// >= this, or the diff is truncated at load and the larger budget above is wasted.
+	// Providers that honor num_ctx (vLLM; Ollama's native /api/chat) use this directly.
+	// The proper fix (switch local reviews to the num_ctx-honoring path) is tracked separately.
+	localReviewNumCtx = 32768
 )
 
 // codeExt is the set of source extensions the local reviewer prioritizes — the
@@ -207,6 +215,7 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 		promptTokens     int64
 		completionTokens int64
 		chunkCount       int
+		droppedFrames    int
 		lastUpdate       time.Time
 	)
 	sc := bufio.NewScanner(resp.Body)
@@ -232,7 +241,12 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 			} `json:"usage"`
 		}
 		if jerr := json.Unmarshal([]byte(data), &chunk); jerr != nil {
-			continue // tolerate keep-alive / non-JSON frames
+			// A well-formed keep-alive is an empty/comment line (skipped above), so a
+			// non-JSON data: frame here is anomalous. Count it rather than dropping it
+			// silently — a provider bug that corrupts the stream then leaves a breadcrumb
+			// (warned below) instead of an unexplained ParseFindings failure.
+			droppedFrames++
+			continue
 		}
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
 			buf.WriteString(chunk.Choices[0].Delta.Content)
@@ -253,6 +267,15 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 		return FindingsDoc{}, promptTokens, completionTokens, fmt.Errorf("coding: read local review stream: %w", serr)
 	}
 	prog.UpdateStream(chunkCount, buf.String()) // final flush with the full buffer
+
+	// Surface dropped frames (manyforge-6ax follow-up / gemini review): a malformed
+	// provider frame can corrupt the accumulated JSON and fail ParseFindings; without
+	// this the drop was silent and undebuggable. Byte content is not logged (may echo
+	// diff/secret material) — only the count and model.
+	if droppedFrames > 0 {
+		slog.Default().WarnContext(ctx, "local review: dropped unparseable stream frames",
+			"count", droppedFrames, "model", cred.Model)
+	}
 
 	if completionTokens == 0 { // usage frame absent → best-effort fallback
 		completionTokens = int64(chunkCount)
