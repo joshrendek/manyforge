@@ -384,13 +384,13 @@ func main() {
 			logger.Warn("sandbox egress infra unavailable; coding reviews will fail at run time", "err", err)
 		}
 		codingSvc = &coding.CodeReviewService{
-			DB:       database,
-			Repos:    repoSvc,
-			Sandbox:  sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr),
-			Creds:    &coding.AgentCredResolver{Agents: agentSvc, Credentials: credSvc},
-			Image:    cfg.SandboxImage,
-			WorkRoot: cfg.SandboxWorkRoot,
-			Timeout:  5 * time.Minute,
+			DB:           database,
+			Repos:        repoSvc,
+			Sandbox:      sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr),
+			Creds:        &coding.AgentCredResolver{Agents: agentSvc, Credentials: credSvc},
+			Image:        cfg.SandboxImage,
+			WorkRoot:     cfg.SandboxWorkRoot,
+			Timeout:      5 * time.Minute,
 			LocalTimeout: cfg.LocalReviewTimeout,
 			// Same allowlist that boots the egress proxy above — Trigger validates the
 			// run's provider host against it up front (manyforge-0qj).
