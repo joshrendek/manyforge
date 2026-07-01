@@ -1,15 +1,16 @@
 package coding
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/github"
@@ -111,12 +112,14 @@ func isLoopbackHost(h string) bool {
 }
 
 // localReview POSTs the rendered diff payload to a local OpenAI-compatible chat
-// endpoint (Ollama/vLLM) and parses the findings with ParseFindings. No
+// endpoint (Ollama/vLLM) as a STREAM and parses the findings with ParseFindings. It
+// accumulates the streamed delta.content into a buffer (rendered live in the UI via
+// the worker heartbeat → prog.UpdateStream) and parses the full buffer on [DONE]. No
 // sandbox/opencode: small local models can't drive opencode's agent loop, and the
-// model is on-host so there is nothing to isolate. The model gets NO tools
-// (chat→JSON only), so prompt injection can at worst yield bogus advisory findings.
-// Returns (doc, promptTokens, completionTokens, err).
-func localReview(ctx context.Context, client *http.Client, cred AICredential, payload string) (FindingsDoc, int64, int64, error) {
+// model is on-host so there is nothing to isolate. The model gets NO tools (chat→JSON
+// only), so prompt injection can at worst yield bogus advisory findings.
+// Returns (doc, promptTokens, completionTokens, err). prog may be nil (no-op).
+func localReview(ctx context.Context, client *http.Client, cred AICredential, payload string, prog *Progress) (FindingsDoc, int64, int64, error) {
 	if !isLoopbackHost(cred.Host()) {
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review base URL must be loopback, got %q: %w", cred.Host(), errs.ErrValidation)
 	}
@@ -130,8 +133,11 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 			{"role": "system", "content": reviewInstructions + "\n\n" + reviewSchemaLine},
 			{"role": "user", "content": "Diff hunks to review:\n" + payload},
 		},
-		"stream":  false,
-		"options": map[string]any{"temperature": 0, "num_ctx": localReviewNumCtx},
+		"stream": true,
+		// In OpenAI-compatible streaming, usage is omitted unless explicitly requested;
+		// without this, token accounting silently goes to 0.
+		"stream_options": map[string]any{"include_usage": true},
+		"options":        map[string]any{"temperature": 0, "num_ctx": localReviewNumCtx},
 	})
 
 	url := strings.TrimRight(cred.BaseURL, "/") + "/chat/completions"
@@ -140,6 +146,7 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: build local review request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	if cred.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+cred.APIKey)
 	}
@@ -148,28 +155,65 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode/100 != 2 {
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local provider status %d", resp.StatusCode)
 	}
 
-	var cc struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
-		} `json:"usage"`
+	var (
+		buf              strings.Builder
+		promptTokens     int64
+		completionTokens int64
+		chunkCount       int
+		lastUpdate       time.Time
+	)
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64<<10), 4<<20) // SSE frames can be large
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int64 `json:"prompt_tokens"`
+				CompletionTokens int64 `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if jerr := json.Unmarshal([]byte(data), &chunk); jerr != nil {
+			continue // tolerate keep-alive / non-JSON frames
+		}
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			buf.WriteString(chunk.Choices[0].Delta.Content)
+			chunkCount++
+			// Throttle progress writes to ~2/s — redaction + marshal happen on the
+			// heartbeat's Snapshot(); updating the shared buffer per token is wasteful.
+			if time.Since(lastUpdate) > 500*time.Millisecond {
+				prog.UpdateStream(chunkCount, buf.String())
+				lastUpdate = time.Now()
+			}
+		}
+		if chunk.Usage != nil {
+			promptTokens = chunk.Usage.PromptTokens
+			completionTokens = chunk.Usage.CompletionTokens
+		}
 	}
-	if err := json.Unmarshal(raw, &cc); err != nil {
-		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: decode local review response: %w", err)
+	if serr := sc.Err(); serr != nil {
+		return FindingsDoc{}, promptTokens, completionTokens, fmt.Errorf("coding: read local review stream: %w", serr)
 	}
-	if len(cc.Choices) == 0 {
-		return FindingsDoc{}, cc.Usage.PromptTokens, cc.Usage.CompletionTokens, fmt.Errorf("coding: local provider returned no choices")
+	prog.UpdateStream(chunkCount, buf.String()) // final flush with the full buffer
+
+	if completionTokens == 0 { // usage frame absent → best-effort fallback
+		completionTokens = int64(chunkCount)
 	}
-	doc, perr := ParseFindings([]byte(cc.Choices[0].Message.Content))
-	return doc, cc.Usage.PromptTokens, cc.Usage.CompletionTokens, perr
+	doc, perr := ParseFindings([]byte(buf.String()))
+	return doc, promptTokens, completionTokens, perr
 }

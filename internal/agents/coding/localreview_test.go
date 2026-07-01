@@ -16,18 +16,31 @@ func TestLocalReview(t *testing.T) {
 		if r.URL.Path != "/chat/completions" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
 		content := `{"summary":"ok","findings":[{"file":"service.go","line":3,"severity":" Warning ","title":"t","detail":"d"}]}`
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
-			"usage":   map[string]int64{"prompt_tokens": 1200, "completion_tokens": 80},
-		})
+		writeFrame := func(v any) {
+			b, _ := json.Marshal(v)
+			_, _ = w.Write([]byte("data: " + string(b) + "\n\n"))
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		// Stream the content split across two delta frames.
+		writeFrame(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": content[:25]}}}})
+		writeFrame(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": content[25:]}}}})
+		// Terminal usage frame (only sent because stream_options.include_usage=true).
+		writeFrame(map[string]any{"choices": []map[string]any{}, "usage": map[string]int64{"prompt_tokens": 1200, "completion_tokens": 80}})
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
 	}))
 	defer srv.Close()
 
-	// httptest serves on 127.0.0.1 → passes the loopback gate.
 	cred := AICredential{BaseURL: srv.URL, Model: "qwen2.5-coder:14b", Provider: "ollama", APIKey: "ollama"}
 	payload := "\n=== service.go ===\n@@ 1-1 @@\n    1 + package x\n"
-	doc, in, out, err := localReview(context.Background(), srv.Client(), cred, payload)
+	doc, in, out, err := localReview(context.Background(), srv.Client(), cred, payload, nil)
 	if err != nil {
 		t.Fatalf("err %v", err)
 	}
@@ -41,8 +54,46 @@ func TestLocalReview(t *testing.T) {
 
 func TestLocalReview_RejectsNonLoopback(t *testing.T) {
 	cred := AICredential{BaseURL: "https://evil.example.com/v1", Model: "m", Provider: "ollama", APIKey: "k"}
-	if _, _, _, err := localReview(context.Background(), http.DefaultClient, cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n"); err == nil {
+	if _, _, _, err := localReview(context.Background(), http.DefaultClient, cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err == nil {
 		t.Fatal("local review must reject a non-loopback base URL (SSRF guard)")
+	}
+}
+
+func TestLocalReview_StreamUpdatesProgress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		content := `{"summary":"streamed","findings":[]}`
+		b, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": content}}}})
+		_, _ = w.Write([]byte("data: " + string(b) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "m", Provider: "ollama", APIKey: "ollama"}
+	prog := &Progress{}
+	prog.SetPhase("reviewing") // worker sets this in prod; needed so Snapshot is non-nil
+	doc, _, out, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", prog)
+	if err != nil {
+		t.Fatalf("err %v", err)
+	}
+	if doc.Summary != "streamed" {
+		t.Fatalf("doc=%+v", doc)
+	}
+	if out == 0 {
+		t.Fatal("completion tokens must fall back to streamed-chunk count when usage absent")
+	}
+	snap := prog.Snapshot()
+	if snap == nil {
+		t.Fatal("expected progress snapshot after streaming")
+	}
+	var s progressSnapshot
+	_ = json.Unmarshal(snap, &s)
+	if !strings.Contains(s.Preview, "streamed") {
+		t.Fatalf("preview missing streamed content: %q", s.Preview)
 	}
 }
 
