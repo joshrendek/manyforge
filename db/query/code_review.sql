@@ -17,6 +17,7 @@ UPDATE code_review SET
     tokens_in = sqlc.arg('tokens_in'),
     tokens_out = sqlc.arg('tokens_out'),
     cost_cents = sqlc.arg('cost_cents'),
+    dimension_runs = sqlc.arg('dimension_runs'),
     agent_run_id = sqlc.narg('agent_run_id'),
     lease_expires_at = NULL,
     updated_at = now()

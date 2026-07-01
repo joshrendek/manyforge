@@ -356,7 +356,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// not fail the whole review — only every lane failing does.
 	prog.SetPhase("reviewing")
 
-	panel := defaultPanel()
+	panel := s.resolvePanel(ctx, principalID, businessID)
 	changedPaths := changedFilePaths(changed)
 	active, skippedDims := activeDimensions(panel, changedPaths)
 	if len(skippedDims) > 0 {
@@ -387,7 +387,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 				nil, ptr("executed"),
 			)
 			d, in, out, lerr := localReview(ctx, s.localClient(), laneCred, lanePayload, dim.Prompt, prog)
-			return laneResult{Dim: dim, Doc: d, TokensIn: clampInt32(in), TokensOut: clampInt32(out), Err: lerr} // local = no cost
+			return laneResult{Dim: dim, Doc: d, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(in), TokensOut: clampInt32(out), Err: lerr} // local = no cost
 		}
 
 		// Cloud path: hand opencode the scoped diff + changed-file scope hint + the dimension's
@@ -426,7 +426,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		// aggregateReview sums this across every lane so a failed-but-billed lane is still
 		// accounted (manyforge-7n5).
 		usage := readSandboxUsage(laneOutDir)
-		lr := laneResult{Dim: dim, TokensIn: clampInt32(usage.Input), TokensOut: clampInt32(usage.Output + usage.Reasoning)}
+		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(usage.Input), TokensOut: clampInt32(usage.Output + usage.Reasoning)}
 		if s.Pricing != nil {
 			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
 				lr.CostCents = c
@@ -473,6 +473,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	if aggErr != nil {
 		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, aggErr, tokensIn, tokensOut, costCents)
 	}
+	// Per-lane accounting persisted on the review row (spec 008): each ran lane's model/usage/
+	// status/finding-count, plus any skipped dimensions with their reason. Empty for a default
+	// single-lane review only in the sense that it holds one "general" entry.
+	dimRunsJSON, _ := json.Marshal(buildDimensionRuns(laneResults, skippedDims))
 
 	// Post the review to the PR (intentionally ungated — advisory only). Findings on
 	// changed lines become inline diff comments; the rest land in the summary body.
@@ -522,6 +526,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			TokensIn:          tokensIn,
 			TokensOut:         tokensOut,
 			CostCents:         costCents,
+			DimensionRuns:     dimRunsJSON,
 			AgentRunID:        pgtype.UUID{Bytes: runID, Valid: true},
 		})
 		if uerr != nil {
