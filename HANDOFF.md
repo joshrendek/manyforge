@@ -1,20 +1,20 @@
 # Handoff — manyforge @ 008-review-dimensions — 2026-07-01 ~19:15 UTC
 
 ## ⚠️ Before you clear
-- **Uncommitted:** none of this session's code — all pushed. Working tree has only stray untracked docs (scattered `CLAUDE.md`s, `.pair/`, screenshots). **Unpushed:** none (`008-review-dimensions` tracks origin).
-- **PR #7 is MERGED** to master (squash `8da6007`); the old `fix/code-review-fallback-model` branch is deleted. We are on a fresh **`008-review-dimensions`** branch off master (one branch off master — compliant).
+- **Unpushed:** none — all 5 Slice 1 commits (`611ed8d`..`2d7d5bd`) are pushed to `origin/008-review-dimensions`.
+- **Uncommitted:** only this `HANDOFF.md` + `.beads/issues.jsonl` (bd close of v9c). Working tree otherwise has only stray untracked docs (scattered `CLAUDE.md`s, `.pair/`, screenshots).
+- **No PR opened yet.** Slice 1 is landed on the branch but not PR'd into master. Open `008-review-dimensions` → master when ready, OR continue Slice 2 on the same branch (still one branch off master — compliant).
 - **Still running:** air **:8081**, ng **:4300**, Ollama **:11434**, LM Studio **192.168.2.241:1234** (external), Docker `mf-dev` :55432 + `mf-egress-proxy`.
 
-## State (≤3 sentences)
-Spec **008 — Multi-dimension Code Review** is greenlit and in flight. It turns a review from *one agent, one prompt* into a **panel of per-dimension reviewers** (security/correctness/performance/UI/docs/tests), each with its own model + prompt + file-scope + severity; a review fans out across the in-scope dimensions, dedupes, optionally verifies, and posts one review tagged by dimension. **Slice 1 part 1 is done** (commit `5a2c34e`): the fully-unit-tested **dimension engine** — nothing wires it yet, so zero behavior change.
+## State
+Spec **008 — Multi-dimension Code Review**. **Slice 1 (`manyforge-v9c`) is COMPLETE and fully verified** — 5 commits on `008-review-dimensions`: `611ed8d` prompt plumbing → `e8ef7c4` `defaultPanel()` + catalog rename → `305b0bb` `runJob` fan-out + pure `aggregateReview()` → `13f5ea0` DB migrations 0077–0079 + `resolvePanel` + `dimension_runs` → `2d7d5bd` multi-lane integration test + MF008 security pins. Reviews now fan out across a per-business dimension panel (or the zero-config single **general** lane = byte-for-byte legacy), tag findings by dimension, aggregate to ONE posted review, and record per-dimension accounting. Gates ALL green: `go build ./...`, `go vet ./...`, contract, full coding integration suite, `make sec-test`.
 
-## Resume here — finish Slice 1 (`manyforge-v9c`), backend core
-The engine (`internal/agents/coding/dimensions.go`, 6 tests green) exists but is unwired. Do these in order, each with tests, keeping the single-agent path working:
-1. **Prompt plumbing** — parameterize the review prompt: `localReview`/`streamLocalReview` take a `prompt` arg (used instead of the `reviewInstructions` const); the sandbox path writes the *dimension's* prompt to `/out/review_instructions.txt` (already the runtime seam, MF007-PIN-13). Default = `reviewInstructions`. Update the existing localreview tests to pass it.
-2. **`defaultPanel()`** — returns a SINGLE "general" dimension using `reviewInstructions` (all files, min info). **This is the zero-config default → NO cost/latency regression** (do NOT auto-enable all 6 specialists by default; that would 5× everyone's review). The `dimensionCatalog()` specialists are opt-in via Slice 2 presets.
-3. **Fan-out in `runJob`** (`service.go` ~348–433, the delicate part I hardened all session — go carefully): resolve the panel → `activeDimensions(panel, changedFilePaths)` → for each active dim run the local/cloud pass with its prompt+model (empty ⇒ the resolved `cred`) against the scope-filtered payload → tag findings with `dim.Key` → `applySeverityFloor` → collect. Then `dedupeFindings` → post ONE review → finalize with **summed** tokens/cost + a `dimension_runs` record (model/tokens/cost/status/skipped). Partial success: one lane failing ≠ whole review fails (FR-013); all fail ⇒ fail.
-4. **Migrations 0077–0079** + sqlc: `review_dimension`, `review_config` (both RLS by business_id/tenant_root_id — mirror `ai_provider_credential`/migration 0025), `code_review.dimension_runs jsonb`. A resolver returns configured rows or `defaultPanel()` when none.
-5. **Tests**: fan-out integration (fake connector + fake local endpoint returning per-dim findings → one aggregated review; partial-success; none-in-scope) + **MF008-PIN-1** (RLS cross-tenant) / **PIN-2** (per-dim SSRF guard not bypassed) / **PIN-3** (prompt-per-dimension plumbed) in `internal/security_regression/`.
+## Resume here — open a PR for Slice 1, or start Slice 2
+Slice 1 ships the panel machinery with NO cost/behavior regression for unconfigured businesses (they still get the single general lane). Two paths:
+1. **Land Slice 1**: open PR `008-review-dimensions` → **base master**, merge, delete branch — the compliant one-branch-off-master cadence.
+2. **Slice 2 (`manyforge-puh`, now unblocked)** — Config UI: the Review Setup page + REST for `review_dimension`/`review_config` + detail-page grouping of findings by dimension. Foundation exists: tables + `resolvePanel` + the `Dimension` tag on `connectors.Finding`. sqlc: `ListReviewDimensions`/`InsertReviewDimension`/`DeleteReviewDimension` exist; **`review_config` has NO sqlc queries yet** (add Get/Upsert). Any UI must be browser-verified (gstack/Playwright) per CLAUDE.md, then codified as a spec.
+
+**Key seams landed:** `resolvePanel(ctx, principalID, businessID)` (`panel.go`) → configured rows or `defaultPanel()`; `aggregateReview([]laneResult)` (pure, `dimensions.go`) floors+tags+dedupes+sums+partial-success; `reviewLane` closure in `runJob` runs one lane (local, or cloud in a per-lane `lane-<key>` outDir); `generalDimensionKey` findings stay untagged (legacy shape); `dimensionCatalog()` = opt-in specialists (Slice 2 presets), NOT the default; `buildDimensionRuns` → the `dimension_runs` jsonb.
 
 ## Run & verify
 - Gates: `go build ./...`; `make lint` (= `go vet ./...`, NOT staticcheck); `go test ./internal/agents/coding/ ./internal/connectors/ ./internal/security_regression/`; `go test -tags contract ./cmd/...`; `make sec-test`. **NO Co-Authored-By** (user rule).
