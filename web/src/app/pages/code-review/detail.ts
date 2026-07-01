@@ -47,6 +47,23 @@ import { runStatusTone } from '../../ui/status';
           }
         </div>
 
+        <!-- Live progress (running only) -->
+        @if (r.status === 'running' && r.progress) {
+          <div class="mf-card" style="margin-bottom:16px" data-testid="review-progress">
+            <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+              <span style="font-weight:600" data-testid="progress-phase">{{ phaseLabel(r) }}</span>
+              <span style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="progress-elapsed">{{ elapsedLabel() }}</span>
+              @if (r.progress.tokens) {
+                <span style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.progress.tokens }} tokens</span>
+              }
+            </div>
+            @if (r.progress.preview) {
+              <pre data-testid="progress-preview"
+                   style="max-height:240px;overflow:auto;white-space:pre-wrap;font-family:monospace;font-size:var(--mf-fs-xs);margin:0;padding:8px;border-radius:6px;background:var(--mf-bg-subtle,rgba(0,0,0,.05))">{{ r.progress.preview }}</pre>
+            }
+          </div>
+        }
+
         <!-- Summary -->
         @if (r.summary) {
           <div class="mf-card" style="margin-bottom:16px" data-testid="review-summary">
@@ -96,10 +113,12 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
   review = signal<CodeReview | null>(null);
   loading = signal(true);
   error = signal('');
+  elapsed = signal(0);
 
   private businessId = '';
   private id = '';
   private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private elapsedTimer: ReturnType<typeof setInterval> | undefined;
 
   // Maps Finding severity to a StatusPill tone.
   findingTone(severity: Finding['severity']): 'danger' | 'warn' | 'neutral' {
@@ -107,6 +126,40 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
       case 'error': return 'danger';
       case 'warning': return 'warn';
       default: return 'neutral';
+    }
+  }
+
+  // Maps a progress phase to a human label (reviewing names the model).
+  phaseLabel(r: CodeReview): string {
+    const phase = r.progress?.phase ?? 'working';
+    const map: Record<string, string> = {
+      preparing: 'Preparing',
+      reviewing: 'Reviewing with ' + (r.model || 'model'),
+      posting: 'Posting review',
+    };
+    return map[phase] ?? phase;
+  }
+
+  // Formats the running-review elapsed seconds as "Ns" or "Mm Ns".
+  elapsedLabel(): string {
+    const s = this.elapsed();
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  }
+
+  private startElapsed(createdAt: string): void {
+    if (this.elapsedTimer !== undefined) return;
+    const start = new Date(createdAt).getTime();
+    const tick = () => this.elapsed.set(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    tick();
+    this.elapsedTimer = setInterval(tick, 1000);
+  }
+
+  private stopElapsed(): void {
+    if (this.elapsedTimer !== undefined) {
+      clearInterval(this.elapsedTimer);
+      this.elapsedTimer = undefined;
     }
   }
 
@@ -134,6 +187,7 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
+    this.stopElapsed();
   }
 
   private pollOnce(): void {
@@ -141,7 +195,11 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
     this.api.getReview(this.businessId, this.id).subscribe({
       next: (r) => {
         this.review.set(r);
-        if (this.isTerminal(r)) this.stopPolling();
+        if (this.isTerminal(r)) {
+          this.stopPolling();
+        } else {
+          this.startElapsed(r.created_at);
+        }
       },
       error: () => {
         // Keep polling on transient errors.
@@ -161,7 +219,10 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
       next: (r) => {
         this.review.set(r);
         this.loading.set(false);
-        if (!this.isTerminal(r)) this.startPolling();
+        if (!this.isTerminal(r)) {
+          this.startPolling();
+          this.startElapsed(r.created_at);
+        }
       },
       error: (e: HttpErrorResponse) => {
         this.loading.set(false);

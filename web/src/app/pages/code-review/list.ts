@@ -213,6 +213,9 @@ import { runStatusTone } from '../../ui/status';
               <span style="width:56px">#{{ r.pr_number }}</span>
               <span style="width:96px">
                 <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" />
+                @if (r.status === 'running' && r.progress?.phase) {
+                  <span data-testid="review-phase" style="display:block;color:var(--mf-text-muted);font-size:var(--mf-fs-xs);margin-top:2px">{{ r.progress?.phase }}</span>
+                }
               </span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     data-testid="review-model" [title]="r.model">{{ r.model || '—' }}</span>

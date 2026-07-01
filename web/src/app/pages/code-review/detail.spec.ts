@@ -164,6 +164,32 @@ describe('CodeReviewDetailComponent', () => {
     expect(qAll('[data-testid="finding-row"]').length).toBe(0);
   });
 
+  // ── Live progress ──────────────────────────────────────────────────────────────
+
+  it('renders the progress block (phase + preview) while running', () => {
+    mount(makeReview({ status: 'running', progress: { phase: 'reviewing', tokens: 12, preview: 'partial output here' } }));
+    expect(q('[data-testid="review-progress"]')).toBeTruthy();
+    expect(q('[data-testid="progress-phase"]')?.textContent).toContain('Reviewing');
+    expect(q('[data-testid="progress-preview"]')?.textContent).toContain('partial output here');
+    // drain the poll the running status scheduled (so mock.verify() is clean)
+    vi.advanceTimersByTime(3000);
+    mock.expectOne(`/api/v1/businesses/${biz}/code-reviews/${reviewId}`).flush(makeReview({ status: 'succeeded' }));
+  });
+
+  it('hides the progress block when terminal', () => {
+    mount(makeReview({ status: 'succeeded', progress: { phase: 'posting', tokens: 1, preview: 'x' } }));
+    expect(q('[data-testid="review-progress"]')).toBeNull();
+  });
+
+  it('ticks the elapsed timer while running', () => {
+    mount(makeReview({ status: 'running', progress: { phase: 'reviewing', tokens: 0, preview: '' } }));
+    const before = cmp.elapsed();
+    vi.advanceTimersByTime(3000);
+    expect(cmp.elapsed()).toBeGreaterThan(before);
+    // the 3s advance also fired a poll — drain it
+    mock.expectOne(`/api/v1/businesses/${biz}/code-reviews/${reviewId}`).flush(makeReview({ status: 'succeeded' }));
+  });
+
   // ── Polling while non-terminal ────────────────────────────────────────────────
 
   it('polls getReview while review is pending', () => {
