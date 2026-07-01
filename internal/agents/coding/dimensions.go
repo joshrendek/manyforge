@@ -95,6 +95,21 @@ func dimensionCatalog() []Dimension {
 	}
 }
 
+// dimensionLabel returns a display label for a dimension key, reusing the built-in catalog's
+// label for a known specialist (or "General" for the default lane) and falling back to the raw
+// key otherwise. Configured rows carry no label column, so the label is derived here.
+func dimensionLabel(key string) string {
+	if key == generalDimensionKey {
+		return "General"
+	}
+	for _, d := range dimensionCatalog() {
+		if d.Key == key {
+			return d.Label
+		}
+	}
+	return key
+}
+
 // matchGlob reports whether name matches a glob pattern that may contain "**" (any number
 // of path segments, including zero) and "*" (any run of non-separator chars within a
 // single segment). It is a compact doublestar matcher; standard path.Match handles each
@@ -268,10 +283,55 @@ func mergeDimensionTags(a, b string) string {
 type laneResult struct {
 	Dim       Dimension
 	Doc       FindingsDoc
+	Model     string // the model actually used (dim.Model, or the resolved default)
+	Provider  string // the provider actually used
 	TokensIn  int32
 	TokensOut int32
 	CostCents int64
 	Err       error
+}
+
+// dimensionRun is the persisted per-lane accounting record (spec 008), serialized into the
+// code_review.dimension_runs JSONB array. status is "succeeded"/"failed" for a lane that ran,
+// or "skipped" (with SkippedReason) for a configured dimension that did not run this review.
+type dimensionRun struct {
+	Dimension     string `json:"dimension"`
+	Model         string `json:"model,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	TokensIn      int32  `json:"tokens_in"`
+	TokensOut     int32  `json:"tokens_out"`
+	CostCents     int64  `json:"cost_cents"`
+	Status        string `json:"status"`
+	SkippedReason string `json:"skipped_reason,omitempty"`
+	FindingCount  int    `json:"finding_count"`
+}
+
+// buildDimensionRuns turns the fan-out's lane results + skipped dimensions into the persisted
+// dimension_runs records. Ran lanes are "succeeded"/"failed" with their usage + raw finding
+// count; skipped dimensions are "skipped" with the reason — so every configured lane's outcome
+// is recorded, never silently dropped (spec 008 FR-003).
+func buildDimensionRuns(results []laneResult, skipped []SkippedDimension) []dimensionRun {
+	runs := make([]dimensionRun, 0, len(results)+len(skipped))
+	for _, lr := range results {
+		status := "succeeded"
+		if lr.Err != nil {
+			status = "failed"
+		}
+		runs = append(runs, dimensionRun{
+			Dimension:    lr.Dim.Key,
+			Model:        lr.Model,
+			Provider:     lr.Provider,
+			TokensIn:     lr.TokensIn,
+			TokensOut:    lr.TokensOut,
+			CostCents:    lr.CostCents,
+			Status:       status,
+			FindingCount: len(lr.Doc.Findings),
+		})
+	}
+	for _, sd := range skipped {
+		runs = append(runs, dimensionRun{Dimension: sd.Key, Status: "skipped", SkippedReason: sd.Reason})
+	}
+	return runs
 }
 
 // aggregateReview combines the per-lane results of a fan-out into ONE review doc plus the
