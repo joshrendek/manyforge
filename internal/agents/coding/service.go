@@ -39,6 +39,10 @@ type CodeReview struct {
 	CostCents     int64              `json:"cost_cents"` // LLM cost of the run (0 until usage capture lands)
 	CreatedAt     time.Time          `json:"created_at"`
 	PostedAt      *time.Time         `json:"posted_at"`
+	// Progress is the live progress snapshot for a running review (phase/tokens/
+	// preview); null/omitted for pending and terminal reviews. Populated from the
+	// code_review.progress jsonb the worker heartbeat persists.
+	Progress json.RawMessage `json:"progress,omitempty"`
 }
 
 // ClaimedReview is the typed representation of a claim_code_reviews result row,
@@ -515,6 +519,7 @@ func (s *CodeReviewService) List(ctx context.Context, principalID, businessID uu
 				CostCents:     r.CostCents,
 				CreatedAt:     r.CreatedAt,
 				PostedAt:      postedAt,
+				Progress:      json.RawMessage(r.Progress),
 				// ReviewURL intentionally empty in List — populated in Get only.
 				// The UI history list links via the detail page to avoid N connector
 				// resolves per list row.
@@ -573,6 +578,7 @@ func (s *CodeReviewService) Get(ctx context.Context, principalID, businessID, id
 			CostCents:     row.CostCents,
 			CreatedAt:     row.CreatedAt,
 			PostedAt:      postedAt,
+			Progress:      json.RawMessage(row.Progress),
 		}
 		raw.repoConnectorID = row.RepoConnectorID
 		raw.externalRef = row.ExternalReviewRef
