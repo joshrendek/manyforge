@@ -362,7 +362,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			map[string]any{"head_sha": pr.HeadSHA, "model": cred.Model, "base_url": cred.BaseURL},
 			nil, ptr("executed"),
 		)
-		d, in, out, lerr := localReview(ctx, s.localClient(), cred, payload, prog)
+		d, in, out, lerr := localReview(ctx, s.localClient(), cred, payload, reviewInstructions, prog)
 		tokensIn, tokensOut = clampInt32(in), clampInt32(out) // local = no cost
 		if lerr != nil {
 			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, lerr, tokensIn, tokensOut, 0)
