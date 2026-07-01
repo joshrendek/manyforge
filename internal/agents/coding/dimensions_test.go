@@ -1,6 +1,8 @@
 package coding
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/connectors"
@@ -130,6 +132,113 @@ func TestDedupeFindings(t *testing.T) {
 // no dimensions gets a SINGLE general lane — the default reviewInstructions, all files, no
 // severity floor — so a default review is byte-for-byte the pre-panel single-agent review
 // (no cost/latency regression). It must NOT be the multi-specialist dimensionCatalog.
+// TestAggregateReview pins the fan-out aggregation (spec 008 FR-005/FR-013): per-lane
+// severity floors, dimension tagging (general lane left untagged), cross-lane dedupe, summed
+// usage across ALL lanes (incl. failed-but-billed), and partial-success semantics.
+func TestAggregateReview(t *testing.T) {
+	sec := Dimension{Key: "security", MinSeverity: "warning"}
+	corr := Dimension{Key: "correctness", MinSeverity: "info"}
+	gen := Dimension{Key: generalDimensionKey, MinSeverity: "info"}
+
+	t.Run("single general lane is untagged and preserves the doc", func(t *testing.T) {
+		res := []laneResult{{
+			Dim:      gen,
+			TokensIn: 100, TokensOut: 20,
+			Doc: FindingsDoc{Summary: "LGTM", Findings: []connectors.Finding{
+				{File: "a.go", Line: iptr(1), Severity: "info", Title: "x"},
+			}},
+		}}
+		doc, in, out, cost, err := aggregateReview(res)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if doc.Summary != "LGTM" {
+			t.Fatalf("summary=%q", doc.Summary)
+		}
+		if len(doc.Findings) != 1 || doc.Findings[0].Dimension != "" {
+			t.Fatalf("general lane must leave findings untagged (legacy shape): %+v", doc.Findings)
+		}
+		if in != 100 || out != 20 || cost != 0 {
+			t.Fatalf("usage in=%d out=%d cost=%d, want 100/20/0", in, out, cost)
+		}
+	})
+
+	t.Run("multi-lane tags, floors, dedupes, sums", func(t *testing.T) {
+		res := []laneResult{
+			{Dim: sec, TokensIn: 10, TokensOut: 5, CostCents: 3, Doc: FindingsDoc{Summary: "sec", Findings: []connectors.Finding{
+				{File: "a.go", Line: iptr(1), Severity: "error", Title: "SQL injection"}, // kept (>= warning)
+				{File: "a.go", Line: iptr(2), Severity: "info", Title: "nit"},            // dropped by warning floor
+			}}},
+			{Dim: corr, TokensIn: 20, TokensOut: 7, CostCents: 4, Doc: FindingsDoc{Summary: "corr", Findings: []connectors.Finding{
+				{File: "a.go", Line: iptr(1), Severity: "warning", Title: "sql injection"}, // dup of sec's (case-insensitive) → merged
+				{File: "b.go", Line: iptr(9), Severity: "info", Title: "logic"},            // kept (info floor)
+			}}},
+		}
+		doc, in, out, cost, err := aggregateReview(res)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if in != 30 || out != 12 || cost != 7 {
+			t.Fatalf("summed usage in=%d out=%d cost=%d, want 30/12/7", in, out, cost)
+		}
+		if len(doc.Findings) != 2 {
+			t.Fatalf("want 2 findings after floor+dedupe, got %d: %+v", len(doc.Findings), doc.Findings)
+		}
+		var merged *connectors.Finding
+		for i := range doc.Findings {
+			if doc.Findings[i].File == "a.go" && doc.Findings[i].Line != nil && *doc.Findings[i].Line == 1 {
+				merged = &doc.Findings[i]
+			}
+		}
+		if merged == nil || merged.Severity != "error" {
+			t.Fatalf("merged finding must keep max severity (error): %+v", merged)
+		}
+		if merged.Dimension != "correctness, security" {
+			t.Fatalf("merged dimension tags = %q, want 'correctness, security'", merged.Dimension)
+		}
+		if !strings.Contains(doc.Summary, "sec") || !strings.Contains(doc.Summary, "corr") {
+			t.Fatalf("summary must join lane summaries: %q", doc.Summary)
+		}
+	})
+
+	t.Run("partial success: one lane fails, survivors proceed, all tokens summed", func(t *testing.T) {
+		res := []laneResult{
+			{Dim: sec, TokensIn: 50, TokensOut: 10, CostCents: 2, Err: errors.New("lane boom")}, // failed but billed
+			{Dim: corr, TokensIn: 5, TokensOut: 1, Doc: FindingsDoc{Summary: "ok", Findings: []connectors.Finding{
+				{File: "b.go", Line: iptr(3), Severity: "error", Title: "bug"},
+			}}},
+		}
+		doc, in, out, cost, err := aggregateReview(res)
+		if err != nil {
+			t.Fatalf("partial success must not error: %v", err)
+		}
+		if in != 55 || out != 11 || cost != 2 {
+			t.Fatalf("failed lane's tokens must still be summed: in=%d out=%d cost=%d, want 55/11/2", in, out, cost)
+		}
+		if len(doc.Findings) != 1 || doc.Findings[0].Dimension != "correctness" {
+			t.Fatalf("survivor findings wrong: %+v", doc.Findings)
+		}
+	})
+
+	t.Run("all lanes fail: first error returned, tokens still summed", func(t *testing.T) {
+		boom := errors.New("first boom")
+		res := []laneResult{
+			{Dim: sec, TokensIn: 3, Err: boom},
+			{Dim: corr, TokensIn: 4, Err: errors.New("second")},
+		}
+		_, in, _, _, err := aggregateReview(res)
+		if err == nil {
+			t.Fatal("all lanes failing must return an error")
+		}
+		if !errors.Is(err, boom) {
+			t.Fatalf("must return the FIRST lane error, got %v", err)
+		}
+		if in != 7 {
+			t.Fatalf("tokens summed even when all fail: in=%d, want 7", in)
+		}
+	})
+}
+
 func TestDefaultPanel(t *testing.T) {
 	panel := defaultPanel()
 	if len(panel) != 1 {

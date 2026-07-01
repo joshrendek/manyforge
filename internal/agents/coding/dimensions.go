@@ -32,6 +32,12 @@ type SkippedDimension struct {
 	Reason string `json:"reason"`
 }
 
+// generalDimensionKey is the Key of the zero-config default lane. Findings from this lane are
+// left UNTAGGED (Dimension="") during aggregation so a default review's stored/posted shape is
+// byte-for-byte the legacy single-agent review — a dimension tag is only meaningful once
+// specialist lanes run alongside each other (Slice 2).
+const generalDimensionKey = "general"
+
 // defaultPanel is the zero-config review panel: a SINGLE "general" lane using the default
 // reviewInstructions, no scope (all files), and no severity floor. It is what a review runs
 // when the business has configured no dimensions of its own — making a default review
@@ -40,7 +46,7 @@ type SkippedDimension struct {
 // specialist lanes in dimensionCatalog() are opt-in on top of this.
 func defaultPanel() []Dimension {
 	return []Dimension{{
-		Key:         "general",
+		Key:         generalDimensionKey,
 		Label:       "General",
 		Prompt:      reviewInstructions,
 		MinSeverity: "info", // no floor — every finding posts, as today
@@ -142,6 +148,22 @@ func matchesScope(globs, paths []string) bool {
 	return false
 }
 
+// filterFilesByScope returns the changed files whose path matches the dimension's scope globs
+// — the per-lane diff subset a scoped dimension reviews. Empty globs ⇒ all files (returned as
+// the same slice, so an unscoped lane assembles the identical payload to a whole-PR review).
+func filterFilesByScope(files []connectors.ChangedFile, globs []string) []connectors.ChangedFile {
+	if len(globs) == 0 {
+		return files
+	}
+	out := make([]connectors.ChangedFile, 0, len(files))
+	for _, f := range files {
+		if matchesScope(globs, []string{f.Path}) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // activeDimensions splits the panel into the enabled dimensions that apply to this PR's
 // changed paths (in Order) and the ones that were skipped, with a reason. Disabled
 // dimensions and dimensions whose scope matches no changed file are skipped — never
@@ -236,4 +258,62 @@ func mergeDimensionTags(a, b string) string {
 	}
 	sort.Strings(tags)
 	return strings.Join(tags, ", ")
+}
+
+// laneResult is one dimension's outcome in a review fan-out (spec 008): the dimension it ran,
+// its findings doc (zero-valued on failure), the tokens/cost it spent, and any error. The
+// accounting fields are populated even on Err so a failed-but-billed lane is still summed —
+// a lane can burn tokens and then fail to parse (the single-agent manyforge-7n5 rule, applied
+// per lane).
+type laneResult struct {
+	Dim       Dimension
+	Doc       FindingsDoc
+	TokensIn  int32
+	TokensOut int32
+	CostCents int64
+	Err       error
+}
+
+// aggregateReview combines the per-lane results of a fan-out into ONE review doc plus the
+// summed usage (spec 008 FR-005/FR-013). For each surviving lane it floors the findings to the
+// lane's MinSeverity and tags them with the dimension key (the zero-config general lane is left
+// untagged, matching the legacy single-agent shape), then de-duplicates the union across lanes
+// (same file+line+title → highest severity, unioned tags). Tokens and cost are summed across
+// ALL lanes, including failed ones. Partial success (FR-013): if ANY lane produced a doc the
+// review proceeds with the survivors; only if EVERY lane failed does it return an error — the
+// first lane's error, so the failure surfaced to the user is a real one.
+func aggregateReview(results []laneResult) (doc FindingsDoc, tokensIn, tokensOut int32, costCents int64, err error) {
+	var findings []connectors.Finding
+	var summaries []string
+	anyOK := false
+	var firstErr error
+	for _, lr := range results {
+		tokensIn += lr.TokensIn
+		tokensOut += lr.TokensOut
+		costCents += lr.CostCents
+		if lr.Err != nil {
+			if firstErr == nil {
+				firstErr = lr.Err
+			}
+			continue
+		}
+		anyOK = true
+		fs := applySeverityFloor(lr.Doc.Findings, lr.Dim.MinSeverity)
+		if lr.Dim.Key != generalDimensionKey {
+			for i := range fs {
+				fs[i].Dimension = lr.Dim.Key
+			}
+		}
+		findings = append(findings, fs...)
+		if s := strings.TrimSpace(lr.Doc.Summary); s != "" {
+			summaries = append(summaries, s)
+		}
+	}
+	if !anyOK {
+		return FindingsDoc{}, tokensIn, tokensOut, costCents, firstErr
+	}
+	return FindingsDoc{
+		Summary:  strings.Join(summaries, "\n\n"),
+		Findings: dedupeFindings(findings),
+	}, tokensIn, tokensOut, costCents, nil
 }
