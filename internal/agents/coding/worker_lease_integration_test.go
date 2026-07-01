@@ -65,8 +65,9 @@ func TestCodeReviewLeaseRenewalPreventsReclaim(t *testing.T) {
 	}
 	w.runJobSeam = seam
 	wctx, wcancel := context.WithCancel(ctx)
-	defer wcancel()
-	go w.Run(wctx)
+	defer wcancel() // safety net if an assertion t.Fatal's before the explicit stop below
+	done := make(chan struct{})
+	go func() { w.Run(wctx); close(done) }()
 
 	select {
 	case <-started:
@@ -88,6 +89,7 @@ func TestCodeReviewLeaseRenewalPreventsReclaim(t *testing.T) {
 	}
 
 	// (3) THE FIX: a concurrent claim must NOT re-claim the running row (fresh lease).
+	// lease arg irrelevant here — asserting the row is NOT reclaimed
 	again, err := (&AppDBAdapter{DB: tdb.App}).ClaimCodeReviews(ctx, 900, 10)
 	if err != nil {
 		t.Fatalf("concurrent claim: %v", err)
@@ -109,6 +111,15 @@ func TestCodeReviewLeaseRenewalPreventsReclaim(t *testing.T) {
 			t.Fatalf("row did not reach succeeded after release; status=%s", readStatus(ctx, t, tdb, cr.ID))
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Stop the worker and join its goroutine so teardown (closing the testcontainers
+	// Postgres pool) never races a query still in flight on wctx.
+	wcancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("worker did not stop within 2s of context cancel")
 	}
 }
 
