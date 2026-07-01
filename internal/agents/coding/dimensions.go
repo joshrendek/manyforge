@@ -32,12 +32,33 @@ type SkippedDimension struct {
 	Reason string `json:"reason"`
 }
 
-// defaultDimensions is the built-in review panel used when a business has configured no
-// dimensions of its own. Provider/Model are left empty so each lane runs on the review's
-// resolved default model; the value it adds out of the box is per-concern PROMPTS +
-// scope routing (vs today's single blended prompt). The UI lane is scoped to frontend
-// paths so it auto-skips backend-only PRs. Docs is shipped disabled (noisiest by default).
-func defaultDimensions() []Dimension {
+// defaultPanel is the zero-config review panel: a SINGLE "general" lane using the default
+// reviewInstructions, no scope (all files), and no severity floor. It is what a review runs
+// when the business has configured no dimensions of its own — making a default review
+// byte-for-byte the pre-panel single-agent review (same prompt, same files, every finding
+// posted), so shipping the panel machinery adds NO cost or latency for existing users. The
+// specialist lanes in dimensionCatalog() are opt-in on top of this.
+func defaultPanel() []Dimension {
+	return []Dimension{{
+		Key:         "general",
+		Label:       "General",
+		Prompt:      reviewInstructions,
+		MinSeverity: "info", // no floor — every finding posts, as today
+		Enabled:     true,
+		Order:       1,
+	}}
+}
+
+// dimensionCatalog is the built-in library of specialized reviewer lanes (spec 008). It is
+// NOT the zero-config default — defaultPanel() is (a single general lane). These specialists
+// are OPT-IN: a business enables/customizes them via presets + the Review Setup UI (Slice 2).
+// Enabling every lane multiplies a review's cost and latency (each is a separate model pass,
+// and on a single-GPU local provider the passes run sequentially), so the catalog must never
+// be auto-enabled as the default. Provider/Model are left empty so each enabled lane runs on
+// the review's resolved default model; the value it adds is per-concern PROMPTS + scope
+// routing. The UI lane is scoped to frontend paths so it auto-skips backend-only PRs; Docs
+// ships disabled (noisiest).
+func dimensionCatalog() []Dimension {
 	return []Dimension{
 		{
 			Key: "security", Label: "Security", Order: 1, Enabled: true, MinSeverity: "warning",
