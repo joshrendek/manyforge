@@ -308,6 +308,19 @@ components:
           type: string
           format: date-time
           nullable: true
+        progress:
+          type: object
+          nullable: true
+          description: >-
+            Live progress snapshot for a running review (phase/tokens/preview);
+            omitted for pending and terminal reviews.
+          properties:
+            phase:
+              type: string
+            tokens:
+              type: integer
+            preview:
+              type: string
 
     Finding:
       type: object

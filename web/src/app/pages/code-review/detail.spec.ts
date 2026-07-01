@@ -164,6 +164,55 @@ describe('CodeReviewDetailComponent', () => {
     expect(qAll('[data-testid="finding-row"]').length).toBe(0);
   });
 
+  // ── Live progress ──────────────────────────────────────────────────────────────
+
+  it('renders the progress block (phase + preview) while running', () => {
+    mount(makeReview({ status: 'running', progress: { phase: 'reviewing', tokens: 12, preview: 'partial output here' } }));
+    expect(q('[data-testid="review-progress"]')).toBeTruthy();
+    expect(q('[data-testid="progress-phase"]')?.textContent).toContain('Reviewing');
+    expect(q('[data-testid="progress-preview"]')?.textContent).toContain('partial output here');
+    // drain the poll the running status scheduled (so mock.verify() is clean)
+    vi.advanceTimersByTime(3000);
+    mock.expectOne(`/api/v1/businesses/${biz}/code-reviews/${reviewId}`).flush(makeReview({ status: 'succeeded' }));
+  });
+
+  it('hides the live progress block when terminal', () => {
+    mount(makeReview({ status: 'succeeded', progress: { phase: 'posting', tokens: 1, preview: 'x' } }));
+    expect(q('[data-testid="review-progress"]')).toBeNull();
+  });
+
+  it('retains the captured output on a failed review', () => {
+    mount(makeReview({
+      status: 'failed',
+      summary: '',
+      findings: [],
+      findings_count: 0,
+      progress: { phase: 'reviewing', tokens: 40, preview: 'partial findings before the crash' },
+    }));
+    // The live block is gone, but the failure block keeps the output visible.
+    expect(q('[data-testid="review-progress"]')).toBeNull();
+    const failed = q('[data-testid="review-failed"]');
+    expect(failed).toBeTruthy();
+    expect(failed?.textContent).toContain('This review failed');
+    expect(q('[data-testid="review-failed-output"]')?.textContent).toContain('partial findings before the crash');
+  });
+
+  it('shows a no-output note when a review fails before producing any output', () => {
+    mount(makeReview({ status: 'failed', summary: '', findings: [], findings_count: 0, progress: undefined }));
+    expect(q('[data-testid="review-failed"]')).toBeTruthy();
+    expect(q('[data-testid="review-failed-output"]')).toBeNull();
+    expect(q('[data-testid="review-failed-nooutput"]')).toBeTruthy();
+  });
+
+  it('ticks the elapsed timer while running', () => {
+    mount(makeReview({ status: 'running', progress: { phase: 'reviewing', tokens: 0, preview: '' } }));
+    const before = cmp.elapsed();
+    vi.advanceTimersByTime(3000);
+    expect(cmp.elapsed()).toBeGreaterThan(before);
+    // the 3s advance also fired a poll — drain it
+    mock.expectOne(`/api/v1/businesses/${biz}/code-reviews/${reviewId}`).flush(makeReview({ status: 'succeeded' }));
+  });
+
   // ── Polling while non-terminal ────────────────────────────────────────────────
 
   it('polls getReview while review is pending', () => {

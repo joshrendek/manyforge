@@ -60,7 +60,7 @@ func (q *Queries) CreateCodeReviewAgentRun(ctx context.Context, arg CreateCodeRe
 }
 
 const getCodeReview = `-- name: GetCodeReview :one
-SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
+SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
 
 type GetCodeReviewParams struct {
@@ -96,6 +96,7 @@ func (q *Queries) GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (C
 		&i.TokensIn,
 		&i.TokensOut,
 		&i.CostCents,
+		&i.Progress,
 	)
 	return i, err
 }
@@ -106,7 +107,7 @@ SELECT $1, b.id, b.tenant_root_id, $2, $3,
     $4, 'pending', $5, $6, $7, now(), now()
 FROM business b
 WHERE b.id = $8::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress
 `
 
 type InsertCodeReviewParams struct {
@@ -157,13 +158,14 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		&i.TokensIn,
 		&i.TokensOut,
 		&i.CostCents,
+		&i.Progress,
 	)
 	return i, err
 }
 
 const listCodeReviews = `-- name: ListCodeReviews :many
 SELECT id, repo_connector_id, pr_number, status, summary, findings,
-       external_review_ref, created_at, posted_at, model, cost_cents
+       external_review_ref, created_at, posted_at, model, cost_cents, progress
 FROM code_review
 WHERE business_id = $1
 ORDER BY created_at DESC
@@ -182,6 +184,7 @@ type ListCodeReviewsRow struct {
 	PostedAt          pgtype.Timestamptz `json:"posted_at"`
 	Model             string             `json:"model"`
 	CostCents         int64              `json:"cost_cents"`
+	Progress          []byte             `json:"progress"`
 }
 
 // ListCodeReviews returns the business's reviews newest-first for the history UI.
@@ -206,6 +209,7 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 			&i.PostedAt,
 			&i.Model,
 			&i.CostCents,
+			&i.Progress,
 		); err != nil {
 			return nil, err
 		}
@@ -258,7 +262,7 @@ UPDATE code_review SET
     lease_expires_at = NULL,
     updated_at = now()
 WHERE id = $11::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress
 `
 
 type UpdateCodeReviewResultParams struct {
@@ -315,6 +319,7 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		&i.TokensIn,
 		&i.TokensOut,
 		&i.CostCents,
+		&i.Progress,
 	)
 	return i, err
 }

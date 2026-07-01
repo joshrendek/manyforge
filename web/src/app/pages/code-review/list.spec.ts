@@ -475,5 +475,28 @@ describe('CodeReviewListComponent', () => {
       vi.advanceTimersByTime(9000);
       mock.expectNone('/api/v1/businesses/b1/code-reviews');
     });
+
+    it('shows the progress phase on a running review row', () => {
+      const f = TestBed.createComponent(CodeReviewListComponent);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses').flush(biz);
+      f.detectChanges();
+      mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
+      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+        items: [{
+          id: 'r1', status: 'running', summary: '', review_url: '', pr_number: 7,
+          model: 'google/gemini-2.5-pro',
+          findings: [], findings_count: 0, cost_cents: 0,
+          created_at: '2026-06-20T12:00:00Z', posted_at: null,
+          progress: { phase: 'reviewing', tokens: 12, preview: 'partial output' },
+        }],
+      });
+      mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
+      f.detectChanges();
+
+      const phase = f.nativeElement.querySelector('[data-testid="review-phase"]');
+      expect(phase).toBeTruthy();
+      expect(phase?.textContent).toContain('reviewing');
+    });
   });
 });
