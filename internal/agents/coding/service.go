@@ -335,7 +335,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	if isLocalProvider(cred.Provider) {
 		maxTotal = localProviderMaxTotalBytes
 	}
-	payload, skippedFiles, omittedFiles, filteredFiles := assembleDiffPayload(files, maxTotal)
+	// The whole-PR dropped-file sets (skipped/omitted/filtered) are computed once here for the
+	// audit trail and the review body's "not reviewed" note; each dimension lane assembles its
+	// own scope-filtered payload below (an unscoped lane reproduces this exact payload).
+	_, skippedFiles, omittedFiles, filteredFiles := assembleDiffPayload(files, maxTotal)
 	// No silent caps: dropped files are surfaced in the review body AND recorded on the audit
 	// trail (binary/too-large → skipped; over-budget → omitted; prose/plan docs → filtered).
 	if len(skippedFiles) > 0 || len(omittedFiles) > 0 || len(filteredFiles) > 0 {
@@ -345,91 +348,130 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			nil, ptr("executed"),
 		)
 	}
-	// Obtain the findings doc + token usage. Two paths by provider:
-	//   - local (Ollama/vLLM): review host-side via the direct-API path — small
-	//     local models can't drive opencode's agent loop, and the model is on-host
-	//     so there's nothing to isolate (manyforge-62s). Cost is 0 (local).
-	//   - cloud: opencode in the hardened, egress-restricted sandbox.
-	var doc FindingsDoc
-	var tokensIn, tokensOut int32
-	var costCents int64
-
+	// Fan out the review across the active dimension lanes (spec 008). Zero-config resolves to a
+	// single "general" lane (defaultPanel), so a default review is byte-for-byte the legacy
+	// single-agent review; configured panels (DB-resolved) arrive in a later slice. Each lane
+	// reviews its scope-filtered diff with its own prompt + model; findings are floored, tagged,
+	// and de-duplicated, and usage is summed. Partial success (FR-013): one lane failing does
+	// not fail the whole review — only every lane failing does.
 	prog.SetPhase("reviewing")
 
-	if isLocalProvider(cred.Provider) {
+	panel := defaultPanel()
+	changedPaths := changedFilePaths(changed)
+	active, skippedDims := activeDimensions(panel, changedPaths)
+	if len(skippedDims) > 0 {
 		_ = s.auditStep(ctx, principalID, businessID, crID,
-			"agent.coding.localreview.invoked",
-			map[string]any{"head_sha": pr.HeadSHA, "model": cred.Model, "base_url": cred.BaseURL},
-			nil, ptr("executed"),
+			"agent.coding.review.dimensions_skipped",
+			map[string]any{"skipped": skippedDims}, nil, ptr("executed"),
 		)
-		d, in, out, lerr := localReview(ctx, s.localClient(), cred, payload, reviewInstructions, prog)
-		tokensIn, tokensOut = clampInt32(in), clampInt32(out) // local = no cost
-		if lerr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, lerr, tokensIn, tokensOut, 0)
+	}
+
+	// reviewLane runs ONE dimension end-to-end and returns its outcome. Local providers
+	// (Ollama/vLLM) review host-side via the direct-API path — small models can't drive
+	// opencode's agent loop, and the on-host model needs no isolation (manyforge-62s; cost 0).
+	// Cloud providers run opencode in the hardened, egress-restricted sandbox, writing to a
+	// per-lane output dir so configured lanes never clobber each other's review.json. An empty
+	// dim.Model uses the review's resolved credential; the dimension's prompt drives both paths.
+	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
+		laneCred := cred
+		if strings.TrimSpace(dim.Model) != "" {
+			laneCred.Model = dim.Model
 		}
-		doc = d
-	} else {
-		// Scope the review to the changed files by writing their paths where the
-		// entrypoint reads them (/out/review_files.txt). Absent → whole-repo review.
-		if len(changed) > 0 {
-			_ = os.WriteFile(filepath.Join(outDir, "review_files.txt"),
-				[]byte(strings.Join(changedFilePaths(changed), "\n")), 0o644)
+		scoped := filterFilesByScope(files, dim.ScopeGlobs)
+		lanePayload, _, _, _ := assembleDiffPayload(scoped, maxTotal)
+
+		if isLocalProvider(laneCred.Provider) {
+			_ = s.auditStep(ctx, principalID, businessID, crID,
+				"agent.coding.localreview.invoked",
+				map[string]any{"head_sha": pr.HeadSHA, "model": laneCred.Model, "base_url": laneCred.BaseURL, "dimension": dim.Key},
+				nil, ptr("executed"),
+			)
+			d, in, out, lerr := localReview(ctx, s.localClient(), laneCred, lanePayload, dim.Prompt, prog)
+			return laneResult{Dim: dim, Doc: d, TokensIn: clampInt32(in), TokensOut: clampInt32(out), Err: lerr} // local = no cost
 		}
-		// Hand opencode the rendered diff (annotated hunks) as the primary review
-		// scope; it may still open the full files in the read-only checkout for
-		// context. Absent/empty → falls back to review_files.txt (whole-file scope).
-		if payload != "" {
-			_ = os.WriteFile(filepath.Join(outDir, "review_diff.txt"), []byte(payload), 0o644)
+
+		// Cloud path: hand opencode the scoped diff + changed-file scope hint + the dimension's
+		// prompt where the entrypoint reads them (/out/review_*.txt), then run it. review_diff
+		// is the primary scope; review_files.txt is the whole-file fallback.
+		if len(scoped) > 0 {
+			_ = os.WriteFile(filepath.Join(laneOutDir, "review_files.txt"),
+				[]byte(strings.Join(changedFilePaths(commentableMap(scoped)), "\n")), 0o644)
 		}
-		// Single-source the review prompt: write the SAME instructions the local path uses
-		// (reviewInstructions) where the entrypoint reads them (/out/review_instructions.txt),
-		// so local and cloud share one prompt and prompt changes need no sandbox-image rebuild.
-		// The image's baked INSTRUCTIONS is only a fallback when this file is absent.
-		_ = os.WriteFile(filepath.Join(outDir, "review_instructions.txt"), []byte(reviewInstructions), 0o644)
+		if lanePayload != "" {
+			_ = os.WriteFile(filepath.Join(laneOutDir, "review_diff.txt"), []byte(lanePayload), 0o644)
+		}
+		// Single-source the prompt: write the dimension's instructions where the entrypoint
+		// reads them, so local and cloud share one prompt and prompt changes need no sandbox-
+		// image rebuild. The image's baked INSTRUCTIONS is only a fallback when this is absent.
+		_ = os.WriteFile(filepath.Join(laneOutDir, "review_instructions.txt"), []byte(dim.Prompt), 0o644)
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.opencode.invoked",
-			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": cred.Model},
+			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": laneCred.Model, "dimension": dim.Key},
 			nil, ptr("executed"),
 		)
 		spec := sandbox.SandboxSpec{
 			Image:       s.Image,
 			ReadOnlyDir: checkout,
-			OutputDir:   outDir,
-			Cmd:         opencodeCmd(cred.Model),
-			Env:         sandboxEnv(cred),
-			EgressAllow: []string{cred.Host()},
+			OutputDir:   laneOutDir,
+			Cmd:         opencodeCmd(laneCred.Model),
+			Env:         sandboxEnv(laneCred),
+			EgressAllow: []string{laneCred.Host()},
 			Timeout:     s.timeout(),
 		}
 		res, rerr := s.Sandbox.Run(ctx, spec)
 
-		// Capture usage as SOON as the sandbox returns — the model may have burned
-		// tokens even when the run ultimately fails (e.g. unparseable output). opencode
-		// reports 0 cost for a custom slug, so we price it via OpenRouter's catalog.
-		// Best-effort: missing usage/pricing → zero. Every exit below records this so a
-		// failed-but-billed run is still accounted (manyforge-7n5).
-		usage := readSandboxUsage(outDir)
-		tokensIn = clampInt32(usage.Input)
-		tokensOut = clampInt32(usage.Output + usage.Reasoning)
+		// Capture usage as SOON as the sandbox returns — the model may have burned tokens even
+		// when the run ultimately fails (e.g. unparseable output). opencode reports 0 cost for a
+		// custom slug, so price it via the catalog. Best-effort: missing usage/pricing → zero.
+		// aggregateReview sums this across every lane so a failed-but-billed lane is still
+		// accounted (manyforge-7n5).
+		usage := readSandboxUsage(laneOutDir)
+		lr := laneResult{Dim: dim, TokensIn: clampInt32(usage.Input), TokensOut: clampInt32(usage.Output + usage.Reasoning)}
 		if s.Pricing != nil {
-			if c, perr := s.Pricing.CostCents(ctx, cred.Provider, cred.Model, int64(tokensIn), int64(tokensOut)); perr == nil {
-				costCents = c
+			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
+				lr.CostCents = c
 			}
 		}
 		if rerr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, rerr, tokensIn, tokensOut, costCents)
+			lr.Err = rerr
+			return lr
 		}
-		rawFindings, ferr := os.ReadFile(filepath.Join(outDir, "review.json"))
+		rawFindings, ferr := os.ReadFile(filepath.Join(laneOutDir, "review.json"))
 		if ferr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-				fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(outDir, cred.APIKey, rc.Credential.APIToken)),
-				tokensIn, tokensOut, costCents)
+			lr.Err = fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+			return lr
 		}
 		d, perr := ParseFindings(rawFindings)
 		if perr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-				fmt.Errorf("%w%s", perr, sandboxStderrTail(outDir, cred.APIKey, rc.Credential.APIToken)), tokensIn, tokensOut, costCents)
+			lr.Err = fmt.Errorf("%w%s", perr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+			return lr
 		}
-		doc = d
+		lr.Doc = d
+		return lr
+	}
+
+	// Sequential fan-out: a single-GPU local provider can't run lanes in parallel, and cloud
+	// lanes stay cheap enough that sequential is fine for v1. A single lane writes directly to
+	// outDir (byte-for-byte the legacy path); multiple lanes each get an isolated sub-dir so
+	// their review.json / usage.json never collide.
+	laneResults := make([]laneResult, 0, len(active))
+	for _, dim := range active {
+		laneOutDir := outDir
+		if len(active) > 1 {
+			laneOutDir = filepath.Join(outDir, "lane-"+dim.Key)
+			if err := os.MkdirAll(laneOutDir, 0o777); err != nil {
+				return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+			}
+			if err := os.Chmod(laneOutDir, 0o777); err != nil {
+				return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+			}
+		}
+		laneResults = append(laneResults, reviewLane(dim, laneOutDir))
+	}
+
+	doc, tokensIn, tokensOut, costCents, aggErr := aggregateReview(laneResults)
+	if aggErr != nil {
+		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, aggErr, tokensIn, tokensOut, costCents)
 	}
 
 	// Post the review to the PR (intentionally ungated — advisory only). Findings on
