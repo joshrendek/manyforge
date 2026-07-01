@@ -391,6 +391,7 @@ func main() {
 			Image:    cfg.SandboxImage,
 			WorkRoot: cfg.SandboxWorkRoot,
 			Timeout:  5 * time.Minute,
+			LocalTimeout: cfg.LocalReviewTimeout,
 			// Same allowlist that boots the egress proxy above — Trigger validates the
 			// run's provider host against it up front (manyforge-0qj).
 			EgressAllow: netsafe.ParseHostAllowlist(cfg.SandboxEgressAllow),

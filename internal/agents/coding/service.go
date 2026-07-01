@@ -84,6 +84,10 @@ type CodeReviewService struct {
 	Image    string        // opencode sandbox image tag
 	WorkRoot string        // host temp root for per-run checkouts; must be writable
 	Timeout  time.Duration // sandbox wall-clock cap (0 = 10 min default)
+	// LocalTimeout is the HTTP timeout for the host-side local-provider review path
+	// (Ollama/vLLM); 0 ⇒ 30 min default. Separate from Timeout (the sandbox cap) so a
+	// long local review (e.g. a 35b model) isn't killed at the 10-min sandbox limit.
+	LocalTimeout time.Duration
 
 	// EgressAllow is the boot-static set of provider hosts the sandbox egress
 	// proxy permits (from MANYFORGE_SANDBOX_EGRESS_ALLOW). The proxy is shared and
@@ -120,11 +124,21 @@ func (s *CodeReviewService) timeout() time.Duration {
 	return 10 * time.Minute
 }
 
+// localTimeout returns the effective host-side local-provider review timeout (30 min
+// default). Distinct from timeout(): local models can run far longer than the cloud
+// sandbox wall-clock cap.
+func (s *CodeReviewService) localTimeout() time.Duration {
+	if s.LocalTimeout > 0 {
+		return s.LocalTimeout
+	}
+	return 30 * time.Minute
+}
+
 // localClient is the HTTP client for the host-side local-provider review path. A
 // plain client (allows loopback, which the SSRF-safe netsafe client refuses);
 // localReview enforces a loopback-only base URL so this stays local-only.
 func (s *CodeReviewService) localClient() *http.Client {
-	return &http.Client{Timeout: s.timeout()}
+	return &http.Client{Timeout: s.localTimeout()}
 }
 
 // Enqueue validates the request cheaply (resolve connector, resolve cred, egress

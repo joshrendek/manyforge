@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"testing"
+	"time"
 )
 
 func TestLoadDKIMMasterKey(t *testing.T) {
@@ -183,6 +184,35 @@ func TestLoadAgentRunLimits(t *testing.T) {
 		t.Setenv("MANYFORGE_AGENT_MAX_ITERATIONS", "not-a-number")
 		if _, err := Load(); err == nil {
 			t.Fatal("Load with malformed MANYFORGE_AGENT_MAX_ITERATIONS: want error, got nil")
+		}
+	})
+}
+
+func TestLocalReviewTimeout(t *testing.T) {
+	t.Run("default 30m", func(t *testing.T) {
+		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LocalReviewTimeout != 30*time.Minute {
+			t.Fatalf("default = %v, want 30m", cfg.LocalReviewTimeout)
+		}
+	})
+	t.Run("override", func(t *testing.T) {
+		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "45m")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LocalReviewTimeout != 45*time.Minute {
+			t.Fatalf("override = %v, want 45m", cfg.LocalReviewTimeout)
+		}
+	})
+	t.Run("malformed is a hard error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "notaduration")
+		if _, err := Load(); err == nil {
+			t.Fatal("malformed duration must be a config error")
 		}
 	})
 }
