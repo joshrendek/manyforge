@@ -334,6 +334,93 @@ func TestLocalReview_LogsTruncationOnLengthFinish(t *testing.T) {
 	}
 }
 
+// TestLocalReview_RetriesPlainOnUnparseable pins manyforge-87a: a local model's plain
+// output is non-deterministic and occasionally malformed (e.g. an unescaped quote from an
+// embedded code snippet). localReview retries plain generation IN-LINE — nudging the
+// temperature up so the retry actually varies — and returns the first output that parses,
+// instead of failing the whole job (which would trigger an expensive worker re-clone).
+func TestLocalReview_RetriesPlainOnUnparseable(t *testing.T) {
+	var plainTemps []float64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var b map[string]any
+		_ = json.Unmarshal(body, &b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		emit := func(content string) {
+			if content != "" {
+				frame, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": content}}}})
+				_, _ = w.Write([]byte("data: " + string(frame) + "\n\n"))
+			}
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		if strings.Contains(string(body), `"response_format"`) {
+			emit("") // json_schema attempt → empty, like LM Studio
+			return
+		}
+		temp, _ := b["temperature"].(float64)
+		plainTemps = append(plainTemps, temp)
+		if len(plainTemps) == 1 {
+			emit(`{"summary":"s" "findings":[]}`) // malformed (missing comma) → ParseFindings fails
+			return
+		}
+		emit(`{"summary":"ok","findings":[{"file":"a.go","line":1,"severity":"warning","title":"t","detail":"d"}]}`)
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil)
+	if err != nil {
+		t.Fatalf("localReview should recover via in-line retry: %v", err)
+	}
+	if doc.Summary != "ok" || len(doc.Findings) != 1 {
+		t.Fatalf("expected the retry's parseable output; doc=%+v", doc)
+	}
+	if len(plainTemps) < 2 {
+		t.Fatalf("expected >=2 plain attempts (retry on unparseable), got %d", len(plainTemps))
+	}
+	if plainTemps[0] != 0 || plainTemps[1] <= plainTemps[0] {
+		t.Fatalf("retry temperature must increase to vary the output: %v", plainTemps)
+	}
+}
+
+// TestLocalReview_FailsAfterMaxPlainAttempts pins that when every in-line plain retry is
+// unparseable, localReview gives up (returning the parse error) rather than looping forever.
+func TestLocalReview_FailsAfterMaxPlainAttempts(t *testing.T) {
+	var plainAttempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		if strings.Contains(string(body), `"response_format"`) {
+			_, _ = w.Write([]byte("data: [DONE]\n\n")) // schema empty
+			if fl != nil {
+				fl.Flush()
+			}
+			return
+		}
+		plainAttempts++
+		frame, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": `{"summary":"s" bad}`}}}})
+		_, _ = w.Write([]byte("data: " + string(frame) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
+	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err == nil {
+		t.Fatal("localReview should fail when every plain retry is unparseable")
+	}
+	if plainAttempts != localReviewMaxPlainAttempts {
+		t.Fatalf("expected exactly %d plain attempts, got %d", localReviewMaxPlainAttempts, plainAttempts)
+	}
+}
+
 func TestIsLocalProvider(t *testing.T) {
 	for _, p := range []string{"ollama", "vllm"} {
 		if !isLocalProvider(p) {

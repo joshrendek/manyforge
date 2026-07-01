@@ -66,6 +66,13 @@ const (
 	// truncated, logged (finish_reason=="length"), and its partial output stays visible on
 	// the failed review rather than hanging indefinitely.
 	localReviewMaxTokens = 8192
+	// localReviewMaxPlainAttempts bounds the in-line plain-generation retries when the
+	// output doesn't parse. A local model's plain JSON is non-deterministic (even at
+	// temperature 0) and occasionally emits a finding whose detail embeds a code snippet
+	// with unescaped double quotes — invalid JSON. Re-generating usually fixes it, and an
+	// in-line retry is far cheaper than a worker requeue (no re-clone / re-fetch), so try a
+	// few times here (nudging temperature up so each retry varies) before failing the job.
+	localReviewMaxPlainAttempts = 3
 )
 
 // codeExt is the set of source extensions the local reviewer prioritizes — the
@@ -233,9 +240,11 @@ func reviewResponseFormat() map[string]any {
 // It first constrains the output with response_format=json_schema (manyforge-6ax):
 // Ollama honors it and needs it (chatty models otherwise stream prose ParseFindings
 // rejects). But some OpenAI-compatible servers (LM Studio) return an EMPTY stream under
-// json_schema — so if the schema attempt yields no content, it retries ONCE without
-// response_format (plain prompting works there; the model wraps JSON in a ```json fence
-// that ParseFindings tolerates). This auto-handles both providers with no config.
+// json_schema — so if the schema attempt yields no usable/parseable content, it falls
+// back to plain prompting (the model wraps JSON in a ```json fence ParseFindings
+// tolerates). Plain output is non-deterministic and occasionally malformed (unescaped
+// quotes from an embedded code snippet), so plain generation is retried in-line a few
+// times (localReviewMaxPlainAttempts) before failing — far cheaper than a worker requeue.
 // Returns (doc, promptTokens, completionTokens, err). prog may be nil (no-op).
 func localReview(ctx context.Context, client *http.Client, cred AICredential, payload string, prog *Progress) (FindingsDoc, int64, int64, error) {
 	if localBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL) {
@@ -245,25 +254,50 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: no reviewable changes for local review: %w", errs.ErrValidation)
 	}
 
-	buf, promptTokens, completionTokens, chunkCount, err := streamLocalReview(ctx, client, cred, payload, true, prog)
+	// Attempt 1 constrains with json_schema (Ollama needs it). If it yields parseable
+	// findings we're done; if it's empty (LM Studio) or unparseable, fall through to plain.
+	buf, promptTokens, completionTokens, chunkCount, err := streamLocalReview(ctx, client, cred, payload, true, 0, prog)
 	if err != nil {
 		return FindingsDoc{}, promptTokens, completionTokens, err
 	}
-	// Empty stream under json_schema (LM Studio) → retry once without the constraint.
-	if chunkCount == 0 {
-		slog.Default().InfoContext(ctx, "local review: empty response under json_schema, retrying without response_format",
-			"model", cred.Model)
-		buf, promptTokens, completionTokens, chunkCount, err = streamLocalReview(ctx, client, cred, payload, false, prog)
-		if err != nil {
-			return FindingsDoc{}, promptTokens, completionTokens, err
+	if chunkCount > 0 {
+		if doc, perr := ParseFindings([]byte(buf)); perr == nil {
+			return doc, promptTokens, completionOrChunks(completionTokens, chunkCount), nil
 		}
+		slog.Default().InfoContext(ctx, "local review: json_schema output unparseable, retrying without response_format", "model", cred.Model)
+	} else {
+		slog.Default().InfoContext(ctx, "local review: empty response under json_schema, retrying without response_format", "model", cred.Model)
 	}
 
-	if completionTokens == 0 { // usage frame absent → best-effort fallback
-		completionTokens = int64(chunkCount)
+	// Plain retries with a temperature nudge so each attempt varies (some backends are
+	// deterministic even at temperature 0). First plain attempt at temp 0; retries higher.
+	var lastErr error
+	for attempt := 0; attempt < localReviewMaxPlainAttempts; attempt++ {
+		temperature := 0.2 * float64(attempt) // 0, 0.2, 0.4, …
+		if attempt > 0 {
+			slog.Default().InfoContext(ctx, "local review: retrying plain generation after unparseable output",
+				"model", cred.Model, "attempt", attempt+1, "err", lastErr)
+		}
+		buf, promptTokens, completionTokens, chunkCount, err = streamLocalReview(ctx, client, cred, payload, false, temperature, prog)
+		if err != nil {
+			return FindingsDoc{}, promptTokens, completionOrChunks(completionTokens, chunkCount), err
+		}
+		doc, perr := ParseFindings([]byte(buf))
+		if perr == nil {
+			return doc, promptTokens, completionOrChunks(completionTokens, chunkCount), nil
+		}
+		lastErr = perr
 	}
-	doc, perr := ParseFindings([]byte(buf))
-	return doc, promptTokens, completionTokens, perr
+	return FindingsDoc{}, promptTokens, completionOrChunks(completionTokens, chunkCount), lastErr
+}
+
+// completionOrChunks returns the reported completion-token count, falling back to the
+// streamed-chunk count when the provider omitted the usage frame (count == 0).
+func completionOrChunks(completionTokens int64, chunkCount int) int64 {
+	if completionTokens == 0 {
+		return int64(chunkCount)
+	}
+	return completionTokens
 }
 
 // streamPreview builds the live-progress preview string. Once the model emits final
@@ -283,9 +317,10 @@ func streamPreview(content, reasoning string) string {
 // streamLocalReview performs ONE chat/completions streaming attempt and returns the
 // accumulated content plus token usage and the delta-chunk count. When useSchema is
 // true it sends response_format=json_schema (manyforge-6ax); false omits it (the
-// empty-stream fallback path). It never parses — the caller decides whether to retry
-// and then parses the returned buffer.
-func streamLocalReview(ctx context.Context, client *http.Client, cred AICredential, payload string, useSchema bool, prog *Progress) (string, int64, int64, int, error) {
+// empty-stream fallback path). temperature is passed through so the caller can vary
+// retries. It never parses — the caller decides whether to retry and then parses the
+// returned buffer.
+func streamLocalReview(ctx context.Context, client *http.Client, cred AICredential, payload string, useSchema bool, temperature float64, prog *Progress) (string, int64, int64, int, error) {
 	body := map[string]any{
 		"model": cred.Model,
 		"messages": []map[string]string{
@@ -298,10 +333,13 @@ func streamLocalReview(ctx context.Context, client *http.Client, cred AICredenti
 		// is its newer alias — send both so servers that renamed it still honor the cap.
 		"max_tokens":            localReviewMaxTokens,
 		"max_completion_tokens": localReviewMaxTokens,
+		// temperature is also sent at top level (OpenAI-standard) so servers that don't
+		// read Ollama's nested "options" still honor the retry nudge.
+		"temperature": temperature,
 		// In OpenAI-compatible streaming, usage is omitted unless explicitly requested;
 		// without this, token accounting silently goes to 0.
 		"stream_options": map[string]any{"include_usage": true},
-		"options":        map[string]any{"temperature": 0, "num_ctx": localReviewNumCtx},
+		"options":        map[string]any{"temperature": temperature, "num_ctx": localReviewNumCtx},
 	}
 	if useSchema {
 		// Force the model to emit ONLY the findings JSON (manyforge-6ax). Chatty
