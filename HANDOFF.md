@@ -18,7 +18,7 @@ No next step required for manyforge-5ai (closed). If continuing Spec 007, pick a
 
 ## Gotchas (don't relearn these)
 - **ornith-1.0-9b is a REASONING model** → streams chain-of-thought in `delta.reasoning_content`, final answer in `delta.content`. localReview shows reasoning in the preview but only parses `content`. [[manyforge-sandbox-dev-gotchas]]
-- **LM Studio returns EMPTY under `response_format=json_schema`** (Ollama NEEDS it) → localReview retries once without it. LM Studio's **plain** path is flaky (sometimes malformed JSON — worker retries mask it → `manyforge-87a`).
+- **LM Studio returns EMPTY under `response_format=json_schema`** (Ollama NEEDS it) → localReview falls back to plain. LM Studio's **plain** path is non-deterministic and sometimes emits malformed JSON (unescaped quotes from a code snippet) → localReview now retries plain IN-LINE with a temperature bump (`manyforge-87a`, done: PR#7 succeeds on worker attempt 1). Structured output (json_schema/json_object) is unusable — the reasoning model emits reasoning but empty content under a schema.
 - **Credentials resolve per-provider.** The `ollama` cred is `localhost`; the LM Studio agent uses the **`vllm`** provider slot (its own cred `ca7b0b97`, `allow_private_base_url=true`). Both route local via `isLocalProvider`.
 - **Local-review SSRF guard is the INVERSE of netsafe**: netsafe permits public IPs; local review must BLOCK public (it bypasses the egress proxy). Guard allows loopback always + private only with `AllowPrivateBaseURL`; metadata/link-local/public blocked. MF007-PIN-14 pins it.
 - **zsh `noclobber`** → bg log redirects use `>|` not `>`. [[user-zsh-noclobber-bg-logs]]
@@ -31,7 +31,7 @@ No next step required for manyforge-5ai (closed). If continuing Spec 007, pick a
 - **`max_tokens=8192`** bounds a reasoning model's output so an attempt fails fast+visibly instead of pinning the worker/GPU for minutes.
 
 ## Pointers
-- **PR:** #7 OPEN → master. **Commit:** `c2602f1`. **bd:** epic `manyforge-7ml` (reopened); done: `manyforge-5ai`. Open follow-ups: `manyforge-87a` (P3 LM Studio plain-path flakiness), `manyforge-byz` (P3 clear-progress = succeeded-only now), `manyforge-5tr` (P2 Ollama num_ctx), `manyforge-lyv`/`bbi` (P3 polish).
+- **PR:** #7 OPEN → master. **Commits:** `c2602f1` (local self-host reviewer) + `a5d2c44` (manyforge-87a in-line retry). **bd:** epic `manyforge-7ml` (reopened); done: `manyforge-5ai`, `manyforge-87a`. Open follow-ups: `manyforge-byz` (P3 clear-progress = succeeded-only now), `manyforge-5tr` (P2 Ollama num_ctx), `manyforge-lyv`/`bbi` (P3 polish).
 - **Key files:** `internal/agents/coding/{localreview.go, credresolver.go, worker.go, findings.go, progress.go, service.go}`; `web/src/app/pages/code-review/detail.ts`; `internal/security_regression/coding_review_pins_test.go` (MF007 pins incl. PIN-14).
 - **Dev entities (business Acme `7bbeb32e-7c98-4c8f-966b-70acdb440dce`):** agents — LM Studio ornith(vllm) `2571c371`, ornith:9b(ollama) `4232e921`, qwen2.5-coder:14b(ollama) `6aeb7a46`, ReviewBot(openrouter z-ai/glm-5.2) `6c252395`; creds — vllm(LM Studio) `ca7b0b97`, ollama(localhost) `4431d2f2`, openrouter `fb0993e2`; connectors — joshrendek/manyforge `eb68939b`, bluescripts-net/threat.gg `3d944fdc` (PR #22 is CLOSED). Superuser DB: `docker exec mf-dev psql -U manyforge -d manyforge`.
 - **Screenshot:** `code-review-failed-output-retained.png` (failed-review output-retention, browser-verified).
