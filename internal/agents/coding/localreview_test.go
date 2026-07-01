@@ -3,6 +3,7 @@ package coding
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,6 +95,35 @@ func TestLocalReview_StreamUpdatesProgress(t *testing.T) {
 	_ = json.Unmarshal(snap, &s)
 	if !strings.Contains(s.Preview, "streamed") {
 		t.Fatalf("preview missing streamed content: %q", s.Preview)
+	}
+}
+
+// TestLocalReview_SendsJSONSchemaResponseFormat pins that localReview constrains the
+// model output with a json_schema response_format (manyforge-6ax) — without it, chatty
+// models emit prose and ParseFindings fails, retrying to terminal failure.
+func TestLocalReview_SendsJSONSchemaResponseFormat(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		frame, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": `{"summary":"ok","findings":[]}`}}}})
+		_, _ = w.Write([]byte("data: " + string(frame) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "ornith:9b", Provider: "ollama", APIKey: "x"}
+	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err != nil {
+		t.Fatalf("localReview: %v", err)
+	}
+	for _, want := range []string{`"response_format"`, `"json_schema"`, "code_review_findings", `"severity"`} {
+		if !strings.Contains(string(gotBody), want) {
+			t.Fatalf("request body missing %q — JSON output not enforced (manyforge-6ax)\nbody: %s", want, string(gotBody))
+		}
 	}
 }
 

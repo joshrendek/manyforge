@@ -111,6 +111,44 @@ func isLoopbackHost(h string) bool {
 	return false
 }
 
+// reviewResponseFormat is the OpenAI-compatible structured-output constraint that
+// forces the model to emit ONLY a findings JSON object matching FindingsDoc's shape
+// (summary + findings[]). Without it, chatty instruction-tuned models stream prose and
+// ParseFindings fails (manyforge-6ax). Ollama honors response_format=json_schema on its
+// /v1/chat/completions endpoint; providers that ignore it are no worse off than before.
+func reviewResponseFormat() map[string]any {
+	return map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   "code_review_findings",
+			"strict": true,
+			"schema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"summary": map[string]any{"type": "string"},
+					"findings": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"properties": map[string]any{
+								"file":     map[string]any{"type": "string"},
+								"line":     map[string]any{"type": []string{"integer", "null"}},
+								"severity": map[string]any{"type": "string", "enum": []string{"info", "warning", "error"}},
+								"title":    map[string]any{"type": "string"},
+								"detail":   map[string]any{"type": "string"},
+							},
+							"required": []string{"file", "line", "severity", "title", "detail"},
+						},
+					},
+				},
+				"required": []string{"summary", "findings"},
+			},
+		},
+	}
+}
+
 // localReview POSTs the rendered diff payload to a local OpenAI-compatible chat
 // endpoint (Ollama/vLLM) as a STREAM and parses the findings with ParseFindings. It
 // accumulates the streamed delta.content into a buffer (rendered live in the UI via
@@ -138,6 +176,11 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 		// without this, token accounting silently goes to 0.
 		"stream_options": map[string]any{"include_usage": true},
 		"options":        map[string]any{"temperature": 0, "num_ctx": localReviewNumCtx},
+		// Force the model to emit ONLY the findings JSON (manyforge-6ax). Chatty
+		// instruction-tuned models (e.g. ornith) otherwise stream prose/markdown that
+		// ParseFindings rejects — the review then fails and retries to terminal failure.
+		// Ollama honors response_format=json_schema on its OpenAI-compatible endpoint.
+		"response_format": reviewResponseFormat(),
 	})
 
 	url := strings.TrimRight(cred.BaseURL, "/") + "/chat/completions"
