@@ -133,6 +133,8 @@ type Querier interface {
 	// DeleteRepoConnector removes one connector scoped to the business (RLS + explicit
 	// predicate). Cascades to its code_review rows via the existing FK.
 	DeleteRepoConnector(ctx context.Context, arg DeleteRepoConnectorParams) (int64, error)
+	// Rows-affected = 0 ⇒ not found / not this tenant (RLS), mapped to 404 by the caller.
+	DeleteReviewDimension(ctx context.Context, arg DeleteReviewDimensionParams) (int64, error)
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
 	// DeleteSecret removes one secret scoped to (id, business); :execrows lets the caller detect a no-op delete.
 	DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error)
@@ -409,6 +411,9 @@ type Querier interface {
 	// (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
 	InsertRepoConnector(ctx context.Context, arg InsertRepoConnectorParams) (RepoConnector, error)
+	// tenant_root_id is derived from the RLS-visible business, so a foreign/invisible business
+	// yields no row (NOT NULL rejects) — the ownership predicate is pushed into SQL, not the caller.
+	InsertReviewDimension(ctx context.Context, arg InsertReviewDimensionParams) (ReviewDimension, error)
 	// InsertSecret seals-then-stores: caller passes a pre-generated id + the sealed ciphertext.
 	// tenant_root_id is derived from the (RLS-visible) business, so an invisible business inserts zero rows.
 	InsertSecret(ctx context.Context, arg InsertSecretParams) (Secret, error)
@@ -545,6 +550,10 @@ type Querier interface {
 	// ListRequestersForContact returns every requester currently pointing at a contact —
 	// the merge/repoint enumeration. Requester is business-scoped; RLS scopes the visible set.
 	ListRequestersForContact(ctx context.Context, contactID pgtype.UUID) ([]Requester, error)
+	// The business's configured review panel (all rows, enabled + disabled) in panel order. The
+	// resolver turns these into the review's dimension lanes; activeDimensions() then applies the
+	// enabled + scope filtering. An empty result ⇒ the caller falls back to the default panel.
+	ListReviewDimensions(ctx context.Context, businessID uuid.UUID) ([]ReviewDimension, error)
 	// Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
 	// this to roles the caller may see; the predicate narrows to one tenant.
 	ListTenantRoles(ctx context.Context, tenantRootID pgtype.UUID) ([]ListTenantRolesRow, error)

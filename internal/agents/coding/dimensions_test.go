@@ -239,6 +239,31 @@ func TestAggregateReview(t *testing.T) {
 	})
 }
 
+// TestBuildDimensionRuns pins the persisted per-lane accounting: ran lanes carry
+// succeeded/failed + usage + finding count; skipped dimensions carry status "skipped" + reason.
+func TestBuildDimensionRuns(t *testing.T) {
+	results := []laneResult{
+		{Dim: Dimension{Key: "security"}, Model: "m1", Provider: "openrouter", TokensIn: 10, TokensOut: 4, CostCents: 2,
+			Doc: FindingsDoc{Findings: []connectors.Finding{{Title: "a"}, {Title: "b"}}}},
+		{Dim: Dimension{Key: "correctness"}, Model: "m2", Provider: "anthropic", TokensIn: 5, Err: errors.New("boom")},
+	}
+	skipped := []SkippedDimension{{Key: "ui", Reason: "scope: no matching files"}}
+
+	runs := buildDimensionRuns(results, skipped)
+	if len(runs) != 3 {
+		t.Fatalf("want 3 runs (2 ran + 1 skipped), got %d", len(runs))
+	}
+	if runs[0].Status != "succeeded" || runs[0].FindingCount != 2 || runs[0].Model != "m1" || runs[0].TokensIn != 10 {
+		t.Fatalf("ran-succeeded record wrong: %+v", runs[0])
+	}
+	if runs[1].Status != "failed" || runs[1].TokensIn != 5 || runs[1].FindingCount != 0 {
+		t.Fatalf("failed record wrong: %+v", runs[1])
+	}
+	if runs[2].Status != "skipped" || runs[2].SkippedReason != "scope: no matching files" {
+		t.Fatalf("skipped record wrong: %+v", runs[2])
+	}
+}
+
 func TestDefaultPanel(t *testing.T) {
 	panel := defaultPanel()
 	if len(panel) != 1 {

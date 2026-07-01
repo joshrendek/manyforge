@@ -60,7 +60,7 @@ func (q *Queries) CreateCodeReviewAgentRun(ctx context.Context, arg CreateCodeRe
 }
 
 const getCodeReview = `-- name: GetCodeReview :one
-SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
+SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
 
 type GetCodeReviewParams struct {
@@ -97,6 +97,7 @@ func (q *Queries) GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (C
 		&i.TokensOut,
 		&i.CostCents,
 		&i.Progress,
+		&i.DimensionRuns,
 	)
 	return i, err
 }
@@ -107,7 +108,7 @@ SELECT $1, b.id, b.tenant_root_id, $2, $3,
     $4, 'pending', $5, $6, $7, now(), now()
 FROM business b
 WHERE b.id = $8::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs
 `
 
 type InsertCodeReviewParams struct {
@@ -159,6 +160,7 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		&i.TokensOut,
 		&i.CostCents,
 		&i.Progress,
+		&i.DimensionRuns,
 	)
 	return i, err
 }
@@ -258,11 +260,12 @@ UPDATE code_review SET
     tokens_in = $7,
     tokens_out = $8,
     cost_cents = $9,
-    agent_run_id = $10,
+    dimension_runs = $10,
+    agent_run_id = $11,
     lease_expires_at = NULL,
     updated_at = now()
-WHERE id = $11::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress
+WHERE id = $12::uuid
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs
 `
 
 type UpdateCodeReviewResultParams struct {
@@ -275,6 +278,7 @@ type UpdateCodeReviewResultParams struct {
 	TokensIn          int32              `json:"tokens_in"`
 	TokensOut         int32              `json:"tokens_out"`
 	CostCents         int64              `json:"cost_cents"`
+	DimensionRuns     []byte             `json:"dimension_runs"`
 	AgentRunID        pgtype.UUID        `json:"agent_run_id"`
 	ID                uuid.UUID          `json:"id"`
 }
@@ -290,6 +294,7 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		arg.TokensIn,
 		arg.TokensOut,
 		arg.CostCents,
+		arg.DimensionRuns,
 		arg.AgentRunID,
 		arg.ID,
 	)
@@ -320,6 +325,7 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		&i.TokensOut,
 		&i.CostCents,
 		&i.Progress,
+		&i.DimensionRuns,
 	)
 	return i, err
 }

@@ -626,10 +626,47 @@ CREATE TABLE code_review (
     tokens_out         integer NOT NULL DEFAULT 0,
     cost_cents         bigint NOT NULL DEFAULT 0,
     progress           jsonb,
+    dimension_runs     jsonb NOT NULL DEFAULT '[]'::jsonb,
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (repo_connector_id, tenant_root_id) REFERENCES repo_connector (id, tenant_root_id),
     CONSTRAINT code_review_status_chk CHECK (status IN ('pending','running','succeeded','failed'))
+);
+
+CREATE TABLE review_dimension (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    dimension       text NOT NULL,
+    provider        ai_provider,
+    model           text NOT NULL DEFAULT '',
+    prompt          text NOT NULL DEFAULT '',
+    scope_globs     text[] NOT NULL DEFAULT '{}',
+    min_severity    text NOT NULL DEFAULT 'info',
+    enabled         boolean NOT NULL DEFAULT true,
+    sort_order      integer NOT NULL DEFAULT 0,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (business_id, dimension),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    CONSTRAINT review_dimension_dimension_chk
+        CHECK (dimension IN ('security', 'correctness', 'performance', 'ui', 'docs', 'tests', 'general')),
+    CONSTRAINT review_dimension_min_severity_chk
+        CHECK (min_severity IN ('info', 'warning', 'error'))
+);
+
+CREATE TABLE review_config (
+    business_id     uuid PRIMARY KEY,
+    tenant_root_id  uuid NOT NULL,
+    dedupe          boolean NOT NULL DEFAULT true,
+    verify_enabled  boolean NOT NULL DEFAULT false,
+    verify_provider ai_provider,
+    verify_model    text NOT NULL DEFAULT '',
+    cite_rules      boolean NOT NULL DEFAULT false,
+    post_mode       text NOT NULL DEFAULT 'single',
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
 
 CREATE INDEX code_review_claim_idx ON code_review (status, run_after);
