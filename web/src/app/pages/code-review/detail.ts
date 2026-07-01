@@ -64,6 +64,22 @@ import { runStatusTone } from '../../ui/status';
           </div>
         }
 
+        <!-- Failed reviews keep their last streamed output so the failure is diagnosable
+             instead of blank. The detailed error stays server-side (it can carry provider/
+             sandbox internals); the preview shown here is already secret-redacted. -->
+        @if (r.status === 'failed') {
+          <div class="mf-card" style="margin-bottom:16px" data-testid="review-failed">
+            <p style="margin:0 0 8px;font-weight:600;color:var(--mf-danger,#c0392b)">This review failed.</p>
+            @if (r.progress?.preview) {
+              <p style="margin:0 0 6px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">Output captured before it failed:</p>
+              <pre data-testid="review-failed-output"
+                   style="max-height:240px;overflow:auto;white-space:pre-wrap;font-family:monospace;font-size:var(--mf-fs-xs);margin:0;padding:8px;border-radius:6px;background:var(--mf-bg-subtle,rgba(0,0,0,.05))">{{ r.progress?.preview }}</pre>
+            } @else {
+              <p style="margin:0;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="review-failed-nooutput">No output was captured before the failure.</p>
+            }
+          </div>
+        }
+
         <!-- Summary -->
         @if (r.summary) {
           <div class="mf-card" style="margin-bottom:16px" data-testid="review-summary">

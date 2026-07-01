@@ -55,10 +55,104 @@ func TestLocalReview(t *testing.T) {
 	}
 }
 
-func TestLocalReview_RejectsNonLoopback(t *testing.T) {
-	cred := AICredential{BaseURL: "https://evil.example.com/v1", Model: "m", Provider: "ollama", APIKey: "k"}
-	if _, _, _, err := localReview(context.Background(), http.DefaultClient, cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err == nil {
-		t.Fatal("local review must reject a non-loopback base URL (SSRF guard)")
+// TestLocalReview_RejectsDisallowedHost pins the SSRF guard behaviorally: a public host
+// (no trust flag helps) and a private-LAN host WITHOUT the AllowPrivateBaseURL opt-in are
+// both refused before any network call. The allow paths (loopback / trusted private) are
+// covered exhaustively by TestLocalBaseURLBlocked.
+func TestLocalReview_RejectsDisallowedHost(t *testing.T) {
+	payload := "=== a.go ===\n@@ 1-1 @@\n    1 + x\n"
+	// Public host — rejected regardless of the trust flag.
+	pub := AICredential{BaseURL: "https://evil.example.com/v1", Model: "m", Provider: "ollama", APIKey: "k", AllowPrivateBaseURL: true}
+	if _, _, _, err := localReview(context.Background(), http.DefaultClient, pub, payload, nil); err == nil {
+		t.Fatal("local review must reject a public base URL host even with AllowPrivateBaseURL (SSRF guard)")
+	}
+	// Private LAN WITHOUT the trust opt-in — rejected before dialing.
+	priv := AICredential{BaseURL: "http://192.168.2.241:1234/v1", Model: "m", Provider: "vllm", APIKey: "k", AllowPrivateBaseURL: false}
+	if _, _, _, err := localReview(context.Background(), http.DefaultClient, priv, payload, nil); err == nil {
+		t.Fatal("local review must reject a private-LAN base URL host without AllowPrivateBaseURL")
+	}
+}
+
+// TestLocalBaseURLBlocked exhaustively pins the local-review SSRF policy: loopback always
+// allowed, private LAN gated on the trust opt-in, public/metadata/link-local always blocked.
+func TestLocalBaseURLBlocked(t *testing.T) {
+	cases := []struct {
+		host         string
+		allowPrivate bool
+		wantBlocked  bool
+	}{
+		// Loopback — always permitted (a model on the same host is never an SSRF pivot).
+		{"127.0.0.1", false, false},
+		{"127.0.0.1", true, false},
+		{"::1", false, false},
+		{"localhost", false, false},
+		{"LOCALHOST", false, false},
+		// Private LAN (RFC1918 / IPv6 ULA) — only with the trust opt-in.
+		{"192.168.2.241", true, false},
+		{"10.0.0.5", true, false},
+		{"172.16.3.4", true, false},
+		{"fd00::1", true, false},
+		{"192.168.2.241", false, true},
+		{"10.0.0.5", false, true},
+		// Public — always blocked.
+		{"8.8.8.8", true, true},
+		{"93.184.216.34", false, true},
+		// Cloud-metadata + link-local — blocked even under full trust.
+		{"169.254.169.254", true, true},
+		{"fd00:ec2::254", true, true},
+		{"169.254.1.1", true, true},
+		// Non-IP hostnames other than localhost — blocked (we don't resolve them here).
+		{"evil.example.com", true, true},
+		{"", true, true},
+	}
+	for _, c := range cases {
+		if got := localBaseURLBlocked(c.host, c.allowPrivate); got != c.wantBlocked {
+			t.Errorf("localBaseURLBlocked(%q, allowPrivate=%v) = %v, want %v", c.host, c.allowPrivate, got, c.wantBlocked)
+		}
+	}
+}
+
+// TestLocalReview_RetriesWithoutSchemaOnEmptyStream pins the LM-Studio fallback: the first
+// attempt sends response_format=json_schema (Ollama needs it); when that yields an EMPTY
+// stream (LM Studio's behavior under json_schema), localReview retries ONCE without the
+// constraint, and the plain-mode fenced JSON then parses.
+func TestLocalReview_RetriesWithoutSchemaOnEmptyStream(t *testing.T) {
+	var sawSchema []bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		hasSchema := strings.Contains(string(body), `"response_format"`)
+		sawSchema = append(sawSchema, hasSchema)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		if hasSchema {
+			// json_schema attempt → empty stream (no delta.content), like LM Studio.
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			if fl != nil {
+				fl.Flush()
+			}
+			return
+		}
+		// Plain retry → valid findings wrapped in a ```json fence (LM Studio plain output).
+		fenced := "```json\n" + `{"summary":"ok","findings":[{"file":"a.go","line":1,"severity":"warning","title":"t","detail":"d"}]}` + "\n```"
+		frame, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": fenced}}}})
+		_, _ = w.Write([]byte("data: " + string(frame) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil)
+	if err != nil {
+		t.Fatalf("localReview: %v", err)
+	}
+	if len(sawSchema) != 2 || !sawSchema[0] || sawSchema[1] {
+		t.Fatalf("sawSchema=%v, want [true false] (json_schema first, then a plain retry)", sawSchema)
+	}
+	if doc.Summary != "ok" || len(doc.Findings) != 1 || doc.Findings[0].Severity != "warning" {
+		t.Fatalf("doc=%+v — fenced JSON from the plain retry must parse", doc)
 	}
 }
 
@@ -161,6 +255,82 @@ func TestLocalReview_LogsDroppedFrames(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "dropped unparseable stream frames") {
 		t.Fatalf("a dropped frame must be logged (not silent); log=%q", logBuf.String())
+	}
+}
+
+// TestLocalReview_ReasoningContentNotParsedButPreviewed pins reasoning-model handling:
+// delta.reasoning_content (chain-of-thought) is surfaced in the live preview but NEVER
+// parsed as findings — only delta.content is. A decoy findings object placed in the
+// reasoning stream must be ignored; the real findings come from content.
+func TestLocalReview_ReasoningContentNotParsedButPreviewed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		write := func(v any) {
+			b, _ := json.Marshal(v)
+			_, _ = w.Write([]byte("data: " + string(b) + "\n\n"))
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		// Reasoning stream carries a DECOY findings object that must NOT be parsed.
+		write(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"reasoning_content": `Thinking... maybe {"summary":"DECOY","findings":[]} — but let me check the real code`}}}})
+		// The final answer arrives in content.
+		write(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": `{"summary":"real","findings":[{"file":"a.go","line":2,"severity":"error","title":"t","detail":"d"}]}`}}}})
+		write(map[string]any{"choices": []map[string]any{}, "usage": map[string]int64{"prompt_tokens": 10, "completion_tokens": 20}})
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
+	prog := &Progress{}
+	prog.SetPhase("reviewing")
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", prog)
+	if err != nil {
+		t.Fatalf("localReview: %v", err)
+	}
+	if doc.Summary != "real" || len(doc.Findings) != 1 {
+		t.Fatalf("findings must come from content, not the reasoning decoy; doc=%+v", doc)
+	}
+	var s progressSnapshot
+	_ = json.Unmarshal(prog.Snapshot(), &s)
+	if !strings.Contains(s.Preview, "real") {
+		t.Fatalf("preview should show the final content once it arrives; got %q", s.Preview)
+	}
+}
+
+// TestLocalReview_LogsTruncationOnLengthFinish pins that a finish_reason=="length" cutoff
+// (truncated, unparseable JSON) is logged with its real cause — not left as a mysterious
+// ParseFindings failure.
+func TestLocalReview_LogsTruncationOnLengthFinish(t *testing.T) {
+	var logBuf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(orig)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		// Partial (truncated) JSON, then the model reports it was cut at the token limit.
+		frame, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": `{"summary":"partial","findings":[`}, "finish_reason": "length"}}})
+		_, _ = w.Write([]byte("data: " + string(frame) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
+	// Truncated JSON → ParseFindings fails (expected); we assert the cause was logged.
+	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err == nil {
+		t.Fatal("truncated JSON should fail to parse")
+	}
+	if !strings.Contains(logBuf.String(), "truncated at token limit") {
+		t.Fatalf("a length-finish truncation must be logged with its cause; log=%q", logBuf.String())
 	}
 }
 

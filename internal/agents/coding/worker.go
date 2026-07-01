@@ -159,6 +159,17 @@ func (w *CodeReviewWorker) processOne(
 	prog := &Progress{}
 	stop := make(chan struct{})
 	go func() {
+		// A panic in an unrecovered goroutine crashes the WHOLE process — so if
+		// RenewLease/Snapshot ever panics, contain it here. The job (running in the
+		// other goroutine) keeps going; the only degradation is that lease renewal
+		// stops, so a long job may be re-claimed after the base lease lapses — far
+		// better than taking the server down.
+		defer func() {
+			if r := recover(); r != nil {
+				w.Logger.ErrorContext(ctx, "code review heartbeat panicked; lease renewal stopped",
+					"id", job.ID, "panic", r)
+			}
+		}()
 		t := time.NewTicker(w.HeartbeatInterval)
 		defer t.Stop()
 		for {

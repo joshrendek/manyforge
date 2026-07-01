@@ -20,6 +20,7 @@ type fakeSystemDB struct {
 	requeueCalls []requeueCall
 	failCalls    []failCall
 	renewCalls   atomic.Int64 // heartbeat renewals (goroutine-concurrent → atomic)
+	renewPanics  bool         // when set, RenewLease panics (heartbeat-goroutine crash test)
 }
 
 type requeueCall struct {
@@ -51,6 +52,9 @@ func (f *fakeSystemDB) FailCodeReview(ctx context.Context, id uuid.UUID, lastErr
 
 func (f *fakeSystemDB) RenewLease(ctx context.Context, id uuid.UUID, leaseSeconds int, progress []byte) error {
 	f.renewCalls.Add(1)
+	if f.renewPanics {
+		panic("boom: simulated RenewLease panic")
+	}
 	return nil
 }
 
@@ -237,5 +241,33 @@ func TestWorkerHeartbeatRenewsLease(t *testing.T) {
 
 	if db.renewCalls.Load() == 0 {
 		t.Fatal("heartbeat never called RenewLease during a runJob in flight")
+	}
+}
+
+// TestWorkerHeartbeatPanicDoesNotCrash pins that a panic inside the heartbeat goroutine
+// (e.g. RenewLease/Snapshot panicking) is recovered and does NOT crash the process — the
+// in-flight job still completes. Without the recover the panic would be fatal (an
+// unrecovered goroutine panic takes down the whole server).
+func TestWorkerHeartbeatPanicDoesNotCrash(t *testing.T) {
+	db := &fakeSystemDB{claims: []ClaimedReview{makeRow(1)}, renewPanics: true}
+	var completed atomic.Bool
+	w := makeWorker(db, func(ctx context.Context, job ClaimedReview, prog *Progress) error {
+		prog.SetPhase("reviewing")
+		time.Sleep(60 * time.Millisecond) // long enough for a heartbeat tick to fire (and panic)
+		completed.Store(true)
+		return nil
+	})
+	w.HeartbeatInterval = 10 * time.Millisecond
+	runOnce(w)
+
+	if db.renewCalls.Load() == 0 {
+		t.Fatal("heartbeat never fired — the panic path was not exercised")
+	}
+	if !completed.Load() {
+		t.Fatal("runJob did not complete — a heartbeat panic must not abort the in-flight job")
+	}
+	if len(db.failCalls) != 0 || len(db.requeueCalls) != 0 {
+		t.Fatalf("job should have succeeded despite the heartbeat panic; fail=%d requeue=%d",
+			len(db.failCalls), len(db.requeueCalls))
 	}
 }

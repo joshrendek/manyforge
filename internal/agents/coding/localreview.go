@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/github"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
 // reviewInstructions is the balanced review prompt. KEEP IN SYNC with the cloud
@@ -56,6 +58,14 @@ const (
 	// is the server's OLLAMA_CONTEXT_LENGTH (or model default). Providers that honor num_ctx
 	// (vLLM; Ollama's native /api/chat) use this directly.
 	localReviewNumCtx = 32768
+	// localReviewMaxTokens bounds the model's OUTPUT so a single review can't run away.
+	// A reasoning model (ornith) with no cap will happily emit tens of thousands of tokens
+	// on a large diff — minutes of generation that pins the single-threaded worker and the
+	// GPU. This cap keeps a real review (which needs only a few thousand output tokens —
+	// reasoning + a few dozen findings) well within budget; a review that exceeds it is
+	// truncated, logged (finish_reason=="length"), and its partial output stays visible on
+	// the failed review rather than hanging indefinitely.
+	localReviewMaxTokens = 8192
 )
 
 // codeExt is the set of source extensions the local reviewer prioritizes — the
@@ -140,15 +150,38 @@ func commentableMap(files []connectors.ChangedFile) map[string]map[int]bool {
 	return out
 }
 
-// isLoopbackHost reports whether h is the local machine — the only host a local
-// provider's base URL may target (a deliberate, narrow exception to the
-// egress-isolation policy: the model is on-host, so the code never leaves it).
-func isLoopbackHost(h string) bool {
-	switch h {
-	case "localhost", "127.0.0.1", "::1", "[::1]":
+// localBaseURLBlocked reports whether a local-review base-URL host must be refused.
+// The local path dials with a plain (non-egress-proxied) client, so this guard is the
+// ONLY thing keeping a run's diff from leaving the machine — it must allow ONLY on-host
+// or trusted-LAN model endpoints and block everything else, including PUBLIC hosts.
+//
+// Note this is the INVERSE emphasis of netsafe.IsBlocked, which permits public IPs (its
+// job is to block internal SSRF targets, not external ones). Here public is blocked; only:
+//   - Loopback (127/8, ::1): always permitted — a model on the same host is never a pivot.
+//   - Private LAN (RFC1918 / IPv6 ULA): permitted ONLY with the AllowPrivateBaseURL trust
+//     opt-in (e.g. LM Studio on 192.168.x.x). Cloud-metadata (incl. the fd00:ec2::254 ULA)
+//     and link-local stay blocked even then — screened via netsafe so that IMDS list can't
+//     drift from the dialer's.
+//   - A non-IP hostname passes only for the loopback name "localhost"; we deliberately do
+//     NOT resolve arbitrary names here (a bare name could rebind to a public/metadata IP
+//     between check and dial). A private-LAN endpoint must therefore be given by IP.
+func localBaseURLBlocked(host string, allowPrivate bool) bool {
+	if host == "" {
 		return true
 	}
-	return false
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return strings.ToLower(host) != "localhost"
+	}
+	if ip.IsLoopback() {
+		return false
+	}
+	// Private LAN requires the opt-in AND must survive netsafe's unconditional
+	// metadata/link-local screen (fd00:ec2::254 is an IsPrivate ULA that IMDS uses).
+	if allowPrivate && ip.IsPrivate() && !netsafe.IsBlocked(ip, netsafe.Options{AllowPrivate: true}) {
+		return false
+	}
+	return true // public, metadata, link-local, or untrusted/blocked private
 }
 
 // reviewResponseFormat is the OpenAI-compatible structured-output constraint that
@@ -196,37 +229,93 @@ func reviewResponseFormat() map[string]any {
 // sandbox/opencode: small local models can't drive opencode's agent loop, and the
 // model is on-host so there is nothing to isolate. The model gets NO tools (chat→JSON
 // only), so prompt injection can at worst yield bogus advisory findings.
+//
+// It first constrains the output with response_format=json_schema (manyforge-6ax):
+// Ollama honors it and needs it (chatty models otherwise stream prose ParseFindings
+// rejects). But some OpenAI-compatible servers (LM Studio) return an EMPTY stream under
+// json_schema — so if the schema attempt yields no content, it retries ONCE without
+// response_format (plain prompting works there; the model wraps JSON in a ```json fence
+// that ParseFindings tolerates). This auto-handles both providers with no config.
 // Returns (doc, promptTokens, completionTokens, err). prog may be nil (no-op).
 func localReview(ctx context.Context, client *http.Client, cred AICredential, payload string, prog *Progress) (FindingsDoc, int64, int64, error) {
-	if !isLoopbackHost(cred.Host()) {
-		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review base URL must be loopback, got %q: %w", cred.Host(), errs.ErrValidation)
+	if localBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL) {
+		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review base URL host %q is not an allowed local/private address: %w", cred.Host(), errs.ErrValidation)
 	}
 	if strings.TrimSpace(payload) == "" {
 		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: no reviewable changes for local review: %w", errs.ErrValidation)
 	}
 
-	reqBody, _ := json.Marshal(map[string]any{
+	buf, promptTokens, completionTokens, chunkCount, err := streamLocalReview(ctx, client, cred, payload, true, prog)
+	if err != nil {
+		return FindingsDoc{}, promptTokens, completionTokens, err
+	}
+	// Empty stream under json_schema (LM Studio) → retry once without the constraint.
+	if chunkCount == 0 {
+		slog.Default().InfoContext(ctx, "local review: empty response under json_schema, retrying without response_format",
+			"model", cred.Model)
+		buf, promptTokens, completionTokens, chunkCount, err = streamLocalReview(ctx, client, cred, payload, false, prog)
+		if err != nil {
+			return FindingsDoc{}, promptTokens, completionTokens, err
+		}
+	}
+
+	if completionTokens == 0 { // usage frame absent → best-effort fallback
+		completionTokens = int64(chunkCount)
+	}
+	doc, perr := ParseFindings([]byte(buf))
+	return doc, promptTokens, completionTokens, perr
+}
+
+// streamPreview builds the live-progress preview string. Once the model emits final
+// answer content, that is shown (the findings JSON forming); until then a reasoning
+// model's chain-of-thought is shown under a marker so a long "thinking" phase is
+// visibly in-progress rather than an empty box. Never used for parsing.
+func streamPreview(content, reasoning string) string {
+	if content != "" {
+		return content
+	}
+	if reasoning != "" {
+		return "💭 reasoning…\n" + reasoning
+	}
+	return ""
+}
+
+// streamLocalReview performs ONE chat/completions streaming attempt and returns the
+// accumulated content plus token usage and the delta-chunk count. When useSchema is
+// true it sends response_format=json_schema (manyforge-6ax); false omits it (the
+// empty-stream fallback path). It never parses — the caller decides whether to retry
+// and then parses the returned buffer.
+func streamLocalReview(ctx context.Context, client *http.Client, cred AICredential, payload string, useSchema bool, prog *Progress) (string, int64, int64, int, error) {
+	body := map[string]any{
 		"model": cred.Model,
 		"messages": []map[string]string{
 			{"role": "system", "content": reviewInstructions + "\n\n" + reviewSchemaLine},
 			{"role": "user", "content": "Diff hunks to review:\n" + payload},
 		},
 		"stream": true,
+		// Bound output so a reasoning model can't run away on a large diff (pins the
+		// worker + GPU for minutes). max_tokens is the OpenAI-standard field; max_completion_tokens
+		// is its newer alias — send both so servers that renamed it still honor the cap.
+		"max_tokens":            localReviewMaxTokens,
+		"max_completion_tokens": localReviewMaxTokens,
 		// In OpenAI-compatible streaming, usage is omitted unless explicitly requested;
 		// without this, token accounting silently goes to 0.
 		"stream_options": map[string]any{"include_usage": true},
 		"options":        map[string]any{"temperature": 0, "num_ctx": localReviewNumCtx},
+	}
+	if useSchema {
 		// Force the model to emit ONLY the findings JSON (manyforge-6ax). Chatty
 		// instruction-tuned models (e.g. ornith) otherwise stream prose/markdown that
-		// ParseFindings rejects — the review then fails and retries to terminal failure.
-		// Ollama honors response_format=json_schema on its OpenAI-compatible endpoint.
-		"response_format": reviewResponseFormat(),
-	})
+		// ParseFindings rejects. Ollama honors this; LM Studio returns empty under it
+		// (handled by the caller's retry-without-schema).
+		body["response_format"] = reviewResponseFormat()
+	}
+	reqBody, _ := json.Marshal(body)
 
 	url := strings.TrimRight(cred.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
-		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: build local review request: %w", err)
+		return "", 0, 0, 0, fmt.Errorf("coding: build local review request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
@@ -235,19 +324,21 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local review request: %w", err)
+		return "", 0, 0, 0, fmt.Errorf("coding: local review request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
-		return FindingsDoc{}, 0, 0, fmt.Errorf("coding: local provider status %d", resp.StatusCode)
+		return "", 0, 0, 0, fmt.Errorf("coding: local provider status %d", resp.StatusCode)
 	}
 
 	var (
-		buf              strings.Builder
+		buf              strings.Builder // final-answer content — the ONLY text parsed into findings
+		reasoning        strings.Builder // chain-of-thought (reasoning models) — shown live, never parsed
 		promptTokens     int64
 		completionTokens int64
 		chunkCount       int
 		droppedFrames    int
+		finishReason     string
 		lastUpdate       time.Time
 	)
 	sc := bufio.NewScanner(resp.Body)
@@ -265,7 +356,14 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 			Choices []struct {
 				Delta struct {
 					Content string `json:"content"`
+					// reasoning_content carries a reasoning model's chain-of-thought
+					// (ornith, deepseek-r1, qwq, …) separately from the final answer.
+					// It is surfaced live in the preview but NEVER parsed as findings.
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
+				// FinishReason is "length" when the model was cut off at the token
+				// limit (→ truncated, unparseable JSON), "stop" on a clean finish.
+				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Usage *struct {
 				PromptTokens     int64 `json:"prompt_tokens"`
@@ -280,13 +378,27 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 			droppedFrames++
 			continue
 		}
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			buf.WriteString(chunk.Choices[0].Delta.Content)
-			chunkCount++
+		if len(chunk.Choices) > 0 {
+			if fr := chunk.Choices[0].FinishReason; fr != "" {
+				finishReason = fr
+			}
+			d := chunk.Choices[0].Delta
+			updated := false
+			if d.ReasoningContent != "" {
+				reasoning.WriteString(d.ReasoningContent) // preview only
+				updated = true
+			}
+			if d.Content != "" {
+				buf.WriteString(d.Content)
+				chunkCount++ // counts FINAL-answer chunks: 0 ⇒ "empty" ⇒ caller retries
+				updated = true
+			}
 			// Throttle progress writes to ~2/s — redaction + marshal happen on the
 			// heartbeat's Snapshot(); updating the shared buffer per token is wasteful.
-			if time.Since(lastUpdate) > 500*time.Millisecond {
-				prog.UpdateStream(chunkCount, buf.String())
+			// Show reasoning while the model thinks, then the answer as it forms, so a
+			// long-reasoning model never looks hung with an empty preview.
+			if updated && time.Since(lastUpdate) > 500*time.Millisecond {
+				prog.UpdateStream(chunkCount, streamPreview(buf.String(), reasoning.String()))
 				lastUpdate = time.Now()
 			}
 		}
@@ -296,9 +408,9 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 		}
 	}
 	if serr := sc.Err(); serr != nil {
-		return FindingsDoc{}, promptTokens, completionTokens, fmt.Errorf("coding: read local review stream: %w", serr)
+		return "", promptTokens, completionTokens, chunkCount, fmt.Errorf("coding: read local review stream: %w", serr)
 	}
-	prog.UpdateStream(chunkCount, buf.String()) // final flush with the full buffer
+	prog.UpdateStream(chunkCount, streamPreview(buf.String(), reasoning.String())) // final flush
 
 	// Surface dropped frames (manyforge-6ax follow-up / gemini review): a malformed
 	// provider frame can corrupt the accumulated JSON and fail ParseFindings; without
@@ -309,9 +421,14 @@ func localReview(ctx context.Context, client *http.Client, cred AICredential, pa
 			"count", droppedFrames, "model", cred.Model)
 	}
 
-	if completionTokens == 0 { // usage frame absent → best-effort fallback
-		completionTokens = int64(chunkCount)
+	// finish_reason=="length" ⇒ the model hit its token limit mid-output, so the JSON is
+	// truncated and ParseFindings will reject it as "empty findings output". Log the real
+	// cause explicitly (with token counts) so a truncated review is diagnosable rather
+	// than a mysterious parse failure.
+	if finishReason == "length" {
+		slog.Default().WarnContext(ctx, "local review: model output truncated at token limit — findings JSON is incomplete",
+			"model", cred.Model, "completion_tokens", completionTokens, "content_bytes", buf.Len())
 	}
-	doc, perr := ParseFindings([]byte(buf.String()))
-	return doc, promptTokens, completionTokens, perr
+
+	return buf.String(), promptTokens, completionTokens, chunkCount, nil
 }
