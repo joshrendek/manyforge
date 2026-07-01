@@ -19,6 +19,11 @@ type AICredential struct {
 	BaseURL  string // provider API base (e.g. "https://api.anthropic.com")
 	Model    string // e.g. "claude-opus-4-5" or "anthropic/claude-..."
 	Provider string // e.g. "anthropic"
+	// AllowPrivateBaseURL is the credential's self-host trust opt-in. It loosens the
+	// local-review base-URL SSRF guard to also permit RFC1918/ULA private-LAN hosts
+	// (a networked self-hosted model), mirroring the create-time guard and clone path.
+	// Loopback is always permitted; cloud-metadata/link-local stay blocked regardless.
+	AllowPrivateBaseURL bool
 }
 
 // Host returns the bare hostname of BaseURL for use in the sandbox egress allowlist.
@@ -111,9 +116,10 @@ func (r *AgentCredResolver) Resolve(ctx context.Context, principalID, businessID
 	}
 
 	return AICredential{
-		APIKey:   rc.APIKey,
-		BaseURL:  baseURL,
-		Model:    model,
-		Provider: ag.Provider,
+		APIKey:              rc.APIKey,
+		BaseURL:             baseURL,
+		Model:               model,
+		Provider:            ag.Provider,
+		AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
 	}, nil
 }

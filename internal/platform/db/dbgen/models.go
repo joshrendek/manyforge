@@ -669,6 +669,7 @@ type CodeReview struct {
 	TokensIn          int32              `json:"tokens_in"`
 	TokensOut         int32              `json:"tokens_out"`
 	CostCents         int64              `json:"cost_cents"`
+	Progress          []byte             `json:"progress"`
 }
 
 type Company struct {

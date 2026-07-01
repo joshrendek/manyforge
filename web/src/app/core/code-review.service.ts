@@ -46,6 +46,7 @@ export interface CodeReview {
   cost_cents: number;
   created_at: string;
   posted_at: string | null;
+  progress?: { phase: string; tokens: number; preview: string };
 }
 
 export interface TriggerBody {

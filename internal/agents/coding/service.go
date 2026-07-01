@@ -39,6 +39,10 @@ type CodeReview struct {
 	CostCents     int64              `json:"cost_cents"` // LLM cost of the run (0 until usage capture lands)
 	CreatedAt     time.Time          `json:"created_at"`
 	PostedAt      *time.Time         `json:"posted_at"`
+	// Progress is the live progress snapshot for a running review (phase/tokens/
+	// preview); null/omitted for pending and terminal reviews. Populated from the
+	// code_review.progress jsonb the worker heartbeat persists.
+	Progress json.RawMessage `json:"progress,omitempty"`
 }
 
 // ClaimedReview is the typed representation of a claim_code_reviews result row,
@@ -84,6 +88,10 @@ type CodeReviewService struct {
 	Image    string        // opencode sandbox image tag
 	WorkRoot string        // host temp root for per-run checkouts; must be writable
 	Timeout  time.Duration // sandbox wall-clock cap (0 = 10 min default)
+	// LocalTimeout is the HTTP timeout for the host-side local-provider review path
+	// (Ollama/vLLM); 0 ⇒ 30 min default. Separate from Timeout (the sandbox cap) so a
+	// long local review (e.g. a 35b model) isn't killed at the 10-min sandbox limit.
+	LocalTimeout time.Duration
 
 	// EgressAllow is the boot-static set of provider hosts the sandbox egress
 	// proxy permits (from MANYFORGE_SANDBOX_EGRESS_ALLOW). The proxy is shared and
@@ -120,11 +128,21 @@ func (s *CodeReviewService) timeout() time.Duration {
 	return 10 * time.Minute
 }
 
+// localTimeout returns the effective host-side local-provider review timeout (30 min
+// default). Distinct from timeout(): local models can run far longer than the cloud
+// sandbox wall-clock cap.
+func (s *CodeReviewService) localTimeout() time.Duration {
+	if s.LocalTimeout > 0 {
+		return s.LocalTimeout
+	}
+	return 30 * time.Minute
+}
+
 // localClient is the HTTP client for the host-side local-provider review path. A
 // plain client (allows loopback, which the SSRF-safe netsafe client refuses);
 // localReview enforces a loopback-only base URL so this stays local-only.
 func (s *CodeReviewService) localClient() *http.Client {
-	return &http.Client{Timeout: s.timeout()}
+	return &http.Client{Timeout: s.localTimeout()}
 }
 
 // Enqueue validates the request cheaply (resolve connector, resolve cred, egress
@@ -202,7 +220,7 @@ func (s *CodeReviewService) Enqueue(
 // It re-resolves the connector and credential under job.PrincipalID/BusinessID —
 // NO secrets come from the queue row itself. Called by the background worker
 // (Task 5) after claiming a pending row via the claim_code_reviews function.
-func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error {
+func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog *Progress) error {
 	// Re-resolve connector under the owning principal (no secrets in the queue row).
 	rc, err := s.Repos.Resolve(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID)
 	if err != nil {
@@ -229,6 +247,23 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	prNumber := job.PRNumber
 	principalID := job.PrincipalID
 	businessID := job.BusinessID
+
+	// Graceful degradation (manyforge-206): on a retry, switch to a faster
+	// provider-compatible fallback model so a slow model that 504'd (OpenRouter
+	// upstream idle timeout) doesn't just fail again on every attempt.
+	if m := effectiveReviewModel(cred.Provider, cred.Model, job.Attempts); m != cred.Model {
+		_ = s.auditStep(ctx, principalID, businessID, crID,
+			"agent.coding.review.fallback_model",
+			map[string]any{"configured": cred.Model, "fallback": m, "attempt": job.Attempts},
+			nil, ptr("executed"),
+		)
+		cred.Model = m
+	}
+
+	// Live progress: scrub the resolved secrets from any streamed preview, and mark
+	// the first phase. prog is nil for direct (non-worker) callers — all methods no-op.
+	prog.SetSecrets(cred.APIKey, rc.Credential.APIToken)
+	prog.SetPhase("preparing")
 
 	// Fetch PR metadata (host-side, uses the credential).
 	pr, err := conn.FetchPR(ctx, prNumber)
@@ -293,13 +328,20 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		files = nil
 	}
 	changed := commentableMap(files)
-	payload, skippedFiles, omittedFiles := assembleDiffPayload(files)
-	// No silent caps: dropped files are surfaced in the review body AND recorded on
-	// the audit trail (binary/too-large → skipped; over-budget → omitted).
-	if len(skippedFiles) > 0 || len(omittedFiles) > 0 {
+	// On-host local providers (Ollama/vLLM) get a tighter diff budget: small models can't
+	// prompt-eval a large diff in reasonable time. Cloud/opencode (capable models) uses the
+	// larger default. Prose/planning docs are filtered out in either case (see assembleDiffPayload).
+	maxTotal := reviewMaxTotalBytes
+	if isLocalProvider(cred.Provider) {
+		maxTotal = localProviderMaxTotalBytes
+	}
+	payload, skippedFiles, omittedFiles, filteredFiles := assembleDiffPayload(files, maxTotal)
+	// No silent caps: dropped files are surfaced in the review body AND recorded on the audit
+	// trail (binary/too-large → skipped; over-budget → omitted; prose/plan docs → filtered).
+	if len(skippedFiles) > 0 || len(omittedFiles) > 0 || len(filteredFiles) > 0 {
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.review.files_dropped",
-			map[string]any{"skipped": skippedFiles, "omitted": omittedFiles},
+			map[string]any{"skipped": skippedFiles, "omitted": omittedFiles, "filtered_docs": filteredFiles},
 			nil, ptr("executed"),
 		)
 	}
@@ -312,13 +354,15 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	var tokensIn, tokensOut int32
 	var costCents int64
 
+	prog.SetPhase("reviewing")
+
 	if isLocalProvider(cred.Provider) {
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.localreview.invoked",
 			map[string]any{"head_sha": pr.HeadSHA, "model": cred.Model, "base_url": cred.BaseURL},
 			nil, ptr("executed"),
 		)
-		d, in, out, lerr := localReview(ctx, s.localClient(), cred, payload)
+		d, in, out, lerr := localReview(ctx, s.localClient(), cred, payload, prog)
 		tokensIn, tokensOut = clampInt32(in), clampInt32(out) // local = no cost
 		if lerr != nil {
 			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, lerr, tokensIn, tokensOut, 0)
@@ -337,6 +381,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 		if payload != "" {
 			_ = os.WriteFile(filepath.Join(outDir, "review_diff.txt"), []byte(payload), 0o644)
 		}
+		// Single-source the review prompt: write the SAME instructions the local path uses
+		// (reviewInstructions) where the entrypoint reads them (/out/review_instructions.txt),
+		// so local and cloud share one prompt and prompt changes need no sandbox-image rebuild.
+		// The image's baked INSTRUCTIONS is only a fallback when this file is absent.
+		_ = os.WriteFile(filepath.Join(outDir, "review_instructions.txt"), []byte(reviewInstructions), 0o644)
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.opencode.invoked",
 			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": cred.Model},
@@ -393,6 +442,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview) error
 	redactDoc(&doc, cred.APIKey, rc.Credential.APIToken)
 	review := buildReview(doc, changed, pr.HeadSHA, skippedFiles, omittedFiles)
 	review.DedupKey = crID.String()
+	prog.SetPhase("posting")
 	ref, err := conn.PostReview(ctx, prNumber, review)
 	if err != nil {
 		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)
@@ -481,6 +531,7 @@ func (s *CodeReviewService) List(ctx context.Context, principalID, businessID uu
 				CostCents:     r.CostCents,
 				CreatedAt:     r.CreatedAt,
 				PostedAt:      postedAt,
+				Progress:      json.RawMessage(r.Progress),
 				// ReviewURL intentionally empty in List — populated in Get only.
 				// The UI history list links via the detail page to avoid N connector
 				// resolves per list row.
@@ -539,6 +590,7 @@ func (s *CodeReviewService) Get(ctx context.Context, principalID, businessID, id
 			CostCents:     row.CostCents,
 			CreatedAt:     row.CreatedAt,
 			PostedAt:      postedAt,
+			Progress:      json.RawMessage(row.Progress),
 		}
 		raw.repoConnectorID = row.RepoConnectorID
 		raw.externalRef = row.ExternalReviewRef

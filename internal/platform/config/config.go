@@ -113,6 +113,11 @@ type Config struct {
 	// MUST be a path visible inside the Docker VM (on Colima/Mac that means
 	// under $HOME, NOT /tmp). Default: $HOME/.cache/manyforge/sandbox.
 	SandboxWorkRoot string
+	// LocalReviewTimeout is the HTTP timeout for the host-side local-provider review
+	// path (Ollama/vLLM). Local models can run far longer than the cloud sandbox cap,
+	// so this defaults to 30 min. Env: MANYFORGE_LOCAL_REVIEW_TIMEOUT. Separate from
+	// the sandbox wall-clock cap.
+	LocalReviewTimeout time.Duration
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -267,6 +272,10 @@ func Load() (Config, error) {
 		sandboxWorkRootDefault = home + "/.cache/manyforge/sandbox"
 	}
 	cfg.SandboxWorkRoot = env("MANYFORGE_SANDBOX_WORK_ROOT", sandboxWorkRootDefault)
+
+	if cfg.LocalReviewTimeout, err = envDuration("MANYFORGE_LOCAL_REVIEW_TIMEOUT", 30*time.Minute); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_LOCAL_REVIEW_TIMEOUT: %w", err)
+	}
 
 	return cfg, nil
 }
