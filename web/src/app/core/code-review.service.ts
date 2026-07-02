@@ -32,6 +32,27 @@ export interface Finding {
   severity: FindingSeverity;
   title: string;
   detail: string;
+  // Which review lane produced this finding (spec 008). Empty/absent on a legacy
+  // single-lane review; may be a joined set (e.g. "correctness, security") when the
+  // same issue was flagged by multiple lanes and de-duplicated during aggregation.
+  dimension?: string;
+}
+
+export type DimensionRunStatus = 'succeeded' | 'failed' | 'skipped';
+
+// DimensionRun mirrors the Go coding.dimensionRun record persisted in
+// code_review.dimension_runs (spec 008): per-lane accounting for a multi-dimension
+// review. A "skipped" lane carries skipped_reason and did not run this review.
+export interface DimensionRun {
+  dimension: string;
+  model?: string;
+  provider?: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_cents: number;
+  status: DimensionRunStatus;
+  skipped_reason?: string;
+  finding_count: number;
 }
 
 export interface CodeReview {
@@ -47,6 +68,10 @@ export interface CodeReview {
   created_at: string;
   posted_at: string | null;
   progress?: { phase: string; tokens: number; preview: string };
+  // Per-lane accounting for a multi-dimension review (spec 008); absent on legacy
+  // single-lane reviews. The detail page groups findings by dimension and surfaces
+  // skipped lanes from this.
+  dimension_runs?: DimensionRun[];
 }
 
 export interface TriggerBody {

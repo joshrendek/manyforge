@@ -43,6 +43,11 @@ type CodeReview struct {
 	// preview); null/omitted for pending and terminal reviews. Populated from the
 	// code_review.progress jsonb the worker heartbeat persists.
 	Progress json.RawMessage `json:"progress,omitempty"`
+	// DimensionRuns is the per-lane accounting for a multi-dimension review (spec 008):
+	// a JSON array of {dimension, model, provider, tokens_in, tokens_out, cost_cents,
+	// status, skipped_reason, finding_count}. The detail UI groups findings by dimension
+	// and surfaces skipped lanes from it. Empty/omitted for legacy single-lane reviews.
+	DimensionRuns json.RawMessage `json:"dimension_runs,omitempty"`
 }
 
 // ClaimedReview is the typed representation of a claim_code_reviews result row,
@@ -638,6 +643,7 @@ func (s *CodeReviewService) Get(ctx context.Context, principalID, businessID, id
 			CreatedAt:     row.CreatedAt,
 			PostedAt:      postedAt,
 			Progress:      json.RawMessage(row.Progress),
+			DimensionRuns: json.RawMessage(row.DimensionRuns),
 		}
 		raw.repoConnectorID = row.RepoConnectorID
 		raw.externalRef = row.ExternalReviewRef

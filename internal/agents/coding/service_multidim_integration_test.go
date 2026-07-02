@@ -118,17 +118,18 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 	}
 
 	// dimension_runs records all three lanes: two succeeded, ui skipped (scope: no files).
-	var raw []byte
-	if err := tdb.Super.QueryRow(ctx, `SELECT dimension_runs FROM code_review WHERE id=$1`, cr.ID).Scan(&raw); err != nil {
-		t.Fatalf("read dimension_runs: %v", err)
+	// Read them off the Get DTO (not the raw DB column) so this pins that Get plumbs the
+	// dimension_runs jsonb into CodeReview.DimensionRuns for the detail UI (spec 008 Slice 2).
+	if len(got.DimensionRuns) == 0 {
+		t.Fatalf("Get must surface dimension_runs on the DTO; got empty DimensionRuns")
 	}
 	var runs []struct {
 		Dimension    string `json:"dimension"`
 		Status       string `json:"status"`
 		FindingCount int    `json:"finding_count"`
 	}
-	if err := json.Unmarshal(raw, &runs); err != nil {
-		t.Fatalf("unmarshal dimension_runs %q: %v", raw, err)
+	if err := json.Unmarshal(got.DimensionRuns, &runs); err != nil {
+		t.Fatalf("unmarshal DimensionRuns %q: %v", got.DimensionRuns, err)
 	}
 	byDim := map[string]string{}
 	for _, r := range runs {

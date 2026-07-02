@@ -87,6 +87,30 @@ const reviewSucceeded = {
   posted_at: '2026-06-15T00:01:00Z',
 };
 
+// A multi-dimension (spec 008) review: findings tagged by lane, per-lane accounting
+// in dimension_runs, and one configured lane (ui) skipped for want of matching files.
+const reviewMultiDim = {
+  id: 'r1',
+  status: 'succeeded',
+  summary: 'Reviewed across security and correctness.',
+  review_url: 'https://github.com/acme/api/pull/5#issuecomment-1',
+  pr_number: 5,
+  model: 'x-ai/grok',
+  findings: [
+    { file: 'src/auth.go', line: 10, severity: 'error', title: 'SQLi', detail: 'Parameterize.', dimension: 'security' },
+    { file: 'src/auth.go', line: 20, severity: 'warning', title: 'Weak hash', detail: 'Use bcrypt.', dimension: 'security' },
+    { file: 'src/calc.go', line: 5, severity: 'warning', title: 'Off-by-one', detail: 'Loop bound.', dimension: 'correctness' },
+  ],
+  findings_count: 3,
+  created_at: '2026-06-15T00:00:00Z',
+  posted_at: '2026-06-15T00:01:00Z',
+  dimension_runs: [
+    { dimension: 'security', model: 'x-ai/grok', provider: 'openrouter', tokens_in: 100, tokens_out: 50, cost_cents: 2, status: 'succeeded', finding_count: 2 },
+    { dimension: 'correctness', model: 'x-ai/grok', provider: 'openrouter', tokens_in: 80, tokens_out: 40, cost_cents: 1, status: 'succeeded', finding_count: 1 },
+    { dimension: 'ui', tokens_in: 0, tokens_out: 0, cost_cents: 0, status: 'skipped', skipped_reason: 'no matching files', finding_count: 0 },
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // Auth helper — mirrors agents.spec.ts
 // ---------------------------------------------------------------------------
@@ -192,6 +216,34 @@ test('code-review: trigger a review and watch it complete', async ({ page }) => 
     'href',
     'https://github.com/acme/api/pull/5#issuecomment-1',
   );
+});
+
+test('code-review detail: groups findings by dimension and surfaces skipped lanes', async ({ page }) => {
+  await auth(page);
+  await page.route('**/api/v1/businesses/b1/code-reviews/r1', (r) =>
+    r.fulfill({ json: reviewMultiDim }),
+  );
+
+  await page.goto('/code-review/b1/r1');
+
+  // Two dimension groups, one per ran lane, each headed by its finding count.
+  const groups = page.getByTestId('dimension-group');
+  await expect(groups).toHaveCount(2);
+  const security = page.getByTestId('dimension-group-header').filter({ hasText: 'security' });
+  const correctness = page.getByTestId('dimension-group-header').filter({ hasText: 'correctness' });
+  await expect(security).toContainText('2');
+  await expect(correctness).toContainText('1');
+
+  // All three tagged findings render as rows across the groups.
+  await expect(page.getByTestId('finding-row')).toHaveCount(3);
+
+  // The scoped-out ui lane is surfaced as skipped, with its reason — never silently dropped.
+  const skipped = page.getByTestId('skipped-dimensions');
+  await expect(skipped).toBeVisible();
+  const skippedRow = page.getByTestId('skipped-dimension-row');
+  await expect(skippedRow).toHaveCount(1);
+  await expect(skippedRow).toContainText('ui');
+  await expect(skippedRow).toContainText('no matching files');
 });
 
 test('code-review: connector list renders rows', async ({ page }) => {
