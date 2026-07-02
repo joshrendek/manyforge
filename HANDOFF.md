@@ -1,48 +1,39 @@
-# Handoff — manyforge @ 008-review-dimensions — 2026-07-01 ~19:15 UTC
+# Handoff — manyforge @ 008-review-dimensions — 2026-07-02 ~05:10 UTC
 
 ## ⚠️ Before you clear
-- **Unpushed:** none — Slice 1 (`611ed8d`..`2d7d5bd`) + Slice 2 backend (`2bd2c29`, `f8dc937`) all pushed to `origin/008-review-dimensions`.
-- **Uncommitted:** only this `HANDOFF.md` + `.beads/issues.jsonl` (bd notes). Working tree otherwise has only stray untracked docs (scattered `CLAUDE.md`s, `.pair/`, screenshots).
-- **No PR opened yet.** Slice 1 is landed on the branch but not PR'd into master. Open `008-review-dimensions` → master when ready, OR continue Slice 2 on the same branch (still one branch off master — compliant).
-- **Still running:** air **:8081**, ng **:4300**, Ollama **:11434**, LM Studio **192.168.2.241:1234** (external), Docker `mf-dev` :55432 + `mf-egress-proxy`.
+- **Unpushed:** none — `HEAD == origin/008-review-dimensions` (`ed65aa5`). Slice 1 + Slice 2 (all phases) pushed.
+- **Uncommitted:** only stray untracked docs/screenshots (`.pair/`, scattered `CLAUDE.md`s, `*.png`) + bd's `.beads/issues.jsonl`. No code uncommitted.
+- **No PR opened yet.** `008-review-dimensions` → master is unopened; Slice 1 + Slice 2 both landed on the branch. Open the PR (base master) OR continue Slice 3 on the same branch (still one branch off master — compliant).
+- **Still running:** air **:8081**, ng serve **:4300** (log `/tmp/mf-web.log`), Docker `mf-dev` :55432 + `mf-egress-proxy`. (Ollama/LM Studio external if used.)
 
 ## State
-Spec **008 — Multi-dimension Code Review**. **Slice 1 (`manyforge-v9c`) is COMPLETE and fully verified** — 5 commits on `008-review-dimensions`: `611ed8d` prompt plumbing → `e8ef7c4` `defaultPanel()` + catalog rename → `305b0bb` `runJob` fan-out + pure `aggregateReview()` → `13f5ea0` DB migrations 0077–0079 + `resolvePanel` + `dimension_runs` → `2d7d5bd` multi-lane integration test + MF008 security pins. Reviews now fan out across a per-business dimension panel (or the zero-config single **general** lane = byte-for-byte legacy), tag findings by dimension, aggregate to ONE posted review, and record per-dimension accounting. Gates ALL green: `go build ./...`, `go vet ./...`, contract, full coding integration suite, `make sec-test`.
+Spec **008 — Multi-dimension Code Review**. **Slice 1 (`v9c`) and Slice 2 (`puh`) are BOTH COMPLETE, verified, and pushed.** Slice 2 (this session) added the whole config surface: Phase A service+CRUD, Phase B REST+OpenAPI (both pre-session), **Phase C** detail-page grouping (`1a652c1`), **Phase D** Review Setup page (`b59dae1`), plus a pre-existing e2e fix (`ed65aa5`). `bd close manyforge-puh` done.
 
-## Slice 2 (`manyforge-puh`) — backend DONE, resume at frontend (Phase C)
-**Phase A** (`2bd2c29`): `ReviewDimensionService` + config CRUD sqlc (`UpsertReviewDimension`, `review_config` Get/Upsert) + validation + audit + `TestReviewDimensionServiceCRUD`.
-**Phase B** (`f8dc937`): `coding.Handler.ReviewConfigRoutes` (`GET/POST /businesses/{id}/review-dimensions`, `DELETE .../{dimID}`, `GET/PUT /businesses/{id}/review-config`) mounted under a NEW `agents.configure` `pr.Group` in `cmd/manyforge/main.go`; `specs/008-review-dimensions/contracts/openapi.yaml` + `drift_008_test.go` + `spec008Routes` folded into the untagged drift union; handler tests. **All backend gates green** (build/vet/unit/untagged-drift/`-tags contract`). No new migration; dev DB at 79, backend healthy.
+## Resume here → Slice 3 (`manyforge-8qs`)
+"Quality: verify pass + rule citations + cost estimate." This is where the seams left this session get consumed:
+- **`Finding.RuleID`** (Go `connectors.Finding` + Angular `Finding.rule_id`): deliberately NOT added in Slice 2 (would be dead plumbing). Add it here when findings actually emit rule citations, and render it in `detail.ts`.
+- **Verify config UI**: `ReviewConfig` already carries `verify_enabled`/`verify_provider`/`verify_model` (DTO + PUT round-trip them), but the Setup page's Aggregation section intentionally does NOT expose them yet. Add the verify controls to `web/src/app/pages/code-review/setup.ts` when the verify pass lands.
+- Cost estimate surfacing (per-dimension `cost_cents` is already in `dimension_runs`).
 
-**Remaining — FRONTEND (needs real-browser verify per CLAUDE.md); do in a FRESH session:**
-- **Phase C (detail grouping):** add `CodeReview.DimensionRuns` to the Go DTO (`internal/agents/coding/service.go` ~30-46) + populate in `Get` (~629-641; `row.DimensionRuns` is a `[]byte` → `json.RawMessage`); add `connectors.Finding.RuleID`; edit `web/src/app/core/code-review.service.ts` DTOs (`Finding.dimension`/`rule_id`, `CodeReview.dimension_runs`); `web/src/app/pages/code-review/detail.ts` group findings by dimension (counts + pills) + skipped-dimensions section from `dimension_runs`; `detail.spec.ts` + e2e.
-- **Phase D (Setup page):** `web/src/app/pages/code-review/setup.ts` (business select via `CurrentBusinessService`, `mf-table` + inline editor reusing `agents/agent-form.ts` provider/model picker, Fast/Balanced/Thorough presets mirroring `dimensionCatalog()`, aggregation row for `review_config`) + `ui/nav.ts` item (UPDATE the strict `nav.spec.ts` `toEqual`!) + `app.routes.ts` route `code-review/setup/:businessId`; `setup.spec.ts` + e2e; **real-browser verify (gstack `$B` / Playwright).** Endpoints are live under `agents.configure`.
-- ⚠️ **Adding a migration takes the dev backend down** until you `migrate up` the mf-dev DB — see the [[manyforge-migration-dev-db-version-guard]] memory. (Phase C/D add none.)
-
-## (Slice 1) Land options — open a PR, or continue on-branch
-Slice 1 ships the panel machinery with NO cost/behavior regression for unconfigured businesses (they still get the single general lane). Two paths:
-1. **Land Slice 1**: open PR `008-review-dimensions` → **base master**, merge, delete branch — the compliant one-branch-off-master cadence.
-2. **Slice 2 (`manyforge-puh`, now unblocked)** — Config UI: the Review Setup page + REST for `review_dimension`/`review_config` + detail-page grouping of findings by dimension. Foundation exists: tables + `resolvePanel` + the `Dimension` tag on `connectors.Finding`. sqlc: `ListReviewDimensions`/`InsertReviewDimension`/`DeleteReviewDimension` exist; **`review_config` has NO sqlc queries yet** (add Get/Upsert). Any UI must be browser-verified (gstack/Playwright) per CLAUDE.md, then codified as a spec.
-
-**Key seams landed:** `resolvePanel(ctx, principalID, businessID)` (`panel.go`) → configured rows or `defaultPanel()`; `aggregateReview([]laneResult)` (pure, `dimensions.go`) floors+tags+dedupes+sums+partial-success; `reviewLane` closure in `runJob` runs one lane (local, or cloud in a per-lane `lane-<key>` outDir); `generalDimensionKey` findings stay untagged (legacy shape); `dimensionCatalog()` = opt-in specialists (Slice 2 presets), NOT the default; `buildDimensionRuns` → the `dimension_runs` jsonb.
+## What Slice 2 shipped (key files)
+- **Backend (Phase C):** `CodeReview.DimensionRuns json.RawMessage` on the DTO (`internal/agents/coding/service.go` ~46), populated in `Get` from `row.DimensionRuns`. Pinned by `service_multidim_integration_test.go` reading it off the DTO.
+- **Frontend (Phase C):** `web/src/app/pages/code-review/detail.ts` groups findings into per-dimension tables (count pills) + a skipped-dimensions section; **legacy single-lane reviews stay flat** — grouping triggers only when a finding carries a `dimension` tag (NOT on `dimension_runs` presence — the default general lane writes a run too). `code-review.service.ts` DTOs: `Finding.dimension`, `CodeReview.dimension_runs`, `ReviewDimension(Input)`, `ReviewConfig`.
+- **Frontend (Phase D):** `web/src/app/pages/code-review/setup.ts` (`CodeReviewSetupComponent`) at **paramless** route `/code-review/setup` (nav item `nav-review-setup`). Business selector (CurrentBusinessService), Fast/Balanced/Thorough presets seeding editable rows from a frontend `DIMENSION_CATALOG` **that mirrors `dimensions.go` dimensionCatalog()** (keep in sync by hand — prompts are duplicated there), inline per-row provider/model/severity/scope editor → `POST`/`DELETE /review-dimensions`, Aggregation section → `GET`/`PUT /review-config`. 5 service methods added.
+- **Deviation from plan sketch:** route is paramless `/code-review/setup` + on-page business selector, NOT `/setup/:businessId` — a static nav item can't carry a businessId; mirrors the sibling list page.
 
 ## Run & verify
-- Gates: `go build ./...`; `make lint` (= `go vet ./...`, NOT staticcheck); `go test ./internal/agents/coding/ ./internal/connectors/ ./internal/security_regression/`; `go test -tags contract ./cmd/...`; `make sec-test`. **NO Co-Authored-By** (user rule).
-- Live review (still works): login `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` → trigger `POST :8081/api/v1/businesses/7bbeb32e-.../code-reviews {agent_id,repo_connector_id,pr_number}`. Only OPEN PR is **joshrendek/manyforge #7** (now merged — reviewing a merged PR fails "not open"; open a new PR or reopen one to dogfood).
+- Backend gates: `go build ./...`; `make lint` (=`go vet`, NOT staticcheck); `go test ./internal/agents/coding/ ./internal/connectors/`; `go test -tags contract ./cmd/...`; `make sec-test` (testcontainers, ~70s). Integration: `go test -tags integration -run TestCodeReviewMultiDimensionFanout ./internal/agents/coding/`.
+- Frontend: from `web/` — `npx ng test --no-watch` (277 pass; single file: `--include <path>`); `npx playwright test` (69 pass, needs ng serve on :4300).
+- **NO Co-Authored-By** on commits (user rule, overrides harness default). Commit style: `feat(008 s2): … (manyforge-puh)`.
 
 ## Gotchas (don't relearn these)
-- **Don't 5× review cost by default.** Zero-config panel = one general lane (`defaultPanel`), not all specialists. Specialists are opt-in (Slice 2 presets/UI). Local providers are single-GPU → fan-out is sequential and each lane is minutes.
-- **Scope globs use doublestar** (`matchGlob`): `**/*.go` = any-depth; bare `*.go` = top-level only (correct glob semantics). Defaults use `**/`.
-- **The runJob local/cloud paths** are freshly hardened (spec 007 + manyforge-87a): reasoning models stream `reasoning_content` (preview-only), LM Studio empty-under-json_schema → plain + in-line retry, `max_tokens=8192` bound, per-dimension prompt must flow through BOTH paths. [[manyforge-sandbox-dev-gotchas]]
-- **zsh `noclobber`** → bg redirects use `>|`. [[user-zsh-noclobber-bg-logs]] · **sqlc PINNED v1.27.0** (`/opt/homebrew/bin/sqlc`) [[sqlc-version-pin-v127]] · editing `.go` restarts air mid-review → park orphans.
-- **Next migration is 0077.** RLS pattern: mirror `migrations/0025_ai_provider_credential.up.sql`.
-
-## Decisions & rationale
-- **Inline per-dimension config** (not agent-bound): each dimension holds its own provider+model+prompt+scope+severity, resolving the credential by provider — no forcing agent pre-creation. (User pick.)
-- **Deterministic glob routing** (not an LLM router) for v1; risk-tier triage deferred to Slice 4.
-- **Backward-compatible default** (one general lane) so Slice 1 ships the fan-out machinery with no cost/behavior regression; value lands when users configure the panel (Slice 2).
+- **e2e logout trap:** Playwright specs that don't mock the shell's nav-badge calls (`/approvals`,`/connectors`) → 401 → refresh interceptor → `/login` mid-test (snapshot shows the login page). Add a `**/api/**` empty-fallback route FIRST (specific mocks win, last-registered-first). See [[manyforge-e2e-shell-nav-badge-401-logout]]. `theme.spec` is safe via its broad `businesses**` glob.
+- **ng serve races rebuilds:** after editing web files, give ng serve (:4300) a moment; an e2e run immediately after an edit can hit the stale bundle. Check `/tmp/mf-web.log` for "bundle generation complete".
+- **gopls shows phantom dbgen errors** after editing service.go (`row.DimensionRuns undefined` etc.) — stale; `go build` is truth. [[gopls-stale-dbgen-diagnostics]]
+- **DIMENSION_CATALOG duplication:** `setup.ts` mirrors `dimensions.go` prompts/scopes. If you change one, change both (or Slice 3+ could expose a catalog endpoint to kill the dup).
+- Zero-config reviews still run one general lane (byte-for-byte legacy) — presets/specialists are opt-in. Don't 5× review cost by default.
 
 ## Pointers
-- **Spec/plan:** `specs/008-review-dimensions/{spec.md,plan.md}` (greenlit, commit `95f4bf4`). **Foundation:** spec 007 (`internal/agents/coding`).
-- **bd:** epic `manyforge-t2s`; slices `manyforge-v9c` (Slice 1, in progress — see its notes for the remaining checklist), `puh` (Slice 2 config UI, blocked by v9c), `8qs` (Slice 3 quality), `e54` (Slice 4 later). Also open: `manyforge-byz` (clear-progress = succeeded-only now), `manyforge-5tr` (Ollama num_ctx).
-- **Key new files:** `internal/agents/coding/dimensions.go` (+ `_test.go`). **Key edit targets next:** `localreview.go`, `service.go` (runJob), `migrations/0077+`, `internal/security_regression/`.
-- **Dev entities (business Acme `7bbeb32e-7c98-4c8f-966b-70acdb440dce`):** LM Studio agent(vllm) `2571c371` + cred `ca7b0b97` (192.168.2.241:1234, allow_private=true); connectors joshrendek/manyforge `eb68939b`.
+- **Spec/plan:** `specs/008-review-dimensions/{spec.md,plan.md}`. **bd:** epic `manyforge-t2s`; `v9c` (Slice 1, closed), `puh` (Slice 2, CLOSED), **`8qs` (Slice 3 — NEXT)**, `e54` (Slice 4, later). Also open: `manyforge-byz`, `manyforge-5tr`.
+- **Commits this session:** `1a652c1` (Phase C), `b59dae1` (Phase D), `ed65aa5` (flows-seeded e2e fix).
+- **Key files:** `internal/agents/coding/{service.go,dimensions.go,panel.go,review_config_service.go,handler.go}`; `web/src/app/pages/code-review/{detail.ts,setup.ts}`; `web/src/app/core/code-review.service.ts`; `web/src/app/ui/nav.ts`.
