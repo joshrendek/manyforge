@@ -1,15 +1,24 @@
 # Handoff — manyforge @ 008-review-dimensions — 2026-07-01 ~19:15 UTC
 
 ## ⚠️ Before you clear
-- **Unpushed:** none — all 5 Slice 1 commits (`611ed8d`..`2d7d5bd`) are pushed to `origin/008-review-dimensions`.
-- **Uncommitted:** only this `HANDOFF.md` + `.beads/issues.jsonl` (bd close of v9c). Working tree otherwise has only stray untracked docs (scattered `CLAUDE.md`s, `.pair/`, screenshots).
+- **Unpushed:** none — Slice 1 (`611ed8d`..`2d7d5bd`) + Slice 2 backend (`2bd2c29`, `f8dc937`) all pushed to `origin/008-review-dimensions`.
+- **Uncommitted:** only this `HANDOFF.md` + `.beads/issues.jsonl` (bd notes). Working tree otherwise has only stray untracked docs (scattered `CLAUDE.md`s, `.pair/`, screenshots).
 - **No PR opened yet.** Slice 1 is landed on the branch but not PR'd into master. Open `008-review-dimensions` → master when ready, OR continue Slice 2 on the same branch (still one branch off master — compliant).
 - **Still running:** air **:8081**, ng **:4300**, Ollama **:11434**, LM Studio **192.168.2.241:1234** (external), Docker `mf-dev` :55432 + `mf-egress-proxy`.
 
 ## State
 Spec **008 — Multi-dimension Code Review**. **Slice 1 (`manyforge-v9c`) is COMPLETE and fully verified** — 5 commits on `008-review-dimensions`: `611ed8d` prompt plumbing → `e8ef7c4` `defaultPanel()` + catalog rename → `305b0bb` `runJob` fan-out + pure `aggregateReview()` → `13f5ea0` DB migrations 0077–0079 + `resolvePanel` + `dimension_runs` → `2d7d5bd` multi-lane integration test + MF008 security pins. Reviews now fan out across a per-business dimension panel (or the zero-config single **general** lane = byte-for-byte legacy), tag findings by dimension, aggregate to ONE posted review, and record per-dimension accounting. Gates ALL green: `go build ./...`, `go vet ./...`, contract, full coding integration suite, `make sec-test`.
 
-## Resume here — open a PR for Slice 1, or start Slice 2
+## Slice 2 (`manyforge-puh`) — backend DONE, resume at frontend (Phase C)
+**Phase A** (`2bd2c29`): `ReviewDimensionService` + config CRUD sqlc (`UpsertReviewDimension`, `review_config` Get/Upsert) + validation + audit + `TestReviewDimensionServiceCRUD`.
+**Phase B** (`f8dc937`): `coding.Handler.ReviewConfigRoutes` (`GET/POST /businesses/{id}/review-dimensions`, `DELETE .../{dimID}`, `GET/PUT /businesses/{id}/review-config`) mounted under a NEW `agents.configure` `pr.Group` in `cmd/manyforge/main.go`; `specs/008-review-dimensions/contracts/openapi.yaml` + `drift_008_test.go` + `spec008Routes` folded into the untagged drift union; handler tests. **All backend gates green** (build/vet/unit/untagged-drift/`-tags contract`). No new migration; dev DB at 79, backend healthy.
+
+**Remaining — FRONTEND (needs real-browser verify per CLAUDE.md); do in a FRESH session:**
+- **Phase C (detail grouping):** add `CodeReview.DimensionRuns` to the Go DTO (`internal/agents/coding/service.go` ~30-46) + populate in `Get` (~629-641; `row.DimensionRuns` is a `[]byte` → `json.RawMessage`); add `connectors.Finding.RuleID`; edit `web/src/app/core/code-review.service.ts` DTOs (`Finding.dimension`/`rule_id`, `CodeReview.dimension_runs`); `web/src/app/pages/code-review/detail.ts` group findings by dimension (counts + pills) + skipped-dimensions section from `dimension_runs`; `detail.spec.ts` + e2e.
+- **Phase D (Setup page):** `web/src/app/pages/code-review/setup.ts` (business select via `CurrentBusinessService`, `mf-table` + inline editor reusing `agents/agent-form.ts` provider/model picker, Fast/Balanced/Thorough presets mirroring `dimensionCatalog()`, aggregation row for `review_config`) + `ui/nav.ts` item (UPDATE the strict `nav.spec.ts` `toEqual`!) + `app.routes.ts` route `code-review/setup/:businessId`; `setup.spec.ts` + e2e; **real-browser verify (gstack `$B` / Playwright).** Endpoints are live under `agents.configure`.
+- ⚠️ **Adding a migration takes the dev backend down** until you `migrate up` the mf-dev DB — see the [[manyforge-migration-dev-db-version-guard]] memory. (Phase C/D add none.)
+
+## (Slice 1) Land options — open a PR, or continue on-branch
 Slice 1 ships the panel machinery with NO cost/behavior regression for unconfigured businesses (they still get the single general lane). Two paths:
 1. **Land Slice 1**: open PR `008-review-dimensions` → **base master**, merge, delete branch — the compliant one-branch-off-master cadence.
 2. **Slice 2 (`manyforge-puh`, now unblocked)** — Config UI: the Review Setup page + REST for `review_dimension`/`review_config` + detail-page grouping of findings by dimension. Foundation exists: tables + `resolvePanel` + the `Dimension` tag on `connectors.Finding`. sqlc: `ListReviewDimensions`/`InsertReviewDimension`/`DeleteReviewDimension` exist; **`review_config` has NO sqlc queries yet** (add Get/Upsert). Any UI must be browser-verified (gstack/Playwright) per CLAUDE.md, then codified as a spec.
