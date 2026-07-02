@@ -5,6 +5,7 @@ import { ActivatedRoute } from '@angular/router';
 import {
   CodeReview,
   CodeReviewService,
+  DimensionRun,
   Finding,
 } from '../../core/code-review.service';
 import { PageHeader } from '../../ui/page-header/page-header';
@@ -87,35 +88,86 @@ import { runStatusTone } from '../../ui/status';
           </div>
         }
 
-        <!-- Findings table -->
+        <!-- Findings -->
         <h3 style="margin:0 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
           Findings ({{ r.findings_count }})
         </h3>
-        <div class="mf-table" data-testid="findings-table">
-          <div class="mf-tr mf-th">
-            <span style="flex:2">File</span>
-            <span style="width:60px">Line</span>
-            <span style="width:80px">Severity</span>
-            <span style="flex:2">Title</span>
-            <span style="flex:3">Detail</span>
+
+        @if (isGrouped()) {
+          <!-- Multi-dimension review: one findings table per lane, headed by its
+               dimension + finding count (spec 008). -->
+          @for (g of dimensionGroups(); track g.dimension) {
+            <div data-testid="dimension-group" style="margin-bottom:16px">
+              <div data-testid="dimension-group-header"
+                   style="display:flex;align-items:center;gap:8px;margin:0 0 6px">
+                <span style="font-weight:600;text-transform:capitalize">{{ g.dimension }}</span>
+                <mf-status-pill tone="neutral" [label]="g.findings.length + ''" />
+              </div>
+              <div class="mf-table">
+                <div class="mf-tr mf-th">
+                  <span style="flex:2">File</span>
+                  <span style="width:60px">Line</span>
+                  <span style="width:80px">Severity</span>
+                  <span style="flex:2">Title</span>
+                  <span style="flex:3">Detail</span>
+                </div>
+                @for (f of g.findings; track $index) {
+                  <div class="mf-tr" data-testid="finding-row">
+                    <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all">{{ f.file }}</span>
+                    <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.line ?? '—' }}</span>
+                    <span style="width:80px;font-size:var(--mf-fs-sm)">
+                      <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" />
+                    </span>
+                    <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500">{{ f.title }}</span>
+                    <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.detail }}</span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        } @else {
+          <div class="mf-table" data-testid="findings-table">
+            <div class="mf-tr mf-th">
+              <span style="flex:2">File</span>
+              <span style="width:60px">Line</span>
+              <span style="width:80px">Severity</span>
+              <span style="flex:2">Title</span>
+              <span style="flex:3">Detail</span>
+            </div>
+            @for (f of r.findings; track $index) {
+              <div class="mf-tr" data-testid="finding-row">
+                <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all">{{ f.file }}</span>
+                <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.line ?? '—' }}</span>
+                <span style="width:80px;font-size:var(--mf-fs-sm)">
+                  <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" />
+                </span>
+                <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500">{{ f.title }}</span>
+                <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.detail }}</span>
+              </div>
+            }
+            @if (!r.findings.length) {
+              <div class="mf-tr" style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="findings-empty">
+                No findings.
+              </div>
+            }
           </div>
-          @for (f of r.findings; track $index) {
-            <div class="mf-tr" data-testid="finding-row">
-              <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all">{{ f.file }}</span>
-              <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.line ?? '—' }}</span>
-              <span style="width:80px;font-size:var(--mf-fs-sm)">
-                <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" />
-              </span>
-              <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500">{{ f.title }}</span>
-              <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.detail }}</span>
-            </div>
-          }
-          @if (!r.findings.length) {
-            <div class="mf-tr" style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="findings-empty">
-              No findings.
-            </div>
-          }
-        </div>
+        }
+
+        <!-- Configured lanes that did not run this review — surfaced, never silently
+             dropped (spec 008 FR-003). -->
+        @if (skippedDimensions().length) {
+          <div class="mf-card" data-testid="skipped-dimensions" style="margin-top:16px">
+            <h3 style="margin:0 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
+              Skipped dimensions
+            </h3>
+            @for (s of skippedDimensions(); track s.dimension) {
+              <div class="mf-tr" data-testid="skipped-dimension-row" style="display:flex;gap:8px;align-items:center">
+                <span style="font-weight:500;text-transform:capitalize">{{ s.dimension }}</span>
+                <span style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ s.skipped_reason || 'skipped' }}</span>
+              </div>
+            }
+          </div>
+        }
       }
     </div>
   `,
@@ -135,6 +187,37 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
   private id = '';
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private elapsedTimer: ReturnType<typeof setInterval> | undefined;
+
+  // A review is "grouped" once any finding carries a dimension tag (spec 008). Legacy
+  // single-lane reviews leave every finding untagged, so they render the flat table
+  // unchanged — this is the load-bearing back-compat trigger.
+  isGrouped(): boolean {
+    return !!this.review()?.findings.some((f) => (f.dimension ?? '').trim() !== '');
+  }
+
+  // Groups the review's findings by dimension, preserving first-seen order. Untagged
+  // findings (e.g. a general lane mixed with specialists) fall under "general".
+  dimensionGroups(): { dimension: string; findings: Finding[] }[] {
+    const r = this.review();
+    if (!r) return [];
+    const order: string[] = [];
+    const byDim = new Map<string, Finding[]>();
+    for (const f of r.findings) {
+      const key = (f.dimension ?? '').trim() || 'general';
+      if (!byDim.has(key)) {
+        byDim.set(key, []);
+        order.push(key);
+      }
+      byDim.get(key)!.push(f);
+    }
+    return order.map((d) => ({ dimension: d, findings: byDim.get(d)! }));
+  }
+
+  // Configured lanes that did not run this review (scoped out, disabled, etc.). Surfaced
+  // so a skipped dimension is never silently absent (spec 008 FR-003).
+  skippedDimensions(): DimensionRun[] {
+    return (this.review()?.dimension_runs ?? []).filter((d) => d.status === 'skipped');
+  }
 
   // Maps Finding severity to a StatusPill tone.
   findingTone(severity: Finding['severity']): 'danger' | 'warn' | 'neutral' {
