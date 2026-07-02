@@ -1,0 +1,221 @@
+openapi: 3.1.0
+info:
+  title: manyforge Multi-Dimension Code Review — Config API
+  version: 0.1.0
+  description: >
+    Spec 008 Slice 2 — per-business review-panel configuration: the reviewer
+    dimensions and the panel-level config. Gated by agents.configure. RLS-scoped
+    to the business; cross-tenant or unknown ids return 404 (no oracle).
+
+paths:
+  /businesses/{id}/review-dimensions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listReviewDimensions
+      summary: List a business's configured review dimensions
+      description: >
+        Returns the business's configured reviewer lanes (enabled + disabled) in
+        panel order. Empty when none are configured (the review then uses the
+        built-in single general lane). Gated by agents.configure.
+      responses:
+        "200":
+          description: Configured dimensions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReviewDimensionView'
+                required: [items]
+        "404":
+          description: Business not found or caller lacks agents.configure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: upsertReviewDimension
+      summary: Create or update one review dimension
+      description: >
+        Inserts or updates the business's config for one dimension (keyed on the
+        dimension key). Validates provider/model/severity/prompt. Gated by
+        agents.configure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewDimensionInput'
+      responses:
+        "200":
+          description: The persisted dimension
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewDimensionView'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: Business not found or caller lacks agents.configure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /businesses/{id}/review-dimensions/{dimID}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: dimID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: deleteReviewDimension
+      summary: Delete one review dimension
+      description: Removes a configured dimension. Gated by agents.configure.
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Dimension not found, cross-tenant, or caller lacks agents.configure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /businesses/{id}/review-config:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getReviewConfig
+      summary: Get a business's review-panel config
+      description: >
+        Returns the panel-level config (dedupe, verify, cite-rules, post-mode). When
+        no config row exists, returns the built-in defaults. Gated by agents.configure.
+      responses:
+        "200":
+          description: The review config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewConfig'
+        "404":
+          description: Business not found or caller lacks agents.configure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: upsertReviewConfig
+      summary: Create or update a business's review-panel config
+      description: Inserts or updates the panel-level config (one row per business). Gated by agents.configure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewConfig'
+      responses:
+        "200":
+          description: The persisted config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewConfig'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: Business not found or caller lacks agents.configure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    ReviewDimensionInput:
+      type: object
+      properties:
+        dimension:
+          type: string
+          enum: [security, correctness, performance, ui, docs, tests, general]
+        provider:
+          type: string
+          description: 'Empty ⇒ use the review''s default resolved credential.'
+        model:
+          type: string
+        prompt:
+          type: string
+        scope_globs:
+          type: array
+          items:
+            type: string
+        min_severity:
+          type: string
+          enum: [info, warning, error]
+        enabled:
+          type: boolean
+        sort_order:
+          type: integer
+      required: [dimension, min_severity]
+    ReviewDimensionView:
+      allOf:
+        - $ref: '#/components/schemas/ReviewDimensionInput'
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+          required: [id]
+    ReviewConfig:
+      type: object
+      properties:
+        dedupe:
+          type: boolean
+        verify_enabled:
+          type: boolean
+        verify_provider:
+          type: string
+        verify_model:
+          type: string
+        cite_rules:
+          type: boolean
+        post_mode:
+          type: string
+          enum: [single, per_dimension]
+      required: [dedupe, post_mode]
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      required: [code, message]
