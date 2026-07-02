@@ -5,6 +5,7 @@ package coding
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 // perDimRunner is a fake sandbox runner for the multi-dimension fan-out: it reads the per-lane
@@ -137,6 +139,72 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 	}
 	if byDim["ui"] != "skipped" {
 		t.Fatalf("the scoped-out ui dimension must be recorded as skipped, not silently dropped; got %v", byDim)
+	}
+}
+
+// TestReviewDimensionServiceCRUD exercises the Slice 2 config service against a real DB: the
+// upsert insert+update paths (ON CONFLICT, no duplicate), list, config default-then-upsert,
+// delete, and cross-tenant ownership (a foreign business yields ErrNotFound, not a forged row).
+func TestReviewDimensionServiceCRUD(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	svc := &ReviewDimensionService{DB: tdb.App}
+
+	// Insert.
+	if _, err := svc.UpsertDimension(ctx, seed.principalID, seed.businessID, ReviewDimensionInput{
+		Dimension: "security", MinSeverity: "warning", Provider: "openrouter", Model: "x-ai/grok", Enabled: true, SortOrder: 1,
+	}); err != nil {
+		t.Fatalf("insert dimension: %v", err)
+	}
+	panel, err := svc.ListPanel(ctx, seed.principalID, seed.businessID)
+	if err != nil || len(panel) != 1 || panel[0].Dimension != "security" || !panel[0].Enabled {
+		t.Fatalf("list after insert: %+v err=%v", panel, err)
+	}
+
+	// Update via upsert (same business+dimension) — must NOT create a duplicate row.
+	if _, err := svc.UpsertDimension(ctx, seed.principalID, seed.businessID, ReviewDimensionInput{
+		Dimension: "security", MinSeverity: "error", Enabled: false, SortOrder: 1,
+	}); err != nil {
+		t.Fatalf("update dimension: %v", err)
+	}
+	panel, _ = svc.ListPanel(ctx, seed.principalID, seed.businessID)
+	if len(panel) != 1 || panel[0].Enabled || panel[0].MinSeverity != "error" || panel[0].Provider != "" {
+		t.Fatalf("upsert must update in place (enabled=false, sev=error, provider cleared): %+v", panel)
+	}
+
+	// Config: default when absent, then upsert.
+	cfg, err := svc.GetConfig(ctx, seed.principalID, seed.businessID)
+	if err != nil || !cfg.Dedupe || cfg.PostMode != "single" {
+		t.Fatalf("default config wrong: %+v err=%v", cfg, err)
+	}
+	if _, err := svc.UpsertConfig(ctx, seed.principalID, seed.businessID, ReviewConfigInput{
+		Dedupe: false, VerifyEnabled: true, VerifyProvider: "anthropic", VerifyModel: "m", PostMode: "per_dimension",
+	}); err != nil {
+		t.Fatalf("upsert config: %v", err)
+	}
+	cfg, _ = svc.GetConfig(ctx, seed.principalID, seed.businessID)
+	if cfg.Dedupe || !cfg.VerifyEnabled || cfg.PostMode != "per_dimension" {
+		t.Fatalf("config not persisted: %+v", cfg)
+	}
+
+	// Cross-tenant ownership: tenant B upserting for tenant A's business is rejected (no row).
+	seedB := seedCodingTenant(ctx, t, tdb)
+	if _, err := svc.UpsertDimension(ctx, seedB.principalID, seed.businessID, ReviewDimensionInput{
+		Dimension: "docs", MinSeverity: "info",
+	}); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("cross-tenant upsert must be ErrNotFound (ownership), got %v", err)
+	}
+
+	// Delete.
+	dimID := uuid.MustParse(panel[0].ID)
+	if err := svc.DeleteDimension(ctx, seed.principalID, seed.businessID, dimID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	panel, _ = svc.ListPanel(ctx, seed.principalID, seed.businessID)
+	if len(panel) != 0 {
+		t.Fatalf("panel must be empty after delete: %+v", panel)
+	}
+	if err := svc.DeleteDimension(ctx, seed.principalID, seed.businessID, dimID); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("re-delete must be ErrNotFound, got %v", err)
 	}
 }
 
