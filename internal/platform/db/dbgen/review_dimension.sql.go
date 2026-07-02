@@ -139,3 +139,81 @@ func (q *Queries) ListReviewDimensions(ctx context.Context, businessID uuid.UUID
 	}
 	return items, nil
 }
+
+const upsertReviewDimension = `-- name: UpsertReviewDimension :one
+INSERT INTO review_dimension (
+    id, business_id, tenant_root_id, dimension, provider, model, prompt,
+    scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
+SELECT
+    $1::uuid, b.id, b.tenant_root_id,
+    $2::text,
+    $3::ai_provider,
+    $4::text,
+    $5::text,
+    $6::text[],
+    $7::text,
+    $8::boolean,
+    $9::int,
+    now(), now()
+FROM business b
+WHERE b.id = $10::uuid
+ON CONFLICT (business_id, dimension) DO UPDATE SET
+    provider     = EXCLUDED.provider,
+    model        = EXCLUDED.model,
+    prompt       = EXCLUDED.prompt,
+    scope_globs  = EXCLUDED.scope_globs,
+    min_severity = EXCLUDED.min_severity,
+    enabled      = EXCLUDED.enabled,
+    sort_order   = EXCLUDED.sort_order,
+    updated_at   = now()
+RETURNING id, business_id, tenant_root_id, dimension, provider, model, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at
+`
+
+type UpsertReviewDimensionParams struct {
+	ID          uuid.UUID      `json:"id"`
+	Dimension   string         `json:"dimension"`
+	Provider    NullAiProvider `json:"provider"`
+	Model       string         `json:"model"`
+	Prompt      string         `json:"prompt"`
+	ScopeGlobs  []string       `json:"scope_globs"`
+	MinSeverity string         `json:"min_severity"`
+	Enabled     bool           `json:"enabled"`
+	SortOrder   int32          `json:"sort_order"`
+	BusinessID  uuid.UUID      `json:"business_id"`
+}
+
+// Insert-or-update a business's config for one dimension, keyed on UNIQUE(business_id,
+// dimension) — the Review Setup "save row" write. tenant_root_id is derived from the RLS-visible
+// business (foreign business ⇒ no row ⇒ ErrNotFound), and the tenant/created_at are never
+// overwritten on conflict.
+func (q *Queries) UpsertReviewDimension(ctx context.Context, arg UpsertReviewDimensionParams) (ReviewDimension, error) {
+	row := q.db.QueryRow(ctx, upsertReviewDimension,
+		arg.ID,
+		arg.Dimension,
+		arg.Provider,
+		arg.Model,
+		arg.Prompt,
+		arg.ScopeGlobs,
+		arg.MinSeverity,
+		arg.Enabled,
+		arg.SortOrder,
+		arg.BusinessID,
+	)
+	var i ReviewDimension
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Dimension,
+		&i.Provider,
+		&i.Model,
+		&i.Prompt,
+		&i.ScopeGlobs,
+		&i.MinSeverity,
+		&i.Enabled,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

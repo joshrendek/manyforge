@@ -277,6 +277,9 @@ type Querier interface {
 	// GetRequesterForTicket loads the embedded Requester for a ticket via its
 	// requester_id, scoped to the same business. Returned inline in the Ticket schema.
 	GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (Requester, error)
+	// The business's panel-level review config (one row per business). Absent ⇒ the caller uses
+	// the built-in defaults (dedupe on, verify off, single post).
+	GetReviewConfig(ctx context.Context, businessID uuid.UUID) (ReviewConfig, error)
 	// A role assignable within the tenant (a preset, or one the tenant owns), with
 	// the bits the assignment guard needs (is_locked marks the full-access Owner role).
 	GetRoleInTenant(ctx context.Context, arg GetRoleInTenantParams) (GetRoleInTenantRow, error)
@@ -738,6 +741,14 @@ type Querier interface {
 	// Derives (business_id, tenant_root_id) from the RLS-visible mcp_server row, so an invisible or
 	// foreign server yields no row → pgx.ErrNoRows → 404 (no oracle). Upsert on (mcp_server_id, tool_name).
 	UpsertMCPToolPolicy(ctx context.Context, arg UpsertMCPToolPolicyParams) (McpToolPolicy, error)
+	// Insert-or-update the business's review config (PK business_id). tenant_root_id is derived
+	// from the RLS-visible business, so a foreign business yields no row (⇒ ErrNotFound).
+	UpsertReviewConfig(ctx context.Context, arg UpsertReviewConfigParams) (ReviewConfig, error)
+	// Insert-or-update a business's config for one dimension, keyed on UNIQUE(business_id,
+	// dimension) — the Review Setup "save row" write. tenant_root_id is derived from the RLS-visible
+	// business (foreign business ⇒ no row ⇒ ErrNotFound), and the tenant/created_at are never
+	// overwritten on conflict.
+	UpsertReviewDimension(ctx context.Context, arg UpsertReviewDimensionParams) (ReviewDimension, error)
 	// ValidateMCPServerIDs returns the subset of the given UUIDs that exist and
 	// are owned by the given business. Used by the agent service to validate
 	// allowed_mcp_servers before persisting an agent.
