@@ -52,6 +52,13 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/code-review/list').then((m) => m.CodeReviewListComponent),
   },
   {
+    // Literal 'setup' route must precede the :businessId/:id detail route below, else a
+    // /code-review/setup/... URL would bind :businessId='setup'. (Setup is paramless.)
+    path: 'code-review/setup',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/code-review/setup').then((m) => m.CodeReviewSetupComponent),
+  },
+  {
     path: 'code-review/:businessId/:id',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/code-review/detail').then((m) => m.CodeReviewDetailComponent),

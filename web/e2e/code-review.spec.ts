@@ -246,6 +246,56 @@ test('code-review detail: groups findings by dimension and surfaces skipped lane
   await expect(skippedRow).toContainText('no matching files');
 });
 
+test('review setup: preset seeds rows, save row + config hit the API', async ({ page }) => {
+  // Fallback FIRST (Playwright matches most-recently-added first) so unmocked shell calls
+  // — nav badge fetches like /approvals, /connectors — return empty instead of hitting the
+  // real backend, 401-ing, and tripping the refresh interceptor into a logout redirect.
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
+  await auth(page);
+  await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-config', (r) => {
+    if (r.request().method() === 'PUT') {
+      return r.fulfill({ json: { ...r.request().postDataJSON() } });
+    }
+    return r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single' } });
+  });
+  let postedDim: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => {
+    if (r.request().method() === 'POST') {
+      postedDim = r.request().postDataJSON() as Record<string, unknown>;
+      return r.fulfill({ json: { id: 'new1', ...postedDim } });
+    }
+    return r.fulfill({ json: { items: [] } });
+  });
+
+  await page.goto('/code-review/setup');
+
+  // Empty until a preset is applied.
+  await expect(page.getByTestId('dimensions-empty')).toBeVisible();
+
+  // Balanced preset seeds four editable rows.
+  await page.getByTestId('preset-balanced').click();
+  await expect(page.getByTestId('dimension-row')).toHaveCount(4);
+  await expect(page.getByTestId('code-review-setup')).toContainText('Performance');
+
+  // Save the first row → POST /review-dimensions with the built input.
+  await page.getByTestId('row-save').first().click();
+  await expect(page.getByTestId('setup-saved')).toBeVisible();
+  expect(postedDim).not.toBeNull();
+  expect(postedDim!['dimension']).toBe('security');
+  expect(postedDim!['min_severity']).toBe('warning');
+
+  // Save aggregation config → PUT /review-config.
+  const putReq = page.waitForRequest(
+    (req) => req.url().includes('/review-config') && req.method() === 'PUT',
+  );
+  await page.getByTestId('config-save').click();
+  await putReq;
+});
+
 test('code-review: connector list renders rows', async ({ page }) => {
   await auth(page);
   await page.route('**/api/v1/businesses/b1/agents', (r) =>
