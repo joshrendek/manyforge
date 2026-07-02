@@ -144,8 +144,14 @@ set -e
 # any failure leaves /out/usage.json absent and the host records 0.
 DB=$(ls -t "$XDG_DATA_HOME"/opencode/opencode*.db 2>/dev/null | head -1)
 if [ -n "$DB" ]; then
+  # opencode (sst) records per-session usage AND its own computed cost (which correctly
+  # prices cache-read tokens — the dominant category, since the agentic loop re-reads the
+  # cached context every turn). Sum across sessions (a run may spawn sub-agent sessions)
+  # and hand the host both the cost and the full token breakdown. The host uses `cost`
+  # directly when >0 and only falls back to catalog pricing for a custom slug opencode
+  # couldn't price (cost=0). Cache-read/write are reported so token accounting is honest.
   sqlite3 -json "$DB" \
-    "SELECT tokens_input AS input, tokens_output AS output, tokens_reasoning AS reasoning FROM session ORDER BY time_created DESC LIMIT 1;" \
+    "SELECT COALESCE(SUM(cost),0) AS cost, COALESCE(SUM(tokens_input),0) AS input, COALESCE(SUM(tokens_output),0) AS output, COALESCE(SUM(tokens_reasoning),0) AS reasoning, COALESCE(SUM(tokens_cache_read),0) AS cache_read, COALESCE(SUM(tokens_cache_write),0) AS cache_write FROM session;" \
     > /out/usage.json 2>/dev/null || true
 fi
 

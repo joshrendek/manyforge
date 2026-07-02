@@ -431,8 +431,14 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		// aggregateReview sums this across every lane so a failed-but-billed lane is still
 		// accounted (manyforge-7n5).
 		usage := readSandboxUsage(laneOutDir)
-		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(usage.Input), TokensOut: clampInt32(usage.Output + usage.Reasoning)}
-		if s.Pricing != nil {
+		// TokensIn counts the FULL billed prompt volume — fresh input plus cached reads,
+		// which dominate the agentic loop (opencode re-reads the cached context every turn).
+		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(usage.Input + usage.CacheRead), TokensOut: clampInt32(usage.Output + usage.Reasoning)}
+		// Prefer opencode's own cost (it prices cache-read tokens correctly); fall back to
+		// catalog pricing only when opencode couldn't price the model (custom slug ⇒ cost 0).
+		if c, priced := costCentsFromUsage(usage); priced {
+			lr.CostCents = c
+		} else if s.Pricing != nil {
 			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
 				lr.CostCents = c
 			}
@@ -819,9 +825,23 @@ func reviewURL(repo string, pr int, externalRef string) string {
 // sandboxUsage is the token usage the entrypoint extracts from opencode's session
 // DB into /out/usage.json (sqlite3 -json output: a one-element array).
 type sandboxUsage struct {
-	Input     int64 `json:"input"`
-	Output    int64 `json:"output"`
-	Reasoning int64 `json:"reasoning"`
+	Cost       float64 `json:"cost"` // opencode's own computed cost in USD (0 if it couldn't price the model)
+	Input      int64   `json:"input"`
+	Output     int64   `json:"output"`
+	Reasoning  int64   `json:"reasoning"`
+	CacheRead  int64   `json:"cache_read"`  // cached-prompt reads — the dominant token category for the agentic loop
+	CacheWrite int64   `json:"cache_write"` // cache writes (first-turn prompt caching)
+}
+
+// costCentsFromUsage returns opencode's own computed cost in cents, preferring it over
+// catalog pricing because opencode prices cache-read tokens correctly (the host's token
+// catalog does not). A zero cost means opencode couldn't price the model (e.g. a custom
+// slug) → priced=false so the caller falls back to catalog pricing.
+func costCentsFromUsage(u sandboxUsage) (cents int64, priced bool) {
+	if u.Cost > 0 {
+		return int64(math.Round(u.Cost * 100)), true
+	}
+	return 0, false
 }
 
 // readSandboxUsage reads /out/usage.json. Best-effort: missing/empty/garbage → zero

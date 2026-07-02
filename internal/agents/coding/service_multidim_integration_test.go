@@ -44,6 +44,13 @@ func (r *perDimRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox
 	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644); err != nil {
 		return sandbox.SandboxResult{}, err
 	}
+	// Emit usage.json the way the real entrypoint does — including opencode's OWN cost and
+	// the dominant cache-read tokens — so the fan-out's cost accounting is exercised: the
+	// host must bill from `cost` (0.02 ⇒ 2¢), not re-price from the token subset.
+	usage := `[{"cost":0.02,"input":1000,"output":50,"reasoning":10,"cache_read":40000,"cache_write":0}]`
+	if err := os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"), []byte(usage), 0o644); err != nil {
+		return sandbox.SandboxResult{}, err
+	}
 	return sandbox.SandboxResult{ExitCode: 0}, nil
 }
 
@@ -127,19 +134,37 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 		Dimension    string `json:"dimension"`
 		Status       string `json:"status"`
 		FindingCount int    `json:"finding_count"`
+		CostCents    int64  `json:"cost_cents"`
+		TokensIn     int64  `json:"tokens_in"`
 	}
 	if err := json.Unmarshal(got.DimensionRuns, &runs); err != nil {
 		t.Fatalf("unmarshal DimensionRuns %q: %v", got.DimensionRuns, err)
 	}
 	byDim := map[string]string{}
+	var byCost map[string]int64 = map[string]int64{}
+	var byTokensIn map[string]int64 = map[string]int64{}
 	for _, r := range runs {
 		byDim[r.Dimension] = r.Status
+		byCost[r.Dimension] = r.CostCents
+		byTokensIn[r.Dimension] = r.TokensIn
 	}
 	if byDim["security"] != "succeeded" || byDim["correctness"] != "succeeded" {
 		t.Fatalf("ran lanes must be recorded succeeded; got %v", byDim)
 	}
 	if byDim["ui"] != "skipped" {
 		t.Fatalf("the scoped-out ui dimension must be recorded as skipped, not silently dropped; got %v", byDim)
+	}
+	// A ran lane must bill from opencode's OWN cost (0.02 ⇒ 2¢), not re-price the tokens,
+	// and TokensIn must include the cache-read tokens (1000 fresh + 40000 cached = 41000).
+	if byCost["security"] != 2 {
+		t.Fatalf("lane cost must come from opencode cost (2¢); got %d", byCost["security"])
+	}
+	if byTokensIn["security"] != 41000 {
+		t.Fatalf("TokensIn must include cache-read tokens (1000+40000); got %d", byTokensIn["security"])
+	}
+	// Aggregated review cost = sum of the two ran lanes (2¢ + 2¢).
+	if got.CostCents != 4 {
+		t.Fatalf("aggregated cost must sum lane costs (4¢); got %d", got.CostCents)
 	}
 }
 
