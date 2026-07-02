@@ -17,8 +17,9 @@ import (
 // (code-review is scoped to the business by RLS + the principal/business pair
 // threaded through every service call).
 type Handler struct {
-	RepoSvc   *connectors.RepoConnectorService
-	ReviewSvc *CodeReviewService
+	RepoSvc      *connectors.RepoConnectorService
+	ReviewSvc    *CodeReviewService
+	ReviewDimSvc *ReviewDimensionService
 }
 
 // RepoConnectorRoutes mounts the repo-connector creation, list, and delete
@@ -41,11 +42,28 @@ func (h *Handler) CodeReviewRoutes(r chi.Router) {
 	})
 }
 
+// ReviewConfigRoutes mounts the per-business review-panel config surface (spec 008 Slice 2):
+// the dimension rows + the panel config. Gate with agentsConfigure (agents.configure) before
+// mounting — configuring the review panel is a configuration action, distinct from running a
+// review (which is gated on agents.run).
+func (h *Handler) ReviewConfigRoutes(r chi.Router) {
+	r.Route("/businesses/{id}/review-dimensions", func(r chi.Router) {
+		r.Get("/", h.listDimensions)
+		r.Post("/", h.upsertDimension)
+		r.Delete("/{dimID}", h.deleteDimension)
+	})
+	r.Route("/businesses/{id}/review-config", func(r chi.Router) {
+		r.Get("/", h.getReviewConfig)
+		r.Put("/", h.putReviewConfig)
+	})
+}
+
 // ProtectedRoutes mounts all code-review endpoints under a business. Used by
 // tests that want the full surface without per-slice permission middleware.
 func (h *Handler) ProtectedRoutes(r chi.Router) {
 	h.RepoConnectorRoutes(r)
 	h.CodeReviewRoutes(r)
+	h.ReviewConfigRoutes(r)
 }
 
 func codingBusinessID(r *http.Request) (uuid.UUID, error) {
@@ -194,4 +212,111 @@ func (h *Handler) listReviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) listDimensions(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	items, err := h.ReviewDimSvc.ListPanel(r.Context(), pid, bid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) upsertDimension(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	var in ReviewDimensionInput
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	view, err := h.ReviewDimSvc.UpsertDimension(r.Context(), pid, bid, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
+func (h *Handler) deleteDimension(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	dimID, err := uuid.Parse(chi.URLParam(r, "dimID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err := h.ReviewDimSvc.DeleteDimension(r.Context(), pid, bid, dimID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) getReviewConfig(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	cfg, err := h.ReviewDimSvc.GetConfig(r.Context(), pid, bid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, cfg)
+}
+
+func (h *Handler) putReviewConfig(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	var in ReviewConfigInput
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	cfg, err := h.ReviewDimSvc.UpsertConfig(r.Context(), pid, bid, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, cfg)
 }

@@ -397,7 +397,11 @@ func main() {
 			EgressAllow: netsafe.ParseHostAllowlist(cfg.SandboxEgressAllow),
 			Pricing:     orModels,
 		}
-		codingH = &coding.Handler{RepoSvc: repoSvc, ReviewSvc: codingSvc}
+		codingH = &coding.Handler{
+			RepoSvc:      repoSvc,
+			ReviewSvc:    codingSvc,
+			ReviewDimSvc: &coding.ReviewDimensionService{DB: database},
+		}
 	}
 
 	// Late-wire the agent handler's read-only metadata endpoints (/agents/tools,
@@ -985,8 +989,10 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			})
 			// Spec 007 code-review slice: repo-connector create gated on connectors.manage,
 			// code-review trigger/get gated on agents.run — same RLS-bound 404-on-lacking-perm
-			// semantics as the other permission groups. Guard on nil so a zero-value
-			// apiHandlers (as used by the OpenAPI-drift contract test) does not panic.
+			// semantics as the other permission groups. Spec 008 adds the review-panel config
+			// surface, gated on agents.configure (configuring the panel is distinct from running
+			// a review). Guard on nil so a zero-value apiHandlers (as used by the OpenAPI-drift
+			// contract test) does not panic.
 			if h.codingReviews != nil {
 				pr.Group(func(cg chi.Router) {
 					cg.Use(h.connectorsManage)
@@ -995,6 +1001,10 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				pr.Group(func(ag chi.Router) {
 					ag.Use(h.agentsRun)
 					h.codingReviews.CodeReviewRoutes(ag)
+				})
+				pr.Group(func(cf chi.Router) {
+					cf.Use(h.agentsConfigure)
+					h.codingReviews.ReviewConfigRoutes(cf)
 				})
 			}
 		})
