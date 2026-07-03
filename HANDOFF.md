@@ -1,43 +1,40 @@
-# Handoff — manyforge @ 008-cloud-stream — 2026-07-03 ~14:30 UTC
+# Handoff — manyforge @ master — 2026-07-03 ~18:30 UTC
 
 ## ⚠️ Before you clear
-- **Unpushed:** none — on branch **008-cloud-stream**, pushed. `master` @ `8ffb570` (has all of Spec 008 via #8).
-- **Uncommitted:** none code (only stray untracked `*.png`/`.pair/`/scattered `CLAUDE.md`s + two untracked `docs/superpowers/plans/*.md` predating this work).
-- **PR #8 MERGED** ✅ (Spec 008 core + the cloud bug fixes + a11y + tests). **PR #9 OPEN** (008-cloud-stream → master): cloud review streaming, **live-verified**, ready to merge.
-- **Still running:** air backend **:8081** (`/tmp/mf-air.log`), ng frontend **:4300** (`/tmp/mf-web.log`), Docker `mf-dev` :55432 + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt (streaming entrypoint: opencode stderr → container stderr).
+- **Unpushed:** none. On **master**, up to date with origin. Single local branch (rule: one branch off master at a time).
+- **Uncommitted:** none code (only long-standing untracked `*.png` / `.pair/` worktree / scattered `CLAUDE.md`s that predate this work).
+- **PR #9 MERGED** ✅ (squash `6fb7eba` — "feat(008): stream cloud review progress live"). Spec 008 core (#8) + cloud streaming (#9) are both on master.
+- **Still running:** air backend on **:8080** (`main` pid listens :8080), Docker `mf-dev` Postgres :55432. (Prior handoff said :8081 — that was stale; it's :8080 now.)
 
 ## State
-Spec 008 core is on master. This session also shipped **#2 cloud streaming** (PR #9) — cloud reviews now stream opencode's live tool-call narration into the UI heartbeat like the local path (LIVE-VERIFIED: `progress.preview` streamed 0→1091 bytes during a real review, then succeeded). **Resume: merge PR #9, then pick next from Other open work.**
+`/handoff resume` this session found PR #9's CI was **red**, not "green" as the prior note claimed: `make test` failed on security pin **MF007-PIN-11** because the #2 streaming commit refactored `sandboxStderrTail(outDir string,…)` → `sandboxStderrTail(stderr []byte,…)` and the source pin literal still matched the old signature. Verified redaction is intact on both client-visible paths (last_error via `redactSecrets`; live `progress.preview` via `Progress.Snapshot`→`redactSecrets` with `SetSecrets` at service.go:272). Updated the pin literal (commit squashed into `6fb7eba`), full local gate green, merged #9 squash + deleted branch.
 
-## Resume here → merge PR #9, then next
-PR #9 (008-cloud-stream) is live-verified and green. Merge it (base master, delete branch), then the single branch is master again. Next candidates (Other open work below): none is started.
-#2 streaming implementation (all in PR #9, for reference):
-- `entrypoint.sh`: opencode stderr left on container stderr (dropped `2> /out/stderr.log`); stdout still → review.json.
-- `sandbox`: `SandboxSpec.StreamStderr io.Writer` + `docker.go` `io.MultiWriter` tee. `+TestRunStreamsStderr`.
-- `service.go`: `progressStreamWriter` → `prog.UpdateStream`; worker heartbeat persists it. `sandboxStderrTail` reads `res.Stderr`. `+TestProgressStreamWriter`.
+## Resume here → pick next open work (nothing started)
+No work is in flight. Master is the single branch. Choose from `bd ready`. Top candidates:
+- **`manyforge-1s9`** (P2, bug): opencode does ~no prompt caching for glm-5.2/OpenRouter (`cache_read`≈0) → lanes 5–10× heavier/slower + timeouts. Likely opencode/provider-side; the deepest driver of slow cloud reviews.
+- **`manyforge-ubk`** (P3): wire per-dimension provider (credential resolve + egress allowlist). **Has a security note** (see below) that MUST be honored when implemented.
+- **`manyforge-8qs`** (P3): 008 Slice 3 — verify pass + rule citations + cost estimate (owns verify_provider/verify_model validation).
+- **`manyforge-byz`** (P3): clear `code_review.progress` on terminal states (succeeded/failed).
+- **`manyforge-5tr`** (P2, bug): local Ollama OpenAI-compat ignores `options.num_ctx` → huge-context models unusable.
 
-## Other open work
-- **`manyforge-ubk`** (P3): full per-dimension provider support (credential resolve via `credResolver.Resolve(businessID, provider)` + egress allowlist per provider). Currently mismatched-provider lanes are SKIPPED with a reason (partitionByProvider).
-- **`manyforge-1s9`** (P2): opencode does ~no prompt caching for glm-5.2/OpenRouter (`cache_read`≈0) → the deeper driver behind heavy/slow lanes + timeouts. Likely opencode/provider-side.
-- **`manyforge-vay`** (P3, partially done): remaining SQL-query/CRUD unit tests are integration-covered; verify-config validation deferred to Slice 3.
-- **`manyforge-8qs`** (P3): Slice 3 — verify pass + rule citations + cost estimate (also owns the verify_provider/verify_model validation).
+## Loose ends from this session (not blocking)
+- **Stale remote branch `origin/005-crm-contacts-timeline`** is FULLY merged into master (0 ahead). Safe to delete (`git push origin --delete 005-crm-contacts-timeline`); left in place because it wasn't created this session.
+- **Latent security gap on `manyforge-ubk`** (noted in its bd `--notes`): `SetSecrets` registers only the PRIMARY cred key. Identical to lane keys today (mismatched lanes are skipped), but when per-dimension providers land, each lane key must be `SetSecrets`-registered before it streams, or it can leak into `progress.preview`. Add an MF007 pin for the per-lane call in the same change.
 
 ## Run & verify
-- Backend: `go build ./...`; `make lint`; `go test ./internal/agents/coding/ ./internal/connectors/`; `go test -tags contract ./cmd/...`; `make sec-test`; integration e.g. `go test -tags integration -run 'TestRunReapsContainerOnTimeout' ./internal/agents/coding/sandbox/`.
-- Frontend (`web/`): `npx ng test --no-watch` (277) — vitest, NOT `--browsers=`; `npx playwright test` (71, needs ng :4300).
-- Live cloud repro: login `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` (token TTL 900s); `POST /api/v1/businesses/7bbeb32e-…/code-reviews {"agent_id":"6c252395-… glm-5.2","repo_connector_id":"eb68939b-…","pr_number":8}`. Cheap single lane: `UPDATE review_dimension SET enabled=false … WHERE dimension<>'security'` (re-enable after). mf-dev: `PGPASSWORD=devpassword psql -h localhost -p55432 -U manyforge -d manyforge`.
+- CI gate (`.github/workflows/ci.yml`, one `build-test` job, sequential): `make build` → `make lint` → `make test` → `make contract-test` → `make int-test` (testcontainers, needs Docker). **`make test` includes `internal/security_regression` — run it locally; per-package `go test` misses it.** [[backend-verification-gates-easy-to-miss]]
+- Security pins live in `internal/security_regression/mf00*_*_test.go` as source-literal `strings.Contains` checks — a Go signature/literal refactor breaks them; update the pin in the SAME change. [[security-regression-pins-grep-source-literals]]
+- Frontend (`web/`): `npx ng test --no-watch` (vitest, NOT `--browsers=`); `npx playwright test` (needs ng dev server).
+- Live cloud repro: login `POST :8080/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` (TTL 900s); `POST /api/v1/businesses/<id>/code-reviews {...}`. mf-dev: `PGPASSWORD=devpassword psql -h localhost -p55432 -U manyforge -d manyforge`.
 - **NO Co-Authored-By** on commits (user rule). Branch off master (one at a time); `fix(008): …` style.
 
 ## Gotchas (don't relearn)
-- opencode stderr → `/out/stderr.log` (file), so it never reaches the host `cmd.Stderr` — the crux of the #2 redesign above.
-- Sandbox timeout on macOS orphaned the container (attached-run gotcha) — FIXED (reap by name in docker.go).
-- A partial-success lane's error is now in `dimension_runs.last_error` (client-safe reason) + server log `"code review cloud lane failed"`.
-- Non-deterministic lane failure: model verbosity varies run-to-run; the failing lane moved correctness→ui between identical triggers.
-- gopls phantom `dbgen` field errors (DimensionRuns/Progress) after editing service.go — stale; `go build` is truth. [[gopls-stale-dbgen-diagnostics]]
-- vitest for frontend unit tests (`ng test`), NOT Karma; `--browsers=` is invalid.
-- zsh `noclobber`: use `>|` for redirects. [[user-zsh-noclobber-bg-logs]]
+- Prior handoff's "green, ready to merge" was WRONG — always re-check `gh pr checks` on resume; don't trust a note's CI claim.
+- opencode stderr now stays on container stderr → `SandboxResult.Stderr` (the #2 redesign); `sandboxStderrTail` reads that `[]byte`, no longer `/out/stderr.log`.
+- gopls phantom `dbgen` field errors after editing service.go are stale; `go build` is truth. [[gopls-stale-dbgen-diagnostics]]
+- zsh `noclobber`: use `>|` for bg-log redirects. [[user-zsh-noclobber-bg-logs]]
 
 ## Pointers
-- **bd:** epic `manyforge-t2s` (008); CLOSED this session: `6h1`, `2s1`, `0h0`. Open: `1s9`, `ubk`, `vay`, `8qs`, `e54`.
-- **This session's commits (all on master via #8):** `c0e969b` (6h1/2s1), `ecac038` (provider/empty-review blockers), `3d89728` (a11y), `dbf7fd0` (vay tests), `399ddc4` (theme de-flake), `8ffb570` (merge).
-- **Key files for #2:** `internal/agents/coding/{service.go,sandbox/docker.go,sandbox/runner.go,progress.go,localreview.go}`; `deploy/sandbox/entrypoint.sh`.
+- **bd:** epics `manyforge-t2s` (008), `manyforge-7ml` (007). This session touched no issue status; added a security note to `manyforge-ubk`.
+- **This session's change:** pin fix, squashed into master `6fb7eba` (#9).
+- **Key files (#2 streaming):** `internal/agents/coding/{service.go,progress.go,sandbox/docker.go,sandbox/runner.go}`; `deploy/sandbox/entrypoint.sh`; pins in `internal/security_regression/mf007_review_redaction_test.go`.
