@@ -274,6 +274,45 @@ func TestBuildDimensionRuns(t *testing.T) {
 	}
 }
 
+func TestPartitionByProvider(t *testing.T) {
+	active := []Dimension{
+		{Key: "security", Provider: ""},           // inherits review default → kept
+		{Key: "correctness", Provider: "openrouter"}, // same as review → kept
+		{Key: "ui", Provider: "OpenRouter"},        // case-insensitive match → kept
+		{Key: "docs", Provider: "anthropic"},       // different provider → skipped (manyforge-ubk)
+	}
+	kept, skipped := partitionByProvider(active, "openrouter")
+	if len(kept) != 3 || kept[0].Key != "security" || kept[1].Key != "correctness" || kept[2].Key != "ui" {
+		t.Fatalf("kept wrong: %+v", keysOfDims(kept))
+	}
+	if len(skipped) != 1 || skipped[0].Key != "docs" {
+		t.Fatalf("skipped wrong: %+v", skipped)
+	}
+	if !strings.Contains(skipped[0].Reason, "anthropic") || !strings.Contains(skipped[0].Reason, "openrouter") {
+		t.Fatalf("skip reason must name both providers, got %q", skipped[0].Reason)
+	}
+}
+
+func keysOfDims(ds []Dimension) []string {
+	out := make([]string, len(ds))
+	for i, d := range ds {
+		out[i] = d.Key
+	}
+	return out
+}
+
+// aggregateReview must NEVER return a nil error with an empty doc — that would post a bogus
+// "No issues found" review implying the PR was checked when no lane ran (manyforge-t2s).
+func TestAggregateReviewAllSkippedErrors(t *testing.T) {
+	doc, _, _, _, err := aggregateReview(nil) // zero lanes ran
+	if err == nil {
+		t.Fatal("aggregateReview(no lanes): want error, got nil")
+	}
+	if len(doc.Findings) != 0 || doc.Summary != "" {
+		t.Fatalf("want empty doc on error, got %+v", doc)
+	}
+}
+
 func TestDefaultPanel(t *testing.T) {
 	panel := defaultPanel()
 	if len(panel) != 1 {
