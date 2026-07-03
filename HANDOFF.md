@@ -1,23 +1,20 @@
-# Handoff — manyforge @ master — 2026-07-03 ~14:00 UTC
+# Handoff — manyforge @ 008-cloud-stream — 2026-07-03 ~14:30 UTC
 
 ## ⚠️ Before you clear
-- **Unpushed:** none — on **master**, `HEAD == origin/master` (`8ffb570`). All work pushed.
+- **Unpushed:** none — on branch **008-cloud-stream**, pushed. `master` @ `8ffb570` (has all of Spec 008 via #8).
 - **Uncommitted:** none code (only stray untracked `*.png`/`.pair/`/scattered `CLAUDE.md`s + two untracked `docs/superpowers/plans/*.md` predating this work).
-- **PR #8 MERGED** ✅ (merge commit `8ffb570`) — Spec 008 multi-dimension code review (Slice 1+2), cost fix, the two P2 cloud-path bug fixes, the PR-review blockers, a11y, and test-coverage. 008 branch deleted. **Single branch = master.**
-- **Still running:** air backend **:8081** (`/tmp/mf-air.log`), ng frontend **:4300** (`/tmp/mf-web.log`), Docker `mf-dev` :55432 + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` = clean final (max_tokens=32000, no debug).
+- **PR #8 MERGED** ✅ (Spec 008 core + the cloud bug fixes + a11y + tests). **PR #9 OPEN** (008-cloud-stream → master): cloud review streaming, **live-verified**, ready to merge.
+- **Still running:** air backend **:8081** (`/tmp/mf-air.log`), ng frontend **:4300** (`/tmp/mf-web.log`), Docker `mf-dev` :55432 + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt (streaming entrypoint: opencode stderr → container stderr).
 
 ## State
-Spec 008 is fully landed on master. This session: root-caused + fixed & LIVE-verified the two P2 cloud bugs (6h1, 2s1), then triaged PR #8's 56 review threads — fixed the real blockers (per-dimension provider misroute, empty-review-on-all-skipped), did the frontend a11y pass (0h0, browser-verified), added test coverage (vay), de-flaked a theme e2e — then merged. **Next: #2 cloud-review streaming (NOT started).**
+Spec 008 core is on master. This session also shipped **#2 cloud streaming** (PR #9) — cloud reviews now stream opencode's live tool-call narration into the UI heartbeat like the local path (LIVE-VERIFIED: `progress.preview` streamed 0→1091 bytes during a real review, then succeeded). **Resume: merge PR #9, then pick next from Other open work.**
 
-## Resume here → #2 cloud streaming (design CORRECTED — see wrinkle)
-Goal: cloud/OpenRouter reviews should stream live tool-call narration into the UI heartbeat like the local path (currently cloud shows `progress {tokens:0, preview:""}` the whole run).
-**⚠️ Design wrinkle (invalidates the old handoff's plan):** the entrypoint redirects opencode stderr to a FILE — `deploy/sandbox/entrypoint.sh:153` `... 2> /out/stderr.log`. So `cmd.Stderr` on the host (docker CLI stderr) receives NOTHING from opencode. The old "MultiWriter on cmd.Stderr" alone streams nothing. **Corrected design:**
-1. `entrypoint.sh`: drop `2> /out/stderr.log` so opencode stderr flows to the container's stderr (→ docker → host `cmd.Stderr`). (stdout still → `/out/review.json`; the two fds are independent, review.json stays clean.) Needs image rebuild.
-2. `sandbox/docker.go`: add `StreamStderr io.Writer` to `SandboxSpec`; `cmd.Stderr = io.MultiWriter(&stderr, spec.StreamStderr)` when set. `res.Stderr` already buffers it.
-3. `service.go` `reviewLane`: pass a secret-scrubbing writer (scrub `laneCred.APIKey`, `rc.Credential.APIToken`) as `spec.StreamStderr` that pushes lines to `prog.UpdateStream(counter, preview)` — the heartbeat the UI already polls (see `progress.go` `UpdateStream`, and `localreview.go:443` for the local pattern). Token counts still finalize at end from usage.json.
-4. `sandboxStderrTail` (service.go): change to read from `res.Stderr` instead of `/out/stderr.log` (the file no longer exists). Pass `res.Stderr` into it.
-5. Tests: unit — a fake StreamStderr receives bytes; docker.go MultiWriter wiring. Verify: needs ONE paid live cloud review (~$0.75, Acme 6-lane) to SEE streaming in the UI (browser). Cheaper: single-lane (narrow Acme panel to 1 dim, re-enable after — see below).
-No frontend change (UI already renders `progress.preview`).
+## Resume here → merge PR #9, then next
+PR #9 (008-cloud-stream) is live-verified and green. Merge it (base master, delete branch), then the single branch is master again. Next candidates (Other open work below): none is started.
+#2 streaming implementation (all in PR #9, for reference):
+- `entrypoint.sh`: opencode stderr left on container stderr (dropped `2> /out/stderr.log`); stdout still → review.json.
+- `sandbox`: `SandboxSpec.StreamStderr io.Writer` + `docker.go` `io.MultiWriter` tee. `+TestRunStreamsStderr`.
+- `service.go`: `progressStreamWriter` → `prog.UpdateStream`; worker heartbeat persists it. `sandboxStderrTail` reads `res.Stderr`. `+TestProgressStreamWriter`.
 
 ## Other open work
 - **`manyforge-ubk`** (P3): full per-dimension provider support (credential resolve via `credResolver.Resolve(businessID, provider)` + egress allowlist per provider). Currently mismatched-provider lanes are SKIPPED with a reason (partitionByProvider).
