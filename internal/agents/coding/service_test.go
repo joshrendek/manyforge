@@ -48,6 +48,19 @@ func githubRepos() *fakeRepos {
 	}}
 }
 
+// resolvePanel must NEVER brick a review on a panel-resolution failure — a DB error degrades to
+// the default single "general" lane (legacy-shaped review) rather than a failed job (manyforge-vay).
+func TestResolvePanelDegradesToDefaultOnDBError(t *testing.T) {
+	svc := &CodeReviewService{DB: fakeServiceDB{}} // WithPrincipal returns errFakeDB, never runs fn
+	panel := svc.resolvePanel(context.Background(), uuid.New(), uuid.New())
+	if len(panel) != 1 || panel[0].Key != generalDimensionKey {
+		t.Fatalf("want default single %q lane on DB error, got %d: %+v", generalDimensionKey, len(panel), panel)
+	}
+	if !panel[0].Enabled {
+		t.Fatal("default lane must be enabled")
+	}
+}
+
 // manyforge-0qj: a provider host outside the configured egress allowlist must be
 // rejected up front with ErrValidation — never silently launched into a sandbox
 // whose egress the boot-static proxy will block.
