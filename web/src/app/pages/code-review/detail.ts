@@ -98,56 +98,56 @@ import { runStatusTone } from '../../ui/status';
                dimension + finding count (spec 008). -->
           @for (g of dimensionGroups(); track g.dimension) {
             <div data-testid="dimension-group" style="margin-bottom:16px">
-              <div data-testid="dimension-group-header"
-                   style="display:flex;align-items:center;gap:8px;margin:0 0 6px">
-                <span style="font-weight:600;text-transform:capitalize">{{ g.dimension }}</span>
-                <mf-status-pill tone="neutral" [label]="g.findings.length + ''" />
-              </div>
-              <div class="mf-table">
-                <div class="mf-tr mf-th">
-                  <span style="flex:2">File</span>
-                  <span style="width:60px">Line</span>
-                  <span style="width:80px">Severity</span>
-                  <span style="flex:2">Title</span>
-                  <span style="flex:3">Detail</span>
+              <h4 data-testid="dimension-group-header"
+                  style="display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:var(--mf-fs-base);font-weight:600">
+                <span style="text-transform:capitalize">{{ g.dimension }}</span>
+                <mf-status-pill tone="neutral" [label]="g.findings.length + ''" [ariaLabel]="g.findings.length + ' findings'" />
+              </h4>
+              <div class="mf-table" role="table" [attr.aria-label]="g.dimension + ' findings'">
+                <div class="mf-tr mf-th" role="row">
+                  <span style="flex:2" role="columnheader">File</span>
+                  <span style="width:60px" role="columnheader">Line</span>
+                  <span style="width:80px" role="columnheader">Severity</span>
+                  <span style="flex:2" role="columnheader">Title</span>
+                  <span style="flex:3" role="columnheader">Detail</span>
                 </div>
                 @for (f of g.findings; track $index) {
-                  <div class="mf-tr" data-testid="finding-row">
-                    <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all">{{ f.file }}</span>
-                    <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.line ?? '—' }}</span>
-                    <span style="width:80px;font-size:var(--mf-fs-sm)">
-                      <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" />
+                  <div class="mf-tr" data-testid="finding-row" role="row">
+                    <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all" role="cell">{{ f.file }}</span>
+                    <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.line ?? '—' }}</span>
+                    <span style="width:80px;font-size:var(--mf-fs-sm)" role="cell">
+                      <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" [ariaLabel]="'severity ' + f.severity" />
                     </span>
-                    <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500">{{ f.title }}</span>
-                    <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.detail }}</span>
+                    <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500" role="cell">{{ f.title }}</span>
+                    <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.detail }}</span>
                   </div>
                 }
               </div>
             </div>
           }
         } @else {
-          <div class="mf-table" data-testid="findings-table">
-            <div class="mf-tr mf-th">
-              <span style="flex:2">File</span>
-              <span style="width:60px">Line</span>
-              <span style="width:80px">Severity</span>
-              <span style="flex:2">Title</span>
-              <span style="flex:3">Detail</span>
+          <div class="mf-table" data-testid="findings-table" role="table" aria-label="Findings">
+            <div class="mf-tr mf-th" role="row">
+              <span style="flex:2" role="columnheader">File</span>
+              <span style="width:60px" role="columnheader">Line</span>
+              <span style="width:80px" role="columnheader">Severity</span>
+              <span style="flex:2" role="columnheader">Title</span>
+              <span style="flex:3" role="columnheader">Detail</span>
             </div>
             @for (f of r.findings; track $index) {
-              <div class="mf-tr" data-testid="finding-row">
-                <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all">{{ f.file }}</span>
-                <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.line ?? '—' }}</span>
-                <span style="width:80px;font-size:var(--mf-fs-sm)">
-                  <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" />
+              <div class="mf-tr" data-testid="finding-row" role="row">
+                <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all" role="cell">{{ f.file }}</span>
+                <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.line ?? '—' }}</span>
+                <span style="width:80px;font-size:var(--mf-fs-sm)" role="cell">
+                  <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" [ariaLabel]="'severity ' + f.severity" />
                 </span>
-                <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500">{{ f.title }}</span>
-                <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ f.detail }}</span>
+                <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500" role="cell">{{ f.title }}</span>
+                <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.detail }}</span>
               </div>
             }
             @if (!r.findings.length) {
-              <div class="mf-tr" style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="findings-empty">
-                No findings.
+              <div class="mf-tr" style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="findings-empty" role="row">
+                <span role="cell">No findings.</span>
               </div>
             }
           </div>
@@ -160,12 +160,14 @@ import { runStatusTone } from '../../ui/status';
             <h3 style="margin:0 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
               Skipped dimensions
             </h3>
-            @for (s of skippedDimensions(); track s.dimension) {
-              <div class="mf-tr" data-testid="skipped-dimension-row" style="display:flex;gap:8px;align-items:center">
-                <span style="font-weight:500;text-transform:capitalize">{{ s.dimension }}</span>
-                <span style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ s.skipped_reason || 'skipped' }}</span>
-              </div>
-            }
+            <ul style="list-style:none;margin:0;padding:0">
+              @for (s of skippedDimensions(); track s.dimension) {
+                <li data-testid="skipped-dimension-row" style="display:flex;gap:8px;align-items:center">
+                  <span style="font-weight:500;text-transform:capitalize">{{ s.dimension }}</span>
+                  <span style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ s.skipped_reason || 'skipped' }}</span>
+                </li>
+              }
+            </ul>
           </div>
         }
       }

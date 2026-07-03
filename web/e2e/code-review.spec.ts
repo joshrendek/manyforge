@@ -246,6 +246,51 @@ test('code-review detail: groups findings by dimension and surfaces skipped lane
   await expect(skippedRow).toContainText('no matching files');
 });
 
+test('code-review detail a11y: findings are ARIA tables, group headers are headings, skipped is a list, pills are named', async ({ page }) => {
+  await auth(page);
+  await page.route('**/api/v1/businesses/b1/code-reviews/r1', (r) =>
+    r.fulfill({ json: reviewMultiDim }),
+  );
+
+  await page.goto('/code-review/b1/r1');
+
+  // The div-based .mf-table now carries role=table so a screen reader announces it (manyforge-0h0).
+  await expect(page.getByRole('table').first()).toBeVisible();
+  // Each dimension group header is a real heading element, not a bare div.
+  await expect(page.locator('h4[data-testid="dimension-group-header"]')).toHaveCount(2);
+  // Finding rows are exposed as table rows.
+  await expect(page.getByTestId('finding-row').first()).toHaveAttribute('role', 'row');
+  // The severity pill has an accessible name (dot is decorative/aria-hidden).
+  await expect(page.getByRole('img', { name: 'severity error' })).toBeVisible();
+  // Skipped dimensions render as a semantic list.
+  await expect(page.locator('[data-testid="skipped-dimensions"] ul > li')).toHaveCount(1);
+});
+
+test('review setup a11y: every per-row control has an accessible name naming its dimension', async ({ page }) => {
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
+  await auth(page);
+  await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-config', (r) =>
+    r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single' } }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => r.fulfill({ json: { items: [] } }));
+
+  await page.goto('/code-review/setup');
+  await page.getByTestId('preset-balanced').click();
+  await expect(page.getByTestId('dimension-row')).toHaveCount(4);
+
+  // The dimensions grid is an ARIA table, and the first seeded row (Security) has individually
+  // named controls — no more unlabeled checkbox/selects/buttons (manyforge-0h0).
+  await expect(page.getByRole('table', { name: 'Review dimensions' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Enable Security dimension' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Provider for Security' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save Security' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove Security' })).toBeVisible();
+});
+
 test('review setup: preset seeds rows, save row + config hit the API', async ({ page }) => {
   // Fallback FIRST (Playwright matches most-recently-added first) so unmocked shell calls
   // — nav badge fetches like /approvals, /connectors — return empty instead of hitting the
