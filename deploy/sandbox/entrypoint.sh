@@ -148,9 +148,13 @@ matching exactly this schema:
 # `opencode run` executes a single prompt headlessly (no TUI) and prints the
 # assistant's final text to stdout → review.json. -m pins the model
 # (belt-and-suspenders with the config default). NO_COLOR strips ANSI escapes.
-# Capture opencode's exit code so usage capture below can't mask a failed review.
+# stderr is LEFT ON the container's stderr (NOT redirected to a file) so the host runner
+# receives opencode's live tool-call narration ("Read …/Grep …") and can stream it into the
+# review progress heartbeat. stdout still goes to review.json — the two fds are independent, so
+# review.json stays clean. The host reads the full stderr from SandboxResult.Stderr for the
+# failure tail. Capture opencode's exit code so usage capture below can't mask a failed review.
 set +e
-NO_COLOR=1 opencode run -m "$MODEL" "$PROMPT" > /out/review.json 2> /out/stderr.log
+NO_COLOR=1 opencode run -m "$MODEL" "$PROMPT" > /out/review.json
 rc=$?
 set -e
 

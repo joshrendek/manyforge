@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,39 @@ import (
 	"testing"
 	"time"
 )
+
+// TestRunStreamsStderr pins the cloud-streaming wiring: when SandboxSpec.StreamStderr is set, the
+// container's stderr is tee'd to it live (in addition to SandboxResult.Stderr), and stdout does
+// NOT leak into it.
+func TestRunStreamsStderr(t *testing.T) {
+	dockerBuild(t, "deploy/sandbox-stub/Dockerfile", "manyforge/sandbox-stub:test")
+
+	ctx := t.Context()
+	ro := sandboxTempDir(t)
+	out := sandboxTempDir(t)
+	r := NewDockerRunner("bridge", "")
+
+	var streamed bytes.Buffer
+	res, err := r.Run(ctx, SandboxSpec{
+		Image:        "manyforge/sandbox-stub:test",
+		ReadOnlyDir:  ro,
+		OutputDir:    out,
+		Cmd:          []string{"sh", "-c", "echo TO_STDERR 1>&2; echo TO_STDOUT"},
+		StreamStderr: &streamed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(streamed.String(), "TO_STDERR") {
+		t.Fatalf("StreamStderr did not receive live stderr: %q", streamed.String())
+	}
+	if !strings.Contains(string(res.Stderr), "TO_STDERR") {
+		t.Fatalf("res.Stderr must still buffer stderr: %q", res.Stderr)
+	}
+	if strings.Contains(streamed.String(), "TO_STDOUT") {
+		t.Fatalf("stdout leaked into StreamStderr: %q", streamed.String())
+	}
+}
 
 func dockerBuild(t *testing.T, dockerfile, tag string) {
 	t.Helper()

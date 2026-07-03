@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -434,6 +435,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			Env:         sandboxEnv(laneCred),
 			EgressAllow: []string{laneCred.Host()},
 			Timeout:     s.timeout(),
+			// Stream opencode's live tool-call narration into the review heartbeat so a cloud
+			// review shows progress like the local path (secrets are scrubbed by prog.Snapshot
+			// via SetSecrets). The worker persists prog every heartbeat while this lane runs.
+			StreamStderr: &progressStreamWriter{prog: prog, dim: dim.Key},
 		}
 		// runLaneOnce executes the sandbox once, captures usage, and parses the findings.
 		// Usage is read as SOON as the sandbox returns — the model may have burned tokens even
@@ -453,12 +458,12 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			raw, ferr := os.ReadFile(filepath.Join(laneOutDir, "review.json"))
 			if ferr != nil {
 				return usage, FindingsDoc{}, "no output produced",
-					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(res.Stderr, laneCred.APIKey, rc.Credential.APIToken))
 			}
 			d, perr := ParseFindings(raw)
 			if perr != nil {
 				return usage, FindingsDoc{}, "unparseable model output",
-					fmt.Errorf("%w%s", perr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+					fmt.Errorf("%w%s", perr, sandboxStderrTail(res.Stderr, laneCred.APIKey, rc.Credential.APIToken))
 			}
 			return usage, d, "", nil
 		}
@@ -943,18 +948,18 @@ func clampInt32(n int64) int32 {
 	}
 }
 
-// sandboxStderrTail returns a short tail of the sandbox's /out/stderr.log for the
-// failure last_error (the entrypoint redirects opencode stderr there). Best-effort;
-// empty when absent. Server-side diagnostic only — last_error is never returned to API clients.
-func sandboxStderrTail(outDir string, secrets ...string) string {
-	b, err := os.ReadFile(filepath.Join(outDir, "stderr.log"))
-	if err != nil {
+// sandboxStderrTail returns a short tail of the container's stderr (opencode's output, now
+// streamed to the container stderr and captured in SandboxResult.Stderr) for the failure
+// last_error. Best-effort; empty when absent. Server-side diagnostic only — last_error is never
+// returned to API clients.
+func sandboxStderrTail(stderr []byte, secrets ...string) string {
+	if len(stderr) == 0 {
 		return ""
 	}
 	// opencode prints a long usage block after ANY error; keep the meaningful
 	// error lines and drop the usage/spinner noise.
 	var keep []string
-	for _, ln := range strings.Split(string(b), "\n") {
+	for _, ln := range strings.Split(string(stderr), "\n") {
 		t := strings.TrimSpace(ln)
 		if t == "" {
 			continue
@@ -965,8 +970,8 @@ func sandboxStderrTail(outDir string, secrets ...string) string {
 		}
 	}
 	s := strings.Join(keep, " ")
-	if s == "" { // fallback: head of the raw log
-		s = strings.TrimSpace(string(b))
+	if s == "" { // fallback: head of the raw stderr
+		s = strings.TrimSpace(string(stderr))
 	}
 	const max = 600
 	if len(s) > max {
@@ -976,6 +981,33 @@ func sandboxStderrTail(outDir string, secrets ...string) string {
 		return ""
 	}
 	return " | sandbox stderr: " + redactSecrets(s, secrets...)
+}
+
+// progressStreamWriter forwards the sandbox's live stderr (opencode's tool-call narration) into
+// the review Progress heartbeat, so a cloud review streams progress like the local path. It is
+// driven by io.MultiWriter from exec's single stderr-copy goroutine (no concurrent writes here),
+// and Progress.UpdateStream is itself synchronized. Only a tail is retained — the heartbeat
+// preview is tail-capped anyway — so a long run does not hold the whole (multi-MB) stderr twice.
+// Secrets are scrubbed downstream by Progress.Snapshot (via SetSecrets), so nothing sensitive is
+// persisted even if the model echoes a key. dim prefixes the preview so the UI shows the live lane.
+type progressStreamWriter struct {
+	prog  *Progress
+	dim   string
+	buf   bytes.Buffer
+	lines int
+}
+
+func (w *progressStreamWriter) Write(p []byte) (int, error) {
+	w.lines += bytes.Count(p, []byte{'\n'})
+	w.buf.Write(p)
+	const keepTail = 8 << 10
+	if w.buf.Len() > keepTail {
+		tail := append([]byte(nil), w.buf.Bytes()[w.buf.Len()-keepTail:]...)
+		w.buf.Reset()
+		w.buf.Write(tail)
+	}
+	w.prog.UpdateStream(w.lines, w.dim+":\n"+w.buf.String())
+	return len(p), nil
 }
 
 // ptr returns a pointer to the given string value.

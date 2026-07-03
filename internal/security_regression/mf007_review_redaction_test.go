@@ -11,7 +11,7 @@ import (
 // Source pins — a refactor that drops these must update this file in the same change.
 func TestReviewOutputRedaction(t *testing.T) {
 	svc := mustRead(t, "../agents/coding/service.go")
-	if !strings.Contains(svc, "func sandboxStderrTail(outDir string, secrets ...string)") {
+	if !strings.Contains(svc, "func sandboxStderrTail(stderr []byte, secrets ...string)") {
 		t.Fatal("sandboxStderrTail must take secrets to redact (MF007-PIN-11)")
 	}
 	if !strings.Contains(svc, "redactSecrets(s, secrets...)") {

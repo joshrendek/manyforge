@@ -3,8 +3,6 @@ package coding
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -178,18 +176,36 @@ func TestReviewURLConstructedFromConnectorAndRef(t *testing.T) {
 }
 
 func TestSandboxStderrTail_Redacts(t *testing.T) {
-	dir := t.TempDir()
 	secret := "sk-LIVE0123456789abcdefghij"
-	if err := os.WriteFile(filepath.Join(dir, "stderr.log"),
-		[]byte("Error: Unauthorized: bad key "+secret+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tail := sandboxStderrTail(dir, secret)
+	stderr := []byte("Error: Unauthorized: bad key " + secret + "\n")
+	tail := sandboxStderrTail(stderr, secret)
 	if strings.Contains(tail, secret) {
 		t.Fatalf("secret leaked in stderr tail: %s", tail)
 	}
 	if !strings.Contains(tail, "[REDACTED]") {
 		t.Fatalf("expected redaction marker: %s", tail)
+	}
+}
+
+// progressStreamWriter must forward the sandbox's live stderr into the Progress heartbeat so a
+// cloud review streams like the local path (manyforge cloud streaming).
+func TestProgressStreamWriter_FeedsProgress(t *testing.T) {
+	prog := &Progress{}
+	prog.SetPhase("reviewing") // Snapshot is nil until a phase is set (real flow sets it first)
+	w := &progressStreamWriter{prog: prog, dim: "security"}
+	n, err := w.Write([]byte("Read main.go\n"))
+	if err != nil || n != len("Read main.go\n") {
+		t.Fatalf("Write = %d, %v", n, err)
+	}
+	_, _ = w.Write([]byte("Grep func\n"))
+	snap := prog.Snapshot()
+	if !strings.Contains(string(snap), "security") || !strings.Contains(string(snap), "Grep func") {
+		t.Fatalf("progress preview missing streamed narration: %s", snap)
+	}
+	// A nil prog must not panic (defensive — Progress.UpdateStream is nil-safe).
+	wn := &progressStreamWriter{prog: nil, dim: "x"}
+	if _, err := wn.Write([]byte("hi")); err != nil {
+		t.Fatalf("nil-prog write errored: %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"time"
@@ -81,7 +82,13 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 	cmd := exec.CommandContext(runCtx, "docker", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Always buffer stderr into res.Stderr; when a live stream is requested, also tee it there
+	// so the caller can surface progress as the container runs (manyforge cloud streaming).
+	if spec.StreamStderr != nil {
+		cmd.Stderr = io.MultiWriter(&stderr, spec.StreamStderr)
+	} else {
+		cmd.Stderr = &stderr
+	}
 
 	err := cmd.Run()
 	res := SandboxResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
