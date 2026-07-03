@@ -87,6 +87,30 @@ const reviewSucceeded = {
   posted_at: '2026-06-15T00:01:00Z',
 };
 
+// A multi-dimension (spec 008) review: findings tagged by lane, per-lane accounting
+// in dimension_runs, and one configured lane (ui) skipped for want of matching files.
+const reviewMultiDim = {
+  id: 'r1',
+  status: 'succeeded',
+  summary: 'Reviewed across security and correctness.',
+  review_url: 'https://github.com/acme/api/pull/5#issuecomment-1',
+  pr_number: 5,
+  model: 'x-ai/grok',
+  findings: [
+    { file: 'src/auth.go', line: 10, severity: 'error', title: 'SQLi', detail: 'Parameterize.', dimension: 'security' },
+    { file: 'src/auth.go', line: 20, severity: 'warning', title: 'Weak hash', detail: 'Use bcrypt.', dimension: 'security' },
+    { file: 'src/calc.go', line: 5, severity: 'warning', title: 'Off-by-one', detail: 'Loop bound.', dimension: 'correctness' },
+  ],
+  findings_count: 3,
+  created_at: '2026-06-15T00:00:00Z',
+  posted_at: '2026-06-15T00:01:00Z',
+  dimension_runs: [
+    { dimension: 'security', model: 'x-ai/grok', provider: 'openrouter', tokens_in: 100, tokens_out: 50, cost_cents: 2, status: 'succeeded', finding_count: 2 },
+    { dimension: 'correctness', model: 'x-ai/grok', provider: 'openrouter', tokens_in: 80, tokens_out: 40, cost_cents: 1, status: 'succeeded', finding_count: 1 },
+    { dimension: 'ui', tokens_in: 0, tokens_out: 0, cost_cents: 0, status: 'skipped', skipped_reason: 'no matching files', finding_count: 0 },
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // Auth helper — mirrors agents.spec.ts
 // ---------------------------------------------------------------------------
@@ -192,6 +216,129 @@ test('code-review: trigger a review and watch it complete', async ({ page }) => 
     'href',
     'https://github.com/acme/api/pull/5#issuecomment-1',
   );
+});
+
+test('code-review detail: groups findings by dimension and surfaces skipped lanes', async ({ page }) => {
+  await auth(page);
+  await page.route('**/api/v1/businesses/b1/code-reviews/r1', (r) =>
+    r.fulfill({ json: reviewMultiDim }),
+  );
+
+  await page.goto('/code-review/b1/r1');
+
+  // Two dimension groups, one per ran lane, each headed by its finding count.
+  const groups = page.getByTestId('dimension-group');
+  await expect(groups).toHaveCount(2);
+  const security = page.getByTestId('dimension-group-header').filter({ hasText: 'security' });
+  const correctness = page.getByTestId('dimension-group-header').filter({ hasText: 'correctness' });
+  await expect(security).toContainText('2');
+  await expect(correctness).toContainText('1');
+
+  // All three tagged findings render as rows across the groups.
+  await expect(page.getByTestId('finding-row')).toHaveCount(3);
+
+  // The scoped-out ui lane is surfaced as skipped, with its reason — never silently dropped.
+  const skipped = page.getByTestId('skipped-dimensions');
+  await expect(skipped).toBeVisible();
+  const skippedRow = page.getByTestId('skipped-dimension-row');
+  await expect(skippedRow).toHaveCount(1);
+  await expect(skippedRow).toContainText('ui');
+  await expect(skippedRow).toContainText('no matching files');
+});
+
+test('code-review detail a11y: findings are ARIA tables, group headers are headings, skipped is a list, pills are named', async ({ page }) => {
+  await auth(page);
+  await page.route('**/api/v1/businesses/b1/code-reviews/r1', (r) =>
+    r.fulfill({ json: reviewMultiDim }),
+  );
+
+  await page.goto('/code-review/b1/r1');
+
+  // The div-based .mf-table now carries role=table so a screen reader announces it (manyforge-0h0).
+  await expect(page.getByRole('table').first()).toBeVisible();
+  // Each dimension group header is a real heading element, not a bare div.
+  await expect(page.locator('h4[data-testid="dimension-group-header"]')).toHaveCount(2);
+  // Finding rows are exposed as table rows.
+  await expect(page.getByTestId('finding-row').first()).toHaveAttribute('role', 'row');
+  // The severity pill has an accessible name (dot is decorative/aria-hidden).
+  await expect(page.getByRole('img', { name: 'severity error' })).toBeVisible();
+  // Skipped dimensions render as a semantic list.
+  await expect(page.locator('[data-testid="skipped-dimensions"] ul > li')).toHaveCount(1);
+});
+
+test('review setup a11y: every per-row control has an accessible name naming its dimension', async ({ page }) => {
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
+  await auth(page);
+  await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-config', (r) =>
+    r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single' } }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => r.fulfill({ json: { items: [] } }));
+
+  await page.goto('/code-review/setup');
+  await page.getByTestId('preset-balanced').click();
+  await expect(page.getByTestId('dimension-row')).toHaveCount(4);
+
+  // The dimensions grid is an ARIA table, and the first seeded row (Security) has individually
+  // named controls — no more unlabeled checkbox/selects/buttons (manyforge-0h0).
+  await expect(page.getByRole('table', { name: 'Review dimensions' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Enable Security dimension' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Provider for Security' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save Security' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove Security' })).toBeVisible();
+});
+
+test('review setup: preset seeds rows, save row + config hit the API', async ({ page }) => {
+  // Fallback FIRST (Playwright matches most-recently-added first) so unmocked shell calls
+  // — nav badge fetches like /approvals, /connectors — return empty instead of hitting the
+  // real backend, 401-ing, and tripping the refresh interceptor into a logout redirect.
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
+  await auth(page);
+  await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-config', (r) => {
+    if (r.request().method() === 'PUT') {
+      return r.fulfill({ json: { ...r.request().postDataJSON() } });
+    }
+    return r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single' } });
+  });
+  let postedDim: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => {
+    if (r.request().method() === 'POST') {
+      postedDim = r.request().postDataJSON() as Record<string, unknown>;
+      return r.fulfill({ json: { id: 'new1', ...postedDim } });
+    }
+    return r.fulfill({ json: { items: [] } });
+  });
+
+  await page.goto('/code-review/setup');
+
+  // Empty until a preset is applied.
+  await expect(page.getByTestId('dimensions-empty')).toBeVisible();
+
+  // Balanced preset seeds four editable rows.
+  await page.getByTestId('preset-balanced').click();
+  await expect(page.getByTestId('dimension-row')).toHaveCount(4);
+  await expect(page.getByTestId('code-review-setup')).toContainText('Performance');
+
+  // Save the first row → POST /review-dimensions with the built input.
+  await page.getByTestId('row-save').first().click();
+  await expect(page.getByTestId('setup-saved')).toBeVisible();
+  expect(postedDim).not.toBeNull();
+  expect(postedDim!['dimension']).toBe('security');
+  expect(postedDim!['min_severity']).toBe('warning');
+
+  // Save aggregation config → PUT /review-config.
+  const putReq = page.waitForRequest(
+    (req) => req.url().includes('/review-config') && req.method() === 'PUT',
+  );
+  await page.getByTestId('config-save').click();
+  await putReq;
 });
 
 test('code-review: connector list renders rows', async ({ page }) => {

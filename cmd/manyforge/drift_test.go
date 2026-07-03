@@ -195,6 +195,19 @@ func spec007Routes(t *testing.T) map[string]bool {
 	return specRoutesFrom(t, p)
 }
 
+// spec008Routes returns the operations declared in the spec-008 contract, or an
+// empty set if the contract file does not yet exist (so the untagged drift test does
+// not fail before the file is committed; the contract-tagged drift_008_test enforces
+// the full two-way check once the file is present).
+func spec008Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	p := specPath("specs", "008-review-dimensions", "contracts", "openapi.yaml")
+	if _, err := os.Stat(p); err != nil {
+		return map[string]bool{}
+	}
+	return specRoutesFrom(t, p)
+}
+
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
 // operation served but documented in NEITHER spec. Param-name and trailing-slash
@@ -234,6 +247,11 @@ func TestOpenAPIDrift(t *testing.T) {
 	for op := range spec007 {
 		documented[op] = true
 	}
+	spec008 := spec008Routes(t)
+	spec008Available := len(spec008) > 0
+	for op := range spec008 {
+		documented[op] = true
+	}
 
 	var missing, undocumented []string
 	for op := range spec001 {
@@ -265,6 +283,13 @@ func TestOpenAPIDrift(t *testing.T) {
 			// is committed. Once that file exists spec007Available is true and these
 			// routes must be documented (the strict two-way check is TestOpenAPIDrift007).
 			if !spec007Available && (strings.Contains(op, "/repo-connectors") || strings.Contains(op, "/code-reviews")) {
+				continue
+			}
+			// Likewise skip the spec-008 review-panel config surface (/review-dimensions,
+			// /review-config) until specs/008-review-dimensions/contracts/openapi.yaml is
+			// committed. Once that file exists spec008Available is true and these routes must
+			// be documented (the strict two-way check is TestOpenAPIDrift008).
+			if !spec008Available && (strings.Contains(op, "/review-dimensions") || strings.Contains(op, "/review-config")) {
 				continue
 			}
 			undocumented = append(undocumented, op)

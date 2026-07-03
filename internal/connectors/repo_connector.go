@@ -44,6 +44,11 @@ type Finding struct {
 	Severity string `json:"severity"` // "info" | "warning" | "error"
 	Title    string `json:"title"`
 	Detail   string `json:"detail"`
+	// Dimension tags which review lane produced the finding (spec 008): "security",
+	// "correctness", … On a legacy single-agent review it is empty. When aggregation
+	// de-duplicates the same issue flagged by multiple lanes, it holds the joined set
+	// (e.g. "correctness, security"). Omitted from JSON when empty for back-compat.
+	Dimension string `json:"dimension,omitempty"`
 }
 
 // ReviewComment is a single inline review comment anchored to a line of the PR

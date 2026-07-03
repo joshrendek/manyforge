@@ -85,6 +85,11 @@ async function install(page: Page) {
     localStorage.setItem('mf_access', 'test-access');
     localStorage.setItem('mf_refresh', 'test-refresh');
   });
+  // Defensive fallback FIRST (specific routes below win — last-registered-first): the app
+  // shell fetches nav-badge counts (/approvals, /connectors) on every authenticated page.
+  // Left unmocked they hit the real backend, 401, and the refresh interceptor logs out to
+  // /login mid-test. Return empty for any otherwise-unmocked /api call.
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await page.route('**/api/v1/me', (r) => r.fulfill({ json: profile }));
   await page.route('**/api/v1/businesses', (r) =>
     r.fulfill({ json: { items: [{ id: BIZ_ID, parent_id: null, tenant_root_id: BIZ_ID, name: 'Acme Holdings', status: 'active' }], next_cursor: null } }),
