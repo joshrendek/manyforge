@@ -79,6 +79,21 @@ printf '{"%s":{"type":"api","key":"%s"}}\n' "$LLM_PROVIDER" "$LLM_API_KEY" > "$X
 # options.max_tokens so reasoning + the findings JSON both fit. options is passed straight to
 # the provider SDK (OpenRouter → request max_tokens). The model key is the slug WITHOUT the
 # provider prefix ($LLM_MODEL); provider + slug are validated inputs with no JSON metacharacters.
+#
+# manyforge-1s9: GLM has no first-class prompt caching via OpenRouter — opencode only emits
+# Anthropic-style cache_control breakpoints for anthropic/claude models (transform.ts gate),
+# and every GLM upstream on OpenRouter reports implicit-caching=false. To give the agentic
+# loop a chance to reuse its growing prefix instead of re-billing the full context each turn,
+# pin routing to z.ai's own backend — the one upstream that does implicit prefix caching per
+# z.ai's docs — and keep every turn on it (allow_fallbacks:false). Best-effort: it helps only
+# if z.ai caches implicitly. Scoped to z-ai/GLM slugs so any other OpenRouter model is
+# unaffected; a non-GLM custom slug keeps the plain options. The routing preference is passed
+# via opencode's documented provider.<id>.models.<slug>.options.provider passthrough.
+MODEL_OPTIONS='"max_tokens": 32000'
+case "${LLM_PROVIDER}/${LLM_MODEL}" in
+  openrouter/z-ai/*|openrouter/*glm*)
+    MODEL_OPTIONS=${MODEL_OPTIONS}', "provider": { "order": ["z-ai"], "allow_fallbacks": false }' ;;
+esac
 export OPENCODE_CONFIG=/tmp/opencode.json
 printf '%s\n' '{
   "$schema": "https://opencode.ai/config.json",
@@ -87,7 +102,7 @@ printf '%s\n' '{
     "'"${LLM_PROVIDER}"'": {
       "models": {
         "'"${LLM_MODEL}"'": {
-          "options": { "max_tokens": 32000 }
+          "options": { '"${MODEL_OPTIONS}"' }
         }
       }
     }
