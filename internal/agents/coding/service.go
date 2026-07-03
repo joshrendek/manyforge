@@ -365,6 +365,17 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	panel := s.resolvePanel(ctx, principalID, businessID)
 	changedPaths := changedFilePaths(changed)
 	active, skippedDims := activeDimensions(panel, changedPaths)
+	// Drop lanes requesting an unsupported per-dimension provider (manyforge-ubk) — skip with a
+	// reason rather than silently misroute them to the review's default provider.
+	active, provSkipped := partitionByProvider(active, cred.Provider)
+	skippedDims = append(skippedDims, provSkipped...)
+	// Every dimension scoped out or skipped ⇒ nothing was reviewed. Fail honestly rather than
+	// post an empty "No issues found" review that falsely implies the PR was checked
+	// (aggregateReview would otherwise return an empty doc + nil error).
+	if len(active) == 0 {
+		return s.failJob(ctx, principalID, businessID, crID, prNumber,
+			fmt.Errorf("coding: no reviewable dimensions matched this change: %w", errs.ErrValidation))
+	}
 	if len(skippedDims) > 0 {
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.review.dimensions_skipped",
