@@ -151,39 +151,42 @@ function catalogLabel(key: string): string {
       </div>
 
       <!-- Dimensions table -->
-      <div class="mf-table" data-testid="dimensions-table">
-        <div class="mf-tr mf-th">
-          <span style="width:56px">On</span>
-          <span style="flex:1">Dimension</span>
-          <span style="flex:1">Provider</span>
-          <span style="flex:1">Model</span>
-          <span style="width:110px">Min severity</span>
-          <span style="flex:1">Scope globs</span>
-          <span style="width:150px"></span>
+      <div class="mf-table" data-testid="dimensions-table" role="table" aria-label="Review dimensions">
+        <div class="mf-tr mf-th" role="row">
+          <span style="width:56px" role="columnheader">On</span>
+          <span style="flex:1" role="columnheader">Dimension</span>
+          <span style="flex:1" role="columnheader">Provider</span>
+          <span style="flex:1" role="columnheader">Model</span>
+          <span style="width:110px" role="columnheader">Min severity</span>
+          <span style="flex:1" role="columnheader">Scope globs</span>
+          <span style="width:150px" role="columnheader" aria-label="Actions"></span>
         </div>
         @for (row of rows(); track $index) {
-          <div class="mf-tr" data-testid="dimension-row">
-            <span style="width:56px">
-              <input type="checkbox" data-testid="row-enabled" [(ngModel)]="row.enabled" />
+          <div class="mf-tr" data-testid="dimension-row" role="row">
+            <span style="width:56px" role="cell">
+              <input type="checkbox" data-testid="row-enabled" [(ngModel)]="row.enabled"
+                     [attr.aria-label]="'Enable ' + row.label + ' dimension'" />
             </span>
-            <span style="flex:1;font-weight:500">{{ row.label }}</span>
-            <span style="flex:1">
-              <select class="mf-select" data-testid="row-provider" [ngModel]="row.provider" (ngModelChange)="onProviderChange(row, $event)">
+            <span style="flex:1;font-weight:500" role="cell">{{ row.label }}</span>
+            <span style="flex:1" role="cell">
+              <select class="mf-select" data-testid="row-provider" [ngModel]="row.provider" (ngModelChange)="onProviderChange(row, $event)"
+                      [attr.aria-label]="'Provider for ' + row.label">
                 @for (p of providers; track p.value) {
                   <option [value]="p.value">{{ p.label }}</option>
                 }
               </select>
             </span>
-            <span style="flex:1">
+            <span style="flex:1" role="cell">
               @if (isFreeText(row.provider)) {
                 <input class="mf-input" type="text" data-testid="row-model-text" [(ngModel)]="row.model"
                        [attr.list]="isOpenRouter(row.provider) ? 'setup-openrouter-models' : null"
-                       placeholder="model id" />
+                       [attr.aria-label]="'Model for ' + row.label" placeholder="model id" />
               } @else if (row.provider === '') {
                 <input class="mf-input" type="text" data-testid="row-model-text" [(ngModel)]="row.model"
-                       placeholder="(default)" />
+                       [attr.aria-label]="'Model for ' + row.label" placeholder="(default)" />
               } @else {
-                <select class="mf-select" data-testid="row-model-select" [(ngModel)]="row.model">
+                <select class="mf-select" data-testid="row-model-select" [(ngModel)]="row.model"
+                        [attr.aria-label]="'Model for ' + row.label">
                   <option value="">Choose a model…</option>
                   @for (m of modelsForProvider(row.provider); track m.model_id) {
                     <option [value]="m.model_id">{{ m.model_id }}</option>
@@ -191,22 +194,23 @@ function catalogLabel(key: string): string {
                 </select>
               }
             </span>
-            <span style="width:110px">
-              <select class="mf-select" data-testid="row-severity" [(ngModel)]="row.min_severity">
+            <span style="width:110px" role="cell">
+              <select class="mf-select" data-testid="row-severity" [(ngModel)]="row.min_severity"
+                      [attr.aria-label]="'Minimum severity for ' + row.label">
                 @for (s of severities; track s) {
                   <option [value]="s">{{ s }}</option>
                 }
               </select>
             </span>
-            <span style="flex:1">
+            <span style="flex:1" role="cell">
               <input class="mf-input" type="text" data-testid="row-scope" [(ngModel)]="row.scope"
-                     placeholder="all files" />
+                     [attr.aria-label]="'Scope globs for ' + row.label" placeholder="all files" />
             </span>
-            <span style="width:150px;display:flex;gap:6px;justify-content:flex-end">
+            <span style="width:150px;display:flex;gap:6px;justify-content:flex-end" role="cell">
               <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="row-save"
-                      [disabled]="row.saving" (click)="saveRow(row)">Save</button>
+                      [disabled]="row.saving" (click)="saveRow(row)" [attr.aria-label]="'Save ' + row.label">Save</button>
               <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="row-remove"
-                      (click)="removeRow(row)">Remove</button>
+                      (click)="removeRow(row)" [attr.aria-label]="'Remove ' + row.label">Remove</button>
             </span>
           </div>
         }
