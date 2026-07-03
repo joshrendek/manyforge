@@ -1,37 +1,41 @@
-# Handoff — manyforge @ fix/code-review-fallback-model — 2026-07-01 ~16:30 UTC
+# Handoff — manyforge @ 008-review-dimensions — 2026-07-03 ~02:20 UTC
 
 ## ⚠️ Before you clear
-- **Uncommitted:** none of this session's code — commit `c2602f1` is pushed (HEAD == origin). Only stray untracked docs remain (scattered `CLAUDE.md`s, `.pair/`, screenshots — not this session's, not code). **Unpushed:** none.
-- **Still running (survive the clear):** air **:8081** (`/tmp/mf-air.log`), ng serve **:4300** (`/tmp/mf-web.log`), **Ollama :11434**, **LM Studio at 192.168.2.241:1234** (external box; OpenAI-compatible, 142k ctx, no key), Docker `mf-dev` Postgres **:55432** + `mf-egress-proxy`.
+- **Unpushed:** none — `HEAD == origin/008-review-dimensions` (`c941b88`). All work pushed.
+- **Uncommitted:** none code (working tree clean apart from bd's export churn + stray untracked `*.png`/`.pair/`/scattered `CLAUDE.md`s + two untracked `docs/superpowers/plans/*.md` that predate this session).
+- **PR #8 OPEN:** `008-review-dimensions` → `master`. Now carries Slice 1 + Slice 2 + cost fix + **the two P2 cloud-path bug fixes (6h1, 2s1)**. MERGEABLE.
+- **Still running:** air backend **:8081** (`/tmp/mf-air.log`), ng frontend **:4300** (`/tmp/mf-web.log`), Docker `mf-dev` :55432 + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt clean (final entrypoint, max_tokens=32000, **no debug instrumentation**).
 
-## State (≤3 sentences)
-The local self-host reviewer now **works end-to-end**: commit `c2602f1` (PR #7) makes local reviews reach a **private-LAN** model (LM Studio), handles reasoning models + LM Studio's json_schema quirk, bounds runaway output, and **keeps a failed review's captured output visible** (the user's explicit ask). **Verified live:** a `vllm` agent pointed at LM Studio ornith-1.0-9b reviewed PR #7 to **`succeeded` with 7 real findings about the actual code** (localreview.go / entrypoint.sh / code_review.sql — no hallucinated paths); the failed-output UI was browser-checked. All gates green; nothing in flight.
+## State
+Spec **008 — Multi-dimension Code Review**. Slice 1 (`v9c`) + Slice 2 (`puh`) + cost fix (`d2bf8a2`) complete. **This session fixed + LIVE-verified both remaining P2 cloud-path bugs (`manyforge-6h1`, `manyforge-2s1`) — both CLOSED.** Commits `c0e969b` (code) + `c941b88` (bd).
 
-## Resume here — this unit of work is DONE
-No next step required for manyforge-5ai (closed). If continuing Spec 007, pick a follow-up (see Pointers). If merging: PR #7 is large but complete — `gh pr view 7`.
+## 6h1 + 2s1 — DONE + verified live (`c0e969b`)
+Root-caused via a live instrumented repro on Acme's 6-lane glm-5.2 panel (PR #8). Both are distinct failures on the same pathologically-heavy `correctness`/`ui` lanes (300k+ input tokens, `cache_read`≈0):
+- **2s1 (failed lane loses cost):** a heavy lane hits the **5-min sandbox timeout** → killed before opencode writes `usage.json` → `readSandboxUsage` empty → lane records all-zero cost AND tokens. **Compound leak:** `docker.go` `exec.CommandContext` killed the docker CLI but NOT the daemon container → orphan seen "Up 10m" past a 5m cap, still calling OpenRouter. Fixes: `docker.go` names + reaps the container on ctx timeout/cancel (`+TestRunReapsContainerOnTimeout`); `main.go` timeout 5m→**8m**; `service.go`/`dimensions.go` persist a client-safe `FailReason` → `dimension_runs.last_error` + log full err server-side (closes the observability gap — a partial-success lane's error was silently dropped).
+- **6h1 (truncated JSON):** custom OpenRouter slug has no catalog output limit → opencode's small default cap → glm-5.2's ~9k reasoning tokens exhaust the shared completion budget → JSON truncated. **Proven live:** `max_tokens=50` → `reasoning=50/output=1` (empty); `32000` → complete. Fixes: `entrypoint.sh` sets `provider.<p>.models.<slug>.options.max_tokens=32000`; `service.go` retries a clean-exit parse/empty failure ONCE (mirrors local path), summing usage across attempts.
+
+## Resume here → #2 streaming (design ready, decided Option B) OR Slice 3
+**#2 (`manyforge`… streaming):** make cloud reviews stream live progress like the local path. Design (unchanged, still valid): add `StreamStderr io.Writer` to `SandboxSpec`; in `sandbox/docker.go` `Run`, `cmd.Stderr = io.MultiWriter(&stderr, spec.StreamStderr)` when set; `reviewLane` passes a secret-scrubbing writer pushing opencode's live stderr (tool-call narration) into `prog.UpdateStream` — the heartbeat the UI already polls. Token counts still finalize at end. No frontend change. NOTE: cloud progress currently shows `tokens:0, preview:""` the whole run (this is exactly #2).
+
+## Also open
+- **`manyforge-1s9` (P2, NEW):** opencode does ~no prompt caching for glm-5.2/OpenRouter (`cache_read`≈0) → lanes 5-10× heavier/slower → the deeper driver behind the timeouts. Intermittent (one earlier run showed 205k cache_read). Likely opencode/provider-side; mitigated (not root-fixed) by the 8m timeout + retry.
+- **`manyforge-8qs` (P3):** Slice 3 — verify pass + rule citations + cost estimate.
 
 ## Run & verify
-- **Stack is up.** Restart if needed: air `set -a; . ./.air.env; set +a; nohup air >| /tmp/mf-air.log 2>&1 & disown` (`curl :8081/healthz`); ng `cd web && nohup npx ng serve --proxy-config proxy.conf.json --port 4300 --host 127.0.0.1 >| /tmp/mf-web.log 2>&1 & disown`.
-- Login (fresh JWT each air restart): `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` → `access_token`. Trigger: `POST :8081/api/v1/businesses/7bbeb32e-7c98-4c8f-966b-70acdb440dce/code-reviews {agent_id,repo_connector_id,pr_number}`; poll `GET …/code-reviews/{id}`.
-- Gates (all green as of `c2602f1`): `go build ./...`; `make lint`; `go test ./internal/agents/coding/ ./internal/platform/netsafe/ ./internal/security_regression/`; `go test -tags contract ./cmd/...`; `make sec-test`; `cd web && npx ng test --include='**/code-review/**/*.spec.ts' --watch=false`. **NO Co-Authored-By trailer** (user rule).
-- Browser-verify UI: inject JWT into `localStorage['mf_access']`, then `/code-review/{bizId}/{reviewId}` (Playwright MCP or gstack).
+- Backend: `go build ./...`; `make lint`; `go test ./internal/agents/coding/ ./internal/connectors/`; `go test -tags contract ./cmd/...`; `make sec-test`. NEW integration tests: `go test -tags integration -run 'TestRunReapsContainerOnTimeout' ./internal/agents/coding/sandbox/` and `-run 'TestCodeReviewTrigger/cloud_lane_retries' ./internal/agents/coding/`. (All GREEN this session.)
+- **Live cloud-review repro:** login `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` (token TTL 900s — re-login before reading results); `POST /api/v1/businesses/7bbeb32e-…/code-reviews {"agent_id":"6c252395-… (glm-5.2)","repo_connector_id":"eb68939b-…","pr_number":8}`. Acme = 6-lane panel (~15min, ~$0.75). For a CHEAP single lane: temporarily `UPDATE review_dimension SET enabled=false … WHERE dimension<>'security'` (re-enable after). mf-dev DB: `PGPASSWORD=devpassword psql -h localhost -p55432 -U manyforge -d manyforge`.
+- **NO Co-Authored-By** on commits (user rule). Commit style `fix(008): …`.
 
-## Gotchas (don't relearn these)
-- **ornith-1.0-9b is a REASONING model** → streams chain-of-thought in `delta.reasoning_content`, final answer in `delta.content`. localReview shows reasoning in the preview but only parses `content`. [[manyforge-sandbox-dev-gotchas]]
-- **LM Studio returns EMPTY under `response_format=json_schema`** (Ollama NEEDS it) → localReview falls back to plain. LM Studio's **plain** path is non-deterministic and sometimes emits malformed JSON (unescaped quotes from a code snippet) → localReview now retries plain IN-LINE with a temperature bump (`manyforge-87a`, done: PR#7 succeeds on worker attempt 1). Structured output (json_schema/json_object) is unusable — the reasoning model emits reasoning but empty content under a schema.
-- **Credentials resolve per-provider.** The `ollama` cred is `localhost`; the LM Studio agent uses the **`vllm`** provider slot (its own cred `ca7b0b97`, `allow_private_base_url=true`). Both route local via `isLocalProvider`.
-- **Local-review SSRF guard is the INVERSE of netsafe**: netsafe permits public IPs; local review must BLOCK public (it bypasses the egress proxy). Guard allows loopback always + private only with `AllowPrivateBaseURL`; metadata/link-local/public blocked. MF007-PIN-14 pins it.
-- **zsh `noclobber`** → bg log redirects use `>|` not `>`. [[user-zsh-noclobber-bg-logs]]
-- **Editing a `.go` file restarts air mid-review** and orphans the in-flight job → park it (`UPDATE code_review SET status='failed',lease_expires_at=NULL WHERE id=…`). Large PRs on a 9B reasoning model can run minutes; `max_tokens=8192` now bounds it.
-- **Stale gopls** after edits — `go build`/`test` is truth. [[gopls-stale-dbgen-diagnostics]] · **sqlc PINNED v1.27.0** [[sqlc-version-pin-v127]]
-
-## Decisions & rationale
-- **Reuse the existing `AllowPrivateBaseURL` trust flag + netsafe** rather than hardcoding RFC1918 in `isLoopbackHost` — consistent with `validateBaseURL` (create-time) + `clone.checkCloneURL`, DNS-rebind-aware for literal IPs, backward-compatible (existing `localhost` cred already had the flag).
-- **Failed reviews retain `progress`** (already-redacted preview) and the UI shows it — the raw `last_error` stays server-side (can carry provider/sandbox internals). This narrows `manyforge-byz` ("clear progress on terminal") to **succeeded only**.
-- **`max_tokens=8192`** bounds a reasoning model's output so an attempt fails fast+visibly instead of pinning the worker/GPU for minutes.
+## Gotchas (don't relearn)
+- **A lane fan-out failure is non-deterministic** (model verbosity varies run-to-run) — the failing lane moved correctness→ui between two identical triggers. Don't rely on one run; the timeout edge is ~real for any 300k-token lane.
+- Sandbox timeout on macOS **orphaned the container** (docker.go attached-run gotcha) — FIXED now (reap by name), but the pattern is: `exec.CommandContext` kills the CLI, not the daemon container.
+- A **partial-success** lane's error text used to be dropped (only `status` in `dimension_runs`) — now in `dimension_runs.last_error` + server log `"code review cloud lane failed"`.
+- Instrumenting: comment the cleanup `defer` at `service.go` ~line 320 to preserve `~/.cache/manyforge/sandbox/<crID>/out`; it collides with the worker's job-retry re-clone ("destination path already exists") — restore it when done.
+- gopls shows phantom `dbgen` field errors (DimensionRuns/Progress) after editing service.go — stale; `go build` is truth. [[gopls-stale-dbgen-diagnostics]]
+- opencode config knobs: `provider.<p>.models.<slug>.options` → provider SDK (`max_tokens`); `.limit.output` needs `.limit.context` too (avoided). [[manyforge-opencode-sandbox-cost-and-usage]]
+- zsh `noclobber`: use `>|` for redirects. [[user-zsh-noclobber-bg-logs]]
 
 ## Pointers
-- **PR:** #7 OPEN → master. **Commits:** `c2602f1` (local self-host reviewer) + `a5d2c44` (manyforge-87a in-line retry). **bd:** epic `manyforge-7ml` (reopened); done: `manyforge-5ai`, `manyforge-87a`. Open follow-ups: `manyforge-byz` (P3 clear-progress = succeeded-only now), `manyforge-5tr` (P2 Ollama num_ctx), `manyforge-lyv`/`bbi` (P3 polish).
-- **Key files:** `internal/agents/coding/{localreview.go, credresolver.go, worker.go, findings.go, progress.go, service.go}`; `web/src/app/pages/code-review/detail.ts`; `internal/security_regression/coding_review_pins_test.go` (MF007 pins incl. PIN-14).
-- **Dev entities (business Acme `7bbeb32e-7c98-4c8f-966b-70acdb440dce`):** agents — LM Studio ornith(vllm) `2571c371`, ornith:9b(ollama) `4232e921`, qwen2.5-coder:14b(ollama) `6aeb7a46`, ReviewBot(openrouter z-ai/glm-5.2) `6c252395`; creds — vllm(LM Studio) `ca7b0b97`, ollama(localhost) `4431d2f2`, openrouter `fb0993e2`; connectors — joshrendek/manyforge `eb68939b`, bluescripts-net/threat.gg `3d944fdc` (PR #22 is CLOSED). Superuser DB: `docker exec mf-dev psql -U manyforge -d manyforge`.
-- **Screenshot:** `code-review-failed-output-retained.png` (failed-review output-retention, browser-verified).
+- **bd:** epic `manyforge-t2s`; `v9c`+`puh`+**`6h1`+`2s1` CLOSED**; open: `1s9` (caching), `8qs` (Slice 3), `e54` (Slice 4). **PR #8** open.
+- **This session's commits:** `c0e969b` (6h1/2s1 fix), `c941b88` (bd close).
+- **Key files:** `internal/agents/coding/{service.go,dimensions.go,sandbox/docker.go}`; `cmd/manyforge/main.go`; `deploy/sandbox/entrypoint.sh`.
