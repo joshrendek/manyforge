@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func dockerBuild(t *testing.T, dockerfile, tag string) {
@@ -57,6 +58,50 @@ func sandboxTempDir(t *testing.T) string {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	return dir
+}
+
+// TestRunReapsContainerOnTimeout pins the manyforge-2s1 fix: on timeout, exec.CommandContext
+// SIGKILLs the `docker` CLI but the daemon-run container keeps running (an orphan that keeps
+// burning LLM spend). Run must reap it by name. Before the fix the sleep container stays "Up"
+// long after the 2s cap; after it, the container is gone within the poll window.
+func TestRunReapsContainerOnTimeout(t *testing.T) {
+	dockerBuild(t, "deploy/sandbox-stub/Dockerfile", "manyforge/sandbox-stub:test")
+
+	ctx := t.Context()
+	ro := sandboxTempDir(t)
+	out := sandboxTempDir(t)
+	r := NewDockerRunner("bridge", "") // default network; a sleep needs no egress proxy
+
+	res, err := r.Run(ctx, SandboxSpec{
+		Image:       "manyforge/sandbox-stub:test",
+		ReadOnlyDir: ro,
+		OutputDir:   out,
+		Cmd:         []string{"sh", "-c", "sleep 120"},
+		Timeout:     2 * time.Second,
+	})
+	if err == nil || !res.TimedOut {
+		t.Fatalf("want a timeout (TimedOut=true, non-nil err), got res=%+v err=%v", res, err)
+	}
+
+	// docker kill + --rm removal is near-immediate but not synchronous; poll briefly.
+	running := func() string {
+		b, _ := exec.Command("docker", "ps", "-q",
+			"--filter", "ancestor=manyforge/sandbox-stub:test", "--filter", "status=running").Output()
+		return strings.TrimSpace(string(b))
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if running() == "" {
+			return // reaped ✓
+		}
+		if time.Now().After(deadline) {
+			for _, id := range strings.Fields(running()) { // don't poison sibling tests
+				_ = exec.Command("docker", "kill", id).Run()
+			}
+			t.Fatal("timed-out container was NOT reaped — still running (orphan leak)")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func TestSandboxIsolation(t *testing.T) {

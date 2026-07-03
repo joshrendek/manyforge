@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -423,41 +424,84 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			EgressAllow: []string{laneCred.Host()},
 			Timeout:     s.timeout(),
 		}
-		res, rerr := s.Sandbox.Run(ctx, spec)
+		// runLaneOnce executes the sandbox once, captures usage, and parses the findings.
+		// Usage is read as SOON as the sandbox returns — the model may have burned tokens even
+		// when the run ultimately fails (unparseable output). A timed-out/killed container never
+		// writes usage.json, so a killed lane genuinely has no usage to recover (manyforge-2s1).
+		// Returns (usage, doc, failReason, err); failReason is the client-safe category for err.
+		runLaneOnce := func() (sandboxUsage, FindingsDoc, string, error) {
+			res, rerr := s.Sandbox.Run(ctx, spec)
+			usage := readSandboxUsage(laneOutDir)
+			if rerr != nil {
+				reason := "sandbox error"
+				if res.TimedOut {
+					reason = "timed out"
+				}
+				return usage, FindingsDoc{}, reason, rerr
+			}
+			raw, ferr := os.ReadFile(filepath.Join(laneOutDir, "review.json"))
+			if ferr != nil {
+				return usage, FindingsDoc{}, "no output produced",
+					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+			}
+			d, perr := ParseFindings(raw)
+			if perr != nil {
+				return usage, FindingsDoc{}, "unparseable model output",
+					fmt.Errorf("%w%s", perr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+			}
+			return usage, d, "", nil
+		}
 
-		// Capture usage as SOON as the sandbox returns — the model may have burned tokens even
-		// when the run ultimately fails (e.g. unparseable output). opencode reports 0 cost for a
-		// custom slug, so price it via the catalog. Best-effort: missing usage/pricing → zero.
-		// aggregateReview sums this across every lane so a failed-but-billed lane is still
-		// accounted (manyforge-7n5).
-		usage := readSandboxUsage(laneOutDir)
+		// Run the lane, retrying ONCE on a clean-exit parse/empty failure — mirrors the local
+		// path's empty-under-json_schema retry (manyforge-6h1). A verbose model whose final JSON
+		// was truncated/garbled often succeeds on a second pass. Only clean-exit failures retry:
+		// a timeout or docker error would just recur and cost another full lane run. Usage is
+		// summed across attempts so a failed-then-succeeded lane bills for both.
+		var totalUsage sandboxUsage
+		var doc FindingsDoc
+		var laneErr error
+		var reason string
+		for attempt := 0; attempt < codeReviewLaneMaxAttempts; attempt++ {
+			if attempt > 0 {
+				slog.Default().InfoContext(ctx, "code review cloud lane: retrying after unparseable/empty output",
+					"dimension", dim.Key, "model", laneCred.Model)
+			}
+			u, d, rsn, err := runLaneOnce()
+			totalUsage = addUsage(totalUsage, u)
+			if err == nil {
+				doc, laneErr, reason = d, nil, ""
+				break
+			}
+			doc, laneErr, reason = FindingsDoc{}, err, rsn
+			if rsn != "unparseable model output" && rsn != "no output produced" {
+				break // timeout / sandbox error — do not burn another full run
+			}
+		}
+
 		// TokensIn counts the FULL billed prompt volume — fresh input plus cached reads,
 		// which dominate the agentic loop (opencode re-reads the cached context every turn).
-		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(usage.Input + usage.CacheRead), TokensOut: clampInt32(usage.Output + usage.Reasoning)}
+		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider,
+			TokensIn: clampInt32(totalUsage.Input + totalUsage.CacheRead), TokensOut: clampInt32(totalUsage.Output + totalUsage.Reasoning)}
 		// Prefer opencode's own cost (it prices cache-read tokens correctly); fall back to
 		// catalog pricing only when opencode couldn't price the model (custom slug ⇒ cost 0).
-		if c, priced := costCentsFromUsage(usage); priced {
+		if c, priced := costCentsFromUsage(totalUsage); priced {
 			lr.CostCents = c
 		} else if s.Pricing != nil {
 			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
 				lr.CostCents = c
 			}
 		}
-		if rerr != nil {
-			lr.Err = rerr
+		if laneErr != nil {
+			lr.Err = laneErr
+			lr.FailReason = reason
+			// Log the FULL error server-side (it can carry model-output snippets / sandbox
+			// internals) — the client only ever sees lr.FailReason. This closes the gap where a
+			// partial-success lane's failure was silently dropped, undiagnosable (manyforge-2s1/6h1).
+			slog.Default().ErrorContext(ctx, "code review cloud lane failed",
+				"dimension", dim.Key, "model", laneCred.Model, "reason", reason, "err", lr.Err)
 			return lr
 		}
-		rawFindings, ferr := os.ReadFile(filepath.Join(laneOutDir, "review.json"))
-		if ferr != nil {
-			lr.Err = fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
-			return lr
-		}
-		d, perr := ParseFindings(rawFindings)
-		if perr != nil {
-			lr.Err = fmt.Errorf("%w%s", perr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
-			return lr
-		}
-		lr.Doc = d
+		lr.Doc = doc
 		return lr
 	}
 
@@ -831,6 +875,23 @@ type sandboxUsage struct {
 	Reasoning  int64   `json:"reasoning"`
 	CacheRead  int64   `json:"cache_read"`  // cached-prompt reads — the dominant token category for the agentic loop
 	CacheWrite int64   `json:"cache_write"` // cache writes (first-turn prompt caching)
+}
+
+// codeReviewLaneMaxAttempts caps how many times a cloud lane runs: one initial attempt plus
+// one retry, taken only on a clean-exit parse/empty failure (manyforge-6h1).
+const codeReviewLaneMaxAttempts = 2
+
+// addUsage sums two sandbox usage records — used to accumulate cost/tokens across a lane's
+// retry attempts so a failed-then-succeeded lane bills for every attempt (manyforge-6h1).
+func addUsage(a, b sandboxUsage) sandboxUsage {
+	return sandboxUsage{
+		Cost:       a.Cost + b.Cost,
+		Input:      a.Input + b.Input,
+		Output:     a.Output + b.Output,
+		Reasoning:  a.Reasoning + b.Reasoning,
+		CacheRead:  a.CacheRead + b.CacheRead,
+		CacheWrite: a.CacheWrite + b.CacheWrite,
+	}
 }
 
 // costCentsFromUsage returns opencode's own computed cost in cents, preferring it over

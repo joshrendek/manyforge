@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,6 +51,26 @@ func TestReadSandboxUsage_CostAndCache(t *testing.T) {
 // costCentsFromUsage prefers opencode's own cost (it prices cache reads correctly).
 // A zero cost means opencode couldn't price the model (custom slug) → not "priced",
 // so the caller falls back to catalog pricing.
+// addUsage must sum every field so a lane that fails then succeeds on retry bills for
+// both attempts (manyforge-6h1) — cost + all token categories, not just a subset.
+func TestAddUsage(t *testing.T) {
+	a := sandboxUsage{Cost: 0.10, Input: 100, Output: 10, Reasoning: 5, CacheRead: 200, CacheWrite: 3}
+	b := sandboxUsage{Cost: 0.05, Input: 40, Output: 8, Reasoning: 2, CacheRead: 60, CacheWrite: 1}
+	got := addUsage(a, b)
+	// Cost is a float sum (compared within epsilon; production rounds it via math.Round);
+	// token categories are exact integer sums.
+	if math.Abs(got.Cost-0.15) > 1e-9 {
+		t.Errorf("Cost = %v, want ~0.15", got.Cost)
+	}
+	if got.Input != 140 || got.Output != 18 || got.Reasoning != 7 || got.CacheRead != 260 || got.CacheWrite != 4 {
+		t.Errorf("token sums wrong: %+v", got)
+	}
+	// identity: adding a zero record changes nothing (first attempt of a lane).
+	if got := addUsage(sandboxUsage{}, a); got != a {
+		t.Fatalf("addUsage(zero, a) = %+v, want %+v", got, a)
+	}
+}
+
 func TestCostCentsFromUsage(t *testing.T) {
 	if cents, priced := costCentsFromUsage(sandboxUsage{Cost: 0.0582}); !priced || cents != 6 {
 		t.Fatalf("cost=0.0582 → cents=%d priced=%v, want 6/true", cents, priced)

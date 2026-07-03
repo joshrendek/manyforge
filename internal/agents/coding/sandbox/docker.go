@@ -3,6 +3,8 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -12,6 +14,17 @@ import (
 var envKeyRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 func validEnvKey(k string) bool { return envKeyRe.MatchString(k) }
+
+// containerName returns a unique, docker-safe name for one sandbox run. We name the
+// container so a timed-out/cancelled run can be reaped by name: exec.CommandContext
+// SIGKILLs the `docker` CLI on ctx expiry, but the daemon-run container keeps going
+// (an orphan that continues to burn LLM API spend with no accounting). Killing it by
+// name closes that leak. Fixed prefix + random suffix; crypto/rand can't fail here.
+func containerName() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return "mf-sbx-" + hex.EncodeToString(b[:])
+}
 
 // DockerRunner implements SandboxRunner via the docker CLI.
 type DockerRunner struct {
@@ -35,8 +48,10 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 
+	name := containerName()
 	args := []string{
 		"run", "--rm",
+		"--name", name, // named so a timed-out run's orphaned container can be reaped (below)
 		"--network", d.Network,
 		"--read-only",                        // read-only root fs
 		"--cap-drop", "ALL",                  // drop all Linux capabilities
@@ -70,6 +85,16 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 
 	err := cmd.Run()
 	res := SandboxResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+
+	// On timeout/cancel, exec killed the `docker` CLI but not the daemon-run container —
+	// it orphans and keeps running (observed: still "Up" 5+ min past a 5-min cap, continuing
+	// to call the LLM). Reap it by name so it stops spending. Best-effort; a container that
+	// already exited (normal completion) yields "no such container", which we ignore.
+	if runCtx.Err() != nil {
+		killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		_ = exec.CommandContext(killCtx, "docker", "kill", name).Run()
+		killCancel()
+	}
 
 	if runCtx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true

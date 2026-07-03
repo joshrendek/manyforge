@@ -289,6 +289,11 @@ type laneResult struct {
 	TokensOut int32
 	CostCents int64
 	Err       error
+	// FailReason is a short, client-safe category for a failed lane ("timed out",
+	// "no output produced", "unparseable model output", "sandbox error") — persisted so the
+	// UI can show WHY a lane failed. The full Err is logged server-side, never surfaced
+	// (it can carry model-output snippets / sandbox internals). Empty on success.
+	FailReason string
 }
 
 // dimensionRun is the persisted per-lane accounting record (spec 008), serialized into the
@@ -303,6 +308,7 @@ type dimensionRun struct {
 	CostCents     int64  `json:"cost_cents"`
 	Status        string `json:"status"`
 	SkippedReason string `json:"skipped_reason,omitempty"`
+	LastError     string `json:"last_error,omitempty"` // client-safe reason a "failed" lane failed (e.g. "timed out")
 	FindingCount  int    `json:"finding_count"`
 }
 
@@ -314,8 +320,13 @@ func buildDimensionRuns(results []laneResult, skipped []SkippedDimension) []dime
 	runs := make([]dimensionRun, 0, len(results)+len(skipped))
 	for _, lr := range results {
 		status := "succeeded"
+		lastErr := ""
 		if lr.Err != nil {
 			status = "failed"
+			lastErr = lr.FailReason
+			if lastErr == "" {
+				lastErr = "sandbox error" // default category if a failure site didn't set one
+			}
 		}
 		runs = append(runs, dimensionRun{
 			Dimension:    lr.Dim.Key,
@@ -325,6 +336,7 @@ func buildDimensionRuns(results []laneResult, skipped []SkippedDimension) []dime
 			TokensOut:    lr.TokensOut,
 			CostCents:    lr.CostCents,
 			Status:       status,
+			LastError:    lastErr,
 			FindingCount: len(lr.Doc.Findings),
 		})
 	}
