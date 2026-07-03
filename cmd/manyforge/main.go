@@ -390,7 +390,7 @@ func main() {
 			Creds:        &coding.AgentCredResolver{Agents: agentSvc, Credentials: credSvc},
 			Image:        cfg.SandboxImage,
 			WorkRoot:     cfg.SandboxWorkRoot,
-			Timeout:      5 * time.Minute,
+			Timeout:      8 * time.Minute, // heavy uncached agentic lanes (300k+ input tokens) exceed 5m (manyforge-2s1)
 			LocalTimeout: cfg.LocalReviewTimeout,
 			// Same allowlist that boots the egress proxy above — Trigger validates the
 			// run's provider host against it up front (manyforge-0qj).
