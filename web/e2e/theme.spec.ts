@@ -9,10 +9,15 @@ test('theme toggle flips data-theme and persists across reload', async ({ page }
 
   await page.goto('/dashboard');
   const html = page.locator('html');
+  // Wait for the toggle to be interactive before reading/clicking — under the full-suite load a
+  // click can otherwise race hydration and no-op, so data-theme never flips (flaky).
+  const toggle = page.getByTestId('theme-toggle');
+  await expect(toggle).toBeVisible();
   const before = await html.getAttribute('data-theme');
-  await page.getByTestId('theme-toggle').click();
+  await toggle.click();
+  // Retrying assertion: wait until the attribute actually changes rather than reading it once.
+  await expect(html).not.toHaveAttribute('data-theme', before ?? '');
   const after = await html.getAttribute('data-theme');
-  expect(after).not.toBe(before);
 
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', after!);

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -43,6 +44,11 @@ type CodeReview struct {
 	// preview); null/omitted for pending and terminal reviews. Populated from the
 	// code_review.progress jsonb the worker heartbeat persists.
 	Progress json.RawMessage `json:"progress,omitempty"`
+	// DimensionRuns is the per-lane accounting for a multi-dimension review (spec 008):
+	// a JSON array of {dimension, model, provider, tokens_in, tokens_out, cost_cents,
+	// status, skipped_reason, finding_count}. The detail UI groups findings by dimension
+	// and surfaces skipped lanes from it. Empty/omitted for legacy single-lane reviews.
+	DimensionRuns json.RawMessage `json:"dimension_runs,omitempty"`
 }
 
 // ClaimedReview is the typed representation of a claim_code_reviews result row,
@@ -335,7 +341,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	if isLocalProvider(cred.Provider) {
 		maxTotal = localProviderMaxTotalBytes
 	}
-	payload, skippedFiles, omittedFiles, filteredFiles := assembleDiffPayload(files, maxTotal)
+	// The whole-PR dropped-file sets (skipped/omitted/filtered) are computed once here for the
+	// audit trail and the review body's "not reviewed" note; each dimension lane assembles its
+	// own scope-filtered payload below (an unscoped lane reproduces this exact payload).
+	_, skippedFiles, omittedFiles, filteredFiles := assembleDiffPayload(files, maxTotal)
 	// No silent caps: dropped files are surfaced in the review body AND recorded on the audit
 	// trail (binary/too-large → skipped; over-budget → omitted; prose/plan docs → filtered).
 	if len(skippedFiles) > 0 || len(omittedFiles) > 0 || len(filteredFiles) > 0 {
@@ -345,92 +354,195 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			nil, ptr("executed"),
 		)
 	}
-	// Obtain the findings doc + token usage. Two paths by provider:
-	//   - local (Ollama/vLLM): review host-side via the direct-API path — small
-	//     local models can't drive opencode's agent loop, and the model is on-host
-	//     so there's nothing to isolate (manyforge-62s). Cost is 0 (local).
-	//   - cloud: opencode in the hardened, egress-restricted sandbox.
-	var doc FindingsDoc
-	var tokensIn, tokensOut int32
-	var costCents int64
-
+	// Fan out the review across the active dimension lanes (spec 008). Zero-config resolves to a
+	// single "general" lane (defaultPanel), so a default review is byte-for-byte the legacy
+	// single-agent review; configured panels (DB-resolved) arrive in a later slice. Each lane
+	// reviews its scope-filtered diff with its own prompt + model; findings are floored, tagged,
+	// and de-duplicated, and usage is summed. Partial success (FR-013): one lane failing does
+	// not fail the whole review — only every lane failing does.
 	prog.SetPhase("reviewing")
 
-	if isLocalProvider(cred.Provider) {
+	panel := s.resolvePanel(ctx, principalID, businessID)
+	changedPaths := changedFilePaths(changed)
+	active, skippedDims := activeDimensions(panel, changedPaths)
+	// Drop lanes requesting an unsupported per-dimension provider (manyforge-ubk) — skip with a
+	// reason rather than silently misroute them to the review's default provider.
+	active, provSkipped := partitionByProvider(active, cred.Provider)
+	skippedDims = append(skippedDims, provSkipped...)
+	// Every dimension scoped out or skipped ⇒ nothing was reviewed. Fail honestly rather than
+	// post an empty "No issues found" review that falsely implies the PR was checked
+	// (aggregateReview would otherwise return an empty doc + nil error).
+	if len(active) == 0 {
+		return s.failJob(ctx, principalID, businessID, crID, prNumber,
+			fmt.Errorf("coding: no reviewable dimensions matched this change: %w", errs.ErrValidation))
+	}
+	if len(skippedDims) > 0 {
 		_ = s.auditStep(ctx, principalID, businessID, crID,
-			"agent.coding.localreview.invoked",
-			map[string]any{"head_sha": pr.HeadSHA, "model": cred.Model, "base_url": cred.BaseURL},
-			nil, ptr("executed"),
+			"agent.coding.review.dimensions_skipped",
+			map[string]any{"skipped": skippedDims}, nil, ptr("executed"),
 		)
-		d, in, out, lerr := localReview(ctx, s.localClient(), cred, payload, prog)
-		tokensIn, tokensOut = clampInt32(in), clampInt32(out) // local = no cost
-		if lerr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, lerr, tokensIn, tokensOut, 0)
+	}
+
+	// reviewLane runs ONE dimension end-to-end and returns its outcome. Local providers
+	// (Ollama/vLLM) review host-side via the direct-API path — small models can't drive
+	// opencode's agent loop, and the on-host model needs no isolation (manyforge-62s; cost 0).
+	// Cloud providers run opencode in the hardened, egress-restricted sandbox, writing to a
+	// per-lane output dir so configured lanes never clobber each other's review.json. An empty
+	// dim.Model uses the review's resolved credential; the dimension's prompt drives both paths.
+	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
+		laneCred := cred
+		if strings.TrimSpace(dim.Model) != "" {
+			laneCred.Model = dim.Model
 		}
-		doc = d
-	} else {
-		// Scope the review to the changed files by writing their paths where the
-		// entrypoint reads them (/out/review_files.txt). Absent → whole-repo review.
-		if len(changed) > 0 {
-			_ = os.WriteFile(filepath.Join(outDir, "review_files.txt"),
-				[]byte(strings.Join(changedFilePaths(changed), "\n")), 0o644)
+		scoped := filterFilesByScope(files, dim.ScopeGlobs)
+		lanePayload, _, _, _ := assembleDiffPayload(scoped, maxTotal)
+
+		if isLocalProvider(laneCred.Provider) {
+			_ = s.auditStep(ctx, principalID, businessID, crID,
+				"agent.coding.localreview.invoked",
+				map[string]any{"head_sha": pr.HeadSHA, "model": laneCred.Model, "base_url": laneCred.BaseURL, "dimension": dim.Key},
+				nil, ptr("executed"),
+			)
+			d, in, out, lerr := localReview(ctx, s.localClient(), laneCred, lanePayload, dim.Prompt, prog)
+			return laneResult{Dim: dim, Doc: d, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(in), TokensOut: clampInt32(out), Err: lerr} // local = no cost
 		}
-		// Hand opencode the rendered diff (annotated hunks) as the primary review
-		// scope; it may still open the full files in the read-only checkout for
-		// context. Absent/empty → falls back to review_files.txt (whole-file scope).
-		if payload != "" {
-			_ = os.WriteFile(filepath.Join(outDir, "review_diff.txt"), []byte(payload), 0o644)
+
+		// Cloud path: hand opencode the scoped diff + changed-file scope hint + the dimension's
+		// prompt where the entrypoint reads them (/out/review_*.txt), then run it. review_diff
+		// is the primary scope; review_files.txt is the whole-file fallback.
+		if len(scoped) > 0 {
+			_ = os.WriteFile(filepath.Join(laneOutDir, "review_files.txt"),
+				[]byte(strings.Join(changedFilePaths(commentableMap(scoped)), "\n")), 0o644)
 		}
-		// Single-source the review prompt: write the SAME instructions the local path uses
-		// (reviewInstructions) where the entrypoint reads them (/out/review_instructions.txt),
-		// so local and cloud share one prompt and prompt changes need no sandbox-image rebuild.
-		// The image's baked INSTRUCTIONS is only a fallback when this file is absent.
-		_ = os.WriteFile(filepath.Join(outDir, "review_instructions.txt"), []byte(reviewInstructions), 0o644)
+		if lanePayload != "" {
+			_ = os.WriteFile(filepath.Join(laneOutDir, "review_diff.txt"), []byte(lanePayload), 0o644)
+		}
+		// Single-source the prompt: write the dimension's instructions where the entrypoint
+		// reads them, so local and cloud share one prompt and prompt changes need no sandbox-
+		// image rebuild. The image's baked INSTRUCTIONS is only a fallback when this is absent.
+		_ = os.WriteFile(filepath.Join(laneOutDir, "review_instructions.txt"), []byte(dim.Prompt), 0o644)
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.opencode.invoked",
-			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": cred.Model},
+			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": laneCred.Model, "dimension": dim.Key},
 			nil, ptr("executed"),
 		)
 		spec := sandbox.SandboxSpec{
 			Image:       s.Image,
 			ReadOnlyDir: checkout,
-			OutputDir:   outDir,
-			Cmd:         opencodeCmd(cred.Model),
-			Env:         sandboxEnv(cred),
-			EgressAllow: []string{cred.Host()},
+			OutputDir:   laneOutDir,
+			Cmd:         opencodeCmd(laneCred.Model),
+			Env:         sandboxEnv(laneCred),
+			EgressAllow: []string{laneCred.Host()},
 			Timeout:     s.timeout(),
 		}
-		res, rerr := s.Sandbox.Run(ctx, spec)
+		// runLaneOnce executes the sandbox once, captures usage, and parses the findings.
+		// Usage is read as SOON as the sandbox returns — the model may have burned tokens even
+		// when the run ultimately fails (unparseable output). A timed-out/killed container never
+		// writes usage.json, so a killed lane genuinely has no usage to recover (manyforge-2s1).
+		// Returns (usage, doc, failReason, err); failReason is the client-safe category for err.
+		runLaneOnce := func() (sandboxUsage, FindingsDoc, string, error) {
+			res, rerr := s.Sandbox.Run(ctx, spec)
+			usage := readSandboxUsage(laneOutDir)
+			if rerr != nil {
+				reason := "sandbox error"
+				if res.TimedOut {
+					reason = "timed out"
+				}
+				return usage, FindingsDoc{}, reason, rerr
+			}
+			raw, ferr := os.ReadFile(filepath.Join(laneOutDir, "review.json"))
+			if ferr != nil {
+				return usage, FindingsDoc{}, "no output produced",
+					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+			}
+			d, perr := ParseFindings(raw)
+			if perr != nil {
+				return usage, FindingsDoc{}, "unparseable model output",
+					fmt.Errorf("%w%s", perr, sandboxStderrTail(laneOutDir, laneCred.APIKey, rc.Credential.APIToken))
+			}
+			return usage, d, "", nil
+		}
 
-		// Capture usage as SOON as the sandbox returns — the model may have burned
-		// tokens even when the run ultimately fails (e.g. unparseable output). opencode
-		// reports 0 cost for a custom slug, so we price it via OpenRouter's catalog.
-		// Best-effort: missing usage/pricing → zero. Every exit below records this so a
-		// failed-but-billed run is still accounted (manyforge-7n5).
-		usage := readSandboxUsage(outDir)
-		tokensIn = clampInt32(usage.Input)
-		tokensOut = clampInt32(usage.Output + usage.Reasoning)
-		if s.Pricing != nil {
-			if c, perr := s.Pricing.CostCents(ctx, cred.Provider, cred.Model, int64(tokensIn), int64(tokensOut)); perr == nil {
-				costCents = c
+		// Run the lane, retrying ONCE on a clean-exit parse/empty failure — mirrors the local
+		// path's empty-under-json_schema retry (manyforge-6h1). A verbose model whose final JSON
+		// was truncated/garbled often succeeds on a second pass. Only clean-exit failures retry:
+		// a timeout or docker error would just recur and cost another full lane run. Usage is
+		// summed across attempts so a failed-then-succeeded lane bills for both.
+		var totalUsage sandboxUsage
+		var doc FindingsDoc
+		var laneErr error
+		var reason string
+		for attempt := 0; attempt < codeReviewLaneMaxAttempts; attempt++ {
+			if attempt > 0 {
+				slog.Default().InfoContext(ctx, "code review cloud lane: retrying after unparseable/empty output",
+					"dimension", dim.Key, "model", laneCred.Model)
+			}
+			u, d, rsn, err := runLaneOnce()
+			totalUsage = addUsage(totalUsage, u)
+			if err == nil {
+				doc, laneErr, reason = d, nil, ""
+				break
+			}
+			doc, laneErr, reason = FindingsDoc{}, err, rsn
+			if rsn != "unparseable model output" && rsn != "no output produced" {
+				break // timeout / sandbox error — do not burn another full run
 			}
 		}
-		if rerr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, rerr, tokensIn, tokensOut, costCents)
+
+		// TokensIn counts the FULL billed prompt volume — fresh input plus cached reads,
+		// which dominate the agentic loop (opencode re-reads the cached context every turn).
+		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider,
+			TokensIn: clampInt32(totalUsage.Input + totalUsage.CacheRead), TokensOut: clampInt32(totalUsage.Output + totalUsage.Reasoning)}
+		// Prefer opencode's own cost (it prices cache-read tokens correctly); fall back to
+		// catalog pricing only when opencode couldn't price the model (custom slug ⇒ cost 0).
+		if c, priced := costCentsFromUsage(totalUsage); priced {
+			lr.CostCents = c
+		} else if s.Pricing != nil {
+			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
+				lr.CostCents = c
+			}
 		}
-		rawFindings, ferr := os.ReadFile(filepath.Join(outDir, "review.json"))
-		if ferr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-				fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(outDir, cred.APIKey, rc.Credential.APIToken)),
-				tokensIn, tokensOut, costCents)
+		if laneErr != nil {
+			lr.Err = laneErr
+			lr.FailReason = reason
+			// Log the FULL error server-side (it can carry model-output snippets / sandbox
+			// internals) — the client only ever sees lr.FailReason. This closes the gap where a
+			// partial-success lane's failure was silently dropped, undiagnosable (manyforge-2s1/6h1).
+			slog.Default().ErrorContext(ctx, "code review cloud lane failed",
+				"dimension", dim.Key, "model", laneCred.Model, "reason", reason, "err", lr.Err)
+			return lr
 		}
-		d, perr := ParseFindings(rawFindings)
-		if perr != nil {
-			return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber,
-				fmt.Errorf("%w%s", perr, sandboxStderrTail(outDir, cred.APIKey, rc.Credential.APIToken)), tokensIn, tokensOut, costCents)
-		}
-		doc = d
+		lr.Doc = doc
+		return lr
 	}
+
+	// Sequential fan-out: a single-GPU local provider can't run lanes in parallel, and cloud
+	// lanes stay cheap enough that sequential is fine for v1. A single lane writes directly to
+	// outDir (byte-for-byte the legacy path); multiple lanes each get an isolated sub-dir so
+	// their review.json / usage.json never collide.
+	laneResults := make([]laneResult, 0, len(active))
+	for _, dim := range active {
+		laneOutDir := outDir
+		if len(active) > 1 {
+			laneOutDir = filepath.Join(outDir, "lane-"+dim.Key)
+			if err := os.MkdirAll(laneOutDir, 0o777); err != nil {
+				return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+			}
+			if err := os.Chmod(laneOutDir, 0o777); err != nil {
+				return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+			}
+		}
+		laneResults = append(laneResults, reviewLane(dim, laneOutDir))
+	}
+
+	doc, tokensIn, tokensOut, costCents, aggErr := aggregateReview(laneResults)
+	if aggErr != nil {
+		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, aggErr, tokensIn, tokensOut, costCents)
+	}
+	// Per-lane accounting persisted on the review row (spec 008): each ran lane's model/usage/
+	// status/finding-count, plus any skipped dimensions with their reason. Empty for a default
+	// single-lane review only in the sense that it holds one "general" entry.
+	dimRunsJSON, _ := json.Marshal(buildDimensionRuns(laneResults, skippedDims))
 
 	// Post the review to the PR (intentionally ungated — advisory only). Findings on
 	// changed lines become inline diff comments; the rest land in the summary body.
@@ -480,6 +592,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			TokensIn:          tokensIn,
 			TokensOut:         tokensOut,
 			CostCents:         costCents,
+			DimensionRuns:     dimRunsJSON,
 			AgentRunID:        pgtype.UUID{Bytes: runID, Valid: true},
 		})
 		if uerr != nil {
@@ -591,6 +704,7 @@ func (s *CodeReviewService) Get(ctx context.Context, principalID, businessID, id
 			CreatedAt:     row.CreatedAt,
 			PostedAt:      postedAt,
 			Progress:      json.RawMessage(row.Progress),
+			DimensionRuns: json.RawMessage(row.DimensionRuns),
 		}
 		raw.repoConnectorID = row.RepoConnectorID
 		raw.externalRef = row.ExternalReviewRef
@@ -766,9 +880,40 @@ func reviewURL(repo string, pr int, externalRef string) string {
 // sandboxUsage is the token usage the entrypoint extracts from opencode's session
 // DB into /out/usage.json (sqlite3 -json output: a one-element array).
 type sandboxUsage struct {
-	Input     int64 `json:"input"`
-	Output    int64 `json:"output"`
-	Reasoning int64 `json:"reasoning"`
+	Cost       float64 `json:"cost"` // opencode's own computed cost in USD (0 if it couldn't price the model)
+	Input      int64   `json:"input"`
+	Output     int64   `json:"output"`
+	Reasoning  int64   `json:"reasoning"`
+	CacheRead  int64   `json:"cache_read"`  // cached-prompt reads — the dominant token category for the agentic loop
+	CacheWrite int64   `json:"cache_write"` // cache writes (first-turn prompt caching)
+}
+
+// codeReviewLaneMaxAttempts caps how many times a cloud lane runs: one initial attempt plus
+// one retry, taken only on a clean-exit parse/empty failure (manyforge-6h1).
+const codeReviewLaneMaxAttempts = 2
+
+// addUsage sums two sandbox usage records — used to accumulate cost/tokens across a lane's
+// retry attempts so a failed-then-succeeded lane bills for every attempt (manyforge-6h1).
+func addUsage(a, b sandboxUsage) sandboxUsage {
+	return sandboxUsage{
+		Cost:       a.Cost + b.Cost,
+		Input:      a.Input + b.Input,
+		Output:     a.Output + b.Output,
+		Reasoning:  a.Reasoning + b.Reasoning,
+		CacheRead:  a.CacheRead + b.CacheRead,
+		CacheWrite: a.CacheWrite + b.CacheWrite,
+	}
+}
+
+// costCentsFromUsage returns opencode's own computed cost in cents, preferring it over
+// catalog pricing because opencode prices cache-read tokens correctly (the host's token
+// catalog does not). A zero cost means opencode couldn't price the model (e.g. a custom
+// slug) → priced=false so the caller falls back to catalog pricing.
+func costCentsFromUsage(u sandboxUsage) (cents int64, priced bool) {
+	if u.Cost > 0 {
+		return int64(math.Round(u.Cost * 100)), true
+	}
+	return 0, false
 }
 
 // readSandboxUsage reads /out/usage.json. Best-effort: missing/empty/garbage → zero

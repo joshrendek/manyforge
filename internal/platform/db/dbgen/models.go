@@ -670,6 +670,7 @@ type CodeReview struct {
 	TokensOut         int32              `json:"tokens_out"`
 	CostCents         int64              `json:"cost_cents"`
 	Progress          []byte             `json:"progress"`
+	DimensionRuns     []byte             `json:"dimension_runs"`
 }
 
 type Company struct {
@@ -925,6 +926,34 @@ type Requester struct {
 	LastSeenAt   time.Time   `json:"last_seen_at"`
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
+}
+
+type ReviewConfig struct {
+	BusinessID     uuid.UUID      `json:"business_id"`
+	TenantRootID   uuid.UUID      `json:"tenant_root_id"`
+	Dedupe         bool           `json:"dedupe"`
+	VerifyEnabled  bool           `json:"verify_enabled"`
+	VerifyProvider NullAiProvider `json:"verify_provider"`
+	VerifyModel    string         `json:"verify_model"`
+	CiteRules      bool           `json:"cite_rules"`
+	PostMode       string         `json:"post_mode"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+type ReviewDimension struct {
+	ID           uuid.UUID      `json:"id"`
+	BusinessID   uuid.UUID      `json:"business_id"`
+	TenantRootID uuid.UUID      `json:"tenant_root_id"`
+	Dimension    string         `json:"dimension"`
+	Provider     NullAiProvider `json:"provider"`
+	Model        string         `json:"model"`
+	Prompt       string         `json:"prompt"`
+	ScopeGlobs   []string       `json:"scope_globs"`
+	MinSeverity  string         `json:"min_severity"`
+	Enabled      bool           `json:"enabled"`
+	SortOrder    int32          `json:"sort_order"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 type Role struct {

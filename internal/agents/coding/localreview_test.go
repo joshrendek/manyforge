@@ -43,7 +43,7 @@ func TestLocalReview(t *testing.T) {
 
 	cred := AICredential{BaseURL: srv.URL, Model: "qwen2.5-coder:14b", Provider: "ollama", APIKey: "ollama"}
 	payload := "\n=== service.go ===\n@@ 1-1 @@\n    1 + package x\n"
-	doc, in, out, err := localReview(context.Background(), srv.Client(), cred, payload, nil)
+	doc, in, out, err := localReview(context.Background(), srv.Client(), cred, payload, reviewInstructions, nil)
 	if err != nil {
 		t.Fatalf("err %v", err)
 	}
@@ -63,12 +63,12 @@ func TestLocalReview_RejectsDisallowedHost(t *testing.T) {
 	payload := "=== a.go ===\n@@ 1-1 @@\n    1 + x\n"
 	// Public host — rejected regardless of the trust flag.
 	pub := AICredential{BaseURL: "https://evil.example.com/v1", Model: "m", Provider: "ollama", APIKey: "k", AllowPrivateBaseURL: true}
-	if _, _, _, err := localReview(context.Background(), http.DefaultClient, pub, payload, nil); err == nil {
+	if _, _, _, err := localReview(context.Background(), http.DefaultClient, pub, payload, reviewInstructions, nil); err == nil {
 		t.Fatal("local review must reject a public base URL host even with AllowPrivateBaseURL (SSRF guard)")
 	}
 	// Private LAN WITHOUT the trust opt-in — rejected before dialing.
 	priv := AICredential{BaseURL: "http://192.168.2.241:1234/v1", Model: "m", Provider: "vllm", APIKey: "k", AllowPrivateBaseURL: false}
-	if _, _, _, err := localReview(context.Background(), http.DefaultClient, priv, payload, nil); err == nil {
+	if _, _, _, err := localReview(context.Background(), http.DefaultClient, priv, payload, reviewInstructions, nil); err == nil {
 		t.Fatal("local review must reject a private-LAN base URL host without AllowPrivateBaseURL")
 	}
 }
@@ -144,7 +144,7 @@ func TestLocalReview_RetriesWithoutSchemaOnEmptyStream(t *testing.T) {
 	defer srv.Close()
 
 	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
-	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil)
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, nil)
 	if err != nil {
 		t.Fatalf("localReview: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestLocalReview_StreamUpdatesProgress(t *testing.T) {
 	cred := AICredential{BaseURL: srv.URL, Model: "m", Provider: "ollama", APIKey: "ollama"}
 	prog := &Progress{}
 	prog.SetPhase("reviewing") // worker sets this in prod; needed so Snapshot is non-nil
-	doc, _, out, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", prog)
+	doc, _, out, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, prog)
 	if err != nil {
 		t.Fatalf("err %v", err)
 	}
@@ -213,13 +213,60 @@ func TestLocalReview_SendsJSONSchemaResponseFormat(t *testing.T) {
 	defer srv.Close()
 
 	cred := AICredential{BaseURL: srv.URL, Model: "ornith:9b", Provider: "ollama", APIKey: "x"}
-	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err != nil {
+	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, nil); err != nil {
 		t.Fatalf("localReview: %v", err)
 	}
 	for _, want := range []string{`"response_format"`, `"json_schema"`, "code_review_findings", `"severity"`} {
 		if !strings.Contains(string(gotBody), want) {
 			t.Fatalf("request body missing %q — JSON output not enforced (manyforge-6ax)\nbody: %s", want, string(gotBody))
 		}
+	}
+}
+
+// TestLocalReview_UsesProvidedPrompt pins spec 008 per-dimension prompt plumbing: the
+// prompt localReview is given (a dimension's instructions) becomes the model's system
+// message — REPLACING the default reviewInstructions — with reviewSchemaLine still appended
+// so the JSON-only output contract holds regardless of which dimension's prompt is used.
+func TestLocalReview_UsesProvidedPrompt(t *testing.T) {
+	const sentinel = "SENTINEL_DIMENSION_PROMPT_review_only_widgets"
+	var gotSystem string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var b struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &b)
+		for _, m := range b.Messages {
+			if m.Role == "system" {
+				gotSystem = m.Content
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		frame, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": `{"summary":"ok","findings":[]}`}}}})
+		_, _ = w.Write([]byte("data: " + string(frame) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	cred := AICredential{BaseURL: srv.URL, Model: "m", Provider: "ollama", APIKey: "x"}
+	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", sentinel, nil); err != nil {
+		t.Fatalf("localReview: %v", err)
+	}
+	if !strings.Contains(gotSystem, sentinel) {
+		t.Fatalf("system message must use the provided dimension prompt; got %q", gotSystem)
+	}
+	if !strings.Contains(gotSystem, reviewSchemaLine) {
+		t.Fatalf("reviewSchemaLine must still be appended so JSON-only output holds; got %q", gotSystem)
+	}
+	if strings.Contains(gotSystem, "Surface every plausible") {
+		t.Fatalf("default reviewInstructions must be REPLACED by the provided prompt, not present; got %q", gotSystem)
 	}
 }
 
@@ -246,7 +293,7 @@ func TestLocalReview_LogsDroppedFrames(t *testing.T) {
 	defer srv.Close()
 
 	cred := AICredential{BaseURL: srv.URL, Model: "ornith:9b", Provider: "ollama", APIKey: "x"}
-	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil)
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, nil)
 	if err != nil {
 		t.Fatalf("localReview: %v", err)
 	}
@@ -288,7 +335,7 @@ func TestLocalReview_ReasoningContentNotParsedButPreviewed(t *testing.T) {
 	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
 	prog := &Progress{}
 	prog.SetPhase("reviewing")
-	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", prog)
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, prog)
 	if err != nil {
 		t.Fatalf("localReview: %v", err)
 	}
@@ -326,7 +373,7 @@ func TestLocalReview_LogsTruncationOnLengthFinish(t *testing.T) {
 
 	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
 	// Truncated JSON → ParseFindings fails (expected); we assert the cause was logged.
-	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err == nil {
+	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, nil); err == nil {
 		t.Fatal("truncated JSON should fail to parse")
 	}
 	if !strings.Contains(logBuf.String(), "truncated at token limit") {
@@ -372,7 +419,7 @@ func TestLocalReview_RetriesPlainOnUnparseable(t *testing.T) {
 	defer srv.Close()
 
 	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
-	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil)
+	doc, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, nil)
 	if err != nil {
 		t.Fatalf("localReview should recover via in-line retry: %v", err)
 	}
@@ -413,7 +460,7 @@ func TestLocalReview_FailsAfterMaxPlainAttempts(t *testing.T) {
 	defer srv.Close()
 
 	cred := AICredential{BaseURL: srv.URL, Model: "ornith-1.0-9b", Provider: "vllm", APIKey: "lmstudio"}
-	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", nil); err == nil {
+	if _, _, _, err := localReview(context.Background(), srv.Client(), cred, "=== a.go ===\n@@ 1-1 @@\n    1 + x\n", reviewInstructions, nil); err == nil {
 		t.Fatal("localReview should fail when every plain retry is unparseable")
 	}
 	if plainAttempts != localReviewMaxPlainAttempts {

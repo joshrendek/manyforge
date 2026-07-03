@@ -164,6 +164,71 @@ describe('CodeReviewDetailComponent', () => {
     expect(qAll('[data-testid="finding-row"]').length).toBe(0);
   });
 
+  // ── Multi-dimension grouping (spec 008) ──────────────────────────────────────
+
+  it('groups findings by dimension with a per-dimension count', () => {
+    mount(makeReview({
+      findings: [
+        makeFinding({ dimension: 'security', title: 'S1' }),
+        makeFinding({ dimension: 'security', title: 'S2' }),
+        makeFinding({ dimension: 'correctness', title: 'C1' }),
+      ],
+      findings_count: 3,
+      dimension_runs: [
+        { dimension: 'security', status: 'succeeded', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 2 },
+        { dimension: 'correctness', status: 'succeeded', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 1 },
+      ],
+    }));
+    const groups = qAll('[data-testid="dimension-group"]');
+    expect(groups.length).toBe(2);
+    const headers = Array.from(qAll('[data-testid="dimension-group-header"]')).map((h) => h.textContent ?? '');
+    const security = headers.find((h) => h.toLowerCase().includes('security'));
+    const correctness = headers.find((h) => h.toLowerCase().includes('correctness'));
+    expect(security).toContain('2');
+    expect(correctness).toContain('1');
+    // Every finding still renders a row (shared row markup), 3 total across the groups.
+    expect(qAll('[data-testid="finding-row"]').length).toBe(3);
+  });
+
+  it('renders skipped dimensions from dimension_runs with the reason', () => {
+    mount(makeReview({
+      findings: [makeFinding({ dimension: 'security', title: 'S1' })],
+      findings_count: 1,
+      dimension_runs: [
+        { dimension: 'security', status: 'succeeded', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 1 },
+        { dimension: 'ui', status: 'skipped', skipped_reason: 'no matching files', tokens_in: 0, tokens_out: 0, cost_cents: 0, finding_count: 0 },
+      ],
+    }));
+    const skipped = q('[data-testid="skipped-dimensions"]');
+    expect(skipped).toBeTruthy();
+    const rows = qAll('[data-testid="skipped-dimension-row"]');
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain('ui');
+    expect(rows[0].textContent).toContain('no matching files');
+  });
+
+  it('does NOT render a skipped-dimensions section when no lane was skipped', () => {
+    mount(makeReview({
+      findings: [makeFinding({ dimension: 'security' })],
+      findings_count: 1,
+      dimension_runs: [
+        { dimension: 'security', status: 'succeeded', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 1 },
+      ],
+    }));
+    expect(q('[data-testid="skipped-dimensions"]')).toBeNull();
+  });
+
+  it('back-compat: a legacy single-lane review renders the flat findings table (no dimension groups)', () => {
+    mount(makeReview({
+      findings: [makeFinding({ title: 'legacy' })], // untagged (no dimension)
+      findings_count: 1,
+      dimension_runs: undefined,
+    }));
+    expect(qAll('[data-testid="dimension-group"]').length).toBe(0);
+    expect(qAll('[data-testid="finding-row"]').length).toBe(1);
+    expect(q('[data-testid="skipped-dimensions"]')).toBeNull();
+  });
+
   // ── Live progress ──────────────────────────────────────────────────────────────
 
   it('renders the progress block (phase + preview) while running', () => {
