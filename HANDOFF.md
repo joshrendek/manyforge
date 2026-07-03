@@ -1,40 +1,41 @@
-# Handoff — manyforge @ 008-review-dimensions — 2026-07-02 ~17:15 UTC
+# Handoff — manyforge @ 008-review-dimensions — 2026-07-03 ~02:20 UTC
 
 ## ⚠️ Before you clear
-- **Unpushed:** none — `HEAD == origin/008-review-dimensions` (`d2bf8a2`). All work pushed.
-- **Uncommitted:** none code (working tree clean apart from bd's `.beads/issues.jsonl` + stray untracked `*.png`/`.pair/`/scattered `CLAUDE.md`s).
-- **PR #8 OPEN:** `008-review-dimensions` → `master` (Slice 1 + Slice 2 + cost fix). MERGEABLE.
-- **Still running:** air **:8081** (backend log `/tmp/mf-air.log`), ng serve **:4300** (`/tmp/mf-web.log`), Docker `mf-dev` :55432 + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt (final entrypoint).
+- **Unpushed:** none — `HEAD == origin/008-review-dimensions` (`c941b88`). All work pushed.
+- **Uncommitted:** none code (working tree clean apart from bd's export churn + stray untracked `*.png`/`.pair/`/scattered `CLAUDE.md`s + two untracked `docs/superpowers/plans/*.md` that predate this session).
+- **PR #8 OPEN:** `008-review-dimensions` → `master`. Now carries Slice 1 + Slice 2 + cost fix + **the two P2 cloud-path bug fixes (6h1, 2s1)**. MERGEABLE.
+- **Still running:** air backend **:8081** (`/tmp/mf-air.log`), ng frontend **:4300** (`/tmp/mf-web.log`), Docker `mf-dev` :55432 + `mf-egress-proxy`. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt clean (final entrypoint, max_tokens=32000, **no debug instrumentation**).
 
 ## State
-Spec **008 — Multi-dimension Code Review**. Slice 1 (`v9c`) + Slice 2 (`puh`) COMPLETE. **This session also fixed + verified the cloud-review cost undercount (`d2bf8a2`).** Then diagnosed (not yet fixed) two more cloud-path bugs and designed the sandbox-streaming feature.
+Spec **008 — Multi-dimension Code Review**. Slice 1 (`v9c`) + Slice 2 (`puh`) + cost fix (`d2bf8a2`) complete. **This session fixed + LIVE-verified both remaining P2 cloud-path bugs (`manyforge-6h1`, `manyforge-2s1`) — both CLOSED.** Commits `c0e969b` (code) + `c941b88` (bd).
 
-## Cost fix — DONE + verified live (`d2bf8a2`)
-Cloud reviews under-billed ~3–4× because the entrypoint captured only input/output/reasoning tokens and the host re-priced them — ignoring **`tokens_cache_read`**, which dominate the agentic loop (opencode re-reads the cached context every tool turn: one lane had 205,696 cache-read vs 9,886 fresh input). sst/opencode already computes the right cost in `session.cost`; the "cost=0 for custom slug" assumption was stale. Fix: `deploy/sandbox/entrypoint.sh` usage.json now SUMs `session.cost` + full token breakdown; `readSandboxUsage`/`costCentsFromUsage` bill from `cost` when >0, catalog fallback otherwise; `TokensIn` includes cache reads. **Verified live:** 5/6 lanes matched opencode's cost to the cent. See [[manyforge-opencode-sandbox-cost-and-usage]].
+## 6h1 + 2s1 — DONE + verified live (`c0e969b`)
+Root-caused via a live instrumented repro on Acme's 6-lane glm-5.2 panel (PR #8). Both are distinct failures on the same pathologically-heavy `correctness`/`ui` lanes (300k+ input tokens, `cache_read`≈0):
+- **2s1 (failed lane loses cost):** a heavy lane hits the **5-min sandbox timeout** → killed before opencode writes `usage.json` → `readSandboxUsage` empty → lane records all-zero cost AND tokens. **Compound leak:** `docker.go` `exec.CommandContext` killed the docker CLI but NOT the daemon container → orphan seen "Up 10m" past a 5m cap, still calling OpenRouter. Fixes: `docker.go` names + reaps the container on ctx timeout/cancel (`+TestRunReapsContainerOnTimeout`); `main.go` timeout 5m→**8m**; `service.go`/`dimensions.go` persist a client-safe `FailReason` → `dimension_runs.last_error` + log full err server-side (closes the observability gap — a partial-success lane's error was silently dropped).
+- **6h1 (truncated JSON):** custom OpenRouter slug has no catalog output limit → opencode's small default cap → glm-5.2's ~9k reasoning tokens exhaust the shared completion budget → JSON truncated. **Proven live:** `max_tokens=50` → `reasoning=50/output=1` (empty); `32000` → complete. Fixes: `entrypoint.sh` sets `provider.<p>.models.<slug>.options.max_tokens=32000`; `service.go` retries a clean-exit parse/empty failure ONCE (mirrors local path), summing usage across attempts.
 
-## Resume here → fix two cloud-path bugs (both need ONE instrumented repro FIRST)
-**`manyforge-6h1` (P2) — lanes fail on truncated output.** Confirmed class via review `5c471422`: model emitted a ` ```json ` fence around JSON **truncated mid-object** → `ParseFindings` "empty findings output". Root cause = output TRUNCATION (verbose/reasoning models exceed opencode's output cap). Fix direction: raise opencode's max output tokens, and/or terser JSON-only prompt, and/or a plain-retry like the local path. NOT just fence-stripping (JSON is incomplete).
+## Resume here → #2 streaming (design ready, decided Option B) OR Slice 3
+**#2 (`manyforge`… streaming):** make cloud reviews stream live progress like the local path. Design (unchanged, still valid): add `StreamStderr io.Writer` to `SandboxSpec`; in `sandbox/docker.go` `Run`, `cmd.Stderr = io.MultiWriter(&stderr, spec.StreamStderr)` when set; `reviewLane` passes a secret-scrubbing writer pushing opencode's live stderr (tool-call narration) into `prog.UpdateStream` — the heartbeat the UI already polls. Token counts still finalize at end. No frontend change. NOTE: cloud progress currently shows `tokens:0, preview:""` the whole run (this is exactly #2).
 
-**`manyforge-2s1` (P2) — a failed lane loses its cost.** correctness lane recorded 0¢ though opencode billed 19¢. Puzzle: `reviewLane` reads usage BEFORE the parse-error return, so a parse failure should PRESERVE cost — yet it was 0, meaning `readSandboxUsage` returned empty at read time despite usage.json having real data post-hoc. Mechanism unconfirmed (bind-mount flush lag? session-write ordering?). **Do NOT guess-fix** (systematic-debugging).
-
-**Repro recipe (both):** the runDir (`$HOME/.cache/manyforge/sandbox/<crID>`) is `os.RemoveAll`'d by a `defer` at service.go:320, and the opencode DB is in the container's ephemeral `/tmp`. To inspect: temporarily (a) instrument `entrypoint.sh` to `cp` the DB + `review.json` to `/out`, (b) comment that cleanup defer, then trigger ONE review and read `$HOME/.cache/manyforge/sandbox/<crID>/out/lane-*/`. Rebuild image: `DOCKER_BUILDKIT=0 docker build --build-arg TARGETARCH=arm64 -f deploy/sandbox/Dockerfile -t manyforge/opencode-sandbox:dev .` (buildx missing → BuildKit off). Trigger via API: login `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` → `POST /api/v1/businesses/7bbeb32e-…/code-reviews {"agent_id":"6c252395-… (openrouter glm-5.2)","repo_connector_id":"eb68939b-…","pr_number":8}`. NOTE: Acme has a 6-lane panel so every review fans out (~15min, ~$0.30-0.70). **Access token expires mid-poll — re-login before reading results.** Clean up after: restore cleanup defer + entrypoint, `rm -rf` the runDir, `docker kill` orphan opencode containers.
-
-## Then → #2 streaming (design ready, decided: Option B)
-Make OpenRouter/cloud reviews stream live progress like the local path. Design: add `StreamStderr io.Writer` to `SandboxSpec`; in `sandbox/docker.go` `Run`, `cmd.Stderr = io.MultiWriter(&stderr, spec.StreamStderr)` when set (currently buffers + blocks). `reviewLane` passes a secret-scrubbing writer that pushes opencode's live stderr (tool-call narration: "Read…/Grep…") into `prog.UpdateStream` — the same heartbeat the UI already polls. Token counts still finalize at end (usage.json); only `prog.preview` streams. No frontend change. (#3 — sandbox the local Ollama/vLLM path — remains a later spike.)
+## Also open
+- **`manyforge-1s9` (P2, NEW):** opencode does ~no prompt caching for glm-5.2/OpenRouter (`cache_read`≈0) → lanes 5-10× heavier/slower → the deeper driver behind the timeouts. Intermittent (one earlier run showed 205k cache_read). Likely opencode/provider-side; mitigated (not root-fixed) by the 8m timeout + retry.
+- **`manyforge-8qs` (P3):** Slice 3 — verify pass + rule citations + cost estimate.
 
 ## Run & verify
-- Backend: `go build ./...`; `make lint`; `go test ./internal/agents/coding/ ./internal/connectors/`; `go test -tags contract ./cmd/...`; `make sec-test`; multidim: `go test -tags integration -run TestCodeReviewMultiDimensionFanout ./internal/agents/coding/`.
-- Frontend (`web/`): `npx ng test --no-watch` (277); `npx playwright test` (69, needs ng :4300).
+- Backend: `go build ./...`; `make lint`; `go test ./internal/agents/coding/ ./internal/connectors/`; `go test -tags contract ./cmd/...`; `make sec-test`. NEW integration tests: `go test -tags integration -run 'TestRunReapsContainerOnTimeout' ./internal/agents/coding/sandbox/` and `-run 'TestCodeReviewTrigger/cloud_lane_retries' ./internal/agents/coding/`. (All GREEN this session.)
+- **Live cloud-review repro:** login `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` (token TTL 900s — re-login before reading results); `POST /api/v1/businesses/7bbeb32e-…/code-reviews {"agent_id":"6c252395-… (glm-5.2)","repo_connector_id":"eb68939b-…","pr_number":8}`. Acme = 6-lane panel (~15min, ~$0.75). For a CHEAP single lane: temporarily `UPDATE review_dimension SET enabled=false … WHERE dimension<>'security'` (re-enable after). mf-dev DB: `PGPASSWORD=devpassword psql -h localhost -p55432 -U manyforge -d manyforge`.
 - **NO Co-Authored-By** on commits (user rule). Commit style `fix(008): …`.
 
 ## Gotchas (don't relearn)
-- opencode is **agentic** (many LLM calls/lane, cache reads dominate) — bill from `session.cost`, not a token subset. [[manyforge-opencode-sandbox-cost-and-usage]]
-- `docker.go` `Run` uses `exec.CommandContext` → on timeout it kills the docker CLI but the **container orphans** (attached-run gotcha). Relevant if you touch the sandbox lifecycle.
-- gopls shows phantom dbgen errors after editing service.go — stale; `go build` is truth. [[gopls-stale-dbgen-diagnostics]]
-- e2e specs need the shell nav-badge calls mocked or they 401→logout. [[manyforge-e2e-shell-nav-badge-401-logout]]
+- **A lane fan-out failure is non-deterministic** (model verbosity varies run-to-run) — the failing lane moved correctness→ui between two identical triggers. Don't rely on one run; the timeout edge is ~real for any 300k-token lane.
+- Sandbox timeout on macOS **orphaned the container** (docker.go attached-run gotcha) — FIXED now (reap by name), but the pattern is: `exec.CommandContext` kills the CLI, not the daemon container.
+- A **partial-success** lane's error text used to be dropped (only `status` in `dimension_runs`) — now in `dimension_runs.last_error` + server log `"code review cloud lane failed"`.
+- Instrumenting: comment the cleanup `defer` at `service.go` ~line 320 to preserve `~/.cache/manyforge/sandbox/<crID>/out`; it collides with the worker's job-retry re-clone ("destination path already exists") — restore it when done.
+- gopls shows phantom `dbgen` field errors (DimensionRuns/Progress) after editing service.go — stale; `go build` is truth. [[gopls-stale-dbgen-diagnostics]]
+- opencode config knobs: `provider.<p>.models.<slug>.options` → provider SDK (`max_tokens`); `.limit.output` needs `.limit.context` too (avoided). [[manyforge-opencode-sandbox-cost-and-usage]]
 - zsh `noclobber`: use `>|` for redirects. [[user-zsh-noclobber-bg-logs]]
 
 ## Pointers
-- **bd:** epic `manyforge-t2s`; `v9c`+`puh` closed; **`6h1`+`2s1` (P2 bugs — NEXT)**; `8qs` (Slice 3); `e54` (Slice 4). **PR #8** open.
-- **This session's commits:** `1a652c1` (Phase C), `b59dae1` (Phase D), `ed65aa5` (e2e fix), `9ea76cf` (handoff), `d2bf8a2` (cost fix).
-- **Key files:** `internal/agents/coding/{service.go,dimensions.go,panel.go,localreview.go,findings.go,sandbox/docker.go}`; `deploy/sandbox/entrypoint.sh`.
+- **bd:** epic `manyforge-t2s`; `v9c`+`puh`+**`6h1`+`2s1` CLOSED**; open: `1s9` (caching), `8qs` (Slice 3), `e54` (Slice 4). **PR #8** open.
+- **This session's commits:** `c0e969b` (6h1/2s1 fix), `c941b88` (bd close).
+- **Key files:** `internal/agents/coding/{service.go,dimensions.go,sandbox/docker.go}`; `cmd/manyforge/main.go`; `deploy/sandbox/entrypoint.sh`.
