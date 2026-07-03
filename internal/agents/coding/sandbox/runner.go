@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -13,6 +14,10 @@ type SandboxSpec struct {
 	Env         map[string]string // ONLY allowlisted run-scoped secrets/config
 	EgressAllow []string          // allowlisted egress hosts (informational; enforced by proxy/network)
 	Timeout     time.Duration     // wall-clock cap
+	// StreamStderr, when non-nil, receives the container's stderr LIVE (in addition to the
+	// buffered SandboxResult.Stderr) so a caller can stream progress as the run proceeds. The
+	// entrypoint routes the tool's stderr to the container's stderr for exactly this.
+	StreamStderr io.Writer
 }
 
 type SandboxResult struct {
