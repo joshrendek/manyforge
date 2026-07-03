@@ -72,10 +72,26 @@ printf '{"%s":{"type":"api","key":"%s"}}\n' "$LLM_PROVIDER" "$LLM_API_KEY" > "$X
 # default model and a read-only permission profile: deny every mutation/tool,
 # allow only read/grep/glob (never "ask" — headless run has no TTY to answer a
 # prompt). Credentials come from auth.json above, not from here.
+# The custom OpenRouter slug is absent from the (disabled) models.dev catalog, so opencode
+# has no output-token limit for it and falls back to a small default. A reasoning model
+# (glm-5.2 burns ~9k reasoning tokens/lane) then exhausts that budget mid-answer and the final
+# JSON is truncated → ParseFindings fails (manyforge-6h1). Declare a generous per-model
+# options.max_tokens so reasoning + the findings JSON both fit. options is passed straight to
+# the provider SDK (OpenRouter → request max_tokens). The model key is the slug WITHOUT the
+# provider prefix ($LLM_MODEL); provider + slug are validated inputs with no JSON metacharacters.
 export OPENCODE_CONFIG=/tmp/opencode.json
 printf '%s\n' '{
   "$schema": "https://opencode.ai/config.json",
   "model": "'"${MODEL}"'",
+  "provider": {
+    "'"${LLM_PROVIDER}"'": {
+      "models": {
+        "'"${LLM_MODEL}"'": {
+          "options": { "max_tokens": 32000 }
+        }
+      }
+    }
+  },
   "permission": {
     "read": "allow",
     "glob": "allow",

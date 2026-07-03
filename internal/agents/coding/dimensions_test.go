@@ -245,22 +245,32 @@ func TestBuildDimensionRuns(t *testing.T) {
 	results := []laneResult{
 		{Dim: Dimension{Key: "security"}, Model: "m1", Provider: "openrouter", TokensIn: 10, TokensOut: 4, CostCents: 2,
 			Doc: FindingsDoc{Findings: []connectors.Finding{{Title: "a"}, {Title: "b"}}}},
-		{Dim: Dimension{Key: "correctness"}, Model: "m2", Provider: "anthropic", TokensIn: 5, Err: errors.New("boom")},
+		{Dim: Dimension{Key: "correctness"}, Model: "m2", Provider: "anthropic", TokensIn: 5, Err: errors.New("timed out after 8m"), FailReason: "timed out"},
+		{Dim: Dimension{Key: "tests"}, Model: "m3", Provider: "openrouter", Err: errors.New("boom")}, // no FailReason set
 	}
 	skipped := []SkippedDimension{{Key: "ui", Reason: "scope: no matching files"}}
 
 	runs := buildDimensionRuns(results, skipped)
-	if len(runs) != 3 {
-		t.Fatalf("want 3 runs (2 ran + 1 skipped), got %d", len(runs))
+	if len(runs) != 4 {
+		t.Fatalf("want 4 runs (3 ran + 1 skipped), got %d", len(runs))
 	}
 	if runs[0].Status != "succeeded" || runs[0].FindingCount != 2 || runs[0].Model != "m1" || runs[0].TokensIn != 10 {
 		t.Fatalf("ran-succeeded record wrong: %+v", runs[0])
 	}
+	if runs[0].LastError != "" {
+		t.Fatalf("succeeded lane must not carry a last_error, got %q", runs[0].LastError)
+	}
 	if runs[1].Status != "failed" || runs[1].TokensIn != 5 || runs[1].FindingCount != 0 {
 		t.Fatalf("failed record wrong: %+v", runs[1])
 	}
-	if runs[2].Status != "skipped" || runs[2].SkippedReason != "scope: no matching files" {
-		t.Fatalf("skipped record wrong: %+v", runs[2])
+	if runs[1].LastError != "timed out" { // client-safe reason surfaces, NOT the raw err text
+		t.Fatalf("failed lane must persist its FailReason as last_error, got %q", runs[1].LastError)
+	}
+	if runs[2].Status != "failed" || runs[2].LastError != "sandbox error" { // default category when a site left FailReason empty
+		t.Fatalf("failed lane w/o FailReason must default last_error to %q, got %+v", "sandbox error", runs[2])
+	}
+	if runs[3].Status != "skipped" || runs[3].SkippedReason != "scope: no matching files" {
+		t.Fatalf("skipped record wrong: %+v", runs[3])
 	}
 }
 

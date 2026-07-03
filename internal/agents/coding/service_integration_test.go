@@ -213,6 +213,26 @@ func (r *malformedWithUsageRunner) Run(_ context.Context, spec sandbox.SandboxSp
 	return sandbox.SandboxResult{ExitCode: 0}, nil
 }
 
+// retryFakeRunner fails the FIRST run with unparseable output (no JSON object), then
+// succeeds on the second — exercising the cloud-lane single retry (manyforge-6h1). Each
+// attempt writes its own usage.json so the test can assert the lane bills for BOTH attempts.
+type retryFakeRunner struct{ calls atomic.Int32 }
+
+func (r *retryFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	if r.calls.Add(1) == 1 {
+		_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte("prose only, no JSON here"), 0o644)
+		_ = os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"), []byte(`[{"cost":0.10,"input":1000,"output":50}]`), 0o644)
+		return sandbox.SandboxResult{ExitCode: 0}, nil
+	}
+	doc := map[string]any{"summary": "recovered on retry", "findings": []map[string]any{
+		{"file": "main.go", "line": 3, "severity": "info", "title": "ok", "detail": "d"},
+	}}
+	data, _ := json.Marshal(doc)
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644)
+	_ = os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"), []byte(`[{"cost":0.05,"input":500,"output":20}]`), 0o644)
+	return sandbox.SandboxResult{ExitCode: 0}, nil
+}
+
 // fixedPricing is a CostEstimator that returns a constant cost regardless of input.
 type fixedPricing struct{ cents int64 }
 
@@ -389,6 +409,39 @@ func TestCodeReviewTrigger(t *testing.T) {
 		}
 	})
 
+	t.Run("cloud_lane_retries_unparseable_then_succeeds", func(t *testing.T) {
+		localSrv, _ := startGitHubStub(t, prJSON)
+		env := newCodingEnv(t, tdb)
+		connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+		runner := &retryFakeRunner{}
+		svc := buildService(t, tdb, env, runner, fakeCred)
+
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, agentID, connID, 1)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+		}
+		if err := svc.runJob(ctx, claimed, nil); err != nil {
+			t.Fatalf("runJob: want success after retry, got %v", err)
+		}
+		if n := runner.calls.Load(); n != 2 {
+			t.Fatalf("want exactly 2 sandbox runs (1 unparseable + 1 retry), got %d", n)
+		}
+		got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.Status != "succeeded" {
+			t.Fatalf("status after successful retry: want succeeded, got %q", got.Status)
+		}
+		if got.CostCents != 15 { // both attempts billed: 10¢ (failed) + 5¢ (retry)
+			t.Fatalf("lane must bill for BOTH attempts (10¢+5¢=15¢), got %d", got.CostCents)
+		}
+	})
+
 	t.Run("rls_cross_tenant_get_not_found", func(t *testing.T) {
 		env := newCodingEnv(t, tdb)
 		connID := createRepoConnector(ctx, t, env, seed, srv.URL)
@@ -484,7 +537,10 @@ func TestCodeReviewFailureRecordsUsage(t *testing.T) {
 		t.Fatal("want error (malformed findings), got nil")
 	}
 
-	// A failed agent_run must capture the spend so accounting reflects it.
+	// A failed agent_run must capture the spend so accounting reflects it. The lane exits
+	// cleanly with unparseable output, so it retries once (manyforge-6h1); both attempts hit
+	// the model and are billed, so tokens SUM across attempts (1000+1000 in, 200+200 out).
+	// fixedPricing returns a constant regardless of token count, so cost stays 204.
 	var arStatus string
 	var arIn, arOut int32
 	var arCost int64
@@ -493,8 +549,8 @@ func TestCodeReviewFailureRecordsUsage(t *testing.T) {
 	).Scan(&arStatus, &arIn, &arOut, &arCost); err != nil {
 		t.Fatalf("expected a failed agent_run recording the spend: %v", err)
 	}
-	if arStatus != "failed" || arIn != 1000 || arOut != 200 || arCost != 204 {
-		t.Fatalf("agent_run = status=%s in=%d out=%d cost=%d; want failed/1000/200/204", arStatus, arIn, arOut, arCost)
+	if arStatus != "failed" || arIn != 2000 || arOut != 400 || arCost != 204 {
+		t.Fatalf("agent_run = status=%s in=%d out=%d cost=%d; want failed/2000/400/204 (usage summed over the retry)", arStatus, arIn, arOut, arCost)
 	}
 
 	// The review row must also show the usage/cost (via SetCodeReviewUsage).
@@ -505,8 +561,8 @@ func TestCodeReviewFailureRecordsUsage(t *testing.T) {
 	).Scan(&rIn, &rOut, &rCost); err != nil {
 		t.Fatalf("read code_review: %v", err)
 	}
-	if rIn != 1000 || rOut != 200 || rCost != 204 {
-		t.Fatalf("code_review usage = in=%d out=%d cost=%d; want 1000/200/204", rIn, rOut, rCost)
+	if rIn != 2000 || rOut != 400 || rCost != 204 {
+		t.Fatalf("code_review usage = in=%d out=%d cost=%d; want 2000/400/204 (usage summed over the retry)", rIn, rOut, rCost)
 	}
 }
 
