@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -176,61 +175,59 @@ func startGitHubStub(t *testing.T, prJSON []byte) (*httptest.Server, *githubStub
 // Fake runners
 // ---------------------------------------------------------------------------
 
-// validFakeRunner writes a valid review.json into spec.OutputDir when Run is called.
+// validFakeRunner returns a valid review.json in the result's in-band Outputs.
 type validFakeRunner struct {
 	summary string
 }
 
-func (r *validFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+func (r *validFakeRunner) Run(_ context.Context, _ sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
 	findings := []map[string]any{
 		{"file": "main.go", "line": 10, "severity": "warning", "title": "Issue", "detail": "A detail"},
 	}
 	doc := map[string]any{"summary": r.summary, "findings": findings}
 	data, _ := json.Marshal(doc)
-	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644); err != nil {
-		return sandbox.SandboxResult{}, err
-	}
-	return sandbox.SandboxResult{ExitCode: 0}, nil
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{"review.json": data}}, nil
 }
 
-// malformedFakeRunner writes invalid JSON into spec.OutputDir.
+// malformedFakeRunner returns invalid JSON as review.json in Outputs.
 type malformedFakeRunner struct{}
 
-func (r *malformedFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte(`{not json`), 0o644)
-	return sandbox.SandboxResult{ExitCode: 0}, nil
+func (r *malformedFakeRunner) Run(_ context.Context, _ sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{"review.json": []byte(`{not json`)}}, nil
 }
 
-// malformedWithUsageRunner writes invalid findings JSON (so ParseFindings fails)
+// malformedWithUsageRunner returns invalid findings JSON (so ParseFindings fails)
 // AND a usage.json — mimicking a run where the model burned tokens before the
 // review failed (manyforge-7n5: a failed-but-billed run must still be accounted).
 type malformedWithUsageRunner struct{}
 
-func (r *malformedWithUsageRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte(`{not json`), 0o644)
-	_ = os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"),
-		[]byte(`[{"input":1000,"output":200,"reasoning":0}]`), 0o644)
-	return sandbox.SandboxResult{ExitCode: 0}, nil
+func (r *malformedWithUsageRunner) Run(_ context.Context, _ sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{
+		"review.json": []byte(`{not json`),
+		"usage.json":  []byte(`[{"input":1000,"output":200,"reasoning":0}]`),
+	}}, nil
 }
 
 // retryFakeRunner fails the FIRST run with unparseable output (no JSON object), then
 // succeeds on the second — exercising the cloud-lane single retry (manyforge-6h1). Each
-// attempt writes its own usage.json so the test can assert the lane bills for BOTH attempts.
+// attempt returns its own usage.json so the test can assert the lane bills for BOTH attempts.
 type retryFakeRunner struct{ calls atomic.Int32 }
 
-func (r *retryFakeRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+func (r *retryFakeRunner) Run(_ context.Context, _ sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
 	if r.calls.Add(1) == 1 {
-		_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), []byte("prose only, no JSON here"), 0o644)
-		_ = os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"), []byte(`[{"cost":0.10,"input":1000,"output":50}]`), 0o644)
-		return sandbox.SandboxResult{ExitCode: 0}, nil
+		return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{
+			"review.json": []byte("prose only, no JSON here"),
+			"usage.json":  []byte(`[{"cost":0.10,"input":1000,"output":50}]`),
+		}}, nil
 	}
 	doc := map[string]any{"summary": "recovered on retry", "findings": []map[string]any{
 		{"file": "main.go", "line": 3, "severity": "info", "title": "ok", "detail": "d"},
 	}}
 	data, _ := json.Marshal(doc)
-	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644)
-	_ = os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"), []byte(`[{"cost":0.05,"input":500,"output":20}]`), 0o644)
-	return sandbox.SandboxResult{ExitCode: 0}, nil
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{
+		"review.json": data,
+		"usage.json":  []byte(`[{"cost":0.05,"input":500,"output":20}]`),
+	}}, nil
 }
 
 // fixedPricing is a CostEstimator that returns a constant cost regardless of input.
@@ -722,15 +719,14 @@ func TestRLSIsolation(t *testing.T) {
 	})
 }
 
-// recordingRunner captures the SandboxSpec.Env it was invoked with and writes a
-// valid (empty-findings) review.json so the run succeeds.
+// recordingRunner captures the SandboxSpec.Env it was invoked with and returns a
+// valid (empty-findings) review.json in Outputs so the run succeeds.
 type recordingRunner struct{ env map[string]string }
 
 func (r *recordingRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
 	r.env = spec.Env
 	data, _ := json.Marshal(map[string]any{"summary": "ok", "findings": []any{}})
-	_ = os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644)
-	return sandbox.SandboxResult{ExitCode: 0}, nil
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{"review.json": data}}, nil
 }
 
 // TestCodeReviewFallbackModelOnRetry: a fresh attempt uses the configured model; a

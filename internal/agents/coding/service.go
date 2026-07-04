@@ -409,19 +409,21 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		}
 
 		// Cloud path: hand opencode the scoped diff + changed-file scope hint + the dimension's
-		// prompt where the entrypoint reads them (/out/review_*.txt), then run it. review_diff
-		// is the primary scope; review_files.txt is the whole-file fallback.
+		// prompt in-band on the spec (Inputs) — the runner materializes them where the
+		// entrypoint reads them (/out/review_*.txt). review_diff is the primary scope;
+		// review_files.txt is the whole-file fallback. Single-sourcing the prompt this way
+		// means local and cloud share one prompt and prompt changes need no sandbox-image
+		// rebuild — the image's baked INSTRUCTIONS is only a fallback when review_instructions.txt
+		// is absent.
+		inputs := map[string][]byte{
+			"review_instructions.txt": []byte(dim.Prompt),
+		}
 		if len(scoped) > 0 {
-			_ = os.WriteFile(filepath.Join(laneOutDir, "review_files.txt"),
-				[]byte(strings.Join(changedFilePaths(commentableMap(scoped)), "\n")), 0o644)
+			inputs["review_files.txt"] = []byte(strings.Join(changedFilePaths(commentableMap(scoped)), "\n"))
 		}
 		if lanePayload != "" {
-			_ = os.WriteFile(filepath.Join(laneOutDir, "review_diff.txt"), []byte(lanePayload), 0o644)
+			inputs["review_diff.txt"] = []byte(lanePayload)
 		}
-		// Single-source the prompt: write the dimension's instructions where the entrypoint
-		// reads them, so local and cloud share one prompt and prompt changes need no sandbox-
-		// image rebuild. The image's baked INSTRUCTIONS is only a fallback when this is absent.
-		_ = os.WriteFile(filepath.Join(laneOutDir, "review_instructions.txt"), []byte(dim.Prompt), 0o644)
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.opencode.invoked",
 			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": laneCred.Model, "dimension": dim.Key},
@@ -439,6 +441,14 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			// review shows progress like the local path (secrets are scrubbed by prog.Snapshot
 			// via SetSecrets). The worker persists prog every heartbeat while this lane runs.
 			StreamStderr: &progressStreamWriter{prog: prog, dim: dim.Key},
+			Inputs:       inputs,
+			// Clone info, in-band, for a future host-FS-independent runner (KubeRunner, Task
+			// 4.3) to clone the repo itself. DockerRunner ignores these fields — the host
+			// clone into ReadOnlyDir above (runJob) is what it actually uses.
+			CloneURL:          conn.CloneURL(),
+			CloneAuthHeader:   authHeader,
+			CloneSHA:          pr.HeadSHA,
+			CloneAllowPrivate: rc.AllowPrivateBaseURL,
 		}
 		// runLaneOnce executes the sandbox once, captures usage, and parses the findings.
 		// Usage is read as SOON as the sandbox returns — the model may have burned tokens even
@@ -447,7 +457,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		// Returns (usage, doc, failReason, err); failReason is the client-safe category for err.
 		runLaneOnce := func() (sandboxUsage, FindingsDoc, string, error) {
 			res, rerr := s.Sandbox.Run(ctx, spec)
-			usage := readSandboxUsage(laneOutDir)
+			usage := parseSandboxUsage(res.Outputs["usage.json"])
 			if rerr != nil {
 				reason := "sandbox error"
 				if res.TimedOut {
@@ -455,10 +465,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 				}
 				return usage, FindingsDoc{}, reason, rerr
 			}
-			raw, ferr := os.ReadFile(filepath.Join(laneOutDir, "review.json"))
-			if ferr != nil {
+			raw, ok := res.Outputs["review.json"]
+			if !ok {
 				return usage, FindingsDoc{}, "no output produced",
-					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(res.Stderr, laneCred.APIKey, rc.Credential.APIToken))
+					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, errNoReviewOutput, sandboxStderrTail(res.Stderr, laneCred.APIKey, rc.Credential.APIToken))
 			}
 			d, perr := ParseFindings(raw)
 			if perr != nil {
@@ -921,11 +931,16 @@ func costCentsFromUsage(u sandboxUsage) (cents int64, priced bool) {
 	return 0, false
 }
 
-// readSandboxUsage reads /out/usage.json. Best-effort: missing/empty/garbage → zero
-// usage (a review is never failed for lack of usage data).
-func readSandboxUsage(outDir string) sandboxUsage {
-	b, err := os.ReadFile(filepath.Join(outDir, "usage.json"))
-	if err != nil {
+// errNoReviewOutput indicates the sandbox run's Outputs carried no review.json — e.g. a
+// run that exited without the entrypoint ever writing findings.
+var errNoReviewOutput = errors.New("coding: review.json not found in sandbox outputs")
+
+// parseSandboxUsage parses usage.json content — the entrypoint's sqlite3 -json output: a
+// one-element array of {cost, input, output, reasoning, cache_read, cache_write}.
+// Best-effort: missing/empty/garbage → zero usage (a review is never failed for lack of
+// usage data).
+func parseSandboxUsage(b []byte) sandboxUsage {
+	if len(b) == 0 {
 		return sandboxUsage{}
 	}
 	var rows []sandboxUsage
@@ -933,6 +948,17 @@ func readSandboxUsage(outDir string) sandboxUsage {
 		return sandboxUsage{}
 	}
 	return rows[0]
+}
+
+// readSandboxUsage reads /out/usage.json from a host output directory. Thin wrapper over
+// parseSandboxUsage for callers still working off a host directory rather than
+// SandboxResult.Outputs (e.g. direct unit tests of the on-disk contract).
+func readSandboxUsage(outDir string) sandboxUsage {
+	b, err := os.ReadFile(filepath.Join(outDir, "usage.json"))
+	if err != nil {
+		return sandboxUsage{}
+	}
+	return parseSandboxUsage(b)
 }
 
 // clampInt32 bounds a token count to a non-negative int32 (the agent_run/code_review
