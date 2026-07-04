@@ -21,6 +21,9 @@ type Config struct {
 	TrustedProxyCIDR string        // CIDR allowed to set the client IP via X-Forwarded-For
 	JWTIssuer        string        // expected/stamped token issuer
 	JWTAudience      string        // expected/stamped token audience
+	JWTActiveKID     string        // kid of the persistent signing key (unset ⇒ ephemeral dev ring)
+	JWTSigningKeyPEM string        // PKCS8 Ed25519 private key PEM for persistent JWT signing; inline or via *_PATH
+	JWTVerifyKeys    string        // additional verify-only keys for rotation: "kid=<pkix pubkey pem>,..."
 	RateLimitRPS     float64       // per-IP token refill rate for abuse-sensitive routes (FR-029)
 	RateLimitBurst   float64       // per-IP burst allowance for abuse-sensitive routes
 
@@ -129,6 +132,8 @@ func Load() (Config, error) {
 		TrustedProxyCIDR: os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
 		JWTIssuer:        env("MANYFORGE_JWT_ISSUER", "manyforge"),
 		JWTAudience:      env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
+		JWTActiveKID:     env("MANYFORGE_JWT_ACTIVE_KID", ""),
+		JWTVerifyKeys:    env("MANYFORGE_JWT_VERIFY_KEYS", ""),
 	}
 
 	ttl, err := envDuration("MANYFORGE_ACCESS_TOKEN_TTL", 15*time.Minute)
@@ -142,6 +147,21 @@ func Load() (Config, error) {
 	}
 	if cfg.RateLimitBurst, err = envFloat("MANYFORGE_RATELIMIT_BURST", 20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_RATELIMIT_BURST: %w", err)
+	}
+
+	// Persistent JWT signing key (Task 1.1): supplied inline (…_PEM) or via a
+	// file path (…_PEM_PATH), mirroring the DKIM key pattern below. Unset ⇒ the
+	// server falls back to the ephemeral dev key ring (see main.go); a
+	// configured-but-unreadable path is a hard config error.
+	cfg.JWTSigningKeyPEM = os.Getenv("MANYFORGE_JWT_SIGNING_KEY_PEM")
+	if cfg.JWTSigningKeyPEM == "" {
+		if p := os.Getenv("MANYFORGE_JWT_SIGNING_KEY_PEM_PATH"); p != "" {
+			b, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return Config{}, fmt.Errorf("MANYFORGE_JWT_SIGNING_KEY_PEM_PATH: %w", rerr)
+			}
+			cfg.JWTSigningKeyPEM = string(b)
+		}
 	}
 
 	// Support desk (spec 002).

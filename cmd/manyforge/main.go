@@ -96,14 +96,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Dev key ring: ephemeral EdDSA keys. Tokens do not survive a restart;
-	// configure persistent keys for production (see research R4).
-	ring, err := auth.NewDevKeyRing(cfg.JWTIssuer, cfg.JWTAudience)
+	// JWT key ring: load a persistent Ed25519 key from config (Task 1.1) when
+	// MANYFORGE_JWT_ACTIVE_KID + MANYFORGE_JWT_SIGNING_KEY_PEM[_PATH] are set,
+	// so access tokens survive restarts and verify across replicas. Falls back
+	// to an ephemeral dev key ring when unconfigured (see research R4).
+	ring, configured, err := auth.LoadKeyRing(cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTActiveKID, cfg.JWTSigningKeyPEM, cfg.JWTVerifyKeys)
 	if err != nil {
-		logger.Error("build key ring", "err", err)
+		logger.Error("load configured JWT keys", "err", err)
 		os.Exit(1)
 	}
-	logger.Warn("using ephemeral dev JWT keys; access tokens are invalid across restarts")
+	if configured {
+		logger.Info("using configured JWT keys", "kid", cfg.JWTActiveKID)
+	} else {
+		ring, err = auth.NewDevKeyRing(cfg.JWTIssuer, cfg.JWTAudience)
+		if err != nil {
+			logger.Error("build key ring", "err", err)
+			os.Exit(1)
+		}
+		logger.Warn("using ephemeral dev JWT keys; access tokens are invalid across restarts")
+	}
 
 	acctSvc := &account.Service{
 		DB: database, Ring: ring, Mailer: mailer.LogMailer{Logger: logger},
