@@ -27,3 +27,8 @@ data:
   # — the namespace this chart's sandbox-namespace.yaml/rbac.yaml/
   # sandbox-egress-proxy.yaml templates actually create the sandbox objects in.
   MANYFORGE_SANDBOX_NAMESPACE: {{ .Values.sandbox.namespace | quote }}
+  # Image-pull secret NAME the KubeRunner attaches to every per-review Job
+  # (internal/platform/config/config.go SandboxPullSecret). MUST match a
+  # Secret of this name in the sandbox namespace above — see the
+  # imagePullSecrets note in values.yaml.
+  MANYFORGE_SANDBOX_PULL_SECRET: {{ .Values.sandbox.pullSecret | quote }}

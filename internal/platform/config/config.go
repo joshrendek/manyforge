@@ -138,6 +138,13 @@ type Config struct {
 	// Defaults to "manyforge-sandbox", matching the chart's
 	// .Values.sandbox.namespace default — keep the two in sync.
 	SandboxNamespace string
+	// SandboxPullSecret is the name of the image-pull Secret the KubeRunner
+	// attaches to every per-review Job's PodSpec (imagePullSecrets), so a
+	// private sandbox image (opencode-sandbox, egress-proxy) can be pulled in
+	// the dedicated sandbox namespace. Env: MANYFORGE_SANDBOX_PULL_SECRET.
+	// Default: "ghcr-auth", matching the chart's imagePullSecrets default —
+	// keep the two in sync (see charts/manyforge/values.yaml sandbox.pullSecret).
+	SandboxPullSecret string
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -331,6 +338,7 @@ func Load() (Config, error) {
 	// derive from this, not from kube.Namespace() (which reads the app pod's
 	// OWN namespace — the wrong value here).
 	cfg.SandboxNamespace = env("MANYFORGE_SANDBOX_NAMESPACE", "manyforge-sandbox")
+	cfg.SandboxPullSecret = env("MANYFORGE_SANDBOX_PULL_SECRET", "ghcr-auth")
 
 	return cfg, nil
 }

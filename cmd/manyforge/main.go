@@ -405,6 +405,10 @@ func main() {
 			// run's provider host against it up front (manyforge-0qj).
 			EgressAllow: netsafe.ParseHostAllowlist(cfg.SandboxEgressAllow),
 			Pricing:     orModels,
+			// Kube mode's app pod is distroless (no git, no shell, read-only root FS):
+			// runJob must not clone host-side there — the KubeRunner clones in-cluster
+			// via its own init container instead. See CodeReviewService.ClonesInSandbox.
+			ClonesInSandbox: cfg.SandboxMode == "kube",
 		}
 		codingH = &coding.Handler{
 			RepoSvc:      repoSvc,
@@ -1119,7 +1123,7 @@ func buildSandboxRunner(ctx context.Context, cfg config.Config, logger *slog.Log
 			Namespace:  cfg.SandboxNamespace,
 			ProxyAddr:  "http://egress-proxy." + cfg.SandboxNamespace + ":8080",
 			Image:      cfg.SandboxImage,
-			PullSecret: "ghcr-auth",
+			PullSecret: cfg.SandboxPullSecret,
 		}
 	case "off":
 		logger.Info("code-review sandbox disabled (MANYFORGE_SANDBOX_MODE=off); local-provider reviews only")

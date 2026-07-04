@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -745,14 +746,14 @@ func TestCodeReviewFallbackModelOnRetry(t *testing.T) {
 		rr := &recordingRunner{}
 		// Build service with openrouter.ai in the egress allowlist.
 		svc := &CodeReviewService{
-			DB:       tdb.App,
-			Repos:    env.Repos,
-			Sandbox:  rr,
-			Creds:    fakeCred,
-			Image:    "opencode:stub",
-			WorkRoot: t.TempDir(),
-			Timeout:  30 * time.Second,
-			Clone:    fakeClone,
+			DB:          tdb.App,
+			Repos:       env.Repos,
+			Sandbox:     rr,
+			Creds:       fakeCred,
+			Image:       "opencode:stub",
+			WorkRoot:    t.TempDir(),
+			Timeout:     30 * time.Second,
+			Clone:       fakeClone,
 			EgressAllow: netsafe.ParseHostAllowlist("openrouter.ai"),
 		}
 		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
@@ -774,5 +775,197 @@ func TestCodeReviewFallbackModelOnRetry(t *testing.T) {
 	}
 	if got := run(2); got != "google/gemini-2.5-flash" {
 		t.Fatalf("attempts=2 should use the fallback model, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ClonesInSandbox (kube-mode host-clone fix): the distroless app pod has no
+// git/shell, so runJob must skip the host-side clone entirely when the
+// configured runner clones in-cluster itself — while the SSRF guard
+// (checkCloneURL) keeps running in every mode.
+// ---------------------------------------------------------------------------
+
+// recordingClone counts host-side clone invocations and otherwise behaves like
+// fakeClone (creates destDir + a placeholder file), so a case where it IS
+// legitimately invoked (ClonesInSandbox=false) still lets the run succeed.
+type recordingClone struct{ calls atomic.Int32 }
+
+func (r *recordingClone) Fn(ctx context.Context, cloneURL, authHeader, sha, destDir string, allowPrivate bool) error {
+	r.calls.Add(1)
+	return fakeClone(ctx, cloneURL, authHeader, sha, destDir, allowPrivate)
+}
+
+// TestCodeReviewClonesInSandboxSkipsHostClone pins the kube-mode fix: when
+// ClonesInSandbox is true, runJob must NOT create the host WorkRoot/checkout/
+// outDir tree or invoke s.cloneFn() — the configured runner (KubeRunner in
+// production) clones the repo itself via an in-cluster init container and
+// returns results via SandboxResult.Outputs. The SSRF guard (checkCloneURL)
+// must still run in every mode — the "ssrf_guard_still_blocks..." subtest
+// proves a disallowed clone URL still fails the job even though no host clone
+// (and no sandbox run) ever happens.
+func TestCodeReviewClonesInSandboxSkipsHostClone(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc123","ref":"f"},"base":{"ref":"main"}}`)
+	fakeCred := &FakeCredResolver{Cred: AICredential{
+		APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "claude-3-5-sonnet", Provider: "anthropic",
+	}}
+
+	t.Run("succeeds_without_any_host_clone_or_workdir", func(t *testing.T) {
+		localSrv, _ := startGitHubStub(t, prJSON)
+		env := newCodingEnv(t, tdb)
+		connID := createRepoConnector(ctx, t, env, seed, localSrv.URL) // AllowPrivateBaseURL: true
+
+		rec := &recordingClone{}
+		workRoot := t.TempDir()
+		svc := &CodeReviewService{
+			DB:              tdb.App,
+			Repos:           env.Repos,
+			Sandbox:         &validFakeRunner{summary: "kube lane"},
+			Creds:           fakeCred,
+			Image:           "opencode:stub",
+			WorkRoot:        workRoot,
+			Timeout:         30 * time.Second,
+			Clone:           rec.Fn,
+			ClonesInSandbox: true,
+			EgressAllow:     netsafe.ParseHostAllowlist("api.anthropic.com"),
+		}
+
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+		}
+		if err := svc.runJob(ctx, claimed, nil); err != nil {
+			t.Fatalf("runJob: %v", err)
+		}
+
+		if n := rec.calls.Load(); n != 0 {
+			t.Fatalf("host clone must NOT be invoked when ClonesInSandbox=true, got %d call(s)", n)
+		}
+		if _, statErr := os.Stat(filepath.Join(workRoot, cr.ID.String())); !os.IsNotExist(statErr) {
+			t.Fatalf("host per-run dir must NOT be created when ClonesInSandbox=true (stat err: %v)", statErr)
+		}
+
+		got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.Status != "succeeded" {
+			t.Fatalf("want succeeded, got %s", got.Status)
+		}
+	})
+
+	t.Run("disallowed_host_still_fails_before_any_clone_or_sandbox", func(t *testing.T) {
+		// A loopback connector with AllowPrivateBaseURL=false must never reach the
+		// clone/sandbox step, ClonesInSandbox=true or not. In this end-to-end path the
+		// github connector's own SSRF-guarded HTTP client (used for FetchPR) shares the
+		// same host + AllowPrivateBaseURL flag as the derived clone URL, so it is what
+		// actually rejects the loopback host first here — checkCloneURL's OWN blocking
+		// behavior in isolation is pinned precisely (and hermetically, without this
+		// FetchPR coupling) by TestCheckCloneURLDirect in clone_test.go, and that
+		// runJob calls it unconditionally is pinned at the source level by
+		// MF-KUBE-SANDBOX-23 (internal/security_regression/mf_kube_sandbox_test.go).
+		// What this test proves end-to-end: a disallowed host NEVER reaches the host
+		// clone recorder or the sandbox runner, even when ClonesInSandbox=true.
+		//
+		// This uses a fake repoResolver (bypassing RepoConnectorService.Create, which
+		// independently requires https unless AllowPrivateBaseURL is set — a
+		// create-time policy check, not the runtime SSRF guard under test here) so the
+		// resolved connector can carry a loopback BaseURL with AllowPrivateBaseURL=
+		// false. A real (safely-configured) repo_connector row is still created so the
+		// code_review row's FK constraint is satisfied — only svc.Repos (what the
+		// service actually consults) is faked.
+		localSrv, _ := startGitHubStub(t, prJSON)
+		env := newCodingEnv(t, tdb)
+		connID := createRepoConnector(ctx, t, env, seed, "https://api.github.com")
+
+		fakeRepoResolver := &fakeRepos{rc: connectors.ResolvedRepoConnector{
+			Type:                "github",
+			BaseURL:             localSrv.URL,
+			Repo:                "o/r",
+			AllowPrivateBaseURL: false,
+			Credential:          connectors.Credential{APIToken: "ghp_test_token"},
+		}}
+
+		rec := &recordingClone{}
+		runner := &sandbox.FakeRunner{}
+		svc := &CodeReviewService{
+			DB:              tdb.App,
+			Repos:           fakeRepoResolver,
+			Sandbox:         runner,
+			Creds:           fakeCred,
+			Image:           "opencode:stub",
+			WorkRoot:        t.TempDir(),
+			Timeout:         30 * time.Second,
+			Clone:           rec.Fn,
+			ClonesInSandbox: true,
+			EgressAllow:     netsafe.ParseHostAllowlist("api.anthropic.com"),
+		}
+
+		cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		claimed := ClaimedReview{
+			ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+		}
+		if err := svc.runJob(ctx, claimed, nil); err == nil {
+			t.Fatal("runJob: want an error for a disallowed/blocked clone host, got nil")
+		}
+		if n := rec.calls.Load(); n != 0 {
+			t.Fatalf("host clone must not be invoked even in the blocked case, got %d call(s)", n)
+		}
+		if runner.Last.Image != "" {
+			t.Error("sandbox must NOT be invoked when the clone host is blocked")
+		}
+	})
+}
+
+// TestCodeReviewClonesInSandboxFalseStillClonesHostSide is the mirror regression check:
+// with the zero-value default (ClonesInSandbox=false — docker/off/tests), the host
+// clone MUST still run exactly as before this change, proving the fix is additive and
+// does not alter the existing docker code path.
+func TestCodeReviewClonesInSandboxFalseStillClonesHostSide(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc123","ref":"f"},"base":{"ref":"main"}}`)
+	localSrv, _ := startGitHubStub(t, prJSON)
+	fakeCred := &FakeCredResolver{Cred: AICredential{
+		APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "claude-3-5-sonnet", Provider: "anthropic",
+	}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
+
+	rec := &recordingClone{}
+	svc := &CodeReviewService{
+		DB:       tdb.App,
+		Repos:    env.Repos,
+		Sandbox:  &validFakeRunner{summary: "docker lane"},
+		Creds:    fakeCred,
+		Image:    "opencode:stub",
+		WorkRoot: t.TempDir(),
+		Timeout:  30 * time.Second,
+		Clone:    rec.Fn,
+		// ClonesInSandbox intentionally omitted (zero value = false): docker/off/tests.
+		EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com"),
+	}
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed, nil); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	if n := rec.calls.Load(); n != 1 {
+		t.Fatalf("host clone must be invoked exactly once when ClonesInSandbox=false, got %d call(s)", n)
 	}
 }

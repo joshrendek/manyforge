@@ -132,16 +132,25 @@ func TestKubeSandboxOpencodePermissionProfile(t *testing.T) {
 	}
 }
 
-// TestKubeSandboxHostSideSSRFGuardRetained pins M1: runJob must still clone
-// the PR head host-side via s.cloneFn() (CloneAtSHA's checkCloneURL SSRF
-// guard) before ever touching the sandbox — regardless of which
-// sandbox.SandboxRunner (DockerRunner or KubeRunner) executes the review.
-// KubeRunner's own init-container clone (cloneScript) is a second,
-// defense-in-depth layer, NOT a substitute for this host-side validation.
+// TestKubeSandboxHostSideSSRFGuardRetained pins M1 (revised for the kube-mode
+// host-clone fix): runJob must ALWAYS run the SSRF guard checkCloneURL before
+// the sandbox runs — regardless of which sandbox.SandboxRunner (DockerRunner
+// or KubeRunner) executes the review, and regardless of whether runJob itself
+// performs the host-side git clone.
+//
+// The host-side git clone (s.cloneFn()/CloneAtSHA) is NO LONGER entrenched for
+// every runner: kube mode's app pod is gcr.io/distroless/static:nonroot (no
+// git, no shell, read-only root FS), so CodeReviewService.ClonesInSandbox lets
+// runJob skip the host clone entirely and rely on the KubeRunner's own
+// in-cluster init-container clone (cloneScript) instead — that init container
+// is a second, defense-in-depth layer, not a substitute for this check. What
+// must never regress is the SSRF validation itself: checkCloneURL is pure
+// (url.Parse + net.LookupIP + netsafe.IsBlocked, no git/exec) and therefore
+// runs safely in EVERY mode, so it is the property this pin now enforces.
 func TestKubeSandboxHostSideSSRFGuardRetained(t *testing.T) {
 	svc := mustRead(t, "../agents/coding/service.go")
 
-	if !strings.Contains(svc, "s.cloneFn()(ctx, conn.CloneURL(), authHeader, pr.HeadSHA, checkout, rc.AllowPrivateBaseURL)") {
-		t.Error("MF-KUBE-SANDBOX-23: runJob must clone via the SSRF-checked s.cloneFn() before the sandbox runs — pin broken, update this pin in the same change if the refactor is intentional")
+	if !strings.Contains(svc, "checkCloneURL(conn.CloneURL(), rc.AllowPrivateBaseURL)") {
+		t.Error("MF-KUBE-SANDBOX-23: runJob must always validate the clone URL via checkCloneURL (the SSRF guard) before any runner (docker or kube) executes the review — pin broken, update this pin in the same change if the refactor is intentional")
 	}
 }

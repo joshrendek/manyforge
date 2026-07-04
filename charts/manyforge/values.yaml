@@ -23,12 +23,15 @@ image:
 
 # Pulled by both the app Deployment and the migrate Job.
 # NOTE: this Secret is namespace-scoped, so it must ALSO exist, under the SAME
-# name (ghcr-auth), in the sandbox namespace (sandbox.namespace below, e.g.
-# manyforge-sandbox) — NOT only in this release namespace. The egress-proxy
-# Deployment (sandbox-egress-proxy.yaml) references .Values.imagePullSecrets
-# and every KubeRunner-created review Job references PullSecret "ghcr-auth"
-# (cmd/manyforge/main.go), both of which are created IN the sandbox namespace,
-# so both pulls fail until that second copy of the secret is created there too.
+# name (ghcr-auth by default), in the sandbox namespace (sandbox.namespace
+# below, e.g. manyforge-sandbox) — NOT only in this release namespace. The
+# egress-proxy Deployment (sandbox-egress-proxy.yaml) references
+# .Values.imagePullSecrets and every KubeRunner-created review Job references
+# sandbox.pullSecret below (threaded to MANYFORGE_SANDBOX_PULL_SECRET, see
+# configmap.yaml), both of which are created IN the sandbox namespace, so both
+# pulls fail until that second copy of the secret is created there too. Keep
+# this list's name(s) and sandbox.pullSecret in sync unless you intentionally
+# use a different pull secret for sandbox Jobs.
 imagePullSecrets:
   - name: ghcr-auth
 
@@ -135,6 +138,13 @@ sandbox:
   egressProxyImage: "ghcr.io/joshrendek/manyforge/egress-proxy:latest"
   egressAllow: "api.anthropic.com,openrouter.ai,api.openai.com"
   mode: "kube"
+  # Name of the image-pull Secret the KubeRunner attaches to every per-review
+  # Job's PodSpec (internal/platform/config/config.go SandboxPullSecret, env
+  # MANYFORGE_SANDBOX_PULL_SECRET). MUST match a Secret of this name that
+  # already exists in `namespace` above (the sandbox namespace) — see the
+  # imagePullSecrets note above for why that's a separate copy from the
+  # release-namespace one.
+  pullSecret: ghcr-auth
 
 # ---------------------------------------------------------------------------
 # Secret wiring — NAMES AND KEYS ONLY. Every value below points at a Secret
