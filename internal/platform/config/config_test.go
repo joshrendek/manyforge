@@ -236,6 +236,36 @@ func TestSandboxMode(t *testing.T) {
 	})
 }
 
+// TestSandboxNamespace pins the Task 4.5 RBAC/DNS fix: SandboxNamespace must
+// default to "manyforge-sandbox" (matching the chart's
+// .Values.sandbox.namespace default) and be overridable via
+// MANYFORGE_SANDBOX_NAMESPACE — this is the single source of truth the
+// KubeRunner's Namespace and the egress-proxy ProxyAddr both derive from in
+// main.go, instead of kube.Namespace() (the app pod's own namespace).
+func TestSandboxNamespace(t *testing.T) {
+	t.Run("defaults to manyforge-sandbox", func(t *testing.T) {
+		t.Setenv("MANYFORGE_SANDBOX_NAMESPACE", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxNamespace != "manyforge-sandbox" {
+			t.Fatalf("SandboxNamespace = %q, want %q", cfg.SandboxNamespace, "manyforge-sandbox")
+		}
+	})
+
+	t.Run("explicit value is honored", func(t *testing.T) {
+		t.Setenv("MANYFORGE_SANDBOX_NAMESPACE", "custom-sandbox-ns")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxNamespace != "custom-sandbox-ns" {
+			t.Fatalf("SandboxNamespace = %q, want %q", cfg.SandboxNamespace, "custom-sandbox-ns")
+		}
+	})
+}
+
 func TestLocalReviewTimeout(t *testing.T) {
 	t.Run("default 30m", func(t *testing.T) {
 		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "")

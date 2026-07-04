@@ -21,3 +21,9 @@ data:
   # "kube" is the Talos deploy target's mode — see sandbox-egress-proxy.yaml
   # and rbac.yaml for the cluster objects that mode depends on.
   MANYFORGE_SANDBOX_MODE: {{ .Values.sandbox.mode | quote }}
+  # Single source of truth for the sandbox namespace: the KubeRunner creates
+  # per-review Jobs/Secrets/ConfigMaps here, and the egress-proxy ProxyAddr
+  # (cmd/manyforge/main.go) is derived from it. MUST match .Values.sandbox.namespace
+  # — the namespace this chart's sandbox-namespace.yaml/rbac.yaml/
+  # sandbox-egress-proxy.yaml templates actually create the sandbox objects in.
+  MANYFORGE_SANDBOX_NAMESPACE: {{ .Values.sandbox.namespace | quote }}

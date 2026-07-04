@@ -128,6 +128,16 @@ type Config struct {
 	// is set (running in-cluster), else "docker". Any other value is a hard config
 	// error caught here.
 	SandboxMode string
+	// SandboxNamespace is the namespace the KubeRunner creates per-review Jobs/
+	// Secrets/ConfigMaps in, and the namespace the egress-proxy Service lives in
+	// (ProxyAddr is derived from it in main.go). This is deliberately NOT
+	// kube.Namespace() — that helper reads the RUNNING POD's own namespace (the
+	// app's release namespace), which is a different namespace than the
+	// dedicated sandbox namespace the Role/RoleBinding in charts/manyforge/
+	// templates/rbac.yaml grant access to. Env: MANYFORGE_SANDBOX_NAMESPACE.
+	// Defaults to "manyforge-sandbox", matching the chart's
+	// .Values.sandbox.namespace default — keep the two in sync.
+	SandboxNamespace string
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -315,6 +325,12 @@ func Load() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("MANYFORGE_SANDBOX_MODE: must be off|docker|kube, got %q", cfg.SandboxMode)
 	}
+
+	// Single source of truth for the sandbox namespace (Task 4.5 fix): the
+	// KubeRunner's Namespace and the egress-proxy ProxyAddr in main.go both
+	// derive from this, not from kube.Namespace() (which reads the app pod's
+	// OWN namespace — the wrong value here).
+	cfg.SandboxNamespace = env("MANYFORGE_SANDBOX_NAMESPACE", "manyforge-sandbox")
 
 	return cfg, nil
 }

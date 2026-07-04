@@ -1116,8 +1116,8 @@ func buildSandboxRunner(ctx context.Context, cfg config.Config, logger *slog.Log
 		}
 		return &kube.KubeRunner{
 			CS:         cs,
-			Namespace:  kube.Namespace(),
-			ProxyAddr:  "http://egress-proxy.manyforge-sandbox:8080",
+			Namespace:  cfg.SandboxNamespace,
+			ProxyAddr:  "http://egress-proxy." + cfg.SandboxNamespace + ":8080",
 			Image:      cfg.SandboxImage,
 			PullSecret: "ghcr-auth",
 		}

@@ -22,6 +22,13 @@ image:
   tag: latest # {"$imagepolicy": "flux-system:manyforge:tag"}
 
 # Pulled by both the app Deployment and the migrate Job.
+# NOTE: this Secret is namespace-scoped, so it must ALSO exist, under the SAME
+# name (ghcr-auth), in the sandbox namespace (sandbox.namespace below, e.g.
+# manyforge-sandbox) — NOT only in this release namespace. The egress-proxy
+# Deployment (sandbox-egress-proxy.yaml) references .Values.imagePullSecrets
+# and every KubeRunner-created review Job references PullSecret "ghcr-auth"
+# (cmd/manyforge/main.go), both of which are created IN the sandbox namespace,
+# so both pulls fail until that second copy of the secret is created there too.
 imagePullSecrets:
   - name: ghcr-auth
 
@@ -118,6 +125,11 @@ sandbox:
   # A dedicated namespace (restricted Pod Security Standard) keeps per-review
   # Jobs — and the RBAC granting the app access to create them — isolated from
   # the app's own release namespace. See sandbox-namespace.yaml, rbac.yaml.
+  # Threaded to the app as MANYFORGE_SANDBOX_NAMESPACE (configmap.yaml) — the
+  # single source of truth internal/platform/config/config.go's SandboxNamespace
+  # reads, so the app and this chart can never disagree on which namespace the
+  # KubeRunner targets. REMINDER: imagePullSecrets (above) must also be copied
+  # into this namespace — see the note there.
   namespace: manyforge-sandbox
   image: "ghcr.io/joshrendek/manyforge/opencode-sandbox:latest"
   egressProxyImage: "ghcr.io/joshrendek/manyforge/egress-proxy:latest"
