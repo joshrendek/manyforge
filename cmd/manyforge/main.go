@@ -48,6 +48,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
+	"github.com/manyforge/manyforge/internal/webui"
 	"github.com/manyforge/manyforge/migrations"
 
 	"github.com/google/uuid"
@@ -621,6 +622,15 @@ func main() {
 		crmWrite:         httpx.RequirePermission(database, permResolve, authz.PermCRMWrite, businessIDFromPath),
 		codingReviews:    codingH,
 	})
+
+	// Same-origin Angular SPA (Task 1.2). Only registered in ui_embed builds —
+	// webui.Handler() returns (nil, false) otherwise, so dev/test/`make test`
+	// never need a built frontend. chi is a trie matched by specificity, not
+	// registration order: "/api/v1/*", "/healthz", "/readyz", and "/metrics"
+	// above all win over this catch-all regardless of where it's mounted.
+	if h, ok := webui.Handler(); ok {
+		mux.Handle("/*", h)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
