@@ -26,9 +26,9 @@ imagePullSecrets:
   - name: ghcr-auth
 
 serviceAccount:
-  # The app needs to talk to the Kubernetes API starting in Phase 4 (in-cluster
-  # sandbox Jobs). The RBAC Role/RoleBinding granting that access is created in
-  # Phase 4, not here — this chart only provisions the identity.
+  # The app talks to the Kubernetes API for kube-mode sandbox reviews
+  # (in-cluster Jobs). The RBAC Role/RoleBinding granting that access lives in
+  # rbac.yaml, scoped to the sandbox namespace only.
   annotations: {}
 
 podAnnotations: {}
@@ -111,12 +111,16 @@ accessTokenTTL: 15m
 trustedProxyCidr: ""
 
 sandbox:
-  # Consumed by the code-review sandbox runner. MANYFORGE_SANDBOX_MODE is not
-  # read by config.go yet (lands in Phase 4's in-cluster sandbox runner); it's
-  # still wired into the ConfigMap now because an env var the binary doesn't
-  # recognize yet is harmless, and it avoids a second chart change in Phase 4.
-  image: "manyforge/opencode-sandbox:dev"
-  egressProxyImage: "manyforge/egress-proxy:dev"
+  # Consumed by the code-review sandbox runner (internal/agents/coding/sandbox)
+  # and, below, by this chart's own sandbox namespace/egress-proxy/RBAC
+  # templates (Task 4.5, Phase 4 k8s-native sandbox).
+  enabled: true
+  # A dedicated namespace (restricted Pod Security Standard) keeps per-review
+  # Jobs — and the RBAC granting the app access to create them — isolated from
+  # the app's own release namespace. See sandbox-namespace.yaml, rbac.yaml.
+  namespace: manyforge-sandbox
+  image: "ghcr.io/joshrendek/manyforge/opencode-sandbox:latest"
+  egressProxyImage: "ghcr.io/joshrendek/manyforge/egress-proxy:latest"
   egressAllow: "api.anthropic.com,openrouter.ai,api.openai.com"
   mode: "kube"
 

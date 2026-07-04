@@ -17,6 +17,7 @@ data:
   MANYFORGE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
   MANYFORGE_EGRESS_PROXY_IMAGE: {{ .Values.sandbox.egressProxyImage | quote }}
   MANYFORGE_SANDBOX_EGRESS_ALLOW: {{ .Values.sandbox.egressAllow | quote }}
-  # Not yet read by config.go (lands in Phase 4); harmless to set now since an
-  # unrecognized env var is a no-op for the current binary.
+  # Selects the code-review sandbox runner (internal/platform/config/config.go);
+  # "kube" is the Talos deploy target's mode — see sandbox-egress-proxy.yaml
+  # and rbac.yaml for the cluster objects that mode depends on.
   MANYFORGE_SANDBOX_MODE: {{ .Values.sandbox.mode | quote }}

@@ -1,0 +1,90 @@
+{{- if .Values.sandbox.enabled }}
+# The long-lived CONNECT-only allowlisting proxy the KubeRunner forces every
+# review Job's egress through (HTTPS_PROXY/HTTP_PROXY, see buildJob in
+# internal/agents/coding/sandbox/kube/runner.go). It is the "kube" mode
+# equivalent of DockerRunner's EnsureEgressInfra-managed container — but
+# always-on (deployed by this chart, not lazily started by the app process)
+# since there's no docker daemon in-cluster to shell out to.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+  namespace: {{ .Values.sandbox.namespace }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-egress-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: egress-proxy
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: egress-proxy
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Satisfies the sandbox namespace's `restricted` Pod Security Standard
+      # (see sandbox-namespace.yaml): non-root, dropped capabilities, no
+      # privilege escalation, read-only root fs (the proxy makes no writes at
+      # all — cmd/mf-egress-proxy/main.go — so it needs no scratch volume).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: egress-proxy
+          image: {{ .Values.sandbox.egressProxyImage }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: EGRESS_ALLOW
+              value: {{ .Values.sandbox.egressAllow | quote }}
+            - name: LISTEN
+              value: ":8080"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+# ClusterIP so the in-cluster DNS name egress-proxy.{{ .Values.sandbox.namespace }}:8080
+# resolves — this is exactly the ProxyAddr KubeRunner is constructed with in
+# cmd/manyforge/main.go's buildSandboxRunner ("kube" branch).
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+  namespace: {{ .Values.sandbox.namespace }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-egress-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: egress-proxy
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+{{- end }}

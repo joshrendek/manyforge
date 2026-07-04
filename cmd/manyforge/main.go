@@ -25,6 +25,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents"
 	"github.com/manyforge/manyforge/internal/agents/coding"
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
+	"github.com/manyforge/manyforge/internal/agents/coding/sandbox/kube"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/jira"
@@ -391,14 +392,10 @@ func main() {
 			connVault = secrets.NewVault(connSealer)
 		}
 		repoSvc := &connectors.RepoConnectorService{DB: database, Vault: connVault}
-		egressAllow := strings.Split(cfg.SandboxEgressAllow, ",")
-		if err := sandbox.EnsureEgressInfra(ctx, cfg.EgressProxyImage, egressAllow); err != nil {
-			logger.Warn("sandbox egress infra unavailable; coding reviews will fail at run time", "err", err)
-		}
 		codingSvc = &coding.CodeReviewService{
 			DB:           database,
 			Repos:        repoSvc,
-			Sandbox:      sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr),
+			Sandbox:      buildSandboxRunner(ctx, cfg, logger),
 			Creds:        &coding.AgentCredResolver{Agents: agentSvc, Credentials: credSvc},
 			Image:        cfg.SandboxImage,
 			WorkRoot:     cfg.SandboxWorkRoot,
@@ -1084,4 +1081,54 @@ func parseTrustedCIDRs(s string, logger *slog.Logger) []*net.IPNet {
 		out = append(out, n)
 	}
 	return out
+}
+
+// buildSandboxRunner selects the code-review sandbox backend by cfg.SandboxMode
+// (Phase 4, Task 4.5 — k8s-native sandbox). "docker" preserves the original
+// Spec 007 behavior unchanged: EnsureEgressInfra boots the local egress-proxy
+// container (non-fatal on error — a missing Docker daemon just means reviews
+// fail at run time, not that the server won't boot) and DockerRunner shells
+// out to `docker run`.
+//
+// "kube" is the Talos deploy target, which has no Docker daemon for
+// DockerRunner to shell out to: it builds an in-cluster Kubernetes clientset
+// and runs each review as a hardened Job instead. EnsureEgressInfra is
+// deliberately NOT called here — it's docker-only; the chart deploys the
+// egress-proxy Deployment/Service directly (see
+// charts/manyforge/templates/sandbox-egress-proxy.yaml), and ProxyAddr below
+// points at its in-cluster Service DNS name. A clientset build failure (e.g.
+// this binary isn't actually running in-cluster — a misconfigured
+// MANYFORGE_SANDBOX_MODE, or a dev box) is logged and falls back to the
+// docker runner rather than crashing the whole server: cloud reviews then
+// fail at run time, but the rest of the app still boots.
+//
+// "off" skips sandbox setup entirely — LOCAL-provider reviews still run
+// host-side in CodeReviewService without a runner at all; only cloud/
+// sandboxed reviews need one, and those fail at run time under this
+// placeholder DockerRunner.
+func buildSandboxRunner(ctx context.Context, cfg config.Config, logger *slog.Logger) sandbox.SandboxRunner {
+	switch cfg.SandboxMode {
+	case "kube":
+		cs, err := kube.InClusterClientset()
+		if err != nil {
+			logger.Error("kube sandbox: not in-cluster", "err", err)
+			return sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr)
+		}
+		return &kube.KubeRunner{
+			CS:         cs,
+			Namespace:  kube.Namespace(),
+			ProxyAddr:  "http://egress-proxy.manyforge-sandbox:8080",
+			Image:      cfg.SandboxImage,
+			PullSecret: "ghcr-auth",
+		}
+	case "off":
+		logger.Info("code-review sandbox disabled (MANYFORGE_SANDBOX_MODE=off); local-provider reviews only")
+		return sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr)
+	default: // "docker"
+		egressAllow := strings.Split(cfg.SandboxEgressAllow, ",")
+		if err := sandbox.EnsureEgressInfra(ctx, cfg.EgressProxyImage, egressAllow); err != nil {
+			logger.Warn("sandbox egress infra unavailable; coding reviews will fail at run time", "err", err)
+		}
+		return sandbox.NewDockerRunner(sandbox.NetworkName, sandbox.ProxyDNSAddr)
+	}
 }
