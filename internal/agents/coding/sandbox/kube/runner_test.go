@@ -2,7 +2,9 @@ package kube
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -567,5 +569,233 @@ func TestParsePodLogs_TruncatedBlock(t *testing.T) {
 	}
 	if v, ok := outputs["review.json"]; ok {
 		t.Fatalf("outputs[review.json]: want absent for a truncated block, got %q", v)
+	}
+}
+
+// TestParsePodLogs_GarbledBase64Block pins the IMPORTANT fix: a well-formed
+// BEGIN/END block whose payload isn't valid base64 (a garbled write) must
+// return an error, not silently drop the block — the old `decErr == nil` gate
+// on the base64 decode discarded a corrupt result exactly like a truncated
+// one, just without a matching signal to the caller.
+func TestParsePodLogs_GarbledBase64Block(t *testing.T) {
+	nonce := "garbled-nonce"
+	var b strings.Builder
+	b.WriteString("narration: starting\n")
+	fmt.Fprintf(&b, "===MF-REVIEW-%s-BEGIN===\n", nonce)
+	b.WriteString("!!!not-valid-base64!!!")
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "===MF-REVIEW-%s-END===\n", nonce)
+	b.WriteString("narration: done\n")
+
+	outputs, _, err := parsePodLogs(strings.NewReader(b.String()), nonce, nil)
+	if err == nil {
+		t.Fatal("parsePodLogs: want error for a garbled base64 payload, got nil")
+	}
+	if v, ok := outputs["review.json"]; ok {
+		t.Fatalf("outputs[review.json]: want absent for a garbled payload, got %q", v)
+	}
+}
+
+// TestParsePodLogs_PartialMerge_GoodKeySurvivesBadKey pins the partial-merge
+// requirement: a genuinely truncated usage.json block must not cause a GOOD,
+// fully-decoded review.json to be discarded too. parsePodLogs must return
+// whatever it successfully decoded (review.json) alongside the error for the
+// key that failed (usage.json) — the caller (Run) is responsible for keeping
+// the good key rather than throwing the whole result away because one key
+// among several failed.
+func TestParsePodLogs_PartialMerge_GoodKeySurvivesBadKey(t *testing.T) {
+	nonce := "partial-nonce"
+	reviewJSON := []byte(`{"summary":"good","findings":[]}`)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "===MF-REVIEW-%s-BEGIN===\n", nonce)
+	b.WriteString(base64.StdEncoding.EncodeToString(reviewJSON))
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "===MF-REVIEW-%s-END===\n", nonce)
+	fmt.Fprintf(&b, "===MF-USAGE-%s-BEGIN===\n", nonce)
+	b.WriteString(base64.StdEncoding.EncodeToString([]byte(`{"cost":0.5}`)))
+	b.WriteString("\n")
+	// No END marker for usage.json — truncated mid-write.
+
+	outputs, _, err := parsePodLogs(strings.NewReader(b.String()), nonce, nil)
+	if err == nil {
+		t.Fatal("parsePodLogs: want error for the truncated usage.json block, got nil")
+	}
+	if got := outputs["review.json"]; string(got) != string(reviewJSON) {
+		t.Fatalf("outputs[review.json]: want the good key to survive, got %q (outputs=%+v)", got, outputs)
+	}
+	if v, ok := outputs["usage.json"]; ok {
+		t.Fatalf("outputs[usage.json]: want absent for the truncated key, got %q", v)
+	}
+}
+
+// TestKubeRunner_Run_SurfacesTruncatedMarkerError proves the CRITICAL fix
+// end-to-end through Run(), not just parsePodLogs in isolation: when the
+// authoritative re-read (rereadPodLogsFn, seamed here since the fake
+// clientset has no real Pods().GetLogs() plumbing behind it) hits a genuine
+// parse error, Run() must return that error rather than silently returning
+// (res, nil) — the exact silent-zero-cost class d2bf8a2 already fixed once
+// for the cost/usage parsing itself.
+func TestKubeRunner_Run_SurfacesTruncatedMarkerError(t *testing.T) {
+	origPoll := pollInterval
+	pollInterval = 5 * time.Millisecond
+	defer func() { pollInterval = origPoll }()
+
+	cs := fake.NewSimpleClientset()
+	r := &KubeRunner{CS: cs, Namespace: "mf-sandbox", ProxyAddr: "http://proxy:8080", PullSecret: "ghcr-auth"}
+
+	wantErr := errors.New("boom: truncated usage.json marker block")
+	r.rereadPodLogsFn = func(_ context.Context, _, _ string) (map[string][]byte, []byte, error) {
+		return nil, nil, wantErr
+	}
+
+	go succeedJobWhenCreated(t, cs)
+
+	res, err := r.Run(t.Context(), testSpec())
+	if err == nil {
+		t.Fatal("Run: want error surfaced from a genuine pod-log parse failure, got nil")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Run: want error wrapping %v, got %v", wantErr, err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("ExitCode: want 0 (the Job itself succeeded; the parse error is separate), got %d", res.ExitCode)
+	}
+}
+
+// TestKubeRunner_Run_PartialMerge_KeepsGoodOutputWhenOtherTruncated proves the
+// partial-merge requirement through Run() itself: rereadPodLogsFn returns a
+// GOOD review.json alongside an error for a truncated usage.json (mirroring
+// what parsePodLogs itself now returns per
+// TestParsePodLogs_PartialMerge_GoodKeySurvivesBadKey). Run() must surface the
+// error AND keep the good review.json in the result — not discard it.
+func TestKubeRunner_Run_PartialMerge_KeepsGoodOutputWhenOtherTruncated(t *testing.T) {
+	origPoll := pollInterval
+	pollInterval = 5 * time.Millisecond
+	defer func() { pollInterval = origPoll }()
+
+	cs := fake.NewSimpleClientset()
+	r := &KubeRunner{CS: cs, Namespace: "mf-sandbox", ProxyAddr: "http://proxy:8080", PullSecret: "ghcr-auth"}
+
+	reviewJSON := []byte(`{"summary":"good","findings":[]}`)
+	wantErr := errors.New("kube: usage.json marker block: truncated")
+	r.rereadPodLogsFn = func(_ context.Context, _, _ string) (map[string][]byte, []byte, error) {
+		return map[string][]byte{"review.json": reviewJSON}, nil, wantErr
+	}
+
+	go succeedJobWhenCreated(t, cs)
+
+	res, err := r.Run(t.Context(), testSpec())
+	if err == nil {
+		t.Fatal("Run: want error surfaced from the truncated usage.json, got nil")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Run: want error wrapping %v, got %v", wantErr, err)
+	}
+	if got := res.Outputs["review.json"]; string(got) != string(reviewJSON) {
+		t.Fatalf("res.Outputs[review.json]: want the good key kept despite the sibling error, got %q (outputs=%+v)", got, res.Outputs)
+	}
+	if _, ok := res.Outputs["usage.json"]; ok {
+		t.Fatalf("res.Outputs[usage.json]: want absent, got %+v", res.Outputs)
+	}
+}
+
+// TestKubeRunner_Run_PodNotFoundIsBenign pins that errPodNotFound from the
+// re-read (the expected case in these unit tests, and for a real run whose
+// pod genuinely never got created) stays a silent, best-effort fallback — it
+// must NOT be classified the same as a genuine parse error. This is the
+// negative-space test for the two fixes above: it proves the new error
+// path is properly scoped to real parse failures, not every rereadPodLogsFn
+// error.
+func TestKubeRunner_Run_PodNotFoundIsBenign(t *testing.T) {
+	origPoll := pollInterval
+	pollInterval = 5 * time.Millisecond
+	defer func() { pollInterval = origPoll }()
+
+	cs := fake.NewSimpleClientset()
+	r := &KubeRunner{CS: cs, Namespace: "mf-sandbox", ProxyAddr: "http://proxy:8080", PullSecret: "ghcr-auth"}
+	r.rereadPodLogsFn = func(ctx context.Context, name, nonce string) (map[string][]byte, []byte, error) {
+		return r.rereadPodLogs(ctx, name, nonce)
+	}
+
+	go succeedJobWhenCreated(t, cs)
+
+	res, err := r.Run(t.Context(), testSpec())
+	if err != nil {
+		t.Fatalf("Run: want no error for benign pod-not-found, got %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("ExitCode: want 0, got %d", res.ExitCode)
+	}
+}
+
+// succeedJobWhenCreated is shared by the Run() tests above: it polls the fake
+// clientset for the Job Run() creates and flips it to Succeeded, standing in
+// for the real Job controller the fake clientset doesn't have.
+func succeedJobWhenCreated(t *testing.T, cs *fake.Clientset) {
+	t.Helper()
+	for {
+		jobs, err := cs.BatchV1().Jobs("mf-sandbox").List(t.Context(), metav1.ListOptions{})
+		if err == nil && len(jobs.Items) > 0 {
+			job := jobs.Items[0]
+			job.Status.Succeeded = 1
+			if _, err := cs.BatchV1().Jobs("mf-sandbox").UpdateStatus(t.Context(), &job, metav1.UpdateOptions{}); err == nil {
+				return
+			}
+		}
+		select {
+		case <-t.Context().Done():
+			return
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
+// TestBenignStreamErr pins the classification helper Run() uses to decide
+// whether the live follow-stream's own error is a real signal (worth
+// surfacing when the authoritative re-read found no pod at all) or just the
+// expected artifact of Run() cancelling streamCtx once the Job is terminal.
+func TestBenignStreamErr(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, true},
+		{"context canceled", context.Canceled, true},
+		{"context deadline exceeded", context.DeadlineExceeded, true},
+		{"genuine parse error", errors.New("kube: truncated review.json marker block (BEGIN with no END)"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := benignStreamErr(tc.err); got != tc.want {
+				t.Fatalf("benignStreamErr(%v): want %v, got %v", tc.err, tc.want, got)
+			}
+		})
+	}
+}
+
+// TestMergeOutputs pins mergeOutputs' contract: src fills in only the keys
+// dst doesn't already have (the live follow-stream's result wins ties over
+// the re-read's), and a nil dst is allocated on demand.
+func TestMergeOutputs(t *testing.T) {
+	dst := map[string][]byte{"review.json": []byte("from-stream")}
+	src := map[string][]byte{
+		"review.json": []byte("from-reread-should-be-ignored"),
+		"usage.json":  []byte("from-reread"),
+	}
+	got := mergeOutputs(dst, src)
+	if string(got["review.json"]) != "from-stream" {
+		t.Fatalf("review.json: want the existing dst value preserved, got %q", got["review.json"])
+	}
+	if string(got["usage.json"]) != "from-reread" {
+		t.Fatalf("usage.json: want the new key merged in, got %q", got["usage.json"])
+	}
+
+	if got := mergeOutputs(nil, map[string][]byte{"k": []byte("v")}); got["k"] == nil {
+		t.Fatalf("mergeOutputs(nil, src): want an allocated map carrying src's keys, got %+v", got)
+	}
+	if got := mergeOutputs(nil, nil); got != nil {
+		t.Fatalf("mergeOutputs(nil, nil): want nil, got %+v", got)
 	}
 }

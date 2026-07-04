@@ -88,6 +88,15 @@ type KubeRunner struct {
 	ProxyAddr  string // e.g. http://mf-egress-proxy:8080, forced via HTTPS_PROXY/HTTP_PROXY
 	Image      string // unused: spec.Image is the source of truth for the containers' image
 	PullSecret string // e.g. "ghcr-auth"; referenced via pod.spec.imagePullSecrets
+
+	// rereadPodLogsFn seams Run's terminal-state, authoritative re-read of pod
+	// logs so tests can drive Run's error-classification/partial-merge logic
+	// (a genuine truncated/garbled marker block from rereadPodLogs must fail
+	// Run, but a good key that DID decode must still be kept) against a
+	// crafted parsePodLogs outcome, without a live cluster's Pods().GetLogs()
+	// plumbing behind it. nil (the zero value, used by every real caller)
+	// means "use r.rereadPodLogs"; only tests set this.
+	rereadPodLogsFn func(ctx context.Context, name, nonce string) (map[string][]byte, []byte, error)
 }
 
 var _ sandbox.SandboxRunner = (*KubeRunner)(nil)
@@ -158,10 +167,11 @@ func (r *KubeRunner) Run(ctx context.Context, spec sandbox.SandboxSpec) (sandbox
 	streamCtx, cancelStream := context.WithCancel(runCtx)
 	var followOutputs map[string][]byte
 	var followStderr []byte
+	var followErr error
 	logDone := make(chan struct{})
 	go func() {
 		defer close(logDone)
-		followOutputs, followStderr = r.streamPodLogs(streamCtx, name, nonce, spec.StreamStderr)
+		followOutputs, followStderr, followErr = r.streamPodLogs(streamCtx, name, nonce, spec.StreamStderr)
 	}()
 
 	finalJob, succeeded, waitErr := r.waitForJob(runCtx, name)
@@ -183,21 +193,44 @@ func (r *KubeRunner) Run(ctx context.Context, spec sandbox.SandboxSpec) (sandbox
 	// COMPLETE logs without Follow and re-parse. A log-rotation/race can leave a
 	// gap in the follow-stream's view of a fast-finishing pod; the non-follow
 	// read sees the full log the kubelet retained, so it wins for any key the
-	// follow-stream missed. Best-effort: if the re-read itself fails (e.g. no
-	// pod was ever found, as in the fake-clientset unit tests), keep whatever
-	// the follow-stream already captured.
-	if rereadOutputs, rereadStderr, rerr := r.rereadPodLogs(runCtx, name, nonce); rerr == nil {
-		if res.Outputs == nil {
-			res.Outputs = map[string][]byte{}
-		}
-		for k, v := range rereadOutputs {
-			if _, ok := res.Outputs[k]; !ok {
-				res.Outputs[k] = v
-			}
-		}
+	// follow-stream missed. This re-read is the AUTHORITATIVE parse: only a
+	// pod-not-found (errPodNotFound — e.g. no pod was ever created, as in the
+	// fake-clientset unit tests) is treated as benign/best-effort, falling back
+	// to whatever the live follow-stream already captured. Any OTHER error
+	// (a genuinely truncated or base64-garbled marker block) must not be
+	// silently swallowed into a fake success — that is exactly how a truncated
+	// usage.json became a silent zero-cost result before (d2bf8a2).
+	rereadFn := r.rereadPodLogsFn
+	if rereadFn == nil {
+		rereadFn = r.rereadPodLogs
+	}
+	rereadOutputs, rereadStderr, rerr := rereadFn(runCtx, name, nonce)
+	switch {
+	case rerr == nil:
+		res.Outputs = mergeOutputs(res.Outputs, rereadOutputs)
 		if len(res.Stderr) == 0 {
 			res.Stderr = rereadStderr
 		}
+	case errors.Is(rerr, errPodNotFound):
+		// No authoritative re-read available. Fall back to the live
+		// follow-stream's own result — but if IT also hit a genuine parse
+		// error (as opposed to the expected context-cancellation from
+		// cancelStream above, which is a normal artifact of ending the
+		// follow-stream once the Job is terminal, not a real problem), that
+		// is the only signal we have of a truncated/garbled result, so
+		// surface it instead of silently returning an incomplete result as a
+		// success.
+		if !benignStreamErr(followErr) {
+			return res, fmt.Errorf("kube: pod log parse: %w", followErr)
+		}
+	default:
+		// Keep whatever DID decode (e.g. a good review.json must survive a
+		// truncated/garbled usage.json) alongside surfacing the error.
+		res.Outputs = mergeOutputs(res.Outputs, rereadOutputs)
+		if len(res.Stderr) == 0 {
+			res.Stderr = rereadStderr
+		}
+		return res, fmt.Errorf("kube: pod log parse: %w", rerr)
 	}
 
 	if !succeeded {
@@ -243,12 +276,21 @@ func jobDeadlineExceeded(job *batchv1.Job) bool {
 		return false
 	}
 	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue && c.Reason == "DeadlineExceeded" {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue && c.Reason == batchv1.JobReasonDeadlineExceeded {
 			return true
 		}
 	}
 	return false
 }
+
+// errPodNotFound is findRunPod's sentinel for "the run's Pod doesn't exist
+// (yet, or ever)" — as opposed to any other error. Callers that treat a
+// missing pod as benign/best-effort (e.g. Run's rereadPodLogs cross-check,
+// which unit tests exercise against a fake clientset with no real Job
+// controller to ever create a pod) use errors.Is(err, errPodNotFound) to
+// distinguish that specific, expected case from a genuine failure they must
+// not silently ignore.
+var errPodNotFound = errors.New("kube: run pod not found")
 
 // findRunPod locates the single Pod the Job created for this run, identified by
 // the mf.dev/run label buildJob's pod template stamps on it (a Job-created Pod
@@ -261,7 +303,7 @@ func (r *KubeRunner) findRunPod(ctx context.Context, name string) (*corev1.Pod, 
 		return nil, err
 	}
 	if len(pods.Items) == 0 {
-		return nil, fmt.Errorf("kube: no pod found for run %s", name)
+		return nil, fmt.Errorf("%w: run %s", errPodNotFound, name)
 	}
 	return &pods.Items[0], nil
 }
@@ -293,21 +335,53 @@ func (r *KubeRunner) waitForPodRunningOrTerminal(ctx context.Context, name strin
 // streamPodLogs waits for the run's Pod (handling the fast-fail race via
 // waitForPodRunningOrTerminal), then follows its logs live and parses out the
 // nonce-marker blocks as they arrive so spec.StreamStderr sees progress as the
-// review runs. Best-effort: any failure to find the pod or open the log stream
-// yields empty results — Run()'s rereadPodLogs, run after the Job is terminal,
-// is the authoritative source.
-func (r *KubeRunner) streamPodLogs(ctx context.Context, name, nonce string, stderr io.Writer) (map[string][]byte, []byte) {
+// review runs. Best-effort: a failure to find the pod or open the log stream
+// yields empty results with that error — Run()'s rereadPodLogs, run after the
+// Job is terminal, is the authoritative source. The returned error is NOT
+// discarded here (Run's C3 fix) — Run's caller decides how to weigh it, since
+// Run itself intentionally cancels ctx once the Job is terminal, which ends
+// this follow-stream mid-read (a benign, expected artifact, not a real parse
+// failure) far more often than it hits a genuine truncated/garbled marker.
+func (r *KubeRunner) streamPodLogs(ctx context.Context, name, nonce string, stderr io.Writer) (map[string][]byte, []byte, error) {
 	pod, err := r.waitForPodRunningOrTerminal(ctx, name)
 	if err != nil || pod == nil {
-		return nil, nil
+		return nil, nil, err
 	}
 	stream, err := r.CS.CoreV1().Pods(r.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Follow: true}).Stream(ctx)
 	if err != nil {
-		return nil, nil
+		return nil, nil, err
 	}
 	defer func() { _ = stream.Close() }()
-	outputs, stderrTail, _ := parsePodLogs(stream, nonce, stderr)
-	return outputs, stderrTail
+	return parsePodLogs(stream, nonce, stderr)
+}
+
+// benignStreamErr reports whether err is an expected artifact of Run()
+// intentionally cancelling the live follow-stream (streamCtx) once the Job
+// reaches a terminal state — as opposed to a genuine parse problem (a
+// truncated or base64-garbled marker block) in what the pod actually wrote.
+// A nil err is trivially benign.
+func benignStreamErr(err error) bool {
+	return err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// mergeOutputs adds every key in src to dst that dst doesn't already have,
+// allocating dst if it's nil and src is non-empty. It never overwrites a key
+// dst already carries (the live follow-stream's result wins ties over the
+// re-read's, matching the pre-existing merge contract) and returns the
+// (possibly newly-allocated) map so callers must assign the result back.
+func mergeOutputs(dst, src map[string][]byte) map[string][]byte {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = map[string][]byte{}
+	}
+	for k, v := range src {
+		if _, ok := dst[k]; !ok {
+			dst[k] = v
+		}
+	}
+	return dst
 }
 
 // rereadPodLogs re-fetches the run's Pod logs WITHOUT Follow, once the Job is
@@ -361,8 +435,14 @@ const maxPodLogLine = 32 * 1024 * 1024
 // included.
 //
 // A BEGIN with no matching END (the stream was cut off mid-write — log
-// rotation, pod eviction, …) is returned as an error so the caller fails the
-// lane cleanly instead of silently accepting a zero-cost/empty result.
+// rotation, pod eviction, …), or a matched BEGIN/END block whose payload
+// isn't valid base64 (a garbled write), is returned as an error so the caller
+// fails the lane cleanly instead of silently accepting a zero-cost/empty
+// result. Parsing keeps going after either error so a later, well-formed
+// block still decodes: the returned outputs map carries every key that DID
+// decode successfully, alongside the error for the key(s) that didn't — the
+// caller must not discard a good review.json just because usage.json was
+// truncated or garbled (or vice versa).
 func parsePodLogs(r io.Reader, nonce string, stderr io.Writer) (outputs map[string][]byte, stderrTail []byte, err error) {
 	reviewBegin := fmt.Sprintf("===MF-REVIEW-%s-BEGIN===", nonce)
 	reviewEnd := fmt.Sprintf("===MF-REVIEW-%s-END===", nonce)
@@ -371,6 +451,7 @@ func parsePodLogs(r io.Reader, nonce string, stderr io.Writer) (outputs map[stri
 
 	outputs = map[string][]byte{}
 	var tail bytes.Buffer
+	var errs []error
 
 	writeNarration := func(line string) {
 		if stderr != nil {
@@ -406,6 +487,12 @@ func parsePodLogs(r io.Reader, nonce string, stderr io.Writer) (outputs map[stri
 		case inBlock && line == blockEnd:
 			if decoded, decErr := base64.StdEncoding.DecodeString(payload.String()); decErr == nil {
 				outputs[blockKey] = decoded
+			} else {
+				// Don't silently drop a well-formed BEGIN/END block whose
+				// payload fails to decode — that's the same "quietly accept
+				// an incomplete result" bug as an unterminated block, just
+				// with the corruption inside the block instead of at its end.
+				errs = append(errs, fmt.Errorf("kube: %s marker block: invalid base64 payload: %w", blockKey, decErr))
 			}
 			inBlock, blockKey, blockEnd = false, "", ""
 		case inBlock:
@@ -415,12 +502,12 @@ func parsePodLogs(r io.Reader, nonce string, stderr io.Writer) (outputs map[stri
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
-		return outputs, tail.Bytes(), fmt.Errorf("kube: reading pod logs: %w", scanErr)
+		errs = append(errs, fmt.Errorf("kube: reading pod logs: %w", scanErr))
 	}
 	if inBlock {
-		return outputs, tail.Bytes(), fmt.Errorf("kube: truncated %s marker block (BEGIN with no END)", blockKey)
+		errs = append(errs, fmt.Errorf("kube: truncated %s marker block (BEGIN with no END)", blockKey))
 	}
-	return outputs, tail.Bytes(), nil
+	return outputs, tail.Bytes(), errors.Join(errs...)
 }
 
 // cleanup best-effort deletes the per-run Secret/ConfigMap/Job. It uses its own
