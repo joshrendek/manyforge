@@ -1,17 +1,22 @@
 // Package kube implements sandbox.SandboxRunner by running each code review as a
 // hardened Kubernetes Job (the Talos deploy target has no Docker daemon for
-// DockerRunner to shell out to). This file (Task 4.3) builds the per-run
-// Secret/ConfigMap/Job, submits them, and waits for the Job to reach a terminal
-// state. Log streaming + marker-based result extraction land in Task 4.4 — Run
-// here returns a minimal SandboxResult (ExitCode/TimedOut only).
+// DockerRunner to shell out to). Task 4.3 built the per-run Secret/ConfigMap/Job
+// and the terminal-state wait; Task 4.4 (this file) adds the result path: Run
+// streams the Job pod's logs live (feeding spec.StreamStderr, mirroring
+// DockerRunner's progress streaming) and extracts the nonce-marker blocks
+// deploy/sandbox/entrypoint.sh writes to stdout into SandboxResult.Outputs.
 package kube
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"time"
 
@@ -93,10 +98,10 @@ func NewKubeRunner(cs kubernetes.Interface, ns, proxyAddr, pullSecret string) *K
 	return &KubeRunner{CS: cs, Namespace: ns, ProxyAddr: proxyAddr, PullSecret: pullSecret}
 }
 
-// Run creates a per-run Job + Secret + ConfigMap, waits for the Job to reach a
-// terminal state, and returns a minimal SandboxResult. Task 4.4 replaces the
-// result path with log streaming + marker parsing (Outputs/Stderr); for now a
-// failed Job simply yields ExitCode 1.
+// Run creates a per-run Job + Secret + ConfigMap, streams the Job pod's logs
+// live while waiting for the Job to reach a terminal state, and returns a
+// SandboxResult with Outputs/Stderr extracted from the nonce-marker blocks
+// deploy/sandbox/entrypoint.sh writes to stdout.
 //
 // The Job is created FIRST (before the Secret/ConfigMap) so its UID is known
 // and can be stamped onto the Secret/ConfigMap as an ownerReference. That way
@@ -112,10 +117,8 @@ func (r *KubeRunner) Run(ctx context.Context, spec sandbox.SandboxSpec) (sandbox
 
 	name := runName()
 	// MF_MARKER_NONCE: a fresh random value per run, set as a (non-secret) literal
-	// env var on the review container. Task 4.4 doesn't need it threaded through
-	// here — it can retrieve the exact value later by fetching this same Job
-	// object and reading .spec.template.spec.containers[main].env, since the Job
-	// name is already the identifier 4.4 needs to locate the run.
+	// env var on the review container (buildJob) AND kept here so Run can parse
+	// the Job pod's logs against the exact same value.
 	nonce := randHex(16)
 
 	job := r.buildJob(name, spec, nonce)
@@ -144,9 +147,28 @@ func (r *KubeRunner) Run(ctx context.Context, spec sandbox.SandboxSpec) (sandbox
 		return sandbox.SandboxResult{}, fmt.Errorf("kube: create configmap: %w", err)
 	}
 
-	succeeded, waitErr := r.waitForJob(runCtx, name)
+	// Stream the Job pod's logs live: feeds spec.StreamStderr with progress
+	// narration as the review runs (mirroring DockerRunner) and best-effort
+	// extracts the marker blocks as they appear. This runs concurrently with
+	// waitForJob below and is bounded by streamCtx, which we cancel once the Job
+	// itself is terminal — so a pod that never appears (e.g. the fake clientset
+	// used in unit tests has no real Job controller to create one) can't block
+	// Run() past the Job's own terminal state. Best-effort only: the non-follow
+	// re-read after the Job is terminal (below) is the authoritative source.
+	streamCtx, cancelStream := context.WithCancel(runCtx)
+	var followOutputs map[string][]byte
+	var followStderr []byte
+	logDone := make(chan struct{})
+	go func() {
+		defer close(logDone)
+		followOutputs, followStderr = r.streamPodLogs(streamCtx, name, nonce, spec.StreamStderr)
+	}()
 
-	res := sandbox.SandboxResult{}
+	finalJob, succeeded, waitErr := r.waitForJob(runCtx, name)
+	cancelStream()
+	<-logDone
+
+	res := sandbox.SandboxResult{Outputs: followOutputs, Stderr: followStderr}
 	if err := runCtx.Err(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			res.TimedOut = true
@@ -156,32 +178,249 @@ func (r *KubeRunner) Run(ctx context.Context, spec sandbox.SandboxSpec) (sandbox
 	if waitErr != nil {
 		return res, fmt.Errorf("kube: wait for job %s: %w", name, waitErr)
 	}
+
+	// Cross-check (v2 C3): now that the Job is terminal, re-fetch the pod's
+	// COMPLETE logs without Follow and re-parse. A log-rotation/race can leave a
+	// gap in the follow-stream's view of a fast-finishing pod; the non-follow
+	// read sees the full log the kubelet retained, so it wins for any key the
+	// follow-stream missed. Best-effort: if the re-read itself fails (e.g. no
+	// pod was ever found, as in the fake-clientset unit tests), keep whatever
+	// the follow-stream already captured.
+	if rereadOutputs, rereadStderr, rerr := r.rereadPodLogs(runCtx, name, nonce); rerr == nil {
+		if res.Outputs == nil {
+			res.Outputs = map[string][]byte{}
+		}
+		for k, v := range rereadOutputs {
+			if _, ok := res.Outputs[k]; !ok {
+				res.Outputs[k] = v
+			}
+		}
+		if len(res.Stderr) == 0 {
+			res.Stderr = rereadStderr
+		}
+	}
+
 	if !succeeded {
 		res.ExitCode = 1
+		if jobDeadlineExceeded(finalJob) {
+			res.TimedOut = true
+		}
 	}
 	return res, nil
 }
 
 // waitForJob polls the Job's status until it reports Succeeded or Failed, or ctx
-// is done (deadline/cancel — the caller classifies that via ctx.Err()).
-func (r *KubeRunner) waitForJob(ctx context.Context, name string) (succeeded bool, err error) {
+// is done (deadline/cancel — the caller classifies that via ctx.Err()). It
+// returns the last-observed Job object so the caller can inspect
+// Status.Conditions (jobDeadlineExceeded) without a second Get.
+func (r *KubeRunner) waitForJob(ctx context.Context, name string) (job *batchv1.Job, succeeded bool, err error) {
 	for {
-		job, getErr := r.CS.BatchV1().Jobs(r.Namespace).Get(ctx, name, metav1.GetOptions{})
+		j, getErr := r.CS.BatchV1().Jobs(r.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if getErr != nil {
-			return false, getErr
+			return nil, false, getErr
 		}
-		if job.Status.Succeeded > 0 {
-			return true, nil
+		if j.Status.Succeeded > 0 {
+			return j, true, nil
 		}
-		if job.Status.Failed > 0 {
-			return false, nil
+		if j.Status.Failed > 0 {
+			return j, false, nil
 		}
 		select {
 		case <-ctx.Done():
-			return false, nil
+			return j, false, nil
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// jobDeadlineExceeded reports whether job's Failed condition carries the
+// "DeadlineExceeded" reason kube-controller-manager sets when a Job runs
+// longer than its ActiveDeadlineSeconds — the authoritative, Kubernetes-side
+// signal that this specific run timed out (as opposed to Run's own runCtx
+// expiring for some unrelated reason, e.g. a slow API call).
+func jobDeadlineExceeded(job *batchv1.Job) bool {
+	if job == nil {
+		return false
+	}
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue && c.Reason == "DeadlineExceeded" {
+			return true
+		}
+	}
+	return false
+}
+
+// findRunPod locates the single Pod the Job created for this run, identified by
+// the mf.dev/run label buildJob's pod template stamps on it (a Job-created Pod
+// gets an auto-generated name, so we can't just Get by the run name).
+func (r *KubeRunner) findRunPod(ctx context.Context, name string) (*corev1.Pod, error) {
+	pods, err := r.CS.CoreV1().Pods(r.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "mf.dev/run=" + name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(pods.Items) == 0 {
+		return nil, fmt.Errorf("kube: no pod found for run %s", name)
+	}
+	return &pods.Items[0], nil
+}
+
+// waitForPodRunningOrTerminal polls until the run's Pod reaches Running OR a
+// terminal phase (Succeeded/Failed) — not just Running. A pod can fail fast
+// (ImagePullBackOff, the init container's clone failing, …) and go straight
+// from Pending to Failed without ever becoming Running; blocking for Running
+// only would then hang this goroutine until ctx's deadline even though the Job
+// is already done. Bounded by ctx (the caller cancels it once the Job is
+// terminal), so a pod that never appears can't block Run() indefinitely.
+func (r *KubeRunner) waitForPodRunningOrTerminal(ctx context.Context, name string) (*corev1.Pod, error) {
+	for {
+		pod, err := r.findRunPod(ctx, name)
+		if err == nil {
+			switch pod.Status.Phase {
+			case corev1.PodRunning, corev1.PodSucceeded, corev1.PodFailed:
+				return pod, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+// streamPodLogs waits for the run's Pod (handling the fast-fail race via
+// waitForPodRunningOrTerminal), then follows its logs live and parses out the
+// nonce-marker blocks as they arrive so spec.StreamStderr sees progress as the
+// review runs. Best-effort: any failure to find the pod or open the log stream
+// yields empty results — Run()'s rereadPodLogs, run after the Job is terminal,
+// is the authoritative source.
+func (r *KubeRunner) streamPodLogs(ctx context.Context, name, nonce string, stderr io.Writer) (map[string][]byte, []byte) {
+	pod, err := r.waitForPodRunningOrTerminal(ctx, name)
+	if err != nil || pod == nil {
+		return nil, nil
+	}
+	stream, err := r.CS.CoreV1().Pods(r.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Follow: true}).Stream(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	defer func() { _ = stream.Close() }()
+	outputs, stderrTail, _ := parsePodLogs(stream, nonce, stderr)
+	return outputs, stderrTail
+}
+
+// rereadPodLogs re-fetches the run's Pod logs WITHOUT Follow, once the Job is
+// terminal, as the v2 C3 cross-check against the live follow-stream: a log
+// rotation, or a race between the follow-stream ending and the container's
+// last writes, can leave a gap the full re-read won't have.
+func (r *KubeRunner) rereadPodLogs(ctx context.Context, name, nonce string) (map[string][]byte, []byte, error) {
+	pod, err := r.findRunPod(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	stream, err := r.CS.CoreV1().Pods(r.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).Stream(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = stream.Close() }()
+	return parsePodLogs(stream, nonce, io.Discard)
+}
+
+// stderrTailCap bounds the narration tail parsePodLogs retains for
+// sandboxStderrTail (M6) diagnostics — mirrors the "short tail" contract
+// sandboxStderrTail already documents, so a very chatty opencode run can't
+// balloon SandboxResult.Stderr without bound.
+const stderrTailCap = 8 * 1024
+
+// maxPodLogLine bounds a single scanned log line. review.json/usage.json are
+// base64-encoded onto ONE line each (entrypoint.sh's `base64 -w0`), so this
+// must comfortably exceed the largest findings payload a review can produce;
+// 32 MiB is generous headroom over any realistic review.json/usage.json.
+const maxPodLogLine = 32 * 1024 * 1024
+
+// parsePodLogs scans r line-by-line, extracting the nonce-scoped
+// ===MF-REVIEW-<nonce>-BEGIN/END=== and ===MF-USAGE-<nonce>-BEGIN/END=== marker
+// blocks (deploy/sandbox/entrypoint.sh) into outputs["review.json"] /
+// outputs["usage.json"] (base64-decoded). This is a PURE function over an
+// io.Reader — no clientset access — so tests can feed it a strings.Reader
+// directly without a live (or even fake) cluster; the real caller
+// (streamPodLogs/rereadPodLogs) feeds it a Pods GetLogs stream.
+//
+// k8s pod logs merge stdout+stderr with no stream tags, so this is the only
+// way to separate the two: any line NOT inside a matching block is opencode's
+// narration, written live to stderr (so spec.StreamStderr can stream review
+// progress) and kept in the returned stderrTail (capped to stderrTailCap) for
+// sandboxStderrTail (M6) diagnostics.
+//
+// nonce scoping is the v2 C3 anti-forgery guard: manyforge reviews its OWN
+// repo, which contains these exact marker strings in source form, so a
+// prompt-injected PR could try to print a static/guessed marker to fake a
+// result. A block whose nonce doesn't match this run's nonce is therefore
+// never recognized as BEGIN/END at all — it's just narration, base64 payload
+// included.
+//
+// A BEGIN with no matching END (the stream was cut off mid-write — log
+// rotation, pod eviction, …) is returned as an error so the caller fails the
+// lane cleanly instead of silently accepting a zero-cost/empty result.
+func parsePodLogs(r io.Reader, nonce string, stderr io.Writer) (outputs map[string][]byte, stderrTail []byte, err error) {
+	reviewBegin := fmt.Sprintf("===MF-REVIEW-%s-BEGIN===", nonce)
+	reviewEnd := fmt.Sprintf("===MF-REVIEW-%s-END===", nonce)
+	usageBegin := fmt.Sprintf("===MF-USAGE-%s-BEGIN===", nonce)
+	usageEnd := fmt.Sprintf("===MF-USAGE-%s-END===", nonce)
+
+	outputs = map[string][]byte{}
+	var tail bytes.Buffer
+
+	writeNarration := func(line string) {
+		if stderr != nil {
+			_, _ = io.WriteString(stderr, line)
+			_, _ = io.WriteString(stderr, "\n")
+		}
+		tail.WriteString(line)
+		tail.WriteByte('\n')
+		if tail.Len() > stderrTailCap {
+			b := tail.Bytes()
+			kept := append([]byte(nil), b[len(b)-stderrTailCap:]...)
+			tail.Reset()
+			tail.Write(kept)
+		}
+	}
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxPodLogLine)
+
+	var inBlock bool
+	var blockKey, blockEnd string
+	var payload bytes.Buffer
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case !inBlock && line == reviewBegin:
+			inBlock, blockKey, blockEnd = true, "review.json", reviewEnd
+			payload.Reset()
+		case !inBlock && line == usageBegin:
+			inBlock, blockKey, blockEnd = true, "usage.json", usageEnd
+			payload.Reset()
+		case inBlock && line == blockEnd:
+			if decoded, decErr := base64.StdEncoding.DecodeString(payload.String()); decErr == nil {
+				outputs[blockKey] = decoded
+			}
+			inBlock, blockKey, blockEnd = false, "", ""
+		case inBlock:
+			payload.WriteString(line)
+		default:
+			writeNarration(line)
+		}
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return outputs, tail.Bytes(), fmt.Errorf("kube: reading pod logs: %w", scanErr)
+	}
+	if inBlock {
+		return outputs, tail.Bytes(), fmt.Errorf("kube: truncated %s marker block (BEGIN with no END)", blockKey)
+	}
+	return outputs, tail.Bytes(), nil
 }
 
 // cleanup best-effort deletes the per-run Secret/ConfigMap/Job. It uses its own
