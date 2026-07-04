@@ -17,3 +17,11 @@ web/.angular
 # match before a real Angular build lands; the Dockerfile build stage
 # regenerates this directory from the SPA build.
 internal/webui/dist
+
+# Secret-bearing files excluded from build context
+.env
+.env.*
+.air.env
+secrets/
+*.pem
+auth.json
