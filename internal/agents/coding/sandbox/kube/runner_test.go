@@ -207,12 +207,54 @@ func TestKubeRunner_BuildsHardenedJob(t *testing.T) {
 	}
 }
 
+// TestKubeRunner_BuildJob_NoPullSecretOmitsImagePullSecrets pins the minor
+// fix: an empty PullSecret must not emit an imagePullSecrets entry with an
+// empty name — the real API server rejects that.
+func TestKubeRunner_BuildJob_NoPullSecretOmitsImagePullSecrets(t *testing.T) {
+	r := &KubeRunner{Namespace: "mf-sandbox", ProxyAddr: "http://mf-egress-proxy:8080"}
+	spec := testSpec()
+	job := r.buildJob("mf-review-abc123", spec, "nonce-value")
+
+	if got := job.Spec.Template.Spec.ImagePullSecrets; len(got) != 0 {
+		t.Fatalf("imagePullSecrets: want none when PullSecret is unset, got %+v", got)
+	}
+}
+
+// TestKubeRunner_BuildJob_DefaultTimeout pins the 5-minute default applied
+// when spec.Timeout is unset (<=0): activeDeadlineSeconds must be 300 (the
+// default) + 120 (cloneMarginSeconds), not 0+120.
+func TestKubeRunner_BuildJob_DefaultTimeout(t *testing.T) {
+	r := &KubeRunner{Namespace: "mf-sandbox", ProxyAddr: "http://mf-egress-proxy:8080", PullSecret: "ghcr-auth"}
+	spec := testSpec()
+	spec.Timeout = 0
+	job := r.buildJob("mf-review-abc123", spec, "nonce-value")
+
+	wantDeadline := int64(300 + cloneMarginSeconds)
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != wantDeadline {
+		t.Fatalf("activeDeadlineSeconds: want %d (5m default + clone margin), got %v", wantDeadline, job.Spec.ActiveDeadlineSeconds)
+	}
+}
+
+// testOwnerRef is a stand-in ownerReferences() result for tests that don't
+// need a real Job object.
+func testOwnerRef() []metav1.OwnerReference {
+	controller := true
+	return []metav1.OwnerReference{{
+		APIVersion: "batch/v1",
+		Kind:       "Job",
+		Name:       "mf-review-abc123",
+		UID:        "test-job-uid",
+		Controller: &controller,
+	}}
+}
+
 // TestKubeRunner_PerRunConfigMapCarriesInputs pins that spec.Inputs lands
 // verbatim in the ConfigMap's BinaryData for the init container to copy into /out.
 func TestKubeRunner_PerRunConfigMapCarriesInputs(t *testing.T) {
 	r := &KubeRunner{Namespace: "mf-sandbox"}
 	spec := testSpec()
-	cm := r.buildConfigMap("mf-review-abc123", spec)
+	owner := testOwnerRef()
+	cm := r.buildConfigMap("mf-review-abc123", spec, owner)
 
 	if cm.Namespace != "mf-sandbox" {
 		t.Fatalf("configmap namespace: want mf-sandbox, got %q", cm.Namespace)
@@ -225,6 +267,7 @@ func TestKubeRunner_PerRunConfigMapCarriesInputs(t *testing.T) {
 			t.Fatalf("configmap BinaryData[%q]: want %q, got %q", k, v, cm.BinaryData[k])
 		}
 	}
+	assertOwnedByJob(t, "configmap", cm.OwnerReferences, "mf-review-abc123", "test-job-uid")
 }
 
 // TestKubeRunner_SecretCarriesCredsOutOfPodSpec pins that the per-run Secret
@@ -232,7 +275,8 @@ func TestKubeRunner_PerRunConfigMapCarriesInputs(t *testing.T) {
 func TestKubeRunner_SecretCarriesCredsOutOfPodSpec(t *testing.T) {
 	r := &KubeRunner{Namespace: "mf-sandbox"}
 	spec := testSpec()
-	secret := r.buildSecret("mf-review-abc123", spec)
+	owner := testOwnerRef()
+	secret := r.buildSecret("mf-review-abc123", spec, owner)
 
 	if secret.StringData[cloneAuthHeaderKey] != spec.CloneAuthHeader {
 		t.Fatalf("secret[%s]: want %q, got %q", cloneAuthHeaderKey, spec.CloneAuthHeader, secret.StringData[cloneAuthHeaderKey])
@@ -241,6 +285,32 @@ func TestKubeRunner_SecretCarriesCredsOutOfPodSpec(t *testing.T) {
 		if secret.StringData[k] != v {
 			t.Fatalf("secret[%s]: want %q, got %q", k, v, secret.StringData[k])
 		}
+	}
+	assertOwnedByJob(t, "secret", secret.OwnerReferences, "mf-review-abc123", "test-job-uid")
+}
+
+// assertOwnedByJob pins that owners is a single ownerReference marking the
+// named Job (wantUID) as the controlling owner — the shape the per-run
+// Secret/ConfigMap need so Kubernetes' garbage collector reaps them when the
+// Job is deleted, regardless of whether the manyforge process is alive to run
+// its own best-effort cleanup.
+func assertOwnedByJob(t *testing.T, kind string, owners []metav1.OwnerReference, wantName, wantUID string) {
+	t.Helper()
+	if len(owners) != 1 {
+		t.Fatalf("%s ownerReferences: want 1 entry, got %+v", kind, owners)
+	}
+	o := owners[0]
+	if o.Kind != "Job" {
+		t.Fatalf("%s ownerReferences[0].Kind: want Job, got %q", kind, o.Kind)
+	}
+	if o.Name != wantName {
+		t.Fatalf("%s ownerReferences[0].Name: want %q, got %q", kind, wantName, o.Name)
+	}
+	if wantUID != "" && string(o.UID) != wantUID {
+		t.Fatalf("%s ownerReferences[0].UID: want %q, got %q", kind, wantUID, o.UID)
+	}
+	if o.Controller == nil || !*o.Controller {
+		t.Fatalf("%s ownerReferences[0].Controller: want true, got %v", kind, o.Controller)
 	}
 }
 
@@ -272,6 +342,13 @@ func TestKubeRunner_Run_SucceedsWhenJobSucceeds(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	r := &KubeRunner{CS: cs, Namespace: "mf-sandbox", ProxyAddr: "http://proxy:8080", PullSecret: "ghcr-auth"}
 
+	// Captured from inside the goroutine, right after the Job appears and
+	// before cleanup deletes everything, so the assertions below can pin that
+	// Run() actually wired the ownerReference onto the Secret/ConfigMap it
+	// created — not just that buildSecret/buildConfigMap can produce one.
+	var jobName string
+	var secretOwners, cmOwners []metav1.OwnerReference
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -279,9 +356,16 @@ func TestKubeRunner_Run_SucceedsWhenJobSucceeds(t *testing.T) {
 			jobs, err := cs.BatchV1().Jobs("mf-sandbox").List(t.Context(), metav1.ListOptions{})
 			if err == nil && len(jobs.Items) > 0 {
 				job := jobs.Items[0]
-				job.Status.Succeeded = 1
-				if _, err := cs.BatchV1().Jobs("mf-sandbox").UpdateStatus(t.Context(), &job, metav1.UpdateOptions{}); err == nil {
-					return
+				secret, secErr := cs.CoreV1().Secrets("mf-sandbox").Get(t.Context(), job.Name, metav1.GetOptions{})
+				cm, cmErr := cs.CoreV1().ConfigMaps("mf-sandbox").Get(t.Context(), job.Name, metav1.GetOptions{})
+				if secErr == nil && cmErr == nil {
+					jobName = job.Name
+					secretOwners = secret.OwnerReferences
+					cmOwners = cm.OwnerReferences
+					job.Status.Succeeded = 1
+					if _, err := cs.BatchV1().Jobs("mf-sandbox").UpdateStatus(t.Context(), &job, metav1.UpdateOptions{}); err == nil {
+						return
+					}
 				}
 			}
 			select {
@@ -303,6 +387,18 @@ func TestKubeRunner_Run_SucceedsWhenJobSucceeds(t *testing.T) {
 	if res.TimedOut {
 		t.Fatal("TimedOut: want false")
 	}
+
+	// The per-run Secret/ConfigMap Run() actually created must carry an
+	// ownerReference to the Job, so k8s GC reaps them if this process dies
+	// before the best-effort cleanup below ever runs. (The fake clientset
+	// doesn't assign a UID on Create the way a real API server would, so this
+	// only pins Kind/Name/Controller — buildSecret/buildConfigMap's own tests
+	// pin that a real UID is carried through correctly.)
+	if jobName == "" {
+		t.Fatal("never observed the created Job/Secret/ConfigMap before cleanup")
+	}
+	assertOwnedByJob(t, "secret", secretOwners, jobName, "")
+	assertOwnedByJob(t, "configmap", cmOwners, jobName, "")
 
 	// Best-effort cleanup should have deleted the Secret/ConfigMap/Job.
 	if jobs, _ := cs.BatchV1().Jobs("mf-sandbox").List(t.Context(), metav1.ListOptions{}); len(jobs.Items) != 0 {

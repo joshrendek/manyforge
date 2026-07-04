@@ -93,14 +93,22 @@ func NewKubeRunner(cs kubernetes.Interface, ns, proxyAddr, pullSecret string) *K
 	return &KubeRunner{CS: cs, Namespace: ns, ProxyAddr: proxyAddr, PullSecret: pullSecret}
 }
 
-// Run creates a per-run Secret + ConfigMap + Job, waits for the Job to reach a
+// Run creates a per-run Job + Secret + ConfigMap, waits for the Job to reach a
 // terminal state, and returns a minimal SandboxResult. Task 4.4 replaces the
 // result path with log streaming + marker parsing (Outputs/Stderr); for now a
 // failed Job simply yields ExitCode 1.
+//
+// The Job is created FIRST (before the Secret/ConfigMap) so its UID is known
+// and can be stamped onto the Secret/ConfigMap as an ownerReference. That way
+// Kubernetes' own garbage collector deletes the credential-bearing Secret and
+// ConfigMap when the Job goes away — via cleanup's best-effort delete on the
+// happy path, or via the Job's TTLSecondsAfterFinished/deletion regardless of
+// this process's lifetime, so a crash/OOM/restart mid-run can no longer
+// orphan them permanently. The pod itself won't be able to start until the
+// Secret/ConfigMap it references exist a moment later; Kubernetes just
+// retries pod creation in the meantime, which is fine.
 func (r *KubeRunner) Run(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	if spec.Timeout <= 0 {
-		spec.Timeout = 5 * time.Minute
-	}
+	spec.Timeout = normalizedTimeout(spec)
 
 	name := runName()
 	// MF_MARKER_NONCE: a fresh random value per run, set as a (non-secret) literal
@@ -110,26 +118,30 @@ func (r *KubeRunner) Run(ctx context.Context, spec sandbox.SandboxSpec) (sandbox
 	// name is already the identifier 4.4 needs to locate the run.
 	nonce := randHex(16)
 
-	secret := r.buildSecret(name, spec)
-	cm := r.buildConfigMap(name, spec)
 	job := r.buildJob(name, spec, nonce)
 
 	deadline := spec.Timeout + time.Duration(cloneMarginSeconds)*time.Second
 	runCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
+	createdJob, err := r.CS.BatchV1().Jobs(r.Namespace).Create(runCtx, job, metav1.CreateOptions{})
+	if err != nil {
+		return sandbox.SandboxResult{}, fmt.Errorf("kube: create job: %w", err)
+	}
+	// From here on, always attempt best-effort cleanup of everything we may have
+	// created, even if a later create call fails partway through. This is the
+	// happy-path cleanup; the ownerReference above is the crash safety net.
+	defer r.cleanup(name)
+
+	owner := ownerReferences(createdJob)
+	secret := r.buildSecret(name, spec, owner)
+	cm := r.buildConfigMap(name, spec, owner)
+
 	if _, err := r.CS.CoreV1().Secrets(r.Namespace).Create(runCtx, secret, metav1.CreateOptions{}); err != nil {
 		return sandbox.SandboxResult{}, fmt.Errorf("kube: create secret: %w", err)
 	}
-	// From here on, always attempt best-effort cleanup of everything we may have
-	// created, even if a later create call fails partway through.
-	defer r.cleanup(name)
-
 	if _, err := r.CS.CoreV1().ConfigMaps(r.Namespace).Create(runCtx, cm, metav1.CreateOptions{}); err != nil {
 		return sandbox.SandboxResult{}, fmt.Errorf("kube: create configmap: %w", err)
-	}
-	if _, err := r.CS.BatchV1().Jobs(r.Namespace).Create(runCtx, job, metav1.CreateOptions{}); err != nil {
-		return sandbox.SandboxResult{}, fmt.Errorf("kube: create job: %w", err)
 	}
 
 	succeeded, waitErr := r.waitForJob(runCtx, name)
@@ -187,27 +199,63 @@ func (r *KubeRunner) cleanup(name string) {
 // buildSecret builds the per-run Secret carrying every secret the pod needs:
 // the LLM_* credentials from spec.Env, plus the git clone credential. This is
 // the ONLY place these values appear — the Job/pod spec references them via
-// secretKeyRef, never as literal env values.
-func (r *KubeRunner) buildSecret(name string, spec sandbox.SandboxSpec) *corev1.Secret {
+// secretKeyRef, never as literal env values. owner (see ownerReferences) ties
+// its lifetime to the Job so it can never outlive it, even across a crash.
+func (r *KubeRunner) buildSecret(name string, spec sandbox.SandboxSpec, owner []metav1.OwnerReference) *corev1.Secret {
 	data := make(map[string]string, len(spec.Env)+1)
 	for k, v := range spec.Env {
 		data[k] = v
 	}
 	data[cloneAuthHeaderKey] = spec.CloneAuthHeader
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Namespace, Labels: runLabels(name)},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Namespace, Labels: runLabels(name), OwnerReferences: owner},
 		Type:       corev1.SecretTypeOpaque,
 		StringData: data,
 	}
 }
 
 // buildConfigMap builds the per-run ConfigMap carrying spec.Inputs (the
-// review_*.txt files) so the init container can copy them into /out.
-func (r *KubeRunner) buildConfigMap(name string, spec sandbox.SandboxSpec) *corev1.ConfigMap {
+// review_*.txt files) so the init container can copy them into /out. owner
+// (see ownerReferences) ties its lifetime to the Job, same as buildSecret.
+func (r *KubeRunner) buildConfigMap(name string, spec sandbox.SandboxSpec, owner []metav1.OwnerReference) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Namespace, Labels: runLabels(name)},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Namespace, Labels: runLabels(name), OwnerReferences: owner},
 		BinaryData: spec.Inputs,
 	}
+}
+
+// ownerReferences returns a single OwnerReference marking job as the
+// controlling owner. Attached to the per-run Secret/ConfigMap so Kubernetes'
+// garbage collector deletes them when the Job is deleted — whether that's
+// cleanup's best-effort delete on the happy path, or the Job's own
+// TTLSecondsAfterFinished/an operator's `kubectl delete job` if this process
+// crashes, OOMs, or restarts before cleanup ever runs. Without this, a
+// mid-run crash orphans credential-bearing objects (a GitHub PAT, an LLM API
+// key) in the cluster permanently — no k8s GC path reaps Secrets/ConfigMaps
+// that aren't owned by anything.
+func ownerReferences(job *batchv1.Job) []metav1.OwnerReference {
+	controller := true
+	blockOwnerDeletion := true
+	return []metav1.OwnerReference{{
+		APIVersion:         "batch/v1",
+		Kind:               "Job",
+		Name:               job.Name,
+		UID:                job.UID,
+		Controller:         &controller,
+		BlockOwnerDeletion: &blockOwnerDeletion,
+	}}
+}
+
+// normalizedTimeout returns spec.Timeout, or a 5 minute default when the
+// caller left it unset (<=0). Both Run's context deadline and buildJob's
+// activeDeadlineSeconds compute off this single function so a zero Timeout
+// can never produce a Job whose activeDeadlineSeconds disagrees with the
+// context Run itself waits on.
+func normalizedTimeout(spec sandbox.SandboxSpec) time.Duration {
+	if spec.Timeout <= 0 {
+		return 5 * time.Minute
+	}
+	return spec.Timeout
 }
 
 // buildJob builds the hardened Job for one review run. It is a pure function of
@@ -216,7 +264,7 @@ func (r *KubeRunner) buildConfigMap(name string, spec sandbox.SandboxSpec) *core
 func (r *KubeRunner) buildJob(name string, spec sandbox.SandboxSpec, markerNonce string) *batchv1.Job {
 	backoffLimit := int32(0)
 	ttl := jobTTLSecondsAfterFinished
-	activeDeadline := int64(spec.Timeout.Seconds()) + cloneMarginSeconds
+	activeDeadline := int64(normalizedTimeout(spec).Seconds()) + cloneMarginSeconds
 
 	cloneEnv := []corev1.EnvVar{
 		{Name: "CLONE_URL", Value: spec.CloneURL},
@@ -259,6 +307,13 @@ func (r *KubeRunner) buildJob(name string, spec sandbox.SandboxSpec, markerNonce
 		})
 	}
 
+	// The real API server rejects an imagePullSecrets entry with an empty name,
+	// so only emit one when PullSecret is actually configured.
+	var imagePullSecrets []corev1.LocalObjectReference
+	if r.PullSecret != "" {
+		imagePullSecrets = []corev1.LocalObjectReference{{Name: r.PullSecret}}
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Namespace, Labels: runLabels(name)},
 		Spec: batchv1.JobSpec{
@@ -270,7 +325,7 @@ func (r *KubeRunner) buildJob(name string, spec sandbox.SandboxSpec, markerNonce
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
 					AutomountServiceAccountToken: boolPtr(false),
-					ImagePullSecrets:             []corev1.LocalObjectReference{{Name: r.PullSecret}},
+					ImagePullSecrets:             imagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: boolPtr(true),
 						RunAsUser:    int64Ptr(65532),
