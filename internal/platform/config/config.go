@@ -121,6 +121,13 @@ type Config struct {
 	// so this defaults to 30 min. Env: MANYFORGE_LOCAL_REVIEW_TIMEOUT. Separate from
 	// the sandbox wall-clock cap.
 	LocalReviewTimeout time.Duration
+
+	// SandboxMode selects which sandbox runner backs the code-review sandbox:
+	// "off" (disabled), "docker" (DockerRunner), or "kube" (KubeRunner, Task 4.5).
+	// Env: MANYFORGE_SANDBOX_MODE. Defaults to "kube" when KUBERNETES_SERVICE_HOST
+	// is set (running in-cluster), else "docker". Any other value is a hard config
+	// error caught here.
+	SandboxMode string
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -297,7 +304,28 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_LOCAL_REVIEW_TIMEOUT: %w", err)
 	}
 
+	// Sandbox mode (Task 4.1, Phase 4 k8s-native sandbox). Defaults to "kube" when
+	// KUBERNETES_SERVICE_HOST is set (the standard in-cluster env var Kubernetes
+	// injects into every pod), else "docker". Only the env var is consulted here —
+	// this package must NOT import client-go — so the default is a cheap, offline
+	// signal rather than a real in-cluster API probe.
+	cfg.SandboxMode = env("MANYFORGE_SANDBOX_MODE", defaultSandboxMode())
+	switch cfg.SandboxMode {
+	case "off", "docker", "kube":
+	default:
+		return Config{}, fmt.Errorf("MANYFORGE_SANDBOX_MODE: must be off|docker|kube, got %q", cfg.SandboxMode)
+	}
+
 	return cfg, nil
+}
+
+// defaultSandboxMode picks "kube" when KUBERNETES_SERVICE_HOST is present (the pod
+// is running in-cluster), else "docker".
+func defaultSandboxMode() string {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return "kube"
+	}
+	return "docker"
 }
 
 func envInt(key string, def int) (int, error) {

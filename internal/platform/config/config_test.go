@@ -188,6 +188,54 @@ func TestLoadAgentRunLimits(t *testing.T) {
 	})
 }
 
+// TestSandboxMode pins Task 4.1: MANYFORGE_SANDBOX_MODE defaults to "kube" when
+// KUBERNETES_SERVICE_HOST is set (in-cluster) and "docker" otherwise; an explicit
+// value is honored, and anything outside off|docker|kube is a hard config error.
+func TestSandboxMode(t *testing.T) {
+	t.Run("defaults to kube in-cluster", func(t *testing.T) {
+		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxMode != "kube" {
+			t.Fatalf("SandboxMode = %q, want %q", cfg.SandboxMode, "kube")
+		}
+	})
+
+	t.Run("defaults to docker off-cluster", func(t *testing.T) {
+		t.Setenv("KUBERNETES_SERVICE_HOST", "")
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxMode != "docker" {
+			t.Fatalf("SandboxMode = %q, want %q", cfg.SandboxMode, "docker")
+		}
+	})
+
+	t.Run("explicit value is honored", func(t *testing.T) {
+		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "off")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxMode != "off" {
+			t.Fatalf("SandboxMode = %q, want %q", cfg.SandboxMode, "off")
+		}
+	})
+
+	t.Run("invalid value is a config error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "bogus")
+		if _, err := Load(); err == nil {
+			t.Fatal("Load with invalid MANYFORGE_SANDBOX_MODE: want error, got nil")
+		}
+	})
+}
+
 func TestLocalReviewTimeout(t *testing.T) {
 	t.Run("default 30m", func(t *testing.T) {
 		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "")
