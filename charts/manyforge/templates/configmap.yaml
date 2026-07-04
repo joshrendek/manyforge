@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "manyforge.fullname" . }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+data:
+  MANYFORGE_ADDR: {{ .Values.addr | quote }}
+  MANYFORGE_JWT_ISSUER: {{ .Values.jwt.issuer | quote }}
+  MANYFORGE_JWT_AUDIENCE: {{ .Values.jwt.audience | quote }}
+  # Single source of truth for the active signing kid: .Values.jwt.activeKid.
+  MANYFORGE_JWT_ACTIVE_KID: {{ .Values.jwt.activeKid | quote }}
+  MANYFORGE_ACCESS_TOKEN_TTL: {{ .Values.accessTokenTTL | quote }}
+  # REQUIRED behind ingress-nginx so rate-limit/audit logging resolve the real
+  # client IP from X-Forwarded-For instead of the ingress controller's pod IP.
+  MANYFORGE_TRUSTED_PROXY_CIDR: {{ .Values.trustedProxyCidr | quote }}
+  MANYFORGE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
+  MANYFORGE_EGRESS_PROXY_IMAGE: {{ .Values.sandbox.egressProxyImage | quote }}
+  MANYFORGE_SANDBOX_EGRESS_ALLOW: {{ .Values.sandbox.egressAllow | quote }}
+  # Not yet read by config.go (lands in Phase 4); harmless to set now since an
+  # unrecognized env var is a no-op for the current binary.
+  MANYFORGE_SANDBOX_MODE: {{ .Values.sandbox.mode | quote }}

@@ -1,0 +1,155 @@
+# Default values for the manyforge chart.
+# Zero secrets live in this file, or in any template — every credential is
+# wired via env.valueFrom.secretKeyRef against an out-of-band Secret NAME
+# (see `secrets:` below). The Secrets themselves are created outside this
+# chart (e.g. SealedSecrets/External Secrets/manual `kubectl create secret`).
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+# Default is 1, not N. Background workers (notify/reconcile tickers etc.) claim
+# work with `SELECT ... FOR UPDATE SKIP LOCKED`, which is LIKELY safe to run
+# from multiple replicas concurrently (no double-claim), but this has NOT been
+# load-tested with replicaCount > 1 yet. Bump only after that's verified.
+
+image:
+  repository: ghcr.io/joshrendek/manyforge
+  pullPolicy: IfNotPresent
+  # CI publishes main-<sha>-<ts> tags (see .github workflows). The trailing
+  # comment is a Flux Image Automation setter marker: Flux rewrites this field
+  # in place whenever a new image matching the `manyforge` ImagePolicy lands.
+  tag: latest # {"$imagepolicy": "flux-system:manyforge:tag"}
+
+# Pulled by both the app Deployment and the migrate Job.
+imagePullSecrets:
+  - name: ghcr-auth
+
+serviceAccount:
+  # The app needs to talk to the Kubernetes API starting in Phase 4 (in-cluster
+  # sandbox Jobs). The RBAC Role/RoleBinding granting that access is created in
+  # Phase 4, not here — this chart only provisions the identity.
+  annotations: {}
+
+podAnnotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: hub.bluescripts.net
+  # HTTP only — no tls: block, no cert-manager annotation. Cloudflare
+  # terminates TLS in front of the cluster.
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "30m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  # /metrics (Go expvar) is otherwise publicly reachable via the `/` catch-all
+  # route; deny it at the ingress. Requires the cluster's ingress-nginx to run
+  # with `allowSnippetAnnotations: true`.
+  denyMetrics: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Pod-level security context. Paired with securityContext below (container-
+# level fields like readOnlyRootFilesystem aren't valid at the pod level).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security context: non-root, read-only root filesystem (the
+# app writes scratch data to the /tmp emptyDir instead), no privilege
+# escalation, every Linux capability dropped.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
+# Non-secret application config (internal/platform/config/config.go), rendered
+# into a ConfigMap and consumed via envFrom.
+# ---------------------------------------------------------------------------
+
+addr: ":8080"
+
+jwt:
+  issuer: manyforge
+  audience: manyforge-api
+  # Single source of truth for MANYFORGE_JWT_ACTIVE_KID: the kid of the
+  # persistent signing key held in secrets.jwt (below). Must match whatever
+  # kid the actual PEM in that Secret was minted with.
+  activeKid: ""
+
+accessTokenTTL: 15m
+
+# CIDR allowed to set the client IP via X-Forwarded-For (e.g. the cluster pod
+# CIDR ingress-nginx runs in). REQUIRED in-cluster: without it, rate-limiting
+# and audit logging see ingress-nginx's pod IP instead of the real client IP.
+trustedProxyCidr: ""
+
+sandbox:
+  # Consumed by the code-review sandbox runner. MANYFORGE_SANDBOX_MODE is not
+  # read by config.go yet (lands in Phase 4's in-cluster sandbox runner); it's
+  # still wired into the ConfigMap now because an env var the binary doesn't
+  # recognize yet is harmless, and it avoids a second chart change in Phase 4.
+  image: "manyforge/opencode-sandbox:dev"
+  egressProxyImage: "manyforge/egress-proxy:dev"
+  egressAllow: "api.anthropic.com,openrouter.ai,api.openai.com"
+  mode: "kube"
+
+# ---------------------------------------------------------------------------
+# Secret wiring — NAMES AND KEYS ONLY. Every value below points at a Secret
+# that must already exist in the release namespace; nothing here is (or may
+# ever become) a literal credential.
+# ---------------------------------------------------------------------------
+secrets:
+  # App-role DSN (non-superuser, non-BYPASSRLS) -> MANYFORGE_DATABASE_URL.
+  database:
+    secretName: manyforge-database
+    key: url
+  # PKCS8 Ed25519 private key PEM -> MANYFORGE_JWT_SIGNING_KEY_PEM. Its kid
+  # MUST match jwt.activeKid above.
+  jwt:
+    secretName: manyforge-jwt
+    key: active.pem
+  # AES-256 at-rest master keys, one per subsystem, all in a single Secret.
+  masterKeys:
+    secretName: manyforge-masterkeys
+    aiKey: ai
+    connectorKey: connector
+    dkimKey: dkim
+    mcpKey: mcp
+  # Owner-role DSN for the migrate Job — distinct from the app DSN above,
+  # since migrations need DDL privileges the app role should not have.
+  migrateDatabase:
+    secretName: manyforge-migrate-database
+    key: url
+  # Optional — rendered only when secretName is set (opt-in). Leave unset to
+  # skip: the app degrades gracefully (outbound mail falls back to the dev
+  # LogSender; inbound webhook/bounce signature verification fail-closed).
+  smtp:
+    secretName: ""
+    userKey: user
+    passKey: pass
+  inbound:
+    secretName: ""
+    webhookSecretKey: webhook-secret
+    bounceSecretKey: bounce-secret
