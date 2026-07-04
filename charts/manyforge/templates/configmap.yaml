@@ -9,11 +9,11 @@ data:
   MANYFORGE_JWT_ISSUER: {{ .Values.jwt.issuer | quote }}
   MANYFORGE_JWT_AUDIENCE: {{ .Values.jwt.audience | quote }}
   # Single source of truth for the active signing kid: .Values.jwt.activeKid.
-  MANYFORGE_JWT_ACTIVE_KID: {{ .Values.jwt.activeKid | quote }}
+  MANYFORGE_JWT_ACTIVE_KID: {{ required "manyforge: jwt.activeKid is required (set it + the manyforge-jwt secret; empty means ephemeral per-pod keys → cluster-wide logouts)" .Values.jwt.activeKid | quote }}
   MANYFORGE_ACCESS_TOKEN_TTL: {{ .Values.accessTokenTTL | quote }}
   # REQUIRED behind ingress-nginx so rate-limit/audit logging resolve the real
   # client IP from X-Forwarded-For instead of the ingress controller's pod IP.
-  MANYFORGE_TRUSTED_PROXY_CIDR: {{ .Values.trustedProxyCidr | quote }}
+  MANYFORGE_TRUSTED_PROXY_CIDR: {{ required "manyforge: trustedProxyCidr is required behind ingress (e.g. the pod CIDR); empty collapses all clients into one rate-limit bucket" .Values.trustedProxyCidr | quote }}
   MANYFORGE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
   MANYFORGE_EGRESS_PROXY_IMAGE: {{ .Values.sandbox.egressProxyImage | quote }}
   MANYFORGE_SANDBOX_EGRESS_ALLOW: {{ .Values.sandbox.egressAllow | quote }}

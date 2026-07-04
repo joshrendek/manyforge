@@ -93,16 +93,21 @@ addr: ":8080"
 jwt:
   issuer: manyforge
   audience: manyforge-api
-  # Single source of truth for MANYFORGE_JWT_ACTIVE_KID: the kid of the
-  # persistent signing key held in secrets.jwt (below). Must match whatever
-  # kid the actual PEM in that Secret was minted with.
+  # REQUIRED — no safe empty default. Single source of truth for
+  # MANYFORGE_JWT_ACTIVE_KID: the kid of the persistent signing key held in
+  # secrets.jwt (below). Must match whatever kid the actual PEM in that
+  # Secret was minted with. Left empty, the app silently falls back to
+  # ephemeral per-pod JWT keys, invalidating every login on each
+  # restart/replica. The chart fails to render (`required`) until this is set.
   activeKid: ""
 
 accessTokenTTL: 15m
 
-# CIDR allowed to set the client IP via X-Forwarded-For (e.g. the cluster pod
-# CIDR ingress-nginx runs in). REQUIRED in-cluster: without it, rate-limiting
-# and audit logging see ingress-nginx's pod IP instead of the real client IP.
+# REQUIRED — no safe empty default. CIDR allowed to set the client IP via
+# X-Forwarded-For (e.g. the cluster pod CIDR ingress-nginx runs in). Without
+# it, rate-limiting and audit logging see ingress-nginx's pod IP instead of
+# the real client IP, collapsing all clients into one rate-limit bucket. The
+# chart fails to render (`required`) until this is set.
 trustedProxyCidr: ""
 
 sandbox:
