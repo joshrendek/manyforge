@@ -77,7 +77,10 @@ const (
 // usage for DockerRunner's host-side clone), so it must NOT be re-wrapped with an
 // extra "Authorization: " prefix here.
 const cloneScript = `set -eu
-GIT_TERMINAL_PROMPT=0 git -c safe.directory=/work -c http.followRedirects=false -c http.extraHeader="${CLONE_AUTH_HEADER}" clone --depth 50 "$CLONE_URL" /work && git -C /work -c safe.directory=/work checkout "$CLONE_SHA" && cp -r /in/. /out/`
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/work
+GIT_TERMINAL_PROMPT=0 git -c http.followRedirects=false -c http.extraHeader="${CLONE_AUTH_HEADER}" clone --no-tags --depth 50 "$CLONE_URL" /work
+git -C /work checkout --quiet "$CLONE_SHA" 2>/dev/null || { GIT_TERMINAL_PROMPT=0 git -C /work -c http.followRedirects=false -c http.extraHeader="${CLONE_AUTH_HEADER}" fetch --no-tags --depth 50 origin "$CLONE_SHA" && git -C /work checkout --quiet "$CLONE_SHA"; }
+cp -r /in/. /out/`
 
 // KubeRunner implements sandbox.SandboxRunner by running each review as a Job.
 // CS is kubernetes.Interface (not *kubernetes.Clientset) so tests can inject
