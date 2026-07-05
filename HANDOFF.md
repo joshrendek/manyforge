@@ -1,44 +1,46 @@
-# Handoff — manyforge @ master — 2026-07-03 ~19:45 UTC
+# Handoff — manyforge @ master — 2026-07-05 ~22:15 UTC
 
 ## ⚠️ Before you clear
-- **Unpushed:** none (after the pending commit below lands). On **master**, single branch.
-- **Uncommitted:** only long-standing untracked `*.png` / `.pair/` worktree / scattered `CLAUDE.md`s (predate this work). No code.
-- **Merged this session:** **PR #9** (cloud streaming, squash `6fb7eba`) and **PR #10** (`manyforge-1s9` GLM cache pin, squash `3dbe6e1`). Both CI-green on master.
-- **Still running:** manyforge air backend on **:8081** (`tmp/manyforge`, logs → `/tmp/mf-air.log`), ng frontend, Docker `mf-dev` Postgres :55432. NOTE: garden.gg's server is on :8080 — manyforge is :8081. Sandbox image `manyforge/opencode-sandbox:dev` rebuilt with the z-ai pin.
+- Uncommitted: none (only untracked noise: screenshots, `.pair/`, stray `CLAUDE.md`s). Unpushed: none — master in sync with origin.
+- Still running: nothing I started. (A pre-existing `ng serve` on :4300 from a prior session may linger — not mine, leave it.)
+- This `HANDOFF.md` can be `.gitignore`d if you want it local-only.
 
-## State
-Two things shipped: (1) PR #9's CI was red on security pin MF007-PIN-11 (stale `sandboxStderrTail` signature literal) — fixed + merged. (2) `manyforge-1s9` (GLM/OpenRouter no prompt caching) — root-caused, fixed with a z.ai routing pin, **live-measured positive** (3/3 runs cached 39–89% vs ~0 baseline), merged (#10), issue CLOSED.
+## State (≤3 sentences)
+The **GitHub App auto-review feature is fully built and deployed live** to https://hub.bluescripts.net: Slice 1 (App identity/webhook/OAuth-linking, spec 009), the setup UI (010), and Slice 2 (`pull_request` → auto-review trigger + App-token auth, 011) are all merged to master, deployed (image `main-a0542b9`, pod 1/1), and DB-migrated (schema version 84, clean). The pipeline is complete but **dormant until the operator registers + installs + links the App** (a human step in the browser). Slice 3 is the remaining work.
 
-## Resume here → pick next open work (nothing started)
-Master is the single branch; nothing in flight. Choose from `bd ready`. Candidates:
-- **`manyforge-5tr`** (P2 bug): local Ollama OpenAI-compat ignores `options.num_ctx` → huge-context models unusable.
-- **`manyforge-ubk`** (P3): wire per-dimension provider (credential + egress). **Has a security note in its bd `--notes`:** `SetSecrets` (service.go:272) registers only the PRIMARY cred key; when per-dimension providers land, each lane key must be `SetSecrets`-registered before it streams or it can leak into `progress.preview`. Add an MF007 pin then.
-- **`manyforge-8qs`** (P3): 008 Slice 3 — verify pass + rule citations + cost estimate.
-- **`manyforge-byz`** (P3): clear `code_review.progress` on terminal states.
-
-## 1s9 deploy note (don't miss)
-The fix is in `deploy/sandbox/entrypoint.sh` (baked into the image). **Prod/other envs need a `manyforge/opencode-sandbox:dev` image rebuild** to pick it up: `DOCKER_BUILDKIT=0 docker build --build-arg TARGETARCH=arm64 -f deploy/sandbox/Dockerfile -t manyforge/opencode-sandbox:dev .` (arm64 dev). Pin is scoped to `z-ai/*`/`*glm*` slugs only.
-
-## How to run a live cloud review (learned this session — the repro that works)
-- manyforge API is **:8081** (NOT :8080 = garden.gg). Login: `POST :8081/api/v1/auth/login {"email":"live-demo@manyforge.test","password":"DevPassw0rd!"}` → `access_token` (TTL 900s — re-login right before use).
-- Trigger: `POST :8081/api/v1/businesses/7bbeb32e-7c98-4c8f-966b-70acdb440dce/code-reviews {"agent_id":"6c252395-c8a3-4e2b-bc23-12de92308f47","repo_connector_id":"eb68939b-ae44-4276-8340-003a10070a36","pr_number":<N>}` (ReviewBot=GLM/OpenRouter).
-- **The PR must be OPEN** — the worker rejects merged/closed PRs ("pull request not open"). Push a branch + open a (draft) PR to get a target.
-- **Cheap single lane:** `UPDATE review_dimension SET enabled=(dimension='correctness') WHERE business_id='7bbeb32e-…';` then restore `enabled=true` after.
-- Server logs (incl. any temp `slog`) go to `/tmp/mf-air.log`. DB folds `cache_read` into `tokens_in`, so granular cache metrics need a temp `slog` of the `sandboxUsage` fields (Input/CacheRead/CacheWrite) in service.go's lane loop (~line 500). mf-dev: `PGPASSWORD=devpassword psql -h localhost -p55432 -U manyforge -d manyforge`.
+## Resume here
+Two independent paths (pick per user):
+1. **Exercise the live feature:** josh logs into https://hub.bluescripts.net/settings/github → "Create GitHub App" (operator gate = his principal `cd28c757-57c6-4674-af89-4623d4fecea4`) → install on `bluescripts-net`/`sysward` → "Connect an organization" (pick a review agent). Then open a PR → it auto-reviews. Nothing in code needs touching for this.
+2. **Build Slice 3:** brainstorm → spec → (fable design review) → plan → (fable plan review) → subagent-driven-development → merge → deploy — same pattern as Slices 1/2. Scope: full budget/cost caps, `no-manyforge-review` opt-out label (+ `labeled`/`unlabeled` events), per-install filter config (`github_app_installation.config` jsonb overrides), fork-PR review (threat-model prompt-injection exfil first).
 
 ## Run & verify
-- CI gate (`.github/workflows/ci.yml`, one `build-test` job): `make build`→`make lint`→`make test`→`make contract-test`→`make int-test`. **`make test` includes `internal/security_regression`** — run it locally. [[backend-verification-gates-easy-to-miss]]
-- Security pins are source-literal `strings.Contains` checks in `internal/security_regression/mf00*_*_test.go`; a Go signature/literal refactor breaks them — update the pin in the SAME change. [[security-regression-pins-grep-source-literals]]
-- **NO Co-Authored-By** on commits. Branch off master (one at a time).
+- Backend tests: `make test`; security pins: `make sec-test`; integration (needs Docker/colima): `go test -tags integration ./...`; contract: `go test -tags contract ./cmd/...`; lint: `golangci-lint run ./...`. `go build ./...` is the source of truth for compile errors.
+- sqlc regen: **use v1.27.0** — `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate` (or `make generate` if local sqlc is pinned); a newer version re-churns `dbgen/models.go`. Always mirror new tables/constraints into `db/schema.sql`.
+- Deploy path: merge to master → GitHub Actions `images` workflow builds `ghcr.io/joshrendek/manyforge:main-<sha>-<ts>` → Flux image-automation auto-commits the tag to `infra-k8s/flux/clusters/proxmox-talos/manyforge.yaml` → HelmRelease redeploys (~10-15 min). Force: `KUBECONFIG=~/.kube/talos flux reconcile image repository manyforge -n flux-system`.
+- Prod DB (external PG 192.168.2.243, non-RLS `account`/`principal` readable): `psql "$(KUBECONFIG=~/.kube/talos kubectl get secret manyforge-database -n manyforge -o jsonpath='{.data.url}' | base64 -d)"`.
+- Verify feature mounted: `curl -X POST https://hub.bluescripts.net/api/v1/github/webhook -d '{}'` → 202 (would be 404 if disabled).
 
-## Gotchas (don't relearn)
-- Don't trust a handoff's "CI green" claim — re-check `gh pr checks` on resume (PR #9's note was wrong).
-- manyforge = :8081, garden.gg = :8080. Two air processes run; check `cwd`.
-- air rebuilds `tmp/manyforge` on `.go` save (delay 500ms); it restarts the process. Verify a rebuild with `strings tmp/manyforge | grep <marker>` — `grep -c` on the binary is unreliable.
-- zsh `noclobber`: use `>|` to overwrite files (e.g. offset markers). [[user-zsh-noclobber-bg-logs]]
-- gopls phantom `dbgen` field errors (DimensionRuns/Progress) after editing service.go are stale; `go build` is truth. [[gopls-stale-dbgen-diagnostics]]
+## Gotchas (don't relearn these)
+- **Stale gopls is constant here:** after edits/regen the editor flags "undefined dbgen method"/type-mismatch/"undefined field" — almost always stale. `go build ./...` is truth; don't chase them.
+- **`code_review` finalize NOT-NULL trap:** `UpdateCodeReviewResult` MUST always pass `Findings` AND `DimensionRuns` as `[]byte("[]")` — pgx encodes a nil `[]byte` as SQL NULL → 23502 → the whole tx silently aborts. `fail()` had this latent bug (no-op since 0079); fixed this session. Any new finalize path must set both.
+- **Migration downs are never tested** (`testdb` only runs Up) — the 0083 down FK-violated on rollback (fixed; `manyforge-yvy` tracks a CI up→down→up smoke test). Check downs by hand.
+- GitHub App is **inert until `MANYFORGE_GITHUB_APP_MASTER_KEY` is set** (it IS in prod, as the `github-app` key in the `manyforge-masterkeys` k8s secret). Webhooks 202 but nothing enqueues until an installation is **linked** (unlinked installs are quarantined by design).
+- Installation tokens are minted **fresh per review, no cache** (a cached token can expire mid-job → PostReview 401 → whole run re-bills).
+- `zsh noclobber`: `cmd > existing.log` fails; use `>|`. Avoid destructive `rm`.
+
+## Decisions & rationale (not visible in code)
+- **App-backed `repo_connector`** (`type='github_app'`, nullable `secret_ref`, `installation_id` in config): keeps the entire `runJob`→clone→PostReview pipeline unchanged; the token is minted in `runJob` (outside any tx) and never stored.
+- **Machine identity = the review agent's own `kind='agent'` principal** (it already has a `membership`) — no invented bot principal.
+- **Authenticated-completion linking** (in-handler `connectors-manage` check on the signed-state business + GitHub OAuth `GET /user/installations` proof) closes the cross-tenant leaked-`state` hole (fable found it).
+- Slice 2 folded basic filters (draft/bot-author/fork) in; budget/label/per-install-config/fork-review deferred to Slice 3 (user decisions).
+
+## Next steps
+1. (User) register the App to make auto-reviews actually fire — see Resume #1.
+2. Slice 3 — see Resume #2.
+3. Follow-ups (all open bd): `manyforge-0w9` (rate-cap config + terminal-on-config-error + Create 400-not-500), `manyforge-yvy` (CI down-migration smoke test), `manyforge-87l` (surface "skipped: already reviewed this head" in review history), `manyforge-3b1` (constrain `github_app_installation.agent_id` on raw updates), `manyforge-g4d` (Slice-1 client OAuth/webhook-lifecycle test coverage).
 
 ## Pointers
-- **bd:** epics `manyforge-t2s` (008), `manyforge-7ml` (007). CLOSED this session: `manyforge-1s9`. Security note added to `manyforge-ubk`.
-- **This session's master commits:** `6fb7eba` (#9 streaming), the MF007 pin fix (in #9), `f64644a` (handoff), `3dbe6e1` (#10 GLM cache pin).
-- **Key files:** `deploy/sandbox/entrypoint.sh` (GLM z-ai pin); `internal/agents/coding/{service.go,progress.go}`; pins in `internal/security_regression/`.
+- Specs: `docs/superpowers/specs/2026-07-05-github-app-auto-review-design.md` (Slice 1), `…-github-app-slice2-pr-trigger.md` (Slice 2 v2). Plans: `docs/superpowers/plans/2026-07-05-github-app-review-slice1.md`, `…-github-app-slice2-plan.md`.
+- Feature code: `internal/githubapp/*` (apptoken, client, config_store, prreview, pullrequest, webhook, handler, installations, state, nonce, manifest, link, perms); `internal/connectors/repo_service.go` (github_app branch); `internal/agents/coding/service.go` (`runJob` mint/egress/claim-time-recheck, `fail()`/`finalizeSkipped`); migrations `0080`–`0084`; SPA `web/src/app/pages/settings/github-*.ts` + `core/github-app.service.ts`; `charts/manyforge/{templates/deployment.yaml,templates/configmap.yaml,values.yaml}`; `infra-k8s/flux/clusters/proxmox-talos/manyforge.yaml` (HelmRelease values: `instanceOperatorPrincipal`, `publicBaseURL`).
+- Closed (done+deployed): `manyforge-q4h` (Slice 1), `manyforge-doh` (setup UI), `manyforge-qpc` (Slice 2). SDD ledger: `.superpowers/sdd/progress.md`.
+- Operator principal: `cd28c757-57c6-4674-af89-4623d4fecea4` · public base URL: `https://hub.bluescripts.net`.
