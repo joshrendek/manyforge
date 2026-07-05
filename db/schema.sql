@@ -638,7 +638,8 @@ CREATE TABLE code_review (
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (repo_connector_id, tenant_root_id) REFERENCES repo_connector (id, tenant_root_id),
-    CONSTRAINT code_review_status_chk CHECK (status IN ('pending','running','succeeded','failed'))
+    -- migrations/0084: 'superseded' added when a new push cancels an unstarted review.
+    CONSTRAINT code_review_status_chk CHECK (status IN ('pending','running','succeeded','failed','superseded'))
 );
 
 CREATE TABLE review_dimension (
@@ -709,4 +710,13 @@ CREATE TABLE github_app_installation (
     deleted_at      timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- Webhook delivery dedup (tenantless — installation is the key pre-link). migrations/0084.
+CREATE TABLE github_webhook_delivery (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    installation_id bigint NOT NULL,
+    external_delivery_id text NOT NULL,
+    received_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (installation_id, external_delivery_id)
 );
