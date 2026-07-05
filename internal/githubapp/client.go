@@ -41,6 +41,8 @@ type Client struct {
 	WebBase string
 }
 
+var _ GitHubAPI = (*Client)(nil)
+
 // NewClient returns a Client wired to the real GitHub hosts over the
 // SSRF-guarded netsafe client — every outbound call this package makes is
 // influenced by data GitHub itself returns (installation IDs, OAuth codes),

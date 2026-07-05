@@ -53,7 +53,10 @@ func (h *Handler) renderManifest(w http.ResponseWriter, r *http.Request) {
 // additionally require a valid single-use "manifest" state (bound at
 // renderManifest time) so a stale/replayed conversion can't overwrite config.
 func (h *Handler) convertManifest(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Code, State string }
+	var in struct {
+		Code  string `json:"code"`
+		State string `json:"state"`
+	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
