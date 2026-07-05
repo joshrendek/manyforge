@@ -61,6 +61,19 @@ func TestManifestRouteRejectsNonOperator(t *testing.T) {
 	}
 }
 
+func TestManifestRouteRejectsWhenOperatorUnset(t *testing.T) {
+	h := &Handler{OperatorPrincipal: uuid.Nil, StateKey: []byte("0123456789abcdef0123456789abcdef"),
+		PublicBaseURL: "https://hub.example.com", Now: func() time.Time { return time.Unix(1_700_000_000, 0) }}
+	r := chi.NewRouter()
+	r.Group(func(g chi.Router) { g.Use(withPrincipalMW(uuid.New())); h.OperatorRoutes(g) })
+	req := httptest.NewRequest(http.MethodGet, "/github/app/manifest", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 when operator unset", w.Code)
+	}
+}
+
 func TestManifestRouteReturnsJSONForOperator(t *testing.T) {
 	op := uuid.New()
 	h := &Handler{OperatorPrincipal: op, StateKey: []byte("0123456789abcdef0123456789abcdef"),
