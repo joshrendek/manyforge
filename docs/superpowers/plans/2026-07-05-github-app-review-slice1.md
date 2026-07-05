@@ -1097,9 +1097,9 @@ func TestGithubWebhookSignaturePinned(t *testing.T) {
 ```
 Confirm the package name/header matches the untagged source-pin files (`accounting_us7_pins_test.go`, `agent_containment_pin_test.go`).
 
-- [ ] **Step 6: Mount on `ingress` + run.** In `mountAPIRoutes` ingress group: `if h.githubApp != nil { h.githubApp.WebhookRoutes(ingress) }`. Run `go test ./internal/githubapp/... && go test ./internal/security_regression/ -run TestGithubWebhookSignaturePinned`.
+- [ ] **Step 6: Build + run tests.** Do NOT touch `main.go` — the webhook route is mounted (and `h.githubApp` is created) in **Task 6**, which owns all `main.go` wiring. The `WebhookRoutes` method + handler logic compile and unit-test standalone with stubs here. Run `go build ./... && go test ./internal/githubapp/... && go test ./internal/security_regression/ -run TestGithubWebhookSignaturePinned`.
 
-- [ ] **Step 7: Commit** (webhook.go, webhook_test.go, pin test, main.go): `feat(009): GitHub webhook — HMAC verify + installation lifecycle (manyforge-q4h)`.
+- [ ] **Step 7: Commit** (webhook.go, webhook_test.go, pin test): `feat(009): GitHub webhook — HMAC verify + installation lifecycle (manyforge-q4h)`.
 
 ---
 
@@ -1335,13 +1335,16 @@ func (g ghPerms) Has(ctx context.Context, principalID, businessID uuid.UUID, per
     return has, err
 }
 ```
-This adapter is the M-1 authorization gate — add a **`//go:build integration` test** (`internal/githubapp` or `cmd`) asserting `Has` returns true for a `connectors-manage` member of a business and false for a non-member/other-business principal, using the `testdb` seed. Add `githubApp *githubapp.Handler` to `apiHandlers` (`main.go:783`), pass `githubAppH`. In `mountAPIRoutes`:
+This adapter is the M-1 authorization gate — add a **`//go:build integration` test** (`internal/githubapp` or `cmd`) asserting `Has` returns true for a `connectors-manage` member of a business and false for a non-member/other-business principal, using the `testdb` seed. Add `githubApp *githubapp.Handler` to `apiHandlers` (`main.go:783`), pass `githubAppH`. Then mount in `mountAPIRoutes` — note `ingress` and the authenticated `pr` group are **separate closures**, so the webhook goes in the ingress closure and the rest in the `pr` closure:
 ```go
+// inside the public ingress group closure (alongside inboxWebhook/connWebhook):
+if h.githubApp != nil { h.githubApp.WebhookRoutes(ingress) }
+
+// inside the authenticated pr group closure (pr.Use(httpx.RequireAuth) already applied):
 if h.githubApp != nil {
-    ingress // already mounted in Task 5: h.githubApp.WebhookRoutes(ingress)
-    pr.Group(func(g chi.Router) { h.githubApp.OperatorRoutes(g) })      // RequireAuth + operatorOnly (internal)
-    pr.Group(func(g chi.Router) { h.githubApp.LinkRoutes(g) })          // RequireAuth; perm checked in-handler
-    pr.Group(func(g chi.Router) { g.Use(h.connectorsManage); h.githubApp.BusinessRoutes(g) }) // {id} gate
+    pr.Group(func(g chi.Router) { h.githubApp.OperatorRoutes(g) })      // operatorOnly applied inside OperatorRoutes
+    pr.Group(func(g chi.Router) { h.githubApp.LinkRoutes(g) })          // perm checked in-handler on state.BusinessID
+    pr.Group(func(g chi.Router) { g.Use(h.connectorsManage); h.githubApp.BusinessRoutes(g) }) // {id} path gate
 }
 ```
 
