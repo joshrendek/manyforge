@@ -86,6 +86,16 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.masterKeys.secretName }}
                   key: {{ .Values.secrets.masterKeys.mcpKey }}
+            # GitHub App at-rest master key (spec 009). Optional: the referenced
+            # key may be absent from the Secret — the app then boots with the
+            # GitHub App integration disabled. `optional: true` keeps the pod from
+            # failing to start when the key isn't present yet.
+            - name: MANYFORGE_GITHUB_APP_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.githubAppKey }}
+                  optional: true
             # --- optional secrets — opt-in via secrets.smtp/secrets.inbound -
             {{- if .Values.secrets.smtp.secretName }}
             - name: MANYFORGE_SMTP_USER
