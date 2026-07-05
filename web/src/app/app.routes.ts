@@ -103,5 +103,20 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/accounting/agent-runs').then((m) => m.AgentRunsComponent),
   },
+  {
+    // GitHub's post-manifest-flow browser redirect lands here with ?code&state.
+    path: 'settings/github/app-created',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/settings/github-app-created').then((m) => m.GithubAppCreatedComponent),
+  },
+  {
+    // GitHub's post-installation browser redirect lands here with
+    // ?code&installation_id&state (or ?setup_action=request&state pending admin approval).
+    path: 'settings/github/installed',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/settings/github-installed').then((m) => m.GithubInstalledComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
