@@ -5,9 +5,10 @@
 // REVOKE/GRANT pair, the github_app secret_ref invariant, or the connector
 // delete guard fails CI even if a behavioral test is also weakened.
 //
-// The runJob egress pre-flight pin (spec §7 item 6) is deferred to Task 5 —
-// that check does not exist in runJob yet, only in the (different) enqueue
-// path, so a pin for it would fail today.
+// Task 5 adds the runJob egress pre-flight pin (spec §7 item 6): the shared
+// review path (not just the enqueue path) must fail fast on a provider host
+// outside the sandbox egress allowlist, so the app-triggered path — which
+// never goes through Enqueue's check — can't launch a doomed sandbox.
 
 package security_regression
 
@@ -94,5 +95,44 @@ func TestGithubPRConnectorDeleteRejectsAppPinned(t *testing.T) {
 	src := mustRead(t, "../connectors/repo_service.go")
 	if !strings.Contains(src, "github_app connectors are managed by the GitHub App install") {
 		t.Error("repo_service.go Delete pin missing — github_app connectors must be rejected from direct deletion")
+	}
+}
+
+// TestGithubPRRunJobEgressPreflightPinned asserts the SHARED code-review path
+// (coding.runJob) still fails fast on a provider host outside the sandbox
+// egress allowlist — BEFORE launching a sandbox the boot-static proxy would
+// CONNECT-block. The app-triggered path is enqueued by the webhook DEFINER and
+// never runs Enqueue's own egress check, so runJob's is the only gate it gets.
+// (spec §7 item 6 / fable M5).
+func TestGithubPRRunJobEgressPreflightPinned(t *testing.T) {
+	src := mustRead(t, "../agents/coding/service.go")
+	// The gate itself.
+	if !strings.Contains(src, "!isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host())") {
+		t.Error("runJob egress pre-flight pin missing — the shared review path must reject a provider host outside the sandbox egress allowlist")
+	}
+	// The runJob-specific failJob message (distinct from Enqueue's), so the pin
+	// tracks the runJob gate and not merely Enqueue's pre-existing one.
+	if !strings.Contains(src, `provider host %q not in sandbox egress allowlist`) {
+		t.Error("runJob egress pre-flight failJob message pin missing — was the runJob gate removed?")
+	}
+}
+
+// TestGithubPRRunJobFinalizeNonNullJSONBPinned asserts the fable C1/C2 fixes stay
+// in place: both the fail() path and finalizeSkipped write non-null dimension_runs
+// ("[]"). A nil []byte encodes to SQL NULL against the jsonb NOT NULL columns → 23502
+// → the UPDATE silently aborts, stranding the row 'running' (fail: last_error lost;
+// finalizeSkipped: an infinite claim/re-claim loop since the worker never fails a
+// nil-returning job).
+func TestGithubPRRunJobFinalizeNonNullJSONBPinned(t *testing.T) {
+	src := mustRead(t, "../agents/coding/service.go")
+	// finalizeSkipped must exist and propagate its error (never swallow it).
+	if !strings.Contains(src, "func (s *CodeReviewService) finalizeSkipped(") {
+		t.Fatal("finalizeSkipped pin missing — the claim-time same-head skip must finalize 'succeeded' concretely")
+	}
+	// Both terminal writers (fail() and finalizeSkipped) must carry a non-nil
+	// dimension_runs. Whitespace-insensitive so gofmt alignment drift doesn't break it.
+	nospace := strings.NewReplacer(" ", "", "\t", "").Replace(src)
+	if strings.Count(nospace, `DimensionRuns:[]byte("[]")`) < 2 {
+		t.Error("fable C1/C2 pin: fail() and finalizeSkipped must both pass DimensionRuns: []byte(\"[]\") — a nil jsonb 23502-aborts the UPDATE")
 	}
 }

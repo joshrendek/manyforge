@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -206,6 +207,174 @@ func TestProgressStreamWriter_FeedsProgress(t *testing.T) {
 	wn := &progressStreamWriter{prog: nil, dim: "x"}
 	if _, err := wn.Write([]byte("hi")); err != nil {
 		t.Fatalf("nil-prog write errored: %v", err)
+	}
+}
+
+// fakeTokens is a test double for installationTokenSource. It records the args of
+// the last Token call so a test can assert the mint ran with the right (installation
+// id, repo) derived from the connector's Config + Repo.
+type fakeTokens struct {
+	tok       string
+	err       error
+	calls     int
+	gotInstID int64
+	gotRepo   string
+}
+
+func (f *fakeTokens) Token(_ context.Context, instID int64, repo string) (string, error) {
+	f.calls++
+	f.gotInstID, f.gotRepo = instID, repo
+	return f.tok, f.err
+}
+
+// githubAppRepos returns a resolver yielding an app-backed connector (no stored
+// credential — runJob mints the token). installation_id arrives as float64 because
+// the connector Config round-trips through json.Unmarshal(map[string]any).
+func githubAppRepos() *fakeRepos {
+	return &fakeRepos{rc: connectors.ResolvedRepoConnector{
+		Type:   "github_app",
+		Repo:   "o/r",
+		Config: map[string]any{"installation_id": float64(4242)},
+	}}
+}
+
+func appJob() ClaimedReview {
+	return ClaimedReview{
+		ID: uuid.New(), BusinessID: uuid.New(), PrincipalID: uuid.New(),
+		AgentID: uuid.New(), RepoConnectorID: uuid.New(), PRNumber: 7, Attempts: 1,
+	}
+}
+
+// A github_app connector reaching runJob without a token source can't authenticate —
+// fail the job with ErrValidation (bounded worker retry), never launch a sandbox.
+func TestRunJobAppConnectorNilTokenSource(t *testing.T) {
+	runner := &sandbox.FakeRunner{}
+	svc := &CodeReviewService{
+		DB:      fakeServiceDB{},
+		Repos:   githubAppRepos(),
+		Sandbox: runner,
+		Creds:   &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}},
+		// Tokens intentionally nil.
+	}
+	err := svc.runJob(context.Background(), appJob(), nil)
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("nil token source: want ErrValidation, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "no installation-token source") {
+		t.Errorf("want an explicit no-token-source message, got %q", err.Error())
+	}
+	if runner.Last.Image != "" {
+		t.Error("sandbox must NOT launch when the app connector has no token source")
+	}
+}
+
+// A github_app connector whose Config lacks installation_id fails the job — the mint
+// call can't be scoped without it.
+func TestRunJobAppConnectorMissingInstallationID(t *testing.T) {
+	repos := &fakeRepos{rc: connectors.ResolvedRepoConnector{Type: "github_app", Repo: "o/r", Config: map[string]any{}}}
+	svc := &CodeReviewService{
+		DB:     fakeServiceDB{},
+		Repos:  repos,
+		Creds:  &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}},
+		Tokens: &fakeTokens{tok: "ghs_x"},
+	}
+	err := svc.runJob(context.Background(), appJob(), nil)
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "missing installation_id") {
+		t.Fatalf("missing installation_id: want ErrValidation with a clear message, got %v", err)
+	}
+}
+
+// A mint failure (e.g. a suspended/deleted install → 401/403/404) is a plain error →
+// failJob → bounded worker retry. The original cause must be wrapped through.
+func TestRunJobAppConnectorMintError(t *testing.T) {
+	mintErr := errors.New("github 401 suspended")
+	runner := &sandbox.FakeRunner{}
+	svc := &CodeReviewService{
+		DB:      fakeServiceDB{},
+		Repos:   githubAppRepos(),
+		Sandbox: runner,
+		Creds:   &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}},
+		Tokens:  &fakeTokens{err: mintErr},
+	}
+	err := svc.runJob(context.Background(), appJob(), nil)
+	if !errors.Is(err, mintErr) {
+		t.Fatalf("mint error must propagate as the cause, got %v", err)
+	}
+	if runner.Last.Image != "" {
+		t.Error("sandbox must NOT launch on a mint failure")
+	}
+}
+
+// The minted token IS the credential the GitHub client is built from: an empty mint
+// makes NewFactory reject the build ("api_token required"), proving the token flows in.
+func TestRunJobAppConnectorEmptyMintedTokenRejected(t *testing.T) {
+	runner := &sandbox.FakeRunner{}
+	svc := &CodeReviewService{
+		DB:      fakeServiceDB{},
+		Repos:   githubAppRepos(),
+		Sandbox: runner,
+		Creds:   &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}},
+		Tokens:  &fakeTokens{tok: ""}, // mint returns an empty token
+	}
+	err := svc.runJob(context.Background(), appJob(), nil)
+	if err == nil || !strings.Contains(err.Error(), "api_token required") {
+		t.Fatalf("empty minted token: want NewFactory 'api_token required', got %v", err)
+	}
+	if runner.Last.Image != "" {
+		t.Error("sandbox must NOT launch when the client build failed")
+	}
+}
+
+// runJob's egress pre-flight (fable M5) must fail fast for a provider host outside the
+// allowlist — AFTER a successful mint (proving the minted token was accepted by the
+// client build) but BEFORE any sandbox launch. This also pins that the mint ran with
+// the (installation id, repo) derived from the connector.
+func TestRunJobEgressPreflightFailsFastAfterMint(t *testing.T) {
+	runner := &sandbox.FakeRunner{}
+	tokens := &fakeTokens{tok: "ghs_unit"}
+	svc := &CodeReviewService{
+		DB:          fakeServiceDB{},
+		Repos:       githubAppRepos(),
+		Sandbox:     runner,
+		Creds:       &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://evil.example.com", Model: "m", Provider: "x"}},
+		EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com,openrouter.ai"),
+		Tokens:      tokens,
+	}
+	err := svc.runJob(context.Background(), appJob(), nil)
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "egress allowlist") {
+		t.Fatalf("disallowed host: want ErrValidation mentioning the egress allowlist, got %v", err)
+	}
+	if runner.Last.Image != "" {
+		t.Error("sandbox must NOT launch when the provider host is egress-blocked")
+	}
+	if tokens.calls != 1 || tokens.gotInstID != 4242 || tokens.gotRepo != "o/r" {
+		t.Errorf("mint must run once with (4242, o/r); got calls=%d instID=%d repo=%q",
+			tokens.calls, tokens.gotInstID, tokens.gotRepo)
+	}
+}
+
+func TestInstallationIDFromConfig(t *testing.T) {
+	cases := []struct {
+		name   string
+		cfg    map[string]any
+		wantID int64
+		wantOK bool
+	}{
+		{"float64 (json.Unmarshal default)", map[string]any{"installation_id": float64(4242)}, 4242, true},
+		{"json.Number", map[string]any{"installation_id": json.Number("99")}, 99, true},
+		{"int64", map[string]any{"installation_id": int64(7)}, 7, true},
+		{"missing", map[string]any{}, 0, false},
+		{"zero rejected", map[string]any{"installation_id": float64(0)}, 0, false},
+		{"non-numeric rejected", map[string]any{"installation_id": "nope"}, 0, false},
+		{"nil config", nil, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, ok := installationIDFromConfig(tc.cfg)
+			if id != tc.wantID || ok != tc.wantOK {
+				t.Fatalf("installationIDFromConfig = (%d,%v), want (%d,%v)", id, ok, tc.wantID, tc.wantOK)
+			}
+		})
 	}
 }
 
