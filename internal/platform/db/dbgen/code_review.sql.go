@@ -261,10 +261,15 @@ UPDATE code_review SET
     tokens_out = $8,
     cost_cents = $9,
     dimension_runs = $10,
-    agent_run_id = $11,
+    -- fable M2: stamp the resolved review model. App-triggered reviews enqueue with
+    -- model='' (github_pr_review_ingest), so the finalize must fill it in. COALESCE(
+    -- NULLIF(...)) means an empty arg PRESERVES any prior model (so fail() passing ''
+    -- never blanks a model already stamped at Enqueue).
+    model = COALESCE(NULLIF($11, ''), model),
+    agent_run_id = $12,
     lease_expires_at = NULL,
     updated_at = now()
-WHERE id = $12::uuid
+WHERE id = $13::uuid
 RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs
 `
 
@@ -279,6 +284,7 @@ type UpdateCodeReviewResultParams struct {
 	TokensOut         int32              `json:"tokens_out"`
 	CostCents         int64              `json:"cost_cents"`
 	DimensionRuns     []byte             `json:"dimension_runs"`
+	Model             interface{}        `json:"model"`
 	AgentRunID        pgtype.UUID        `json:"agent_run_id"`
 	ID                uuid.UUID          `json:"id"`
 }
@@ -295,6 +301,7 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		arg.TokensOut,
 		arg.CostCents,
 		arg.DimensionRuns,
+		arg.Model,
 		arg.AgentRunID,
 		arg.ID,
 	)

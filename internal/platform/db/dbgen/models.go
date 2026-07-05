@@ -801,6 +801,13 @@ type GithubSetupNonce struct {
 	ConsumedAt time.Time `json:"consumed_at"`
 }
 
+type GithubWebhookDelivery struct {
+	ID                 uuid.UUID `json:"id"`
+	InstallationID     int64     `json:"installation_id"`
+	ExternalDeliveryID string    `json:"external_delivery_id"`
+	ReceivedAt         time.Time `json:"received_at"`
+}
+
 type InboundAddress struct {
 	ID            uuid.UUID          `json:"id"`
 	BusinessID    uuid.UUID          `json:"business_id"`
