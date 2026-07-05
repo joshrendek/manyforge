@@ -923,9 +923,7 @@ func (s *InstallationService) Link(ctx context.Context, id int64, businessID, ag
 
 - [ ] **Step 5: Run → PASS** (`go test -tags integration ./internal/githubapp/ -run TestInstallationLifecycleLinkAndQuarantine`).
 
-- [ ] **Step 6: Wire `Installs` in `main.go`.** Replace the Task 3 placeholder: `Installs: &githubapp.InstallationService{DB: database},`. Run `go build ./...`.
-
-- [ ] **Step 7: Commit** (migrations/0082*, schema.sql, installations.go, main.go, test): `feat(009): github_app_installation + DEFINER lifecycle/link (agent-in-business guarded) + service (manyforge-q4h)`.
+- [ ] **Step 6: Build + commit.** `InstallationService` is created and tested here; it is wired into the `Handler` in `main.go` in **Task 6** (which builds the whole handler) — do NOT touch `main.go` in this task. Run `go build ./...` (the `internal/githubapp` package compiles standalone). Commit (migrations/0082*, schema.sql, installations.go, test): `feat(009): github_app_installation + DEFINER lifecycle/link (agent-in-business guarded) + service (manyforge-q4h)`.
 
 ---
 
