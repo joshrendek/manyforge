@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "manyforge.fullname" . }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "manyforge.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "manyforge.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "manyforge.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: manyforge
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          envFrom:
+            - configMapRef:
+                name: {{ include "manyforge.fullname" . }}
+          env:
+            # --- required secrets — always rendered ------------------------
+            - name: MANYFORGE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.database.secretName }}
+                  key: {{ .Values.secrets.database.key }}
+            - name: MANYFORGE_JWT_SIGNING_KEY_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.jwt.secretName }}
+                  key: {{ .Values.secrets.jwt.key }}
+            - name: MANYFORGE_AI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.aiKey }}
+            - name: MANYFORGE_CONNECTOR_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.connectorKey }}
+            - name: MANYFORGE_DKIM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.dkimKey }}
+            - name: MANYFORGE_MCP_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.mcpKey }}
+            # --- optional secrets — opt-in via secrets.smtp/secrets.inbound -
+            {{- if .Values.secrets.smtp.secretName }}
+            - name: MANYFORGE_SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.smtp.secretName }}
+                  key: {{ .Values.secrets.smtp.userKey }}
+            - name: MANYFORGE_SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.smtp.secretName }}
+                  key: {{ .Values.secrets.smtp.passKey }}
+            {{- end }}
+            {{- if .Values.secrets.inbound.secretName }}
+            - name: MANYFORGE_INBOUND_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.inbound.secretName }}
+                  key: {{ .Values.secrets.inbound.webhookSecretKey }}
+            - name: MANYFORGE_INBOUND_BOUNCE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.inbound.secretName }}
+                  key: {{ .Values.secrets.inbound.bounceSecretKey }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
