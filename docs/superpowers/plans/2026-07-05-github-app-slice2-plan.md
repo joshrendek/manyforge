@@ -31,7 +31,7 @@
 - `type tokenMinter interface { MintInstallationToken(ctx context.Context, installationID int64, appJWT, repoFullName string) (string, time.Time, error) }`
 - `type InstallationTokenSource struct { Store appConfigGetter; API tokenMinter; Now func() time.Time }` where `appConfigGetter interface { Get(ctx context.Context) (AppConfig, error) }` (satisfied by `*ConfigStore`)
 - `func (s *InstallationTokenSource) Token(ctx context.Context, installationID int64, repoFullName string) (string, error)`
-- Sentinel: `var ErrInstallationAuth = …` (wraps `errs.ErrForbidden`) for a mint 401/403/404 (terminal).
+- **fable M1 (decided):** no terminal-failure classification. A mint failure (incl. a suspended/deleted install → 401/403/404) returns a plain error; `runJob`'s `failJob` requeues it the bounded `MaxAttempts` (3) times, then the row goes `failed`. The retries are cheap HTTP mint calls that happen *before* any sandbox launch — no sandbox cost. Do NOT add an `ErrInstallationAuth` sentinel or touch `worker.processOne`.
 
 - [ ] **Step 1: Failing unit test.** `internal/githubapp/apptoken_test.go`:
 ```go
@@ -112,7 +112,7 @@ func (c *Client) MintInstallationToken(ctx context.Context, installationID int64
     return r.Token, r.ExpiresAt, nil
 }
 ```
-(Add imports `bytes`, `strings`, `time` if missing. Confirm `Client.do` returns a distinguishable error on non-2xx — if `do` can surface the status, map 401/403/404 to `ErrInstallationAuth`; otherwise the caller treats any mint error as terminal.)
+(Add imports `bytes`, `strings`, `time` if missing. **Check the `http.NewRequestWithContext` error** rather than `_`-discarding it — matching the rest of `client.go` (fable m8). No status-code classification needed — any mint error just propagates and is retried by the worker.)
 
 `internal/githubapp/apptoken.go`:
 ```go
@@ -124,10 +124,7 @@ import (
     "time"
 
     "github.com/golang-jwt/jwt/v5"
-    "manyforge/internal/platform/errs"
 )
-
-var ErrInstallationAuth = fmt.Errorf("github app installation auth failed: %w", errs.ErrForbidden)
 
 func AppJWT(appID int64, privateKeyPEM string, now time.Time) (string, error) {
     key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
@@ -190,9 +187,9 @@ ALTER TABLE repo_connector ADD CONSTRAINT repo_connector_secret_ref_chk CHECK (
 );
 CREATE UNIQUE INDEX repo_connector_github_app_repo_uq ON repo_connector (business_id, repo) WHERE type = 'github_app';
 ```
-`…down.sql`: drop the index + the secret_ref CHECK, `ALTER COLUMN secret_ref SET NOT NULL`, restore the type CHECK to `('github')`. Update `db/schema.sql` (the `repo_connector` table: `secret_ref uuid` nullable + the new CHECK + index).
+`…down.sql`: `DELETE FROM repo_connector WHERE type='github_app';` (fable m6 — else `SET NOT NULL`/the type CHECK re-add fail on existing app rows), then drop the index + the secret_ref CHECK, `ALTER COLUMN secret_ref SET NOT NULL`, restore the type CHECK to `('github')`. Update `db/schema.sql` (the `repo_connector` table: `secret_ref uuid` nullable + the new CHECK + partial index).
 
-- [ ] **Step 2: Regenerate sqlc (secret_ref → pgtype.UUID).** Run `make generate` (sqlc v1.27.0). `RepoConnector.SecretRef` becomes `pgtype.UUID`; `InsertRepoConnectorParams.SecretRef` too. Expect churn ONLY in `repo_connector.sql.go`.
+- [ ] **Step 2: Regenerate sqlc (secret_ref → pgtype.UUID).** Run `make generate` (sqlc v1.27.0). Expect churn in **both** `repo_connector.sql.go` AND `internal/platform/db/dbgen/models.go` (the `RepoConnector.SecretRef uuid.UUID → pgtype.UUID` field lives in models.go — fable m1; don't treat that diff as an error). No other package churns (`repo_service.go` is the only caller of the four repo_connector queries).
 
 - [ ] **Step 3: Fix `Create`/`Resolve` for the nullable secret_ref (mechanical).** In `repo_service.go` `Create` (L63-74), wrap `SecretRef: pgtype.UUID{Bytes: secretID, Valid: true}`. In `Resolve` (L105-116), the existing `github` path must read `row.SecretRef.Bytes` (a `uuid.UUID`) when `row.SecretRef.Valid`. Add the github_app branch (below).
 
@@ -324,7 +321,7 @@ CREATE TABLE github_webhook_delivery (
     received_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (installation_id, external_delivery_id)
 );
-GRANT SELECT, INSERT, DELETE ON github_webhook_delivery TO manyforge_app;
+-- fable m2: no GRANT — only github_pr_review_ingest (running as the owning role, RLS-exempt) touches this table.
 
 -- One atomic principal-less DEFINER: dedup → rate cap → ensure connector → same-head skip
 -- → pending-supersede → insert. Returns the new review id, or NULL on replay/rate/dup.
@@ -379,15 +376,15 @@ CREATE OR REPLACE FUNCTION requeue_code_review(p_id uuid, p_delay_seconds int, p
 LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public AS $$
     UPDATE code_review SET status='pending', run_after=now()+make_interval(secs=>p_delay_seconds),
         lease_expires_at=NULL, last_error=p_last_error, updated_at=now()
-    WHERE id=p_id AND status='running';
+    WHERE id=p_id AND status IN ('running','failed'); -- fable C1: allow failJob->requeue AND terminal-fail after a partial fail() write; blocks succeeded/superseded resurrection
 $$;
 CREATE OR REPLACE FUNCTION fail_code_review(p_id uuid, p_last_error text) RETURNS void
 LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public AS $$
     UPDATE code_review SET status='failed', lease_expires_at=NULL, last_error=p_last_error, updated_at=now()
-    WHERE id=p_id AND status='running';
+    WHERE id=p_id AND status IN ('running','failed'); -- fable C1: allow failJob->requeue AND terminal-fail after a partial fail() write; blocks succeeded/superseded resurrection
 $$;
 ```
-`…down.sql`: drop `github_pr_review_ingest`, `github_installation_context`, `github_webhook_delivery`; restore requeue/fail without the status guard; restore the status CHECK without `'superseded'`. Mirror `github_webhook_delivery` into `db/schema.sql`. (Confirm `CREATE OR REPLACE` matches the original requeue/fail signatures exactly from 0073.)
+`…down.sql`: drop `github_pr_review_ingest`, `github_installation_context`, `github_webhook_delivery`; restore requeue/fail to the exact 0073 bodies (unguarded); **before** restoring `code_review_status_chk` without `'superseded'`, run `UPDATE code_review SET status='failed' WHERE status='superseded';` (fable m6 — else the CHECK re-add fails on existing superseded rows). Mirror into `db/schema.sql` (fable m7): the `github_webhook_delivery` table AND the `code_review_status_chk` change (schema.sql mirrors every table/constraint; `github_app_installation` is mirrored at schema.sql:690). (Confirm `CREATE OR REPLACE` signatures match 0073 exactly.)
 
 - [ ] **Step 2: `PRReviewEnqueuer` (raw pgx).** `internal/githubapp/prreview.go`:
 ```go
@@ -509,9 +506,12 @@ func prTriggerAction(a string) bool {
 }
 
 func (h *Handler) handlePullRequestEvent(r *http.Request, body []byte) {
+    if h.PRReviews == nil { return } // fable m4: nil-safe if webhook wired without the enqueuer
     var ev pullRequestEvent
     if err := json.Unmarshal(body, &ev); err != nil || ev.Installation.ID == 0 { return }
     if !prTriggerAction(ev.Action) { return }
+    // fable m5: reject malformed-but-signed payloads before they create a junk repo_connector.
+    if !strings.Contains(ev.Repository.FullName, "/") || ev.PullRequest.Head.SHA == "" { return }
     // Filters (no DB write / no delivery consumption).
     if ev.PullRequest.Draft { h.log(r.Context(), "pr skipped: draft", nil); return }
     if ev.PullRequest.User.Type == "Bot" { h.log(r.Context(), "pr skipped: bot author", nil); return }
@@ -532,19 +532,21 @@ func (h *Handler) handlePullRequestEvent(r *http.Request, body []byte) {
     }
 }
 ```
-(Add the `uuid` import.)
+(Add the `uuid` + `strings` imports. `h.log` is `ErrorContext` — for the filter/skip reasons use info-level (`h.Logger.InfoContext`, nil-checked) or drop them so normal draft/bot/fork skips don't spam ERROR (fable m4). Capture the `IngestPRReview` `ok` return and info-log the reason when `ok==false` — replay/rate/dup (fable m3), rather than discarding it.)
 
-- [ ] **Step 4: Run → PASS.** **Step 5: Security-regression pin** (untagged) `github_pr_trigger_pin_test.go`: assert `pullrequest.go` contains the fork check (`Head.Repo == nil || … != … Base.Repo.ID`), the bot-author check (`User.Type == "Bot"`), the draft skip, and that the ingest carries `X-GitHub-Delivery`. **Step 6: Commit** (pullrequest.go, webhook.go, handler.go, tests, pin): `feat(011): pull_request webhook handler — filter + installation-context + atomic ingest (manyforge-qpc)`.
+- [ ] **Step 4: Run → PASS.** **Step 5: Security-regression pins** (untagged, `github_pr_trigger_pin_test.go`, using the existing `mustRead` helper) — cover spec §7's full list (fable M3): (1) `pullrequest.go` has the fork check (`Head.Repo == nil || … != … Base.Repo.ID`), the bot-**author** check (`User.Type == "Bot"`), the draft skip, and the ingest carries `X-GitHub-Delivery`; (2) `client.go`'s `MintInstallationToken` sends `"repositories"` (per-repo scope); (3) migration `0084` has `REVOKE ALL … FROM PUBLIC` + `GRANT EXECUTE … TO manyforge_app` on both new functions; (4) migration `0083` has the `secret_ref IS NULL` CHECK for `github_app`; (5) `repo_service.go` `Delete` rejects `github_app`; (6) `service.go` `runJob` has the egress pre-flight (`EgressAllow.Allows`). **Step 6: Commit** (pullrequest.go, webhook.go, handler.go, tests, pins): `feat(011): pull_request webhook handler — filter + installation-context + atomic ingest (manyforge-qpc)`.
 
 ---
 
 ### Task 5: `runJob` mint + egress + claim-time re-check + wiring + end-to-end
 
-**Files:** Modify `internal/agents/coding/service.go` (`runJob`, `CodeReviewService` struct), `cmd/manyforge/main.go` (wire `Tokens` + `PRReviews`), the OpenAPI contract (`POST /api/v1/github/webhook` already exists from Slice 1 — no new route; add nothing unless a new endpoint appears). Test: `internal/agents/coding/service_github_app_test.go` (`//go:build integration`) + unit tests for the runJob branches.
+**Files:** Modify `internal/agents/coding/service.go` (`runJob`, `CodeReviewService` struct, `fail()`, finalize call sites), `db/query/code_review.sql` (fable M2 — add `model` to `UpdateCodeReviewResult`), regen dbgen, `cmd/manyforge/main.go` (wire `Tokens` + `PRReviews`). No OpenAPI change (`/github/webhook` unchanged). Test: `internal/agents/coding/service_github_app_test.go` (`//go:build integration`) + unit tests for the mint/egress runJob branches.
+
+**fable M2 (model stamp):** app-triggered reviews enqueue with `model=''`; nothing stamps the resolved model, so history shows an empty model. Add `model = sqlc.arg('model')` to `UpdateCodeReviewResult` in `db/query/code_review.sql`, `make generate`, and pass `cred.Model` (the resolved review model) at the success-finalize call site **and** `finalizeSkipped` (above); `fail()` may pass `''` or `COALESCE(NULLIF($n,''), model)` to preserve any prior value.
 
 **Interfaces produced:** `CodeReviewService.Tokens installationTokenSource` (interface `Token(ctx, installationID int64, repo string) (string, error)`, satisfied by `*githubapp.InstallationTokenSource`).
 
-- [ ] **Step 1: Failing unit test** for the three `runJob` additions (mint for github_app, egress pre-flight, claim-time re-check) using a `FakeRunner` + a fake `Tokens` + a fake repo resolver returning a `type='github_app'` connector, asserting: the minted token reaches `BasicAuthHeader`/the client; a provider host outside `EgressAllow` fails fast (terminal, no sandbox launch); when a succeeded review already exists for `(connector, pr, head)`, `PostReview` is NOT called. (Adapt the existing `service_test.go` harness.)
+- [ ] **Step 1: Failing unit test** for the two DB-free `runJob` additions (fable M4 — the claim-time re-check needs a real tx, so it's integration-tested in Step 6, NOT here): using a `FakeRunner` + a fake `Tokens` + a fake repo resolver returning a `type='github_app'` connector, assert (a) the minted token reaches `github.BasicAuthHeader`/the built client, and (b) a provider host outside `EgressAllow` fails fast (`failJob`, no sandbox launch). Both branches run before any real DB call, so the existing `fakeServiceDB` harness (whose `WithPrincipal` no-ops fn) is fine for them. (Adapt `service_test.go`.)
 
 - [ ] **Step 2: Run → FAIL.**
 
@@ -587,7 +589,12 @@ After `FetchPR` returns `pr` (find the `pr, err := conn.FetchPR(...)` line), add
         return s.finalizeSkipped(ctx, job, pr.HeadSHA) // sets status='succeeded' w/ a "superseded by same head" note, no PostReview
     }
 ```
-Add helpers: `installationIDFromConfig(cfg map[string]any) (int64, bool)` (typed decode — handle `float64`/`json.Number`); `reviewedHead(...)` (a small query: EXISTS a succeeded `code_review` for `(repo_connector_id, pr_number, head_sha)` with `id <> job.ID`); `finalizeSkipped(...)` (calls `UpdateCodeReviewResult` with `status='succeeded'`, empty summary, a note). Add `Tokens installationTokenSource` to the `CodeReviewService` struct + the interface.
+Add helpers + two required bug fixes:
+- `installationIDFromConfig(cfg map[string]any) (int64, bool)` — typed decode (`float64`/`json.Number` → int64).
+- `reviewedHead(ctx, principalID, businessID, connID uuid.UUID, pr int, headSHA string, selfID uuid.UUID) (bool, error)` — `EXISTS` a `code_review` for `(repo_connector_id, pr_number, head_sha)` with `status='succeeded'` and `id <> selfID`, under `WithPrincipal`. **fable M4:** this needs a real `pgx.Tx` — the existing `fakeServiceDB.WithPrincipal` never invokes fn, so DON'T unit-test the re-check; assert it in the Step 6 integration test. Mint + egress branches ARE unit-testable (they run before any DB touch).
+- **`finalizeSkipped(ctx, job, headSHA)` — concrete (fable C2):** call `UpdateCodeReviewResult` with `Status:"succeeded"`, `HeadSha: headSHA`, `Summary:""`, `Findings: []byte("[]")`, `DimensionRuns: []byte("[]")`, `Model: cred.Model`, zero usage, and **propagate the error** (`return err`). Omitting `Findings`/`DimensionRuns` (both `jsonb NOT NULL`) makes pgx encode nil→SQL NULL → 23502 → the UPDATE aborts; if that error is swallowed the row stays `'running'`, its lease expires, and `claim_code_reviews` re-claims expired-running rows with NO attempts cap → infinite loop. So both fields MUST be non-nil and the error MUST propagate (so a genuine DB failure requeues).
+- **Fix the pre-existing `fail()` bug (fable C1) in the same change:** `fail()` (`service.go:795-819`) calls `UpdateCodeReviewResult` with `Status:"failed"` but omits `DimensionRuns` → the same 23502 silent-abort (a latent no-op since migration 0079). Add `DimensionRuns: []byte("[]")` (and confirm `Findings` is non-nil) to that call so the row actually reaches `'failed'` and `last_error` persists.
+- Add `Tokens installationTokenSource` to the `CodeReviewService` struct + the `installationTokenSource interface { Token(ctx context.Context, installationID int64, repo string) (string, error) }`.
 
 - [ ] **Step 4: Run → PASS.**
 
@@ -599,7 +606,7 @@ Add helpers: `installationIDFromConfig(cfg map[string]any) (int64, bool)` (typed
 ```
 (Cleaner: hoist `gaStore := &githubapp.ConfigStore{DB: database, Sealer: gaSealer}` into its own var, use it for both `githubAppH.Store` and the token source. `codingSvc` exists from L396, so this late-wire assignment is valid — mirrors the `agentH.SetMetadata` late-wire at L456.)
 
-- [ ] **Step 6: End-to-end integration test.** `internal/agents/coding/service_github_app_test.go` (`//go:build integration`): seed a linked installation; POST a signed `opened` `pull_request` delivery to the webhook handler (or call `handlePullRequestEvent` + the enqueuer directly against real Postgres) → assert an app-backed `repo_connector` + pending `code_review` under the agent principal exist; run the worker/`runJob` with a `FakeRunner` + a fake `Tokens` returning `"ghs_test"` → assert the fake token reached the clone auth and `PostReview` was called (or the fake connector recorded it). Reuse Slice-1 seeds + the coding `FakeRunner`.
+- [ ] **Step 6: End-to-end + status-lifecycle integration test.** `internal/agents/coding/service_github_app_test.go` (`//go:build integration`): seed a linked installation; drive `handlePullRequestEvent` + the enqueuer against real Postgres → assert an app-backed `repo_connector` + pending `code_review` under the agent principal exist; run `runJob` with a `FakeRunner` + a fake `Tokens` returning `"ghs_test"` → assert the fake token reached the clone auth + `PostReview` was called. **Plus the status-lifecycle assertions (fable C1/C2):** (a) a runJob failure path lands the row back at `'pending'` via `requeue_code_review` (not stuck `'running'`) and, after `MaxAttempts`, at `'failed'` with `last_error` set — proving the `fail()` `dimension_runs` fix + the `status IN ('running','failed')` guard; (b) `finalizeSkipped` lands the row at `'succeeded'` with `lease_expires_at IS NULL` (no re-claim loop); (c) the claim-time re-check: a second row for the same `(connector, pr, head)` finalizes skipped without a duplicate `PostReview`. Reuse Slice-1 seeds + the coding `FakeRunner`.
 
 - [ ] **Step 7: Full suites.** `go build ./... && make test && go test -tags integration ./internal/githubapp/... ./internal/connectors/... ./internal/agents/coding/... && go test -tags contract ./cmd/... && make sec-test`. **Step 8: Commit** (service.go, main.go, tests): `feat(011): runJob mints installation token + egress pre-flight + claim-time re-check; wire token source + enqueuer (manyforge-qpc)`.
 
