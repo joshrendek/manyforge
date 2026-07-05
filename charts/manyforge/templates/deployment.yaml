@@ -46,7 +46,11 @@ spec:
               path: /readyz
               port: http
             initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 15
+            # /readyz pings the external Postgres; the default 1s timeout is too
+            # tight for that round-trip under load and flaps the pod NotReady → 503.
+            timeoutSeconds: 5
+            failureThreshold: 3
           envFrom:
             - configMapRef:
                 name: {{ include "manyforge.fullname" . }}
