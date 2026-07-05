@@ -670,3 +670,35 @@ CREATE TABLE review_config (
 );
 
 CREATE INDEX code_review_claim_idx ON code_review (status, run_after);
+
+CREATE TABLE github_app_config (
+    id                    integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    app_id                bigint  NOT NULL,
+    slug                  text    NOT NULL,
+    client_id             text    NOT NULL,
+    sealed_client_secret  text    NOT NULL,
+    sealed_private_key    text    NOT NULL,
+    sealed_webhook_secret text    NOT NULL,
+    created_at            timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE github_setup_nonce (
+    nonce       text PRIMARY KEY,
+    consumed_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE github_app_installation (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    installation_id bigint NOT NULL UNIQUE,
+    account_login   text   NOT NULL,
+    account_type    text   NOT NULL DEFAULT 'Organization',
+    business_id     uuid,
+    tenant_root_id  uuid,
+    agent_id        uuid,
+    enabled         boolean NOT NULL DEFAULT true,
+    config          jsonb   NOT NULL DEFAULT '{}'::jsonb,
+    suspended_at    timestamptz,
+    deleted_at      timestamptz,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now()
+);

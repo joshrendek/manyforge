@@ -32,3 +32,7 @@ data:
   # Secret of this name in the sandbox namespace above — see the
   # imagePullSecrets note in values.yaml.
   MANYFORGE_SANDBOX_PULL_SECRET: {{ .Values.sandbox.pullSecret | quote }}
+  # GitHub App integration (spec 009) — optional; empty values leave the
+  # operator-gated setup routes 404 and the webhook/OAuth redirect URLs unset.
+  MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL: {{ .Values.instanceOperatorPrincipal | quote }}
+  MANYFORGE_PUBLIC_BASE_URL: {{ .Values.publicBaseURL | quote }}

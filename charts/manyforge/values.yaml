@@ -120,6 +120,16 @@ accessTokenTTL: 15m
 # chart fails to render (`required`) until this is set.
 trustedProxyCidr: ""
 
+# GitHub App integration (spec 009). Both OPTIONAL — empty leaves the feature
+# disabled (setup routes 404; the App master key in secrets.masterKeys.githubAppKey
+# separately gates whether the integration is mounted at all).
+#   - instanceOperatorPrincipal: the operator's principal UUID permitted to run the
+#     in-app "create GitHub App" manifest flow (empty → those routes 404 for all).
+#   - publicBaseURL: externally-reachable base for the GitHub webhook + OAuth
+#     redirect URLs baked into the App manifest (e.g. https://hub.bluescripts.net).
+instanceOperatorPrincipal: ""
+publicBaseURL: ""
+
 sandbox:
   # Consumed by the code-review sandbox runner (internal/agents/coding/sandbox)
   # and, below, by this chart's own sandbox namespace/egress-proxy/RBAC
@@ -168,6 +178,10 @@ secrets:
     connectorKey: connector
     dkimKey: dkim
     mcpKey: mcp
+    # AES-256 key sealing the GitHub App private key + client/webhook secrets at
+    # rest (spec 009). Optional: if this key is absent from the Secret the app
+    # boots with the GitHub App integration disabled.
+    githubAppKey: github-app
   # Owner-role DSN for the migrate Job — distinct from the app DSN above,
   # since migrations need DDL privileges the app role should not have.
   migrateDatabase:
