@@ -188,6 +188,84 @@ func TestLoadAgentRunLimits(t *testing.T) {
 	})
 }
 
+// TestSandboxMode pins Task 4.1: MANYFORGE_SANDBOX_MODE defaults to "kube" when
+// KUBERNETES_SERVICE_HOST is set (in-cluster) and "docker" otherwise; an explicit
+// value is honored, and anything outside off|docker|kube is a hard config error.
+func TestSandboxMode(t *testing.T) {
+	t.Run("defaults to kube in-cluster", func(t *testing.T) {
+		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxMode != "kube" {
+			t.Fatalf("SandboxMode = %q, want %q", cfg.SandboxMode, "kube")
+		}
+	})
+
+	t.Run("defaults to docker off-cluster", func(t *testing.T) {
+		t.Setenv("KUBERNETES_SERVICE_HOST", "")
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxMode != "docker" {
+			t.Fatalf("SandboxMode = %q, want %q", cfg.SandboxMode, "docker")
+		}
+	})
+
+	t.Run("explicit value is honored", func(t *testing.T) {
+		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "off")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxMode != "off" {
+			t.Fatalf("SandboxMode = %q, want %q", cfg.SandboxMode, "off")
+		}
+	})
+
+	t.Run("invalid value is a config error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_SANDBOX_MODE", "bogus")
+		if _, err := Load(); err == nil {
+			t.Fatal("Load with invalid MANYFORGE_SANDBOX_MODE: want error, got nil")
+		}
+	})
+}
+
+// TestSandboxNamespace pins the Task 4.5 RBAC/DNS fix: SandboxNamespace must
+// default to "manyforge-sandbox" (matching the chart's
+// .Values.sandbox.namespace default) and be overridable via
+// MANYFORGE_SANDBOX_NAMESPACE — this is the single source of truth the
+// KubeRunner's Namespace and the egress-proxy ProxyAddr both derive from in
+// main.go, instead of kube.Namespace() (the app pod's own namespace).
+func TestSandboxNamespace(t *testing.T) {
+	t.Run("defaults to manyforge-sandbox", func(t *testing.T) {
+		t.Setenv("MANYFORGE_SANDBOX_NAMESPACE", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxNamespace != "manyforge-sandbox" {
+			t.Fatalf("SandboxNamespace = %q, want %q", cfg.SandboxNamespace, "manyforge-sandbox")
+		}
+	})
+
+	t.Run("explicit value is honored", func(t *testing.T) {
+		t.Setenv("MANYFORGE_SANDBOX_NAMESPACE", "custom-sandbox-ns")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SandboxNamespace != "custom-sandbox-ns" {
+			t.Fatalf("SandboxNamespace = %q, want %q", cfg.SandboxNamespace, "custom-sandbox-ns")
+		}
+	})
+}
+
 func TestLocalReviewTimeout(t *testing.T) {
 	t.Run("default 30m", func(t *testing.T) {
 		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "")

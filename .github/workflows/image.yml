@@ -1,0 +1,72 @@
+name: images
+
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute tag
+        id: tag
+        run: |
+          TS=$(date +%s)
+          SHA=${GITHUB_SHA::7}
+          TAG=main-${SHA}-${TS}
+          echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/joshrendek/manyforge:${{ steps.tag.outputs.TAG }}
+            ghcr.io/joshrendek/manyforge:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/sandbox/Dockerfile
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            TARGETARCH=amd64
+          tags: |
+            ghcr.io/joshrendek/manyforge/opencode-sandbox:${{ steps.tag.outputs.TAG }}
+            ghcr.io/joshrendek/manyforge/opencode-sandbox:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push egress-proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/egress-proxy/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/joshrendek/manyforge/egress-proxy:${{ steps.tag.outputs.TAG }}
+            ghcr.io/joshrendek/manyforge/egress-proxy:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

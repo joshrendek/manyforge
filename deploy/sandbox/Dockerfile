@@ -52,4 +52,10 @@ RUN opencode --version
 COPY deploy/sandbox/entrypoint.sh /usr/local/bin/review
 RUN chmod +x /usr/local/bin/review
 
+# Non-root: entrypoint.sh only ever writes under /tmp (HOME/XDG_*, and its
+# working copy at /tmp/src) and /out (mkdir -p /out; review.json, usage.json) —
+# both are tmpfs/world-writable mounts at runtime (read-only root fs otherwise),
+# so uid 65532 needs no extra permissions.
+USER 65532:65532
+
 ENTRYPOINT ["/usr/local/bin/review"]

@@ -30,17 +30,17 @@ import (
 
 // CodeReview is the service-layer view of a code_review row.
 type CodeReview struct {
-	ID            uuid.UUID          `json:"id"`
-	Status        string             `json:"status"`
-	Summary       string             `json:"summary"`
-	ReviewURL     string             `json:"review_url"`
-	PRNumber      int                `json:"pr_number"`
-	Model         string             `json:"model"`      // model snapshot used for this review
+	ID            uuid.UUID            `json:"id"`
+	Status        string               `json:"status"`
+	Summary       string               `json:"summary"`
+	ReviewURL     string               `json:"review_url"`
+	PRNumber      int                  `json:"pr_number"`
+	Model         string               `json:"model"` // model snapshot used for this review
 	Findings      []connectors.Finding `json:"findings"`
-	FindingsCount int                `json:"findings_count"`
-	CostCents     int64              `json:"cost_cents"` // LLM cost of the run (0 until usage capture lands)
-	CreatedAt     time.Time          `json:"created_at"`
-	PostedAt      *time.Time         `json:"posted_at"`
+	FindingsCount int                  `json:"findings_count"`
+	CostCents     int64                `json:"cost_cents"` // LLM cost of the run (0 until usage capture lands)
+	CreatedAt     time.Time            `json:"created_at"`
+	PostedAt      *time.Time           `json:"posted_at"`
 	// Progress is the live progress snapshot for a running review (phase/tokens/
 	// preview); null/omitted for pending and terminal reviews. Populated from the
 	// code_review.progress jsonb the worker heartbeat persists.
@@ -117,6 +117,24 @@ type CodeReviewService struct {
 	// a fake that just creates the directory without needing a real git server.
 	// The allowPrivate parameter mirrors rc.AllowPrivateBaseURL from the connector.
 	Clone func(ctx context.Context, cloneURL, authHeader, sha, destDir string, allowPrivate bool) error
+
+	// ClonesInSandbox is true when the configured sandbox.SandboxRunner clones the
+	// reviewed repo itself (KubeRunner: an in-cluster init container clones
+	// CloneURL/CloneSHA from the SandboxSpec) rather than depending on a host-side
+	// checkout. Set from cfg.SandboxMode == "kube" in cmd/manyforge/main.go.
+	//
+	// This matters because the app runs as gcr.io/distroless/static:nonroot in kube
+	// mode — no git, no shell, read-only root filesystem — so runJob's host-side
+	// MkdirAll/git-clone (below) would fail outright. When true, runJob skips ALL
+	// host filesystem work (WorkRoot/checkout/outDir) and never calls s.cloneFn();
+	// the sandbox.SandboxSpec still carries CloneURL/CloneAuthHeader/CloneSHA/
+	// CloneAllowPrivate so the runner can clone on its own, and findings come back
+	// via SandboxResult.Outputs, never a shared host directory.
+	//
+	// The SSRF guard (checkCloneURL) always runs regardless of this flag — see
+	// runJob — so a blocked clone host still fails the job before any runner is
+	// invoked (MF-KUBE-SANDBOX-23).
+	ClonesInSandbox bool
 }
 
 // cloneFn returns the effective clone function (injectable seam or real default).
@@ -282,48 +300,70 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			fmt.Errorf("coding: pull request not open: %w", errs.ErrValidation))
 	}
 
-	// Set up per-run directories and clone the PR head.
+	// Set up per-run directories and clone the PR head — HOST-SIDE ONLY when the
+	// configured runner does not clone in the sandbox itself (docker/off/tests).
+	// In kube mode (s.ClonesInSandbox) the app pod is distroless (no git, no
+	// shell, read-only root FS) — the KubeRunner's own init container clones the
+	// repo instead, so none of this host filesystem work happens; checkout/outDir
+	// below stay as inert, never-created paths that KubeRunner ignores.
 	runDir := filepath.Join(s.WorkRoot, crID.String())
 	checkout := filepath.Join(runDir, "checkout")
 	outDir := filepath.Join(runDir, "out")
-	// Defense in depth: shield the per-run dirs from other local users by making
-	// WorkRoot 0700 owned by the server user. The leaf /work and /out below are
-	// world-accessible so the capless container can reach them, but a 0700 ancestor
-	// means no other local user can traverse in. (The docker daemon resolves the
-	// bind-mount source as root, so the 0700 ancestor never blocks the container.)
-	if err := os.MkdirAll(s.WorkRoot, 0o700); err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+	if !s.ClonesInSandbox {
+		// Defense in depth: shield the per-run dirs from other local users by making
+		// WorkRoot 0700 owned by the server user. The leaf /work and /out below are
+		// world-accessible so the capless container can reach them, but a 0700 ancestor
+		// means no other local user can traverse in. (The docker daemon resolves the
+		// bind-mount source as root, so the 0700 ancestor never blocks the container.)
+		if err := os.MkdirAll(s.WorkRoot, 0o700); err != nil {
+			return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		}
+		if err := os.Chmod(s.WorkRoot, 0o700); err != nil {
+			return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		}
+		// The sandbox runs with --cap-drop ALL, which strips CAP_DAC_OVERRIDE: even the
+		// container's root must obey filesystem permission bits. The per-run dirs are
+		// owned by the host server user, but the container process runs as a different
+		// uid — so the read-only /work mount must be world-readable/traversable (0755)
+		// and the /out mount world-writable (0777), or opencode can neither read the
+		// checkout nor write findings. Chmod explicitly to defeat the process umask.
+		// (Colima remaps bind-mount ownership and hides this; native Linux preserves it
+		// — see TestSandboxIsolation, which pins both halves.) The 0700 WorkRoot above
+		// keeps these world-perms unreachable by other local users. A future hardening
+		// is `--user <host-uid>` so 0700 leaves suffice and no world-perms are needed.
+		if err := os.MkdirAll(checkout, 0o755); err != nil {
+			return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		}
+		if err := os.Chmod(checkout, 0o755); err != nil {
+			return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		}
+		if err := os.MkdirAll(outDir, 0o777); err != nil {
+			return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		}
+		if err := os.Chmod(outDir, 0o777); err != nil {
+			return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		}
+		defer func() { _ = os.RemoveAll(runDir) }() // always clean up regardless of outcome
 	}
-	if err := os.Chmod(s.WorkRoot, 0o700); err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
-	}
-	// The sandbox runs with --cap-drop ALL, which strips CAP_DAC_OVERRIDE: even the
-	// container's root must obey filesystem permission bits. The per-run dirs are
-	// owned by the host server user, but the container process runs as a different
-	// uid — so the read-only /work mount must be world-readable/traversable (0755)
-	// and the /out mount world-writable (0777), or opencode can neither read the
-	// checkout nor write findings. Chmod explicitly to defeat the process umask.
-	// (Colima remaps bind-mount ownership and hides this; native Linux preserves it
-	// — see TestSandboxIsolation, which pins both halves.) The 0700 WorkRoot above
-	// keeps these world-perms unreachable by other local users. A future hardening
-	// is `--user <host-uid>` so 0700 leaves suffice and no world-perms are needed.
-	if err := os.MkdirAll(checkout, 0o755); err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
-	}
-	if err := os.Chmod(checkout, 0o755); err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
-	}
-	if err := os.MkdirAll(outDir, 0o777); err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
-	}
-	if err := os.Chmod(outDir, 0o777); err != nil {
-		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
-	}
-	defer func() { _ = os.RemoveAll(runDir) }() // always clean up regardless of outcome
 
 	authHeader := github.BasicAuthHeader(rc.Credential.APIToken)
-	if err := s.cloneFn()(ctx, conn.CloneURL(), authHeader, pr.HeadSHA, checkout, rc.AllowPrivateBaseURL); err != nil {
+
+	// SSRF guard: ALWAYS validate the clone URL host, regardless of which runner
+	// ends up performing the actual clone. checkCloneURL is pure (url.Parse +
+	// net.LookupIP + netsafe.IsBlocked) — no git/exec needed — so it runs safely
+	// even in the distroless kube-mode app pod. In docker/off mode s.cloneFn()
+	// (CloneAtSHA) re-checks this internally before shelling out to git; in kube
+	// mode there is no host-side git at all, so THIS is the only host-side SSRF
+	// guard the run gets before the KubeRunner's in-cluster init container clones
+	// the repo. Pinned by MF-KUBE-SANDBOX-23.
+	if err := checkCloneURL(conn.CloneURL(), rc.AllowPrivateBaseURL); err != nil {
 		return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+	}
+
+	if !s.ClonesInSandbox {
+		if err := s.cloneFn()(ctx, conn.CloneURL(), authHeader, pr.HeadSHA, checkout, rc.AllowPrivateBaseURL); err != nil {
+			return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+		}
 	}
 
 	// Fetch the PR's changed files (patch text + commentable lines) once. Used to
@@ -409,19 +449,21 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		}
 
 		// Cloud path: hand opencode the scoped diff + changed-file scope hint + the dimension's
-		// prompt where the entrypoint reads them (/out/review_*.txt), then run it. review_diff
-		// is the primary scope; review_files.txt is the whole-file fallback.
+		// prompt in-band on the spec (Inputs) — the runner materializes them where the
+		// entrypoint reads them (/out/review_*.txt). review_diff is the primary scope;
+		// review_files.txt is the whole-file fallback. Single-sourcing the prompt this way
+		// means local and cloud share one prompt and prompt changes need no sandbox-image
+		// rebuild — the image's baked INSTRUCTIONS is only a fallback when review_instructions.txt
+		// is absent.
+		inputs := map[string][]byte{
+			"review_instructions.txt": []byte(dim.Prompt),
+		}
 		if len(scoped) > 0 {
-			_ = os.WriteFile(filepath.Join(laneOutDir, "review_files.txt"),
-				[]byte(strings.Join(changedFilePaths(commentableMap(scoped)), "\n")), 0o644)
+			inputs["review_files.txt"] = []byte(strings.Join(changedFilePaths(commentableMap(scoped)), "\n"))
 		}
 		if lanePayload != "" {
-			_ = os.WriteFile(filepath.Join(laneOutDir, "review_diff.txt"), []byte(lanePayload), 0o644)
+			inputs["review_diff.txt"] = []byte(lanePayload)
 		}
-		// Single-source the prompt: write the dimension's instructions where the entrypoint
-		// reads them, so local and cloud share one prompt and prompt changes need no sandbox-
-		// image rebuild. The image's baked INSTRUCTIONS is only a fallback when this is absent.
-		_ = os.WriteFile(filepath.Join(laneOutDir, "review_instructions.txt"), []byte(dim.Prompt), 0o644)
 		_ = s.auditStep(ctx, principalID, businessID, crID,
 			"agent.coding.opencode.invoked",
 			map[string]any{"image": s.Image, "head_sha": pr.HeadSHA, "model": laneCred.Model, "dimension": dim.Key},
@@ -439,6 +481,14 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			// review shows progress like the local path (secrets are scrubbed by prog.Snapshot
 			// via SetSecrets). The worker persists prog every heartbeat while this lane runs.
 			StreamStderr: &progressStreamWriter{prog: prog, dim: dim.Key},
+			Inputs:       inputs,
+			// Clone info, in-band, for a future host-FS-independent runner (KubeRunner, Task
+			// 4.3) to clone the repo itself. DockerRunner ignores these fields — the host
+			// clone into ReadOnlyDir above (runJob) is what it actually uses.
+			CloneURL:          conn.CloneURL(),
+			CloneAuthHeader:   authHeader,
+			CloneSHA:          pr.HeadSHA,
+			CloneAllowPrivate: rc.AllowPrivateBaseURL,
 		}
 		// runLaneOnce executes the sandbox once, captures usage, and parses the findings.
 		// Usage is read as SOON as the sandbox returns — the model may have burned tokens even
@@ -447,7 +497,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		// Returns (usage, doc, failReason, err); failReason is the client-safe category for err.
 		runLaneOnce := func() (sandboxUsage, FindingsDoc, string, error) {
 			res, rerr := s.Sandbox.Run(ctx, spec)
-			usage := readSandboxUsage(laneOutDir)
+			usage := parseSandboxUsage(res.Outputs["usage.json"])
 			if rerr != nil {
 				reason := "sandbox error"
 				if res.TimedOut {
@@ -455,10 +505,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 				}
 				return usage, FindingsDoc{}, reason, rerr
 			}
-			raw, ferr := os.ReadFile(filepath.Join(laneOutDir, "review.json"))
-			if ferr != nil {
+			raw, ok := res.Outputs["review.json"]
+			if !ok {
 				return usage, FindingsDoc{}, "no output produced",
-					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, ferr, sandboxStderrTail(res.Stderr, laneCred.APIKey, rc.Credential.APIToken))
+					fmt.Errorf("coding: no findings produced (exit %d): %w%s", res.ExitCode, errNoReviewOutput, sandboxStderrTail(res.Stderr, laneCred.APIKey, rc.Credential.APIToken))
 			}
 			d, perr := ParseFindings(raw)
 			if perr != nil {
@@ -530,11 +580,16 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		laneOutDir := outDir
 		if len(active) > 1 {
 			laneOutDir = filepath.Join(outDir, "lane-"+dim.Key)
-			if err := os.MkdirAll(laneOutDir, 0o777); err != nil {
-				return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
-			}
-			if err := os.Chmod(laneOutDir, 0o777); err != nil {
-				return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+			// Host materialization only applies when the docker/off runner shares a
+			// host output directory; KubeRunner ignores OutputDir entirely and the
+			// distroless app pod couldn't create this anyway (s.ClonesInSandbox).
+			if !s.ClonesInSandbox {
+				if err := os.MkdirAll(laneOutDir, 0o777); err != nil {
+					return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+				}
+				if err := os.Chmod(laneOutDir, 0o777); err != nil {
+					return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
+				}
 			}
 		}
 		laneResults = append(laneResults, reviewLane(dim, laneOutDir))
@@ -921,11 +976,16 @@ func costCentsFromUsage(u sandboxUsage) (cents int64, priced bool) {
 	return 0, false
 }
 
-// readSandboxUsage reads /out/usage.json. Best-effort: missing/empty/garbage → zero
-// usage (a review is never failed for lack of usage data).
-func readSandboxUsage(outDir string) sandboxUsage {
-	b, err := os.ReadFile(filepath.Join(outDir, "usage.json"))
-	if err != nil {
+// errNoReviewOutput indicates the sandbox run's Outputs carried no review.json — e.g. a
+// run that exited without the entrypoint ever writing findings.
+var errNoReviewOutput = errors.New("coding: review.json not found in sandbox outputs")
+
+// parseSandboxUsage parses usage.json content — the entrypoint's sqlite3 -json output: a
+// one-element array of {cost, input, output, reasoning, cache_read, cache_write}.
+// Best-effort: missing/empty/garbage → zero usage (a review is never failed for lack of
+// usage data).
+func parseSandboxUsage(b []byte) sandboxUsage {
+	if len(b) == 0 {
 		return sandboxUsage{}
 	}
 	var rows []sandboxUsage
@@ -933,6 +993,17 @@ func readSandboxUsage(outDir string) sandboxUsage {
 		return sandboxUsage{}
 	}
 	return rows[0]
+}
+
+// readSandboxUsage reads /out/usage.json from a host output directory. Thin wrapper over
+// parseSandboxUsage for callers still working off a host directory rather than
+// SandboxResult.Outputs (e.g. direct unit tests of the on-disk contract).
+func readSandboxUsage(outDir string) sandboxUsage {
+	b, err := os.ReadFile(filepath.Join(outDir, "usage.json"))
+	if err != nil {
+		return sandboxUsage{}
+	}
+	return parseSandboxUsage(b)
 }
 
 // clampInt32 bounds a token count to a non-negative int32 (the agent_run/code_review

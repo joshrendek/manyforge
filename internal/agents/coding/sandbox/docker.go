@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"time"
 )
@@ -48,6 +50,15 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 	}
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
+
+	// Materialize in-band inputs (review_diff.txt, review_instructions.txt,
+	// review_files.txt) into the host OutputDir before the container starts — the
+	// entrypoint reads them from /out. Best-effort, mirroring the best-effort
+	// os.WriteFile calls in service.go this replaces: a write failure here must not
+	// abort the run (the entrypoint degrades to its baked-in fallback instructions).
+	for fname, data := range spec.Inputs {
+		_ = os.WriteFile(filepath.Join(spec.OutputDir, fname), data, 0o644)
+	}
 
 	name := containerName()
 	args := []string{
@@ -91,7 +102,10 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 	}
 
 	err := cmd.Run()
-	res := SandboxResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	// Read back whatever the entrypoint wrote to /out, regardless of exit code — a run
+	// that ultimately failed to parse may still have burned tokens and written usage.json.
+	// Best-effort: a missing file is simply absent from Outputs.
+	res := SandboxResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), Outputs: readSandboxOutputs(spec.OutputDir)}
 
 	// On timeout/cancel, exec killed the `docker` CLI but not the daemon-run container —
 	// it orphans and keeps running (observed: still "Up" 5+ min past a 5-min cap, continuing
@@ -115,4 +129,21 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 		return res, fmt.Errorf("sandbox: docker run: %w", err)
 	}
 	return res, nil
+}
+
+// sandboxOutputFiles are the fixed set of files the opencode entrypoint writes to /out
+// that callers read back in-band via SandboxResult.Outputs.
+var sandboxOutputFiles = []string{"review.json", "usage.json"}
+
+// readSandboxOutputs reads sandboxOutputFiles back from the host OutputDir into a map so
+// SandboxResult carries them in-band rather than requiring the caller to know the runner
+// used a shared host filesystem. Best-effort: a missing file is simply omitted.
+func readSandboxOutputs(outputDir string) map[string][]byte {
+	outputs := map[string][]byte{}
+	for _, fname := range sandboxOutputFiles {
+		if b, err := os.ReadFile(filepath.Join(outputDir, fname)); err == nil {
+			outputs[fname] = b
+		}
+	}
+	return outputs
 }

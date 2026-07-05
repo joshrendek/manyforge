@@ -1,0 +1,58 @@
+{{- if .Values.sandbox.enabled }}
+# Grants the app's ServiceAccount (serviceaccount.yaml) just enough access to
+# the sandbox namespace to run KubeRunner (internal/agents/coding/sandbox/kube)
+# — one Job + one per-run ConfigMap + one per-run Secret per review, per
+# runner.go's buildJob/buildSecret/buildConfigMap. Scoped to the sandbox
+# namespace only (Role, not ClusterRole): the app's own release namespace gets
+# no elevated permissions from this.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manyforge-sandbox-runner
+  namespace: {{ .Values.sandbox.namespace }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+rules:
+  # Job lifecycle: KubeRunner creates one Job per review and best-effort
+  # deletes it (cleanup) once the run is done; delete is also needed for an
+  # operator-triggered GC of a Job this process crashed before cleaning up.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Pod status polling (waitForJob/findRunPod) and live log streaming
+  # (streamPodLogs/rereadPodLogs) — read-only, no pod mutation.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  # Per-run ConfigMap (buildConfigMap): review_*.txt inputs the init container
+  # copies into /out.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  # Per-run Secret (buildSecret): LLM_* credentials + the git clone auth
+  # header. REQUIRED — KubeRunner mints one of these per review (M2); without
+  # `secrets` verbs every kube-mode review fails at Job-creation time.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "delete"]
+---
+# Binds the Role above to the app's ServiceAccount, which lives in the
+# release namespace (not the sandbox namespace the Role itself is scoped to)
+# — a cross-namespace subject reference, which RBAC supports as long as the
+# subject's namespace is spelled out explicitly, as it is here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manyforge-sandbox-runner
+  namespace: {{ .Values.sandbox.namespace }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "manyforge.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: manyforge-sandbox-runner
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

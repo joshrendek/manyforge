@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,14 +17,15 @@ import (
 )
 
 // perDimRunner is a fake sandbox runner for the multi-dimension fan-out: it reads the per-lane
-// review_instructions.txt (which the cloud lane writes with the dimension's prompt) to learn
-// WHICH dimension it is reviewing, then writes a dimension-specific finding into that lane's
-// review.json. This lets one runner drive N lanes with distinct findings, exercising the real
-// per-lane sandbox output dirs + aggregation + tagging.
+// review_instructions.txt (which the cloud lane carries in-band via spec.Inputs, keyed by the
+// dimension's prompt) to learn WHICH dimension it is reviewing, then returns a dimension-specific
+// finding in that lane's review.json (via the result's Outputs). This lets one runner drive N
+// lanes with distinct findings, exercising the real per-lane spec/result plumbing + aggregation +
+// tagging.
 type perDimRunner struct{}
 
 func (r *perDimRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
-	instr, _ := os.ReadFile(filepath.Join(spec.OutputDir, "review_instructions.txt"))
+	instr := spec.Inputs["review_instructions.txt"]
 	dim := "general"
 	switch {
 	case strings.Contains(string(instr), "DIMPROMPT:security"):
@@ -41,17 +40,14 @@ func (r *perDimRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox
 		},
 	}
 	data, _ := json.Marshal(doc)
-	if err := os.WriteFile(filepath.Join(spec.OutputDir, "review.json"), data, 0o644); err != nil {
-		return sandbox.SandboxResult{}, err
-	}
 	// Emit usage.json the way the real entrypoint does — including opencode's OWN cost and
 	// the dominant cache-read tokens — so the fan-out's cost accounting is exercised: the
 	// host must bill from `cost` (0.02 ⇒ 2¢), not re-price from the token subset.
 	usage := `[{"cost":0.02,"input":1000,"output":50,"reasoning":10,"cache_read":40000,"cache_write":0}]`
-	if err := os.WriteFile(filepath.Join(spec.OutputDir, "usage.json"), []byte(usage), 0o644); err != nil {
-		return sandbox.SandboxResult{}, err
-	}
-	return sandbox.SandboxResult{ExitCode: 0}, nil
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{
+		"review.json": data,
+		"usage.json":  []byte(usage),
+	}}, nil
 }
 
 // seedReviewDimension inserts a configured review_dimension row for a business via the superuser

@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "manyforge.fullname" . }}-migrate
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "manyforge.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/manyforge", "migrate"]
+          workingDir: /
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            # Owner-role DSN — distinct from the app's non-superuser DSN
+            # (secrets.database) since migrations need DDL privileges the app
+            # role should not have.
+            - name: MANYFORGE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.migrateDatabase.secretName | default "manyforge-migrate-database" }}
+                  key: {{ .Values.secrets.migrateDatabase.key | default "url" }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

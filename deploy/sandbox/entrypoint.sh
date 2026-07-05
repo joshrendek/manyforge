@@ -190,4 +190,23 @@ if [ -n "$DB" ]; then
     > /out/usage.json 2>/dev/null || true
 fi
 
+# KubeRunner (Task 4.4): k8s pod logs merge stdout+stderr with no stream tags, so
+# review.json/usage.json can't just be left on stdout like DockerRunner's shared
+# host /out mount lets them be — the host instead extracts them from the log
+# stream via nonce-scoped markers. MF_MARKER_NONCE is a fresh random value the
+# KubeRunner sets per-run (never on DockerRunner, so this block is a no-op there);
+# gating on it keeps the DOCKER path byte-for-byte unaffected. Base64-encode each
+# file to a single line (no embedded newlines/metacharacters that could be
+# mistaken for a marker) — this also defeats a prompt-injected PR that tries to
+# forge these markers itself: it would need to guess this run's random nonce.
+# Narration continues to go to stderr; this block is stdout only.
+if [ -n "${MF_MARKER_NONCE:-}" ]; then
+  printf '===MF-REVIEW-%s-BEGIN===\n' "$MF_MARKER_NONCE"
+  base64 -w0 /out/review.json 2>/dev/null || true
+  printf '\n===MF-REVIEW-%s-END===\n' "$MF_MARKER_NONCE"
+  printf '===MF-USAGE-%s-BEGIN===\n' "$MF_MARKER_NONCE"
+  base64 -w0 /out/usage.json 2>/dev/null || true
+  printf '\n===MF-USAGE-%s-END===\n' "$MF_MARKER_NONCE"
+fi
+
 exit "$rc"

@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "manyforge.fullname" . }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+data:
+  MANYFORGE_ADDR: {{ .Values.addr | quote }}
+  MANYFORGE_JWT_ISSUER: {{ .Values.jwt.issuer | quote }}
+  MANYFORGE_JWT_AUDIENCE: {{ .Values.jwt.audience | quote }}
+  # Single source of truth for the active signing kid: .Values.jwt.activeKid.
+  MANYFORGE_JWT_ACTIVE_KID: {{ required "manyforge: jwt.activeKid is required (set it + the manyforge-jwt secret; empty means ephemeral per-pod keys → cluster-wide logouts)" .Values.jwt.activeKid | quote }}
+  MANYFORGE_ACCESS_TOKEN_TTL: {{ .Values.accessTokenTTL | quote }}
+  # REQUIRED behind ingress-nginx so rate-limit/audit logging resolve the real
+  # client IP from X-Forwarded-For instead of the ingress controller's pod IP.
+  MANYFORGE_TRUSTED_PROXY_CIDR: {{ required "manyforge: trustedProxyCidr is required behind ingress (e.g. the pod CIDR); empty collapses all clients into one rate-limit bucket" .Values.trustedProxyCidr | quote }}
+  MANYFORGE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
+  MANYFORGE_EGRESS_PROXY_IMAGE: {{ .Values.sandbox.egressProxyImage | quote }}
+  MANYFORGE_SANDBOX_EGRESS_ALLOW: {{ .Values.sandbox.egressAllow | quote }}
+  # Selects the code-review sandbox runner (internal/platform/config/config.go);
+  # "kube" is the Talos deploy target's mode — see sandbox-egress-proxy.yaml
+  # and rbac.yaml for the cluster objects that mode depends on.
+  MANYFORGE_SANDBOX_MODE: {{ .Values.sandbox.mode | quote }}
+  # Single source of truth for the sandbox namespace: the KubeRunner creates
+  # per-review Jobs/Secrets/ConfigMaps here, and the egress-proxy ProxyAddr
+  # (cmd/manyforge/main.go) is derived from it. MUST match .Values.sandbox.namespace
+  # — the namespace this chart's sandbox-namespace.yaml/rbac.yaml/
+  # sandbox-egress-proxy.yaml templates actually create the sandbox objects in.
+  MANYFORGE_SANDBOX_NAMESPACE: {{ .Values.sandbox.namespace | quote }}
+  # Image-pull secret NAME the KubeRunner attaches to every per-review Job
+  # (internal/platform/config/config.go SandboxPullSecret). MUST match a
+  # Secret of this name in the sandbox namespace above — see the
+  # imagePullSecrets note in values.yaml.
+  MANYFORGE_SANDBOX_PULL_SECRET: {{ .Values.sandbox.pullSecret | quote }}

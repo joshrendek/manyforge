@@ -18,6 +18,21 @@ type SandboxSpec struct {
 	// buffered SandboxResult.Stderr) so a caller can stream progress as the run proceeds. The
 	// entrypoint routes the tool's stderr to the container's stderr for exactly this.
 	StreamStderr io.Writer
+
+	// Inputs are files the entrypoint reads back out of /out (review_diff.txt,
+	// review_instructions.txt, review_files.txt) keyed by filename. Carrying them in-band
+	// on the spec — rather than the caller pre-writing them to a shared host OutputDir —
+	// means a runner with no shared host filesystem (e.g. a future KubeRunner) can
+	// materialize them however it wires up /out.
+	Inputs map[string][]byte
+
+	// Clone* let a runner clone the reviewed repo itself instead of depending on a
+	// pre-populated ReadOnlyDir (which only DockerRunner uses today — service.go still
+	// clones host-side for it). CloneAuthHeader is a secret credential — NEVER log it.
+	CloneURL          string
+	CloneAuthHeader   string
+	CloneSHA          string
+	CloneAllowPrivate bool
 }
 
 type SandboxResult struct {
@@ -25,6 +40,10 @@ type SandboxResult struct {
 	Stdout   []byte
 	Stderr   []byte
 	TimedOut bool
+	// Outputs holds files read back from /out after the run (review.json, usage.json),
+	// keyed by filename. A file that was never written is simply absent from the map —
+	// callers must not assume presence.
+	Outputs map[string][]byte
 }
 
 type SandboxRunner interface {

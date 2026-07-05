@@ -21,6 +21,9 @@ type Config struct {
 	TrustedProxyCIDR string        // CIDR allowed to set the client IP via X-Forwarded-For
 	JWTIssuer        string        // expected/stamped token issuer
 	JWTAudience      string        // expected/stamped token audience
+	JWTActiveKID     string        // kid of the persistent signing key (unset ⇒ ephemeral dev ring)
+	JWTSigningKeyPEM string        // PKCS8 Ed25519 private key PEM for persistent JWT signing; inline or via *_PATH
+	JWTVerifyKeys    string        // additional verify-only keys for rotation: "kid=<pkix pubkey pem>,..."
 	RateLimitRPS     float64       // per-IP token refill rate for abuse-sensitive routes (FR-029)
 	RateLimitBurst   float64       // per-IP burst allowance for abuse-sensitive routes
 
@@ -118,6 +121,30 @@ type Config struct {
 	// so this defaults to 30 min. Env: MANYFORGE_LOCAL_REVIEW_TIMEOUT. Separate from
 	// the sandbox wall-clock cap.
 	LocalReviewTimeout time.Duration
+
+	// SandboxMode selects which sandbox runner backs the code-review sandbox:
+	// "off" (disabled), "docker" (DockerRunner), or "kube" (KubeRunner, Task 4.5).
+	// Env: MANYFORGE_SANDBOX_MODE. Defaults to "kube" when KUBERNETES_SERVICE_HOST
+	// is set (running in-cluster), else "docker". Any other value is a hard config
+	// error caught here.
+	SandboxMode string
+	// SandboxNamespace is the namespace the KubeRunner creates per-review Jobs/
+	// Secrets/ConfigMaps in, and the namespace the egress-proxy Service lives in
+	// (ProxyAddr is derived from it in main.go). This is deliberately NOT
+	// kube.Namespace() — that helper reads the RUNNING POD's own namespace (the
+	// app's release namespace), which is a different namespace than the
+	// dedicated sandbox namespace the Role/RoleBinding in charts/manyforge/
+	// templates/rbac.yaml grant access to. Env: MANYFORGE_SANDBOX_NAMESPACE.
+	// Defaults to "manyforge-sandbox", matching the chart's
+	// .Values.sandbox.namespace default — keep the two in sync.
+	SandboxNamespace string
+	// SandboxPullSecret is the name of the image-pull Secret the KubeRunner
+	// attaches to every per-review Job's PodSpec (imagePullSecrets), so a
+	// private sandbox image (opencode-sandbox, egress-proxy) can be pulled in
+	// the dedicated sandbox namespace. Env: MANYFORGE_SANDBOX_PULL_SECRET.
+	// Default: "ghcr-auth", matching the chart's imagePullSecrets default —
+	// keep the two in sync (see charts/manyforge/values.yaml sandbox.pullSecret).
+	SandboxPullSecret string
 }
 
 // Load reads configuration from the environment, applying safe local-dev
@@ -129,6 +156,8 @@ func Load() (Config, error) {
 		TrustedProxyCIDR: os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
 		JWTIssuer:        env("MANYFORGE_JWT_ISSUER", "manyforge"),
 		JWTAudience:      env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
+		JWTActiveKID:     env("MANYFORGE_JWT_ACTIVE_KID", ""),
+		JWTVerifyKeys:    env("MANYFORGE_JWT_VERIFY_KEYS", ""),
 	}
 
 	ttl, err := envDuration("MANYFORGE_ACCESS_TOKEN_TTL", 15*time.Minute)
@@ -142,6 +171,21 @@ func Load() (Config, error) {
 	}
 	if cfg.RateLimitBurst, err = envFloat("MANYFORGE_RATELIMIT_BURST", 20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_RATELIMIT_BURST: %w", err)
+	}
+
+	// Persistent JWT signing key (Task 1.1): supplied inline (…_PEM) or via a
+	// file path (…_PEM_PATH), mirroring the DKIM key pattern below. Unset ⇒ the
+	// server falls back to the ephemeral dev key ring (see main.go); a
+	// configured-but-unreadable path is a hard config error.
+	cfg.JWTSigningKeyPEM = os.Getenv("MANYFORGE_JWT_SIGNING_KEY_PEM")
+	if cfg.JWTSigningKeyPEM == "" {
+		if p := os.Getenv("MANYFORGE_JWT_SIGNING_KEY_PEM_PATH"); p != "" {
+			b, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return Config{}, fmt.Errorf("MANYFORGE_JWT_SIGNING_KEY_PEM_PATH: %w", rerr)
+			}
+			cfg.JWTSigningKeyPEM = string(b)
+		}
 	}
 
 	// Support desk (spec 002).
@@ -277,7 +321,35 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_LOCAL_REVIEW_TIMEOUT: %w", err)
 	}
 
+	// Sandbox mode (Task 4.1, Phase 4 k8s-native sandbox). Defaults to "kube" when
+	// KUBERNETES_SERVICE_HOST is set (the standard in-cluster env var Kubernetes
+	// injects into every pod), else "docker". Only the env var is consulted here —
+	// this package must NOT import client-go — so the default is a cheap, offline
+	// signal rather than a real in-cluster API probe.
+	cfg.SandboxMode = env("MANYFORGE_SANDBOX_MODE", defaultSandboxMode())
+	switch cfg.SandboxMode {
+	case "off", "docker", "kube":
+	default:
+		return Config{}, fmt.Errorf("MANYFORGE_SANDBOX_MODE: must be off|docker|kube, got %q", cfg.SandboxMode)
+	}
+
+	// Single source of truth for the sandbox namespace (Task 4.5 fix): the
+	// KubeRunner's Namespace and the egress-proxy ProxyAddr in main.go both
+	// derive from this, not from kube.Namespace() (which reads the app pod's
+	// OWN namespace — the wrong value here).
+	cfg.SandboxNamespace = env("MANYFORGE_SANDBOX_NAMESPACE", "manyforge-sandbox")
+	cfg.SandboxPullSecret = env("MANYFORGE_SANDBOX_PULL_SECRET", "ghcr-auth")
+
 	return cfg, nil
+}
+
+// defaultSandboxMode picks "kube" when KUBERNETES_SERVICE_HOST is present (the pod
+// is running in-cluster), else "docker".
+func defaultSandboxMode() string {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return "kube"
+	}
+	return "docker"
 }
 
 func envInt(key string, def int) (int, error) {
