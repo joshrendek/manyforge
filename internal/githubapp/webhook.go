@@ -63,13 +63,21 @@ func (h *Handler) handleInstallationEvent(r *http.Request, body []byte) {
 		if at == "" {
 			at = "Organization"
 		}
-		_ = h.Installs.UpsertFromEvent(r.Context(), ev.Installation.ID, ev.Installation.Account.Login, at)
+		if err := h.Installs.UpsertFromEvent(r.Context(), ev.Installation.ID, ev.Installation.Account.Login, at); err != nil {
+			h.log(r.Context(), "webhook: installation upsert failed", err)
+		}
 	case "unsuspend":
-		_ = h.Installs.SetSuspended(r.Context(), ev.Installation.ID, false)
+		if err := h.Installs.SetSuspended(r.Context(), ev.Installation.ID, false); err != nil {
+			h.log(r.Context(), "webhook: installation unsuspend failed", err)
+		}
 	case "suspend":
-		_ = h.Installs.SetSuspended(r.Context(), ev.Installation.ID, true)
+		if err := h.Installs.SetSuspended(r.Context(), ev.Installation.ID, true); err != nil {
+			h.log(r.Context(), "webhook: installation suspend failed", err)
+		}
 	case "deleted":
-		_ = h.Installs.MarkDeleted(r.Context(), ev.Installation.ID)
+		if err := h.Installs.MarkDeleted(r.Context(), ev.Installation.ID); err != nil {
+			h.log(r.Context(), "webhook: installation delete failed", err)
+		}
 	}
 }
 
