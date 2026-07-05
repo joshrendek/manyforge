@@ -118,5 +118,13 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./pages/settings/github-installed').then((m) => m.GithubInstalledComponent),
   },
+  {
+    // Operator/business-admin entry point: create the GitHub App (manifest flow)
+    // and connect an organization to a business. Must precede the catch-all.
+    path: 'settings/github',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/settings/github-app-settings').then((m) => m.GithubAppSettingsComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
