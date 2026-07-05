@@ -40,6 +40,15 @@ type permChecker interface {
 	Has(ctx context.Context, principalID, businessID uuid.UUID, perm string) (bool, error)
 }
 
+// prReviewOps is the subset of the (Task 3) PR review path the Handler needs
+// to react to a pull_request webhook: resolve the installation's linked
+// business/agent, then atomically ingest the review request. Satisfied by
+// *PRReviewEnqueuer.
+type prReviewOps interface {
+	ResolveInstallation(ctx context.Context, installationID int64) (InstallationContext, bool, error)
+	IngestPRReview(ctx context.Context, in PRReviewInput) (uuid.UUID, bool, error)
+}
+
 // Handler is the HTTP surface for the instance-level GitHub App integration:
 // operator-only App setup (manifest creation/conversion) and, in later
 // tasks, the webhook receiver and per-business installation linking.
@@ -49,6 +58,7 @@ type Handler struct {
 	API               GitHubAPI
 	Nonces            nonceConsumer
 	Perms             permChecker
+	PRReviews         prReviewOps
 	OperatorPrincipal uuid.UUID
 	PublicBaseURL     string
 	StateKey          []byte
@@ -59,6 +69,15 @@ type Handler struct {
 func (h *Handler) log(ctx context.Context, msg string, err error) {
 	if h.Logger != nil {
 		h.Logger.ErrorContext(ctx, msg, "err", err)
+	}
+}
+
+// info logs routine, expected skip/filter reasons (draft/bot/fork/rate-cap/
+// dup) at Info level — distinct from log (Error level) so normal pull_request
+// filtering doesn't spam ERROR (fable m4).
+func (h *Handler) info(ctx context.Context, msg string, args ...any) {
+	if h.Logger != nil {
+		h.Logger.InfoContext(ctx, msg, args...)
 	}
 }
 
