@@ -91,6 +91,11 @@ type Config struct {
 	// error caught here.
 	ConnectorMasterKey []byte
 
+	// GitHubAppMasterKey seals the instance GitHub App private key + client/webhook
+	// secrets. MANYFORGE_GITHUB_APP_MASTER_KEY (base64/hex, 32 bytes). Nil when unset —
+	// GitHub App integration disabled, server still boots. Set-but-wrong-length is fatal.
+	GitHubAppMasterKey []byte
+
 	// Agent run loop bounds (Spec 003 §8, manyforge-ji7). Defaults below mirror the code
 	// defaults in agents.RunLimits (withDefaults backstops any zero). Tunable per-deployment
 	// via env so the loop budget isn't a recompile.
@@ -282,6 +287,13 @@ func Load() (Config, error) {
 	// key never silently disables the webhook handler/inbound-sync/reconciler.
 	if cfg.ConnectorMasterKey, err = envKey32("MANYFORGE_CONNECTOR_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_CONNECTOR_MASTER_KEY: %w", err)
+	}
+
+	// GitHub App master key: unset ⇒ nil (no error, GitHub App integration disabled);
+	// set-but-not-32-bytes-after-decode ⇒ hard error so a misconfigured key never
+	// silently disables sealing of the instance GitHub App credentials.
+	if cfg.GitHubAppMasterKey, err = envKey32("MANYFORGE_GITHUB_APP_MASTER_KEY"); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_GITHUB_APP_MASTER_KEY: %w", err)
 	}
 
 	// Agent run loop bounds (Spec 003 §8). Defaults mirror agents.RunLimits; a malformed value
