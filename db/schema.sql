@@ -670,3 +670,14 @@ CREATE TABLE review_config (
 );
 
 CREATE INDEX code_review_claim_idx ON code_review (status, run_after);
+
+CREATE TABLE github_app_config (
+    id                    integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    app_id                bigint  NOT NULL,
+    slug                  text    NOT NULL,
+    client_id             text    NOT NULL,
+    sealed_client_secret  text    NOT NULL,
+    sealed_private_key    text    NOT NULL,
+    sealed_webhook_secret text    NOT NULL,
+    created_at            timestamptz NOT NULL DEFAULT now()
+);
