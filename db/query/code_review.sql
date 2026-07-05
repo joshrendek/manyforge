@@ -18,6 +18,11 @@ UPDATE code_review SET
     tokens_out = sqlc.arg('tokens_out'),
     cost_cents = sqlc.arg('cost_cents'),
     dimension_runs = sqlc.arg('dimension_runs'),
+    -- fable M2: stamp the resolved review model. App-triggered reviews enqueue with
+    -- model='' (github_pr_review_ingest), so the finalize must fill it in. COALESCE(
+    -- NULLIF(...)) means an empty arg PRESERVES any prior model (so fail() passing ''
+    -- never blanks a model already stamped at Enqueue).
+    model = COALESCE(NULLIF(sqlc.arg('model'), ''), model),
     agent_run_id = sqlc.narg('agent_run_id'),
     lease_expires_at = NULL,
     updated_at = now()

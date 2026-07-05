@@ -47,8 +47,9 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Header.Get("X-GitHub-Event") == "installation" {
 		h.handleInstallationEvent(r, body)
+	} else if r.Header.Get("X-GitHub-Event") == "pull_request" {
+		h.handlePullRequestEvent(r, body)
 	}
-	// "pull_request" is Slice 2.
 	w.WriteHeader(http.StatusAccepted)
 }
 

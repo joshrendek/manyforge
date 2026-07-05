@@ -1,6 +1,7 @@
 package githubapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -164,4 +165,36 @@ func (c *Client) ListUserInstallations(ctx context.Context, userToken string) ([
 		out = append(out, Installation{ID: in.ID, Login: in.Account.Login, Type: in.Account.Type})
 	}
 	return out, nil
+}
+
+// MintInstallationToken mints a per-repo installation access token scoped to
+// only repoFullName's repo (POST /app/installations/{id}/access_tokens) —
+// never the whole installation — using appJWT (see AppJWT) to authenticate
+// as the App. Any non-2xx response (including a suspended/deleted
+// installation returning 401/403/404) propagates as a plain error with no
+// status-code classification; the caller's bounded retry policy handles it.
+func (c *Client) MintInstallationToken(ctx context.Context, installationID int64, appJWT, repoFullName string) (string, time.Time, error) {
+	name := repoFullName
+	if i := strings.LastIndex(repoFullName, "/"); i >= 0 {
+		name = repoFullName[i+1:]
+	}
+	payload, _ := json.Marshal(map[string]any{"repositories": []string{name}})
+	u := fmt.Sprintf("%s/app/installations/%d/access_tokens", c.APIBase, installationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(payload))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("github request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+appJWT)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var r struct {
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := c.do(req, &r); err != nil {
+		return "", time.Time{}, err
+	}
+	if r.Token == "" {
+		return "", time.Time{}, fmt.Errorf("github: empty installation token")
+	}
+	return r.Token, r.ExpiresAt, nil
 }

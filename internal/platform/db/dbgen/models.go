@@ -780,6 +780,34 @@ type GithubAppConfig struct {
 	CreatedAt           time.Time `json:"created_at"`
 }
 
+type GithubAppInstallation struct {
+	ID             uuid.UUID          `json:"id"`
+	InstallationID int64              `json:"installation_id"`
+	AccountLogin   string             `json:"account_login"`
+	AccountType    string             `json:"account_type"`
+	BusinessID     pgtype.UUID        `json:"business_id"`
+	TenantRootID   pgtype.UUID        `json:"tenant_root_id"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	Enabled        bool               `json:"enabled"`
+	Config         []byte             `json:"config"`
+	SuspendedAt    pgtype.Timestamptz `json:"suspended_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+}
+
+type GithubSetupNonce struct {
+	Nonce      string    `json:"nonce"`
+	ConsumedAt time.Time `json:"consumed_at"`
+}
+
+type GithubWebhookDelivery struct {
+	ID                 uuid.UUID `json:"id"`
+	InstallationID     int64     `json:"installation_id"`
+	ExternalDeliveryID string    `json:"external_delivery_id"`
+	ReceivedAt         time.Time `json:"received_at"`
+}
+
 type InboundAddress struct {
 	ID            uuid.UUID          `json:"id"`
 	BusinessID    uuid.UUID          `json:"business_id"`
@@ -911,19 +939,19 @@ type RefreshToken struct {
 }
 
 type RepoConnector struct {
-	ID                  uuid.UUID `json:"id"`
-	BusinessID          uuid.UUID `json:"business_id"`
-	TenantRootID        uuid.UUID `json:"tenant_root_id"`
-	Type                string    `json:"type"`
-	DisplayName         string    `json:"display_name"`
-	BaseUrl             string    `json:"base_url"`
-	Repo                string    `json:"repo"`
-	AllowPrivateBaseUrl bool      `json:"allow_private_base_url"`
-	SecretRef           uuid.UUID `json:"secret_ref"`
-	Config              []byte    `json:"config"`
-	Status              string    `json:"status"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                  uuid.UUID   `json:"id"`
+	BusinessID          uuid.UUID   `json:"business_id"`
+	TenantRootID        uuid.UUID   `json:"tenant_root_id"`
+	Type                string      `json:"type"`
+	DisplayName         string      `json:"display_name"`
+	BaseUrl             string      `json:"base_url"`
+	Repo                string      `json:"repo"`
+	AllowPrivateBaseUrl bool        `json:"allow_private_base_url"`
+	SecretRef           pgtype.UUID `json:"secret_ref"`
+	Config              []byte      `json:"config"`
+	Status              string      `json:"status"`
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
 }
 
 type Requester struct {

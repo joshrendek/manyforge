@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteRepoConnector = `-- name: DeleteRepoConnector :execrows
@@ -69,16 +70,16 @@ RETURNING id, business_id, tenant_root_id, type, display_name, base_url, repo, a
 `
 
 type InsertRepoConnectorParams struct {
-	ID                  uuid.UUID `json:"id"`
-	Type                string    `json:"type"`
-	DisplayName         string    `json:"display_name"`
-	BaseUrl             string    `json:"base_url"`
-	Repo                string    `json:"repo"`
-	AllowPrivateBaseUrl bool      `json:"allow_private_base_url"`
-	SecretRef           uuid.UUID `json:"secret_ref"`
-	Config              []byte    `json:"config"`
-	Status              string    `json:"status"`
-	BusinessID          uuid.UUID `json:"business_id"`
+	ID                  uuid.UUID   `json:"id"`
+	Type                string      `json:"type"`
+	DisplayName         string      `json:"display_name"`
+	BaseUrl             string      `json:"base_url"`
+	Repo                string      `json:"repo"`
+	AllowPrivateBaseUrl bool        `json:"allow_private_base_url"`
+	SecretRef           pgtype.UUID `json:"secret_ref"`
+	Config              []byte      `json:"config"`
+	Status              string      `json:"status"`
+	BusinessID          uuid.UUID   `json:"business_id"`
 }
 
 func (q *Queries) InsertRepoConnector(ctx context.Context, arg InsertRepoConnectorParams) (RepoConnector, error) {
