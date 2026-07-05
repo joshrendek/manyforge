@@ -1,0 +1,297 @@
+openapi: 3.1.0
+info:
+  title: manyforge GitHub App Integration API
+  version: 0.1.0
+  description: >
+    Spec 009 slice 1 — instance-level GitHub App setup (operator-only manifest
+    create/convert), the principal-less webhook receiver, and the authenticated
+    per-business installation link (which closes the M-1 leaked-state hole).
+
+paths:
+  /github/app/manifest:
+    get:
+      operationId: getGithubAppManifest
+      summary: Render the GitHub App creation manifest (operator only)
+      description: >
+        Returns the manifest JSON + a signed single-use state the SPA POSTs to
+        GitHub's App-creation form. Gated to the instance operator principal;
+        any other caller (or an unconfigured operator) gets an identical 404 —
+        no oracle.
+      responses:
+        "200":
+          description: Manifest, action URL, and signed state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManifestResponse'
+        "404":
+          description: Caller is not the instance operator
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /github/app/manifest/convert:
+    post:
+      operationId: convertGithubAppManifest
+      summary: Convert a GitHub App manifest code into sealed App credentials (operator only)
+      description: >
+        Exchanges the temporary manifest code returned by GitHub for the
+        permanent App identity + secrets and seals them into the single-row
+        instance config. Requires a valid single-use "manifest" state. Gated to
+        the instance operator principal (404 otherwise). The config row is never
+        overwritten once set (409 on a second conversion).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConvertManifestInput'
+      responses:
+        "200":
+          description: App configured; returns the App slug
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConvertManifestResponse'
+        "400":
+          description: Invalid/expired state or manifest conversion failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: Caller is not the instance operator
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "409":
+          description: Replayed state, or the GitHub App is already configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /github/app/installations/link:
+    post:
+      operationId: linkGithubInstallation
+      summary: Link a GitHub App installation to a business + agent
+      description: >
+        Binds an installation to the business carried by the signed link state
+        and one of that business's agents. Authorization is enforced IN this
+        handler on the state's business (connectors.manage) — a non-member gets
+        the same 404 as a nonexistent business (no oracle, closes M-1). The
+        caller must also prove GitHub-side control of the installation by
+        exchanging their OAuth code and appearing in the installation list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkInstallationInput'
+      responses:
+        "200":
+          description: Installation linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkInstallationResponse'
+        "400":
+          description: Invalid/expired state, malformed installation id, or OAuth exchange failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: >
+            Caller lacks connectors.manage on the state's business, the caller
+            does not control the installation, or the installation/agent is not
+            linkable — all indistinguishable (no oracle).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "409":
+          description: Replayed link state (nonce already consumed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /businesses/{id}/github/app/install-url:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: agent_id
+        in: query
+        required: true
+        description: The agent (of this business) the installation will be bound to on link.
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getGithubInstallURL
+      summary: Mint the GitHub install URL for a business
+      description: >
+        Returns the GitHub App installation URL carrying a signed single-use
+        link state binding this business, the requesting principal, and the
+        chosen agent. Gated by connectors.manage on {id} (404 on lacking perm /
+        missing business — no oracle). 404 if the GitHub App has not been
+        created yet.
+      responses:
+        "200":
+          description: Install URL with embedded signed state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallURLResponse'
+        "400":
+          description: Missing or malformed agent_id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: Business not found, caller lacks connectors.manage, or App not yet configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /github/webhook:
+    post:
+      operationId: githubWebhook
+      summary: Receive GitHub App webhook deliveries
+      description: >
+        Principal-less endpoint authenticated by the App's webhook secret
+        (X-Hub-Signature-256, HMAC-SHA256, verified in-handler). Processes
+        installation lifecycle events (created / deleted / suspend / unsuspend /
+        new_permissions_accepted). Always returns 202 for accepted-and-ignored
+        deliveries (including when the App is unconfigured or the event is not
+        ours) — no oracle; 401 on a bad/absent signature; 413 on an oversized body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GithubWebhookEvent'
+      responses:
+        "202":
+          description: Delivery accepted (processed or ignored)
+        "401":
+          description: Missing or invalid webhook signature
+        "413":
+          description: Request body exceeds the webhook size cap
+
+components:
+  schemas:
+    ManifestResponse:
+      type: object
+      required:
+        - action_url
+        - manifest
+        - state
+      properties:
+        action_url:
+          type: string
+          description: GitHub App-creation form action URL
+        manifest:
+          type: string
+          description: The App manifest JSON the SPA POSTs to GitHub
+        state:
+          type: string
+          description: Signed single-use "manifest" state
+
+    ConvertManifestInput:
+      type: object
+      required:
+        - code
+        - state
+      properties:
+        code:
+          type: string
+          description: Temporary manifest code returned by GitHub
+        state:
+          type: string
+          description: Signed single-use "manifest" state from the manifest step
+
+    ConvertManifestResponse:
+      type: object
+      required:
+        - slug
+      properties:
+        slug:
+          type: string
+          description: The created GitHub App's slug
+
+    LinkInstallationInput:
+      type: object
+      required:
+        - code
+        - installation_id
+        - state
+      properties:
+        code:
+          type: string
+          description: OAuth code from the install redirect (proves GitHub-side control)
+        installation_id:
+          type: string
+          description: The GitHub App installation id to link (decimal string)
+        state:
+          type: string
+          description: Signed single-use "link" state binding business + principal + agent
+
+    LinkInstallationResponse:
+      type: object
+      required:
+        - linked
+      properties:
+        linked:
+          type: boolean
+
+    InstallURLResponse:
+      type: object
+      required:
+        - install_url
+      properties:
+        install_url:
+          type: string
+          description: GitHub App installation URL with the signed state embedded
+
+    GithubWebhookEvent:
+      type: object
+      description: >
+        A GitHub webhook delivery. Only the installation-event shape is consumed
+        in slice 1; other events are accepted and ignored.
+      properties:
+        action:
+          type: string
+        installation:
+          type: object
+          properties:
+            id:
+              type: integer
+              format: int64
+            account:
+              type: object
+              properties:
+                login:
+                  type: string
+                type:
+                  type: string
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string

@@ -18,6 +18,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/crm"
+	"github.com/manyforge/manyforge/internal/githubapp"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
@@ -64,35 +65,36 @@ func apiRoutes(t *testing.T) map[string]bool {
 	}
 	mux := httpx.NewRouter(ring)
 	mountAPIRoutes(mux, apiHandlers{
-		account:         account.NewHandler(&account.Service{}),
-		tenancy:         tenancy.NewHandler(&tenancy.Service{}),
-		authz:           authz.NewHandler(&authz.Service{}),
-		invitations:     invitations.NewHandler(&invitations.Service{}),
-		ticketing:       ticketing.NewHandler(&ticketing.Service{}, nil, nil),
-		identity:        ticketing.NewIdentityHandler(&ticketing.IdentityService{}),
-		inboxWebhook:    inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),
-		bounce:          inbox.NewBounceHandler(nil, "", 0, nil),
-		authLimit:       noop,
-		ingestLimit:     noop,
-		ticketsRead:     noop,
-		ticketsReply:    noop,
-		ticketsWrite:    noop,
-		ticketsAssign:   noop,
-		ticketsDelete:   noop,
-		inboxManage:     noop,
-		agents:          agents.NewHandler(nil),
-		agentsConfigure: noop,
-		agentRuns:       agents.NewRunHandler(nil),
-		agentsRun:       noop,
-		accounting:      agents.NewAccountingHandler(nil),
-		approvals:       agents.NewApprovalHandler(nil),
-		agentsApprove:   noop,
-		mcp:             agents.NewMCPServerHandler(nil, agents.NewMCPToolPolicyHandler(nil, nil)),
-		mcpConfigure:    noop,
-		crm:             crm.NewHandler(&crm.ContactService{}, &crm.CompanyService{}, &crm.ActivityService{}, nil, nil),
-		crmRead:         noop,
-		crmWrite:        noop,
-		codingReviews:   &coding.Handler{},
+		account:          account.NewHandler(&account.Service{}),
+		tenancy:          tenancy.NewHandler(&tenancy.Service{}),
+		authz:            authz.NewHandler(&authz.Service{}),
+		invitations:      invitations.NewHandler(&invitations.Service{}),
+		ticketing:        ticketing.NewHandler(&ticketing.Service{}, nil, nil),
+		identity:         ticketing.NewIdentityHandler(&ticketing.IdentityService{}),
+		inboxWebhook:     inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),
+		bounce:           inbox.NewBounceHandler(nil, "", 0, nil),
+		authLimit:        noop,
+		ingestLimit:      noop,
+		ticketsRead:      noop,
+		ticketsReply:     noop,
+		ticketsWrite:     noop,
+		ticketsAssign:    noop,
+		ticketsDelete:    noop,
+		inboxManage:      noop,
+		agents:           agents.NewHandler(nil),
+		agentsConfigure:  noop,
+		agentRuns:        agents.NewRunHandler(nil),
+		agentsRun:        noop,
+		accounting:       agents.NewAccountingHandler(nil),
+		approvals:        agents.NewApprovalHandler(nil),
+		agentsApprove:    noop,
+		mcp:              agents.NewMCPServerHandler(nil, agents.NewMCPToolPolicyHandler(nil, nil)),
+		mcpConfigure:     noop,
+		crm:              crm.NewHandler(&crm.ContactService{}, &crm.CompanyService{}, &crm.ActivityService{}, nil, nil),
+		crmRead:          noop,
+		crmWrite:         noop,
+		codingReviews:    &coding.Handler{},
+		githubApp:        &githubapp.Handler{},
 		connectorsManage: noop,
 	})
 
@@ -208,6 +210,19 @@ func spec008Routes(t *testing.T) map[string]bool {
 	return specRoutesFrom(t, p)
 }
 
+// spec009Routes returns the operations declared in the spec-009 contract, or an
+// empty set if the contract file does not yet exist (so the untagged drift test does
+// not fail before the file is committed; the contract-tagged drift_009_test enforces
+// the full two-way check once the file is present).
+func spec009Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	p := specPath("specs", "009-github-app-review", "contracts", "openapi.yaml")
+	if _, err := os.Stat(p); err != nil {
+		return map[string]bool{}
+	}
+	return specRoutesFrom(t, p)
+}
+
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
 // operation served but documented in NEITHER spec. Param-name and trailing-slash
@@ -252,6 +267,11 @@ func TestOpenAPIDrift(t *testing.T) {
 	for op := range spec008 {
 		documented[op] = true
 	}
+	spec009 := spec009Routes(t)
+	spec009Available := len(spec009) > 0
+	for op := range spec009 {
+		documented[op] = true
+	}
 
 	var missing, undocumented []string
 	for op := range spec001 {
@@ -290,6 +310,13 @@ func TestOpenAPIDrift(t *testing.T) {
 			// committed. Once that file exists spec008Available is true and these routes must
 			// be documented (the strict two-way check is TestOpenAPIDrift008).
 			if !spec008Available && (strings.Contains(op, "/review-dimensions") || strings.Contains(op, "/review-config")) {
+				continue
+			}
+			// Likewise skip the spec-009 GitHub App surface (every 009 route contains
+			// /github/) until specs/009-github-app-review/contracts/openapi.yaml is
+			// committed. Once that file exists spec009Available is true and these routes
+			// must be documented (the strict two-way check is TestOpenAPIDrift009).
+			if !spec009Available && strings.Contains(op, "/github/") {
 				continue
 			}
 			undocumented = append(undocumented, op)

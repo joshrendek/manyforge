@@ -31,6 +31,7 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors/jira"
 	"github.com/manyforge/manyforge/internal/connectors/zendesk"
 	"github.com/manyforge/manyforge/internal/crm"
+	"github.com/manyforge/manyforge/internal/githubapp"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/platform/auth"
@@ -417,6 +418,37 @@ func main() {
 		}
 	}
 
+	// Spec 009 instance-level GitHub App integration: operator-gated App setup
+	// (manifest create/convert), the principal-less webhook receiver, and the
+	// authenticated per-business installation link. Guarded by the App master key
+	// exactly like the connector sealer block above; when unset the handler is nil
+	// and mountAPIRoutes simply does not register the routes. StateKey is derived
+	// from the same master key (no separate secret to provision). DBPermChecker is
+	// the M-1 authorization gate: it resolves the caller's connectors.manage perm
+	// at the state's business under RLS, identically to httpx.RequirePermission.
+	var githubAppH *githubapp.Handler
+	if len(cfg.GitHubAppMasterKey) > 0 {
+		gaSealer, serr := mfcrypto.NewSealer(cfg.GitHubAppMasterKey)
+		if serr != nil {
+			logger.Error("init github app sealer", "err", serr)
+			os.Exit(1)
+		}
+		githubAppH = &githubapp.Handler{
+			Store:             &githubapp.ConfigStore{DB: database, Sealer: gaSealer},
+			Installs:          &githubapp.InstallationService{DB: database},
+			API:               githubapp.NewClient(15 * time.Second),
+			Nonces:            &githubapp.NonceService{DB: database},
+			Perms:             githubapp.DBPermChecker{DB: database, Resolve: permResolve},
+			OperatorPrincipal: cfg.InstanceOperatorPrincipal,
+			PublicBaseURL:     cfg.PublicBaseURL,
+			StateKey:          githubapp.DeriveStateKey(cfg.GitHubAppMasterKey),
+			Now:               time.Now,
+			Logger:            logger,
+		}
+	} else {
+		logger.Warn("MANYFORGE_GITHUB_APP_MASTER_KEY unset; GitHub App integration disabled")
+	}
+
 	// Late-wire the agent handler's read-only metadata endpoints (/agents/tools,
 	// /agents/models). The registry is built from the same inputs as the engine's
 	// (ticketSvc + the resolved connGateway); only descriptors are read, never
@@ -622,6 +654,7 @@ func main() {
 		crmRead:          httpx.RequirePermission(database, permResolve, authz.PermCRMRead, businessIDFromPath),
 		crmWrite:         httpx.RequirePermission(database, permResolve, authz.PermCRMWrite, businessIDFromPath),
 		codingReviews:    codingH,
+		githubApp:        githubAppH,
 	})
 
 	// Same-origin Angular SPA (Task 1.2). Only registered in ui_embed builds —
@@ -870,6 +903,15 @@ type apiHandlers struct {
 	// by connectorsManage (connectors.manage), code-review trigger/get gated by
 	// agentsRun (agents.run). Same RLS-bound 404-on-lacking-perm semantics.
 	codingReviews *coding.Handler
+
+	// githubApp is the Spec 009 instance GitHub App handler. Nil when
+	// MANYFORGE_GITHUB_APP_MASTER_KEY is unset (integration disabled); mountAPIRoutes
+	// guards on nil so the routes are not registered in that case. Its three surfaces
+	// are mounted distinctly: the webhook in the public ingress group (principal-less,
+	// HMAC-authed), the operator setup + link routes in the authenticated group
+	// (operator gate / in-handler perm gate applied inside the route methods), and the
+	// per-business install-url behind the connectors.manage {id}-path gate.
+	githubApp *githubapp.Handler
 }
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
@@ -897,6 +939,13 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			// unset the handler is nil and the route is simply not registered.
 			if h.connWebhookH != nil {
 				h.connWebhookH.PublicRoutes(ingress)
+			}
+			// Spec 009 GitHub App webhook: public, HMAC-authed by the App's webhook
+			// secret (verified in-handler), per-IP ingest-rate-limited. Guard on nil:
+			// when MANYFORGE_GITHUB_APP_MASTER_KEY is unset the handler is nil and the
+			// route is simply not registered.
+			if h.githubApp != nil {
+				h.githubApp.WebhookRoutes(ingress)
 			}
 		})
 		r.Group(func(pr chi.Router) {
@@ -1027,6 +1076,21 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				pr.Group(func(cf chi.Router) {
 					cf.Use(h.agentsConfigure)
 					h.codingReviews.ReviewConfigRoutes(cf)
+				})
+			}
+			// Spec 009 GitHub App setup + linking (authenticated). Three distinct
+			// gates, each applied INSIDE the route method (not here), so the drift
+			// walk and production share one registration seam:
+			//   - OperatorRoutes: instance-operator-only (operatorOnly, in-method),
+			//   - LinkRoutes: perm checked in-handler on the state's business (M-1),
+			//   - BusinessRoutes: connectors.manage on the {id} path param.
+			// Guard on nil so a zero-value apiHandlers (OpenAPI-drift test) does not panic.
+			if h.githubApp != nil {
+				pr.Group(func(g chi.Router) { h.githubApp.OperatorRoutes(g) })
+				pr.Group(func(g chi.Router) { h.githubApp.LinkRoutes(g) })
+				pr.Group(func(g chi.Router) {
+					g.Use(h.connectorsManage)
+					h.githubApp.BusinessRoutes(g)
 				})
 			}
 		})
