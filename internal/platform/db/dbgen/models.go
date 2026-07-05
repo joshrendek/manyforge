@@ -769,6 +769,17 @@ type EmailSuppression struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type GithubAppConfig struct {
+	ID                  int32     `json:"id"`
+	AppID               int64     `json:"app_id"`
+	Slug                string    `json:"slug"`
+	ClientID            string    `json:"client_id"`
+	SealedClientSecret  string    `json:"sealed_client_secret"`
+	SealedPrivateKey    string    `json:"sealed_private_key"`
+	SealedWebhookSecret string    `json:"sealed_webhook_secret"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
 type InboundAddress struct {
 	ID            uuid.UUID          `json:"id"`
 	BusinessID    uuid.UUID          `json:"business_id"`

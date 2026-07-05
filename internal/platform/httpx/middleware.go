@@ -82,6 +82,12 @@ func PrincipalFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return pid, ok
 }
 
+// WithPrincipal returns a context carrying principalID, as AuthToPrincipal would.
+// Exported for handler tests that bypass the auth middleware.
+func WithPrincipal(ctx context.Context, principalID uuid.UUID) context.Context {
+	return context.WithValue(ctx, ctxKeyPrincipal, principalID)
+}
+
 // RequireAuth rejects requests without a valid principal (401).
 func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
