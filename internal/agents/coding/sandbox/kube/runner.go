@@ -77,6 +77,7 @@ const (
 // usage for DockerRunner's host-side clone), so it must NOT be re-wrapped with an
 // extra "Authorization: " prefix here.
 const cloneScript = `set -eu
+git config --global --add safe.directory /work
 GIT_TERMINAL_PROMPT=0 git -c http.followRedirects=false -c http.extraHeader="${CLONE_AUTH_HEADER}" clone --depth 50 "$CLONE_URL" /work && git -C /work checkout "$CLONE_SHA" && cp -r /in/. /out/`
 
 // KubeRunner implements sandbox.SandboxRunner by running each review as a Job.
