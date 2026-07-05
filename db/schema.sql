@@ -686,3 +686,19 @@ CREATE TABLE github_setup_nonce (
     nonce       text PRIMARY KEY,
     consumed_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE github_app_installation (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    installation_id bigint NOT NULL UNIQUE,
+    account_login   text   NOT NULL,
+    account_type    text   NOT NULL DEFAULT 'Organization',
+    business_id     uuid,
+    tenant_root_id  uuid,
+    agent_id        uuid,
+    enabled         boolean NOT NULL DEFAULT true,
+    config          jsonb   NOT NULL DEFAULT '{}'::jsonb,
+    suspended_at    timestamptz,
+    deleted_at      timestamptz,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now()
+);
