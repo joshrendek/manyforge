@@ -735,15 +735,20 @@ func (r *recordingRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sand
 func TestCodeReviewFallbackModelOnRetry(t *testing.T) {
 	ctx, tdb, seed := startCoding(t)
 	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc123","ref":"f"},"base":{"ref":"main"}}`)
-	localSrv, _ := startGitHubStub(t, prJSON)
 	fakeCred := &FakeCredResolver{Cred: AICredential{
 		APIKey: "k", BaseURL: "https://openrouter.ai/api/v1", Model: "google/gemini-2.5-pro", Provider: "openrouter",
 	}}
 	env := newCodingEnv(t, tdb)
-	connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
 
 	run := func(attempts int) string {
 		rr := &recordingRunner{}
+		// Each run gets its own connector so the two runs are independent reviews. A
+		// shared connector would make run(2) a second review of the SAME (connector, pr,
+		// head) that run(1) already succeeded — which the claim-time same-head re-check
+		// (fable M4) correctly finalizes as skipped, never invoking the sandbox. This
+		// test isolates the fallback-model behavior, so it uses distinct connectors.
+		localSrv, _ := startGitHubStub(t, prJSON)
+		connID := createRepoConnector(ctx, t, env, seed, localSrv.URL)
 		// Build service with openrouter.ai in the egress allowlist.
 		svc := &CodeReviewService{
 			DB:          tdb.App,

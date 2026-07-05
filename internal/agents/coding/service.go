@@ -76,6 +76,16 @@ type repoResolver interface {
 	Resolve(ctx context.Context, principalID, businessID, id uuid.UUID) (connectors.ResolvedRepoConnector, error)
 }
 
+// installationTokenSource mints a fresh per-repo GitHub App installation token
+// (spec 011 Slice 2). Satisfied by *githubapp.InstallationTokenSource. runJob
+// calls it for github_app connectors — which carry no stored credential — to
+// obtain a short-lived ghs_ token that is a drop-in for a PAT on the clone/
+// fetch/post paths. It is an interface (not a concrete type) so the coding
+// package never imports githubapp and stays test-fakeable.
+type installationTokenSource interface {
+	Token(ctx context.Context, installationID int64, repo string) (string, error)
+}
+
 // CostEstimator prices a run from its token counts. Implemented by
 // *agents.OpenRouterModels (live OpenRouter pricing). Returns 0 (no error) for
 // providers/models it can't price, so usage capture never fails a review.
@@ -135,6 +145,13 @@ type CodeReviewService struct {
 	// runJob — so a blocked clone host still fails the job before any runner is
 	// invoked (MF-KUBE-SANDBOX-23).
 	ClonesInSandbox bool
+
+	// Tokens mints a fresh per-repo installation token for github_app connectors
+	// (spec 011 Slice 2). Nil unless the GitHub App integration is configured
+	// (main.go late-wires it inside the App-master-key block). A github_app
+	// connector reaching runJob with a nil source fails the job — there is no
+	// stored credential to fall back on. Manual ('github') reviews never touch it.
+	Tokens installationTokenSource
 }
 
 // cloneFn returns the effective clone function (injectable seam or real default).
@@ -252,6 +269,30 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		return err
 	}
 
+	// App-backed connector: mint a fresh per-repo installation token (outside any DB
+	// tx) and set it as the connector credential — runJob's clone/fetch/post paths are
+	// otherwise unchanged (the ghs_ token is a drop-in for a PAT). NewFactory requires a
+	// non-empty token, so this MUST precede it. A mint failure (incl. a suspended/
+	// deleted install) is a plain error → failJob → bounded worker retry (no terminal
+	// sentinel; a transient GitHub 5xx should get another attempt).
+	if rc.Type == "github_app" {
+		if s.Tokens == nil {
+			return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
+				fmt.Errorf("coding: github_app connector but no installation-token source configured: %w", errs.ErrValidation))
+		}
+		instID, ok := installationIDFromConfig(rc.Config)
+		if !ok {
+			return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
+				fmt.Errorf("coding: github_app connector missing installation_id: %w", errs.ErrValidation))
+		}
+		tok, terr := s.Tokens.Token(ctx, instID, rc.Repo)
+		if terr != nil {
+			return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
+				fmt.Errorf("coding: mint installation token: %w", terr))
+		}
+		rc.Credential.APIToken = tok
+	}
+
 	// Build GitHub connector client.
 	conn, err := github.NewFactory(60 * time.Second)(rc)
 	if err != nil {
@@ -265,6 +306,15 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	}
 	if cred.Host() == "" {
 		return fmt.Errorf("coding: agent has no usable AI credential: %w", errs.ErrValidation)
+	}
+	// Egress pre-flight (fable M5): fail fast on a provider host the boot-static
+	// sandbox proxy will CONNECT-block, instead of launching a doomed sandbox. Same
+	// expression as Enqueue — but this ALSO covers the app-triggered path, which is
+	// enqueued by the webhook DEFINER and never went through Enqueue's check. Local
+	// providers review host-side (no proxy), so the allowlist does not apply to them.
+	if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host()) {
+		return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
+			fmt.Errorf("coding: provider host %q not in sandbox egress allowlist: %w", cred.Host(), errs.ErrValidation))
 	}
 
 	// From here on, any error must call s.failJob to mark the row failed.
@@ -298,6 +348,14 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	if pr.State != "open" {
 		return s.failJob(ctx, principalID, businessID, crID, prNumber,
 			fmt.Errorf("coding: pull request not open: %w", errs.ErrValidation))
+	}
+
+	// Claim-time same-head re-check (fable M4): a rapid-push sibling may have already
+	// reviewed this EXACT head between enqueue and claim. Skip (finalize succeeded, no
+	// post) to avoid a duplicate review on the PR. A query error is treated as "not yet
+	// reviewed" (proceed) — we never skip a real review on a transient DB hiccup.
+	if already, cerr := s.reviewedHead(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID, job.PRNumber, pr.HeadSHA, job.ID); cerr == nil && already {
+		return s.finalizeSkipped(ctx, job, pr.HeadSHA, cred.Model)
 	}
 
 	// Set up per-run directories and clone the PR head — HOST-SIDE ONLY when the
@@ -653,6 +711,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			TokensOut:         tokensOut,
 			CostCents:         costCents,
 			DimensionRuns:     dimRunsJSON,
+			Model:             cred.Model, // fable M2: stamp the resolved review model (app reviews enqueue with model='')
 			AgentRunID:        pgtype.UUID{Bytes: runID, Valid: true},
 		})
 		if uerr != nil {
@@ -807,6 +866,14 @@ func (s *CodeReviewService) fail(
 			Findings:          []byte("[]"),
 			ExternalReviewRef: "",
 			PostedAt:          pgtype.Timestamptz{}, // NULL
+			// fable C1: dimension_runs is jsonb NOT NULL — a nil []byte encodes to SQL
+			// NULL → 23502 → this UPDATE silently aborts (the error is swallowed by the
+			// `_, _ =`), the row stays 'running', and the aborted tx also drops the
+			// failure audit below. Passing "[]" lets the row actually reach 'failed'
+			// (findings is already non-nil). Model "" preserves any prior stamp via the
+			// query's COALESCE(NULLIF(...)).
+			DimensionRuns: []byte("[]"),
+			Model:         "",
 		})
 		return audit.Write(ctx, tx, codingAudit(businessID, principalID, crID,
 			"agent.coding.review.failed",
@@ -869,6 +936,99 @@ func (s *CodeReviewService) failJobWithUsage(
 		})
 	})
 	return err
+}
+
+// installationIDFromConfig extracts the GitHub App installation id from a github_app
+// connector's Config (populated from repo_connector.config → jsonb_build_object(
+// 'installation_id', <bigint>) by github_pr_review_ingest). The value round-trips
+// through json.Unmarshal(map[string]any), so it normally arrives as float64 —
+// json.Number and the integer types are handled too for robustness. A missing, zero,
+// or non-numeric value returns ok=false so the caller fails the job with a clear error.
+func installationIDFromConfig(cfg map[string]any) (int64, bool) {
+	v, present := cfg["installation_id"]
+	if !present {
+		return 0, false
+	}
+	var id int64
+	switch n := v.(type) {
+	case float64:
+		id = int64(n)
+	case json.Number:
+		p, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		id = p
+	case int64:
+		id = n
+	case int:
+		id = int64(n)
+	default:
+		return 0, false
+	}
+	if id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+// reviewedHead reports whether ANOTHER succeeded code_review already exists for this
+// exact (repo_connector, pr, head_sha) — i.e. a rapid-push sibling already reviewed
+// this head. selfID is excluded so the row's own eventual success never matches. Runs
+// under the owning principal (RLS); business_id is pinned as defense in depth. A query
+// error returns (false, err) so the caller treats "unknown" as "not yet reviewed" and
+// proceeds — a real review is never skipped on a transient DB error.
+func (s *CodeReviewService) reviewedHead(ctx context.Context, principalID, businessID, connID uuid.UUID, prNumber int, headSHA string, selfID uuid.UUID) (bool, error) {
+	var exists bool
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT EXISTS (
+			   SELECT 1 FROM code_review
+			   WHERE repo_connector_id = $1 AND pr_number = $2 AND head_sha = $3
+			     AND status = 'succeeded' AND id <> $4 AND business_id = $5
+			 )`,
+			connID, prNumber, headSHA, selfID, businessID).Scan(&exists)
+	})
+	return exists, err
+}
+
+// finalizeSkipped marks a review 'succeeded' WITHOUT posting — used when the claim-time
+// re-check finds a sibling already reviewed this exact head (fable C2). It writes a
+// terminal row (empty summary, empty findings, nothing posted) so the worker treats the
+// job as done and never requeues it.
+//
+// findings AND dimension_runs MUST be non-nil ("[]", not nil): both columns are jsonb
+// NOT NULL, so a nil []byte encodes to SQL NULL → 23502 → the UPDATE aborts. If that
+// error were swallowed the row would stay 'running', its lease would expire, and
+// claim_code_reviews (which re-claims expired-running rows with NO attempts cap) would
+// re-claim it forever — the worker never fails a job that returned nil. So the error is
+// PROPAGATED (return err): a genuine DB failure then surfaces as a job error and the
+// worker requeues it under the normal bounded-retry policy instead of looping.
+func (s *CodeReviewService) finalizeSkipped(ctx context.Context, job ClaimedReview, headSHA, model string) error {
+	return s.DB.WithPrincipal(ctx, job.PrincipalID, func(tx pgx.Tx) error {
+		if _, err := dbgen.New(tx).UpdateCodeReviewResult(ctx, dbgen.UpdateCodeReviewResultParams{
+			ID:                job.ID,
+			Status:            "succeeded",
+			HeadSha:           headSHA,
+			Summary:           "",
+			Findings:          []byte("[]"),
+			ExternalReviewRef: "",
+			PostedAt:          pgtype.Timestamptz{}, // NULL — nothing was posted
+			TokensIn:          0,
+			TokensOut:         0,
+			CostCents:         0,
+			DimensionRuns:     []byte("[]"),
+			Model:             model,
+			AgentRunID:        pgtype.UUID{}, // NULL — no agent_run for a skipped review
+		}); err != nil {
+			return err
+		}
+		return audit.Write(ctx, tx, codingAudit(job.BusinessID, job.PrincipalID, job.ID,
+			"agent.coding.review.skipped_superseded",
+			map[string]any{"pr": job.PRNumber, "head_sha": headSHA},
+			nil, ptr("skipped"),
+		))
+	})
 }
 
 // auditStep opens a short transaction to write a standalone audit entry for steps
