@@ -47,8 +47,39 @@ func (h *Handler) renderManifest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// convertManifest is implemented in Task 6; this stub keeps the package
-// compiling (and the route registered) until then.
+// convertManifest exchanges the just-created App manifest's temporary code for
+// the permanent App identity + secrets and seals them into the single-row
+// config store. The route is already operator-gated via OperatorRoutes; here we
+// additionally require a valid single-use "manifest" state (bound at
+// renderManifest time) so a stale/replayed conversion can't overwrite config.
 func (h *Handler) convertManifest(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteError(w, r, errs.ErrValidation)
+	var in struct{ Code, State string }
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	p, err := verifyState(h.StateKey, in.State, h.Now())
+	if err != nil || p.Purpose != "manifest" {
+		httpx.WriteError(w, r, errs.ErrValidation)
+		return
+	}
+	first, err := h.Nonces.Consume(r.Context(), p.Nonce)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !first {
+		httpx.WriteError(w, r, errs.ErrConflict)
+		return
+	}
+	creds, err := h.API.ConvertManifest(r.Context(), in.Code)
+	if err != nil {
+		h.log(r.Context(), "manifest convert", err)
+		httpx.WriteError(w, r, errs.ErrValidation)
+		return
+	}
+	if err := h.Store.Save(r.Context(), creds); err != nil {
+		httpx.WriteError(w, r, err) // ErrConflict → 409 (config already set, never overwritten)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"slug": creds.Slug})
 }
