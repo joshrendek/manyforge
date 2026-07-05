@@ -252,6 +252,7 @@ type Querier interface {
 	// defense in depth. pgx.ErrNoRows => ErrNotFound (cross-tenant names are invisible).
 	GetEnabledMCPServerByName(ctx context.Context, arg GetEnabledMCPServerByNameParams) (McpServer, error)
 	GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error)
+	GetGithubAppConfig(ctx context.Context) (GetGithubAppConfigRow, error)
 	// GetMCPServerByID loads an MCP server by (id, business_id) — the ownership
 	// predicate. RLS scopes rows to the caller's authorized businesses; the explicit
 	// business_id is defense in depth. pgx.ErrNoRows => ErrNotFound.
@@ -387,6 +388,7 @@ type Querier interface {
 	// (the challenge shows both TXT records at once); verified_at stays NULL until the
 	// TXT challenge passes. Duplicate (tenant_root_id, domain) → unique violation → 409.
 	InsertEmailDomain(ctx context.Context, arg InsertEmailDomainParams) (EmailDomain, error)
+	InsertGithubAppConfig(ctx context.Context, arg InsertGithubAppConfigParams) (int64, error)
 	// Agent runtime (spec 003 US6) — per-business MCP server registry queries.
 	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
 	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement,
