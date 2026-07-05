@@ -1,0 +1,32 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "manyforge.fullname" . }}
+  labels:
+    {{- include "manyforge.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.ingress.denyMetrics }}
+    # /metrics (Go expvar) is otherwise reachable via the `/` catch-all route
+    # below; deny it at the ingress. Requires the cluster's ingress-nginx to
+    # run with `allowSnippetAnnotations: true`.
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location /metrics { deny all; return 403; }
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "manyforge.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

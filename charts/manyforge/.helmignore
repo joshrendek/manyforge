@@ -1,0 +1,29 @@
+# Patterns to ignore when building packages.
+# This supports shell glob matching, relative path matching, and
+# negation (prefixed with !). Only one pattern per line.
+.DS_Store
+# Common VCS dirs
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+# Common backup files
+*.swp
+*.bak
+*.tmp
+*.orig
+*.tgz.orig
+*~
+# Various IDEs
+.project
+.idea/
+*.tmproj
+.vscode/
+# Docs / notes that must never leak into rendered manifests. A stray
+# CLAUDE.md under templates/ breaks `helm template` (Helm treats every
+# file in templates/ as a manifest to render).
+CLAUDE.md
+*.md

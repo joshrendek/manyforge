@@ -1,0 +1,27 @@
+# Build context excludes for the app Dockerfile. Keep go.mod/go.sum, migrations/,
+# and web/ sources — the Dockerfile needs them.
+.git
+tmp/
+.superpowers/
+.pair/
+*.png
+docs/
+specs/
+.beads/
+
+web/node_modules
+web/dist
+web/.angular
+
+# Placeholder committed so the ui_embed build tag has a non-empty //go:embed
+# match before a real Angular build lands; the Dockerfile build stage
+# regenerates this directory from the SPA build.
+internal/webui/dist
+
+# Secret-bearing files excluded from build context
+.env
+.env.*
+.air.env
+secrets/
+*.pem
+auth.json

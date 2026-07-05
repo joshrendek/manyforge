@@ -91,3 +91,43 @@ func TestCloneAtSHASSRF(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckCloneURLDirect exercises checkCloneURL directly — the exact guard runJob
+// calls unconditionally (regardless of CodeReviewService.ClonesInSandbox; see service.go
+// and MF-KUBE-SANDBOX-23) before either cloning host-side or delegating to a
+// self-cloning runner (KubeRunner, kube mode). Pure function: no git/exec/network
+// beyond a local IP-literal resolve, so it stays fast and hermetic.
+func TestCheckCloneURLDirect(t *testing.T) {
+	t.Run("loopback_blocked_when_allowPrivate_false", func(t *testing.T) {
+		err := checkCloneURL("https://127.0.0.1/o/r.git", false)
+		if err == nil {
+			t.Fatal("expected blocked-address error for loopback with allowPrivate=false")
+		}
+		if !strings.Contains(err.Error(), "blocked address") {
+			t.Errorf("want a blocked-address error, got %v", err)
+		}
+	})
+	t.Run("loopback_allowed_when_allowPrivate_true", func(t *testing.T) {
+		if err := checkCloneURL("https://127.0.0.1/o/r.git", true); err != nil {
+			t.Fatalf("loopback with allowPrivate=true should pass, got %v", err)
+		}
+	})
+	t.Run("public_ip_literal_allowed_regardless", func(t *testing.T) {
+		// 8.8.8.8 is a public IP literal — no DNS round trip, and never blocked by
+		// netsafe.IsBlocked regardless of the allowPrivate flag.
+		if err := checkCloneURL("https://8.8.8.8/o/r.git", false); err != nil {
+			t.Fatalf("public IP should pass even with allowPrivate=false, got %v", err)
+		}
+	})
+	t.Run("non_http_scheme_skipped", func(t *testing.T) {
+		// file:// and other local schemes are not SSRF-relevant — never blocked.
+		if err := checkCloneURL("file:///tmp/x", false); err != nil {
+			t.Fatalf("file:// scheme must skip the SSRF check, got %v", err)
+		}
+	})
+	t.Run("invalid_url_rejected", func(t *testing.T) {
+		if err := checkCloneURL("://bad-url", false); err == nil {
+			t.Fatal("expected a validation error for an unparseable clone URL")
+		}
+	})
+}
