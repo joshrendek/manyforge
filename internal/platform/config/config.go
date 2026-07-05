@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Config holds runtime configuration.
@@ -95,6 +97,18 @@ type Config struct {
 	// secrets. MANYFORGE_GITHUB_APP_MASTER_KEY (base64/hex, 32 bytes). Nil when unset —
 	// GitHub App integration disabled, server still boots. Set-but-wrong-length is fatal.
 	GitHubAppMasterKey []byte
+
+	// InstanceOperatorPrincipal gates instance setup routes (GitHub App manifest
+	// creation, etc.). MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL (UUID). uuid.Nil when
+	// unset — setup routes reject everyone (404, no oracle). The operator finds
+	// their principal id from GET /api/v1/me.
+	InstanceOperatorPrincipal uuid.UUID
+	// PublicBaseURL is the externally-reachable base (https://hub.example.com) used
+	// to build the GitHub App manifest's redirect/callback/webhook URLs.
+	// MANYFORGE_PUBLIC_BASE_URL. No existing base-URL config was reusable — the only
+	// other *BaseURL/*URL settings in this file are per-connector (Jira/Zendesk) or
+	// per-feature (BlobURL), not an instance-wide externally-reachable base.
+	PublicBaseURL string
 
 	// Agent run loop bounds (Spec 003 §8, manyforge-ji7). Defaults below mirror the code
 	// defaults in agents.RunLimits (withDefaults backstops any zero). Tunable per-deployment
@@ -295,6 +309,15 @@ func Load() (Config, error) {
 	if cfg.GitHubAppMasterKey, err = envKey32("MANYFORGE_GITHUB_APP_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_GITHUB_APP_MASTER_KEY: %w", err)
 	}
+
+	// Instance operator principal (GitHub App setup gate): unset ⇒ uuid.Nil, so the
+	// operator-only routes 404 for everyone until explicitly configured.
+	if v := os.Getenv("MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL"); v != "" {
+		if cfg.InstanceOperatorPrincipal, err = uuid.Parse(v); err != nil {
+			return Config{}, fmt.Errorf("MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL: %w", err)
+		}
+	}
+	cfg.PublicBaseURL = strings.TrimSuffix(os.Getenv("MANYFORGE_PUBLIC_BASE_URL"), "/")
 
 	// Agent run loop bounds (Spec 003 §8). Defaults mirror agents.RunLimits; a malformed value
 	// is a hard config error rather than a silent fallback (the loop budget is a safety bound).

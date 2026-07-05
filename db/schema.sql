@@ -681,3 +681,8 @@ CREATE TABLE github_app_config (
     sealed_webhook_secret text    NOT NULL,
     created_at            timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE github_setup_nonce (
+    nonce       text PRIMARY KEY,
+    consumed_at timestamptz NOT NULL DEFAULT now()
+);
