@@ -365,6 +365,9 @@ components:
         created_at:
           type: string
           format: date-time
+        auto_managed:
+          type: boolean
+          description: True for github_app connectors — provisioned/removed by the GitHub App install, not by Create/Delete.
 
     Error:
       type: object
