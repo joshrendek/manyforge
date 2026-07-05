@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -29,6 +30,9 @@ type RepoConnectorSummary struct {
 	AllowPrivateBaseURL bool      `json:"allow_private_base_url"`
 	Status              string    `json:"status"`
 	CreatedAt           time.Time `json:"created_at"`
+	// AutoManaged is true for github_app connectors: they're provisioned/removed by
+	// the GitHub App install flow, not by this API's Create/Delete (migrations/0083).
+	AutoManaged bool `json:"auto_managed"`
 }
 
 // RepoConnectorService creates + resolves per-business repo connectors with
@@ -39,7 +43,10 @@ type RepoConnectorService struct {
 }
 
 // knownRepoConnectorTypes gates the type enum at the service boundary.
-var knownRepoConnectorTypes = map[string]bool{"github": true}
+// github_app connectors are metadata-only rows managed by the GitHub App install
+// (migrations/0083) — they are never created via Create (no PAT to validate), but
+// the type must be recognized wherever knownRepoConnectorTypes is consulted.
+var knownRepoConnectorTypes = map[string]bool{"github": true, "github_app": true}
 
 // Create validates input, seals the credential into the vault, and inserts the
 // repo_connector row — all in one transaction. Returns the new connector's UUID.
@@ -67,7 +74,7 @@ func (s *RepoConnectorService) Create(ctx context.Context, principalID, business
 			BaseUrl:             in.BaseURL,
 			Repo:                in.Repo,
 			AllowPrivateBaseUrl: in.AllowPrivateBaseURL,
-			SecretRef:           secretID,
+			SecretRef:           pgtype.UUID{Bytes: secretID, Valid: true},
 			Config:              []byte("{}"),
 			Status:              "enabled",
 			BusinessID:          businessID,
@@ -106,19 +113,33 @@ func (s *RepoConnectorService) Resolve(ctx context.Context, principalID, busines
 		if qerr != nil {
 			return qerr
 		}
-		credBytes, oerr := s.Vault.Open(ctx, tx, businessID, row.SecretRef)
+		var cfg map[string]any
+		if len(row.Config) > 0 {
+			if uerr := json.Unmarshal(row.Config, &cfg); uerr != nil {
+				return fmt.Errorf("repo_connectors: unmarshal config: %w", uerr)
+			}
+		}
+		if row.Type == "github_app" {
+			// App-backed: no stored credential; runJob mints a per-repo installation
+			// token from cfg["installation_id"]. Return metadata only — never touch
+			// the vault (secret_ref is NULL for these rows).
+			out = ResolvedRepoConnector{
+				ID:                  row.ID.String(),
+				Type:                row.Type,
+				BaseURL:             row.BaseUrl,
+				Repo:                row.Repo,
+				AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
+				Config:              cfg,
+			}
+			return nil
+		}
+		credBytes, oerr := s.Vault.Open(ctx, tx, businessID, row.SecretRef.Bytes)
 		if oerr != nil {
 			return oerr
 		}
 		var cred Credential
 		if uerr := json.Unmarshal(credBytes, &cred); uerr != nil {
 			return fmt.Errorf("repo_connectors: unmarshal credential: %w", uerr)
-		}
-		var cfg map[string]any
-		if len(row.Config) > 0 {
-			if uerr := json.Unmarshal(row.Config, &cfg); uerr != nil {
-				return fmt.Errorf("repo_connectors: unmarshal config: %w", uerr)
-			}
 		}
 		out = ResolvedRepoConnector{
 			ID:                  row.ID.String(),
@@ -183,6 +204,7 @@ func (s *RepoConnectorService) List(ctx context.Context, principalID, businessID
 				AllowPrivateBaseURL: r.AllowPrivateBaseUrl,
 				Status:              r.Status,
 				CreatedAt:           r.CreatedAt,
+				AutoManaged:         r.Type == "github_app",
 			})
 		}
 		return nil
@@ -198,6 +220,13 @@ func (s *RepoConnectorService) List(ctx context.Context, principalID, businessID
 // not exist, belongs to a different tenant, or was already deleted.
 func (s *RepoConnectorService) Delete(ctx context.Context, principalID, businessID, id uuid.UUID) error {
 	return mapRepoErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		row, err := dbgen.New(tx).GetRepoConnector(ctx, id)
+		if err != nil {
+			return err // pgx.ErrNoRows → ErrNotFound via mapRepoErr
+		}
+		if row.Type == "github_app" {
+			return fmt.Errorf("repo_connectors: github_app connectors are managed by the GitHub App install: %w", errs.ErrValidation)
+		}
 		n, err := dbgen.New(tx).DeleteRepoConnector(ctx, dbgen.DeleteRepoConnectorParams{
 			ID:         id,
 			BusinessID: businessID,

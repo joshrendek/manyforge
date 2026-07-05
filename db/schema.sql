@@ -587,7 +587,7 @@ CREATE TABLE repo_connector (
     base_url               text NOT NULL,
     repo                   text NOT NULL,
     allow_private_base_url boolean NOT NULL DEFAULT false,
-    secret_ref             uuid NOT NULL,
+    secret_ref             uuid,
     config                 jsonb NOT NULL DEFAULT '{}'::jsonb,
     status                 text NOT NULL DEFAULT 'enabled',
     created_at             timestamptz NOT NULL DEFAULT now(),
@@ -595,8 +595,16 @@ CREATE TABLE repo_connector (
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (secret_ref, tenant_root_id) REFERENCES secret (id, tenant_root_id),
-    CONSTRAINT repo_connector_type_chk CHECK (type IN ('github'))
+    -- migrations/0083: app-backed connectors (type='github_app') store no PAT — secret_ref
+    -- is NULL and config carries the installation_id instead.
+    CONSTRAINT repo_connector_type_chk CHECK (type IN ('github', 'github_app')),
+    CONSTRAINT repo_connector_secret_ref_chk CHECK (
+        (type = 'github'     AND secret_ref IS NOT NULL) OR
+        (type = 'github_app' AND secret_ref IS NULL AND config ? 'installation_id')
+    )
 );
+-- One app-backed connector per (business, repo) — migrations/0083.
+CREATE UNIQUE INDEX repo_connector_github_app_repo_uq ON repo_connector (business_id, repo) WHERE type = 'github_app';
 
 -- Spec 007 code-review agent: one review of one PR, linked to an agent_run (migrations/0071).
 -- Spec 007 slice 2: durable work-queue columns added in migrations/0072.
@@ -630,7 +638,8 @@ CREATE TABLE code_review (
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (repo_connector_id, tenant_root_id) REFERENCES repo_connector (id, tenant_root_id),
-    CONSTRAINT code_review_status_chk CHECK (status IN ('pending','running','succeeded','failed'))
+    -- migrations/0084: 'superseded' added when a new push cancels an unstarted review.
+    CONSTRAINT code_review_status_chk CHECK (status IN ('pending','running','succeeded','failed','superseded'))
 );
 
 CREATE TABLE review_dimension (
@@ -701,4 +710,13 @@ CREATE TABLE github_app_installation (
     deleted_at      timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- Webhook delivery dedup (tenantless — installation is the key pre-link). migrations/0084.
+CREATE TABLE github_webhook_delivery (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    installation_id bigint NOT NULL,
+    external_delivery_id text NOT NULL,
+    received_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (installation_id, external_delivery_id)
 );

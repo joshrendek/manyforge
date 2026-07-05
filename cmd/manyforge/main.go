@@ -433,8 +433,11 @@ func main() {
 			logger.Error("init github app sealer", "err", serr)
 			os.Exit(1)
 		}
+		// One store shared by the Handler (App setup/webhook) AND the code-review
+		// worker's installation-token source, so both read the same sealed App config.
+		gaStore := &githubapp.ConfigStore{DB: database, Sealer: gaSealer}
 		githubAppH = &githubapp.Handler{
-			Store:             &githubapp.ConfigStore{DB: database, Sealer: gaSealer},
+			Store:             gaStore,
 			Installs:          &githubapp.InstallationService{DB: database},
 			API:               githubapp.NewClient(15 * time.Second),
 			Nonces:            &githubapp.NonceService{DB: database},
@@ -444,6 +447,19 @@ func main() {
 			StateKey:          githubapp.DeriveStateKey(cfg.GitHubAppMasterKey),
 			Now:               time.Now,
 			Logger:            logger,
+			// The pull_request webhook → code_review path (spec 011 Slice 2). Without
+			// this the handler's handlePullRequestEvent is a no-op (PRReviews nil).
+			PRReviews: &githubapp.PRReviewEnqueuer{DB: database},
+		}
+		// Late-wire the code-review worker's per-repo installation-token source, so a
+		// github_app connector's runJob can mint a ghs_ token (spec 011 Slice 2). Fresh
+		// mint every call (no cache); 60s client timeout matches the connector factory.
+		// codingSvc is built unconditionally above, so this late-wire is always valid —
+		// mirrors the agentH.SetMetadata late-wire below.
+		codingSvc.Tokens = &githubapp.InstallationTokenSource{
+			Store: gaStore,
+			API:   githubapp.NewClient(60 * time.Second),
+			Now:   time.Now,
 		}
 	} else {
 		logger.Warn("MANYFORGE_GITHUB_APP_MASTER_KEY unset; GitHub App integration disabled")
