@@ -5,6 +5,7 @@ package coding
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -138,6 +139,137 @@ func TestRunJobAppBackedEndToEnd(t *testing.T) {
 	}
 	if got.Model != "anthropic/claude-3-5-sonnet" {
 		t.Errorf("model = %q, want the resolved review model (fable M2 stamp)", got.Model)
+	}
+	// manyforge-nh6: an app-backed review opens exactly one in-progress check run on
+	// the PR head and resolves it to success on completion.
+	if n := stub.checkCreateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run create, got %d", n)
+	}
+	var created map[string]any
+	if err := json.Unmarshal(stub.checkRunCreates[0], &created); err != nil {
+		t.Fatalf("unmarshal check-run create: %v", err)
+	}
+	if created["status"] != "in_progress" || created["head_sha"] != headSHA {
+		t.Errorf("check-run create body = %+v, want status=in_progress head_sha=%s", created, headSHA)
+	}
+	if n := stub.checkUpdateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run update, got %d", n)
+	}
+	var updated map[string]any
+	if err := json.Unmarshal(stub.checkRunUpdates[0], &updated); err != nil {
+		t.Fatalf("unmarshal check-run update: %v", err)
+	}
+	if updated["status"] != "completed" || updated["conclusion"] != "success" {
+		t.Errorf("check-run update body = %+v, want status=completed conclusion=success", updated)
+	}
+	// The success summary reports the finding count (PR #20 review: exercise the
+	// success-summary branch, not just the conclusion).
+	out, _ := updated["output"].(map[string]any)
+	if summ, _ := out["summary"].(string); !strings.Contains(summ, "finding") {
+		t.Errorf("check-run success summary = %q, want it to mention the finding count", summ)
+	}
+}
+
+// panicRunner panics inside the sandbox Run — since lanes run synchronously on
+// runJob's stack, this exercises the deferred resolver's recover() path (PR #20
+// review: panic-specific failure handling was untested).
+type panicRunner struct{}
+
+func (panicRunner) Run(context.Context, sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	panic("boom in sandbox")
+}
+
+// TestRunJobAppBacked_CheckRunResolvesOnPanic pins that a panic on runJob's stack
+// resolves the in-progress check run to failure (not a misleading success) and is
+// re-raised so the worker still observes the crash (manyforge-nh6, PR #20 review).
+func TestRunJobAppBacked_CheckRunResolvesOnPanic(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+
+	const headSHA = "abc123deadbeef"
+	prJSON := []byte(`{"number":1,"title":"PR","state":"open","merged":false,"head":{"sha":"` + headSHA + `","ref":"feature"},"base":{"ref":"main"}}`)
+	srv, stub := startGitHubStub(t, prJSON)
+	env := newCodingEnv(t, tdb)
+
+	const installationID int64 = 55222
+	connID, reviewID, ic := linkInstallation(ctx, t, tdb, seed, installationID, srv.URL, headSHA)
+
+	fakeCred := &FakeCredResolver{Cred: AICredential{
+		APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "anthropic/claude-3-5-sonnet", Provider: "anthropic",
+	}}
+	svc := buildService(t, tdb, env, panicRunner{}, fakeCred)
+	svc.Tokens = &fakeAppTokens{tok: "ghs_test"}
+
+	job := ClaimedReview{
+		ID: reviewID, BusinessID: ic.BusinessID, PrincipalID: ic.AgentPrincipalID,
+		AgentID: ic.AgentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("runJob must re-raise the panic after resolving the check run")
+			}
+		}()
+		_ = svc.runJob(ctx, job, nil)
+	}()
+
+	if n := stub.checkCreateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run create, got %d", n)
+	}
+	if n := stub.checkUpdateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run update (resolve on panic), got %d", n)
+	}
+	var updated map[string]any
+	if err := json.Unmarshal(stub.checkRunUpdates[0], &updated); err != nil {
+		t.Fatalf("unmarshal check-run update: %v", err)
+	}
+	if updated["conclusion"] != "failure" {
+		t.Errorf("check-run conclusion = %v, want failure", updated["conclusion"])
+	}
+}
+
+// TestRunJobAppBacked_CheckRunResolvesFailure pins that the in-progress check run
+// opened at the start of an app-backed review still resolves — to conclusion
+// "failure" — when the run fails partway through (manyforge-nh6). The deferred
+// update must fire on the failJob* exit path, not only on success.
+func TestRunJobAppBacked_CheckRunResolvesFailure(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+
+	const headSHA = "abc123deadbeef"
+	prJSON := []byte(`{"number":1,"title":"PR","state":"open","merged":false,"head":{"sha":"` + headSHA + `","ref":"feature"},"base":{"ref":"main"}}`)
+	srv, stub := startGitHubStub(t, prJSON)
+	env := newCodingEnv(t, tdb)
+
+	const installationID int64 = 55221
+	connID, reviewID, ic := linkInstallation(ctx, t, tdb, seed, installationID, srv.URL, headSHA)
+
+	fakeCred := &FakeCredResolver{Cred: AICredential{
+		APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "anthropic/claude-3-5-sonnet", Provider: "anthropic",
+	}}
+	// malformedFakeRunner returns unparseable review.json → runJob fails after the
+	// check run was already opened.
+	svc := buildService(t, tdb, env, &malformedFakeRunner{}, fakeCred)
+	svc.Tokens = &fakeAppTokens{tok: "ghs_test"}
+
+	job := ClaimedReview{
+		ID: reviewID, BusinessID: ic.BusinessID, PrincipalID: ic.AgentPrincipalID,
+		AgentID: ic.AgentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, job, nil); err == nil {
+		t.Fatal("runJob: want error from malformed review output")
+	}
+
+	if n := stub.checkCreateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run create, got %d", n)
+	}
+	if n := stub.checkUpdateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run update (resolve on failure), got %d", n)
+	}
+	var updated map[string]any
+	if err := json.Unmarshal(stub.checkRunUpdates[0], &updated); err != nil {
+		t.Fatalf("unmarshal check-run update: %v", err)
+	}
+	if updated["conclusion"] != "failure" {
+		t.Errorf("check-run conclusion = %v, want failure", updated["conclusion"])
 	}
 }
 
