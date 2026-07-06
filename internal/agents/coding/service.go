@@ -36,7 +36,7 @@ type CodeReview struct {
 	Summary       string               `json:"summary"`
 	ReviewURL     string               `json:"review_url"`
 	PRNumber      int                  `json:"pr_number"`
-	Model         string               `json:"model"` // model snapshot used for this review
+	Model         string               `json:"model"`          // model snapshot used for this review
 	Repo          string               `json:"repo,omitempty"` // "owner/name" from the review's connector (list rows, via the join); normally always set (repo_connector_id is a NOT NULL FK)
 	Findings      []connectors.Finding `json:"findings"`
 	FindingsCount int                  `json:"findings_count"`
@@ -100,10 +100,13 @@ type CostEstimator interface {
 // runJob (called by the background worker) runs the heavy pipeline:
 // FetchPR → clone → sandbox → parse findings → post review → finalize.
 type CodeReviewService struct {
-	DB       serviceDB
-	Repos    repoResolver
-	Sandbox  sandbox.SandboxRunner
-	Creds    AICredentialResolver
+	DB      serviceDB
+	Repos   repoResolver
+	Sandbox sandbox.SandboxRunner
+	Creds   AICredentialResolver
+	// Prober checks reviewbot liveness for the fallback chain (manyforge-k8e). Nil ⇒ a
+	// default httpProber; injectable so a test can force a bot up/down.
+	Prober   reviewbotProber
 	Image    string        // opencode sandbox image tag
 	WorkRoot string        // host temp root for per-run checkouts; must be writable
 	Timeout  time.Duration // sandbox wall-clock cap (0 = 10 min default)
@@ -268,10 +271,25 @@ func (s *CodeReviewService) Enqueue(
 // while an app-backed review runs (manyforge-nh6).
 const reviewCheckRunName = "manyforge review"
 
-// maxConcurrentLanes bounds how many dimension-review lanes run at once
-// (manyforge-w54). Each lane is its own sandbox container (a Job/pod in kube
-// mode), so this caps the simultaneous pod fan-out for a many-dimension panel.
-const maxConcurrentLanes = 4
+// defaultConcurrentLanes bounds how many dimension-review lanes run at once when the
+// resolved reviewbot has no explicit cap (manyforge-w54). Each lane is its own sandbox
+// container (a Job/pod in kube mode), so this caps the simultaneous pod fan-out for a
+// many-dimension panel. A bot's own agent.max_concurrent_lanes overrides it (laneLimit).
+const defaultConcurrentLanes = 4
+
+// laneLimit is the bounded lane fan-out for a review, taken from the resolved bot's
+// per-agent cap (LM Studio ⇒ 1, cloud ⇒ 4). Zero (unset/legacy) ⇒ defaultConcurrentLanes;
+// values are clamped to [1,16] defensively (the DB CHECK already enforces this on write).
+func laneLimit(cred AICredential) int {
+	n := cred.MaxConcurrentLanes
+	if n < 1 {
+		return defaultConcurrentLanes
+	}
+	if n > 16 {
+		return 16
+	}
+	return n
+}
 
 // reviewModelPanel is the code_review.model sentinel for a multi-dimension review
 // (manyforge-vv6): there is no single model, so the UI renders it as a multi-model
@@ -339,6 +357,22 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	cred, err := s.Creds.Resolve(ctx, job.PrincipalID, job.BusinessID, job.AgentID)
 	if err != nil {
 		return err
+	}
+	// Reviewbot fallback chain (manyforge-k8e): if the business configured an ordered
+	// chain, probe it and let the first reachable bot drive the WHOLE review — its
+	// credential AND its per-agent concurrency cap. Empty chain ⇒ the enqueued agent's
+	// cred above is used unchanged (legacy path). A chain that resolves to nothing is a
+	// terminal config error. Placed before the Host()/egress checks so the CHOSEN bot is
+	// the one validated.
+	if chain := s.resolveReviewChain(ctx, job.PrincipalID, job.BusinessID); len(chain) > 0 {
+		chosen, cerr := chooseReviewbot(ctx, chain,
+			func(c context.Context, id uuid.UUID) (AICredential, error) {
+				return s.Creds.Resolve(c, job.PrincipalID, job.BusinessID, id)
+			}, s.prober())
+		if cerr != nil {
+			return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber, cerr)
+		}
+		cred = chosen
 	}
 	if cred.Host() == "" {
 		return fmt.Errorf("coding: agent has no usable AI credential: %w", errs.ErrValidation)
@@ -717,7 +751,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	}
 
 	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube
-	// mode each lane is its own Job/pod — bounded by maxConcurrentLanes so a
+	// mode each lane is its own Job/pod — bounded by the resolved bot's laneLimit so a
 	// many-dimension panel can't burst the cluster. Results are written BY INDEX so
 	// aggregation stays order-deterministic (aggregateReview / dedupeFindings /
 	// buildDimensionRuns depend on active's Order) regardless of completion order. A
@@ -746,7 +780,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		}
 	}
 	var g errgroup.Group
-	g.SetLimit(maxConcurrentLanes)
+	g.SetLimit(laneLimit(cred))
 	for i, dim := range active {
 		g.Go(func() error {
 			// A lane now runs in its own goroutine, so a panic here would crash the

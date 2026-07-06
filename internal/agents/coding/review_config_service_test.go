@@ -6,11 +6,41 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
+
+// TestParseAgentChain pins the pure parsing of a fallback chain: valid ids parse in order
+// (trimming whitespace), a malformed id is a client validation error, and nil ⇒ empty.
+func TestParseAgentChain(t *testing.T) {
+	id1, id2 := uuid.New(), uuid.New()
+	got, err := parseAgentChain([]string{id1.String(), "  " + id2.String() + "  "})
+	if err != nil {
+		t.Fatalf("valid ids rejected: %v", err)
+	}
+	if len(got) != 2 || got[0] != id1 || got[1] != id2 {
+		t.Fatalf("parse/order wrong: %v", got)
+	}
+	if _, err := parseAgentChain([]string{"not-a-uuid"}); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("malformed id must be ErrValidation, got %v", err)
+	}
+	if empty, err := parseAgentChain(nil); err != nil || len(empty) != 0 {
+		t.Fatalf("nil chain → empty, no error; got %v err=%v", empty, err)
+	}
+}
+
+// TestDistinctUUIDs pins dedup with first-seen order preserved (so the existence count
+// isn't tricked by a repeated id).
+func TestDistinctUUIDs(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	got := distinctUUIDs([]uuid.UUID{a, b, a})
+	if len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("distinct/order wrong: %v", got)
+	}
+}
 
 // mapReviewCfgErr must translate DB/sentinel errors into stable service sentinels so handlers can
 // branch on typed errors and never leak raw DB internals to clients (manyforge-vay).
@@ -53,11 +83,11 @@ func TestValidateDimensionInput(t *testing.T) {
 	}
 
 	bad := map[string]ReviewDimensionInput{
-		"unknown dimension":   {Dimension: "kitchen-sink", MinSeverity: "info"},
-		"bad severity":        {Dimension: "security", MinSeverity: "critical"},
-		"unknown provider":    {Dimension: "security", MinSeverity: "info", Provider: "acme", Model: "m"},
-		"provider no model":   {Dimension: "security", MinSeverity: "info", Provider: "openai", Model: "  "},
-		"prompt too long":     {Dimension: "security", MinSeverity: "info", Prompt: strings.Repeat("x", maxDimensionPromptBytes+1)},
+		"unknown dimension": {Dimension: "kitchen-sink", MinSeverity: "info"},
+		"bad severity":      {Dimension: "security", MinSeverity: "critical"},
+		"unknown provider":  {Dimension: "security", MinSeverity: "info", Provider: "acme", Model: "m"},
+		"provider no model": {Dimension: "security", MinSeverity: "info", Provider: "openai", Model: "  "},
+		"prompt too long":   {Dimension: "security", MinSeverity: "info", Prompt: strings.Repeat("x", maxDimensionPromptBytes+1)},
 	}
 	for name, in := range bad {
 		if err := validateDimensionInput(in); !errors.Is(err, errs.ErrValidation) {

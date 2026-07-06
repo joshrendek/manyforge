@@ -43,6 +43,10 @@ type Querier interface {
 	ConnectorWebhookContext(ctx context.Context, id uuid.UUID) (ConnectorWebhookContextRow, error)
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
 	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
+	// CountAgentsInBusiness counts how many of the given agent IDs exist AND are visible to
+	// the caller in this business. Used to validate a review fallback chain: count != len(ids)
+	// ⇒ an unknown/foreign agent id ⇒ reject (no existence oracle; RLS scopes visibility).
+	CountAgentsInBusiness(ctx context.Context, arg CountAgentsInBusinessParams) (int64, error)
 	// Direct Owners (locked role) whose membership is AT this business. At the tenant
 	// root this is the last-Owner count guarded by FR-014/FR-024.
 	CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error)

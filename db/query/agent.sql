@@ -20,7 +20,8 @@ RETURNING id;
 INSERT INTO agent (
     id, business_id, tenant_root_id, principal_id, name, provider, model,
     system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents,
-    allowed_mcp_servers, retriage_on_reply, web_allowed_domains, created_at, updated_at)
+    allowed_mcp_servers, retriage_on_reply, web_allowed_domains, max_concurrent_lanes,
+    created_at, updated_at)
 SELECT
     sqlc.arg('id')::uuid,
     b.id,
@@ -37,6 +38,7 @@ SELECT
     sqlc.arg('allowed_mcp_servers')::uuid[],
     sqlc.arg('retriage_on_reply')::boolean,
     sqlc.arg('web_allowed_domains')::text[],
+    sqlc.arg('max_concurrent_lanes')::integer,
     now(), now()
 FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid
@@ -70,6 +72,7 @@ UPDATE agent SET
     allowed_mcp_servers  = COALESCE(sqlc.narg('allowed_mcp_servers')::uuid[], allowed_mcp_servers),
     retriage_on_reply    = COALESCE(sqlc.narg('retriage_on_reply')::boolean, retriage_on_reply),
     web_allowed_domains  = COALESCE(sqlc.narg('web_allowed_domains')::text[], web_allowed_domains),
+    max_concurrent_lanes = COALESCE(sqlc.narg('max_concurrent_lanes')::integer, max_concurrent_lanes),
     updated_at           = now()
 WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid
 RETURNING *;
@@ -82,3 +85,10 @@ WITH del AS (
     DELETE FROM agent WHERE agent.id = $1 AND agent.business_id = $2 RETURNING agent.principal_id
 )
 DELETE FROM principal WHERE principal.id IN (SELECT principal_id FROM del) AND principal.kind = 'agent';
+
+-- CountAgentsInBusiness counts how many of the given agent IDs exist AND are visible to
+-- the caller in this business. Used to validate a review fallback chain: count != len(ids)
+-- ⇒ an unknown/foreign agent id ⇒ reject (no existence oracle; RLS scopes visibility).
+-- name: CountAgentsInBusiness :one
+SELECT count(*) FROM agent
+WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND business_id = sqlc.arg('business_id')::uuid;

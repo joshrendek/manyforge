@@ -336,6 +336,7 @@ CREATE TABLE agent (
     allowed_mcp_servers  uuid[] NOT NULL,
     retriage_on_reply    boolean NOT NULL,
     web_allowed_domains  text[] NOT NULL,
+    max_concurrent_lanes integer NOT NULL,
     UNIQUE (business_id, name),
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
@@ -674,6 +675,7 @@ CREATE TABLE review_config (
     verify_model    text NOT NULL DEFAULT '',
     cite_rules      boolean NOT NULL DEFAULT false,
     post_mode       text NOT NULL DEFAULT 'single',
+    review_agent_chain uuid[] NOT NULL DEFAULT '{}',
     updated_at      timestamptz NOT NULL DEFAULT now(),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );

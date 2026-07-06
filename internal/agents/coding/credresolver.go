@@ -24,6 +24,10 @@ type AICredential struct {
 	// (a networked self-hosted model), mirroring the create-time guard and clone path.
 	// Loopback is always permitted; cloud-metadata/link-local stay blocked regardless.
 	AllowPrivateBaseURL bool
+	// MaxConcurrentLanes is the resolved reviewbot's per-agent lane cap (how many
+	// dimension lanes may run at once when THIS bot drives the review). 0 ⇒ the caller
+	// applies defaultConcurrentLanes. Not a secret.
+	MaxConcurrentLanes int
 }
 
 // Host returns the bare hostname of BaseURL for use in the sandbox egress allowlist.
@@ -121,5 +125,6 @@ func (r *AgentCredResolver) Resolve(ctx context.Context, principalID, businessID
 		Model:               model,
 		Provider:            ag.Provider,
 		AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
+		MaxConcurrentLanes:  ag.MaxConcurrentLanes,
 	}, nil
 }

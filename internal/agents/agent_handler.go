@@ -86,6 +86,7 @@ type agentResp struct {
 	AllowedMCPServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	RetriageOnReply    bool        `json:"retriage_on_reply"`
 	WebAllowedDomains  []string    `json:"web_allowed_domains"`
+	MaxConcurrentLanes int         `json:"max_concurrent_lanes"`
 	CreatedAt          time.Time   `json:"created_at"`
 	UpdatedAt          time.Time   `json:"updated_at"`
 }
@@ -108,9 +109,10 @@ func toAgentResp(a Agent) agentResp {
 		Name: a.Name, Provider: a.Provider, Model: a.Model, SystemPrompt: a.SystemPrompt,
 		AllowedTools: tools, AutonomyMode: a.AutonomyMode, Enabled: a.Enabled,
 		MonthlyBudgetCents: a.MonthlyBudgetCents, AllowedMCPServers: mcpServers,
-		RetriageOnReply:   a.RetriageOnReply,
-		WebAllowedDomains: webDomains,
-		CreatedAt:         a.CreatedAt, UpdatedAt: a.UpdatedAt,
+		RetriageOnReply:    a.RetriageOnReply,
+		WebAllowedDomains:  webDomains,
+		MaxConcurrentLanes: a.MaxConcurrentLanes,
+		CreatedAt:          a.CreatedAt, UpdatedAt: a.UpdatedAt,
 	}
 }
 
@@ -162,6 +164,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		AllowedMCPServers  []uuid.UUID `json:"allowed_mcp_servers"`
 		RetriageOnReply    *bool       `json:"retriage_on_reply"`
 		WebAllowedDomains  []string    `json:"web_allowed_domains"`
+		MaxConcurrentLanes int         `json:"max_concurrent_lanes"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -182,8 +185,9 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		Name: in.Name, Provider: in.Provider, Model: in.Model, SystemPrompt: in.SystemPrompt,
 		AllowedTools: in.AllowedTools, AutonomyMode: mode, Enabled: enabled,
 		MonthlyBudgetCents: in.MonthlyBudgetCents, AllowedMCPServers: in.AllowedMCPServers,
-		RetriageOnReply:   retriageOnReply,
-		WebAllowedDomains: in.WebAllowedDomains,
+		RetriageOnReply:    retriageOnReply,
+		WebAllowedDomains:  in.WebAllowedDomains,
+		MaxConcurrentLanes: in.MaxConcurrentLanes,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -244,6 +248,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		AllowedMCPServers  *[]uuid.UUID `json:"allowed_mcp_servers"`
 		RetriageOnReply    *bool        `json:"retriage_on_reply"`
 		WebAllowedDomains  *[]string    `json:"web_allowed_domains"`
+		MaxConcurrentLanes *int         `json:"max_concurrent_lanes"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -253,7 +258,8 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		AllowedTools: in.AllowedTools, AutonomyMode: in.AutonomyMode,
 		Enabled: in.Enabled, MonthlyBudgetCents: in.MonthlyBudgetCents,
 		AllowedMCPServers: in.AllowedMCPServers, RetriageOnReply: in.RetriageOnReply,
-		WebAllowedDomains: in.WebAllowedDomains,
+		WebAllowedDomains:  in.WebAllowedDomains,
+		MaxConcurrentLanes: in.MaxConcurrentLanes,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)

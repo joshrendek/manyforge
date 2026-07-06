@@ -210,6 +210,13 @@ components:
         post_mode:
           type: string
           enum: [single, per_dimension]
+        review_agent_chain:
+          type: array
+          items: { type: string, format: uuid }
+          description: >-
+            Ordered reviewbot fallback chain (agent UUIDs, primary first). At review time
+            the first reachable bot drives the whole panel; empty means no fallback (the
+            review uses its single enqueued agent). Unknown/foreign agent ids are rejected.
       required: [dedupe, post_mode]
     Error:
       type: object
