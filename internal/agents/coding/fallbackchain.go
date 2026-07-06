@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -74,4 +75,52 @@ func (s *CodeReviewService) prober() reviewbotProber {
 		return s.Prober
 	}
 	return httpProber{Timeout: defaultProbeTimeout}
+}
+
+// resolveLaneCred picks the reviewbot credential for one dimension lane (manyforge-azy): its
+// primary (provider, model) probed live, else its fallback (provider, model). A blank provider
+// inherits the review's default resolved cred (def). Returns a non-empty reason when neither
+// primary nor fallback yields a usable, egress-permitted endpoint — the lane is then skipped
+// (recorded in dimension_runs, never silently misrouted).
+func (s *CodeReviewService) resolveLaneCred(ctx context.Context, principalID, businessID uuid.UUID, def AICredential, dim Dimension) (AICredential, string) {
+	primary, perr := s.laneCredFor(ctx, principalID, businessID, def, dim.Provider, dim.Model)
+	if perr == nil && s.prober().Live(ctx, primary) {
+		return primary, ""
+	}
+	if dim.FallbackProvider != "" {
+		fb, ferr := s.laneCredFor(ctx, principalID, businessID, def, dim.FallbackProvider, dim.FallbackModel)
+		if ferr == nil {
+			return fb, "" // use fallback; if it's also down the real call fails → worker retry
+		}
+		slog.Default().InfoContext(ctx, "coding: lane fallback unusable", "dimension", dim.Key, "err", ferr)
+	}
+	if perr == nil {
+		return primary, "" // primary resolved but not live and no usable fallback → try it (retry path)
+	}
+	slog.Default().InfoContext(ctx, "coding: lane primary unresolvable", "dimension", dim.Key, "err", perr)
+	return AICredential{}, fmt.Sprintf("no reachable reviewbot for %q (check its provider credential and fallback)", dim.Key)
+}
+
+// laneCredFor resolves (provider, model) into a lane credential: a blank/same provider inherits
+// the review default (model overridden); a different provider resolves its own BYO credential.
+// It then requires a usable host and, for cloud providers, membership in the sandbox egress
+// allowlist (checked per-lane now that lanes may span endpoints).
+func (s *CodeReviewService) laneCredFor(ctx context.Context, principalID, businessID uuid.UUID, def AICredential, provider, model string) (AICredential, error) {
+	lc := def
+	if provider != "" && !strings.EqualFold(provider, def.Provider) {
+		rc, err := s.Creds.ResolveProvider(ctx, principalID, businessID, provider, model)
+		if err != nil {
+			return AICredential{}, err
+		}
+		lc = rc
+	} else if strings.TrimSpace(model) != "" {
+		lc.Model = model
+	}
+	if lc.Host() == "" {
+		return AICredential{}, fmt.Errorf("no usable base url for provider %q", lc.Provider)
+	}
+	if !isLocalProvider(lc.Provider) && !s.EgressAllow.Allows(lc.Host()) {
+		return AICredential{}, fmt.Errorf("provider host %q not in sandbox egress allowlist", lc.Host())
+	}
+	return lc, nil
 }

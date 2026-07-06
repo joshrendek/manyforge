@@ -318,24 +318,6 @@ type dimensionRun struct {
 	FindingCount  int    `json:"finding_count"`
 }
 
-// partitionByProvider splits active dimensions into those runnable under the review's resolved
-// provider and those skipped because they request a DIFFERENT per-dimension provider. That field
-// is persisted + shown in the setup UI but its credential/egress plumbing is not wired yet
-// (manyforge-ubk): running such a lane would silently use the review's default provider (wrong
-// key/base_url), so skip it with a clear reason instead of misrouting. An empty dim.Provider
-// inherits the review default and is always kept.
-func partitionByProvider(active []Dimension, reviewProvider string) (kept []Dimension, skipped []SkippedDimension) {
-	for _, d := range active {
-		if d.Provider != "" && !strings.EqualFold(d.Provider, reviewProvider) {
-			skipped = append(skipped, SkippedDimension{Key: d.Key,
-				Reason: fmt.Sprintf("per-dimension provider %q not supported yet (review runs on %q)", d.Provider, reviewProvider)})
-			continue
-		}
-		kept = append(kept, d)
-	}
-	return kept, skipped
-}
-
 // buildDimensionRuns turns the fan-out's lane results + skipped dimensions into the persisted
 // dimension_runs records. Ran lanes are "succeeded"/"failed" with their usage + raw finding
 // count; skipped dimensions are "skipped" with the reason — so every configured lane's outcome
