@@ -26,9 +26,11 @@ type fakeAgentSvc struct {
 	createErr error
 	got       Agent
 	getErr    error
+	gotCreate CreateAgentInput // captures the request → input mapping for assertions
 }
 
-func (f *fakeAgentSvc) Create(context.Context, uuid.UUID, uuid.UUID, CreateAgentInput) (Agent, error) {
+func (f *fakeAgentSvc) Create(_ context.Context, _, _ uuid.UUID, in CreateAgentInput) (Agent, error) {
+	f.gotCreate = in
 	return f.created, f.createErr
 }
 func (f *fakeAgentSvc) Get(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (Agent, error) {
@@ -104,6 +106,39 @@ func TestCreateAgentHandler_Created(t *testing.T) {
 	}
 	if resp.Name != "Bot" || resp.Provider != "anthropic" || resp.AllowedTools == nil {
 		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+// TestCreateAgentHandler_MaxConcurrentLanes_RoundTrip pins that the HTTP layer both
+// deserializes max_concurrent_lanes from the request body into CreateAgentInput and
+// serializes it back on the agent response (neither was exercised before).
+func TestCreateAgentHandler_MaxConcurrentLanes_RoundTrip(t *testing.T) {
+	ring := newAgentTestRing(t)
+	bid := uuid.New()
+	svc := &fakeAgentSvc{created: Agent{
+		ID: uuid.New(), BusinessID: bid, PrincipalID: uuid.New(), Name: "GPU Bot",
+		Provider: "vllm", Model: "ornith-1.0-9b", AllowedTools: []string{},
+		AutonomyMode: 1, Enabled: true, MaxConcurrentLanes: 1,
+	}}
+	h := NewHandler(svc)
+	body, _ := json.Marshal(map[string]any{
+		"name": "GPU Bot", "provider": "vllm", "model": "ornith-1.0-9b", "autonomy_mode": 1, "max_concurrent_lanes": 1,
+	})
+	rec := serveAgent(h, ring, http.MethodPost, "/businesses/"+bid.String()+"/agents", mintBearer(t, ring, uuid.New()), bytes.NewReader(body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	// request body → CreateAgentInput mapping
+	if svc.gotCreate.MaxConcurrentLanes != 1 {
+		t.Fatalf("handler must map max_concurrent_lanes into CreateAgentInput; got %d", svc.gotCreate.MaxConcurrentLanes)
+	}
+	// Agent → response serialization
+	var resp agentResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode resp: %v", err)
+	}
+	if resp.MaxConcurrentLanes != 1 {
+		t.Fatalf("response must serialize max_concurrent_lanes; resp = %+v", resp)
 	}
 }
 

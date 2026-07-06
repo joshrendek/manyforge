@@ -130,6 +130,16 @@ func TestValidateCreateAgent(t *testing.T) {
 		{"mode 4", func(in *CreateAgentInput) { in.AutonomyMode = 4 }},
 		{"negative budget", func(in *CreateAgentInput) { in.MonthlyBudgetCents = -1 }},
 		{"budget overflow", func(in *CreateAgentInput) { in.MonthlyBudgetCents = math.MaxInt32 + 1 }},
+		{"lanes over max", func(in *CreateAgentInput) { in.MaxConcurrentLanes = 17 }},
+		{"lanes negative", func(in *CreateAgentInput) { in.MaxConcurrentLanes = -1 }},
+	}
+	// 0 (unset ⇒ default 4) and any value in [1,16] are valid.
+	for _, n := range []int{0, 1, 16} {
+		in := base
+		in.MaxConcurrentLanes = n
+		if err := validateCreateAgent(in); err != nil {
+			t.Fatalf("max_concurrent_lanes=%d should be valid: %v", n, err)
+		}
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,6 +165,8 @@ func TestValidateUpdateAgent(t *testing.T) {
 		{AutonomyMode: mode(9)},
 		{MonthlyBudgetCents: func(i int) *int { return &i }(-5)},
 		{MonthlyBudgetCents: func(i int) *int { return &i }(math.MaxInt32 + 1)},
+		{MaxConcurrentLanes: mode(0)},  // explicit 0 invalid on PATCH (must be 1..16)
+		{MaxConcurrentLanes: mode(17)}, // above the cap
 	}
 	for i, in := range bad {
 		if err := validateUpdateAgent(in); !errors.Is(err, errs.ErrValidation) {

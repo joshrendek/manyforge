@@ -16,6 +16,13 @@ const businesses = {
 
 const models = { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] };
 
+const agentsList = {
+  items: [
+    { id: 'ag1', name: 'LM Studio' },
+    { id: 'ag2', name: 'Cloud' },
+  ],
+};
+
 function makeDim(over: Partial<ReviewDimension> = {}): ReviewDimension {
   return {
     id: 'd1',
@@ -38,6 +45,7 @@ const defaultConfig: ReviewConfig = {
   verify_model: '',
   cite_rules: false,
   post_mode: 'single',
+  review_agent_chain: [],
 };
 
 describe('CodeReviewSetupComponent', () => {
@@ -76,6 +84,7 @@ describe('CodeReviewSetupComponent', () => {
     mock.expectOne('/api/v1/businesses/b1/review-dimensions').flush({ items: dims });
     mock.expectOne('/api/v1/businesses/b1/review-config').flush(config);
     mock.expectOne('/api/v1/businesses/b1/agents/models').flush(models);
+    mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsList);
     fixture.detectChanges();
   }
 
@@ -160,6 +169,37 @@ describe('CodeReviewSetupComponent', () => {
     req.flush({ ...defaultConfig, dedupe: false });
   });
 
+  it('edits the reviewbot fallback chain (add, reorder, remove) and saves it in order', () => {
+    mount();
+    const add = () => q('[data-testid="chain-add"]') as HTMLSelectElement;
+    // add LM Studio (ag1) then Cloud (ag2)
+    add().value = 'ag1';
+    add().dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    add().value = 'ag2';
+    add().dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    expect(cmp.config().review_agent_chain).toEqual(['ag1', 'ag2']);
+    expect((q('[data-testid="chain-name-0"]') as HTMLElement).textContent).toContain('LM Studio');
+
+    // reorder: move the 2nd entry up → [ag2, ag1]
+    (q('[data-testid="chain-up-1"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(cmp.config().review_agent_chain).toEqual(['ag2', 'ag1']);
+
+    // remove the 1st entry → [ag1]
+    (q('[data-testid="chain-remove-0"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(cmp.config().review_agent_chain).toEqual(['ag1']);
+
+    // save → the PUT body carries the chain in order
+    (q('[data-testid="config-save"]') as HTMLButtonElement).click();
+    const req = mock.expectOne('/api/v1/businesses/b1/review-config');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body.review_agent_chain).toEqual(['ag1']);
+    req.flush({ ...defaultConfig, review_agent_chain: ['ag1'] });
+  });
+
   it('reloads the panel when a different business is selected', () => {
     mount();
     const sel = q('[data-testid="setup-business"]') as HTMLSelectElement;
@@ -170,6 +210,7 @@ describe('CodeReviewSetupComponent', () => {
     mock.expectOne('/api/v1/businesses/b2/review-dimensions').flush({ items: [] });
     mock.expectOne('/api/v1/businesses/b2/review-config').flush(defaultConfig);
     mock.expectOne('/api/v1/businesses/b2/agents/models').flush(models);
+    mock.expectOne('/api/v1/businesses/b2/agents').flush({ items: [] });
     fixture.detectChanges();
     expect(cmp.businessId()).toBe('b2');
   });

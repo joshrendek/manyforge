@@ -545,6 +545,7 @@ type Agent struct {
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	RetriageOnReply    bool        `json:"retriage_on_reply"`
 	WebAllowedDomains  []string    `json:"web_allowed_domains"`
+	MaxConcurrentLanes int32       `json:"max_concurrent_lanes"`
 }
 
 type AgentRun struct {
@@ -968,15 +969,16 @@ type Requester struct {
 }
 
 type ReviewConfig struct {
-	BusinessID     uuid.UUID      `json:"business_id"`
-	TenantRootID   uuid.UUID      `json:"tenant_root_id"`
-	Dedupe         bool           `json:"dedupe"`
-	VerifyEnabled  bool           `json:"verify_enabled"`
-	VerifyProvider NullAiProvider `json:"verify_provider"`
-	VerifyModel    string         `json:"verify_model"`
-	CiteRules      bool           `json:"cite_rules"`
-	PostMode       string         `json:"post_mode"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	BusinessID       uuid.UUID      `json:"business_id"`
+	TenantRootID     uuid.UUID      `json:"tenant_root_id"`
+	Dedupe           bool           `json:"dedupe"`
+	VerifyEnabled    bool           `json:"verify_enabled"`
+	VerifyProvider   NullAiProvider `json:"verify_provider"`
+	VerifyModel      string         `json:"verify_model"`
+	CiteRules        bool           `json:"cite_rules"`
+	PostMode         string         `json:"post_mode"`
+	ReviewAgentChain []uuid.UUID    `json:"review_agent_chain"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
 type ReviewDimension struct {

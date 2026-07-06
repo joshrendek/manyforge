@@ -8,7 +8,7 @@ SELECT * FROM review_config WHERE business_id = $1;
 -- from the RLS-visible business, so a foreign business yields no row (⇒ ErrNotFound).
 INSERT INTO review_config (
     business_id, tenant_root_id, dedupe, verify_enabled, verify_provider, verify_model,
-    cite_rules, post_mode, updated_at)
+    cite_rules, post_mode, review_agent_chain, updated_at)
 SELECT
     b.id, b.tenant_root_id,
     sqlc.arg('dedupe')::boolean,
@@ -17,6 +17,7 @@ SELECT
     sqlc.arg('verify_model')::text,
     sqlc.arg('cite_rules')::boolean,
     sqlc.arg('post_mode')::text,
+    sqlc.arg('review_agent_chain')::uuid[],
     now()
 FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid
@@ -27,5 +28,6 @@ ON CONFLICT (business_id) DO UPDATE SET
     verify_model    = EXCLUDED.verify_model,
     cite_rules      = EXCLUDED.cite_rules,
     post_mode       = EXCLUDED.post_mode,
+    review_agent_chain = EXCLUDED.review_agent_chain,
     updated_at      = now()
 RETURNING *;

@@ -57,6 +57,9 @@ type ReviewConfigView struct {
 	VerifyModel    string `json:"verify_model"`
 	CiteRules      bool   `json:"cite_rules"`
 	PostMode       string `json:"post_mode"`
+	// ReviewAgentChain is the ordered reviewbot fallback chain (agent UUIDs, primary
+	// first). Empty ⇒ no fallback (the review uses its single enqueued agent).
+	ReviewAgentChain []string `json:"review_agent_chain"`
 }
 
 // ReviewConfigInput is the PUT payload; same shape as the view.
@@ -228,16 +231,38 @@ func (s *ReviewDimensionService) UpsertConfig(ctx context.Context, principalID, 
 	if in.VerifyProvider != "" && !knownAIProviders[in.VerifyProvider] {
 		return ReviewConfigView{}, fmt.Errorf("coding: unknown verify provider %q: %w", in.VerifyProvider, errs.ErrValidation)
 	}
+	// Parse the fallback chain agent IDs up front (malformed id = client error);
+	// existence/visibility is validated inside the tx below so RLS scopes it.
+	chain, perr := parseAgentChain(in.ReviewAgentChain)
+	if perr != nil {
+		return ReviewConfigView{}, perr
+	}
+	// A chain is an ordered set — dedupe (first-seen order) before validating/storing so a
+	// repeated id isn't persisted (chooseReviewbot would just probe it twice).
+	chain = distinctUUIDs(chain)
 	var view ReviewConfigView
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		row, qerr := dbgen.New(tx).UpsertReviewConfig(ctx, dbgen.UpsertReviewConfigParams{
-			BusinessID:     businessID,
-			Dedupe:         in.Dedupe,
-			VerifyEnabled:  in.VerifyEnabled,
-			VerifyProvider: nullProvider(in.VerifyProvider),
-			VerifyModel:    in.VerifyModel,
-			CiteRules:      in.CiteRules,
-			PostMode:       in.PostMode,
+		q := dbgen.New(tx)
+		// Reject a chain that names an agent this caller can't see (unknown or foreign): a
+		// count mismatch means at least one id doesn't resolve under RLS.
+		if len(chain) > 0 {
+			n, cerr := q.CountAgentsInBusiness(ctx, dbgen.CountAgentsInBusinessParams{Ids: chain, BusinessID: businessID})
+			if cerr != nil {
+				return cerr
+			}
+			if int(n) != len(chain) {
+				return fmt.Errorf("coding: review_agent_chain references an unknown agent: %w", errs.ErrValidation)
+			}
+		}
+		row, qerr := q.UpsertReviewConfig(ctx, dbgen.UpsertReviewConfigParams{
+			BusinessID:       businessID,
+			Dedupe:           in.Dedupe,
+			VerifyEnabled:    in.VerifyEnabled,
+			VerifyProvider:   nullProvider(in.VerifyProvider),
+			VerifyModel:      in.VerifyModel,
+			CiteRules:        in.CiteRules,
+			PostMode:         in.PostMode,
+			ReviewAgentChain: chain,
 		})
 		if qerr != nil {
 			return qerr
@@ -285,16 +310,57 @@ func defaultReviewConfigView() ReviewConfigView {
 
 func configViewFromRow(r dbgen.ReviewConfig) ReviewConfigView {
 	v := ReviewConfigView{
-		Dedupe:        r.Dedupe,
-		VerifyEnabled: r.VerifyEnabled,
-		VerifyModel:   r.VerifyModel,
-		CiteRules:     r.CiteRules,
-		PostMode:      r.PostMode,
+		Dedupe:           r.Dedupe,
+		VerifyEnabled:    r.VerifyEnabled,
+		VerifyModel:      r.VerifyModel,
+		CiteRules:        r.CiteRules,
+		PostMode:         r.PostMode,
+		ReviewAgentChain: uuidsToStrings(r.ReviewAgentChain),
 	}
 	if r.VerifyProvider.Valid {
 		v.VerifyProvider = string(r.VerifyProvider.AiProvider)
 	}
 	return v
+}
+
+// parseAgentChain converts the API's string agent IDs into UUIDs, preserving order. A
+// malformed id is a client error (ErrValidation); existence/visibility is checked
+// separately under RLS by the caller.
+func parseAgentChain(in []string) ([]uuid.UUID, error) {
+	out := make([]uuid.UUID, 0, len(in))
+	for _, s := range in {
+		id, err := uuid.Parse(strings.TrimSpace(s))
+		if err != nil {
+			return nil, fmt.Errorf("coding: review_agent_chain has an invalid agent id %q: %w", s, errs.ErrValidation)
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+// distinctUUIDs returns the unique ids preserving first-seen order (used to validate the
+// chain's agent existence without double-counting a repeated entry).
+func distinctUUIDs(ids []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// uuidsToStrings renders stored agent-chain UUIDs for the API view (nil ⇒ empty slice so
+// the JSON is [] not null).
+func uuidsToStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
 }
 
 // mapReviewCfgErr converts DB/sentinel errors to stable service sentinels (mirrors mapRepoErr).

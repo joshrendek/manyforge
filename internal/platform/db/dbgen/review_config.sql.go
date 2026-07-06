@@ -12,7 +12,7 @@ import (
 )
 
 const getReviewConfig = `-- name: GetReviewConfig :one
-SELECT business_id, tenant_root_id, dedupe, verify_enabled, verify_provider, verify_model, cite_rules, post_mode, updated_at FROM review_config WHERE business_id = $1
+SELECT business_id, tenant_root_id, dedupe, verify_enabled, verify_provider, verify_model, cite_rules, post_mode, review_agent_chain, updated_at FROM review_config WHERE business_id = $1
 `
 
 // The business's panel-level review config (one row per business). Absent ⇒ the caller uses
@@ -29,6 +29,7 @@ func (q *Queries) GetReviewConfig(ctx context.Context, businessID uuid.UUID) (Re
 		&i.VerifyModel,
 		&i.CiteRules,
 		&i.PostMode,
+		&i.ReviewAgentChain,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -37,7 +38,7 @@ func (q *Queries) GetReviewConfig(ctx context.Context, businessID uuid.UUID) (Re
 const upsertReviewConfig = `-- name: UpsertReviewConfig :one
 INSERT INTO review_config (
     business_id, tenant_root_id, dedupe, verify_enabled, verify_provider, verify_model,
-    cite_rules, post_mode, updated_at)
+    cite_rules, post_mode, review_agent_chain, updated_at)
 SELECT
     b.id, b.tenant_root_id,
     $1::boolean,
@@ -46,9 +47,10 @@ SELECT
     $4::text,
     $5::boolean,
     $6::text,
+    $7::uuid[],
     now()
 FROM business b
-WHERE b.id = $7::uuid
+WHERE b.id = $8::uuid
 ON CONFLICT (business_id) DO UPDATE SET
     dedupe          = EXCLUDED.dedupe,
     verify_enabled  = EXCLUDED.verify_enabled,
@@ -56,18 +58,20 @@ ON CONFLICT (business_id) DO UPDATE SET
     verify_model    = EXCLUDED.verify_model,
     cite_rules      = EXCLUDED.cite_rules,
     post_mode       = EXCLUDED.post_mode,
+    review_agent_chain = EXCLUDED.review_agent_chain,
     updated_at      = now()
-RETURNING business_id, tenant_root_id, dedupe, verify_enabled, verify_provider, verify_model, cite_rules, post_mode, updated_at
+RETURNING business_id, tenant_root_id, dedupe, verify_enabled, verify_provider, verify_model, cite_rules, post_mode, review_agent_chain, updated_at
 `
 
 type UpsertReviewConfigParams struct {
-	Dedupe         bool           `json:"dedupe"`
-	VerifyEnabled  bool           `json:"verify_enabled"`
-	VerifyProvider NullAiProvider `json:"verify_provider"`
-	VerifyModel    string         `json:"verify_model"`
-	CiteRules      bool           `json:"cite_rules"`
-	PostMode       string         `json:"post_mode"`
-	BusinessID     uuid.UUID      `json:"business_id"`
+	Dedupe           bool           `json:"dedupe"`
+	VerifyEnabled    bool           `json:"verify_enabled"`
+	VerifyProvider   NullAiProvider `json:"verify_provider"`
+	VerifyModel      string         `json:"verify_model"`
+	CiteRules        bool           `json:"cite_rules"`
+	PostMode         string         `json:"post_mode"`
+	ReviewAgentChain []uuid.UUID    `json:"review_agent_chain"`
+	BusinessID       uuid.UUID      `json:"business_id"`
 }
 
 // Insert-or-update the business's review config (PK business_id). tenant_root_id is derived
@@ -80,6 +84,7 @@ func (q *Queries) UpsertReviewConfig(ctx context.Context, arg UpsertReviewConfig
 		arg.VerifyModel,
 		arg.CiteRules,
 		arg.PostMode,
+		arg.ReviewAgentChain,
 		arg.BusinessID,
 	)
 	var i ReviewConfig
@@ -92,6 +97,7 @@ func (q *Queries) UpsertReviewConfig(ctx context.Context, arg UpsertReviewConfig
 		&i.VerifyModel,
 		&i.CiteRules,
 		&i.PostMode,
+		&i.ReviewAgentChain,
 		&i.UpdatedAt,
 	)
 	return i, err

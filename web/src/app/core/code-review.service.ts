@@ -116,6 +116,8 @@ export interface ReviewConfig {
   verify_model: string;
   cite_rules: boolean;
   post_mode: PostMode;
+  // Ordered reviewbot fallback chain (agent UUIDs, primary first). Empty ⇒ no fallback.
+  review_agent_chain: string[];
 }
 
 export interface TriggerBody {
