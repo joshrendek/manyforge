@@ -95,13 +95,6 @@ const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter']
                name="budget" [(ngModel)]="budgetDollars" />
       </div>
 
-      <div class="mf-field">
-        <label for="ag-lanes">Max concurrent review lanes</label>
-        <input id="ag-lanes" class="mf-input" type="number" min="1" max="16" step="1" data-testid="agent-lanes"
-               name="max_concurrent_lanes" aria-describedby="ag-lanes-hint" [(ngModel)]="maxConcurrentLanes" />
-        <small id="ag-lanes-hint" class="mf-hint">How many code-review dimensions this bot runs at once. A single-GPU self-host: 1; cloud: 4.</small>
-      </div>
-
       @if (mcpServers().length > 0) {
         <div class="mf-field">
           <span>MCP servers</span>
@@ -149,7 +142,6 @@ export class AgentFormComponent implements OnInit {
   enabled = true;
   retriageOnReply = false;
   budgetDollars = 0;
-  maxConcurrentLanes = 4;
 
   tools = signal<ToolDescriptor[]>([]);
   allModels = signal<ModelDescriptor[]>([]);
@@ -180,7 +172,6 @@ export class AgentFormComponent implements OnInit {
       this.enabled = a.enabled;
       this.retriageOnReply = a.retriage_on_reply;
       this.budgetDollars = Math.round(a.monthly_budget_cents / 100);
-      this.maxConcurrentLanes = a.max_concurrent_lanes || 4;
       this.selectedTools.set(new Set(a.allowed_tools ?? []));
       this.selectedMcp.set(new Set(a.allowed_mcp_servers ?? []));
     }
@@ -259,7 +250,6 @@ export class AgentFormComponent implements OnInit {
       monthly_budget_cents: cents,
       allowed_mcp_servers: [...this.selectedMcp()],
       retriage_on_reply: this.retriageOnReply,
-      max_concurrent_lanes: this.lanes(),
     };
   }
 
@@ -275,16 +265,7 @@ export class AgentFormComponent implements OnInit {
       monthly_budget_cents: cents,
       allowed_mcp_servers: [...this.selectedMcp()],
       retriage_on_reply: this.retriageOnReply,
-      max_concurrent_lanes: this.lanes(),
     };
-  }
-
-  // lanes coerces + clamps the max-concurrent-lanes input into the server's [1,16] range
-  // (0/blank ⇒ the default 4), so an empty or out-of-range field can't produce a 400.
-  private lanes(): number {
-    const n = Number(this.maxConcurrentLanes);
-    if (!Number.isFinite(n) || n === 0) return 4;
-    return Math.min(16, Math.max(1, Math.round(n)));
   }
 
   private describe(e: HttpErrorResponse): string {

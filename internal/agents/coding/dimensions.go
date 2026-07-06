@@ -16,15 +16,19 @@ import (
 // review's default resolved credential" — so a zero-config business runs every default
 // dimension on the triggering agent's model, differing only by prompt + scope.
 type Dimension struct {
-	Key         string   // stable id: security|correctness|performance|ui|docs|tests
-	Label       string   // display label, e.g. "Security"
-	Provider    string   // resolves the per-provider BYO credential; "" ⇒ default
-	Model       string   // "" ⇒ default (the review's resolved model)
-	Prompt      string   // review instructions for this lane (reviewSchemaLine is appended by the caller)
-	ScopeGlobs  []string // file globs (doublestar); empty ⇒ all files
-	MinSeverity string   // "info" | "warning" | "error" — floor below which findings are dropped
-	Enabled     bool
-	Order       int
+	Key      string // stable id: security|correctness|performance|ui|docs|tests
+	Label    string // display label, e.g. "Security"
+	Provider string // resolves the per-provider BYO credential; "" ⇒ default
+	Model    string // "" ⇒ default (the review's resolved model)
+	// FallbackProvider/FallbackModel are tried when the primary endpoint fails the
+	// liveness probe (manyforge-azy). "" FallbackProvider ⇒ no fallback for this lane.
+	FallbackProvider string
+	FallbackModel    string
+	Prompt           string   // review instructions for this lane (reviewSchemaLine is appended by the caller)
+	ScopeGlobs       []string // file globs (doublestar); empty ⇒ all files
+	MinSeverity      string   // "info" | "warning" | "error" — floor below which findings are dropped
+	Enabled          bool
+	Order            int
 }
 
 // SkippedDimension records a configured dimension that did not run this review, with why
@@ -312,24 +316,6 @@ type dimensionRun struct {
 	SkippedReason string `json:"skipped_reason,omitempty"`
 	LastError     string `json:"last_error,omitempty"` // client-safe reason a "failed" lane failed (e.g. "timed out")
 	FindingCount  int    `json:"finding_count"`
-}
-
-// partitionByProvider splits active dimensions into those runnable under the review's resolved
-// provider and those skipped because they request a DIFFERENT per-dimension provider. That field
-// is persisted + shown in the setup UI but its credential/egress plumbing is not wired yet
-// (manyforge-ubk): running such a lane would silently use the review's default provider (wrong
-// key/base_url), so skip it with a clear reason instead of misrouting. An empty dim.Provider
-// inherits the review default and is always kept.
-func partitionByProvider(active []Dimension, reviewProvider string) (kept []Dimension, skipped []SkippedDimension) {
-	for _, d := range active {
-		if d.Provider != "" && !strings.EqualFold(d.Provider, reviewProvider) {
-			skipped = append(skipped, SkippedDimension{Key: d.Key,
-				Reason: fmt.Sprintf("per-dimension provider %q not supported yet (review runs on %q)", d.Provider, reviewProvider)})
-			continue
-		}
-		kept = append(kept, d)
-	}
-	return kept, skipped
 }
 
 // buildDimensionRuns turns the fan-out's lane results + skipped dimensions into the persisted

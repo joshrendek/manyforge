@@ -53,10 +53,10 @@ func TestMatchesScope(t *testing.T) {
 
 func TestActiveDimensions(t *testing.T) {
 	dims := []Dimension{
-		{Key: "security", Order: 1, Enabled: true},                                    // no scope → all
-		{Key: "ui", Order: 2, Enabled: true, ScopeGlobs: []string{"frontend/**"}},     // scoped out
-		{Key: "docs", Order: 3, Enabled: false},                                       // disabled
-		{Key: "perf", Order: 4, Enabled: true, ScopeGlobs: []string{"**/*.go"}},       // in scope
+		{Key: "security", Order: 1, Enabled: true},                                // no scope → all
+		{Key: "ui", Order: 2, Enabled: true, ScopeGlobs: []string{"frontend/**"}}, // scoped out
+		{Key: "docs", Order: 3, Enabled: false},                                   // disabled
+		{Key: "perf", Order: 4, Enabled: true, ScopeGlobs: []string{"**/*.go"}},   // in scope
 	}
 	active, skipped := activeDimensions(dims, []string{"internal/svc.go"})
 	if len(active) != 2 || active[0].Key != "security" || active[1].Key != "perf" {
@@ -272,33 +272,6 @@ func TestBuildDimensionRuns(t *testing.T) {
 	if runs[3].Status != "skipped" || runs[3].SkippedReason != "scope: no matching files" {
 		t.Fatalf("skipped record wrong: %+v", runs[3])
 	}
-}
-
-func TestPartitionByProvider(t *testing.T) {
-	active := []Dimension{
-		{Key: "security", Provider: ""},           // inherits review default → kept
-		{Key: "correctness", Provider: "openrouter"}, // same as review → kept
-		{Key: "ui", Provider: "OpenRouter"},        // case-insensitive match → kept
-		{Key: "docs", Provider: "anthropic"},       // different provider → skipped (manyforge-ubk)
-	}
-	kept, skipped := partitionByProvider(active, "openrouter")
-	if len(kept) != 3 || kept[0].Key != "security" || kept[1].Key != "correctness" || kept[2].Key != "ui" {
-		t.Fatalf("kept wrong: %+v", keysOfDims(kept))
-	}
-	if len(skipped) != 1 || skipped[0].Key != "docs" {
-		t.Fatalf("skipped wrong: %+v", skipped)
-	}
-	if !strings.Contains(skipped[0].Reason, "anthropic") || !strings.Contains(skipped[0].Reason, "openrouter") {
-		t.Fatalf("skip reason must name both providers, got %q", skipped[0].Reason)
-	}
-}
-
-func keysOfDims(ds []Dimension) []string {
-	out := make([]string, len(ds))
-	for i, d := range ds {
-		out[i] = d.Key
-	}
-	return out
 }
 
 // aggregateReview must NEVER return a nil error with an empty doc — that would post a bogus

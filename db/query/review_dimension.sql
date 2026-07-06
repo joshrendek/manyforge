@@ -10,13 +10,16 @@ ORDER BY sort_order, dimension;
 -- tenant_root_id is derived from the RLS-visible business, so a foreign/invisible business
 -- yields no row (NOT NULL rejects) — the ownership predicate is pushed into SQL, not the caller.
 INSERT INTO review_dimension (
-    id, business_id, tenant_root_id, dimension, provider, model, prompt,
+    id, business_id, tenant_root_id, dimension, provider, model,
+    fallback_provider, fallback_model, prompt,
     scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
 SELECT
     sqlc.arg('id')::uuid, b.id, b.tenant_root_id,
     sqlc.arg('dimension')::text,
     sqlc.narg('provider')::ai_provider,
     sqlc.arg('model')::text,
+    sqlc.narg('fallback_provider')::ai_provider,
+    sqlc.arg('fallback_model')::text,
     sqlc.arg('prompt')::text,
     sqlc.arg('scope_globs')::text[],
     sqlc.arg('min_severity')::text,
@@ -33,13 +36,16 @@ RETURNING *;
 -- business (foreign business ⇒ no row ⇒ ErrNotFound), and the tenant/created_at are never
 -- overwritten on conflict.
 INSERT INTO review_dimension (
-    id, business_id, tenant_root_id, dimension, provider, model, prompt,
+    id, business_id, tenant_root_id, dimension, provider, model,
+    fallback_provider, fallback_model, prompt,
     scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
 SELECT
     sqlc.arg('id')::uuid, b.id, b.tenant_root_id,
     sqlc.arg('dimension')::text,
     sqlc.narg('provider')::ai_provider,
     sqlc.arg('model')::text,
+    sqlc.narg('fallback_provider')::ai_provider,
+    sqlc.arg('fallback_model')::text,
     sqlc.arg('prompt')::text,
     sqlc.arg('scope_globs')::text[],
     sqlc.arg('min_severity')::text,
@@ -51,6 +57,8 @@ WHERE b.id = sqlc.arg('business_id')::uuid
 ON CONFLICT (business_id, dimension) DO UPDATE SET
     provider     = EXCLUDED.provider,
     model        = EXCLUDED.model,
+    fallback_provider = EXCLUDED.fallback_provider,
+    fallback_model = EXCLUDED.fallback_model,
     prompt       = EXCLUDED.prompt,
     scope_globs  = EXCLUDED.scope_globs,
     min_severity = EXCLUDED.min_severity,

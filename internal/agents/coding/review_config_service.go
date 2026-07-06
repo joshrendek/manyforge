@@ -26,27 +26,31 @@ type ReviewDimensionService struct {
 
 // ReviewDimensionView is the public view of one configured dimension row.
 type ReviewDimensionView struct {
-	ID          string   `json:"id"`
-	Dimension   string   `json:"dimension"`
-	Provider    string   `json:"provider,omitempty"` // "" ⇒ use the review's default resolved credential
-	Model       string   `json:"model"`
-	Prompt      string   `json:"prompt"`
-	ScopeGlobs  []string `json:"scope_globs"`
-	MinSeverity string   `json:"min_severity"`
-	Enabled     bool     `json:"enabled"`
-	SortOrder   int      `json:"sort_order"`
+	ID               string   `json:"id"`
+	Dimension        string   `json:"dimension"`
+	Provider         string   `json:"provider,omitempty"` // "" ⇒ use the review's default resolved credential
+	Model            string   `json:"model"`
+	FallbackProvider string   `json:"fallback_provider,omitempty"` // "" ⇒ no fallback for this lane
+	FallbackModel    string   `json:"fallback_model"`
+	Prompt           string   `json:"prompt"`
+	ScopeGlobs       []string `json:"scope_globs"`
+	MinSeverity      string   `json:"min_severity"`
+	Enabled          bool     `json:"enabled"`
+	SortOrder        int      `json:"sort_order"`
 }
 
 // ReviewDimensionInput is the upsert payload for one dimension (the Setup page "save row").
 type ReviewDimensionInput struct {
-	Dimension   string   `json:"dimension"`
-	Provider    string   `json:"provider"`
-	Model       string   `json:"model"`
-	Prompt      string   `json:"prompt"`
-	ScopeGlobs  []string `json:"scope_globs"`
-	MinSeverity string   `json:"min_severity"`
-	Enabled     bool     `json:"enabled"`
-	SortOrder   int      `json:"sort_order"`
+	Dimension        string   `json:"dimension"`
+	Provider         string   `json:"provider"`
+	Model            string   `json:"model"`
+	FallbackProvider string   `json:"fallback_provider"`
+	FallbackModel    string   `json:"fallback_model"`
+	Prompt           string   `json:"prompt"`
+	ScopeGlobs       []string `json:"scope_globs"`
+	MinSeverity      string   `json:"min_severity"`
+	Enabled          bool     `json:"enabled"`
+	SortOrder        int      `json:"sort_order"`
 }
 
 // ReviewConfigView is the public view of a business's panel-level config.
@@ -98,6 +102,18 @@ func validateDimensionInput(in ReviewDimensionInput) error {
 			return fmt.Errorf("coding: model required when provider is set: %w", errs.ErrValidation)
 		}
 	}
+	if in.FallbackProvider != "" {
+		if !knownAIProviders[in.FallbackProvider] {
+			return fmt.Errorf("coding: unknown fallback provider %q: %w", in.FallbackProvider, errs.ErrValidation)
+		}
+		if strings.TrimSpace(in.FallbackModel) == "" {
+			return fmt.Errorf("coding: fallback_model required when fallback_provider is set: %w", errs.ErrValidation)
+		}
+	} else if strings.TrimSpace(in.FallbackModel) != "" {
+		// A fallback_model with no fallback_provider is dead data — reject it rather than
+		// persist a model that never runs.
+		return fmt.Errorf("coding: fallback_model set without fallback_provider: %w", errs.ErrValidation)
+	}
 	if len(in.Prompt) > maxDimensionPromptBytes {
 		return fmt.Errorf("coding: prompt exceeds %d bytes: %w", maxDimensionPromptBytes, errs.ErrValidation)
 	}
@@ -145,16 +161,18 @@ func (s *ReviewDimensionService) UpsertDimension(ctx context.Context, principalI
 	var view ReviewDimensionView
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		row, qerr := dbgen.New(tx).UpsertReviewDimension(ctx, dbgen.UpsertReviewDimensionParams{
-			ID:          uuid.New(),
-			BusinessID:  businessID,
-			Dimension:   in.Dimension,
-			Provider:    nullProvider(in.Provider),
-			Model:       in.Model,
-			Prompt:      in.Prompt,
-			ScopeGlobs:  globs,
-			MinSeverity: in.MinSeverity,
-			Enabled:     in.Enabled,
-			SortOrder:   int32(in.SortOrder),
+			ID:               uuid.New(),
+			BusinessID:       businessID,
+			Dimension:        in.Dimension,
+			Provider:         nullProvider(in.Provider),
+			Model:            in.Model,
+			FallbackProvider: nullProvider(in.FallbackProvider),
+			FallbackModel:    in.FallbackModel,
+			Prompt:           in.Prompt,
+			ScopeGlobs:       globs,
+			MinSeverity:      in.MinSeverity,
+			Enabled:          in.Enabled,
+			SortOrder:        int32(in.SortOrder),
 		})
 		if qerr != nil {
 			return qerr
@@ -167,7 +185,7 @@ func (s *ReviewDimensionService) UpsertDimension(ctx context.Context, principalI
 			Action:           "review_dimension.upserted",
 			TargetType:       &tt,
 			TargetID:         &row.ID,
-			Inputs:           map[string]any{"dimension": in.Dimension, "enabled": in.Enabled, "provider": in.Provider, "model": in.Model},
+			Inputs:           map[string]any{"dimension": in.Dimension, "enabled": in.Enabled, "provider": in.Provider, "model": in.Model, "fallback_provider": in.FallbackProvider, "fallback_model": in.FallbackModel},
 		})
 	})
 	if err != nil {
@@ -286,17 +304,21 @@ func (s *ReviewDimensionService) UpsertConfig(ctx context.Context, principalID, 
 
 func dimensionViewFromRow(r dbgen.ReviewDimension) ReviewDimensionView {
 	v := ReviewDimensionView{
-		ID:          r.ID.String(),
-		Dimension:   r.Dimension,
-		Model:       r.Model,
-		Prompt:      r.Prompt,
-		ScopeGlobs:  r.ScopeGlobs,
-		MinSeverity: r.MinSeverity,
-		Enabled:     r.Enabled,
-		SortOrder:   int(r.SortOrder),
+		ID:            r.ID.String(),
+		Dimension:     r.Dimension,
+		Model:         r.Model,
+		FallbackModel: r.FallbackModel,
+		Prompt:        r.Prompt,
+		ScopeGlobs:    r.ScopeGlobs,
+		MinSeverity:   r.MinSeverity,
+		Enabled:       r.Enabled,
+		SortOrder:     int(r.SortOrder),
 	}
 	if v.ScopeGlobs == nil {
 		v.ScopeGlobs = []string{}
+	}
+	if r.FallbackProvider.Valid {
+		v.FallbackProvider = string(r.FallbackProvider.AiProvider)
 	}
 	if r.Provider.Valid {
 		v.Provider = string(r.Provider.AiProvider)

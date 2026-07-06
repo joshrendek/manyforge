@@ -32,35 +32,40 @@ func (q *Queries) DeleteReviewDimension(ctx context.Context, arg DeleteReviewDim
 
 const insertReviewDimension = `-- name: InsertReviewDimension :one
 INSERT INTO review_dimension (
-    id, business_id, tenant_root_id, dimension, provider, model, prompt,
+    id, business_id, tenant_root_id, dimension, provider, model,
+    fallback_provider, fallback_model, prompt,
     scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
 SELECT
     $1::uuid, b.id, b.tenant_root_id,
     $2::text,
     $3::ai_provider,
     $4::text,
-    $5::text,
-    $6::text[],
+    $5::ai_provider,
+    $6::text,
     $7::text,
-    $8::boolean,
-    $9::int,
+    $8::text[],
+    $9::text,
+    $10::boolean,
+    $11::int,
     now(), now()
 FROM business b
-WHERE b.id = $10::uuid
-RETURNING id, business_id, tenant_root_id, dimension, provider, model, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at
+WHERE b.id = $12::uuid
+RETURNING id, business_id, tenant_root_id, dimension, provider, model, fallback_provider, fallback_model, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at
 `
 
 type InsertReviewDimensionParams struct {
-	ID          uuid.UUID      `json:"id"`
-	Dimension   string         `json:"dimension"`
-	Provider    NullAiProvider `json:"provider"`
-	Model       string         `json:"model"`
-	Prompt      string         `json:"prompt"`
-	ScopeGlobs  []string       `json:"scope_globs"`
-	MinSeverity string         `json:"min_severity"`
-	Enabled     bool           `json:"enabled"`
-	SortOrder   int32          `json:"sort_order"`
-	BusinessID  uuid.UUID      `json:"business_id"`
+	ID               uuid.UUID      `json:"id"`
+	Dimension        string         `json:"dimension"`
+	Provider         NullAiProvider `json:"provider"`
+	Model            string         `json:"model"`
+	FallbackProvider NullAiProvider `json:"fallback_provider"`
+	FallbackModel    string         `json:"fallback_model"`
+	Prompt           string         `json:"prompt"`
+	ScopeGlobs       []string       `json:"scope_globs"`
+	MinSeverity      string         `json:"min_severity"`
+	Enabled          bool           `json:"enabled"`
+	SortOrder        int32          `json:"sort_order"`
+	BusinessID       uuid.UUID      `json:"business_id"`
 }
 
 // tenant_root_id is derived from the RLS-visible business, so a foreign/invisible business
@@ -71,6 +76,8 @@ func (q *Queries) InsertReviewDimension(ctx context.Context, arg InsertReviewDim
 		arg.Dimension,
 		arg.Provider,
 		arg.Model,
+		arg.FallbackProvider,
+		arg.FallbackModel,
 		arg.Prompt,
 		arg.ScopeGlobs,
 		arg.MinSeverity,
@@ -86,6 +93,8 @@ func (q *Queries) InsertReviewDimension(ctx context.Context, arg InsertReviewDim
 		&i.Dimension,
 		&i.Provider,
 		&i.Model,
+		&i.FallbackProvider,
+		&i.FallbackModel,
 		&i.Prompt,
 		&i.ScopeGlobs,
 		&i.MinSeverity,
@@ -98,7 +107,7 @@ func (q *Queries) InsertReviewDimension(ctx context.Context, arg InsertReviewDim
 }
 
 const listReviewDimensions = `-- name: ListReviewDimensions :many
-SELECT id, business_id, tenant_root_id, dimension, provider, model, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at FROM review_dimension
+SELECT id, business_id, tenant_root_id, dimension, provider, model, fallback_provider, fallback_model, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at FROM review_dimension
 WHERE business_id = $1
 ORDER BY sort_order, dimension
 `
@@ -122,6 +131,8 @@ func (q *Queries) ListReviewDimensions(ctx context.Context, businessID uuid.UUID
 			&i.Dimension,
 			&i.Provider,
 			&i.Model,
+			&i.FallbackProvider,
+			&i.FallbackModel,
 			&i.Prompt,
 			&i.ScopeGlobs,
 			&i.MinSeverity,
@@ -142,44 +153,51 @@ func (q *Queries) ListReviewDimensions(ctx context.Context, businessID uuid.UUID
 
 const upsertReviewDimension = `-- name: UpsertReviewDimension :one
 INSERT INTO review_dimension (
-    id, business_id, tenant_root_id, dimension, provider, model, prompt,
+    id, business_id, tenant_root_id, dimension, provider, model,
+    fallback_provider, fallback_model, prompt,
     scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
 SELECT
     $1::uuid, b.id, b.tenant_root_id,
     $2::text,
     $3::ai_provider,
     $4::text,
-    $5::text,
-    $6::text[],
+    $5::ai_provider,
+    $6::text,
     $7::text,
-    $8::boolean,
-    $9::int,
+    $8::text[],
+    $9::text,
+    $10::boolean,
+    $11::int,
     now(), now()
 FROM business b
-WHERE b.id = $10::uuid
+WHERE b.id = $12::uuid
 ON CONFLICT (business_id, dimension) DO UPDATE SET
     provider     = EXCLUDED.provider,
     model        = EXCLUDED.model,
+    fallback_provider = EXCLUDED.fallback_provider,
+    fallback_model = EXCLUDED.fallback_model,
     prompt       = EXCLUDED.prompt,
     scope_globs  = EXCLUDED.scope_globs,
     min_severity = EXCLUDED.min_severity,
     enabled      = EXCLUDED.enabled,
     sort_order   = EXCLUDED.sort_order,
     updated_at   = now()
-RETURNING id, business_id, tenant_root_id, dimension, provider, model, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, dimension, provider, model, fallback_provider, fallback_model, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at
 `
 
 type UpsertReviewDimensionParams struct {
-	ID          uuid.UUID      `json:"id"`
-	Dimension   string         `json:"dimension"`
-	Provider    NullAiProvider `json:"provider"`
-	Model       string         `json:"model"`
-	Prompt      string         `json:"prompt"`
-	ScopeGlobs  []string       `json:"scope_globs"`
-	MinSeverity string         `json:"min_severity"`
-	Enabled     bool           `json:"enabled"`
-	SortOrder   int32          `json:"sort_order"`
-	BusinessID  uuid.UUID      `json:"business_id"`
+	ID               uuid.UUID      `json:"id"`
+	Dimension        string         `json:"dimension"`
+	Provider         NullAiProvider `json:"provider"`
+	Model            string         `json:"model"`
+	FallbackProvider NullAiProvider `json:"fallback_provider"`
+	FallbackModel    string         `json:"fallback_model"`
+	Prompt           string         `json:"prompt"`
+	ScopeGlobs       []string       `json:"scope_globs"`
+	MinSeverity      string         `json:"min_severity"`
+	Enabled          bool           `json:"enabled"`
+	SortOrder        int32          `json:"sort_order"`
+	BusinessID       uuid.UUID      `json:"business_id"`
 }
 
 // Insert-or-update a business's config for one dimension, keyed on UNIQUE(business_id,
@@ -192,6 +210,8 @@ func (q *Queries) UpsertReviewDimension(ctx context.Context, arg UpsertReviewDim
 		arg.Dimension,
 		arg.Provider,
 		arg.Model,
+		arg.FallbackProvider,
+		arg.FallbackModel,
 		arg.Prompt,
 		arg.ScopeGlobs,
 		arg.MinSeverity,
@@ -207,6 +227,8 @@ func (q *Queries) UpsertReviewDimension(ctx context.Context, arg UpsertReviewDim
 		&i.Dimension,
 		&i.Provider,
 		&i.Model,
+		&i.FallbackProvider,
+		&i.FallbackModel,
 		&i.Prompt,
 		&i.ScopeGlobs,
 		&i.MinSeverity,
