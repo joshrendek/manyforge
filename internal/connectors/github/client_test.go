@@ -256,6 +256,18 @@ func TestCreateCheckRun_ForbiddenIsError(t *testing.T) {
 	}
 }
 
+// A 2xx with an unparseable body must be an error, not a silent id=0 that a later
+// UpdateCheckRun would target wrongly (PR #20 review).
+func TestCreateCheckRun_DecodeFailureIsError(t *testing.T) {
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{not json`))
+	})
+	if _, err := c.CreateCheckRun(t.Context(), "manyforge review", "abc"); err == nil {
+		t.Fatal("expected error for undecodable 2xx body")
+	}
+}
+
 func TestUpdateCheckRun(t *testing.T) {
 	var gotPath, gotMethod string
 	var gotBody map[string]any

@@ -389,14 +389,22 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 						sha = sha[:7]
 					}
 					summary := fmt.Sprintf("Reviewed %s — %d finding(s).", sha, checkFindings)
-					if checkReviewURL != "" {
+					// checkReviewURL is GitHub's own review html_url; still, only embed it
+					// as a link when it's a clean https URL so a surprising value can't
+					// break out of the Markdown link syntax (PR #20 review).
+					if strings.HasPrefix(checkReviewURL, "https://") && !strings.ContainsAny(checkReviewURL, "() ") {
 						summary += " [View review](" + checkReviewURL + ")"
 					}
 					if retErr != nil || rec != nil {
 						conclusion, title = "failure", "manyforge review failed"
 						summary = "The review did not complete. See manyforge logs for details."
 					}
-					if uerr := crp.UpdateCheckRun(ctx, id, conclusion, title, summary); uerr != nil {
+					// Resolve on a cancel-immune context: when the job failed BECAUSE its
+					// own ctx was canceled (timeout/shutdown), reusing it here would fail
+					// too and leave the run stuck "in progress" forever (PR #20 review).
+					uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+					defer cancel()
+					if uerr := crp.UpdateCheckRun(uctx, id, conclusion, title, summary); uerr != nil {
 						slog.Default().WarnContext(ctx, "code review: update check run (non-fatal)", "err", uerr, "review", crID)
 					}
 					if rec != nil {

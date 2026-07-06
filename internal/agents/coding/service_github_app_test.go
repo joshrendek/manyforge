@@ -5,6 +5,7 @@ package coding
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -160,6 +161,69 @@ func TestRunJobAppBackedEndToEnd(t *testing.T) {
 	}
 	if updated["status"] != "completed" || updated["conclusion"] != "success" {
 		t.Errorf("check-run update body = %+v, want status=completed conclusion=success", updated)
+	}
+	// The success summary reports the finding count (PR #20 review: exercise the
+	// success-summary branch, not just the conclusion).
+	out, _ := updated["output"].(map[string]any)
+	if summ, _ := out["summary"].(string); !strings.Contains(summ, "finding") {
+		t.Errorf("check-run success summary = %q, want it to mention the finding count", summ)
+	}
+}
+
+// panicRunner panics inside the sandbox Run — since lanes run synchronously on
+// runJob's stack, this exercises the deferred resolver's recover() path (PR #20
+// review: panic-specific failure handling was untested).
+type panicRunner struct{}
+
+func (panicRunner) Run(context.Context, sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	panic("boom in sandbox")
+}
+
+// TestRunJobAppBacked_CheckRunResolvesOnPanic pins that a panic on runJob's stack
+// resolves the in-progress check run to failure (not a misleading success) and is
+// re-raised so the worker still observes the crash (manyforge-nh6, PR #20 review).
+func TestRunJobAppBacked_CheckRunResolvesOnPanic(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+
+	const headSHA = "abc123deadbeef"
+	prJSON := []byte(`{"number":1,"title":"PR","state":"open","merged":false,"head":{"sha":"` + headSHA + `","ref":"feature"},"base":{"ref":"main"}}`)
+	srv, stub := startGitHubStub(t, prJSON)
+	env := newCodingEnv(t, tdb)
+
+	const installationID int64 = 55222
+	connID, reviewID, ic := linkInstallation(ctx, t, tdb, seed, installationID, srv.URL, headSHA)
+
+	fakeCred := &FakeCredResolver{Cred: AICredential{
+		APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "anthropic/claude-3-5-sonnet", Provider: "anthropic",
+	}}
+	svc := buildService(t, tdb, env, panicRunner{}, fakeCred)
+	svc.Tokens = &fakeAppTokens{tok: "ghs_test"}
+
+	job := ClaimedReview{
+		ID: reviewID, BusinessID: ic.BusinessID, PrincipalID: ic.AgentPrincipalID,
+		AgentID: ic.AgentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("runJob must re-raise the panic after resolving the check run")
+			}
+		}()
+		_ = svc.runJob(ctx, job, nil)
+	}()
+
+	if n := stub.checkCreateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run create, got %d", n)
+	}
+	if n := stub.checkUpdateN.Load(); n != 1 {
+		t.Fatalf("want 1 check-run update (resolve on panic), got %d", n)
+	}
+	var updated map[string]any
+	if err := json.Unmarshal(stub.checkRunUpdates[0], &updated); err != nil {
+		t.Fatalf("unmarshal check-run update: %v", err)
+	}
+	if updated["conclusion"] != "failure" {
+		t.Errorf("check-run conclusion = %v, want failure", updated["conclusion"])
 	}
 }
 

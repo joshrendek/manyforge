@@ -258,8 +258,8 @@ func (c *client) PostReview(ctx context.Context, prNumber int, r connectors.Revi
 }
 
 // CreateCheckRun opens an in-progress check run on headSHA and returns its id
-// (manyforge-nh6). GitHub only lets a GitHub App identity (checks:write) create
-// check runs; a PAT-backed client gets 403 here — callers treat that, and any
+// (manyforge-nh6). Only a GitHub App identity (with checks:write) can create check
+// runs; GitHub rejects a non-App (PAT/user) token — callers treat that, and any
 // other non-2xx, as non-fatal (a progress signal must never fail the review).
 func (c *client) CreateCheckRun(ctx context.Context, name, headSHA string) (int64, error) {
 	url := fmt.Sprintf("%s/repos/%s/check-runs", c.apiBase, c.repo)

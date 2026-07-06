@@ -22,11 +22,11 @@ type RepoConnector interface {
 
 // CheckRunPoster is an OPTIONAL connector capability (manyforge-nh6): posting a
 // GitHub Check Run that signals "manyforge is reviewing this PR" while the review
-// runs, then resolving it to success/failure when the run finishes. GitHub only
-// lets a GitHub App identity (checks:write) create check runs — a PAT-backed
-// connector always 403s — so runJob attempts this ONLY for app-backed connectors
-// and treats every check-run error as non-fatal: a status nicety must never fail
-// or block the review itself.
+// runs, then resolving it to success/failure when the run finishes. Only a GitHub
+// App identity (with checks:write) can create check runs — GitHub rejects a non-App
+// (PAT) token — so runJob attempts this ONLY for app-backed connectors and treats
+// every check-run error as non-fatal: a status nicety must never fail or block the
+// review itself.
 type CheckRunPoster interface {
 	// CreateCheckRun opens an in-progress check run named `name` anchored to
 	// `headSHA`, returning the check-run id for a later UpdateCheckRun.
