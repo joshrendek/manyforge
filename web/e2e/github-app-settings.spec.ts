@@ -11,14 +11,25 @@ async function auth(page: import('@playwright/test').Page) {
 }
 
 // manyforge-11e: the settings page was only reachable by typing the URL. It must
-// have a nav entry pointing at /settings/github.
-test('github app settings: reachable via a GitHub nav entry', async ({ page }) => {
-  await auth(page);
+// be reachable by CLICKING a nav entry — so start elsewhere (/dashboard) and
+// navigate via the sidebar link, landing on the rendered settings page.
+test('github app settings: reachable by clicking the GitHub nav entry', async ({ page }) => {
+  // Broad fallback registered FIRST so shell nav-badge calls on /dashboard can't
+  // 401 -> logout; the specific routes below are registered after and win
+  // (Playwright matches most-recently-registered first).
+  await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
+  await page.addInitScript(() => localStorage.setItem('mf_access', 'tok'));
+  await page.route('**/api/v1/me', (r) => r.fulfill({ json: profile }));
+  await page.route('**/api/v1/businesses', (r) => r.fulfill({ json: biz }));
   await page.route('**/api/v1/businesses/b1/agents', (r) => r.fulfill({ json: { items: [agent] } }));
-  await page.goto('/settings/github');
+
+  await page.goto('/dashboard');
   const navLink = page.getByTestId('nav-github');
   await expect(navLink).toBeVisible();
   await expect(navLink).toHaveAttribute('href', '/settings/github');
+  await navLink.click();
+  await expect(page).toHaveURL(/\/settings\/github$/);
+  await expect(page.getByTestId('create-app-button')).toBeVisible();
 });
 
 test('github app settings: create-app button submits manifest form to GitHub', async ({ page }) => {

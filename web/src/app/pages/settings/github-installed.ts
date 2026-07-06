@@ -29,11 +29,11 @@ import { GithubAppService } from '../../core/github-app.service';
         </p>
       }
       @if (state() === 'error') {
-        <p class="mf-err" data-testid="gh-error">{{ message() }}</p>
+        <p class="mf-err" data-testid="gh-error" role="alert">{{ message() }}</p>
       }
-      <p>
+      <div>
         <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/settings/github" data-testid="back-to-github-settings">Back to GitHub settings</a>
-      </p>
+      </div>
     </div>
   `,
 })
