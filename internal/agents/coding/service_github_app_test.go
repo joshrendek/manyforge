@@ -170,19 +170,20 @@ func TestRunJobAppBackedEndToEnd(t *testing.T) {
 	}
 }
 
-// panicRunner panics inside the sandbox Run — since lanes run synchronously on
-// runJob's stack, this exercises the deferred resolver's recover() path (PR #20
-// review: panic-specific failure handling was untested).
+// panicRunner panics inside the sandbox Run. Lanes run in their own goroutines
+// (manyforge-w54), so runJob's per-lane recover must contain the panic: the review
+// fails cleanly (it does NOT crash the worker), and the in-progress check run still
+// resolves to failure via runJob's error return (manyforge-nh6).
 type panicRunner struct{}
 
 func (panicRunner) Run(context.Context, sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
 	panic("boom in sandbox")
 }
 
-// TestRunJobAppBacked_CheckRunResolvesOnPanic pins that a panic on runJob's stack
-// resolves the in-progress check run to failure (not a misleading success) and is
-// re-raised so the worker still observes the crash (manyforge-nh6, PR #20 review).
-func TestRunJobAppBacked_CheckRunResolvesOnPanic(t *testing.T) {
+// TestRunJobAppBacked_LanePanicFailsCleanly pins that a panicking review lane is
+// contained (no worker crash), the review is marked failed, and the check run
+// resolves to failure (manyforge-w54 + nh6).
+func TestRunJobAppBacked_LanePanicFailsCleanly(t *testing.T) {
 	ctx, tdb, seed := startCoding(t)
 
 	const headSHA = "abc123deadbeef"
@@ -203,20 +204,17 @@ func TestRunJobAppBacked_CheckRunResolvesOnPanic(t *testing.T) {
 		ID: reviewID, BusinessID: ic.BusinessID, PrincipalID: ic.AgentPrincipalID,
 		AgentID: ic.AgentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
 	}
-	func() {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("runJob must re-raise the panic after resolving the check run")
-			}
-		}()
-		_ = svc.runJob(ctx, job, nil)
-	}()
+	// runJob must RETURN an error (the lane panic is recovered into a lane failure),
+	// not propagate a panic — reaching this line at all proves the worker survived.
+	if err := svc.runJob(ctx, job, nil); err == nil {
+		t.Fatal("a panicking review lane must fail the review, not succeed")
+	}
 
 	if n := stub.checkCreateN.Load(); n != 1 {
 		t.Fatalf("want 1 check-run create, got %d", n)
 	}
 	if n := stub.checkUpdateN.Load(); n != 1 {
-		t.Fatalf("want 1 check-run update (resolve on panic), got %d", n)
+		t.Fatalf("want 1 check-run update (resolve on failure), got %d", n)
 	}
 	var updated map[string]any
 	if err := json.Unmarshal(stub.checkRunUpdates[0], &updated); err != nil {
@@ -224,6 +222,14 @@ func TestRunJobAppBacked_CheckRunResolvesOnPanic(t *testing.T) {
 	}
 	if updated["conclusion"] != "failure" {
 		t.Errorf("check-run conclusion = %v, want failure", updated["conclusion"])
+	}
+	// The review row is marked failed (not stuck running).
+	got, gerr := svc.Get(ctx, ic.AgentPrincipalID, ic.BusinessID, reviewID)
+	if gerr != nil {
+		t.Fatalf("Get: %v", gerr)
+	}
+	if got.Status != "failed" {
+		t.Errorf("review status = %q, want failed", got.Status)
 	}
 }
 
