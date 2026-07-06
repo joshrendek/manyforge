@@ -1,0 +1,18 @@
+title = "manyforge gitleaks config"
+
+# Use gitleaks' default rules, plus an allowlist for KNOWN-FAKE secrets that exist
+# only to test manyforge's own redaction/security features (verified fake, e.g.
+# "sk_live_...SecretDoNotCommit", "ghp_0123456789abcdef...").
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake secrets in redaction tests, security-regression pins, eval fixtures, and redaction planning docs"
+paths = [
+  '''internal/agents/coding/redact_test.go''',
+  '''internal/agents/coding/service_test.go''',
+  '''internal/security_regression/.*_test\.go''',
+  '''internal/inbox/resolve_test.go''',
+  '''tools/local-model-eval/fixture/.*''',
+  '''docs/superpowers/plans/.*review-redaction.*\.md''',
+]
