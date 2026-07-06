@@ -19,21 +19,21 @@ import { GithubAppService } from '../../core/github-app.service';
         <p>Linking your installation…</p>
       }
       @if (state() === 'pending') {
-        <p data-testid="gh-pending">
+        <p data-testid="gh-pending" role="status">
           Installation is awaiting org-admin approval. Re-run this once approved.
         </p>
       }
       @if (state() === 'done') {
-        <p data-testid="gh-linked">
+        <p data-testid="gh-linked" role="status">
           Installation linked. manyforge will review pull requests for this organization.
         </p>
       }
       @if (state() === 'error') {
-        <p class="mf-err" data-testid="gh-error">{{ message() }}</p>
+        <p class="mf-err" data-testid="gh-error" role="alert">{{ message() }}</p>
       }
-      <p>
+      <div>
         <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/settings/github" data-testid="back-to-github-settings">Back to GitHub settings</a>
-      </p>
+      </div>
     </div>
   `,
 })
