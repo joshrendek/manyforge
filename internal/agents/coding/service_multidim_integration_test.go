@@ -80,7 +80,7 @@ func (r *overlapRunner) Run(_ context.Context, _ sandbox.SandboxSpec) (sandbox.S
 
 // TestCodeReviewLanesRunInParallel pins that a multi-dimension review fans out
 // concurrently (manyforge-w54): with 5 dimensions all reviewing everything, at
-// least 2 lanes overlap, and the fan-out never exceeds maxConcurrentLanes. Run
+// least 2 lanes overlap, and the fan-out never exceeds defaultConcurrentLanes. Run
 // under -race, it also guards the indexed-write result collection against races.
 func TestCodeReviewLanesRunInParallel(t *testing.T) {
 	ctx, tdb, seed := startCoding(t)
@@ -112,8 +112,8 @@ func TestCodeReviewLanesRunInParallel(t *testing.T) {
 
 	if maxN := runner.maxSeen.Load(); maxN < 2 {
 		t.Fatalf("lanes must run in parallel: max concurrent Run = %d, want >= 2", maxN)
-	} else if maxN > maxConcurrentLanes {
-		t.Fatalf("max concurrent Run = %d exceeds the cap maxConcurrentLanes=%d", maxN, maxConcurrentLanes)
+	} else if maxN > defaultConcurrentLanes {
+		t.Fatalf("max concurrent Run = %d exceeds the default cap defaultConcurrentLanes=%d", maxN, defaultConcurrentLanes)
 	}
 
 	// Determinism (manyforge-w54, PR #23 review): despite lanes completing in
@@ -135,6 +135,46 @@ func TestCodeReviewLanesRunInParallel(t *testing.T) {
 	}
 	if want := "security,correctness,performance,tests,docs"; strings.Join(order, ",") != want {
 		t.Errorf("dimension_runs order = %q, want %q (indexed writes must preserve sort order)", strings.Join(order, ","), want)
+	}
+}
+
+// TestCodeReviewLanesRespectPerAgentCap pins that the resolved reviewbot's
+// max_concurrent_lanes serializes the fan-out (manyforge-k8e.2): a bot capped at 1 (a
+// single-GPU self-host) runs the whole 5-dimension panel one lane at a time, even though
+// the lanes would otherwise overlap. This exercises the real runJob → laneLimit →
+// g.SetLimit path end-to-end, not just the pure laneLimit unit.
+func TestCodeReviewLanesRespectPerAgentCap(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+
+	// 5 dimensions, all unscoped so every lane runs (nothing skipped) — the same panel
+	// the parallel test uses, so the ONLY behavioral difference is the per-agent cap.
+	for i, d := range []string{"security", "correctness", "performance", "tests", "docs"} {
+		seedReviewDimension(ctx, t, tdb, seed.businessID, d, "DIMPROMPT:"+d, "info", nil, i+1)
+	}
+
+	// A single-GPU self-host reviewbot: cap the fan-out at one lane.
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic", MaxConcurrentLanes: 1}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+	runner := &overlapRunner{}
+	svc := buildService(t, tdb, env, runner, fakeCred)
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed, nil); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	if maxN := runner.maxSeen.Load(); maxN != 1 {
+		t.Fatalf("per-agent cap=1 must serialize lanes: max concurrent Run = %d, want 1", maxN)
 	}
 }
 
