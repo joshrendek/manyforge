@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -48,6 +50,92 @@ func (r *perDimRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox
 		"review.json": data,
 		"usage.json":  []byte(usage),
 	}}, nil
+}
+
+// overlapRunner records the maximum number of Run calls in flight at once, to prove
+// dimension lanes execute concurrently and never exceed maxConcurrentLanes
+// (manyforge-w54). It is stateless apart from the two atomics, so it is safe to
+// invoke from many goroutines.
+type overlapRunner struct {
+	inFlight atomic.Int32
+	maxSeen  atomic.Int32
+}
+
+func (r *overlapRunner) Run(_ context.Context, _ sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	n := r.inFlight.Add(1)
+	for { // publish the running max
+		m := r.maxSeen.Load()
+		if n <= m || r.maxSeen.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	time.Sleep(60 * time.Millisecond) // hold the slot so sibling lanes overlap
+	r.inFlight.Add(-1)
+	doc, _ := json.Marshal(map[string]any{
+		"summary":  "s",
+		"findings": []map[string]any{{"file": "main.go", "line": 1, "severity": "error", "title": "t", "detail": "d"}},
+	})
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{"review.json": doc}}, nil
+}
+
+// TestCodeReviewLanesRunInParallel pins that a multi-dimension review fans out
+// concurrently (manyforge-w54): with 5 dimensions all reviewing everything, at
+// least 2 lanes overlap, and the fan-out never exceeds maxConcurrentLanes. Run
+// under -race, it also guards the indexed-write result collection against races.
+func TestCodeReviewLanesRunInParallel(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+
+	// 5 dimensions, all with nil scope globs so every lane actually runs (nothing skipped).
+	for i, d := range []string{"security", "correctness", "performance", "tests", "docs"} {
+		seedReviewDimension(ctx, t, tdb, seed.businessID, d, "DIMPROMPT:"+d, "info", nil, i+1)
+	}
+
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+	runner := &overlapRunner{}
+	svc := buildService(t, tdb, env, runner, fakeCred)
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed, nil); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	if maxN := runner.maxSeen.Load(); maxN < 2 {
+		t.Fatalf("lanes must run in parallel: max concurrent Run = %d, want >= 2", maxN)
+	} else if maxN > maxConcurrentLanes {
+		t.Fatalf("max concurrent Run = %d exceeds the cap maxConcurrentLanes=%d", maxN, maxConcurrentLanes)
+	}
+
+	// Determinism (manyforge-w54, PR #23 review): despite lanes completing in
+	// arbitrary order, indexed writes keep dimension_runs in the configured sort
+	// order — so aggregation output is identical to the old sequential path.
+	got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	var runs []struct {
+		Dimension string `json:"dimension"`
+	}
+	if err := json.Unmarshal(got.DimensionRuns, &runs); err != nil {
+		t.Fatalf("unmarshal dimension_runs %q: %v", got.DimensionRuns, err)
+	}
+	order := make([]string, len(runs))
+	for i, r := range runs {
+		order[i] = r.Dimension
+	}
+	if want := "security,correctness,performance,tests,docs"; strings.Join(order, ",") != want {
+		t.Errorf("dimension_runs order = %q, want %q (indexed writes must preserve sort order)", strings.Join(order, ","), want)
+	}
 }
 
 // seedReviewDimension inserts a configured review_dimension row for a business via the superuser
@@ -111,6 +199,13 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 		t.Fatalf("want succeeded, got %s", got.Status)
 	}
 
+	// vv6: a multi-dimension review stamps the "panel" sentinel on the top-level
+	// model, not the agent's single default model (which no lane necessarily ran) —
+	// the per-lane models live in dimension_runs.
+	if got.Model != "panel" {
+		t.Errorf("multi-dim review model = %q, want the \"panel\" sentinel (vv6)", got.Model)
+	}
+
 	// Findings from the two ran lanes are present and tagged by dimension.
 	tags := map[string]bool{}
 	for _, f := range got.Findings {
@@ -129,6 +224,7 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 	var runs []struct {
 		Dimension    string `json:"dimension"`
 		Status       string `json:"status"`
+		Model        string `json:"model"`
 		FindingCount int    `json:"finding_count"`
 		CostCents    int64  `json:"cost_cents"`
 		TokensIn     int64  `json:"tokens_in"`
@@ -137,15 +233,23 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 		t.Fatalf("unmarshal DimensionRuns %q: %v", got.DimensionRuns, err)
 	}
 	byDim := map[string]string{}
+	byModel := map[string]string{}
 	var byCost map[string]int64 = map[string]int64{}
 	var byTokensIn map[string]int64 = map[string]int64{}
 	for _, r := range runs {
 		byDim[r.Dimension] = r.Status
+		byModel[r.Dimension] = r.Model
 		byCost[r.Dimension] = r.CostCents
 		byTokensIn[r.Dimension] = r.TokensIn
 	}
 	if byDim["security"] != "succeeded" || byDim["correctness"] != "succeeded" {
 		t.Fatalf("ran lanes must be recorded succeeded; got %v", byDim)
+	}
+	// vv6: the top-level model is the "panel" sentinel, but the REAL per-lane models
+	// are preserved in dimension_runs (here the resolved "m", since these dims carry
+	// no own model). That's the split the panel sentinel relies on.
+	if byModel["security"] != "m" || byModel["correctness"] != "m" {
+		t.Errorf("per-lane models must be preserved in dimension_runs; got %v (top-level model=%q)", byModel, got.Model)
 	}
 	if byDim["ui"] != "skipped" {
 		t.Fatalf("the scoped-out ui dimension must be recorded as skipped, not silently dropped; got %v", byDim)
