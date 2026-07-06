@@ -1,5 +1,5 @@
 import { provideHttpClient } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, TestRequest, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentFormComponent } from './agent-form';
@@ -103,5 +103,38 @@ describe('AgentFormComponent', () => {
     c.onProviderChange('anthropic');
     expect(c.isFreeTextModel()).toBe(false);
     expect(c.openrouterModels().length).toBe(0);
+  });
+
+  function flushAgent(req: TestRequest, lanes: number) {
+    req.flush({
+      id: 'a1', business_id: 'b1', principal_id: 'p1', name: 'GPU Bot', provider: 'vllm',
+      model: 'ornith-1.0-9b', system_prompt: '', allowed_tools: [], autonomy_mode: 1, enabled: true,
+      monthly_budget_cents: 0, allowed_mcp_servers: [], retriage_on_reply: false,
+      max_concurrent_lanes: lanes, created_at: '', updated_at: '',
+    });
+  }
+
+  it('sends the per-agent max_concurrent_lanes in the create payload', () => {
+    const c = fixture.componentInstance;
+    c.name = 'GPU Bot';
+    c.provider.set('vllm');
+    c.model = 'ornith-1.0-9b';
+    c.maxConcurrentLanes = 1; // single-GPU self-host
+    c.submit();
+    const req = http.expectOne('/api/v1/businesses/b1/agents');
+    expect(req.request.body).toEqual(expect.objectContaining({ max_concurrent_lanes: 1 }));
+    flushAgent(req, 1);
+  });
+
+  it('clamps an out-of-range lanes value into [1,16] before sending', () => {
+    const c = fixture.componentInstance;
+    c.name = 'GPU Bot';
+    c.provider.set('vllm');
+    c.model = 'ornith-1.0-9b';
+    c.maxConcurrentLanes = 99;
+    c.submit();
+    const req = http.expectOne('/api/v1/businesses/b1/agents');
+    expect(req.request.body).toEqual(expect.objectContaining({ max_concurrent_lanes: 16 }));
+    flushAgent(req, 16);
   });
 });

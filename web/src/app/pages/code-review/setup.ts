@@ -1,7 +1,7 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
-import { AgentsService, ModelDescriptor } from '../../core/agents.service';
+import { Agent, AgentsService, ModelDescriptor } from '../../core/agents.service';
 import { BusinessService } from '../../core/business.service';
 import { Business } from '../../core/tree';
 import {
@@ -248,6 +248,37 @@ function catalogLabel(key: string): string {
             <option value="per_dimension">One review per dimension</option>
           </select>
         </div>
+        <div class="mf-field">
+          <div style="font-weight:500;margin-bottom:2px">Reviewbot fallback chain</div>
+          <small class="mf-hint" style="display:block">Ordered — the first reachable bot reviews; if it's down, the next one does.
+            Empty means no fallback (the triggering agent reviews).</small>
+          <div data-testid="chain-list" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+            @for (id of config().review_agent_chain; track id; let i = $index) {
+              <div style="display:flex;gap:8px;align-items:center" [attr.data-testid]="'chain-row-' + i">
+                <span style="min-width:20px;color:var(--mf-text-muted)">{{ i + 1 }}.</span>
+                <span style="flex:1" [attr.data-testid]="'chain-name-' + i">{{ agentName(id) }}</span>
+                <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-up-' + i"
+                        [disabled]="i === 0" (click)="moveChain(i, -1)" aria-label="Move up">↑</button>
+                <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-down-' + i"
+                        [disabled]="i === config().review_agent_chain.length - 1" (click)="moveChain(i, 1)" aria-label="Move down">↓</button>
+                <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-remove-' + i"
+                        (click)="removeFromChain(id)">Remove</button>
+              </div>
+            }
+            @if (config().review_agent_chain.length === 0) {
+              <small class="mf-hint" data-testid="chain-empty">No fallback configured.</small>
+            }
+          </div>
+          @if (availableAgents().length > 0) {
+            <select class="mf-select" data-testid="chain-add" style="margin-top:6px;max-width:260px"
+                    [ngModel]="''" (ngModelChange)="addToChain($event)">
+              <option value="" disabled>Add a reviewbot…</option>
+              @for (a of availableAgents(); track a.id) {
+                <option [value]="a.id">{{ a.name }}</option>
+              }
+            </select>
+          }
+        </div>
         <div>
           <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="config-save"
                   [disabled]="savingConfig()" (click)="saveConfig()">Save aggregation</button>
@@ -270,7 +301,9 @@ export class CodeReviewSetupComponent implements OnInit {
   rows = signal<DraftRow[]>([]);
   config = signal<ReviewConfig>({
     dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single',
+    review_agent_chain: [],
   });
+  agents = signal<Agent[]>([]);
   allModels = signal<ModelDescriptor[]>([]);
   openrouterModels = signal<ModelDescriptor[]>([]);
   private openrouterLoaded = false;
@@ -329,8 +362,9 @@ export class CodeReviewSetupComponent implements OnInit {
         this.error.set(e.status === 403 || e.status === 404 ? "You don't have access to this business." : 'Could not load the review panel.');
       },
     });
-    this.api.getConfig(bid).subscribe({ next: (c) => this.config.set(c), error: () => {} });
+    this.api.getConfig(bid).subscribe({ next: (c) => this.config.set(this.withChain(c)), error: () => {} });
     this.agentsApi.models(bid).subscribe({ next: (r) => this.allModels.set(r.items ?? []), error: () => {} });
+    this.agentsApi.list(bid).subscribe({ next: (r) => this.agents.set(r.items ?? []), error: () => {} });
   }
 
   applyPreset(name: string): void {
@@ -427,6 +461,44 @@ export class CodeReviewSetupComponent implements OnInit {
 
   patchConfig(patch: Partial<ReviewConfig>): void {
     this.config.set({ ...this.config(), ...patch });
+  }
+
+  // withChain guards a server config that predates / omits the chain field, so the
+  // template's @for and length checks never hit undefined.
+  private withChain(c: ReviewConfig): ReviewConfig {
+    return { ...c, review_agent_chain: c.review_agent_chain ?? [] };
+  }
+
+  // agentName renders a chain entry by its agent name (falls back to the raw id when the
+  // agent list hasn't loaded or the agent was deleted).
+  agentName(id: string): string {
+    return this.agents().find((a) => a.id === id)?.name ?? id;
+  }
+
+  // availableAgents are the business's agents not already in the chain (the add dropdown).
+  availableAgents = computed(() => {
+    const inChain = new Set(this.config().review_agent_chain);
+    return this.agents().filter((a) => !inChain.has(a.id));
+  });
+
+  addToChain(id: string): void {
+    if (!id) return;
+    const chain = this.config().review_agent_chain;
+    if (chain.includes(id)) return;
+    this.patchConfig({ review_agent_chain: [...chain, id] });
+  }
+
+  removeFromChain(id: string): void {
+    this.patchConfig({ review_agent_chain: this.config().review_agent_chain.filter((x) => x !== id) });
+  }
+
+  // moveChain swaps entry i with its neighbor (delta -1 up / +1 down) to reorder priority.
+  moveChain(i: number, delta: number): void {
+    const chain = [...this.config().review_agent_chain];
+    const j = i + delta;
+    if (j < 0 || j >= chain.length) return;
+    [chain[i], chain[j]] = [chain[j], chain[i]];
+    this.patchConfig({ review_agent_chain: chain });
   }
 
   private ensureOpenrouterModels(): void {

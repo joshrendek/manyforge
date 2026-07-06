@@ -341,6 +341,64 @@ test('review setup: preset seeds rows, save row + config hit the API', async ({ 
   await putReq;
 });
 
+test('review setup: configure a reviewbot fallback chain (add, reorder, remove) and save it', async ({ page }) => {
+  // Fallback FIRST so unmocked shell/nav calls return empty instead of 401→logout.
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
+  await auth(page);
+  await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/agents', (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          { ...agent, id: 'ag1', name: 'LM Studio', provider: 'vllm', model: 'ornith-1.0-9b', max_concurrent_lanes: 1 },
+          { ...agent, id: 'ag2', name: 'Cloud', provider: 'openrouter', model: 'x-ai/grok', max_concurrent_lanes: 4 },
+        ],
+      },
+    }),
+  );
+  let putBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/businesses/b1/review-config', (r) => {
+    if (r.request().method() === 'PUT') {
+      putBody = r.request().postDataJSON() as Record<string, unknown>;
+      return r.fulfill({ json: { ...putBody } });
+    }
+    return r.fulfill({
+      json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] },
+    });
+  });
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => r.fulfill({ json: { items: [] } }));
+
+  await page.goto('/code-review/setup');
+
+  // No fallback configured initially.
+  await expect(page.getByTestId('chain-empty')).toBeVisible();
+
+  // Add LM Studio (primary) then Cloud (fallback) via the picker.
+  await page.getByTestId('chain-add').selectOption('ag1');
+  await page.getByTestId('chain-add').selectOption('ag2');
+  await expect(page.getByTestId('chain-name-0')).toContainText('LM Studio');
+  await expect(page.getByTestId('chain-name-1')).toContainText('Cloud');
+
+  // Reorder: move Cloud up → it becomes primary.
+  await page.getByTestId('chain-up-1').click();
+  await expect(page.getByTestId('chain-name-0')).toContainText('Cloud');
+
+  // Remove the primary (Cloud) → only LM Studio remains.
+  await page.getByTestId('chain-remove-0').click();
+  await expect(page.getByTestId('chain-name-0')).toContainText('LM Studio');
+  await expect(page.getByTestId('chain-name-1')).toHaveCount(0);
+
+  // Save → the PUT body carries the chain in order.
+  const putReq = page.waitForRequest((req) => req.url().includes('/review-config') && req.method() === 'PUT');
+  await page.getByTestId('config-save').click();
+  await putReq;
+  expect(putBody).not.toBeNull();
+  expect(putBody!['review_agent_chain']).toEqual(['ag1']);
+});
+
 test('code-review: connector list renders rows', async ({ page }) => {
   await auth(page);
   await page.route('**/api/v1/businesses/b1/agents', (r) =>
