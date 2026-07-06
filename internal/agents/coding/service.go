@@ -36,7 +36,7 @@ type CodeReview struct {
 	Summary       string               `json:"summary"`
 	ReviewURL     string               `json:"review_url"`
 	PRNumber      int                  `json:"pr_number"`
-	Model         string               `json:"model"` // model snapshot used for this review
+	Model         string               `json:"model"`          // model snapshot used for this review
 	Repo          string               `json:"repo,omitempty"` // "owner/name" from the review's connector (list rows, via the join); normally always set (repo_connector_id is a NOT NULL FK)
 	Findings      []connectors.Finding `json:"findings"`
 	FindingsCount int                  `json:"findings_count"`
@@ -268,10 +268,25 @@ func (s *CodeReviewService) Enqueue(
 // while an app-backed review runs (manyforge-nh6).
 const reviewCheckRunName = "manyforge review"
 
-// maxConcurrentLanes bounds how many dimension-review lanes run at once
-// (manyforge-w54). Each lane is its own sandbox container (a Job/pod in kube
-// mode), so this caps the simultaneous pod fan-out for a many-dimension panel.
-const maxConcurrentLanes = 4
+// defaultConcurrentLanes bounds how many dimension-review lanes run at once when the
+// resolved reviewbot has no explicit cap (manyforge-w54). Each lane is its own sandbox
+// container (a Job/pod in kube mode), so this caps the simultaneous pod fan-out for a
+// many-dimension panel. A bot's own agent.max_concurrent_lanes overrides it (laneLimit).
+const defaultConcurrentLanes = 4
+
+// laneLimit is the bounded lane fan-out for a review, taken from the resolved bot's
+// per-agent cap (LM Studio ⇒ 1, cloud ⇒ 4). Zero (unset/legacy) ⇒ defaultConcurrentLanes;
+// values are clamped to [1,16] defensively (the DB CHECK already enforces this on write).
+func laneLimit(cred AICredential) int {
+	n := cred.MaxConcurrentLanes
+	if n < 1 {
+		return defaultConcurrentLanes
+	}
+	if n > 16 {
+		return 16
+	}
+	return n
+}
 
 // reviewModelPanel is the code_review.model sentinel for a multi-dimension review
 // (manyforge-vv6): there is no single model, so the UI renders it as a multi-model
@@ -717,7 +732,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	}
 
 	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube
-	// mode each lane is its own Job/pod — bounded by maxConcurrentLanes so a
+	// mode each lane is its own Job/pod — bounded by the resolved bot's laneLimit so a
 	// many-dimension panel can't burst the cluster. Results are written BY INDEX so
 	// aggregation stays order-deterministic (aggregateReview / dedupeFindings /
 	// buildDimensionRuns depend on active's Order) regardless of completion order. A
@@ -746,7 +761,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		}
 	}
 	var g errgroup.Group
-	g.SetLimit(maxConcurrentLanes)
+	g.SetLimit(laneLimit(cred))
 	for i, dim := range active {
 		g.Go(func() error {
 			// A lane now runs in its own goroutine, so a panic here would crash the
