@@ -1,7 +1,7 @@
 # Design — Per-Dimension Reviewbot: provider+model + fallback (completes ubk)
 
 - **Date:** 2026-07-06
-- **Status:** Approved (Model A); implementation in progress on a fresh branch. Epic `manyforge-azy`.
+- **Status:** Implemented on `feat/per-dimension-fallback` (Slices 1–5), pending PR into master. Epic `manyforge-azy`. **Deploy caveat:** the hub worker pod must route to the LAN LM Studio host (`192.168.2.241`) — a networking step, not code.
 - **Area:** `internal/agents/coding/` (review engine), `internal/agents/credential.go`, `web/`
 - **Builds on:** epic `manyforge-k8e` (review-level fallback chain + per-agent concurrency). **Completes** `manyforge-ubk` (per-dimension provider previously silently ignored).
 
