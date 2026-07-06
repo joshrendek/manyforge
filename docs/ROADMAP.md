@@ -284,3 +284,5 @@ pins and contract tests that spec must add before it is considered done.
 Brainstorm **Spec 002 — Native Support Desk** through the normal
 brainstorm → spec → plan → tasks flow, producing `specs/002-support-desk/`.
 Optionally, file `bd` epics for 002–007 to track the program in the issue tracker.
+
+<!-- retrigger: verify per-dimension provider routing live on hub (manyforge-azy) -->
