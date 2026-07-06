@@ -294,6 +294,9 @@ components:
           type: integer
         model:
           type: string
+        repo:
+          type: string
+          description: "owner/name of the review's connector (normally always present)"
         cost_cents:
           type: integer
           format: int64
