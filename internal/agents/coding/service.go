@@ -100,10 +100,13 @@ type CostEstimator interface {
 // runJob (called by the background worker) runs the heavy pipeline:
 // FetchPR → clone → sandbox → parse findings → post review → finalize.
 type CodeReviewService struct {
-	DB       serviceDB
-	Repos    repoResolver
-	Sandbox  sandbox.SandboxRunner
-	Creds    AICredentialResolver
+	DB      serviceDB
+	Repos   repoResolver
+	Sandbox sandbox.SandboxRunner
+	Creds   AICredentialResolver
+	// Prober checks reviewbot liveness for the fallback chain (manyforge-k8e). Nil ⇒ a
+	// default httpProber; injectable so a test can force a bot up/down.
+	Prober   reviewbotProber
 	Image    string        // opencode sandbox image tag
 	WorkRoot string        // host temp root for per-run checkouts; must be writable
 	Timeout  time.Duration // sandbox wall-clock cap (0 = 10 min default)
@@ -354,6 +357,22 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	cred, err := s.Creds.Resolve(ctx, job.PrincipalID, job.BusinessID, job.AgentID)
 	if err != nil {
 		return err
+	}
+	// Reviewbot fallback chain (manyforge-k8e): if the business configured an ordered
+	// chain, probe it and let the first reachable bot drive the WHOLE review — its
+	// credential AND its per-agent concurrency cap. Empty chain ⇒ the enqueued agent's
+	// cred above is used unchanged (legacy path). A chain that resolves to nothing is a
+	// terminal config error. Placed before the Host()/egress checks so the CHOSEN bot is
+	// the one validated.
+	if chain := s.resolveReviewChain(ctx, job.PrincipalID, job.BusinessID); len(chain) > 0 {
+		chosen, cerr := chooseReviewbot(ctx, chain,
+			func(c context.Context, id uuid.UUID) (AICredential, error) {
+				return s.Creds.Resolve(c, job.PrincipalID, job.BusinessID, id)
+			}, s.prober())
+		if cerr != nil {
+			return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber, cerr)
+		}
+		cred = chosen
 	}
 	if cred.Host() == "" {
 		return fmt.Errorf("coding: agent has no usable AI credential: %w", errs.ErrValidation)

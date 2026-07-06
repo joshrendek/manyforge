@@ -178,6 +178,79 @@ func TestCodeReviewLanesRespectPerAgentCap(t *testing.T) {
 	}
 }
 
+// mapCredResolver resolves per-agent credentials from a map — lets a fallback-chain test
+// give the primary and secondary bots DIFFERENT creds (a single FakeCredResolver can't).
+type mapCredResolver map[uuid.UUID]AICredential
+
+func (m mapCredResolver) Resolve(_ context.Context, _, _, agentID uuid.UUID) (AICredential, error) {
+	c, ok := m[agentID]
+	if !ok {
+		return AICredential{}, errs.ErrNotFound
+	}
+	return c, nil
+}
+
+// TestCodeReviewFallbackChainPicksLiveSecondary is the end-to-end wiring test for the
+// fallback chain (manyforge-k8e): with a configured chain whose primary (a self-hosted
+// vLLM bot at a dead port) fails the REAL liveness probe, runJob transparently runs the
+// whole review on the live secondary (cloud) bot — its provider shows up in the persisted
+// dimension_runs, and the review completes rather than failing on the down primary.
+func TestCodeReviewFallbackChainPicksLiveSecondary(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+	seedReviewDimension(ctx, t, tdb, seed.businessID, "security", "P:security", "info", nil, 1)
+
+	primary := uuid.New()     // self-hosted vLLM at a dead port → probe fails
+	secondary := seed.agentID // cloud (anthropic), reachable via the sandbox runner
+	// Store the chain directly (bypass UpsertConfig validation: primary isn't a real agent
+	// row; the map resolver supplies its cred). tenant_root_id == business_id for a root.
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO review_config (business_id, tenant_root_id, dedupe, verify_enabled, verify_model, cite_rules, post_mode, review_agent_chain, updated_at)
+		 VALUES ($1,$1,true,false,'',false,'single',$2,now())
+		 ON CONFLICT (business_id) DO UPDATE SET review_agent_chain = EXCLUDED.review_agent_chain`,
+		seed.businessID, []uuid.UUID{primary, secondary}); err != nil {
+		t.Fatalf("seed chain: %v", err)
+	}
+
+	resolver := mapCredResolver{
+		primary:   {Provider: "vllm", BaseURL: "http://127.0.0.1:9/v1", Model: "ornith-1.0-9b", AllowPrivateBaseURL: true},
+		secondary: {APIKey: "k", Provider: "anthropic", BaseURL: "https://api.anthropic.com", Model: "m"},
+	}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+	runner := &overlapRunner{}
+	svc := buildService(t, tdb, env, runner, resolver) // Prober nil ⇒ REAL httpProber
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, secondary, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: secondary, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed, nil); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	var runs []struct {
+		Dimension string `json:"dimension"`
+		Provider  string `json:"provider"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal(got.DimensionRuns, &runs); err != nil {
+		t.Fatalf("unmarshal dimension_runs %q: %v", got.DimensionRuns, err)
+	}
+	if len(runs) != 1 || runs[0].Provider != "anthropic" || runs[0].Status != "succeeded" {
+		t.Fatalf("review must run on the live secondary (anthropic), got %+v", runs)
+	}
+}
+
 // seedReviewDimension inserts a configured review_dimension row for a business via the superuser
 // connection (bypasses RLS for setup). tenant_root_id == business_id for a root business.
 func seedReviewDimension(ctx context.Context, t *testing.T, tdb *testdb.TestDB, businessID uuid.UUID, dimension, prompt, minSeverity string, globs []string, order int) {
