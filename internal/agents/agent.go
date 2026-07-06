@@ -53,6 +53,7 @@ type Agent struct {
 	AllowedMCPServers  []uuid.UUID
 	RetriageOnReply    bool
 	WebAllowedDomains  []string
+	MaxConcurrentLanes int
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -70,6 +71,7 @@ type CreateAgentInput struct {
 	AllowedMCPServers  []uuid.UUID
 	RetriageOnReply    bool
 	WebAllowedDomains  []string
+	MaxConcurrentLanes int // 0 ⇒ default (4)
 }
 
 // UpdateAgentInput is a partial (PATCH) update — nil fields are left unchanged.
@@ -88,6 +90,7 @@ type UpdateAgentInput struct {
 	AllowedMCPServers  *[]uuid.UUID
 	RetriageOnReply    *bool
 	WebAllowedDomains  *[]string
+	MaxConcurrentLanes *int
 }
 
 func validateCreateAgent(in CreateAgentInput) error {
@@ -106,6 +109,10 @@ func validateCreateAgent(in CreateAgentInput) error {
 	if in.MonthlyBudgetCents < 0 || in.MonthlyBudgetCents > math.MaxInt32 {
 		return fmt.Errorf("agents: monthly_budget_cents out of range [0, 2147483647]: %w", errs.ErrValidation)
 	}
+	// 0 ⇒ "use the DB default (4)"; any explicit value must be in [1,16].
+	if in.MaxConcurrentLanes != 0 && (in.MaxConcurrentLanes < 1 || in.MaxConcurrentLanes > 16) {
+		return fmt.Errorf("agents: max_concurrent_lanes must be in [1, 16]: %w", errs.ErrValidation)
+	}
 	return nil
 }
 
@@ -121,6 +128,9 @@ func validateUpdateAgent(in UpdateAgentInput) error {
 	}
 	if in.MonthlyBudgetCents != nil && (*in.MonthlyBudgetCents < 0 || *in.MonthlyBudgetCents > math.MaxInt32) {
 		return fmt.Errorf("agents: monthly_budget_cents out of range [0, 2147483647]: %w", errs.ErrValidation)
+	}
+	if in.MaxConcurrentLanes != nil && (*in.MaxConcurrentLanes < 1 || *in.MaxConcurrentLanes > 16) {
+		return fmt.Errorf("agents: max_concurrent_lanes must be in [1, 16]: %w", errs.ErrValidation)
 	}
 	return nil
 }
@@ -148,6 +158,7 @@ func toAgent(r dbgen.Agent) Agent {
 		AllowedMCPServers:  mcpServers,
 		RetriageOnReply:    r.RetriageOnReply,
 		WebAllowedDomains:  webDomains,
+		MaxConcurrentLanes: int(r.MaxConcurrentLanes),
 		CreatedAt:          r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -158,6 +169,11 @@ func toAgent(r dbgen.Agent) Agent {
 func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.UUID, in CreateAgentInput) (Agent, error) {
 	if err := validateCreateAgent(in); err != nil {
 		return Agent{}, err
+	}
+	// 0 means "unset" — default to the same 4 the DB column defaults to (a NOT NULL
+	// column with a CHECK BETWEEN 1 AND 16 would reject a zero insert).
+	if in.MaxConcurrentLanes == 0 {
+		in.MaxConcurrentLanes = 4
 	}
 	// Validate allowed_mcp_servers before touching the DB. Nil-safe: only call
 	// when the validator is wired AND the slice is non-empty.
@@ -204,6 +220,7 @@ func (s *AgentService) Create(ctx context.Context, principalID, businessID uuid.
 			AllowedMcpServers:  mcpServers,
 			RetriageOnReply:    in.RetriageOnReply,
 			WebAllowedDomains:  webDomains,
+			MaxConcurrentLanes: int32(in.MaxConcurrentLanes),
 			BusinessID:         businessID,
 		})
 		if aerr != nil {
@@ -310,6 +327,10 @@ func (s *AgentService) Update(ctx context.Context, principalID, businessID, agen
 		params.WebAllowedDomains = *in.WebAllowedDomains
 	}
 	params.RetriageOnReply = in.RetriageOnReply
+	if in.MaxConcurrentLanes != nil {
+		n := int32(*in.MaxConcurrentLanes)
+		params.MaxConcurrentLanes = &n
+	}
 	var row dbgen.Agent
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		r, qerr := dbgen.New(tx).UpdateAgent(ctx, params)

@@ -545,6 +545,7 @@ type Agent struct {
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	RetriageOnReply    bool        `json:"retriage_on_reply"`
 	WebAllowedDomains  []string    `json:"web_allowed_domains"`
+	MaxConcurrentLanes int32       `json:"max_concurrent_lanes"`
 }
 
 type AgentRun struct {
