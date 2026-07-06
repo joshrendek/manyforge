@@ -364,6 +364,29 @@ describe('CodeReviewListComponent', () => {
     expect(modelCell?.getAttribute('title')).toContain('Multi-model panel');
   });
 
+  // PR #24 review: a review with no repo renders "—" and drops the title attr
+  // (the [attr.title] binding must not stringify undefined into "undefined").
+  it('renders "—" for a review with no repo, with no title attribute', () => {
+    const f = TestBed.createComponent(CodeReviewListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
+    mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+      items: [{
+        id: 'rn', status: 'succeeded', summary: '', review_url: '', pr_number: 3,
+        model: 'x', findings: [], findings_count: 0, cost_cents: 0,
+        created_at: '2026-06-20T12:00:00Z', posted_at: null,
+      }],
+    });
+    mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
+    f.detectChanges();
+
+    const repoCell = f.nativeElement.querySelector('[data-testid="review-repo"]');
+    expect(repoCell?.textContent?.trim()).toBe('—');
+    expect(repoCell?.getAttribute('title')).toBeNull();
+  });
+
   // ── History + polling (fake timers scoped to this nested describe) ────────────
 
   describe('polling', () => {

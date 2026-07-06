@@ -62,6 +62,8 @@ export interface CodeReview {
   review_url: string;
   pr_number: number;
   model: string;
+  // "owner/name" of the review's connector, shown in the reviews list. Absent on
+  // older API responses that predate the field.
   repo?: string;
   findings: Finding[];
   findings_count: number;

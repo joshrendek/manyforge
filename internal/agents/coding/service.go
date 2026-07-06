@@ -37,7 +37,7 @@ type CodeReview struct {
 	ReviewURL     string               `json:"review_url"`
 	PRNumber      int                  `json:"pr_number"`
 	Model         string               `json:"model"` // model snapshot used for this review
-	Repo          string               `json:"repo,omitempty"` // "owner/name" from the review's connector; empty if the connector was deleted
+	Repo          string               `json:"repo,omitempty"` // "owner/name" from the review's connector (list rows, via the join); normally always set (repo_connector_id is a NOT NULL FK)
 	Findings      []connectors.Finding `json:"findings"`
 	FindingsCount int                  `json:"findings_count"`
 	CostCents     int64                `json:"cost_cents"` // LLM cost of the run (0 until usage capture lands)

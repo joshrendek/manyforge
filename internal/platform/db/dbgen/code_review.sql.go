@@ -170,7 +170,7 @@ SELECT cr.id, cr.repo_connector_id, cr.pr_number, cr.status, cr.summary, cr.find
        cr.external_review_ref, cr.created_at, cr.posted_at, cr.model, cr.cost_cents, cr.progress,
        rc.repo
 FROM code_review cr
-LEFT JOIN repo_connector rc ON rc.id = cr.repo_connector_id
+LEFT JOIN repo_connector rc ON rc.id = cr.repo_connector_id AND rc.business_id = cr.business_id
 WHERE cr.business_id = $1
 ORDER BY cr.created_at DESC
 LIMIT 200
@@ -193,8 +193,10 @@ type ListCodeReviewsRow struct {
 }
 
 // ListCodeReviews returns the business's reviews newest-first for the history UI.
-// LEFT JOIN repo_connector so each row can show its repo (owner/name) in the list
-// without an O(n) per-row connector resolve; a deleted connector yields a NULL repo.
+// Join repo_connector so each row shows its repo (owner/name) in one query, no O(n)
+// per-row connector resolve. repo_connector_id is a NOT NULL FK, so this normally
+// always resolves; the same-business match is defense-in-depth and the LEFT JOIN
+// only guards against ever dropping a review row on an inconsistent state.
 func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]ListCodeReviewsRow, error) {
 	rows, err := q.db.Query(ctx, listCodeReviews, businessID)
 	if err != nil {

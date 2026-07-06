@@ -219,7 +219,7 @@ import { runStatusTone } from '../../ui/status';
                 }
               </span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                    data-testid="review-repo" [title]="r.repo">{{ r.repo || '—' }}</span>
+                    data-testid="review-repo" [attr.title]="r.repo || null">{{ r.repo || '—' }}</span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     data-testid="review-model"
                     [title]="r.model === 'panel' ? 'Multi-model panel — see per-dimension models in the review detail' : r.model"
