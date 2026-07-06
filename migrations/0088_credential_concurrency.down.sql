@@ -1,0 +1,1 @@
+ALTER TABLE ai_provider_credential DROP COLUMN max_concurrent_lanes;

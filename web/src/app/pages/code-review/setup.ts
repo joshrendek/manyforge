@@ -96,6 +96,8 @@ interface DraftRow {
   enabled: boolean;
   provider: string;
   model: string;
+  fallback_provider: string;
+  fallback_model: string;
   min_severity: FindingSeverity;
   scope: string;
   prompt: string;
@@ -157,6 +159,8 @@ function catalogLabel(key: string): string {
           <span style="flex:1" role="columnheader">Dimension</span>
           <span style="flex:1" role="columnheader">Provider</span>
           <span style="flex:1" role="columnheader">Model</span>
+          <span style="flex:1" role="columnheader">Fallback provider</span>
+          <span style="flex:1" role="columnheader">Fallback model</span>
           <span style="width:110px" role="columnheader">Min severity</span>
           <span style="flex:1" role="columnheader">Scope globs</span>
           <span style="width:150px" role="columnheader" aria-label="Actions"></span>
@@ -189,6 +193,34 @@ function catalogLabel(key: string): string {
                         [attr.aria-label]="'Model for ' + row.label">
                   <option value="">Choose a model…</option>
                   @for (m of modelsForProvider(row.provider); track m.model_id) {
+                    <option [value]="m.model_id">{{ m.model_id }}</option>
+                  }
+                </select>
+              }
+            </span>
+            <span style="flex:1" role="cell">
+              <select class="mf-select" data-testid="row-fallback-provider" [ngModel]="row.fallback_provider"
+                      (ngModelChange)="onFallbackProviderChange(row, $event)" [attr.aria-label]="'Fallback provider for ' + row.label">
+                <option value="">None</option>
+                @for (p of providers; track p.value) {
+                  @if (p.value) {
+                    <option [value]="p.value">{{ p.label }}</option>
+                  }
+                }
+              </select>
+            </span>
+            <span style="flex:1" role="cell">
+              @if (!row.fallback_provider) {
+                <span class="mf-hint">—</span>
+              } @else if (isFreeText(row.fallback_provider)) {
+                <input class="mf-input" type="text" data-testid="row-fallback-model-text" [(ngModel)]="row.fallback_model"
+                       [attr.list]="isOpenRouter(row.fallback_provider) ? 'setup-openrouter-models' : null"
+                       [attr.aria-label]="'Fallback model for ' + row.label" placeholder="model id" />
+              } @else {
+                <select class="mf-select" data-testid="row-fallback-model-select" [(ngModel)]="row.fallback_model"
+                        [attr.aria-label]="'Fallback model for ' + row.label">
+                  <option value="">Choose a model…</option>
+                  @for (m of modelsForProvider(row.fallback_provider); track m.model_id) {
                     <option [value]="m.model_id">{{ m.model_id }}</option>
                   }
                 </select>
@@ -383,7 +415,7 @@ export class CodeReviewSetupComponent implements OnInit {
     const next = DIMENSION_CATALOG.find((c) => !present.has(c.key));
     const row = next
       ? this.rowFromCatalog(next)
-      : { id: null, dimension: 'general', label: 'General', enabled: true, provider: '', model: '', min_severity: 'info' as FindingSeverity, scope: '', prompt: '', saving: false };
+      : { id: null, dimension: 'general', label: 'General', enabled: true, provider: '', model: '', fallback_provider: '', fallback_model: '', min_severity: 'info' as FindingSeverity, scope: '', prompt: '', saving: false };
     this.rows.set([...this.rows(), row]);
   }
 
@@ -444,6 +476,13 @@ export class CodeReviewSetupComponent implements OnInit {
   onProviderChange(row: DraftRow, provider: string): void {
     row.provider = provider;
     row.model = '';
+    if (provider === 'openrouter') this.ensureOpenrouterModels();
+    this.bumpRows();
+  }
+
+  onFallbackProviderChange(row: DraftRow, provider: string): void {
+    row.fallback_provider = provider;
+    row.fallback_model = '';
     if (provider === 'openrouter') this.ensureOpenrouterModels();
     this.bumpRows();
   }
@@ -525,6 +564,8 @@ export class CodeReviewSetupComponent implements OnInit {
       enabled: d.enabled,
       provider: d.provider ?? '',
       model: d.model,
+      fallback_provider: d.fallback_provider ?? '',
+      fallback_model: d.fallback_model ?? '',
       min_severity: d.min_severity,
       scope: (d.scope_globs ?? []).join(', '),
       prompt: d.prompt,
@@ -540,6 +581,8 @@ export class CodeReviewSetupComponent implements OnInit {
       enabled: true,
       provider: '',
       model: '',
+      fallback_provider: '',
+      fallback_model: '',
       min_severity: c.min_severity,
       scope: c.scope_globs.join(', '),
       prompt: c.prompt,
@@ -553,6 +596,8 @@ export class CodeReviewSetupComponent implements OnInit {
       dimension: row.dimension,
       provider: row.provider,
       model: row.model,
+      fallback_provider: row.fallback_provider,
+      fallback_model: row.fallback_model,
       prompt: row.prompt,
       scope_globs: row.scope.split(',').map((s) => s.trim()).filter(Boolean),
       min_severity: row.min_severity,

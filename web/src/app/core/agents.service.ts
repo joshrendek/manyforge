@@ -18,7 +18,6 @@ export interface Agent {
   monthly_budget_cents: number;
   allowed_mcp_servers: string[];
   retriage_on_reply: boolean;
-  max_concurrent_lanes: number;
   created_at: string;
   updated_at: string;
 }
@@ -34,7 +33,6 @@ export interface CreateAgentBody {
   monthly_budget_cents: number;
   allowed_mcp_servers: string[];
   retriage_on_reply: boolean;
-  max_concurrent_lanes: number;
 }
 
 export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'provider'>>;

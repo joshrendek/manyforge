@@ -134,6 +134,17 @@ describe('CodeReviewSetupComponent', () => {
     req.flush(makeDim({ dimension: 'security', model: 'x' }));
   });
 
+  it('sends per-dimension fallback provider+model in the save payload', () => {
+    mount([makeDim({ dimension: 'security', model: 'x' })]);
+    cmp.rows()[0].fallback_provider = 'openrouter';
+    cmp.rows()[0].fallback_model = 'deepseek';
+    (q('[data-testid="row-save"]') as HTMLButtonElement).click();
+    const req = mock.expectOne('/api/v1/businesses/b1/review-dimensions');
+    expect(req.request.body.fallback_provider).toBe('openrouter');
+    expect(req.request.body.fallback_model).toBe('deepseek');
+    req.flush(makeDim({ dimension: 'security', model: 'x' }));
+  });
+
   it('deletes a persisted row via DELETE', () => {
     mount([makeDim({ id: 'd9', dimension: 'security' })]);
     (q('[data-testid="row-remove"]') as HTMLButtonElement).click();

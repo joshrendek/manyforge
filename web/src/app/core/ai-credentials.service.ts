@@ -12,6 +12,7 @@ export interface AICredential {
   base_url: string;
   default_model: string;
   allow_private_base_url: boolean;
+  max_concurrent_lanes: number;
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +23,7 @@ export interface CreateAICredentialBody {
   default_model: string;
   base_url?: string;
   allow_private_base_url?: boolean;
+  max_concurrent_lanes?: number;
 }
 
 // AICredentialsService talks to the agents.configure-gated credential API.

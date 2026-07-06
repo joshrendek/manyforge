@@ -530,14 +530,6 @@ components:
           description: >-
             When true, a customer reply on an existing ticket re-invokes this agent
             (bounded by a per-ticket hourly cap). Default false.
-        max_concurrent_lanes:
-          type: integer
-          minimum: 1
-          maximum: 16
-          default: 4
-          description: >-
-            Concurrent code-review dimension lanes allowed when this agent is the
-            review's resolved reviewbot. A single-GPU self-host sets this to 1.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     AgentList:
@@ -601,14 +593,6 @@ components:
           description: >-
             When true, a customer reply on an existing ticket re-invokes this agent
             (bounded by a per-ticket hourly cap). Default false.
-        max_concurrent_lanes:
-          type: integer
-          minimum: 1
-          maximum: 16
-          default: 4
-          description: >-
-            Concurrent code-review dimension lanes allowed when this agent is the
-            review's resolved reviewbot. 0/omitted defaults to 4.
     UpdateAgentRequest:
       type: object
       description: Partial update — omit a field to leave it unchanged. provider is immutable.
@@ -632,13 +616,6 @@ components:
           description: >-
             When true, a customer reply on an existing ticket re-invokes this agent
             (bounded by a per-ticket hourly cap). Default false.
-        max_concurrent_lanes:
-          type: integer
-          minimum: 1
-          maximum: 16
-          description: >-
-            Concurrent code-review dimension lanes allowed when this agent is the
-            review's resolved reviewbot. Omit to leave unchanged.
     MCPServer:
       type: object
       description: >
@@ -780,6 +757,7 @@ components:
         base_url: { type: string }
         default_model: { type: string }
         allow_private_base_url: { type: boolean }
+        max_concurrent_lanes: { type: integer, minimum: 1, maximum: 16, default: 4 }
         created_at: { type: string }
         updated_at: { type: string }
     CreateAICredentialRequest:
@@ -798,3 +776,11 @@ components:
         allow_private_base_url:
           type: boolean
           description: Opt-in to a loopback/RFC1918 base_url (SSRF trust grant).
+        max_concurrent_lanes:
+          type: integer
+          minimum: 1
+          maximum: 16
+          default: 4
+          description: >-
+            How many code-review lanes may hit this endpoint at once. A single-GPU
+            self-host sets this to 1; cloud is fine at 4.

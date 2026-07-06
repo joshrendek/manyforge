@@ -44,16 +44,41 @@ func (c AICredential) Host() string {
 // The agentID identifies which agent to look up; principalID and businessID scope the RLS query.
 type AICredentialResolver interface {
 	Resolve(ctx context.Context, principalID, businessID, agentID uuid.UUID) (AICredential, error)
+	// ResolveProvider yields the credential for a specific provider (per-dimension lane
+	// routing, manyforge-azy): the (business, provider) BYO credential + the given model
+	// (empty ⇒ the credential's default_model).
+	ResolveProvider(ctx context.Context, principalID, businessID uuid.UUID, provider, model string) (AICredential, error)
 }
 
 // FakeCredResolver is a test double for AICredentialResolver.
 type FakeCredResolver struct {
 	Cred AICredential
 	Err  error
+	// ByProvider, when non-nil, backs ResolveProvider so a test can give each provider a
+	// distinct credential (per-dimension lane tests).
+	ByProvider map[string]AICredential
 }
 
 func (f *FakeCredResolver) Resolve(_ context.Context, _, _, _ uuid.UUID) (AICredential, error) {
 	return f.Cred, f.Err
+}
+
+func (f *FakeCredResolver) ResolveProvider(_ context.Context, _, _ uuid.UUID, provider, model string) (AICredential, error) {
+	if f.Err != nil {
+		return AICredential{}, f.Err
+	}
+	c := f.Cred
+	if f.ByProvider != nil {
+		pc, ok := f.ByProvider[provider]
+		if !ok {
+			return AICredential{}, errs.ErrNotFound
+		}
+		c = pc
+	}
+	if model != "" {
+		c.Model = model
+	}
+	return c, nil
 }
 
 // defaultBaseURLs mirrors the defaults in internal/platform/ai/factory.go so the egress
@@ -125,6 +150,35 @@ func (r *AgentCredResolver) Resolve(ctx context.Context, principalID, businessID
 		Model:               model,
 		Provider:            ag.Provider,
 		AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
-		MaxConcurrentLanes:  ag.MaxConcurrentLanes,
+		MaxConcurrentLanes:  rc.MaxConcurrentLanes,
+	}, nil
+}
+
+// ResolveProvider unseals the (business, provider) BYO credential directly (no agent) for a
+// per-dimension lane, mapping it into an AICredential with the given model (empty ⇒ the
+// credential's default_model). manyforge-azy.
+func (r *AgentCredResolver) ResolveProvider(ctx context.Context, principalID, businessID uuid.UUID, provider, model string) (AICredential, error) {
+	rc, err := r.Credentials.Resolve(ctx, principalID, businessID, provider)
+	if err != nil {
+		return AICredential{}, fmt.Errorf("coding: resolve provider %q credential: %w", provider, err)
+	}
+	if rc.APIKey == "" {
+		return AICredential{}, fmt.Errorf("coding: provider %q has no api key configured: %w", provider, errs.ErrValidation)
+	}
+	baseURL := rc.BaseURL
+	if baseURL == "" {
+		baseURL = defaultBaseURLs[provider]
+	}
+	m := model
+	if m == "" {
+		m = rc.Model
+	}
+	return AICredential{
+		APIKey:              rc.APIKey,
+		BaseURL:             baseURL,
+		Model:               m,
+		Provider:            provider,
+		AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
+		MaxConcurrentLanes:  rc.MaxConcurrentLanes,
 	}, nil
 }

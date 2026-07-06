@@ -171,6 +171,11 @@ components:
           description: 'Empty ⇒ use the review''s default resolved credential.'
         model:
           type: string
+        fallback_provider:
+          type: string
+          description: 'Empty ⇒ no fallback for this lane.'
+        fallback_model:
+          type: string
         prompt:
           type: string
         scope_globs:

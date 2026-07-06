@@ -35,7 +35,7 @@ const createAgent = `-- name: CreateAgent :one
 INSERT INTO agent (
     id, business_id, tenant_root_id, principal_id, name, provider, model,
     system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents,
-    allowed_mcp_servers, retriage_on_reply, web_allowed_domains, max_concurrent_lanes,
+    allowed_mcp_servers, retriage_on_reply, web_allowed_domains,
     created_at, updated_at)
 SELECT
     $1::uuid,
@@ -53,11 +53,10 @@ SELECT
     $11::uuid[],
     $12::boolean,
     $13::text[],
-    $14::integer,
     now(), now()
 FROM business b
-WHERE b.id = $15::uuid
-RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains, max_concurrent_lanes
+WHERE b.id = $14::uuid
+RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains
 `
 
 type CreateAgentParams struct {
@@ -74,7 +73,6 @@ type CreateAgentParams struct {
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	RetriageOnReply    bool        `json:"retriage_on_reply"`
 	WebAllowedDomains  []string    `json:"web_allowed_domains"`
-	MaxConcurrentLanes int32       `json:"max_concurrent_lanes"`
 	BusinessID         uuid.UUID   `json:"business_id"`
 }
 
@@ -95,7 +93,6 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.AllowedMcpServers,
 		arg.RetriageOnReply,
 		arg.WebAllowedDomains,
-		arg.MaxConcurrentLanes,
 		arg.BusinessID,
 	)
 	var i Agent
@@ -117,7 +114,6 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.AllowedMcpServers,
 		&i.RetriageOnReply,
 		&i.WebAllowedDomains,
-		&i.MaxConcurrentLanes,
 	)
 	return i, err
 }
@@ -175,7 +171,7 @@ func (q *Queries) DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains, max_concurrent_lanes FROM agent
+SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains FROM agent
 WHERE id = $1 AND business_id = $2
 `
 
@@ -208,13 +204,12 @@ func (q *Queries) GetAgent(ctx context.Context, arg GetAgentParams) (Agent, erro
 		&i.AllowedMcpServers,
 		&i.RetriageOnReply,
 		&i.WebAllowedDomains,
-		&i.MaxConcurrentLanes,
 	)
 	return i, err
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains, max_concurrent_lanes FROM agent
+SELECT id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains FROM agent
 WHERE business_id = $1
 ORDER BY name
 `
@@ -247,7 +242,6 @@ func (q *Queries) ListAgents(ctx context.Context, businessID uuid.UUID) ([]Agent
 			&i.AllowedMcpServers,
 			&i.RetriageOnReply,
 			&i.WebAllowedDomains,
-			&i.MaxConcurrentLanes,
 		); err != nil {
 			return nil, err
 		}
@@ -271,10 +265,9 @@ UPDATE agent SET
     allowed_mcp_servers  = COALESCE($8::uuid[], allowed_mcp_servers),
     retriage_on_reply    = COALESCE($9::boolean, retriage_on_reply),
     web_allowed_domains  = COALESCE($10::text[], web_allowed_domains),
-    max_concurrent_lanes = COALESCE($11::integer, max_concurrent_lanes),
     updated_at           = now()
-WHERE id = $12::uuid AND business_id = $13::uuid
-RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains, max_concurrent_lanes
+WHERE id = $11::uuid AND business_id = $12::uuid
+RETURNING id, business_id, tenant_root_id, principal_id, name, provider, model, system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents, created_at, updated_at, allowed_mcp_servers, retriage_on_reply, web_allowed_domains
 `
 
 type UpdateAgentParams struct {
@@ -288,7 +281,6 @@ type UpdateAgentParams struct {
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	RetriageOnReply    *bool       `json:"retriage_on_reply"`
 	WebAllowedDomains  []string    `json:"web_allowed_domains"`
-	MaxConcurrentLanes *int32      `json:"max_concurrent_lanes"`
 	ID                 uuid.UUID   `json:"id"`
 	BusinessID         uuid.UUID   `json:"business_id"`
 }
@@ -308,7 +300,6 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.AllowedMcpServers,
 		arg.RetriageOnReply,
 		arg.WebAllowedDomains,
-		arg.MaxConcurrentLanes,
 		arg.ID,
 		arg.BusinessID,
 	)
@@ -331,7 +322,6 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.AllowedMcpServers,
 		&i.RetriageOnReply,
 		&i.WebAllowedDomains,
-		&i.MaxConcurrentLanes,
 	)
 	return i, err
 }

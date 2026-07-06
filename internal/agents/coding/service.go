@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -585,10 +586,22 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	panel := s.resolvePanel(ctx, principalID, businessID)
 	changedPaths := changedFilePaths(changed)
 	active, skippedDims := activeDimensions(panel, changedPaths)
-	// Drop lanes requesting an unsupported per-dimension provider (manyforge-ubk) — skip with a
-	// reason rather than silently misroute them to the review's default provider.
-	active, provSkipped := partitionByProvider(active, cred.Provider)
-	skippedDims = append(skippedDims, provSkipped...)
+	// Resolve each active dimension's own reviewbot (manyforge-azy, completes ubk): its
+	// provider's credential + model, probed live, else its fallback (provider, model). A lane
+	// whose primary AND fallback can't be resolved/reached is skipped with a reason (recorded,
+	// never silently misrouted). A blank provider inherits the review's default resolved cred.
+	laneCreds := make(map[string]AICredential, len(active))
+	kept := make([]Dimension, 0, len(active))
+	for _, dim := range active {
+		lc, reason := s.resolveLaneCred(ctx, principalID, businessID, cred, dim)
+		if reason != "" {
+			skippedDims = append(skippedDims, SkippedDimension{Key: dim.Key, Reason: reason})
+			continue
+		}
+		laneCreds[dim.Key] = lc
+		kept = append(kept, dim)
+	}
+	active = kept
 	// Every dimension scoped out or skipped ⇒ nothing was reviewed. Fail honestly rather than
 	// post an empty "No issues found" review that falsely implies the PR was checked
 	// (aggregateReview would otherwise return an empty doc + nil error).
@@ -610,10 +623,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// per-lane output dir so configured lanes never clobber each other's review.json. An empty
 	// dim.Model uses the review's resolved credential; the dimension's prompt drives both paths.
 	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
-		laneCred := cred
-		if strings.TrimSpace(dim.Model) != "" {
-			laneCred.Model = dim.Model
-		}
+		laneCred := laneCreds[dim.Key]
 		scoped := filterFilesByScope(files, dim.ScopeGlobs)
 		lanePayload, _, _, _ := assembleDiffPayload(scoped, maxTotal)
 
@@ -779,19 +789,39 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			laneOutDirs[i] = laneOutDir
 		}
 	}
+	// Per-endpoint concurrency (manyforge-azy): a lane serializes against OTHER lanes on the
+	// SAME endpoint (provider+base_url) up to that endpoint's cap — a single-GPU local endpoint
+	// runs one lane at a time, a cloud endpoint runs its cap, and different endpoints run in
+	// parallel. This replaces the single global lane limit now that lanes may span endpoints.
+	endpointSems := make(map[string]chan struct{})
+	var semMu sync.Mutex
+	acquireEndpoint := func(lc AICredential) func() {
+		key := strings.ToLower(lc.Provider) + "|" + lc.Host()
+		semMu.Lock()
+		sem, ok := endpointSems[key]
+		if !ok {
+			sem = make(chan struct{}, laneLimit(lc))
+			endpointSems[key] = sem
+		}
+		semMu.Unlock()
+		sem <- struct{}{}
+		return func() { <-sem }
+	}
 	var g errgroup.Group
-	g.SetLimit(laneLimit(cred))
 	for i, dim := range active {
 		g.Go(func() error {
-			// A lane now runs in its own goroutine, so a panic here would crash the
-			// whole worker instead of failing a single review. Recover it and record
-			// the lane as failed; aggregateReview then treats it like any other lane
-			// failure (this review fails cleanly, sibling lanes still produce output).
+			// A lane runs in its own goroutine, so a panic here would crash the whole
+			// worker instead of failing a single review. Recover it and record the lane as
+			// failed; aggregateReview then treats it like any other lane failure (this
+			// review fails cleanly, sibling lanes still produce output).
 			defer func() {
 				if r := recover(); r != nil {
 					laneResults[i] = laneResult{Dim: dim, Err: fmt.Errorf("coding: review lane %q panicked: %v", dim.Key, r)}
 				}
 			}()
+			// Bound this lane against others sharing its endpoint (released even on panic).
+			release := acquireEndpoint(laneCreds[dim.Key])
+			defer release()
 			// reviewLane captures its own (non-panic) failures in laneResult.Err; the
 			// goroutine never returns an error, so aggregateReview always sees every
 			// lane's outcome (a failed lane is a failed dimension, not a dropped one).

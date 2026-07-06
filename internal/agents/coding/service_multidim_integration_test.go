@@ -16,6 +16,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
 // perDimRunner is a fake sandbox runner for the multi-dimension fan-out: it reads the per-lane
@@ -190,6 +191,12 @@ func (m mapCredResolver) Resolve(_ context.Context, _, _, agentID uuid.UUID) (AI
 	return c, nil
 }
 
+// ResolveProvider satisfies the interface; the chain test's dims all have blank providers
+// (they inherit the review default), so per-lane provider resolution is never invoked here.
+func (m mapCredResolver) ResolveProvider(_ context.Context, _, _ uuid.UUID, _, _ string) (AICredential, error) {
+	return AICredential{}, errs.ErrNotFound
+}
+
 // TestCodeReviewFallbackChainPicksLiveSecondary is the end-to-end wiring test for the
 // fallback chain (manyforge-k8e): with a configured chain whose primary (a self-hosted
 // vLLM bot at a dead port) fails the REAL liveness probe, runJob transparently runs the
@@ -248,6 +255,101 @@ func TestCodeReviewFallbackChainPicksLiveSecondary(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].Provider != "anthropic" || runs[0].Status != "succeeded" {
 		t.Fatalf("review must run on the live secondary (anthropic), got %+v", runs)
+	}
+}
+
+// seedDimFull inserts a review_dimension with an explicit primary + fallback (provider, model),
+// via the superuser connection (bypasses RLS for setup). Empty provider ⇒ NULL.
+func seedDimFull(ctx context.Context, t *testing.T, tdb *testdb.TestDB, businessID uuid.UUID, dim, provider, model, fbProvider, fbModel string, order int) {
+	t.Helper()
+	var prov, fbProv any
+	if provider != "" {
+		prov = provider
+	}
+	if fbProvider != "" {
+		fbProv = fbProvider
+	}
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO review_dimension
+		   (id, business_id, tenant_root_id, dimension, provider, model, fallback_provider, fallback_model,
+		    prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
+		 VALUES ($1,$2,$2,$3,$4::ai_provider,$5,$6::ai_provider,$7,$8,'{}','info',true,$9,now(),now())`,
+		uuid.New(), businessID, dim, prov, model, fbProv, fbModel, "DIMPROMPT:"+dim, order); err != nil {
+		t.Fatalf("seed dim %q: %v", dim, err)
+	}
+}
+
+// TestCodeReviewPerDimensionProviderAndFallback is the core manyforge-azy exercise: each
+// dimension routes to its OWN (provider, model), and a dimension whose primary endpoint fails
+// the liveness probe transparently runs on its fallback (provider, model). All three lanes are
+// cloud (sandbox), so a stub prober controls liveness deterministically.
+func TestCodeReviewPerDimensionProviderAndFallback(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+
+	// security → openrouter (up); docs → anthropic (up); tests → openai (DOWN) ⇒ fallback anthropic.
+	seedDimFull(ctx, t, tdb, seed.businessID, "security", "openrouter", "grok", "", "", 1)
+	seedDimFull(ctx, t, tdb, seed.businessID, "docs", "anthropic", "claude-docs", "", "", 2)
+	seedDimFull(ctx, t, tdb, seed.businessID, "tests", "openai", "gpt", "anthropic", "claude-fb", 3)
+
+	resolver := &FakeCredResolver{
+		Cred: AICredential{APIKey: "k", Provider: "anthropic", BaseURL: "https://api.anthropic.com", Model: "def"},
+		ByProvider: map[string]AICredential{
+			"openrouter": {APIKey: "k", Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Model: "grok"},
+			"anthropic":  {APIKey: "k", Provider: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude"},
+			"openai":     {APIKey: "k", Provider: "openai", BaseURL: "https://api.openai.com/v1", Model: "gpt"},
+		},
+	}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+	runner := &perDimRunner{}
+	svc := buildService(t, tdb, env, runner, resolver)
+	svc.EgressAllow = netsafe.ParseHostAllowlist("api.anthropic.com,openrouter.ai,api.openai.com")
+	svc.Prober = stubProbe{
+		"https://openrouter.ai/api/v1": true,
+		"https://api.anthropic.com":    true,
+		"https://api.openai.com/v1":    false, // down ⇒ the tests lane falls back to anthropic
+	}
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed, nil); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	var runs []struct {
+		Dimension string `json:"dimension"`
+		Provider  string `json:"provider"`
+		Model     string `json:"model"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal(got.DimensionRuns, &runs); err != nil {
+		t.Fatalf("unmarshal dimension_runs %q: %v", got.DimensionRuns, err)
+	}
+	type pm struct{ provider, model string }
+	byDim := map[string]pm{}
+	for _, r := range runs {
+		byDim[r.Dimension] = pm{r.Provider, r.Model}
+	}
+	if byDim["security"] != (pm{"openrouter", "grok"}) {
+		t.Fatalf("security must route to openrouter/grok, got %+v", byDim["security"])
+	}
+	if byDim["docs"] != (pm{"anthropic", "claude-docs"}) {
+		t.Fatalf("docs must route to anthropic/claude-docs, got %+v", byDim["docs"])
+	}
+	if byDim["tests"] != (pm{"anthropic", "claude-fb"}) {
+		t.Fatalf("tests must FALL BACK to anthropic/claude-fb, got %+v", byDim["tests"])
 	}
 }
 

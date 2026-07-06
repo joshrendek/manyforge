@@ -55,6 +55,22 @@ type CreateCredentialInput struct {
 	BaseURL             string // optional (openai-compat / self-host)
 	DefaultModel        string
 	AllowPrivateBaseURL bool // self-host opt-in: permit a loopback/RFC1918 base_url
+	MaxConcurrentLanes  int  // 0 ⇒ default 4; review-lane cap for this endpoint (1–16)
+}
+
+// credLanes clamps the endpoint concurrency cap into the DB's [1,16] (0/unset ⇒ 4), so a
+// blank or out-of-range form value can't trip the CHECK constraint on insert.
+func credLanes(n int) int32 {
+	if n == 0 {
+		return 4
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > 16 {
+		n = 16
+	}
+	return int32(n)
 }
 
 // ResolvedCredential is what the gateway needs to build a Provider.
@@ -64,6 +80,9 @@ type ResolvedCredential struct {
 	BaseURL             string
 	Model               string
 	AllowPrivateBaseURL bool
+	// MaxConcurrentLanes caps how many code-review lanes may hit THIS endpoint at once
+	// (a credential is one provider+base_url); the review fan-out serializes per endpoint.
+	MaxConcurrentLanes int
 }
 
 // CredentialView is the safe, key-free projection of a stored credential for
@@ -108,6 +127,7 @@ type storedCredential struct {
 	BaseURL             *string
 	DefaultModel        string
 	AllowPrivateBaseURL bool
+	MaxConcurrentLanes  int32
 }
 
 func (s *CredentialService) validate(in CreateCredentialInput) error {
@@ -171,6 +191,7 @@ func (s *CredentialService) resolveRow(row storedCredential) (ResolvedCredential
 		out.BaseURL = *row.BaseURL
 	}
 	out.AllowPrivateBaseURL = row.AllowPrivateBaseURL
+	out.MaxConcurrentLanes = int(row.MaxConcurrentLanes)
 	if row.SealedKeyRef != nil && *row.SealedKeyRef != "" {
 		// A sealed key with a nil Sealer (master key unset since the row was written)
 		// → clean validation error, never a nil-pointer panic on Open.
@@ -214,6 +235,7 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 			BaseUrl:             baseArg,
 			DefaultModel:        in.DefaultModel,
 			AllowPrivateBaseUrl: in.AllowPrivateBaseURL,
+			MaxConcurrentLanes:  credLanes(in.MaxConcurrentLanes),
 		})
 		if qerr != nil {
 			return qerr
@@ -301,6 +323,7 @@ func (s *CredentialService) Resolve(ctx context.Context, principalID, businessID
 		Provider: string(row.Provider), SealedKeyRef: row.SealedKeyRef,
 		BaseURL: row.BaseUrl, DefaultModel: row.DefaultModel,
 		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
+		MaxConcurrentLanes:  row.MaxConcurrentLanes,
 	})
 }
 

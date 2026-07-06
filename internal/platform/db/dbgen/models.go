@@ -545,7 +545,6 @@ type Agent struct {
 	AllowedMcpServers  []uuid.UUID `json:"allowed_mcp_servers"`
 	RetriageOnReply    bool        `json:"retriage_on_reply"`
 	WebAllowedDomains  []string    `json:"web_allowed_domains"`
-	MaxConcurrentLanes int32       `json:"max_concurrent_lanes"`
 }
 
 type AgentRun struct {
@@ -576,6 +575,7 @@ type AiProviderCredential struct {
 	BaseUrl             *string    `json:"base_url"`
 	DefaultModel        string     `json:"default_model"`
 	AllowPrivateBaseUrl bool       `json:"allow_private_base_url"`
+	MaxConcurrentLanes  int32      `json:"max_concurrent_lanes"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
@@ -982,19 +982,21 @@ type ReviewConfig struct {
 }
 
 type ReviewDimension struct {
-	ID           uuid.UUID      `json:"id"`
-	BusinessID   uuid.UUID      `json:"business_id"`
-	TenantRootID uuid.UUID      `json:"tenant_root_id"`
-	Dimension    string         `json:"dimension"`
-	Provider     NullAiProvider `json:"provider"`
-	Model        string         `json:"model"`
-	Prompt       string         `json:"prompt"`
-	ScopeGlobs   []string       `json:"scope_globs"`
-	MinSeverity  string         `json:"min_severity"`
-	Enabled      bool           `json:"enabled"`
-	SortOrder    int32          `json:"sort_order"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	ID               uuid.UUID      `json:"id"`
+	BusinessID       uuid.UUID      `json:"business_id"`
+	TenantRootID     uuid.UUID      `json:"tenant_root_id"`
+	Dimension        string         `json:"dimension"`
+	Provider         NullAiProvider `json:"provider"`
+	Model            string         `json:"model"`
+	FallbackProvider NullAiProvider `json:"fallback_provider"`
+	FallbackModel    string         `json:"fallback_model"`
+	Prompt           string         `json:"prompt"`
+	ScopeGlobs       []string       `json:"scope_globs"`
+	MinSeverity      string         `json:"min_severity"`
+	Enabled          bool           `json:"enabled"`
+	SortOrder        int32          `json:"sort_order"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
 type Role struct {
