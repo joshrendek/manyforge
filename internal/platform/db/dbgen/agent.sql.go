@@ -11,6 +11,26 @@ import (
 	"github.com/google/uuid"
 )
 
+const countAgentsInBusiness = `-- name: CountAgentsInBusiness :one
+SELECT count(*) FROM agent
+WHERE id = ANY($1::uuid[]) AND business_id = $2::uuid
+`
+
+type CountAgentsInBusinessParams struct {
+	Ids        []uuid.UUID `json:"ids"`
+	BusinessID uuid.UUID   `json:"business_id"`
+}
+
+// CountAgentsInBusiness counts how many of the given agent IDs exist AND are visible to
+// the caller in this business. Used to validate a review fallback chain: count != len(ids)
+// ⇒ an unknown/foreign agent id ⇒ reject (no existence oracle; RLS scopes visibility).
+func (q *Queries) CountAgentsInBusiness(ctx context.Context, arg CountAgentsInBusinessParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAgentsInBusiness, arg.Ids, arg.BusinessID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgent = `-- name: CreateAgent :one
 INSERT INTO agent (
     id, business_id, tenant_root_id, principal_id, name, provider, model,

@@ -85,3 +85,10 @@ WITH del AS (
     DELETE FROM agent WHERE agent.id = $1 AND agent.business_id = $2 RETURNING agent.principal_id
 )
 DELETE FROM principal WHERE principal.id IN (SELECT principal_id FROM del) AND principal.kind = 'agent';
+
+-- CountAgentsInBusiness counts how many of the given agent IDs exist AND are visible to
+-- the caller in this business. Used to validate a review fallback chain: count != len(ids)
+-- ⇒ an unknown/foreign agent id ⇒ reject (no existence oracle; RLS scopes visibility).
+-- name: CountAgentsInBusiness :one
+SELECT count(*) FROM agent
+WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND business_id = sqlc.arg('business_id')::uuid;

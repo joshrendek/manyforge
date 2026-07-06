@@ -352,6 +352,30 @@ func TestReviewDimensionServiceCRUD(t *testing.T) {
 		t.Fatalf("config not persisted: %+v", cfg)
 	}
 
+	// Fallback chain: a known agent round-trips (order preserved via uuid[]), an unknown
+	// agent id is rejected (no forged chain), and clearing persists an empty list.
+	if _, err := svc.UpsertConfig(ctx, seed.principalID, seed.businessID, ReviewConfigInput{
+		PostMode: "single", ReviewAgentChain: []string{seed.agentID.String()},
+	}); err != nil {
+		t.Fatalf("upsert config with chain: %v", err)
+	}
+	cfg, _ = svc.GetConfig(ctx, seed.principalID, seed.businessID)
+	if len(cfg.ReviewAgentChain) != 1 || cfg.ReviewAgentChain[0] != seed.agentID.String() {
+		t.Fatalf("chain not persisted: %+v", cfg.ReviewAgentChain)
+	}
+	if _, err := svc.UpsertConfig(ctx, seed.principalID, seed.businessID, ReviewConfigInput{
+		PostMode: "single", ReviewAgentChain: []string{uuid.NewString()},
+	}); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("unknown agent in chain must be ErrValidation, got %v", err)
+	}
+	if _, err := svc.UpsertConfig(ctx, seed.principalID, seed.businessID, ReviewConfigInput{PostMode: "single"}); err != nil {
+		t.Fatalf("clear chain: %v", err)
+	}
+	cfg, _ = svc.GetConfig(ctx, seed.principalID, seed.businessID)
+	if len(cfg.ReviewAgentChain) != 0 {
+		t.Fatalf("chain should be cleared, got %+v", cfg.ReviewAgentChain)
+	}
+
 	// Cross-tenant ownership: tenant B upserting for tenant A's business is rejected (no row).
 	seedB := seedCodingTenant(ctx, t, tdb)
 	if _, err := svc.UpsertDimension(ctx, seedB.principalID, seed.businessID, ReviewDimensionInput{

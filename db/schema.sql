@@ -675,6 +675,7 @@ CREATE TABLE review_config (
     verify_model    text NOT NULL DEFAULT '',
     cite_rules      boolean NOT NULL DEFAULT false,
     post_mode       text NOT NULL DEFAULT 'single',
+    review_agent_chain uuid[] NOT NULL DEFAULT '{}',
     updated_at      timestamptz NOT NULL DEFAULT now(),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
