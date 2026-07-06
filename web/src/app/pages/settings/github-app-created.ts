@@ -17,7 +17,7 @@ import { GithubAppService } from '../../core/github-app.service';
         <p>Finishing GitHub App setup…</p>
       }
       @if (state() === 'done') {
-        <p data-testid="gh-success">GitHub App created. You can now connect your organizations.</p>
+        <p data-testid="gh-success" role="status">GitHub App created. You can now connect your organizations.</p>
       }
       @if (state() === 'error') {
         <p class="mf-err" data-testid="gh-error" role="alert">{{ message() }}</p>

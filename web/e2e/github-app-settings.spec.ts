@@ -14,13 +14,13 @@ async function auth(page: import('@playwright/test').Page) {
 // be reachable by CLICKING a nav entry — so start elsewhere (/dashboard) and
 // navigate via the sidebar link, landing on the rendered settings page.
 test('github app settings: reachable by clicking the GitHub nav entry', async ({ page }) => {
-  // Broad fallback registered FIRST so shell nav-badge calls on /dashboard can't
-  // 401 -> logout; the specific routes below are registered after and win
-  // (Playwright matches most-recently-registered first).
-  await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
+  // Specific, safe-shaped mocks (mirrors shell.spec) instead of a blanket {} stub
+  // (PR #22 review): the approvals/connectors nav badges only fetch when a current
+  // business is set (app.ts hasBiz), which it isn't here, so those calls never fire.
   await page.addInitScript(() => localStorage.setItem('mf_access', 'tok'));
   await page.route('**/api/v1/me', (r) => r.fulfill({ json: profile }));
   await page.route('**/api/v1/businesses', (r) => r.fulfill({ json: biz }));
+  await page.route('**/api/v1/businesses/*/tickets**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await page.route('**/api/v1/businesses/b1/agents', (r) => r.fulfill({ json: { items: [agent] } }));
 
   await page.goto('/dashboard');
