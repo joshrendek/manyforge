@@ -166,11 +166,13 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 }
 
 const listCodeReviews = `-- name: ListCodeReviews :many
-SELECT id, repo_connector_id, pr_number, status, summary, findings,
-       external_review_ref, created_at, posted_at, model, cost_cents, progress
-FROM code_review
-WHERE business_id = $1
-ORDER BY created_at DESC
+SELECT cr.id, cr.repo_connector_id, cr.pr_number, cr.status, cr.summary, cr.findings,
+       cr.external_review_ref, cr.created_at, cr.posted_at, cr.model, cr.cost_cents, cr.progress,
+       rc.repo
+FROM code_review cr
+LEFT JOIN repo_connector rc ON rc.id = cr.repo_connector_id AND rc.business_id = cr.business_id
+WHERE cr.business_id = $1
+ORDER BY cr.created_at DESC
 LIMIT 200
 `
 
@@ -187,9 +189,14 @@ type ListCodeReviewsRow struct {
 	Model             string             `json:"model"`
 	CostCents         int64              `json:"cost_cents"`
 	Progress          []byte             `json:"progress"`
+	Repo              *string            `json:"repo"`
 }
 
 // ListCodeReviews returns the business's reviews newest-first for the history UI.
+// Join repo_connector so each row shows its repo (owner/name) in one query, no O(n)
+// per-row connector resolve. repo_connector_id is a NOT NULL FK, so this normally
+// always resolves; the same-business match is defense-in-depth and the LEFT JOIN
+// only guards against ever dropping a review row on an inconsistent state.
 func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]ListCodeReviewsRow, error) {
 	rows, err := q.db.Query(ctx, listCodeReviews, businessID)
 	if err != nil {
@@ -212,6 +219,7 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 			&i.Model,
 			&i.CostCents,
 			&i.Progress,
+			&i.Repo,
 		); err != nil {
 			return nil, err
 		}

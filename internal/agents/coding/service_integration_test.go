@@ -414,6 +414,23 @@ func TestCodeReviewTrigger(t *testing.T) {
 		if n := localStub.postCount.Load(); n != 1 {
 			t.Errorf("want exactly 1 GitHub POST, got %d", n)
 		}
+		// List surfaces the connector repo per row (owner/name) via the LEFT JOIN.
+		reviews, lerr := svc.List(ctx, seed.principalID, seed.businessID)
+		if lerr != nil {
+			t.Fatalf("List: %v", lerr)
+		}
+		var listed *CodeReview
+		for i := range reviews {
+			if reviews[i].ID == cr.ID {
+				listed = &reviews[i]
+			}
+		}
+		if listed == nil {
+			t.Fatal("List did not return the review")
+		}
+		if listed.Repo != "o/r" {
+			t.Errorf("List review repo = %q, want %q", listed.Repo, "o/r")
+		}
 	})
 
 	t.Run("malformed_json_marks_failed", func(t *testing.T) {

@@ -102,6 +102,10 @@ import { runStatusTone } from '../../ui/status';
                   style="display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:var(--mf-fs-base);font-weight:600">
                 <span style="text-transform:capitalize">{{ g.dimension }}</span>
                 <mf-status-pill tone="neutral" [label]="g.findings.length + ''" [ariaLabel]="g.findings.length + ' findings'" />
+                @if (g.model) {
+                  <span data-testid="dimension-model" [title]="g.model"
+                        style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ g.model }}</span>
+                }
               </h4>
               <div class="mf-table" role="table" [attr.aria-label]="g.dimension + ' findings'">
                 <div class="mf-tr mf-th" role="row">
@@ -199,9 +203,15 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
 
   // Groups the review's findings by dimension, preserving first-seen order. Untagged
   // findings (e.g. a general lane mixed with specialists) fall under "general".
-  dimensionGroups(): { dimension: string; findings: Finding[] }[] {
+  dimensionGroups(): { dimension: string; findings: Finding[]; model?: string }[] {
     const r = this.review();
     if (!r) return [];
+    // The per-lane model lives in dimension_runs (the top-level model is the "panel"
+    // sentinel for a multi-dimension review) — surface it per group.
+    const modelByDim = new Map<string, string>();
+    for (const dr of r.dimension_runs ?? []) {
+      if (dr.model) modelByDim.set(dr.dimension, dr.model);
+    }
     const order: string[] = [];
     const byDim = new Map<string, Finding[]>();
     for (const f of r.findings) {
@@ -212,7 +222,7 @@ export class CodeReviewDetailComponent implements OnInit, OnDestroy {
       }
       byDim.get(key)!.push(f);
     }
-    return order.map((d) => ({ dimension: d, findings: byDim.get(d)! }));
+    return order.map((d) => ({ dimension: d, findings: byDim.get(d)!, model: modelByDim.get(d) }));
   }
 
   // Configured lanes that did not run this review (scoped out, disabled, etc.). Surfaced

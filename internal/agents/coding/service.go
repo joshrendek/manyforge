@@ -37,6 +37,7 @@ type CodeReview struct {
 	ReviewURL     string               `json:"review_url"`
 	PRNumber      int                  `json:"pr_number"`
 	Model         string               `json:"model"` // model snapshot used for this review
+	Repo          string               `json:"repo,omitempty"` // "owner/name" from the review's connector (list rows, via the join); normally always set (repo_connector_id is a NOT NULL FK)
 	Findings      []connectors.Finding `json:"findings"`
 	FindingsCount int                  `json:"findings_count"`
 	CostCents     int64                `json:"cost_cents"` // LLM cost of the run (0 until usage capture lands)
@@ -869,12 +870,17 @@ func (s *CodeReviewService) List(ctx context.Context, principalID, businessID uu
 				t := r.PostedAt.Time
 				postedAt = &t
 			}
+			repo := ""
+			if r.Repo != nil { // LEFT JOIN: nil when the connector was deleted
+				repo = *r.Repo
+			}
 			out = append(out, CodeReview{
 				ID:            r.ID,
 				Status:        r.Status,
 				Summary:       r.Summary,
 				PRNumber:      int(r.PrNumber),
 				Model:         r.Model,
+				Repo:          repo,
 				Findings:      findings,
 				FindingsCount: len(findings),
 				CostCents:     r.CostCents,

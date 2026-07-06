@@ -202,6 +202,7 @@ import { runStatusTone } from '../../ui/status';
           <div class="mf-tr mf-th">
             <span style="width:56px">PR #</span>
             <span style="width:96px">Status</span>
+            <span style="flex:1">Repo</span>
             <span style="flex:1">Model</span>
             <span style="width:64px">Findings</span>
             <span style="width:72px">Cost</span>
@@ -217,6 +218,8 @@ import { runStatusTone } from '../../ui/status';
                   <span data-testid="review-phase" style="display:block;color:var(--mf-text-muted);font-size:var(--mf-fs-xs);margin-top:2px">{{ r.progress?.phase }}</span>
                 }
               </span>
+              <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    data-testid="review-repo" [attr.title]="r.repo || null">{{ r.repo || '—' }}</span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     data-testid="review-model"
                     [title]="r.model === 'panel' ? 'Multi-model panel — see per-dimension models in the review detail' : r.model"
