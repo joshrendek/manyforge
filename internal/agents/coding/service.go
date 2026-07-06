@@ -379,6 +379,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 				slog.Default().WarnContext(ctx, "code review: create check run (non-fatal)", "err", cerr, "review", crID)
 			} else {
 				defer func() {
+					// Recover so a panic on runJob's stack (retErr stays nil during
+					// unwinding) resolves the run as failure, not a misleading success —
+					// then re-raise so the worker still observes the crash.
+					rec := recover()
 					conclusion, title := "success", "manyforge review complete"
 					sha := pr.HeadSHA
 					if len(sha) > 7 {
@@ -388,12 +392,15 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 					if checkReviewURL != "" {
 						summary += " [View review](" + checkReviewURL + ")"
 					}
-					if retErr != nil {
+					if retErr != nil || rec != nil {
 						conclusion, title = "failure", "manyforge review failed"
 						summary = "The review did not complete. See manyforge logs for details."
 					}
 					if uerr := crp.UpdateCheckRun(ctx, id, conclusion, title, summary); uerr != nil {
 						slog.Default().WarnContext(ctx, "code review: update check run (non-fatal)", "err", uerr, "review", crID)
+					}
+					if rec != nil {
+						panic(rec)
 					}
 				}()
 			}
