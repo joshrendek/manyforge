@@ -9,6 +9,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Agents', route: '/agents', testid: 'nav-agents' },
   { label: 'Code Review', route: '/code-review', testid: 'nav-code-review' },
   { label: 'Review Setup', route: '/code-review/setup', testid: 'nav-review-setup' },
+  { label: 'GitHub', route: '/settings/github', testid: 'nav-github' },
   { label: 'Contacts', route: '/crm/contacts', testid: 'nav-crm-contacts' },
   { label: 'Companies', route: '/crm/companies', testid: 'nav-crm-companies' },
   { label: 'MCP', route: '/mcp', testid: 'nav-mcp' },
