@@ -115,6 +115,27 @@ func TestCodeReviewLanesRunInParallel(t *testing.T) {
 	} else if maxN > maxConcurrentLanes {
 		t.Fatalf("max concurrent Run = %d exceeds the cap maxConcurrentLanes=%d", maxN, maxConcurrentLanes)
 	}
+
+	// Determinism (manyforge-w54, PR #23 review): despite lanes completing in
+	// arbitrary order, indexed writes keep dimension_runs in the configured sort
+	// order — so aggregation output is identical to the old sequential path.
+	got, err := svc.Get(ctx, seed.principalID, seed.businessID, cr.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	var runs []struct {
+		Dimension string `json:"dimension"`
+	}
+	if err := json.Unmarshal(got.DimensionRuns, &runs); err != nil {
+		t.Fatalf("unmarshal dimension_runs %q: %v", got.DimensionRuns, err)
+	}
+	order := make([]string, len(runs))
+	for i, r := range runs {
+		order[i] = r.Dimension
+	}
+	if want := "security,correctness,performance,tests,docs"; strings.Join(order, ",") != want {
+		t.Errorf("dimension_runs order = %q, want %q (indexed writes must preserve sort order)", strings.Join(order, ","), want)
+	}
 }
 
 // seedReviewDimension inserts a configured review_dimension row for a business via the superuser

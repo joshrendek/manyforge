@@ -283,10 +283,16 @@ const reviewModelPanel = "panel"
 // which previously misled the review list into showing one model for the whole
 // panel — manyforge-vv6).
 func reviewModelLabel(active []Dimension, resolved string) string {
-	if len(active) > 1 {
+	switch {
+	case len(active) > 1:
 		return reviewModelPanel
+	case len(active) == 1 && strings.TrimSpace(active[0].Model) != "":
+		// A single configured dimension ran on its OWN model (PR #23 review) — record
+		// that, not the review agent's default which no lane used.
+		return active[0].Model
+	default:
+		return resolved
 	}
-	return resolved
 }
 
 // runJob uses a named return (retErr) so a deferred Check Run update can resolve
@@ -742,9 +748,18 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	g.SetLimit(maxConcurrentLanes)
 	for i, dim := range active {
 		g.Go(func() error {
-			// reviewLane captures its own failures in laneResult.Err; the goroutine
-			// never returns an error, so aggregateReview still sees every lane's
-			// outcome (a failed lane is a skipped/failed dimension, not a dropped one).
+			// A lane now runs in its own goroutine, so a panic here would crash the
+			// whole worker instead of failing a single review. Recover it and record
+			// the lane as failed; aggregateReview then treats it like any other lane
+			// failure (this review fails cleanly, sibling lanes still produce output).
+			defer func() {
+				if r := recover(); r != nil {
+					laneResults[i] = laneResult{Dim: dim, Err: fmt.Errorf("coding: review lane %q panicked: %v", dim.Key, r)}
+				}
+			}()
+			// reviewLane captures its own (non-panic) failures in laneResult.Err; the
+			// goroutine never returns an error, so aggregateReview always sees every
+			// lane's outcome (a failed lane is a failed dimension, not a dropped one).
 			laneResults[i] = reviewLane(dim, laneOutDirs[i])
 			return nil
 		})
