@@ -262,7 +262,13 @@ func (s *CodeReviewService) Enqueue(
 // It re-resolves the connector and credential under job.PrincipalID/BusinessID —
 // NO secrets come from the queue row itself. Called by the background worker
 // (Task 5) after claiming a pending row via the claim_code_reviews function.
-func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog *Progress) error {
+// reviewCheckRunName is the GitHub Check Run name shown in the PR's Checks tab
+// while an app-backed review runs (manyforge-nh6).
+const reviewCheckRunName = "manyforge review"
+
+// runJob uses a named return (retErr) so a deferred Check Run update can resolve
+// the "review in progress" signal to success/failure from whatever exit path fires.
+func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog *Progress) (retErr error) {
 	// Re-resolve connector under the owning principal (no secrets in the queue row).
 	rc, err := s.Repos.Resolve(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID)
 	if err != nil {
@@ -356,6 +362,57 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// reviewed" (proceed) — we never skip a real review on a transient DB hiccup.
 	if already, cerr := s.reviewedHead(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID, job.PRNumber, pr.HeadSHA, job.ID); cerr == nil && already {
 		return s.finalizeSkipped(ctx, job, pr.HeadSHA, cred.Model)
+	}
+
+	// Best-effort "review in progress" Check Run on the PR (manyforge-nh6). Placed
+	// after the skip check so a skipped/deduped review never opens one. Only
+	// app-backed connectors carry the checks:write permission GitHub requires (a PAT
+	// would 403), so we gate on that and swallow any error — a progress signal must
+	// never fail or block the review. The deferred update resolves the run from
+	// retErr, covering every exit below (success, failJob*, or a raw finalize error);
+	// checkFindings/checkReviewURL are stamped by the success path for the summary.
+	var checkFindings int
+	var checkReviewURL string
+	if rc.Type == "github_app" {
+		if crp, ok := conn.(connectors.CheckRunPoster); ok {
+			if id, cerr := crp.CreateCheckRun(ctx, reviewCheckRunName, pr.HeadSHA); cerr != nil {
+				slog.Default().WarnContext(ctx, "code review: create check run (non-fatal)", "err", cerr, "review", crID)
+			} else {
+				defer func() {
+					// Recover so a panic on runJob's stack (retErr stays nil during
+					// unwinding) resolves the run as failure, not a misleading success —
+					// then re-raise so the worker still observes the crash.
+					rec := recover()
+					conclusion, title := "success", "manyforge review complete"
+					sha := pr.HeadSHA
+					if len(sha) > 7 {
+						sha = sha[:7]
+					}
+					summary := fmt.Sprintf("Reviewed %s — %d finding(s).", sha, checkFindings)
+					// checkReviewURL is GitHub's own review html_url; still, only embed it
+					// as a link when it's a clean https URL so a surprising value can't
+					// break out of the Markdown link syntax (PR #20 review).
+					if strings.HasPrefix(checkReviewURL, "https://") && !strings.ContainsAny(checkReviewURL, "() ") {
+						summary += " [View review](" + checkReviewURL + ")"
+					}
+					if retErr != nil || rec != nil {
+						conclusion, title = "failure", "manyforge review failed"
+						summary = "The review did not complete. See manyforge logs for details."
+					}
+					// Resolve on a cancel-immune context: when the job failed BECAUSE its
+					// own ctx was canceled (timeout/shutdown), reusing it here would fail
+					// too and leave the run stuck "in progress" forever (PR #20 review).
+					uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+					defer cancel()
+					if uerr := crp.UpdateCheckRun(uctx, id, conclusion, title, summary); uerr != nil {
+						slog.Default().WarnContext(ctx, "code review: update check run (non-fatal)", "err", uerr, "review", crID)
+					}
+					if rec != nil {
+						panic(rec)
+					}
+				}()
+			}
+		}
 	}
 
 	// Set up per-run directories and clone the PR head — HOST-SIDE ONLY when the
@@ -677,6 +734,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	if err != nil {
 		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)
 	}
+	// manyforge-nh6: the review posted — stamp the detail the deferred check-run
+	// update renders as its success summary (no-op for non-app connectors).
+	checkFindings = len(doc.Findings)
+	checkReviewURL = ref.URL
 
 	// Finalize in one tx: record the run as an agent_run (so ReviewBot shows in
 	// accounting), stamp tokens/cost + the run link on the review, and audit.
