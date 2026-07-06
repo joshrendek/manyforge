@@ -53,6 +53,13 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
         Allow a private / loopback base URL (self-host only)
       </label>
 
+      <div class="mf-field">
+        <label for="cred-lanes">Max concurrent review lanes</label>
+        <input id="cred-lanes" class="mf-input" type="number" min="1" max="16" step="1" data-testid="cred-lanes"
+               name="max_concurrent_lanes" aria-describedby="cred-lanes-hint" [(ngModel)]="maxConcurrentLanes" [disabled]="submitting()" />
+        <small id="cred-lanes-hint" class="mf-hint">How many code-review lanes may hit this endpoint at once. A single-GPU self-host: 1; cloud: 4.</small>
+      </div>
+
       @if (error()) {
         <p class="mf-err" data-testid="credential-form-error">{{ error() }}</p>
       }
@@ -79,6 +86,7 @@ export class CredentialFormComponent {
   defaultModel = '';
   baseUrl = '';
   allowPrivateBaseUrl = false;
+  maxConcurrentLanes = 4;
 
   submitting = signal(false);
   error = signal('');
@@ -110,6 +118,7 @@ export class CredentialFormComponent {
         default_model: this.defaultModel.trim(),
         base_url: this.baseUrl.trim() || undefined,
         allow_private_base_url: this.allowPrivateBaseUrl,
+        max_concurrent_lanes: Math.min(16, Math.max(1, Math.round(Number(this.maxConcurrentLanes) || 4))),
       })
       .subscribe({
         next: (c) => {

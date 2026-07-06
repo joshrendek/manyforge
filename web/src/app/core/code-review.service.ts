@@ -89,6 +89,8 @@ export interface ReviewDimension {
   dimension: string;
   provider?: string; // "" ⇒ use the review's default resolved credential
   model: string;
+  fallback_provider?: string; // "" ⇒ no fallback for this lane
+  fallback_model?: string;
   prompt: string;
   scope_globs: string[];
   min_severity: FindingSeverity;
@@ -101,6 +103,8 @@ export interface ReviewDimensionInput {
   dimension: string;
   provider: string;
   model: string;
+  fallback_provider: string;
+  fallback_model: string;
   prompt: string;
   scope_globs: string[];
   min_severity: FindingSeverity;

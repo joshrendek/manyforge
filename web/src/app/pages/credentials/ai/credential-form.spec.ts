@@ -41,6 +41,22 @@ describe('CredentialFormComponent', () => {
     expect(saved).toBe(true);
   });
 
+  it('sends the endpoint max_concurrent_lanes in the create payload', () => {
+    const c = fixture.componentInstance;
+    c.provider.set('vllm');
+    c.apiKey = 'lmstudio';
+    c.defaultModel = 'ornith-1.0-9b';
+    c.baseUrl = 'http://192.168.2.241:1234/v1';
+    c.maxConcurrentLanes = 1; // single-GPU self-host
+    c.submit();
+    const req = http.expectOne('/api/v1/businesses/b1/ai_credentials');
+    expect(req.request.body).toEqual(expect.objectContaining({ max_concurrent_lanes: 1 }));
+    req.flush({
+      id: 'c1', business_id: 'b1', provider: 'vllm', base_url: 'http://192.168.2.241:1234/v1',
+      default_model: 'ornith-1.0-9b', allow_private_base_url: true, max_concurrent_lanes: 1, created_at: '', updated_at: '',
+    });
+  });
+
   it('prefills the OpenRouter base URL when openrouter is selected', () => {
     const c = fixture.componentInstance;
     expect(c.baseUrl).toBe('');
