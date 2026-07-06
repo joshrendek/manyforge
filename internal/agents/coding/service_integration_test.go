@@ -135,6 +135,11 @@ type githubStub struct {
 	prJSON      []byte // canned PR response
 	reviewPosts [][]byte
 	postCount   atomic.Int64
+	// manyforge-nh6: check-run activity (create + update bodies).
+	checkRunCreates [][]byte
+	checkRunUpdates [][]byte
+	checkCreateN    atomic.Int64
+	checkUpdateN    atomic.Int64
 }
 
 // startGitHubStub creates an httptest server that:
@@ -163,6 +168,31 @@ func startGitHubStub(t *testing.T, prJSON []byte) (*httptest.Server, *githubStub
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id": 42, "html_url": "https://github.com/o/r/pull/1#pullrequestreview-42"}`))
+			return
+		}
+		http.NotFound(w, r)
+	})
+	// manyforge-nh6: check-run create (POST, exact path) + update (PATCH, subtree).
+	mux.HandleFunc("/repos/o/r/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			stub.checkRunCreates = append(stub.checkRunCreates, body)
+			stub.checkCreateN.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id": 7001}`))
+			return
+		}
+		http.NotFound(w, r)
+	})
+	mux.HandleFunc("/repos/o/r/check-runs/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			body, _ := io.ReadAll(r.Body)
+			stub.checkRunUpdates = append(stub.checkRunUpdates, body)
+			stub.checkUpdateN.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id": 7001}`))
 			return
 		}
 		http.NotFound(w, r)

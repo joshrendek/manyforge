@@ -218,3 +218,76 @@ func TestChangedFiles(t *testing.T) {
 		t.Fatalf("a.go lines 1,2 expected commentable; got %v", a.Commentable)
 	}
 }
+
+// manyforge-nh6: check-run posting (the "review in progress" PR signal).
+
+func TestCreateCheckRun(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		if r.Header.Get("Authorization") != "Bearer tkn" {
+			t.Errorf("missing or incorrect auth header")
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":99}`))
+	})
+	id, err := c.CreateCheckRun(t.Context(), "manyforge review", "abc123")
+	if err != nil || id != 99 {
+		t.Fatalf("got id=%d err=%v", id, err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/repos/o/r/check-runs" {
+		t.Errorf("got %s %s, want POST /repos/o/r/check-runs", gotMethod, gotPath)
+	}
+	if gotBody["status"] != "in_progress" || gotBody["head_sha"] != "abc123" || gotBody["name"] != "manyforge review" {
+		t.Errorf("body = %+v", gotBody)
+	}
+}
+
+// A PAT-backed client gets 403 (only Apps may create check runs); the method must
+// surface that as an error so the caller can degrade gracefully (manyforge-nh6).
+func TestCreateCheckRun_ForbiddenIsError(t *testing.T) {
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+	if _, err := c.CreateCheckRun(t.Context(), "manyforge review", "abc"); err == nil {
+		t.Fatal("expected error for 403 (missing checks:write)")
+	}
+}
+
+// A 2xx with an unparseable body must be an error, not a silent id=0 that a later
+// UpdateCheckRun would target wrongly (PR #20 review).
+func TestCreateCheckRun_DecodeFailureIsError(t *testing.T) {
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{not json`))
+	})
+	if _, err := c.CreateCheckRun(t.Context(), "manyforge review", "abc"); err == nil {
+		t.Fatal("expected error for undecodable 2xx body")
+	}
+}
+
+func TestUpdateCheckRun(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	c := newStubClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	if err := c.UpdateCheckRun(t.Context(), 99, "success", "done", "all good"); err != nil {
+		t.Fatalf("err %v", err)
+	}
+	if gotMethod != http.MethodPatch || gotPath != "/repos/o/r/check-runs/99" {
+		t.Errorf("got %s %s, want PATCH /repos/o/r/check-runs/99", gotMethod, gotPath)
+	}
+	if gotBody["status"] != "completed" || gotBody["conclusion"] != "success" {
+		t.Errorf("body = %+v", gotBody)
+	}
+	out, _ := gotBody["output"].(map[string]any)
+	if out["title"] != "done" || out["summary"] != "all good" {
+		t.Errorf("output = %+v", out)
+	}
+}

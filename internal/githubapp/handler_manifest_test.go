@@ -112,6 +112,31 @@ func TestManifestRouteReturnsJSONForOperator(t *testing.T) {
 	}
 }
 
+// manyforge-nh6: the App manifest must request checks:write so newly created Apps
+// can post the "review in progress" Check Run. Pins the full default permission set.
+func TestManifestRequestsCheckWritePermission(t *testing.T) {
+	h := &Handler{PublicBaseURL: "https://hub.example.com"}
+	raw, err := h.manifestJSON()
+	if err != nil {
+		t.Fatalf("manifestJSON: %v", err)
+	}
+	var m struct {
+		DefaultPermissions map[string]string `json:"default_permissions"`
+	}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	want := map[string]string{"contents": "read", "pull_requests": "write", "checks": "write", "metadata": "read"}
+	if len(m.DefaultPermissions) != len(want) {
+		t.Fatalf("default_permissions = %v, want exactly %v", m.DefaultPermissions, want)
+	}
+	for k, v := range want {
+		if m.DefaultPermissions[k] != v {
+			t.Errorf("default_permissions[%q] = %q, want %q", k, m.DefaultPermissions[k], v)
+		}
+	}
+}
+
 // test helper: inject a principal into the request context via the exported setter.
 func withPrincipalMW(pid uuid.UUID) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

@@ -257,6 +257,78 @@ func (c *client) PostReview(ctx context.Context, prNumber int, r connectors.Revi
 	}, nil
 }
 
+// CreateCheckRun opens an in-progress check run on headSHA and returns its id
+// (manyforge-nh6). Only a GitHub App identity (with checks:write) can create check
+// runs; GitHub rejects a non-App (PAT/user) token — callers treat that, and any
+// other non-2xx, as non-fatal (a progress signal must never fail the review).
+func (c *client) CreateCheckRun(ctx context.Context, name, headSHA string) (int64, error) {
+	url := fmt.Sprintf("%s/repos/%s/check-runs", c.apiBase, c.repo)
+	payload, err := json.Marshal(map[string]any{
+		"name":     name,
+		"head_sha": headSHA,
+		"status":   "in_progress",
+	})
+	if err != nil {
+		return 0, fmt.Errorf("github: marshal check run: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return 0, fmt.Errorf("github: build create check run request: %w", err)
+	}
+	req.Header.Set("Authorization", c.authHeader())
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("github: create check run: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode/100 != 2 {
+		return 0, fmt.Errorf("github: create check run status %d", resp.StatusCode)
+	}
+	var body struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, fmt.Errorf("github: decode check run: %w", err)
+	}
+	return body.ID, nil
+}
+
+// UpdateCheckRun completes a check run with the given conclusion + rendered output
+// (manyforge-nh6). Non-2xx is returned to the caller, which treats it as non-fatal.
+func (c *client) UpdateCheckRun(ctx context.Context, id int64, conclusion, title, summary string) error {
+	url := fmt.Sprintf("%s/repos/%s/check-runs/%d", c.apiBase, c.repo, id)
+	payload, err := json.Marshal(map[string]any{
+		"status":     "completed",
+		"conclusion": conclusion,
+		"output":     map[string]any{"title": title, "summary": summary},
+	})
+	if err != nil {
+		return fmt.Errorf("github: marshal check run update: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("github: build update check run request: %w", err)
+	}
+	req.Header.Set("Authorization", c.authHeader())
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("github: update check run: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("github: update check run status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // BasicAuthHeader builds the Authorization header value used for host-side git clone auth.
 // The format is the git credential helper extraHeader format used with http.extraHeader.
 func BasicAuthHeader(token string) string {

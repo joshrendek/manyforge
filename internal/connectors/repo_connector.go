@@ -20,6 +20,22 @@ type RepoConnector interface {
 	PostReview(ctx context.Context, prNumber int, r Review) (ReviewRef, error)
 }
 
+// CheckRunPoster is an OPTIONAL connector capability (manyforge-nh6): posting a
+// GitHub Check Run that signals "manyforge is reviewing this PR" while the review
+// runs, then resolving it to success/failure when the run finishes. Only a GitHub
+// App identity (with checks:write) can create check runs — GitHub rejects a non-App
+// (PAT) token — so runJob attempts this ONLY for app-backed connectors and treats
+// every check-run error as non-fatal: a status nicety must never fail or block the
+// review itself.
+type CheckRunPoster interface {
+	// CreateCheckRun opens an in-progress check run named `name` anchored to
+	// `headSHA`, returning the check-run id for a later UpdateCheckRun.
+	CreateCheckRun(ctx context.Context, name, headSHA string) (int64, error)
+	// UpdateCheckRun completes the check run: conclusion is "success" | "failure"
+	// | "neutral"; title/summary render in the PR's Checks tab.
+	UpdateCheckRun(ctx context.Context, id int64, conclusion, title, summary string) error
+}
+
 // ChangedFile is one file of a PR diff: its new-version path, the raw unified-diff
 // patch text (the files[].patch field; "" for binary or GitHub-omitted patches),
 // and the set of new-side line numbers that are valid inline-comment targets.
