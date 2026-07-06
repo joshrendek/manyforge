@@ -175,8 +175,8 @@ describe('CodeReviewDetailComponent', () => {
       ],
       findings_count: 3,
       dimension_runs: [
-        { dimension: 'security', status: 'succeeded', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 2 },
-        { dimension: 'correctness', status: 'succeeded', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 1 },
+        { dimension: 'security', status: 'succeeded', model: 'deepseek/deepseek-v4-pro', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 2 },
+        { dimension: 'correctness', status: 'succeeded', model: 'openai/gpt-5.5', tokens_in: 1, tokens_out: 1, cost_cents: 0, finding_count: 1 },
       ],
     }));
     const groups = qAll('[data-testid="dimension-group"]');
@@ -186,6 +186,9 @@ describe('CodeReviewDetailComponent', () => {
     const correctness = headers.find((h) => h.toLowerCase().includes('correctness'));
     expect(security).toContain('2');
     expect(correctness).toContain('1');
+    // Each dimension header shows the model that lane ran on (from dimension_runs).
+    expect(security).toContain('deepseek/deepseek-v4-pro');
+    expect(correctness).toContain('openai/gpt-5.5');
     // Every finding still renders a row (shared row markup), 3 total across the groups.
     expect(qAll('[data-testid="finding-row"]').length).toBe(3);
   });

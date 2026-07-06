@@ -480,6 +480,8 @@ type Querier interface {
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
 	// ListCodeReviews returns the business's reviews newest-first for the history UI.
+	// LEFT JOIN repo_connector so each row can show its repo (owner/name) in the list
+	// without an O(n) per-row connector resolve; a deleted connector yields a NULL repo.
 	ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]ListCodeReviewsRow, error)
 	// ListCompanies is the first (unkeyed) page of a tenant's companies, ordered by name
 	// for a stable keyset.

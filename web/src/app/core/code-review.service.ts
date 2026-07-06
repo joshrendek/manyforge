@@ -62,6 +62,7 @@ export interface CodeReview {
   review_url: string;
   pr_number: number;
   model: string;
+  repo?: string;
   findings: Finding[];
   findings_count: number;
   cost_cents: number;

@@ -316,7 +316,7 @@ describe('CodeReviewListComponent', () => {
     mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
       items: [{
         id: 'r1', status: 'succeeded', summary: '', review_url: '', pr_number: 7,
-        model: 'google/gemini-2.5-pro',
+        model: 'google/gemini-2.5-pro', repo: 'acme/api',
         findings: [], findings_count: 3, cost_cents: 825,
         created_at: '2026-06-20T12:00:00Z', posted_at: null,
       }],
@@ -328,6 +328,9 @@ describe('CodeReviewListComponent', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].textContent).toContain('7');  // PR number
     expect(rows[0].textContent).toContain('3');  // findings_count
+    // The repo is shown in its own column.
+    const repoCell = rows[0].querySelector('[data-testid="review-repo"]');
+    expect(repoCell?.textContent).toContain('acme/api');
     // The model used for the review is shown in its own column.
     const modelCell = rows[0].querySelector('[data-testid="review-model"]');
     expect(modelCell?.textContent).toContain('google/gemini-2.5-pro');

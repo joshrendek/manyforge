@@ -58,11 +58,15 @@ SELECT * FROM code_review WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc
 
 -- ListCodeReviews returns the business's reviews newest-first for the history UI.
 -- name: ListCodeReviews :many
-SELECT id, repo_connector_id, pr_number, status, summary, findings,
-       external_review_ref, created_at, posted_at, model, cost_cents, progress
-FROM code_review
-WHERE business_id = $1
-ORDER BY created_at DESC
+-- LEFT JOIN repo_connector so each row can show its repo (owner/name) in the list
+-- without an O(n) per-row connector resolve; a deleted connector yields a NULL repo.
+SELECT cr.id, cr.repo_connector_id, cr.pr_number, cr.status, cr.summary, cr.findings,
+       cr.external_review_ref, cr.created_at, cr.posted_at, cr.model, cr.cost_cents, cr.progress,
+       rc.repo
+FROM code_review cr
+LEFT JOIN repo_connector rc ON rc.id = cr.repo_connector_id
+WHERE cr.business_id = $1
+ORDER BY cr.created_at DESC
 LIMIT 200;
 
 -- NOTE: claim/requeue/fail are NOT sqlc queries. The CodeReviewWorker is a system
