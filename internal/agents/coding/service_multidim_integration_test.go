@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -48,6 +50,71 @@ func (r *perDimRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox
 		"review.json": data,
 		"usage.json":  []byte(usage),
 	}}, nil
+}
+
+// overlapRunner records the maximum number of Run calls in flight at once, to prove
+// dimension lanes execute concurrently and never exceed maxConcurrentLanes
+// (manyforge-w54). It is stateless apart from the two atomics, so it is safe to
+// invoke from many goroutines.
+type overlapRunner struct {
+	inFlight atomic.Int32
+	maxSeen  atomic.Int32
+}
+
+func (r *overlapRunner) Run(_ context.Context, _ sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	n := r.inFlight.Add(1)
+	for { // publish the running max
+		m := r.maxSeen.Load()
+		if n <= m || r.maxSeen.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	time.Sleep(60 * time.Millisecond) // hold the slot so sibling lanes overlap
+	r.inFlight.Add(-1)
+	doc, _ := json.Marshal(map[string]any{
+		"summary":  "s",
+		"findings": []map[string]any{{"file": "main.go", "line": 1, "severity": "error", "title": "t", "detail": "d"}},
+	})
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{"review.json": doc}}, nil
+}
+
+// TestCodeReviewLanesRunInParallel pins that a multi-dimension review fans out
+// concurrently (manyforge-w54): with 5 dimensions all reviewing everything, at
+// least 2 lanes overlap, and the fan-out never exceeds maxConcurrentLanes. Run
+// under -race, it also guards the indexed-write result collection against races.
+func TestCodeReviewLanesRunInParallel(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+
+	// 5 dimensions, all with nil scope globs so every lane actually runs (nothing skipped).
+	for i, d := range []string{"security", "correctness", "performance", "tests", "docs"} {
+		seedReviewDimension(ctx, t, tdb, seed.businessID, d, "DIMPROMPT:"+d, "info", nil, i+1)
+	}
+
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+	runner := &overlapRunner{}
+	svc := buildService(t, tdb, env, runner, fakeCred)
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	if err := svc.runJob(ctx, claimed, nil); err != nil {
+		t.Fatalf("runJob: %v", err)
+	}
+
+	if maxN := runner.maxSeen.Load(); maxN < 2 {
+		t.Fatalf("lanes must run in parallel: max concurrent Run = %d, want >= 2", maxN)
+	} else if maxN > maxConcurrentLanes {
+		t.Fatalf("max concurrent Run = %d exceeds the cap maxConcurrentLanes=%d", maxN, maxConcurrentLanes)
+	}
 }
 
 // seedReviewDimension inserts a configured review_dimension row for a business via the superuser
@@ -109,6 +176,13 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 	}
 	if got.Status != "succeeded" {
 		t.Fatalf("want succeeded, got %s", got.Status)
+	}
+
+	// vv6: a multi-dimension review stamps the "panel" sentinel on the top-level
+	// model, not the agent's single default model (which no lane necessarily ran) —
+	// the per-lane models live in dimension_runs.
+	if got.Model != "panel" {
+		t.Errorf("multi-dim review model = %q, want the \"panel\" sentinel (vv6)", got.Model)
 	}
 
 	// Findings from the two ran lanes are present and tagged by dimension.

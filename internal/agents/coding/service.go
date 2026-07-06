@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/connectors"
@@ -265,6 +266,28 @@ func (s *CodeReviewService) Enqueue(
 // reviewCheckRunName is the GitHub Check Run name shown in the PR's Checks tab
 // while an app-backed review runs (manyforge-nh6).
 const reviewCheckRunName = "manyforge review"
+
+// maxConcurrentLanes bounds how many dimension-review lanes run at once
+// (manyforge-w54). Each lane is its own sandbox container (a Job/pod in kube
+// mode), so this caps the simultaneous pod fan-out for a many-dimension panel.
+const maxConcurrentLanes = 4
+
+// reviewModelPanel is the code_review.model sentinel for a multi-dimension review
+// (manyforge-vv6): there is no single model, so the UI renders it as a multi-model
+// panel and reads the real per-lane models from dimension_runs.
+const reviewModelPanel = "panel"
+
+// reviewModelLabel is the value stamped on code_review.model. A single-lane review
+// records the resolved model; a multi-dimension panel records the panel sentinel
+// instead of the review agent's default model (which no lane necessarily ran, and
+// which previously misled the review list into showing one model for the whole
+// panel — manyforge-vv6).
+func reviewModelLabel(active []Dimension, resolved string) string {
+	if len(active) > 1 {
+		return reviewModelPanel
+	}
+	return resolved
+}
 
 // runJob uses a named return (retErr) so a deferred Check Run update can resolve
 // the "review in progress" signal to success/failure from whatever exit path fires.
@@ -686,15 +709,21 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		return lr
 	}
 
-	// Sequential fan-out: a single-GPU local provider can't run lanes in parallel, and cloud
-	// lanes stay cheap enough that sequential is fine for v1. A single lane writes directly to
-	// outDir (byte-for-byte the legacy path); multiple lanes each get an isolated sub-dir so
-	// their review.json / usage.json never collide.
-	laneResults := make([]laneResult, 0, len(active))
-	for _, dim := range active {
-		laneOutDir := outDir
+	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube
+	// mode each lane is its own Job/pod — bounded by maxConcurrentLanes so a
+	// many-dimension panel can't burst the cluster. Results are written BY INDEX so
+	// aggregation stays order-deterministic (aggregateReview / dedupeFindings /
+	// buildDimensionRuns depend on active's Order) regardless of completion order. A
+	// single lane still writes directly to outDir (byte-for-byte the legacy path);
+	// multiple lanes each get an isolated sub-dir so their review.json / usage.json
+	// never collide. Per-lane dirs are created BEFORE the fan-out so a mkdir failure
+	// still funnels through failJob cleanly rather than racing inside a goroutine.
+	laneResults := make([]laneResult, len(active))
+	laneOutDirs := make([]string, len(active))
+	for i, dim := range active {
+		laneOutDirs[i] = outDir
 		if len(active) > 1 {
-			laneOutDir = filepath.Join(outDir, "lane-"+dim.Key)
+			laneOutDir := filepath.Join(outDir, "lane-"+dim.Key)
 			// Host materialization only applies when the docker/off runner shares a
 			// host output directory; KubeRunner ignores OutputDir entirely and the
 			// distroless app pod couldn't create this anyway (s.ClonesInSandbox).
@@ -706,9 +735,21 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 					return s.failJob(ctx, principalID, businessID, crID, prNumber, err)
 				}
 			}
+			laneOutDirs[i] = laneOutDir
 		}
-		laneResults = append(laneResults, reviewLane(dim, laneOutDir))
 	}
+	var g errgroup.Group
+	g.SetLimit(maxConcurrentLanes)
+	for i, dim := range active {
+		g.Go(func() error {
+			// reviewLane captures its own failures in laneResult.Err; the goroutine
+			// never returns an error, so aggregateReview still sees every lane's
+			// outcome (a failed lane is a skipped/failed dimension, not a dropped one).
+			laneResults[i] = reviewLane(dim, laneOutDirs[i])
+			return nil
+		})
+	}
+	_ = g.Wait()
 
 	doc, tokensIn, tokensOut, costCents, aggErr := aggregateReview(laneResults)
 	if aggErr != nil {
@@ -772,7 +813,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			TokensOut:         tokensOut,
 			CostCents:         costCents,
 			DimensionRuns:     dimRunsJSON,
-			Model:             cred.Model, // fable M2: stamp the resolved review model (app reviews enqueue with model='')
+			Model:             reviewModelLabel(active, cred.Model), // fable M2 + vv6: single-lane stamps the resolved model; a multi-dim panel stamps the "panel" sentinel
 			AgentRunID:        pgtype.UUID{Bytes: runID, Valid: true},
 		})
 		if uerr != nil {
