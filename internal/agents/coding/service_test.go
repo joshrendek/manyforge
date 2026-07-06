@@ -399,6 +399,7 @@ func TestReviewModelLabel(t *testing.T) {
 	}{
 		{"no dimensions (default lane)", nil, "glm-5.2", "glm-5.2"},
 		{"single dimension, no own model", []Dimension{dim("")}, "glm-5.2", "glm-5.2"},
+		{"single dimension, whitespace-only model", []Dimension{dim("   ")}, "glm-5.2", "glm-5.2"},
 		{"single dimension, own model", []Dimension{dim("openai/gpt-5.5")}, "glm-5.2", "openai/gpt-5.5"},
 		{"multi-dimension panel", []Dimension{dim("openai/gpt-5.5"), dim("deepseek/deepseek-v4-pro")}, "glm-5.2", "panel"},
 	}

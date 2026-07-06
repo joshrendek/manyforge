@@ -220,7 +220,6 @@ import { runStatusTone } from '../../ui/status';
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     data-testid="review-model"
                     [title]="r.model === 'panel' ? 'Multi-model panel — see per-dimension models in the review detail' : r.model"
-                    [attr.aria-label]="r.model === 'panel' ? 'Multi-model panel; see per-dimension models in the review detail' : null"
                     >{{ r.model === 'panel' ? 'Panel' : (r.model || '—') }}</span>
               <span style="width:64px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
               <span style="width:72px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)"

@@ -224,6 +224,7 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 	var runs []struct {
 		Dimension    string `json:"dimension"`
 		Status       string `json:"status"`
+		Model        string `json:"model"`
 		FindingCount int    `json:"finding_count"`
 		CostCents    int64  `json:"cost_cents"`
 		TokensIn     int64  `json:"tokens_in"`
@@ -232,15 +233,23 @@ func TestCodeReviewMultiDimensionFanout(t *testing.T) {
 		t.Fatalf("unmarshal DimensionRuns %q: %v", got.DimensionRuns, err)
 	}
 	byDim := map[string]string{}
+	byModel := map[string]string{}
 	var byCost map[string]int64 = map[string]int64{}
 	var byTokensIn map[string]int64 = map[string]int64{}
 	for _, r := range runs {
 		byDim[r.Dimension] = r.Status
+		byModel[r.Dimension] = r.Model
 		byCost[r.Dimension] = r.CostCents
 		byTokensIn[r.Dimension] = r.TokensIn
 	}
 	if byDim["security"] != "succeeded" || byDim["correctness"] != "succeeded" {
 		t.Fatalf("ran lanes must be recorded succeeded; got %v", byDim)
+	}
+	// vv6: the top-level model is the "panel" sentinel, but the REAL per-lane models
+	// are preserved in dimension_runs (here the resolved "m", since these dims carry
+	// no own model). That's the split the panel sentinel relies on.
+	if byModel["security"] != "m" || byModel["correctness"] != "m" {
+		t.Errorf("per-lane models must be preserved in dimension_runs; got %v (top-level model=%q)", byModel, got.Model)
 	}
 	if byDim["ui"] != "skipped" {
 		t.Fatalf("the scoped-out ui dimension must be recorded as skipped, not silently dropped; got %v", byDim)

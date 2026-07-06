@@ -224,7 +224,11 @@ func TestRunJobAppBacked_LanePanicFailsCleanly(t *testing.T) {
 		t.Errorf("check-run conclusion = %v, want failure", updated["conclusion"])
 	}
 	// The review row is marked failed (not stuck running).
-	if got, gerr := svc.Get(ctx, ic.AgentPrincipalID, ic.BusinessID, reviewID); gerr == nil && got.Status != "failed" {
+	got, gerr := svc.Get(ctx, ic.AgentPrincipalID, ic.BusinessID, reviewID)
+	if gerr != nil {
+		t.Fatalf("Get: %v", gerr)
+	}
+	if got.Status != "failed" {
 		t.Errorf("review status = %q, want failed", got.Status)
 	}
 }
