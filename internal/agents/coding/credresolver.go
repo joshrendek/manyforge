@@ -125,6 +125,6 @@ func (r *AgentCredResolver) Resolve(ctx context.Context, principalID, businessID
 		Model:               model,
 		Provider:            ag.Provider,
 		AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
-		MaxConcurrentLanes:  ag.MaxConcurrentLanes,
+		MaxConcurrentLanes:  rc.MaxConcurrentLanes,
 	}, nil
 }

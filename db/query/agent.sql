@@ -20,7 +20,7 @@ RETURNING id;
 INSERT INTO agent (
     id, business_id, tenant_root_id, principal_id, name, provider, model,
     system_prompt, allowed_tools, autonomy_mode, enabled, monthly_budget_cents,
-    allowed_mcp_servers, retriage_on_reply, web_allowed_domains, max_concurrent_lanes,
+    allowed_mcp_servers, retriage_on_reply, web_allowed_domains,
     created_at, updated_at)
 SELECT
     sqlc.arg('id')::uuid,
@@ -38,7 +38,6 @@ SELECT
     sqlc.arg('allowed_mcp_servers')::uuid[],
     sqlc.arg('retriage_on_reply')::boolean,
     sqlc.arg('web_allowed_domains')::text[],
-    sqlc.arg('max_concurrent_lanes')::integer,
     now(), now()
 FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid
@@ -72,7 +71,6 @@ UPDATE agent SET
     allowed_mcp_servers  = COALESCE(sqlc.narg('allowed_mcp_servers')::uuid[], allowed_mcp_servers),
     retriage_on_reply    = COALESCE(sqlc.narg('retriage_on_reply')::boolean, retriage_on_reply),
     web_allowed_domains  = COALESCE(sqlc.narg('web_allowed_domains')::text[], web_allowed_domains),
-    max_concurrent_lanes = COALESCE(sqlc.narg('max_concurrent_lanes')::integer, max_concurrent_lanes),
     updated_at           = now()
 WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid
 RETURNING *;

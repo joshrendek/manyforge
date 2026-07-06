@@ -16,15 +16,19 @@ import (
 // review's default resolved credential" — so a zero-config business runs every default
 // dimension on the triggering agent's model, differing only by prompt + scope.
 type Dimension struct {
-	Key         string   // stable id: security|correctness|performance|ui|docs|tests
-	Label       string   // display label, e.g. "Security"
-	Provider    string   // resolves the per-provider BYO credential; "" ⇒ default
-	Model       string   // "" ⇒ default (the review's resolved model)
-	Prompt      string   // review instructions for this lane (reviewSchemaLine is appended by the caller)
-	ScopeGlobs  []string // file globs (doublestar); empty ⇒ all files
-	MinSeverity string   // "info" | "warning" | "error" — floor below which findings are dropped
-	Enabled     bool
-	Order       int
+	Key      string // stable id: security|correctness|performance|ui|docs|tests
+	Label    string // display label, e.g. "Security"
+	Provider string // resolves the per-provider BYO credential; "" ⇒ default
+	Model    string // "" ⇒ default (the review's resolved model)
+	// FallbackProvider/FallbackModel are tried when the primary endpoint fails the
+	// liveness probe (manyforge-azy). "" FallbackProvider ⇒ no fallback for this lane.
+	FallbackProvider string
+	FallbackModel    string
+	Prompt           string   // review instructions for this lane (reviewSchemaLine is appended by the caller)
+	ScopeGlobs       []string // file globs (doublestar); empty ⇒ all files
+	MinSeverity      string   // "info" | "warning" | "error" — floor below which findings are dropped
+	Enabled          bool
+	Order            int
 }
 
 // SkippedDimension records a configured dimension that did not run this review, with why
