@@ -385,3 +385,29 @@ func TestSandboxEnv(t *testing.T) {
 		t.Fatalf("env = %+v", env)
 	}
 }
+
+// TestReviewModelLabel pins the model stamped on code_review.model per lane count
+// (manyforge-vv6, PR #23 review): single-lane records the effective model, a
+// multi-dimension panel records the sentinel.
+func TestReviewModelLabel(t *testing.T) {
+	dim := func(model string) Dimension { return Dimension{Key: "security", Model: model} }
+	cases := []struct {
+		name     string
+		active   []Dimension
+		resolved string
+		want     string
+	}{
+		{"no dimensions (default lane)", nil, "glm-5.2", "glm-5.2"},
+		{"single dimension, no own model", []Dimension{dim("")}, "glm-5.2", "glm-5.2"},
+		{"single dimension, whitespace-only model", []Dimension{dim("   ")}, "glm-5.2", "glm-5.2"},
+		{"single dimension, own model", []Dimension{dim("openai/gpt-5.5")}, "glm-5.2", "openai/gpt-5.5"},
+		{"multi-dimension panel", []Dimension{dim("openai/gpt-5.5"), dim("deepseek/deepseek-v4-pro")}, "glm-5.2", "panel"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := reviewModelLabel(c.active, c.resolved); got != c.want {
+				t.Errorf("reviewModelLabel(%d dims) = %q, want %q", len(c.active), got, c.want)
+			}
+		})
+	}
+}

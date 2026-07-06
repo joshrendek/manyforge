@@ -336,6 +336,31 @@ describe('CodeReviewListComponent', () => {
     expect(costCell?.textContent).toContain('$8.25');
   });
 
+  // vv6: a multi-dimension review carries the "panel" model sentinel; the list
+  // renders it as "Panel" (per-dimension models live on the detail page) rather
+  // than a misleading single model name.
+  it('renders a multi-model panel review as "Panel"', () => {
+    const f = TestBed.createComponent(CodeReviewListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
+    mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
+      items: [{
+        id: 'rp', status: 'succeeded', summary: '', review_url: '', pr_number: 9,
+        model: 'panel',
+        findings: [], findings_count: 0, cost_cents: 0,
+        created_at: '2026-06-20T12:00:00Z', posted_at: null,
+      }],
+    });
+    mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
+    f.detectChanges();
+
+    const modelCell = f.nativeElement.querySelector('[data-testid="review-model"]');
+    expect(modelCell?.textContent?.trim()).toBe('Panel');
+    expect(modelCell?.getAttribute('title')).toContain('Multi-model panel');
+  });
+
   // ── History + polling (fake timers scoped to this nested describe) ────────────
 
   describe('polling', () => {
