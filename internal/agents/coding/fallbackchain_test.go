@@ -62,3 +62,13 @@ func TestChooseReviewbot(t *testing.T) {
 		t.Fatalf("all-stale: want ErrValidation, got %v", err)
 	}
 }
+
+// TestResolveReviewChain_DBErrorDegradesToNil pins the intentional degradation: a DB
+// failure loading review_config must NOT brick reviews — resolveReviewChain logs and
+// returns nil so runJob falls back to the single enqueued agent (no chain, no error).
+func TestResolveReviewChain_DBErrorDegradesToNil(t *testing.T) {
+	s := &CodeReviewService{DB: fakeServiceDB{}} // WithPrincipal returns errFakeDB without running fn
+	if got := s.resolveReviewChain(context.Background(), uuid.New(), uuid.New()); got != nil {
+		t.Fatalf("a DB error must degrade to a nil chain, got %v", got)
+	}
+}

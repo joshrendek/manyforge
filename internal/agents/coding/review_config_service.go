@@ -237,18 +237,20 @@ func (s *ReviewDimensionService) UpsertConfig(ctx context.Context, principalID, 
 	if perr != nil {
 		return ReviewConfigView{}, perr
 	}
+	// A chain is an ordered set — dedupe (first-seen order) before validating/storing so a
+	// repeated id isn't persisted (chooseReviewbot would just probe it twice).
+	chain = distinctUUIDs(chain)
 	var view ReviewConfigView
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
-		// Reject a chain that names an agent this caller can't see (unknown or foreign).
-		// Count distinct ids under RLS: a mismatch means at least one id doesn't resolve.
+		// Reject a chain that names an agent this caller can't see (unknown or foreign): a
+		// count mismatch means at least one id doesn't resolve under RLS.
 		if len(chain) > 0 {
-			distinct := distinctUUIDs(chain)
-			n, cerr := q.CountAgentsInBusiness(ctx, dbgen.CountAgentsInBusinessParams{Ids: distinct, BusinessID: businessID})
+			n, cerr := q.CountAgentsInBusiness(ctx, dbgen.CountAgentsInBusinessParams{Ids: chain, BusinessID: businessID})
 			if cerr != nil {
 				return cerr
 			}
-			if int(n) != len(distinct) {
+			if int(n) != len(chain) {
 				return fmt.Errorf("coding: review_agent_chain references an unknown agent: %w", errs.ErrValidation)
 			}
 		}

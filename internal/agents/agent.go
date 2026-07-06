@@ -53,6 +53,8 @@ type Agent struct {
 	AllowedMCPServers  []uuid.UUID
 	RetriageOnReply    bool
 	WebAllowedDomains  []string
+	// MaxConcurrentLanes bounds how many code-review dimension lanes this agent runs at
+	// once when it is the review's resolved reviewbot (1–16; DB default 4).
 	MaxConcurrentLanes int
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -90,7 +92,7 @@ type UpdateAgentInput struct {
 	AllowedMCPServers  *[]uuid.UUID
 	RetriageOnReply    *bool
 	WebAllowedDomains  *[]string
-	MaxConcurrentLanes *int
+	MaxConcurrentLanes *int // nil = unchanged (PATCH); 1–16 when set
 }
 
 func validateCreateAgent(in CreateAgentInput) error {

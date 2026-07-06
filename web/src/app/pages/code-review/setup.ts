@@ -248,8 +248,8 @@ function catalogLabel(key: string): string {
             <option value="per_dimension">One review per dimension</option>
           </select>
         </div>
-        <div class="mf-field">
-          <div style="font-weight:500;margin-bottom:2px">Reviewbot fallback chain</div>
+        <fieldset class="mf-field" style="border:none;padding:0;margin:0;min-inline-size:auto">
+          <legend style="font-weight:500;margin-bottom:2px;padding:0">Reviewbot fallback chain</legend>
           <small class="mf-hint" style="display:block">Ordered — the first reachable bot reviews; if it's down, the next one does.
             Empty means no fallback (the triggering agent reviews).</small>
           <div data-testid="chain-list" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
@@ -258,11 +258,11 @@ function catalogLabel(key: string): string {
                 <span style="min-width:20px;color:var(--mf-text-muted)">{{ i + 1 }}.</span>
                 <span style="flex:1" [attr.data-testid]="'chain-name-' + i">{{ agentName(id) }}</span>
                 <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-up-' + i"
-                        [disabled]="i === 0" (click)="moveChain(i, -1)" aria-label="Move up">↑</button>
+                        [disabled]="i === 0" (click)="moveChain(i, -1)" [attr.aria-label]="'Move ' + agentName(id) + ' up'">↑</button>
                 <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-down-' + i"
-                        [disabled]="i === config().review_agent_chain.length - 1" (click)="moveChain(i, 1)" aria-label="Move down">↓</button>
+                        [disabled]="i === config().review_agent_chain.length - 1" (click)="moveChain(i, 1)" [attr.aria-label]="'Move ' + agentName(id) + ' down'">↓</button>
                 <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-remove-' + i"
-                        (click)="removeFromChain(id)">Remove</button>
+                        (click)="removeFromChain(id)" [attr.aria-label]="'Remove ' + agentName(id) + ' from the fallback chain'">Remove</button>
               </div>
             }
             @if (config().review_agent_chain.length === 0) {
@@ -271,6 +271,7 @@ function catalogLabel(key: string): string {
           </div>
           @if (availableAgents().length > 0) {
             <select class="mf-select" data-testid="chain-add" style="margin-top:6px;max-width:260px"
+                    aria-label="Add a reviewbot to the fallback chain"
                     [ngModel]="''" (ngModelChange)="addToChain($event)">
               <option value="" disabled>Add a reviewbot…</option>
               @for (a of availableAgents(); track a.id) {
@@ -278,7 +279,7 @@ function catalogLabel(key: string): string {
               }
             </select>
           }
-        </div>
+        </fieldset>
         <div>
           <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="config-save"
                   [disabled]="savingConfig()" (click)="saveConfig()">Save aggregation</button>

@@ -73,3 +73,16 @@ func TestHTTPProber_EmptyBaseURL(t *testing.T) {
 		t.Fatal("expected not-live for an empty base_url")
 	}
 }
+
+// TestHTTPProber_DefaultTimeout: a zero Timeout falls back to defaultProbeTimeout and the
+// probe still succeeds against a reachable endpoint (exercises the to<=0 branch).
+func TestHTTPProber_DefaultTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	p := httpProber{Timeout: 0} // ⇒ defaultProbeTimeout
+	if !p.Live(context.Background(), AICredential{Provider: "vllm", BaseURL: srv.URL + "/v1", AllowPrivateBaseURL: true}) {
+		t.Fatal("expected live with the default timeout")
+	}
+}

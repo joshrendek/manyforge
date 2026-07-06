@@ -98,8 +98,8 @@ const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter']
       <div class="mf-field">
         <label for="ag-lanes">Max concurrent review lanes</label>
         <input id="ag-lanes" class="mf-input" type="number" min="1" max="16" step="1" data-testid="agent-lanes"
-               name="max_concurrent_lanes" [(ngModel)]="maxConcurrentLanes" />
-        <small class="mf-hint">How many code-review dimensions this bot runs at once. A single-GPU self-host: 1; cloud: 4.</small>
+               name="max_concurrent_lanes" aria-describedby="ag-lanes-hint" [(ngModel)]="maxConcurrentLanes" />
+        <small id="ag-lanes-hint" class="mf-hint">How many code-review dimensions this bot runs at once. A single-GPU self-host: 1; cloud: 4.</small>
       </div>
 
       @if (mcpServers().length > 0) {

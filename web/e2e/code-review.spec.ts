@@ -373,14 +373,19 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
 
   await page.goto('/code-review/setup');
 
-  // No fallback configured initially.
+  // No fallback configured initially. The add-picker has an accessible name (a11y).
   await expect(page.getByTestId('chain-empty')).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Add a reviewbot to the fallback chain' })).toBeVisible();
 
   // Add LM Studio (primary) then Cloud (fallback) via the picker.
   await page.getByTestId('chain-add').selectOption('ag1');
   await page.getByTestId('chain-add').selectOption('ag2');
   await expect(page.getByTestId('chain-name-0')).toContainText('LM Studio');
   await expect(page.getByTestId('chain-name-1')).toContainText('Cloud');
+
+  // a11y: per-row controls carry accessible names that identify their agent (manyforge-review).
+  await expect(page.getByRole('button', { name: 'Remove LM Studio from the fallback chain' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Move Cloud up' })).toBeVisible();
 
   // Reorder: move Cloud up → it becomes primary.
   await page.getByTestId('chain-up-1').click();

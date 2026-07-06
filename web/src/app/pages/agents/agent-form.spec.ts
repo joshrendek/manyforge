@@ -126,15 +126,23 @@ describe('AgentFormComponent', () => {
     flushAgent(req, 1);
   });
 
-  it('clamps an out-of-range lanes value into [1,16] before sending', () => {
+  it('clamps/coerces every out-of-range lanes value into [1,16] before sending', () => {
     const c = fixture.componentInstance;
     c.name = 'GPU Bot';
     c.provider.set('vllm');
     c.model = 'ornith-1.0-9b';
-    c.maxConcurrentLanes = 99;
-    c.submit();
-    const req = http.expectOne('/api/v1/businesses/b1/agents');
-    expect(req.request.body).toEqual(expect.objectContaining({ max_concurrent_lanes: 16 }));
-    flushAgent(req, 16);
+    const cases: Array<[number, number]> = [
+      [99, 16], // above cap → 16
+      [-5, 1], // negative → 1
+      [0, 4], // unset/zero → default 4
+      [NaN, 4], // non-finite → default 4
+    ];
+    for (const [input, want] of cases) {
+      c.maxConcurrentLanes = input;
+      c.submit();
+      const req = http.expectOne('/api/v1/businesses/b1/agents');
+      expect(req.request.body).toEqual(expect.objectContaining({ max_concurrent_lanes: want }));
+      flushAgent(req, want);
+    }
   });
 });
