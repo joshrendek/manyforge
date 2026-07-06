@@ -93,6 +93,7 @@ func TestValidateDimensionInput(t *testing.T) {
 		"provider no model":          {Dimension: "security", MinSeverity: "info", Provider: "openai", Model: "  "},
 		"unknown fallback provider":  {Dimension: "security", MinSeverity: "info", FallbackProvider: "acme", FallbackModel: "m"},
 		"fallback provider no model": {Dimension: "security", MinSeverity: "info", FallbackProvider: "openai", FallbackModel: "  "},
+		"fallback model no provider": {Dimension: "security", MinSeverity: "info", FallbackModel: "m"},
 		"prompt too long":            {Dimension: "security", MinSeverity: "info", Prompt: strings.Repeat("x", maxDimensionPromptBytes+1)},
 	}
 	for name, in := range bad {

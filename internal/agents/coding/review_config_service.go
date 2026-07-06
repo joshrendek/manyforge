@@ -109,6 +109,10 @@ func validateDimensionInput(in ReviewDimensionInput) error {
 		if strings.TrimSpace(in.FallbackModel) == "" {
 			return fmt.Errorf("coding: fallback_model required when fallback_provider is set: %w", errs.ErrValidation)
 		}
+	} else if strings.TrimSpace(in.FallbackModel) != "" {
+		// A fallback_model with no fallback_provider is dead data — reject it rather than
+		// persist a model that never runs.
+		return fmt.Errorf("coding: fallback_model set without fallback_provider: %w", errs.ErrValidation)
 	}
 	if len(in.Prompt) > maxDimensionPromptBytes {
 		return fmt.Errorf("coding: prompt exceeds %d bytes: %w", maxDimensionPromptBytes, errs.ErrValidation)
@@ -181,7 +185,7 @@ func (s *ReviewDimensionService) UpsertDimension(ctx context.Context, principalI
 			Action:           "review_dimension.upserted",
 			TargetType:       &tt,
 			TargetID:         &row.ID,
-			Inputs:           map[string]any{"dimension": in.Dimension, "enabled": in.Enabled, "provider": in.Provider, "model": in.Model},
+			Inputs:           map[string]any{"dimension": in.Dimension, "enabled": in.Enabled, "provider": in.Provider, "model": in.Model, "fallback_provider": in.FallbackProvider, "fallback_model": in.FallbackModel},
 		})
 	})
 	if err != nil {
