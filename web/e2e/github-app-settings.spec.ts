@@ -10,6 +10,17 @@ async function auth(page: import('@playwright/test').Page) {
   await page.route('**/api/v1/businesses', (r) => r.fulfill({ json: biz }));
 }
 
+// manyforge-11e: the settings page was only reachable by typing the URL. It must
+// have a nav entry pointing at /settings/github.
+test('github app settings: reachable via a GitHub nav entry', async ({ page }) => {
+  await auth(page);
+  await page.route('**/api/v1/businesses/b1/agents', (r) => r.fulfill({ json: { items: [agent] } }));
+  await page.goto('/settings/github');
+  const navLink = page.getByTestId('nav-github');
+  await expect(navLink).toBeVisible();
+  await expect(navLink).toHaveAttribute('href', '/settings/github');
+});
+
 test('github app settings: create-app button submits manifest form to GitHub', async ({ page }) => {
   await auth(page);
   await page.route('**/api/v1/businesses/b1/agents', (r) => r.fulfill({ json: { items: [agent] } }));

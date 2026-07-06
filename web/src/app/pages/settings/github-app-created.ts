@@ -1,5 +1,5 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { GithubAppService } from '../../core/github-app.service';
 
@@ -10,7 +10,7 @@ import { GithubAppService } from '../../core/github-app.service';
 // endpoint that exchanges the code for the App's credentials (Task 6).
 @Component({
   selector: 'app-github-app-created',
-  imports: [],
+  imports: [RouterLink],
   template: `
     <div class="mf-card" data-testid="github-app-created">
       @if (state() === 'working') {
@@ -22,6 +22,9 @@ import { GithubAppService } from '../../core/github-app.service';
       @if (state() === 'error') {
         <p class="mf-err" data-testid="gh-error">{{ message() }}</p>
       }
+      <p>
+        <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/settings/github" data-testid="back-to-github-settings">Back to GitHub settings</a>
+      </p>
     </div>
   `,
 })

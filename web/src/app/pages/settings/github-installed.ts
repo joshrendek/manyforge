@@ -1,5 +1,5 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { GithubAppService } from '../../core/github-app.service';
 
@@ -12,7 +12,7 @@ import { GithubAppService } from '../../core/github-app.service';
 // business/agent come from the signed state, so the SPA sends no path params.
 @Component({
   selector: 'app-github-installed',
-  imports: [],
+  imports: [RouterLink],
   template: `
     <div class="mf-card" data-testid="github-installed">
       @if (state() === 'working') {
@@ -31,6 +31,9 @@ import { GithubAppService } from '../../core/github-app.service';
       @if (state() === 'error') {
         <p class="mf-err" data-testid="gh-error">{{ message() }}</p>
       }
+      <p>
+        <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/settings/github" data-testid="back-to-github-settings">Back to GitHub settings</a>
+      </p>
     </div>
   `,
 })

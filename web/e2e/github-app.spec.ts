@@ -59,3 +59,23 @@ test('github app created: shows error when setup params are missing', async ({ p
   await page.goto('/settings/github/app-created');
   await expect(page.getByTestId('gh-error')).toBeVisible();
 });
+
+// manyforge-11e: the success screen previously dead-ended (no way back). A
+// "Back to GitHub settings" link must return to /settings/github.
+test('github app created: back link returns to GitHub settings', async ({ page }) => {
+  await auth(page);
+  await page.route('**/api/v1/businesses/*/agents', (r) => r.fulfill({ json: { items: [] } }));
+  await page.goto('/settings/github/app-created');
+  await page.getByTestId('back-to-github-settings').click();
+  await expect(page).toHaveURL(/\/settings\/github$/);
+});
+
+// manyforge-11e: the org-linkage landing screen needs the same back link.
+test('github installed: back link returns to GitHub settings', async ({ page }) => {
+  await auth(page);
+  await page.route('**/api/v1/businesses/*/agents', (r) => r.fulfill({ json: { items: [] } }));
+  await page.goto('/settings/github/installed?setup_action=request&state=sig.tok');
+  await expect(page.getByTestId('gh-pending')).toBeVisible();
+  await page.getByTestId('back-to-github-settings').click();
+  await expect(page).toHaveURL(/\/settings\/github$/);
+});
