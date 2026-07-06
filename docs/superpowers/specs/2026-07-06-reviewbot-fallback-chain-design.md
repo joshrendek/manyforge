@@ -1,7 +1,7 @@
 # Design — Reviewbot Fallback Chain + Per-Bot Concurrency
 
 - **Date:** 2026-07-06
-- **Status:** Approved (design); implementation plan pending
+- **Status:** Implemented on `feat/reviewbot-fallback-chain` (backend Slices 1–4 + UI Slice 5), pending PR into master. Plan: `docs/superpowers/plans/2026-07-06-reviewbot-fallback-chain.md` (epic `manyforge-k8e`). **Deploy caveat:** the hub worker pod must be able to route to the LAN LM Studio host (`192.168.2.241`) — a networking step, not code.
 - **Area:** `internal/agents/coding/` (code-review path), `web/` (config UI)
 - **Related:** Spec 008 (multi-dimension review panel), `manyforge-ubk` (per-dimension provider — separate seam)
 
