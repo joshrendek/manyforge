@@ -663,10 +663,38 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		)
 	}
 
+	// Per-endpoint concurrency (manyforge-azy): a lane serializes against OTHER lanes on the
+	// SAME endpoint (provider+base_url) up to that endpoint's cap — a single-GPU local endpoint
+	// runs one lane at a time, a cloud endpoint runs its cap, and different endpoints run in
+	// parallel. This replaces the single global lane limit now that lanes may span endpoints.
+	// Declared here (before runSandboxLane) so every sandbox run — chosen or fallback alike —
+	// can acquire its OWN endpoint's slot for just the duration of that one run (manyforge-9er).
+	endpointSems := make(map[string]chan struct{})
+	var semMu sync.Mutex
+	acquireEndpoint := func(lc AICredential) func() {
+		key := strings.ToLower(lc.Provider) + "|" + lc.Host()
+		semMu.Lock()
+		sem, ok := endpointSems[key]
+		if !ok {
+			sem = make(chan struct{}, laneLimit(lc))
+			endpointSems[key] = sem
+		}
+		semMu.Unlock()
+		sem <- struct{}{}
+		return func() { <-sem }
+	}
+
 	// runSandboxLane runs ONE dimension end-to-end in the opencode sandbox and returns its
 	// outcome. Local and cloud providers share this path (manyforge-9er): the entrypoint maps
 	// the provider onto opencode. Small local models keep the tighter diff budget via `maxTotal`.
+	// Acquires and releases laneCred's OWN endpoint slot for just this run (manyforge-9er),
+	// including its retry loop below — never held across a fallback run on a different endpoint,
+	// so no two endpoint slots are ever held at once by the same lane (no serialization behind a
+	// slow fallback, no hold-and-wait cycle across swapped provider/fallback pairs).
 	runSandboxLane := func(dim Dimension, laneCred AICredential, laneOutDir string) laneResult {
+		release := acquireEndpoint(laneCred)
+		defer release()
+
 		scoped := filterFilesByScope(files, dim.ScopeGlobs)
 		lanePayload, _, _, _ := assembleDiffPayload(scoped, maxTotal)
 
@@ -793,27 +821,6 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		return lr
 	}
 
-	// Per-endpoint concurrency (manyforge-azy): a lane serializes against OTHER lanes on the
-	// SAME endpoint (provider+base_url) up to that endpoint's cap — a single-GPU local endpoint
-	// runs one lane at a time, a cloud endpoint runs its cap, and different endpoints run in
-	// parallel. This replaces the single global lane limit now that lanes may span endpoints.
-	// Declared here (before reviewLane) so reviewLane's runtime fallback (below) can also bound
-	// itself against the FALLBACK endpoint's cap, not just the chosen lane's (manyforge-9er).
-	endpointSems := make(map[string]chan struct{})
-	var semMu sync.Mutex
-	acquireEndpoint := func(lc AICredential) func() {
-		key := strings.ToLower(lc.Provider) + "|" + lc.Host()
-		semMu.Lock()
-		sem, ok := endpointSems[key]
-		if !ok {
-			sem = make(chan struct{}, laneLimit(lc))
-			endpointSems[key] = sem
-		}
-		semMu.Unlock()
-		sem <- struct{}{}
-		return func() { <-sem }
-	}
-
 	// reviewLane runs ONE dimension end-to-end and returns its outcome, resolving the
 	// dimension's own reviewbot credential (laneCreds, set above by resolveLaneCred) and
 	// handing it to runSandboxLane. An empty dim.Model uses the review's resolved credential.
@@ -846,16 +853,12 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 						return lr
 					}
 				}
-				fbResult := func() laneResult {
-					// Bound the fallback endpoint too, so a mass local-endpoint outage can't
-					// let every dimension pile onto the shared cloud provider unbounded
-					// (manyforge-9er): every failing lane still holds its own distinct local
-					// endpoint slot and only contends the fallback endpoint's slot, which has
-					// its own capacity — no held-and-wanted cycle, so this cannot deadlock.
-					rel := acquireEndpoint(fb)
-					defer rel()
-					return runSandboxLane(dim, fb, fbOutDir)
-				}()
+				// runSandboxLane self-bounds against the fallback endpoint's own cap
+				// (manyforge-9er): the chosen endpoint's slot was already released before
+				// this call runs, so a mass local-endpoint outage can't serialize every
+				// dimension's cloud fallback behind a slot held on the (unrelated) local
+				// endpoint — each fallback only contends the fallback endpoint's own cap.
+				fbResult := runSandboxLane(dim, fb, fbOutDir)
 				if fbResult.Err == nil {
 					return fbResult
 				}
@@ -908,9 +911,6 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 					laneResults[i] = laneResult{Dim: dim, Err: fmt.Errorf("coding: review lane %q panicked: %v", dim.Key, r)}
 				}
 			}()
-			// Bound this lane against others sharing its endpoint (released even on panic).
-			release := acquireEndpoint(laneCreds[dim.Key])
-			defer release()
 			// reviewLane captures its own (non-panic) failures in laneResult.Err; the
 			// goroutine never returns an error, so aggregateReview always sees every
 			// lane's outcome (a failed lane is a failed dimension, not a dropped one).
