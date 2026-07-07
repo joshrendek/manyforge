@@ -271,23 +271,15 @@ func TestSandboxRunDirPermsPinned(t *testing.T) {
 	}
 }
 
-// MF007-PIN-14 (manyforge-5ai): the host-side local-review path dials with a plain
-// (non-egress-proxied) client, so localReview's base-URL guard is the ONLY control
-// keeping a run's diff from leaving the machine. It MUST classify the host via netsafe
-// (shared with the create-time guard + clone path, so the IMDS/link-local screen can't
-// drift) AND gate private LAN on the credential's AllowPrivateBaseURL trust opt-in.
-// A regression to a hand-rolled string allowlist — or dropping the trust gate — would
-// silently re-open (or over-open) the self-host egress hatch.
-func TestLocalReviewBaseURLGuardPinned(t *testing.T) {
-	src := mustRead(t, "../agents/coding/localreview.go")
-	for _, frag := range []string{
-		`func localBaseURLBlocked(`,       // the guard exists
-		`netsafe.IsBlocked`,               // classification is netsafe's, not a private copy
-		`cred.AllowPrivateBaseURL`,        // private LAN is gated on the trust opt-in
-		`localBaseURLBlocked(cred.Host()`, // and localReview actually calls it
-	} {
-		if !strings.Contains(src, frag) {
-			t.Fatalf("localreview.go missing local base-URL guard fragment %q — was the self-host SSRF control weakened? (MF007-PIN-14)", frag)
-		}
-	}
-}
+// MF007-PIN-14 (manyforge-5ai): originally pinned localReview's localBaseURLBlocked —
+// the dial-time base-URL guard for the host-side direct-POST local-review path (a
+// plain, non-egress-proxied client, so that guard was the ONLY control keeping a run's
+// diff from leaving the machine). manyforge-9er Tasks 4-5 routed local providers
+// through the same egress-gated opencode sandbox as cloud providers, leaving the
+// direct-POST path with no caller; Task 6 deleted it (localReview, streamLocalReview,
+// localBaseURLBlocked, and friends) along with this pin's target. There is nothing
+// left to pin here — the construct this test asserted no longer exists in source.
+// The sandbox path's egress guard is pinned separately: privateBaseURLBlocked
+// (fallbackchain.go) by TestGithubPRRunJobEgressPreflightPinned in
+// github_pr_trigger_pin_test.go, and the sandbox's network posture by the
+// MF-KUBE-SANDBOX-* pins in mf_kube_sandbox_test.go.

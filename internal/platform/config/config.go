@@ -135,11 +135,13 @@ type Config struct {
 	// MUST be a path visible inside the Docker VM (on Colima/Mac that means
 	// under $HOME, NOT /tmp). Default: $HOME/.cache/manyforge/sandbox.
 	SandboxWorkRoot string
-	// LocalReviewTimeout is the HTTP timeout for the host-side local-provider review
-	// path (Ollama/vLLM). Local models can run far longer than the cloud sandbox cap,
-	// so this defaults to 30 min. Env: MANYFORGE_LOCAL_REVIEW_TIMEOUT. Separate from
-	// the sandbox wall-clock cap.
-	LocalReviewTimeout time.Duration
+	// SandboxReviewTimeout is the wall-clock cap for a single sandbox review run
+	// (CodeReviewService.Timeout), covering every provider including local ones
+	// (Ollama/vLLM/LM Studio) now that all reviews route through the sandbox
+	// (manyforge-9er) — there is no longer a separate host-side local-provider path.
+	// Default 8m matches the prior hardcoded cloud-sandbox cap; operators running a
+	// slow local model can raise it. Env: MANYFORGE_SANDBOX_REVIEW_TIMEOUT.
+	SandboxReviewTimeout time.Duration
 
 	// SandboxMode selects which sandbox runner backs the code-review sandbox:
 	// "off" (disabled), "docker" (DockerRunner), or "kube" (KubeRunner, Task 4.5).
@@ -352,8 +354,8 @@ func Load() (Config, error) {
 	}
 	cfg.SandboxWorkRoot = env("MANYFORGE_SANDBOX_WORK_ROOT", sandboxWorkRootDefault)
 
-	if cfg.LocalReviewTimeout, err = envDuration("MANYFORGE_LOCAL_REVIEW_TIMEOUT", 30*time.Minute); err != nil {
-		return Config{}, fmt.Errorf("MANYFORGE_LOCAL_REVIEW_TIMEOUT: %w", err)
+	if cfg.SandboxReviewTimeout, err = envDuration("MANYFORGE_SANDBOX_REVIEW_TIMEOUT", 8*time.Minute); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_SANDBOX_REVIEW_TIMEOUT: %w", err)
 	}
 
 	// Sandbox mode (Task 4.1, Phase 4 k8s-native sandbox). Defaults to "kube" when

@@ -103,17 +103,28 @@ func TestGithubPRConnectorDeleteRejectsAppPinned(t *testing.T) {
 // egress allowlist — BEFORE launching a sandbox the boot-static proxy would
 // CONNECT-block. The app-triggered path is enqueued by the webhook DEFINER and
 // never runs Enqueue's own egress check, so runJob's is the only gate it gets.
-// (spec §7 item 6 / fable M5).
+// (spec §7 item 6 / fable M5). manyforge-9er Task 3 dropped the isLocalProvider
+// carve-out (local providers now route through the sandbox too, Task 4) and
+// added a second gate: an IP-literal private host requires the credential's
+// AllowPrivateBaseURL opt-in (privateBaseURLBlocked, fallbackchain.go) — both
+// halves are pinned here so neither can silently regress.
 func TestGithubPRRunJobEgressPreflightPinned(t *testing.T) {
 	src := mustRead(t, "../agents/coding/service.go")
-	// The gate itself.
-	if !strings.Contains(src, "!isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host())") {
+	// The allowlist gate applies to every provider now — no isLocalProvider carve-out.
+	if !strings.Contains(src, "!s.EgressAllow.Allows(cred.Host())") {
 		t.Error("runJob egress pre-flight pin missing — the shared review path must reject a provider host outside the sandbox egress allowlist")
+	}
+	if strings.Contains(src, "!isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host())") {
+		t.Error("runJob egress pre-flight must NOT carve out local providers — Task 4 routes them through the sandbox too")
 	}
 	// The runJob-specific failJob message (distinct from Enqueue's), so the pin
 	// tracks the runJob gate and not merely Enqueue's pre-existing one.
 	if !strings.Contains(src, `provider host %q not in sandbox egress allowlist`) {
 		t.Error("runJob egress pre-flight failJob message pin missing — was the runJob gate removed?")
+	}
+	// The private-base-URL opt-in gate (manyforge-9er Task 3).
+	if !strings.Contains(src, "privateBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL)") {
+		t.Error("runJob private-base-URL gate pin missing — a private/IP-literal host must require allow_private_base_url")
 	}
 }
 

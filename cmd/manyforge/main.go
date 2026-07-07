@@ -394,14 +394,18 @@ func main() {
 		}
 		repoSvc := &connectors.RepoConnectorService{DB: database, Vault: connVault}
 		codingSvc = &coding.CodeReviewService{
-			DB:           database,
-			Repos:        repoSvc,
-			Sandbox:      buildSandboxRunner(ctx, cfg, logger),
-			Creds:        &coding.AgentCredResolver{Agents: agentSvc, Credentials: credSvc},
-			Image:        cfg.SandboxImage,
-			WorkRoot:     cfg.SandboxWorkRoot,
-			Timeout:      8 * time.Minute, // heavy uncached agentic lanes (300k+ input tokens) exceed 5m (manyforge-2s1)
-			LocalTimeout: cfg.LocalReviewTimeout,
+			DB:       database,
+			Repos:    repoSvc,
+			Sandbox:  buildSandboxRunner(ctx, cfg, logger),
+			Creds:    &coding.AgentCredResolver{Agents: agentSvc, Credentials: credSvc},
+			Image:    cfg.SandboxImage,
+			WorkRoot: cfg.SandboxWorkRoot,
+			// Sandbox wall-clock cap: heavy uncached agentic lanes (300k+ input tokens)
+			// exceed 5m (manyforge-2s1). Configurable (MANYFORGE_SANDBOX_REVIEW_TIMEOUT,
+			// default 8m unchanged) so a slow local model isn't killed at the same cap as
+			// a fast cloud lane, now that local providers route through this same
+			// sandbox path (manyforge-9er).
+			Timeout: cfg.SandboxReviewTimeout,
 			// Same allowlist that boots the egress proxy above — Trigger validates the
 			// run's provider host against it up front (manyforge-0qj).
 			EgressAllow: netsafe.ParseHostAllowlist(cfg.SandboxEgressAllow),
