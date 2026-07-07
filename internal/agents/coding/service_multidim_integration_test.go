@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -321,23 +322,29 @@ func TestCodeReviewRetryBypassesDedup(t *testing.T) {
 	}
 }
 
-// seedDimFull inserts a review_dimension with an explicit primary + fallback (provider, model),
-// via the superuser connection (bypasses RLS for setup). Empty provider ⇒ NULL.
+// seedDimFull inserts a review_dimension with an explicit primary + a single-entry fallback
+// chain (provider, model), via the superuser connection (bypasses RLS for setup). Empty
+// provider ⇒ NULL; empty fbProvider ⇒ an empty fallback_chain ('[]', no fallback).
 func seedDimFull(ctx context.Context, t *testing.T, tdb *testdb.TestDB, businessID uuid.UUID, dim, provider, model, fbProvider, fbModel string, order int) {
 	t.Helper()
-	var prov, fbProv any
+	var prov any
 	if provider != "" {
 		prov = provider
 	}
+	chain := "[]"
 	if fbProvider != "" {
-		fbProv = fbProvider
+		b, err := json.Marshal([]FallbackEntry{{Provider: fbProvider, Model: fbModel}})
+		if err != nil {
+			t.Fatalf("marshal fallback chain: %v", err)
+		}
+		chain = string(b)
 	}
 	if _, err := tdb.Super.Exec(ctx,
 		`INSERT INTO review_dimension
-		   (id, business_id, tenant_root_id, dimension, provider, model, fallback_provider, fallback_model,
+		   (id, business_id, tenant_root_id, dimension, provider, model, fallback_chain,
 		    prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
-		 VALUES ($1,$2,$2,$3,$4::ai_provider,$5,$6::ai_provider,$7,$8,'{}','info',true,$9,now(),now())`,
-		uuid.New(), businessID, dim, prov, model, fbProv, fbModel, "DIMPROMPT:"+dim, order); err != nil {
+		 VALUES ($1,$2,$2,$3,$4::ai_provider,$5,$6::jsonb,$7,'{}','info',true,$8,now(),now())`,
+		uuid.New(), businessID, dim, prov, model, chain, "DIMPROMPT:"+dim, order); err != nil {
 		t.Fatalf("seed dim %q: %v", dim, err)
 	}
 }
@@ -633,6 +640,41 @@ func TestReviewDimensionServiceCRUD(t *testing.T) {
 	}
 	if err := svc.DeleteDimension(ctx, seed.principalID, seed.businessID, dimID); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("re-delete must be ErrNotFound, got %v", err)
+	}
+}
+
+// TestReviewDimensionFallbackChainRoundTrips pins manyforge-7lx Task 1: an ordered N-entry
+// fallback chain persists through UpsertDimension and comes back byte-for-byte (same providers,
+// same models, same order) via ListPanel — the jsonb column round-trip, not just the in-memory
+// shape. A blank-provider entry is rejected before any DB write (mirrored, faster, in
+// TestValidateDimensionInput; asserted again here end-to-end through the real service).
+func TestReviewDimensionFallbackChainRoundTrips(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	svc := &ReviewDimensionService{DB: tdb.App}
+
+	chain := []FallbackEntry{
+		{Provider: "openrouter", Model: "grok"},
+		{Provider: "vllm", Model: "local-model"},
+		{Provider: "anthropic", Model: "claude"},
+	}
+	if _, err := svc.UpsertDimension(ctx, seed.principalID, seed.businessID, ReviewDimensionInput{
+		Dimension: "security", MinSeverity: "warning", FallbackChain: chain, Enabled: true, SortOrder: 1,
+	}); err != nil {
+		t.Fatalf("upsert with 3-entry chain: %v", err)
+	}
+	panel, err := svc.ListPanel(ctx, seed.principalID, seed.businessID)
+	if err != nil || len(panel) != 1 {
+		t.Fatalf("list after insert: %+v err=%v", panel, err)
+	}
+	if got := panel[0].FallbackChain; !reflect.DeepEqual(got, chain) {
+		t.Fatalf("fallback chain round-trip: got %+v, want %+v", got, chain)
+	}
+
+	// A blank-provider entry is rejected — never persisted as dead/unusable config.
+	if _, err := svc.UpsertDimension(ctx, seed.principalID, seed.businessID, ReviewDimensionInput{
+		Dimension: "docs", MinSeverity: "info", FallbackChain: []FallbackEntry{{Provider: "", Model: "m"}},
+	}); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("blank-provider fallback entry must be ErrValidation, got %v", err)
 	}
 }
 

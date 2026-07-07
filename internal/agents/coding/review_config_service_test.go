@@ -81,20 +81,26 @@ func TestValidateDimensionInput(t *testing.T) {
 	if err := validateDimensionInput(okProv); err != nil {
 		t.Fatalf("valid provider+model rejected: %v", err)
 	}
-	okFb := ReviewDimensionInput{Dimension: "docs", MinSeverity: "info", Provider: "vllm", Model: "ornith", FallbackProvider: "openrouter", FallbackModel: "deepseek"}
+	okFb := ReviewDimensionInput{Dimension: "docs", MinSeverity: "info", Provider: "vllm", Model: "ornith", FallbackChain: []FallbackEntry{{Provider: "openrouter", Model: "deepseek"}}}
 	if err := validateDimensionInput(okFb); err != nil {
 		t.Fatalf("valid primary+fallback rejected: %v", err)
 	}
+	okChain := ReviewDimensionInput{Dimension: "docs", MinSeverity: "info", FallbackChain: []FallbackEntry{
+		{Provider: "openrouter", Model: "a"}, {Provider: "vllm", Model: "b"}, {Provider: "anthropic", Model: "c"},
+	}}
+	if err := validateDimensionInput(okChain); err != nil {
+		t.Fatalf("valid 3-entry chain rejected: %v", err)
+	}
 
 	bad := map[string]ReviewDimensionInput{
-		"unknown dimension":          {Dimension: "kitchen-sink", MinSeverity: "info"},
-		"bad severity":               {Dimension: "security", MinSeverity: "critical"},
-		"unknown provider":           {Dimension: "security", MinSeverity: "info", Provider: "acme", Model: "m"},
-		"provider no model":          {Dimension: "security", MinSeverity: "info", Provider: "openai", Model: "  "},
-		"unknown fallback provider":  {Dimension: "security", MinSeverity: "info", FallbackProvider: "acme", FallbackModel: "m"},
-		"fallback provider no model": {Dimension: "security", MinSeverity: "info", FallbackProvider: "openai", FallbackModel: "  "},
-		"fallback model no provider": {Dimension: "security", MinSeverity: "info", FallbackModel: "m"},
-		"prompt too long":            {Dimension: "security", MinSeverity: "info", Prompt: strings.Repeat("x", maxDimensionPromptBytes+1)},
+		"unknown dimension":             {Dimension: "kitchen-sink", MinSeverity: "info"},
+		"bad severity":                  {Dimension: "security", MinSeverity: "critical"},
+		"unknown provider":              {Dimension: "security", MinSeverity: "info", Provider: "acme", Model: "m"},
+		"provider no model":             {Dimension: "security", MinSeverity: "info", Provider: "openai", Model: "  "},
+		"unknown fallback provider":     {Dimension: "security", MinSeverity: "info", FallbackChain: []FallbackEntry{{Provider: "acme", Model: "m"}}},
+		"fallback provider no model":    {Dimension: "security", MinSeverity: "info", FallbackChain: []FallbackEntry{{Provider: "openai", Model: "  "}}},
+		"fallback entry blank provider": {Dimension: "security", MinSeverity: "info", FallbackChain: []FallbackEntry{{Provider: "", Model: "m"}}},
+		"prompt too long":               {Dimension: "security", MinSeverity: "info", Prompt: strings.Repeat("x", maxDimensionPromptBytes+1)},
 	}
 	for name, in := range bad {
 		if err := validateDimensionInput(in); !errors.Is(err, errs.ErrValidation) {

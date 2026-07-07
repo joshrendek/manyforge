@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -43,21 +44,20 @@ func (s *CodeReviewService) resolvePanel(ctx context.Context, principalID, busin
 // is derived from the key since the row carries no label column.
 func dimensionFromRow(r dbgen.ReviewDimension) Dimension {
 	d := Dimension{
-		Key:           r.Dimension,
-		Label:         dimensionLabel(r.Dimension),
-		Model:         r.Model,
-		FallbackModel: r.FallbackModel,
-		Prompt:        r.Prompt,
-		ScopeGlobs:    r.ScopeGlobs,
-		MinSeverity:   r.MinSeverity,
-		Enabled:       r.Enabled,
-		Order:         int(r.SortOrder),
+		Key:         r.Dimension,
+		Label:       dimensionLabel(r.Dimension),
+		Model:       r.Model,
+		Prompt:      r.Prompt,
+		ScopeGlobs:  r.ScopeGlobs,
+		MinSeverity: r.MinSeverity,
+		Enabled:     r.Enabled,
+		Order:       int(r.SortOrder),
 	}
 	if r.Provider.Valid {
 		d.Provider = string(r.Provider.AiProvider)
 	}
-	if r.FallbackProvider.Valid {
-		d.FallbackProvider = string(r.FallbackProvider.AiProvider)
+	if len(r.FallbackChain) > 0 {
+		_ = json.Unmarshal(r.FallbackChain, &d.FallbackChain) // best-effort; malformed ⇒ empty chain
 	}
 	return d
 }

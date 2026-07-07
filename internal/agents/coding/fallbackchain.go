@@ -83,16 +83,18 @@ func (s *CodeReviewService) prober() reviewbotProber {
 // primary (provider, model) probed live, else its fallback (provider, model). A blank provider
 // inherits the review's default resolved cred (def). Returns a non-empty reason when neither
 // primary nor fallback yields a usable, egress-permitted endpoint — the lane is then skipped
-// (recorded in dimension_runs, never silently misrouted).
+// (recorded in dimension_runs, never silently misrouted). T1 (manyforge-7lx) only tries
+// FallbackChain[0] — the same single-fallback behavior as before; T2/T3 walk the full chain.
 func (s *CodeReviewService) resolveLaneCred(ctx context.Context, principalID, businessID uuid.UUID, def AICredential, dim Dimension) (AICredential, string) {
 	primary, perr := s.laneCredFor(ctx, principalID, businessID, def, dim.Provider, dim.Model)
 	if perr == nil && s.prober().Live(ctx, primary) {
 		return primary, ""
 	}
-	if dim.FallbackProvider != "" {
-		fb, ferr := s.laneCredFor(ctx, principalID, businessID, def, dim.FallbackProvider, dim.FallbackModel)
+	if len(dim.FallbackChain) > 0 {
+		fb := dim.FallbackChain[0]
+		lc, ferr := s.laneCredFor(ctx, principalID, businessID, def, fb.Provider, fb.Model)
 		if ferr == nil {
-			return fb, "" // use fallback; if it's also down the real call fails → worker retry
+			return lc, "" // use fallback; if it's also down the real call fails → worker retry
 		}
 		slog.Default().InfoContext(ctx, "coding: lane fallback unusable", "dimension", dim.Key, "err", ferr)
 	}

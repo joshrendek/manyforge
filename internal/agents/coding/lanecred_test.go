@@ -49,7 +49,7 @@ func TestResolveLaneCred(t *testing.T) {
 	}
 
 	// Primary down ⇒ fallback provider chosen.
-	if lc, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "openrouter", Model: "or", FallbackProvider: "vllm", FallbackModel: "orn"}); reason != "" || lc.Provider != "vllm" {
+	if lc, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "openrouter", Model: "or", FallbackChain: []FallbackEntry{{Provider: "vllm", Model: "orn"}}}); reason != "" || lc.Provider != "vllm" {
 		t.Fatalf("down ⇒ fallback vllm: %+v reason=%q", lc, reason)
 	}
 

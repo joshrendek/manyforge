@@ -171,11 +171,15 @@ components:
           description: 'Empty ⇒ use the review''s default resolved credential.'
         model:
           type: string
-        fallback_provider:
-          type: string
-          description: 'Empty ⇒ no fallback for this lane.'
-        fallback_model:
-          type: string
+        fallback_chain:
+          type: array
+          description: 'Ordered fallback (provider, model) pairs, tried in order after the primary.'
+          items:
+            type: object
+            properties:
+              provider: { type: string }
+              model: { type: string }
+            required: [provider, model]
         prompt:
           type: string
         scope_globs:

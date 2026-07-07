@@ -96,7 +96,7 @@ func (r *failoverRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandb
 // TestReviewLaneFallsBackToCloudOnLocalFailure pins manyforge-9er Task 5: when a dimension's
 // chosen lane (its LIVE primary, per resolveLaneCred) fails the actual sandbox run, and that
 // lane was NOT already the dimension's configured cloud fallback, reviewLane re-runs the lane
-// once on the dimension's (FallbackProvider, FallbackModel) before giving up. This is runtime
+// once on the dimension's FallbackChain[0] (provider, model) before giving up. This is runtime
 // fallback (a real run failure), distinct from resolveLaneCred's config-time liveness-probe
 // fallback (manyforge-azy) exercised by TestCodeReviewPerDimensionProviderAndFallback.
 //
@@ -208,7 +208,7 @@ func (r *callCountingRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (s
 // TestReviewLaneNoDoubleRunWhenChosenIsAlreadyFallback pins manyforge-9er (review MINOR 2): when
 // a dimension's chosen lane's provider IS ALREADY its own configured fallback provider (a no-op
 // fallback config), reviewLane's guard — `!strings.EqualFold(chosen.Provider,
-// dim.FallbackProvider)` — must skip the runtime-fallback re-run entirely. Re-running the exact
+// dim.FallbackChain[0].Provider)` — must skip the runtime-fallback re-run entirely. Re-running the exact
 // same (down) provider a second time burns another full sandbox invocation for no chance of a
 // different outcome. This test fails red if that guard is removed/broken (the fake runner would
 // be invoked twice) and passes green with exactly one invocation.

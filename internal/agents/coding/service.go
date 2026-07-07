@@ -825,8 +825,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		lr := runSandboxLane(dim, chosen, laneOutDir)
 		// Runtime fallback (manyforge-9er): if the chosen lane failed and it was NOT already the
 		// configured fallback, re-run once on the dimension's cloud fallback (provider, model).
-		if lr.Err != nil && dim.FallbackProvider != "" && !strings.EqualFold(chosen.Provider, dim.FallbackProvider) {
-			if fb, ferr := s.laneCredFor(ctx, principalID, businessID, cred, dim.FallbackProvider, dim.FallbackModel); ferr == nil {
+		// T1 (manyforge-7lx) only tries the chain's FIRST entry — the same single-fallback
+		// behavior as before; T2/T3 generalize this to walk the full chain.
+		if lr.Err != nil && len(dim.FallbackChain) > 0 && !strings.EqualFold(chosen.Provider, dim.FallbackChain[0].Provider) {
+			fbEntry := dim.FallbackChain[0]
+			if fb, ferr := s.laneCredFor(ctx, principalID, businessID, cred, fbEntry.Provider, fbEntry.Model); ferr == nil {
 				slog.Default().InfoContext(ctx, "code review lane: falling back to cloud after local failure",
 					"dimension", dim.Key, "from", chosen.Provider, "to", fb.Provider)
 				// fbOutDir isolates the fallback run's output from the chosen lane's
@@ -860,7 +863,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 				}
 			} else {
 				slog.Default().InfoContext(ctx, "code review lane: fallback credential unusable",
-					"dimension", dim.Key, "fallback_provider", dim.FallbackProvider, "err", ferr)
+					"dimension", dim.Key, "fallback_provider", fbEntry.Provider, "err", ferr)
 			}
 		}
 		return lr
