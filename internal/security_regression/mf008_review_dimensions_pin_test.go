@@ -52,23 +52,28 @@ func TestMF008PIN2(t *testing.T) {
 }
 
 // MF008-PIN-3: the review prompt must be PER-DIMENSION, threaded from the resolved dimension
-// through BOTH review paths (local direct-API + cloud sandbox), not the single hardcoded
-// reviewInstructions const. A regression back to the const would collapse the panel to one
-// blended prompt and defeat spec 008 — pins the parameterized system message and the host-written
-// per-dimension prompt file, and that the old hardcoded form is gone.
+// into the review path, not the single hardcoded reviewInstructions const. A regression back to
+// the const would collapse the panel to one blended prompt and defeat spec 008 — pins the
+// parameterized system message and the host-written per-dimension prompt file. Local and cloud
+// providers share ONE path since manyforge-9er Task 4 (runSandboxLane): reviewLane no longer
+// branches a local credential to localReview's separate host-side call, so this also pins that
+// regression away — a reintroduced isLocalProvider(laneCred.Provider) branch in reviewLane would
+// silently reopen the un-egress-gated direct-API path Task 3/4 closed. localReview itself is
+// unused dead code as of this task (deleted by Task 6); its own per-dimension prompt threading is
+// still pinned below for as long as the function exists.
 func TestMF008PIN3(t *testing.T) {
 	lr := mustRead(t, "../agents/coding/localreview.go")
 	if !strings.Contains(lr, `prompt + "\n\n" + reviewSchemaLine`) {
-		t.Fatal("streamLocalReview must build the system message from the passed prompt (per-dimension), not a hardcoded const (MF008-PIN-3)")
+		t.Fatal("localReview must build the system message from the passed prompt (per-dimension), not a hardcoded const (MF008-PIN-3)")
 	}
 	if strings.Contains(lr, `reviewInstructions + "\n\n" + reviewSchemaLine`) {
 		t.Fatal("localreview.go still hardcodes reviewInstructions in the system message — the per-dimension prompt is not plumbed (MF008-PIN-3)")
 	}
 	svc := mustRead(t, "../agents/coding/service.go")
 	if !strings.Contains(svc, "[]byte(dim.Prompt)") {
-		t.Fatal("the cloud lane must write the dimension's prompt to review_instructions.txt (per-dimension), not the const (MF008-PIN-3)")
+		t.Fatal("the sandbox lane must write the dimension's prompt to review_instructions.txt (per-dimension), not the const (MF008-PIN-3)")
 	}
-	if !strings.Contains(svc, "laneCred, lanePayload, dim.Prompt, prog") {
-		t.Fatal("the local lane must call localReview with the dimension's prompt (MF008-PIN-3)")
+	if strings.Contains(svc, "isLocalProvider(laneCred.Provider)") {
+		t.Fatal("reviewLane must not branch a local credential to localReview's separate host-side call — local and cloud share the egress-gated sandbox path (runSandboxLane, manyforge-9er Task 4) (MF008-PIN-3)")
 	}
 }

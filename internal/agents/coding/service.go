@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,23 +173,6 @@ func (s *CodeReviewService) timeout() time.Duration {
 		return s.Timeout
 	}
 	return 10 * time.Minute
-}
-
-// localTimeout returns the effective host-side local-provider review timeout (30 min
-// default). Distinct from timeout(): local models can run far longer than the cloud
-// sandbox wall-clock cap.
-func (s *CodeReviewService) localTimeout() time.Duration {
-	if s.LocalTimeout > 0 {
-		return s.LocalTimeout
-	}
-	return 30 * time.Minute
-}
-
-// localClient is the HTTP client for the host-side local-provider review path. A
-// plain client (allows loopback, which the SSRF-safe netsafe client refuses);
-// localReview enforces a loopback-only base URL so this stays local-only.
-func (s *CodeReviewService) localClient() *http.Client {
-	return &http.Client{Timeout: s.localTimeout()}
 }
 
 // Enqueue validates the request cheaply (resolve connector, resolve cred, egress
@@ -681,26 +663,12 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		)
 	}
 
-	// reviewLane runs ONE dimension end-to-end and returns its outcome. Local providers
-	// (Ollama/vLLM) review host-side via the direct-API path — small models can't drive
-	// opencode's agent loop, and the on-host model needs no isolation (manyforge-62s; cost 0).
-	// Cloud providers run opencode in the hardened, egress-restricted sandbox, writing to a
-	// per-lane output dir so configured lanes never clobber each other's review.json. An empty
-	// dim.Model uses the review's resolved credential; the dimension's prompt drives both paths.
-	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
-		laneCred := laneCreds[dim.Key]
+	// runSandboxLane runs ONE dimension end-to-end in the opencode sandbox and returns its
+	// outcome. Local and cloud providers share this path (manyforge-9er): the entrypoint maps
+	// the provider onto opencode. Small local models keep the tighter diff budget via `maxTotal`.
+	runSandboxLane := func(dim Dimension, laneCred AICredential, laneOutDir string) laneResult {
 		scoped := filterFilesByScope(files, dim.ScopeGlobs)
 		lanePayload, _, _, _ := assembleDiffPayload(scoped, maxTotal)
-
-		if isLocalProvider(laneCred.Provider) {
-			_ = s.auditStep(ctx, principalID, businessID, crID,
-				"agent.coding.localreview.invoked",
-				map[string]any{"head_sha": pr.HeadSHA, "model": laneCred.Model, "base_url": laneCred.BaseURL, "dimension": dim.Key},
-				nil, ptr("executed"),
-			)
-			d, in, out, lerr := localReview(ctx, s.localClient(), laneCred, lanePayload, dim.Prompt, prog)
-			return laneResult{Dim: dim, Doc: d, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(in), TokensOut: clampInt32(out), Err: lerr} // local = no cost
-		}
 
 		// Cloud path: hand opencode the scoped diff + changed-file scope hint + the dimension's
 		// prompt in-band on the spec (Inputs) — the runner materializes them where the
@@ -823,6 +791,13 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		}
 		lr.Doc = doc
 		return lr
+	}
+
+	// reviewLane runs ONE dimension end-to-end and returns its outcome, resolving the
+	// dimension's own reviewbot credential (laneCreds, set above by resolveLaneCred) and
+	// handing it to runSandboxLane. An empty dim.Model uses the review's resolved credential.
+	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
+		return runSandboxLane(dim, laneCreds[dim.Key], laneOutDir)
 	}
 
 	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube
