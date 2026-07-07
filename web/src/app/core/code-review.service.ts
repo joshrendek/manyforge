@@ -168,6 +168,12 @@ export class CodeReviewService {
     return this.http.get<CodeReview>(`${this.reviewsBase(businessId)}/${id}`);
   }
 
+  // retry re-runs a review: enqueues a fresh forced review for the same PR, bypassing the
+  // same-head dedup (so it runs even on an unchanged commit). Returns the new review.
+  retry(businessId: string, id: string): Observable<CodeReview> {
+    return this.http.post<CodeReview>(`${this.reviewsBase(businessId)}/${id}/retry`, {});
+  }
+
   trigger(businessId: string, body: TriggerBody): Observable<TriggerReviewResponse> {
     return this.http.post<TriggerReviewResponse>(this.reviewsBase(businessId), body);
   }

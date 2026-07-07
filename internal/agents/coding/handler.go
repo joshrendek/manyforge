@@ -39,6 +39,7 @@ func (h *Handler) CodeReviewRoutes(r chi.Router) {
 		r.Post("/", h.triggerReview)
 		r.Get("/", h.listReviews)
 		r.Get("/{reviewID}", h.getReview)
+		r.Post("/{reviewID}/retry", h.retryReview)
 	})
 }
 
@@ -151,6 +152,33 @@ func (h *Handler) getReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, cr)
+}
+
+// retryReview enqueues a FRESH forced review for the same PR as an existing review — a manual
+// re-run that bypasses the same-head dedup (so it re-runs even on an unchanged commit). Returns
+// 202 + the new review.
+func (h *Handler) retryReview(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	reviewID, err := uuid.Parse(chi.URLParam(r, "reviewID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	cr, err := h.ReviewSvc.Retry(r.Context(), pid, bid, reviewID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, cr)
 }
 
 func (h *Handler) listRepoConnectors(w http.ResponseWriter, r *http.Request) {

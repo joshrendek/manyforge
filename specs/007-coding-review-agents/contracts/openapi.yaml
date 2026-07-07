@@ -202,6 +202,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /businesses/{id}/code-reviews/{reviewID}/retry:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: reviewID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: retryCodeReview
+      summary: Re-run a code review
+      description: >
+        Enqueues a fresh forced review for the same PR as an existing review,
+        bypassing the same-head dedup so it re-runs even on an unchanged commit.
+        Gated by agents.run.
+      responses:
+        "202":
+          description: New review enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodeReview'
+        "404":
+          description: Review not found or caller lacks agents.run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
   schemas:
