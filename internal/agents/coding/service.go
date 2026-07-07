@@ -793,6 +793,27 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		return lr
 	}
 
+	// Per-endpoint concurrency (manyforge-azy): a lane serializes against OTHER lanes on the
+	// SAME endpoint (provider+base_url) up to that endpoint's cap — a single-GPU local endpoint
+	// runs one lane at a time, a cloud endpoint runs its cap, and different endpoints run in
+	// parallel. This replaces the single global lane limit now that lanes may span endpoints.
+	// Declared here (before reviewLane) so reviewLane's runtime fallback (below) can also bound
+	// itself against the FALLBACK endpoint's cap, not just the chosen lane's (manyforge-9er).
+	endpointSems := make(map[string]chan struct{})
+	var semMu sync.Mutex
+	acquireEndpoint := func(lc AICredential) func() {
+		key := strings.ToLower(lc.Provider) + "|" + lc.Host()
+		semMu.Lock()
+		sem, ok := endpointSems[key]
+		if !ok {
+			sem = make(chan struct{}, laneLimit(lc))
+			endpointSems[key] = sem
+		}
+		semMu.Unlock()
+		sem <- struct{}{}
+		return func() { <-sem }
+	}
+
 	// reviewLane runs ONE dimension end-to-end and returns its outcome, resolving the
 	// dimension's own reviewbot credential (laneCreds, set above by resolveLaneCred) and
 	// handing it to runSandboxLane. An empty dim.Model uses the review's resolved credential.
@@ -805,9 +826,42 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			if fb, ferr := s.laneCredFor(ctx, principalID, businessID, cred, dim.FallbackProvider, dim.FallbackModel); ferr == nil {
 				slog.Default().InfoContext(ctx, "code review lane: falling back to cloud after local failure",
 					"dimension", dim.Key, "from", chosen.Provider, "to", fb.Provider)
-				if fbResult := runSandboxLane(dim, fb, laneOutDir); fbResult.Err == nil {
+				// fbOutDir isolates the fallback run's output from the chosen lane's
+				// (manyforge-9er): DockerRunner reads back whatever review.json/usage.json
+				// exist in the dir and never clears it, so a fallback that fails before
+				// writing could otherwise pick up the chosen lane's stale output. Same
+				// creation pattern as the chosen lane's own laneOutDir below: host
+				// materialization only applies when the runner shares a host output
+				// directory (KubeRunner ignores it; s.ClonesInSandbox skips this).
+				fbOutDir := laneOutDir + "-fallback"
+				if !s.ClonesInSandbox {
+					if mkErr := os.MkdirAll(fbOutDir, 0o777); mkErr != nil {
+						slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
+							"dimension", dim.Key, "dir", fbOutDir, "err", mkErr)
+						return lr
+					}
+					if chErr := os.Chmod(fbOutDir, 0o777); chErr != nil {
+						slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
+							"dimension", dim.Key, "dir", fbOutDir, "err", chErr)
+						return lr
+					}
+				}
+				fbResult := func() laneResult {
+					// Bound the fallback endpoint too, so a mass local-endpoint outage can't
+					// let every dimension pile onto the shared cloud provider unbounded
+					// (manyforge-9er): every failing lane still holds its own distinct local
+					// endpoint slot and only contends the fallback endpoint's slot, which has
+					// its own capacity — no held-and-wanted cycle, so this cannot deadlock.
+					rel := acquireEndpoint(fb)
+					defer rel()
+					return runSandboxLane(dim, fb, fbOutDir)
+				}()
+				if fbResult.Err == nil {
 					return fbResult
 				}
+			} else {
+				slog.Default().InfoContext(ctx, "code review lane: fallback credential unusable",
+					"dimension", dim.Key, "fallback_provider", dim.FallbackProvider, "err", ferr)
 			}
 		}
 		return lr
@@ -841,24 +895,6 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			}
 			laneOutDirs[i] = laneOutDir
 		}
-	}
-	// Per-endpoint concurrency (manyforge-azy): a lane serializes against OTHER lanes on the
-	// SAME endpoint (provider+base_url) up to that endpoint's cap — a single-GPU local endpoint
-	// runs one lane at a time, a cloud endpoint runs its cap, and different endpoints run in
-	// parallel. This replaces the single global lane limit now that lanes may span endpoints.
-	endpointSems := make(map[string]chan struct{})
-	var semMu sync.Mutex
-	acquireEndpoint := func(lc AICredential) func() {
-		key := strings.ToLower(lc.Provider) + "|" + lc.Host()
-		semMu.Lock()
-		sem, ok := endpointSems[key]
-		if !ok {
-			sem = make(chan struct{}, laneLimit(lc))
-			endpointSems[key] = sem
-		}
-		semMu.Unlock()
-		sem <- struct{}{}
-		return func() { <-sem }
 	}
 	var g errgroup.Group
 	for i, dim := range active {

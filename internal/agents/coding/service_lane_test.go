@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
@@ -178,5 +180,141 @@ func TestReviewLaneFallsBackToCloudOnLocalFailure(t *testing.T) {
 	// entirely).
 	if runner.Last.Env["LLM_PROVIDER"] != "openrouter" {
 		t.Fatalf("last sandbox invocation provider = %q, want %q (fallback must run last)", runner.Last.Env["LLM_PROVIDER"], "openrouter")
+	}
+}
+
+// callCountingRunner is a fake sandbox runner that fails every lane run for a configured set of
+// providers (identified via spec.Env["LLM_PROVIDER"], the same key sandboxEnv sets from the
+// lane's credential) and records the provider of EVERY invocation in order. Unlike failoverRunner
+// (which only tracks the LAST spec), this lets a test assert exactly how many times — and on
+// which providers — a lane was actually run, distinguishing a genuine single/double run from one
+// masked by a short-circuit.
+type callCountingRunner struct {
+	failProviders map[string]bool // providers whose lane run fails
+	calls         []string        // LLM_PROVIDER of each Run() call, in invocation order
+}
+
+func (r *callCountingRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandbox.SandboxResult, error) {
+	provider := spec.Env["LLM_PROVIDER"]
+	r.calls = append(r.calls, provider)
+	if r.failProviders[provider] {
+		return sandbox.SandboxResult{ExitCode: 1, Stderr: []byte(provider + " backend unreachable")},
+			fmt.Errorf("sandbox: %s backend unreachable", provider)
+	}
+	doc, _ := json.Marshal(map[string]any{"summary": "ok", "findings": []map[string]any{}})
+	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{"review.json": doc}}, nil
+}
+
+// TestReviewLaneNoDoubleRunWhenChosenIsAlreadyFallback pins manyforge-9er (review MINOR 2): when
+// a dimension's chosen lane's provider IS ALREADY its own configured fallback provider (a no-op
+// fallback config), reviewLane's guard — `!strings.EqualFold(chosen.Provider,
+// dim.FallbackProvider)` — must skip the runtime-fallback re-run entirely. Re-running the exact
+// same (down) provider a second time burns another full sandbox invocation for no chance of a
+// different outcome. This test fails red if that guard is removed/broken (the fake runner would
+// be invoked twice) and passes green with exactly one invocation.
+func TestReviewLaneNoDoubleRunWhenChosenIsAlreadyFallback(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+
+	// The dimension's fallback provider is the SAME as its primary — a no-op fallback config.
+	seedDimFull(ctx, t, tdb, seed.businessID, "security", "vllm", "local-model", "vllm", "local-model", 1)
+
+	vllmCred := AICredential{Provider: "vllm", BaseURL: "http://127.0.0.1:19999", Model: "local-model"}
+	resolver := &FakeCredResolver{
+		Cred:       AICredential{APIKey: "k", Provider: "anthropic", BaseURL: "https://api.anthropic.com", Model: "def"},
+		ByProvider: map[string]AICredential{"vllm": vllmCred},
+	}
+
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+
+	runner := &callCountingRunner{failProviders: map[string]bool{"vllm": true}}
+
+	svc := buildService(t, tdb, env, runner, resolver)
+	svc.EgressAllow = netsafe.ParseHostAllowlist("api.anthropic.com,127.0.0.1")
+	svc.Prober = stubProbe{vllmCred.BaseURL: true}
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	// The only dimension's only lane fails and has nowhere else to go (fallback == chosen
+	// provider), so the whole review fails — that is the expected outcome here, not a test bug.
+	if err := svc.runJob(ctx, claimed, nil); err == nil {
+		t.Fatal("runJob: want error (the lane's only provider failed), got nil")
+	}
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("sandbox runner invoked %d times, want exactly 1 (no double-run when chosen == fallback provider): calls=%v", len(runner.calls), runner.calls)
+	}
+	if runner.calls[0] != "vllm" {
+		t.Fatalf("sandbox runner's only call was for provider %q, want %q", runner.calls[0], "vllm")
+	}
+}
+
+// TestReviewLaneBothChosenAndFallbackFailReturnsOriginalError pins manyforge-9er (review MINOR
+// 2): when the chosen (local) lane fails AND the runtime fallback re-run ALSO fails, reviewLane
+// must surface the ORIGINAL local failure — not a masked/empty result, and not the fallback's own
+// error. An operator debugging a failed review needs to see what actually broke FIRST (the local
+// endpoint), not a confusing cloud-provider error that obscures the real root cause.
+func TestReviewLaneBothChosenAndFallbackFailReturnsOriginalError(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+
+	seedDimFull(ctx, t, tdb, seed.businessID, "security", "vllm", "local-model", "openrouter", "deepseek/deepseek-chat-v3.1", 1)
+
+	vllmCred := AICredential{Provider: "vllm", BaseURL: "http://127.0.0.1:19999", Model: "local-model"}
+	openrouterCred := AICredential{APIKey: "ork", Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Model: "deepseek/deepseek-chat-v3.1"}
+	resolver := &FakeCredResolver{
+		Cred: AICredential{APIKey: "k", Provider: "anthropic", BaseURL: "https://api.anthropic.com", Model: "def"},
+		ByProvider: map[string]AICredential{
+			"vllm":       vllmCred,
+			"openrouter": openrouterCred,
+		},
+	}
+
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+
+	runner := &callCountingRunner{failProviders: map[string]bool{"vllm": true, "openrouter": true}}
+
+	svc := buildService(t, tdb, env, runner, resolver)
+	svc.EgressAllow = netsafe.ParseHostAllowlist("api.anthropic.com,127.0.0.1,openrouter.ai")
+	svc.Prober = stubProbe{vllmCred.BaseURL: true}
+
+	cr, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed := ClaimedReview{
+		ID: cr.ID, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+		AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+	}
+	runErr := svc.runJob(ctx, claimed, nil)
+	if runErr == nil {
+		t.Fatal("runJob: want error (both the chosen and fallback lanes failed), got nil")
+	}
+	// The surfaced error must reference the ORIGINAL local (vllm) failure, not the fallback's —
+	// a masked/generic error here would hide which endpoint actually broke first.
+	if !strings.Contains(runErr.Error(), "vllm") {
+		t.Fatalf("runJob error = %q, want it to reference the ORIGINAL local (vllm) failure", runErr.Error())
+	}
+	if strings.Contains(runErr.Error(), "openrouter") {
+		t.Fatalf("runJob error = %q, must not be masked by the fallback's own failure", runErr.Error())
+	}
+
+	// Both the chosen lane AND the fallback must have genuinely been attempted (a masked/
+	// short-circuited result would show only 1 call, or the wrong providers/order).
+	if len(runner.calls) != 2 {
+		t.Fatalf("sandbox runner invoked %d times, want exactly 2 (chosen then fallback): calls=%v", len(runner.calls), runner.calls)
+	}
+	if runner.calls[0] != "vllm" || runner.calls[1] != "openrouter" {
+		t.Fatalf("sandbox runner call order = %v, want [vllm openrouter]", runner.calls)
 	}
 }
