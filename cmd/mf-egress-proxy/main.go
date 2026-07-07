@@ -3,10 +3,8 @@ package main
 import (
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
@@ -19,16 +17,55 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
-	h := func(w http.ResponseWriter, r *http.Request) {
+	srv := &http.Server{Addr: addr, Handler: proxyHandler(allow)}
+	log.Printf("mf-egress-proxy listening on %s allow=%v", addr, allow)
+	log.Fatal(srv.ListenAndServe())
+}
+
+// proxyHandler builds the egress handler: CONNECT tunnels (HTTPS) and plain-HTTP
+// forwarding, both gated by the same host allowlist. Local providers use plain HTTP,
+// so a non-CONNECT request to an allowlisted host is round-tripped upstream.
+//
+// Both paths dial through netsafe.ScreenedDialContext, which re-resolves the host and
+// refuses any resolved IP that lands on cloud-metadata/link-local (unconditionally) or
+// loopback/private outside AllowLoopback/AllowPrivate. The allowlist check above is a
+// name-based gate; the screen is the resolved-IP gate — an allowlisted DNS name can
+// still rebind to a blocked address between the two, so both are required (manyforge-9er,
+// restoring the resolved-IP check the deleted host-side localReview dialer used to do).
+func proxyHandler(allow netsafe.HostAllowlist) http.Handler {
+	// AllowLoopback+AllowPrivate permit the intended local-provider/private-LAN targets
+	// (e.g. LM Studio on a RFC1918 host); metadata/link-local stay blocked unconditionally
+	// regardless of these flags (see netsafe.blockedWith).
+	screen := netsafe.ScreenedDialContext(netsafe.Options{AllowLoopback: true, AllowPrivate: true})
+	fwd := &http.Transport{Proxy: nil, DialContext: screen} // no upstream proxy; dial the target directly
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {
-			http.Error(w, "only CONNECT supported", http.StatusMethodNotAllowed)
+			if !allow.Allows(r.Host) {
+				http.Error(w, "egress not allowed", http.StatusForbidden)
+				return
+			}
+			out := r.Clone(r.Context())
+			out.RequestURI = "" // required for a client (outbound) request
+			resp, err := fwd.RoundTrip(out)
+			if err != nil {
+				http.Error(w, "upstream error", http.StatusBadGateway)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+			for k, vs := range resp.Header {
+				for _, v := range vs {
+					w.Header().Add(k, v)
+				}
+			}
+			w.WriteHeader(resp.StatusCode)
+			_, _ = io.Copy(flushWriter{w}, resp.Body) // stream (SSE) as chunks arrive
 			return
 		}
 		if !allow.Allows(r.Host) {
 			http.Error(w, "egress not allowed", http.StatusForbidden)
 			return
 		}
-		dst, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+		dst, err := screen(r.Context(), "tcp", r.Host)
 		if err != nil {
 			http.Error(w, "dial failed", http.StatusBadGateway)
 			return
@@ -46,8 +83,16 @@ func main() {
 		}
 		go func() { _, _ = io.Copy(dst, src); _ = dst.Close() }()
 		go func() { _, _ = io.Copy(src, dst); _ = src.Close() }()
+	})
+}
+
+// flushWriter flushes after each write so SSE chunks reach the sandbox promptly.
+type flushWriter struct{ w http.ResponseWriter }
+
+func (f flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if fl, ok := f.w.(http.Flusher); ok {
+		fl.Flush()
 	}
-	srv := &http.Server{Addr: addr, Handler: http.HandlerFunc(h)}
-	log.Printf("mf-egress-proxy listening on %s allow=%v", addr, allow)
-	log.Fatal(srv.ListenAndServe())
+	return n, err
 }

@@ -9,10 +9,16 @@
 #
 # Environment (injected by the sandbox runner — internal/agents/coding/service.go):
 #   LLM_API_KEY   — provider API key (forwarded only to the allowlisted LLM host)
-#   LLM_BASE_URL  — provider base URL (used only to derive the egress-allowlist host;
-#                   opencode's built-in provider already knows its endpoint)
+#   LLM_BASE_URL  — provider base URL. For openrouter/anthropic/openai this is used only
+#                   to derive the egress-allowlist host (opencode's built-in provider
+#                   already knows its endpoint). For vllm/ollama it IS the provider base —
+#                   passed straight through as the bundled openai-compatible provider's
+#                   options.baseURL (e.g. http://host:1234/v1).
 #   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro" or "claude-3-5-sonnet"
-#   LLM_PROVIDER  — opencode provider id: one of openrouter|anthropic|openai
+#   LLM_PROVIDER  — opencode provider id: one of openrouter|anthropic|openai|vllm|ollama.
+#                   vllm/ollama are local OpenAI-compatible servers and map to a CUSTOM
+#                   opencode provider ("local", @ai-sdk/openai-compatible) below — NOT the
+#                   built-in openai provider, which speaks the Responses API.
 set -eu
 
 mkdir -p /out
@@ -43,14 +49,55 @@ export OPENCODE_DISABLE_PRUNE=1
 cp -r /work /tmp/src
 cd /tmp/src
 
-# Provider selects the opencode built-in SDK (model prefix + auth.json key). Only
-# these three are validated/supported via the sandbox; ollama/vllm use the host-side
-# direct-API path and never reach here.
+# Provider gate: openrouter/anthropic/openai select the opencode built-in SDK (model
+# prefix + auth.json key). vllm/ollama are a local OpenAI-compatible server (LM
+# Studio, vLLM, Ollama) and route through the bundled @ai-sdk/openai-compatible
+# provider instead — see the LLM_LOCAL branch below.
 case "${LLM_PROVIDER:-}" in
-  openrouter|anthropic|openai) : ;;
+  openrouter|anthropic|openai) LLM_LOCAL=0 ;;
+  vllm|ollama)                 LLM_LOCAL=1 ;;
   *) echo "entrypoint: unsupported LLM_PROVIDER='${LLM_PROVIDER:-}'" >&2; exit 2 ;;
 esac
 
+# SECURITY: the provider config/auth.json below interpolate these connector-supplied
+# values into JSON string literals and keys. A value containing a JSON metacharacter
+# (" or \) could break out of its string and inject config keys — e.g. overriding the
+# read-only "permission" block (pins MF-KUBE-SANDBOX-19/20/21). Legitimate base URLs,
+# model slugs, and API keys never contain these; reject any that do.
+for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}"; do
+  case "$_mfval" in
+    *'"'*|*'\'*) echo "entrypoint: LLM_* value contains a JSON metacharacter" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$LLM_LOCAL" = 1 ]; then
+  # Local OpenAI-compatible server (vLLM/Ollama/LM Studio). Use the bundled
+  # @ai-sdk/openai-compatible provider (Chat Completions) — NOT the built-in openai
+  # provider, which speaks the Responses API (/v1/responses) that local servers don't
+  # serve. Verified: opencode loads this provider offline (no npm). LLM_BASE_URL is the
+  # server's OpenAI base (e.g. http://host:1234/v1). Provider id "local" must match auth.json.
+  MODEL="local/${LLM_MODEL}"
+  mkdir -p "$XDG_DATA_HOME/opencode"
+  printf '{"local":{"type":"api","key":"%s"}}\n' "$LLM_API_KEY" > "$XDG_DATA_HOME/opencode/auth.json"
+  export OPENCODE_CONFIG=/tmp/opencode.json
+  printf '%s\n' '{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "'"${MODEL}"'",
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local",
+      "options": { "baseURL": "'"${LLM_BASE_URL}"'" },
+      "models": { "'"${LLM_MODEL}"'": { "options": { "max_tokens": 8192 } } }
+    }
+  },
+  "permission": {
+    "read": "allow", "glob": "allow", "grep": "allow",
+    "edit": "deny", "bash": "deny", "webfetch": "deny", "websearch": "deny",
+    "task": "deny", "external_directory": "deny"
+  }
+}' > "$OPENCODE_CONFIG"
+else
 # Model id for a built-in provider is "<provider>/<slug>"; the slug itself may
 # contain a slash (e.g. openrouter/google/gemini-2.5-pro).
 MODEL="${LLM_PROVIDER}/${LLM_MODEL}"
@@ -119,6 +166,7 @@ printf '%s\n' '{
     "external_directory": "deny"
   }
 }' > "$OPENCODE_CONFIG"
+fi
 
 # Scope the review to the PR's changed files when the runner supplied the list
 # (/out/review_files.txt, one repo-relative path per line). This keeps findings on

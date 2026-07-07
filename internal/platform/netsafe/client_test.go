@@ -1,8 +1,11 @@
 package netsafe
 
 import (
+	"context"
 	"net"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestBlocked(t *testing.T) {
@@ -101,5 +104,31 @@ func TestBlockedWithPrivateAllowed(t *testing.T) {
 	}
 	if IsBlocked(net.ParseIP("10.0.0.1"), Options{AllowPrivate: true}) != false {
 		t.Error("IsBlocked must allow RFC1918 when AllowPrivate is set")
+	}
+}
+
+// TestScreenedDialContextRefusesMetadataAndLinkLocal pins the resolved-IP screen the
+// egress proxy relies on (manyforge-9er): dialing a literal metadata/link-local address
+// must be refused even under full trust (AllowLoopback+AllowPrivate), because these are
+// blocked unconditionally by blockedWith. This is the defense-in-depth the deleted
+// host-side localReview dialer used to provide — an allowlisted hostname alone is not
+// enough, since DNS can rebind to one of these addresses between the allowlist check and
+// the dial. A full proxy-level test can't force real DNS to resolve to IMDS, so this
+// netsafe-level test (dialing the literal IP/IP-literal-host directly, no DNS involved)
+// is what actually exercises the screen.
+func TestScreenedDialContextRefusesMetadataAndLinkLocal(t *testing.T) {
+	dial := ScreenedDialContext(Options{AllowLoopback: true, AllowPrivate: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for _, addr := range []string{"169.254.169.254:80", "[fe80::1]:80"} {
+		conn, err := dial(ctx, "tcp", addr)
+		if err == nil {
+			_ = conn.Close()
+			t.Fatalf("dial(%s) succeeded, want blocked-address error", addr)
+		}
+		if !strings.Contains(err.Error(), "blocked address") {
+			t.Fatalf("dial(%s) err = %v, want a blocked-address error", addr, err)
+		}
 	}
 }

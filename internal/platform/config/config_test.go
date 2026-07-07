@@ -266,29 +266,29 @@ func TestSandboxNamespace(t *testing.T) {
 	})
 }
 
-func TestLocalReviewTimeout(t *testing.T) {
-	t.Run("default 30m", func(t *testing.T) {
-		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "")
+func TestSandboxReviewTimeout(t *testing.T) {
+	t.Run("default 8m", func(t *testing.T) {
+		t.Setenv("MANYFORGE_SANDBOX_REVIEW_TIMEOUT", "")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.LocalReviewTimeout != 30*time.Minute {
-			t.Fatalf("default = %v, want 30m", cfg.LocalReviewTimeout)
+		if cfg.SandboxReviewTimeout != 8*time.Minute {
+			t.Fatalf("default = %v, want 8m", cfg.SandboxReviewTimeout)
 		}
 	})
 	t.Run("override", func(t *testing.T) {
-		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "45m")
+		t.Setenv("MANYFORGE_SANDBOX_REVIEW_TIMEOUT", "45m")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.LocalReviewTimeout != 45*time.Minute {
-			t.Fatalf("override = %v, want 45m", cfg.LocalReviewTimeout)
+		if cfg.SandboxReviewTimeout != 45*time.Minute {
+			t.Fatalf("override = %v, want 45m", cfg.SandboxReviewTimeout)
 		}
 	})
 	t.Run("malformed is a hard error", func(t *testing.T) {
-		t.Setenv("MANYFORGE_LOCAL_REVIEW_TIMEOUT", "notaduration")
+		t.Setenv("MANYFORGE_SANDBOX_REVIEW_TIMEOUT", "notaduration")
 		if _, err := Load(); err == nil {
 			t.Fatal("malformed duration must be a config error")
 		}

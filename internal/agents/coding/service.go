@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,10 +110,6 @@ type CodeReviewService struct {
 	Image    string        // opencode sandbox image tag
 	WorkRoot string        // host temp root for per-run checkouts; must be writable
 	Timeout  time.Duration // sandbox wall-clock cap (0 = 10 min default)
-	// LocalTimeout is the HTTP timeout for the host-side local-provider review path
-	// (Ollama/vLLM); 0 ⇒ 30 min default. Separate from Timeout (the sandbox cap) so a
-	// long local review (e.g. a 35b model) isn't killed at the 10-min sandbox limit.
-	LocalTimeout time.Duration
 
 	// EgressAllow is the boot-static set of provider hosts the sandbox egress
 	// proxy permits (from MANYFORGE_SANDBOX_EGRESS_ALLOW). The proxy is shared and
@@ -176,23 +171,6 @@ func (s *CodeReviewService) timeout() time.Duration {
 	return 10 * time.Minute
 }
 
-// localTimeout returns the effective host-side local-provider review timeout (30 min
-// default). Distinct from timeout(): local models can run far longer than the cloud
-// sandbox wall-clock cap.
-func (s *CodeReviewService) localTimeout() time.Duration {
-	if s.LocalTimeout > 0 {
-		return s.LocalTimeout
-	}
-	return 30 * time.Minute
-}
-
-// localClient is the HTTP client for the host-side local-provider review path. A
-// plain client (allows loopback, which the SSRF-safe netsafe client refuses);
-// localReview enforces a loopback-only base URL so this stays local-only.
-func (s *CodeReviewService) localClient() *http.Client {
-	return &http.Client{Timeout: s.localTimeout()}
-}
-
 // Enqueue validates the request cheaply (resolve connector, resolve cred, egress
 // pre-flight) and inserts a pending code_review row. It does NOT build the GitHub
 // client, fetch the PR, clone, or touch the sandbox — those run in runJob when the
@@ -235,11 +213,19 @@ func (s *CodeReviewService) enqueueReview(
 	// The sandbox egress proxy is shared and boot-static; a provider host outside
 	// its allowlist would be silently CONNECT-blocked, so reject it up front with a
 	// clear, actionable error instead of launching a doomed sandbox (manyforge-0qj).
-	// Local providers (Ollama/vLLM) review host-side via the direct-API path — no
-	// sandbox, no egress proxy — so the allowlist check does not apply to them.
-	if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host()) {
+	// Local providers (Ollama/vLLM) now route through the sandbox too (manyforge-9er
+	// Task 4), so the allowlist check applies to every provider's host here.
+	if !s.EgressAllow.Allows(cred.Host()) {
 		return CodeReview{}, fmt.Errorf(
 			"coding: provider host %q is not in the sandbox egress allowlist (add it to MANYFORGE_SANDBOX_EGRESS_ALLOW): %w",
+			cred.Host(), errs.ErrValidation)
+	}
+	// An IP-literal private/RFC1918/ULA (or metadata/link-local) host is permitted only
+	// with the credential's explicit AllowPrivateBaseURL opt-in; DNS + public hosts pass
+	// unchanged (privateBaseURLBlocked, fallbackchain.go).
+	if privateBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL) {
+		return CodeReview{}, fmt.Errorf(
+			"coding: provider host %q requires allow_private_base_url: %w",
 			cred.Host(), errs.ErrValidation)
 	}
 
@@ -427,10 +413,18 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// sandbox proxy will CONNECT-block, instead of launching a doomed sandbox. Same
 	// expression as Enqueue — but this ALSO covers the app-triggered path, which is
 	// enqueued by the webhook DEFINER and never went through Enqueue's check. Local
-	// providers review host-side (no proxy), so the allowlist does not apply to them.
-	if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host()) {
+	// providers now route through the sandbox too (manyforge-9er Task 4), so the
+	// allowlist applies to every provider's host here.
+	if !s.EgressAllow.Allows(cred.Host()) {
 		return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
 			fmt.Errorf("coding: provider host %q not in sandbox egress allowlist: %w", cred.Host(), errs.ErrValidation))
+	}
+	// An IP-literal private/RFC1918/ULA (or metadata/link-local) host is permitted only
+	// with the credential's explicit AllowPrivateBaseURL opt-in; DNS + public hosts pass
+	// unchanged (privateBaseURLBlocked, fallbackchain.go).
+	if privateBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL) {
+		return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
+			fmt.Errorf("coding: provider host %q requires allow_private_base_url: %w", cred.Host(), errs.ErrValidation))
 	}
 
 	// From here on, any error must call s.failJob to mark the row failed.
@@ -665,26 +659,40 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		)
 	}
 
-	// reviewLane runs ONE dimension end-to-end and returns its outcome. Local providers
-	// (Ollama/vLLM) review host-side via the direct-API path — small models can't drive
-	// opencode's agent loop, and the on-host model needs no isolation (manyforge-62s; cost 0).
-	// Cloud providers run opencode in the hardened, egress-restricted sandbox, writing to a
-	// per-lane output dir so configured lanes never clobber each other's review.json. An empty
-	// dim.Model uses the review's resolved credential; the dimension's prompt drives both paths.
-	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
-		laneCred := laneCreds[dim.Key]
+	// Per-endpoint concurrency (manyforge-azy): a lane serializes against OTHER lanes on the
+	// SAME endpoint (provider+base_url) up to that endpoint's cap — a single-GPU local endpoint
+	// runs one lane at a time, a cloud endpoint runs its cap, and different endpoints run in
+	// parallel. This replaces the single global lane limit now that lanes may span endpoints.
+	// Declared here (before runSandboxLane) so every sandbox run — chosen or fallback alike —
+	// can acquire its OWN endpoint's slot for just the duration of that one run (manyforge-9er).
+	endpointSems := make(map[string]chan struct{})
+	var semMu sync.Mutex
+	acquireEndpoint := func(lc AICredential) func() {
+		key := strings.ToLower(lc.Provider) + "|" + lc.Host()
+		semMu.Lock()
+		sem, ok := endpointSems[key]
+		if !ok {
+			sem = make(chan struct{}, laneLimit(lc))
+			endpointSems[key] = sem
+		}
+		semMu.Unlock()
+		sem <- struct{}{}
+		return func() { <-sem }
+	}
+
+	// runSandboxLane runs ONE dimension end-to-end in the opencode sandbox and returns its
+	// outcome. Local and cloud providers share this path (manyforge-9er): the entrypoint maps
+	// the provider onto opencode. Small local models keep the tighter diff budget via `maxTotal`.
+	// Acquires and releases laneCred's OWN endpoint slot for just this run (manyforge-9er),
+	// including its retry loop below — never held across a fallback run on a different endpoint,
+	// so no two endpoint slots are ever held at once by the same lane (no serialization behind a
+	// slow fallback, no hold-and-wait cycle across swapped provider/fallback pairs).
+	runSandboxLane := func(dim Dimension, laneCred AICredential, laneOutDir string) laneResult {
+		release := acquireEndpoint(laneCred)
+		defer release()
+
 		scoped := filterFilesByScope(files, dim.ScopeGlobs)
 		lanePayload, _, _, _ := assembleDiffPayload(scoped, maxTotal)
-
-		if isLocalProvider(laneCred.Provider) {
-			_ = s.auditStep(ctx, principalID, businessID, crID,
-				"agent.coding.localreview.invoked",
-				map[string]any{"head_sha": pr.HeadSHA, "model": laneCred.Model, "base_url": laneCred.BaseURL, "dimension": dim.Key},
-				nil, ptr("executed"),
-			)
-			d, in, out, lerr := localReview(ctx, s.localClient(), laneCred, lanePayload, dim.Prompt, prog)
-			return laneResult{Dim: dim, Doc: d, Model: laneCred.Model, Provider: laneCred.Provider, TokensIn: clampInt32(in), TokensOut: clampInt32(out), Err: lerr} // local = no cost
-		}
 
 		// Cloud path: hand opencode the scoped diff + changed-file scope hint + the dimension's
 		// prompt in-band on the spec (Inputs) — the runner materializes them where the
@@ -809,9 +817,61 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		return lr
 	}
 
+	// reviewLane runs ONE dimension end-to-end and returns its outcome, resolving the
+	// dimension's own reviewbot credential (laneCreds, set above by resolveLaneCred) and
+	// handing it to runSandboxLane. An empty dim.Model uses the review's resolved credential.
+	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
+		chosen := laneCreds[dim.Key]
+		lr := runSandboxLane(dim, chosen, laneOutDir)
+		// Runtime fallback (manyforge-9er): if the chosen lane failed and it was NOT already the
+		// configured fallback, re-run once on the dimension's cloud fallback (provider, model).
+		if lr.Err != nil && dim.FallbackProvider != "" && !strings.EqualFold(chosen.Provider, dim.FallbackProvider) {
+			if fb, ferr := s.laneCredFor(ctx, principalID, businessID, cred, dim.FallbackProvider, dim.FallbackModel); ferr == nil {
+				slog.Default().InfoContext(ctx, "code review lane: falling back to cloud after local failure",
+					"dimension", dim.Key, "from", chosen.Provider, "to", fb.Provider)
+				// fbOutDir isolates the fallback run's output from the chosen lane's
+				// (manyforge-9er): DockerRunner reads back whatever review.json/usage.json
+				// exist in the dir and never clears it, so a fallback that fails before
+				// writing could otherwise pick up the chosen lane's stale output. Same
+				// creation pattern as the chosen lane's own laneOutDir below: host
+				// materialization only applies when the runner shares a host output
+				// directory (KubeRunner ignores it; s.ClonesInSandbox skips this).
+				fbOutDir := laneOutDir + "-fallback"
+				if !s.ClonesInSandbox {
+					if mkErr := os.MkdirAll(fbOutDir, 0o777); mkErr != nil {
+						slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
+							"dimension", dim.Key, "dir", fbOutDir, "err", mkErr)
+						return lr
+					}
+					if chErr := os.Chmod(fbOutDir, 0o777); chErr != nil {
+						slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
+							"dimension", dim.Key, "dir", fbOutDir, "err", chErr)
+						return lr
+					}
+				}
+				// runSandboxLane self-bounds against the fallback endpoint's own cap
+				// (manyforge-9er): the chosen endpoint's slot was already released before
+				// this call runs, so a mass local-endpoint outage can't serialize every
+				// dimension's cloud fallback behind a slot held on the (unrelated) local
+				// endpoint — each fallback only contends the fallback endpoint's own cap.
+				fbResult := runSandboxLane(dim, fb, fbOutDir)
+				if fbResult.Err == nil {
+					return fbResult
+				}
+			} else {
+				slog.Default().InfoContext(ctx, "code review lane: fallback credential unusable",
+					"dimension", dim.Key, "fallback_provider", dim.FallbackProvider, "err", ferr)
+			}
+		}
+		return lr
+	}
+
 	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube
-	// mode each lane is its own Job/pod — bounded by the resolved bot's laneLimit so a
-	// many-dimension panel can't burst the cluster. Results are written BY INDEX so
+	// mode each lane is its own Job/pod — bounded PER-ENDPOINT by acquireEndpoint's
+	// laneLimit-sized semaphore above (manyforge-azy), not by a single global bound: a
+	// many-dimension panel spanning multiple endpoints can have more sandboxes running
+	// concurrently in total than any one endpoint's laneLimit, since each endpoint gets
+	// its own cap. Results are written BY INDEX so
 	// aggregation stays order-deterministic (aggregateReview / dedupeFindings /
 	// buildDimensionRuns depend on active's Order) regardless of completion order. A
 	// single lane still writes directly to outDir (byte-for-byte the legacy path);
@@ -838,24 +898,6 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			laneOutDirs[i] = laneOutDir
 		}
 	}
-	// Per-endpoint concurrency (manyforge-azy): a lane serializes against OTHER lanes on the
-	// SAME endpoint (provider+base_url) up to that endpoint's cap — a single-GPU local endpoint
-	// runs one lane at a time, a cloud endpoint runs its cap, and different endpoints run in
-	// parallel. This replaces the single global lane limit now that lanes may span endpoints.
-	endpointSems := make(map[string]chan struct{})
-	var semMu sync.Mutex
-	acquireEndpoint := func(lc AICredential) func() {
-		key := strings.ToLower(lc.Provider) + "|" + lc.Host()
-		semMu.Lock()
-		sem, ok := endpointSems[key]
-		if !ok {
-			sem = make(chan struct{}, laneLimit(lc))
-			endpointSems[key] = sem
-		}
-		semMu.Unlock()
-		sem <- struct{}{}
-		return func() { <-sem }
-	}
 	var g errgroup.Group
 	for i, dim := range active {
 		g.Go(func() error {
@@ -868,9 +910,6 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 					laneResults[i] = laneResult{Dim: dim, Err: fmt.Errorf("coding: review lane %q panicked: %v", dim.Key, r)}
 				}
 			}()
-			// Bound this lane against others sharing its endpoint (released even on panic).
-			release := acquireEndpoint(laneCreds[dim.Key])
-			defer release()
 			// reviewLane captures its own (non-panic) failures in laneResult.Err; the
 			// goroutine never returns an error, so aggregateReview always sees every
 			// lane's outcome (a failed lane is a failed dimension, not a dropped one).

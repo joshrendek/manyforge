@@ -79,26 +79,36 @@ func vettedDialAddr(ips []net.IPAddr, host, port string, o Options) (string, err
 	return net.JoinHostPort(ips[0].IP.String(), port), nil
 }
 
+// ScreenedDialContext returns a DialContext that resolves the host and refuses any
+// resolved IP blocked under o (metadata/link-local always; loopback/private per o).
+// This is the resolved-IP screen shared by NewClientWithOptions and any other caller
+// that dials a caller-influenced host directly (e.g. the egress proxy, manyforge-9er) —
+// an allowlisted hostname is not enough on its own, because DNS can rebind the same
+// name to a blocked address between the allowlist check and the dial.
+func ScreenedDialContext(o Options) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		target, err := vettedDialAddr(ips, host, port, o)
+		if err != nil {
+			return nil, err
+		}
+		return dialer.DialContext(ctx, network, target)
+	}
+}
+
 // NewClientWithOptions builds a guarded client configured by o. See Options for the
 // available trust flags; the zero-value Options is the fully locked-down posture.
 func NewClientWithOptions(timeout time.Duration, o Options) *http.Client {
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Client{Timeout: timeout, Transport: &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-			if err != nil {
-				return nil, err
-			}
-			target, err := vettedDialAddr(ips, host, port, o)
-			if err != nil {
-				return nil, err
-			}
-			return dialer.DialContext(ctx, network, target)
-		},
+		DialContext: ScreenedDialContext(o),
 	}}
 }
 

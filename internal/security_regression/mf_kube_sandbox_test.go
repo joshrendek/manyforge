@@ -127,8 +127,20 @@ func TestKubeSandboxOpencodePermissionProfile(t *testing.T) {
 	if !strings.Contains(entry, `"websearch": "deny",`) {
 		t.Error("MF-KUBE-SANDBOX-21: opencode config must deny the websearch tool — pin broken, update this pin in the same change if the refactor is intentional")
 	}
-	if !strings.Contains(entry, "openrouter|anthropic|openai) : ;;") {
-		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
+	if !strings.Contains(entry, "openrouter|anthropic|openai) LLM_LOCAL=0 ;;") {
+		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai|vllm|ollama allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
+	}
+	if !strings.Contains(entry, "vllm|ollama)                 LLM_LOCAL=1 ;;") {
+		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai|vllm|ollama allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
+	}
+	// manyforge-9er: entrypoint.sh interpolates LLM_BASE_URL/LLM_MODEL/LLM_API_KEY
+	// into JSON string literals (and, for LLM_MODEL, a JSON object key) with no
+	// escaping. A value containing a JSON metacharacter (" or \) can break out of
+	// its string and inject config keys — including overriding the read-only
+	// "permission" block pinned by MF-KUBE-SANDBOX-19/20/21 above. This guard must
+	// run before either branch (built-in or local provider) writes config/auth.json.
+	if !strings.Contains(entry, `*'"'*|*'\'*) echo "entrypoint: LLM_* value contains a JSON metacharacter" >&2; exit 2 ;;`) {
+		t.Error("MF-KUBE-SANDBOX-24: entrypoint must reject any LLM_BASE_URL/LLM_MODEL/LLM_API_KEY containing a JSON metacharacter before interpolating it into config/auth.json — pin broken, update this pin in the same change if the refactor is intentional")
 	}
 }
 

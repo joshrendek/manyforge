@@ -3,11 +3,13 @@ package coding
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
 // stubProbe reports liveness by base_url — a pure test double for reviewbotProber.
@@ -71,4 +73,103 @@ func TestResolveReviewChain_DBErrorDegradesToNil(t *testing.T) {
 	if got := s.resolveReviewChain(context.Background(), uuid.New(), uuid.New()); got != nil {
 		t.Fatalf("a DB error must degrade to a nil chain, got %v", got)
 	}
+}
+
+// TestPrivateBaseURLBlocked pins privateBaseURLBlocked's classification: it is deliberately
+// narrower than localBaseURLBlocked (the direct-POST SSRF guard) — a DNS hostname or a public
+// IP always passes here (the egress allowlist is what governs those), while an IP-literal
+// private/ULA host requires the AllowPrivateBaseURL opt-in, loopback always passes, and
+// cloud-metadata/link-local stay blocked even with the opt-in.
+func TestPrivateBaseURLBlocked(t *testing.T) {
+	cases := []struct {
+		name        string
+		host        string
+		allowPriv   bool
+		wantBlocked bool
+	}{
+		{"dns hostname, no opt-in", "api.anthropic.com", false, false},
+		{"dns hostname, opt-in", "api.anthropic.com", true, false},
+		{"public ip", "8.8.8.8", false, false},
+		{"private ip, opt-in", "192.168.2.241", true, false},
+		{"private ip, no opt-in", "192.168.2.241", false, true},
+		{"rfc1918 10/8, no opt-in", "10.0.0.5", false, true},
+		{"loopback", "127.0.0.1", false, false},
+		{"metadata, opt-in still blocked", "169.254.169.254", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := privateBaseURLBlocked(c.host, c.allowPriv); got != c.wantBlocked {
+				t.Errorf("privateBaseURLBlocked(%q, allowPrivate=%v) = %v, want %v", c.host, c.allowPriv, got, c.wantBlocked)
+			}
+		})
+	}
+}
+
+// TestLaneCredForEgressAndPrivateBaseURL pins laneCredFor's two-part sandbox lane guard
+// (manyforge-9er Task 3): EVERY provider's host must be in the sandbox egress allowlist —
+// local providers are no longer exempt now that Task 4 routes them through the sandbox too —
+// and an IP-literal private host additionally requires the credential's AllowPrivateBaseURL
+// opt-in. The cloud/anthropic case is a regression guard: an earlier draft of this gate
+// reused localBaseURLBlocked (the INVERTED direct-POST guard, which blocks every public/DNS
+// host) and would have wrongly rejected every cloud provider — this proves it still resolves.
+func TestLaneCredForEgressAndPrivateBaseURL(t *testing.T) {
+	def := AICredential{Provider: "anthropic", BaseURL: "https://api.anthropic.com", Model: "def"}
+	ctx := context.Background()
+	p, b := uuid.New(), uuid.New()
+
+	t.Run("cloud provider without opt-in still resolves (regression guard)", func(t *testing.T) {
+		svc := &CodeReviewService{
+			Creds:       &FakeCredResolver{ByProvider: map[string]AICredential{}},
+			EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com"),
+		}
+		lc, err := svc.laneCredFor(ctx, p, b, def, "", "")
+		if err != nil {
+			t.Fatalf("cloud cred with AllowPrivateBaseURL=false must resolve: %v", err)
+		}
+		if lc.Provider != "anthropic" || lc.Host() != "api.anthropic.com" {
+			t.Fatalf("unexpected resolved cred: %+v", lc)
+		}
+	})
+
+	t.Run("local private host with opt-in and allowlist membership resolves", func(t *testing.T) {
+		svc := &CodeReviewService{
+			Creds: &FakeCredResolver{ByProvider: map[string]AICredential{
+				"vllm": {Provider: "vllm", BaseURL: "http://192.168.2.241:1234/v1", Model: "orn", AllowPrivateBaseURL: true, APIKey: "k"},
+			}},
+			EgressAllow: netsafe.ParseHostAllowlist("192.168.2.241"),
+		}
+		lc, err := svc.laneCredFor(ctx, p, b, def, "vllm", "orn")
+		if err != nil {
+			t.Fatalf("local cred with opt-in + allowlist membership must resolve: %v", err)
+		}
+		if lc.Provider != "vllm" {
+			t.Fatalf("unexpected resolved cred: %+v", lc)
+		}
+	})
+
+	t.Run("local private host without opt-in is rejected", func(t *testing.T) {
+		svc := &CodeReviewService{
+			Creds: &FakeCredResolver{ByProvider: map[string]AICredential{
+				"vllm": {Provider: "vllm", BaseURL: "http://192.168.2.241:1234/v1", Model: "orn", AllowPrivateBaseURL: false, APIKey: "k"},
+			}},
+			EgressAllow: netsafe.ParseHostAllowlist("192.168.2.241"),
+		}
+		_, err := svc.laneCredFor(ctx, p, b, def, "vllm", "orn")
+		if err == nil || !strings.Contains(err.Error(), "allow_private_base_url") {
+			t.Fatalf("local cred without opt-in: want error mentioning allow_private_base_url, got %v", err)
+		}
+	})
+
+	t.Run("local host not in allowlist is rejected regardless of opt-in", func(t *testing.T) {
+		svc := &CodeReviewService{
+			Creds: &FakeCredResolver{ByProvider: map[string]AICredential{
+				"vllm": {Provider: "vllm", BaseURL: "http://192.168.2.241:1234/v1", Model: "orn", AllowPrivateBaseURL: true, APIKey: "k"},
+			}},
+			EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com"), // 192.168.2.241 NOT included
+		}
+		_, err := svc.laneCredFor(ctx, p, b, def, "vllm", "orn")
+		if err == nil || !strings.Contains(err.Error(), "egress allowlist") {
+			t.Fatalf("host not in allowlist: want error mentioning egress allowlist, got %v", err)
+		}
+	})
 }
