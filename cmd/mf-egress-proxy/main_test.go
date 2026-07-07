@@ -1,6 +1,11 @@
 package main
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
@@ -47,5 +52,45 @@ func TestProxyAllowMatching(t *testing.T) {
 				t.Errorf("Allows(%q) = %v, want %v", tt.query, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestProxyForwardsAllowlistedPlainHTTP(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("upstream-ok"))
+	}))
+	defer upstream.Close()
+	host := strings.TrimPrefix(upstream.URL, "http://") // 127.0.0.1:PORT
+
+	proxy := httptest.NewServer(proxyHandler(netsafe.ParseHostAllowlist(host)))
+	defer proxy.Close()
+
+	// A client that sends every request through the proxy (plain-HTTP ⇒ absolute-form, not CONNECT).
+	pu, _ := url.Parse(proxy.URL)
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+
+	resp, err := client.Get(upstream.URL)
+	if err != nil {
+		t.Fatalf("get through proxy: %v", err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || string(b) != "upstream-ok" {
+		t.Fatalf("want 200/upstream-ok, got %d/%q", resp.StatusCode, b)
+	}
+}
+
+func TestProxyRejectsNonAllowlistedPlainHTTP(t *testing.T) {
+	proxy := httptest.NewServer(proxyHandler(netsafe.ParseHostAllowlist("api.anthropic.com")))
+	defer proxy.Close()
+	pu, _ := url.Parse(proxy.URL)
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+	resp, err := client.Get("http://198.51.100.7:9/x") // not allowlisted, never dialed
+	if err != nil {
+		t.Fatalf("unexpected transport error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("want 403, got %d", resp.StatusCode)
 	}
 }
