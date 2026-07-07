@@ -797,7 +797,20 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// dimension's own reviewbot credential (laneCreds, set above by resolveLaneCred) and
 	// handing it to runSandboxLane. An empty dim.Model uses the review's resolved credential.
 	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
-		return runSandboxLane(dim, laneCreds[dim.Key], laneOutDir)
+		chosen := laneCreds[dim.Key]
+		lr := runSandboxLane(dim, chosen, laneOutDir)
+		// Runtime fallback (manyforge-9er): if the chosen lane failed and it was NOT already the
+		// configured fallback, re-run once on the dimension's cloud fallback (provider, model).
+		if lr.Err != nil && dim.FallbackProvider != "" && !strings.EqualFold(chosen.Provider, dim.FallbackProvider) {
+			if fb, ferr := s.laneCredFor(ctx, principalID, businessID, cred, dim.FallbackProvider, dim.FallbackModel); ferr == nil {
+				slog.Default().InfoContext(ctx, "code review lane: falling back to cloud after local failure",
+					"dimension", dim.Key, "from", chosen.Provider, "to", fb.Provider)
+				if fbResult := runSandboxLane(dim, fb, laneOutDir); fbResult.Err == nil {
+					return fbResult
+				}
+			}
+		}
+		return lr
 	}
 
 	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube
