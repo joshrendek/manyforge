@@ -60,7 +60,7 @@ func (q *Queries) CreateCodeReviewAgentRun(ctx context.Context, arg CreateCodeRe
 }
 
 const getCodeReview = `-- name: GetCodeReview :one
-SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
+SELECT id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs, force FROM code_review WHERE id = $1::uuid AND business_id = $2::uuid
 `
 
 type GetCodeReviewParams struct {
@@ -98,17 +98,18 @@ func (q *Queries) GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (C
 		&i.CostCents,
 		&i.Progress,
 		&i.DimensionRuns,
+		&i.Force,
 	)
 	return i, err
 }
 
 const insertCodeReview = `-- name: InsertCodeReview :one
-INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, principal_id, agent_id, model, created_at, updated_at)
+INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, principal_id, agent_id, model, force, created_at, updated_at)
 SELECT $1, b.id, b.tenant_root_id, $2, $3,
-    $4, 'pending', $5, $6, $7, now(), now()
+    $4, 'pending', $5, $6, $7, $8::boolean, now(), now()
 FROM business b
-WHERE b.id = $8::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs
+WHERE b.id = $9::uuid
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs, force
 `
 
 type InsertCodeReviewParams struct {
@@ -119,6 +120,7 @@ type InsertCodeReviewParams struct {
 	PrincipalID     pgtype.UUID `json:"principal_id"`
 	AgentID         pgtype.UUID `json:"agent_id"`
 	Model           string      `json:"model"`
+	Force           bool        `json:"force"`
 	BusinessID      uuid.UUID   `json:"business_id"`
 }
 
@@ -131,6 +133,7 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		arg.PrincipalID,
 		arg.AgentID,
 		arg.Model,
+		arg.Force,
 		arg.BusinessID,
 	)
 	var i CodeReview
@@ -161,6 +164,7 @@ func (q *Queries) InsertCodeReview(ctx context.Context, arg InsertCodeReviewPara
 		&i.CostCents,
 		&i.Progress,
 		&i.DimensionRuns,
+		&i.Force,
 	)
 	return i, err
 }
@@ -278,7 +282,7 @@ UPDATE code_review SET
     lease_expires_at = NULL,
     updated_at = now()
 WHERE id = $13::uuid
-RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs
+RETURNING id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, head_sha, status, summary, findings, external_review_ref, posted_at, created_at, updated_at, principal_id, agent_id, attempts, run_after, lease_expires_at, last_error, model, tokens_in, tokens_out, cost_cents, progress, dimension_runs, force
 `
 
 type UpdateCodeReviewResultParams struct {
@@ -341,6 +345,7 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		&i.CostCents,
 		&i.Progress,
 		&i.DimensionRuns,
+		&i.Force,
 	)
 	return i, err
 }

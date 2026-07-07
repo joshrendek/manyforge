@@ -1,7 +1,7 @@
 -- name: InsertCodeReview :one
-INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, principal_id, agent_id, model, created_at, updated_at)
+INSERT INTO code_review (id, business_id, tenant_root_id, agent_run_id, repo_connector_id, pr_number, status, principal_id, agent_id, model, force, created_at, updated_at)
 SELECT sqlc.arg('id'), b.id, b.tenant_root_id, sqlc.narg('agent_run_id'), sqlc.arg('repo_connector_id'),
-    sqlc.arg('pr_number'), 'pending', sqlc.narg('principal_id'), sqlc.narg('agent_id'), sqlc.arg('model'), now(), now()
+    sqlc.arg('pr_number'), 'pending', sqlc.narg('principal_id'), sqlc.narg('agent_id'), sqlc.arg('model'), sqlc.arg('force')::boolean, now(), now()
 FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid
 RETURNING *;

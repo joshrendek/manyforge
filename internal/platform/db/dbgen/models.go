@@ -672,6 +672,7 @@ type CodeReview struct {
 	CostCents         int64              `json:"cost_cents"`
 	Progress          []byte             `json:"progress"`
 	DimensionRuns     []byte             `json:"dimension_runs"`
+	Force             bool               `json:"force"`
 }
 
 type Company struct {

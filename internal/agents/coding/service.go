@@ -198,10 +198,23 @@ func (s *CodeReviewService) localClient() *http.Client {
 // client, fetch the PR, clone, or touch the sandbox — those run in runJob when the
 // background worker picks up the row.
 // Returns CodeReview{ID, Status:"pending", PRNumber} on success.
+// Enqueue creates a pending code review for a PR (the normal, deduped path).
 func (s *CodeReviewService) Enqueue(
 	ctx context.Context,
 	principalID, businessID, agentID, repoConnectorID uuid.UUID,
 	prNumber int,
+) (CodeReview, error) {
+	return s.enqueueReview(ctx, principalID, businessID, agentID, repoConnectorID, prNumber, false)
+}
+
+// enqueueReview inserts a pending code_review. force=true marks it to bypass the claim-time
+// same-head dedup (the manual "retry" path, manyforge), so it re-runs even on a head that was
+// already reviewed — e.g. after a failure or a config change.
+func (s *CodeReviewService) enqueueReview(
+	ctx context.Context,
+	principalID, businessID, agentID, repoConnectorID uuid.UUID,
+	prNumber int,
+	force bool,
 ) (CodeReview, error) {
 
 	// 1. Resolve repo connector (RLS-scoped) to confirm ownership and extract type.
@@ -244,6 +257,7 @@ func (s *CodeReviewService) Enqueue(
 			// Snapshot the resolved model so the history shows which model produced
 			// each review even after the agent's model changes later.
 			Model: cred.Model,
+			Force: force,
 		}); ierr != nil {
 			return ierr
 		}
@@ -262,6 +276,37 @@ func (s *CodeReviewService) Enqueue(
 		Status:   "pending",
 		PRNumber: prNumber,
 	}, nil
+}
+
+// Retry re-runs a code review by enqueuing a FRESH forced review for the same PR (same agent,
+// connector, PR number), bypassing the same-head dedup so it executes even on an unchanged
+// commit — used to re-run after a failure or a config change (manyforge retry option). The
+// source review must be visible to the caller (RLS) and carry an agent.
+func (s *CodeReviewService) Retry(ctx context.Context, principalID, businessID, reviewID uuid.UUID) (CodeReview, error) {
+	var agentID, connID uuid.UUID
+	var prNumber int
+	if err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		row, qerr := dbgen.New(tx).GetCodeReview(ctx, dbgen.GetCodeReviewParams{ID: reviewID, BusinessID: businessID})
+		if qerr != nil {
+			return qerr
+		}
+		if !row.AgentID.Valid {
+			return fmt.Errorf("coding: review has no agent to retry with: %w", errs.ErrValidation)
+		}
+		agentID = uuid.UUID(row.AgentID.Bytes)
+		connID = row.RepoConnectorID
+		prNumber = int(row.PrNumber)
+		return nil
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CodeReview{}, fmt.Errorf("coding: review not found: %w", errs.ErrNotFound)
+		}
+		if errors.Is(err, errs.ErrValidation) {
+			return CodeReview{}, err
+		}
+		return CodeReview{}, fmt.Errorf("coding: retry review: %w", err)
+	}
+	return s.enqueueReview(ctx, principalID, businessID, agentID, connID, prNumber, true)
 }
 
 // runJob executes the heavy code-review pipeline for a claimed row.
@@ -424,9 +469,13 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// Claim-time same-head re-check (fable M4): a rapid-push sibling may have already
 	// reviewed this EXACT head between enqueue and claim. Skip (finalize succeeded, no
 	// post) to avoid a duplicate review on the PR. A query error is treated as "not yet
-	// reviewed" (proceed) — we never skip a real review on a transient DB hiccup.
-	if already, cerr := s.reviewedHead(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID, job.PRNumber, pr.HeadSHA, job.ID); cerr == nil && already {
-		return s.finalizeSkipped(ctx, job, pr.HeadSHA, cred.Model)
+	// reviewed" (proceed) — we never skip a real review on a transient DB hiccup. A FORCED
+	// retry (manyforge) bypasses this dedup so a user can deliberately re-run a review on an
+	// already-reviewed head after a failure or a config change.
+	if forced, _ := s.reviewForced(ctx, job.PrincipalID, job.BusinessID, job.ID); !forced {
+		if already, cerr := s.reviewedHead(ctx, job.PrincipalID, job.BusinessID, job.RepoConnectorID, job.PRNumber, pr.HeadSHA, job.ID); cerr == nil && already {
+			return s.finalizeSkipped(ctx, job, pr.HeadSHA, cred.Model)
+		}
 	}
 
 	// Best-effort "review in progress" Check Run on the PR (manyforge-nh6). Placed
@@ -1177,6 +1226,20 @@ func (s *CodeReviewService) reviewedHead(ctx context.Context, principalID, busin
 			connID, prNumber, headSHA, selfID, businessID).Scan(&exists)
 	})
 	return exists, err
+}
+
+// reviewForced reports whether this review was enqueued as a forced retry (manyforge), which
+// bypasses the same-head dedup so a user can deliberately re-run a review on an already-reviewed
+// commit. Read under the owning principal (RLS) + business_id pin (defense in depth). A query
+// error returns (false, err); the caller treats "unknown" as not-forced (normal dedup applies).
+func (s *CodeReviewService) reviewForced(ctx context.Context, principalID, businessID, id uuid.UUID) (bool, error) {
+	var forced bool
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT force FROM code_review WHERE id = $1 AND business_id = $2`,
+			id, businessID).Scan(&forced)
+	})
+	return forced, err
 }
 
 // finalizeSkipped marks a review 'succeeded' WITHOUT posting — used when the claim-time

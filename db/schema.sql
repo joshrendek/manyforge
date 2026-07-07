@@ -636,6 +636,7 @@ CREATE TABLE code_review (
     cost_cents         bigint NOT NULL DEFAULT 0,
     progress           jsonb,
     dimension_runs     jsonb NOT NULL DEFAULT '[]'::jsonb,
+    force              boolean NOT NULL DEFAULT false,
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (repo_connector_id, tenant_root_id) REFERENCES repo_connector (id, tenant_root_id),

@@ -550,4 +550,21 @@ describe('CodeReviewListComponent', () => {
       expect(phase?.textContent).toContain('reviewing');
     });
   });
+
+  it('shows Retry on a terminal review and re-runs it via POST /retry', () => {
+    const f = mount();
+    const cmp = f.componentInstance;
+    cmp.reviews.set([
+      { id: 'r1', status: 'failed', pr_number: 5, model: 'm', repo: 'o/r', findings_count: 0, cost_cents: 0, created_at: '', findings: [] } as any,
+    ]);
+    f.detectChanges();
+    const btn = f.nativeElement.querySelector('[data-testid="review-retry-r1"]') as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    btn.click();
+    const req = mock.expectOne('/api/v1/businesses/b1/code-reviews/r1/retry');
+    expect(req.request.method).toBe('POST');
+    req.flush({ id: 'r2', status: 'pending', pr_number: 5 });
+    expect(cmp.reviews()[0].id).toBe('r2');
+    f.destroy();
+  });
 });
