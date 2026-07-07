@@ -146,6 +146,18 @@ sandbox:
   namespace: manyforge-sandbox
   image: "ghcr.io/joshrendek/manyforge/opencode-sandbox:latest"
   egressProxyImage: "ghcr.io/joshrendek/manyforge/egress-proxy:latest"
+  # Comma-separated allowlist of provider hosts (host or host:port) the mf-egress-proxy
+  # permits (both CONNECT for TLS and plain-HTTP forwarding). Every AI credential's host
+  # must appear here or its reviews are rejected up front (manyforge-9er) — including
+  # local providers (vLLM/Ollama/LM Studio), which now route through this same sandbox
+  # egress path rather than a direct-POST bypass. To enable a local provider, add its
+  # host:port (e.g. "192.168.2.241:1234") to this list. The app reads this same value as
+  # MANYFORGE_SANDBOX_EGRESS_ALLOW (see configmap.yaml). Private/RFC1918/loopback hosts
+  # are additionally gated at the service layer by the credential's own
+  # allow_private_base_url opt-in — being on this allowlist is necessary but not
+  # sufficient for a private host. Do NOT add the deployment-specific LAN IP here: the
+  # default below stays cloud-only; the actual LAN host lives only in the hub's Flux
+  # HelmRelease values (out of this repo).
   egressAllow: "api.anthropic.com,openrouter.ai,api.openai.com"
   mode: "kube"
   # Name of the image-pull Secret the KubeRunner attaches to every per-review
