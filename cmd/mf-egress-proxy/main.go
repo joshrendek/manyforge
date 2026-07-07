@@ -42,7 +42,7 @@ func proxyHandler(allow netsafe.HostAllowlist) http.Handler {
 				http.Error(w, "upstream error", http.StatusBadGateway)
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			for k, vs := range resp.Header {
 				for _, v := range vs {
 					w.Header().Add(k, v)
