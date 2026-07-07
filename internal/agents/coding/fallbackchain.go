@@ -106,10 +106,11 @@ func (s *CodeReviewService) resolveLaneCred(ctx context.Context, principalID, bu
 // privateBaseURLBlocked reports whether a base-URL host must be refused for a sandbox
 // lane given the credential's AllowPrivateBaseURL opt-in. Only IP-LITERAL hosts are
 // classified: a DNS hostname or a public IP returns false (governed solely by the egress
-// allowlist). A private/ULA IP is permitted only with the opt-in; loopback is always
-// permitted; cloud-metadata/link-local stay blocked even with the opt-in. NOTE: this is
-// deliberately NOT localBaseURLBlocked (the direct-POST SSRF guard, which blocks public/
-// DNS hosts) — cloud providers reach opencode via the allowlist-gated egress proxy.
+// allowlist, checked separately in laneCredFor/runJob). A private/ULA IP is permitted
+// only with the opt-in; loopback is always permitted; cloud-metadata/link-local stay
+// blocked even with the opt-in. Every provider — local and cloud alike — reaches its
+// endpoint via the same sandbox path, gated by this guard plus the allowlist-gated
+// egress proxy (manyforge-9er Tasks 3-4).
 func privateBaseURLBlocked(host string, allowPrivate bool) bool {
 	ip := net.ParseIP(host)
 	if ip == nil {
