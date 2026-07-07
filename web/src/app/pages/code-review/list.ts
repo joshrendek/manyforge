@@ -228,6 +228,13 @@ import { runStatusTone } from '../../ui/status';
               <span style="width:72px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)"
                     data-testid="review-cost">{{ formatCost(r.cost_cents) }}</span>
               <span style="width:132px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
+              <span style="width:76px;text-align:right" role="cell" (click)="$event.stopPropagation()">
+                @if (isTerminal(r.status)) {
+                  <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'review-retry-' + r.id"
+                          [disabled]="retrying().has(r.id)" (click)="retry(r)"
+                          [attr.aria-label]="'Retry review of PR #' + r.pr_number">Retry</button>
+                }
+              </span>
             </div>
           }
         </div>
@@ -256,6 +263,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   businessId = signal<string>('');
   connectors = signal<RepoConnector[]>([]);
   reviews = signal<CodeReview[]>([]);
+  retrying = signal<Set<string>>(new Set());
   agents = signal<Agent[]>([]);
   loading = signal(false);
   // pending counts the in-flight init loads (connectors/reviews/agents) so the
@@ -347,6 +355,39 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   // Navigate to the detail page for a review row click.
   openDetail(r: CodeReview): void {
     void this.router.navigate(['/code-review', this.businessId(), r.id]);
+  }
+
+  // isTerminal is true for a review that has finished (so it can be retried); pending/running
+  // reviews are still in flight.
+  isTerminal(status: string): boolean {
+    return status !== 'pending' && status !== 'running';
+  }
+
+  // retry re-runs a review: POSTs a forced re-run (bypasses the same-head dedup), prepends the
+  // new pending review, and resumes polling so it updates live.
+  retry(r: CodeReview): void {
+    if (this.retrying().has(r.id)) return;
+    this.retrying.update((s) => new Set(s).add(r.id));
+    this.api.retry(this.businessId(), r.id).subscribe({
+      next: (fresh) => {
+        this.clearRetrying(r.id);
+        this.reviews.set([fresh, ...this.reviews()]);
+        this.startPolling();
+        this.toast.success('Review re-queued');
+      },
+      error: (e: HttpErrorResponse) => {
+        this.clearRetrying(r.id);
+        this.toast.error(e.status === 404 ? 'Review not found' : 'Retry failed');
+      },
+    });
+  }
+
+  private clearRetrying(id: string): void {
+    this.retrying.update((s) => {
+      const n = new Set(s);
+      n.delete(id);
+      return n;
+    });
   }
 
   selectBusiness(id: string): void {

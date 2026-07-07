@@ -258,6 +258,69 @@ func TestCodeReviewFallbackChainPicksLiveSecondary(t *testing.T) {
 	}
 }
 
+// TestCodeReviewRetryBypassesDedup pins the manual retry (manyforge): a normal re-run of an
+// already-reviewed head is SKIPPED by the same-head dedup, but Retry enqueues a FORCED review
+// that runs anyway (lanes execute) — the exact "re-run after a failure/config change" path.
+func TestCodeReviewRetryBypassesDedup(t *testing.T) {
+	ctx, tdb, seed := startCoding(t)
+	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
+	ghSrv, _ := startGitHubStub(t, prJSON)
+	seedReviewDimension(ctx, t, tdb, seed.businessID, "security", "P:security", "info", nil, 1)
+
+	fakeCred := &FakeCredResolver{Cred: AICredential{APIKey: "k", BaseURL: "https://api.anthropic.com", Model: "m", Provider: "anthropic"}}
+	env := newCodingEnv(t, tdb)
+	connID := createRepoConnector(ctx, t, env, seed, ghSrv.URL)
+	svc := buildService(t, tdb, env, &overlapRunner{}, fakeCred)
+
+	run := func(id uuid.UUID) {
+		if err := svc.runJob(ctx, ClaimedReview{
+			ID: id, BusinessID: seed.businessID, PrincipalID: seed.principalID,
+			AgentID: seed.agentID, RepoConnectorID: connID, PRNumber: 1, Attempts: 1,
+		}, nil); err != nil {
+			t.Fatalf("runJob %s: %v", id, err)
+		}
+	}
+	lanes := func(id uuid.UUID) int {
+		got, err := svc.Get(ctx, seed.principalID, seed.businessID, id)
+		if err != nil {
+			t.Fatalf("Get %s: %v", id, err)
+		}
+		var runs []struct{}
+		_ = json.Unmarshal(got.DimensionRuns, &runs)
+		return len(runs)
+	}
+
+	// 1. First review runs + succeeds → head "abc" is now recorded reviewed.
+	cr1, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue 1: %v", err)
+	}
+	run(cr1.ID)
+	if lanes(cr1.ID) == 0 {
+		t.Fatal("first review should have run its lane")
+	}
+
+	// 2. A NORMAL new review of the SAME head is skipped by the dedup → no lanes.
+	cr2, err := svc.Enqueue(ctx, seed.principalID, seed.businessID, seed.agentID, connID, 1)
+	if err != nil {
+		t.Fatalf("Enqueue 2: %v", err)
+	}
+	run(cr2.ID)
+	if n := lanes(cr2.ID); n != 0 {
+		t.Fatalf("a normal re-run of an already-reviewed head must be deduped (0 lanes), got %d", n)
+	}
+
+	// 3. Retry the first review → a FORCED review that runs despite the same head.
+	cr3, err := svc.Retry(ctx, seed.principalID, seed.businessID, cr1.ID)
+	if err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	run(cr3.ID)
+	if n := lanes(cr3.ID); n == 0 {
+		t.Fatal("a forced retry must bypass the dedup and run its lane, got 0")
+	}
+}
+
 // seedDimFull inserts a review_dimension with an explicit primary + fallback (provider, model),
 // via the superuser connection (bypasses RLS for setup). Empty provider ⇒ NULL.
 func seedDimFull(ctx context.Context, t *testing.T, tdb *testdb.TestDB, businessID uuid.UUID, dim, provider, model, fbProvider, fbModel string, order int) {
