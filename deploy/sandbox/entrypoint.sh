@@ -59,6 +59,17 @@ case "${LLM_PROVIDER:-}" in
   *) echo "entrypoint: unsupported LLM_PROVIDER='${LLM_PROVIDER:-}'" >&2; exit 2 ;;
 esac
 
+# SECURITY: the provider config/auth.json below interpolate these connector-supplied
+# values into JSON string literals and keys. A value containing a JSON metacharacter
+# (" or \) could break out of its string and inject config keys — e.g. overriding the
+# read-only "permission" block (pins MF-KUBE-SANDBOX-19/20/21). Legitimate base URLs,
+# model slugs, and API keys never contain these; reject any that do.
+for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}"; do
+  case "$_mfval" in
+    *'"'*|*'\'*) echo "entrypoint: LLM_* value contains a JSON metacharacter" >&2; exit 2 ;;
+  esac
+done
+
 if [ "$LLM_LOCAL" = 1 ]; then
   # Local OpenAI-compatible server (vLLM/Ollama/LM Studio). Use the bundled
   # @ai-sdk/openai-compatible provider (Chat Completions) — NOT the built-in openai
