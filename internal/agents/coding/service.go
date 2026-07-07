@@ -629,19 +629,25 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	panel := s.resolvePanel(ctx, principalID, businessID)
 	changedPaths := changedFilePaths(changed)
 	active, skippedDims := activeDimensions(panel, changedPaths)
-	// Resolve each active dimension's own reviewbot (manyforge-azy, completes ubk): its
-	// provider's credential + model, probed live, else its fallback (provider, model). A lane
-	// whose primary AND fallback can't be resolved/reached is skipped with a reason (recorded,
-	// never silently misrouted). A blank provider inherits the review's default resolved cred.
+	// Resolve each active dimension's own reviewbot (manyforge-azy, extended to walk the whole
+	// fallback chain by manyforge-7lx T2): its provider's credential + model, probed live, else
+	// each fallback (provider, model) in order. A lane whose ENTIRE chain can't be
+	// resolved/reached is skipped with a reason (recorded, never silently misrouted). A blank
+	// provider inherits the review's default resolved cred.
 	laneCreds := make(map[string]AICredential, len(active))
+	// laneRest holds each lane's not-yet-tried fallback tail (manyforge-7lx T2): the chain
+	// candidates resolveLaneCred didn't choose. Not yet consumed here — T3 wires it into
+	// reviewLane's runtime fallback so a failed real call keeps walking the chain.
+	laneRest := make(map[string][]FallbackEntry, len(active))
 	kept := make([]Dimension, 0, len(active))
 	for _, dim := range active {
-		lc, reason := s.resolveLaneCred(ctx, principalID, businessID, cred, dim)
+		lc, rest, reason := s.resolveLaneCred(ctx, principalID, businessID, cred, dim)
 		if reason != "" {
 			skippedDims = append(skippedDims, SkippedDimension{Key: dim.Key, Reason: reason})
 			continue
 		}
 		laneCreds[dim.Key] = lc
+		laneRest[dim.Key] = rest
 		kept = append(kept, dim)
 	}
 	active = kept

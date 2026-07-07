@@ -79,30 +79,46 @@ func (s *CodeReviewService) prober() reviewbotProber {
 	return httpProber{Timeout: defaultProbeTimeout}
 }
 
-// resolveLaneCred picks the reviewbot credential for one dimension lane (manyforge-azy): its
-// primary (provider, model) probed live, else its fallback (provider, model). A blank provider
-// inherits the review's default resolved cred (def). Returns a non-empty reason when neither
-// primary nor fallback yields a usable, egress-permitted endpoint — the lane is then skipped
-// (recorded in dimension_runs, never silently misrouted). T1 (manyforge-7lx) only tries
-// FallbackChain[0] — the same single-fallback behavior as before; T2/T3 walk the full chain.
-func (s *CodeReviewService) resolveLaneCred(ctx context.Context, principalID, businessID uuid.UUID, def AICredential, dim Dimension) (AICredential, string) {
-	primary, perr := s.laneCredFor(ctx, principalID, businessID, def, dim.Provider, dim.Model)
-	if perr == nil && s.prober().Live(ctx, primary) {
-		return primary, ""
-	}
-	if len(dim.FallbackChain) > 0 {
-		fb := dim.FallbackChain[0]
-		lc, ferr := s.laneCredFor(ctx, principalID, businessID, def, fb.Provider, fb.Model)
-		if ferr == nil {
-			return lc, "" // use fallback; if it's also down the real call fails → worker retry
+// laneCandidates returns the ordered fallback candidates for a dimension: the primary
+// (provider, model) first, then each fallback-chain entry.
+func laneCandidates(dim Dimension) []FallbackEntry {
+	out := make([]FallbackEntry, 0, len(dim.FallbackChain)+1)
+	out = append(out, FallbackEntry{Provider: dim.Provider, Model: dim.Model})
+	out = append(out, dim.FallbackChain...)
+	return out
+}
+
+// resolveLaneCred picks the reviewbot credential for one dimension lane (manyforge-azy, extended
+// to walk the whole chain by manyforge-7lx T2): it probes [primary, ...FallbackChain] in order
+// and returns the first one that resolves AND passes the liveness probe, plus the not-yet-tried
+// tail (the remaining candidates after the chosen one) so a caller can keep going down the chain
+// at runtime if the chosen lane's real call still fails (T3). A blank provider inherits the
+// review's default resolved cred (def). If nothing in the chain is live but some candidates
+// resolve, it returns the first resolvable one (the retry path — a briefly-flapping endpoint
+// still gets a shot). Returns a non-empty reason only when NOTHING in the chain resolves — the
+// lane is then skipped (recorded in dimension_runs, never silently misrouted).
+func (s *CodeReviewService) resolveLaneCred(ctx context.Context, principalID, businessID uuid.UUID, def AICredential, dim Dimension) (AICredential, []FallbackEntry, string) {
+	cands := laneCandidates(dim)
+	var firstResolvable AICredential
+	firstResolvableIdx := -1
+	for i, c := range cands {
+		lc, err := s.laneCredFor(ctx, principalID, businessID, def, c.Provider, c.Model)
+		if err != nil {
+			slog.Default().InfoContext(ctx, "coding: lane candidate unresolvable", "dimension", dim.Key, "provider", c.Provider, "err", err)
+			continue
 		}
-		slog.Default().InfoContext(ctx, "coding: lane fallback unusable", "dimension", dim.Key, "err", ferr)
+		if firstResolvableIdx < 0 {
+			firstResolvable, firstResolvableIdx = lc, i
+		}
+		if s.prober().Live(ctx, lc) {
+			return lc, cands[i+1:], "" // live start; runtime may continue down the tail
+		}
+		slog.Default().InfoContext(ctx, "coding: lane candidate not live, trying next", "dimension", dim.Key, "provider", c.Provider)
 	}
-	if perr == nil {
-		return primary, "" // primary resolved but not live and no usable fallback → try it (retry path)
+	if firstResolvableIdx >= 0 {
+		return firstResolvable, cands[firstResolvableIdx+1:], "" // none live; try the first resolvable (retry path)
 	}
-	slog.Default().InfoContext(ctx, "coding: lane primary unresolvable", "dimension", dim.Key, "err", perr)
-	return AICredential{}, fmt.Sprintf("no reachable reviewbot for %q (check its provider credential and fallback)", dim.Key)
+	return AICredential{}, nil, fmt.Sprintf("no reachable reviewbot for %q (check its provider credentials and fallbacks)", dim.Key)
 }
 
 // privateBaseURLBlocked reports whether a base-URL host must be refused for a sandbox
