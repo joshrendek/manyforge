@@ -292,34 +292,57 @@ git commit -m "feat(sandbox): entrypoint maps local providers to bundled openai-
 ### Task 3: Egress gate applies to local, gated by AllowPrivateBaseURL
 
 **Files:**
-- Modify: `internal/agents/coding/fallbackchain.go:119-124` (`laneCredFor`)
+- Modify: `internal/agents/coding/fallbackchain.go` (`laneCredFor` + new helper)
 - Modify: `internal/agents/coding/service.go:240`, `:431` (enqueue-time pre-checks)
 - Test: `internal/agents/coding/fallbackchain_test.go` (add cases)
 
+> **PLAN CORRECTION (do NOT reuse `localBaseURLBlocked`).** The original plan reused `localBaseURLBlocked`, but that helper is the *inverted* SSRF guard for the direct-POST path: it blocks EVERY public host and every non-`localhost` DNS name (it returns `true`/blocked for `api.anthropic.com`, `8.8.8.8`, etc.). Reusing it here would reject every cloud provider. Use a NEW narrow helper that classifies only IP-literal hosts and passes DNS/public hosts through. `localBaseURLBlocked` stays untouched by Task 3 and is deleted with the direct-POST path in Task 6.
+
 **Interfaces:**
-- Consumes: `AICredential.AllowPrivateBaseURL bool`, `AICredential.Host() string`, `s.EgressAllow.Allows`, and `localBaseURLBlocked(host string, allowPrivate bool) bool` (kept from Task 6's retained file; read its body first — it must return true for RFC1918/ULA when `!allowPrivate`, always false for public hosts, always true for cloud-metadata/link-local).
-- Produces: `laneCredFor` now validates local hosts too; a private local host is rejected unless `AllowPrivateBaseURL`.
+- Consumes: `AICredential.AllowPrivateBaseURL bool`, `AICredential.Host() string`, `s.EgressAllow.Allows`, and `netsafe.IsBlocked(ip net.IP, netsafe.Options{AllowLoopback, AllowPrivate}) bool` (metadata stays blocked even with `AllowPrivate`).
+- Produces: new helper `privateBaseURLBlocked(host string, allowPrivate bool) bool` in `fallbackchain.go`; `laneCredFor` now validates ALL hosts against the allowlist, and rejects an IP-literal private/link-local/metadata host unless `AllowPrivateBaseURL`.
 
-- [ ] **Step 1: Write failing tests** in `fallbackchain_test.go`: a local (`vllm`) cred with a private host + `AllowPrivateBaseURL=true` and the host in the allowlist resolves OK; the same with `AllowPrivateBaseURL=false` returns an error mentioning `allow_private_base_url`; a local host NOT in the allowlist returns an allowlist error. (Use the existing `FakeCredResolver`/allowlist test scaffolding in that file.)
+- [ ] **Step 1: Add the helper + its table test.** In `fallbackchain.go` add:
 
-- [ ] **Step 2: Run — fails** (current code skips the check for local, so the `AllowPrivateBaseURL=false` case wrongly resolves).
+```go
+// privateBaseURLBlocked reports whether a base-URL host must be refused for a sandbox
+// lane given the credential's AllowPrivateBaseURL opt-in. Only IP-LITERAL hosts are
+// classified: a DNS hostname or a public IP returns false (governed solely by the egress
+// allowlist). A private/ULA IP is permitted only with the opt-in; loopback is always
+// permitted; cloud-metadata/link-local stay blocked even with the opt-in. NOTE: this is
+// deliberately NOT localBaseURLBlocked (the direct-POST SSRF guard, which blocks public/
+// DNS hosts) — cloud providers reach opencode via the allowlist-gated egress proxy.
+func privateBaseURLBlocked(host string, allowPrivate bool) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false // DNS name / not an IP literal — egress allowlist governs it
+	}
+	return netsafe.IsBlocked(ip, netsafe.Options{AllowLoopback: true, AllowPrivate: allowPrivate})
+}
+```
 
-- [ ] **Step 3: Rewrite the guard in `laneCredFor`** (replace lines 122-124):
+Add a table test `TestPrivateBaseURLBlocked` (in `fallbackchain_test.go`) covering: `api.anthropic.com`→false (any opt-in); `8.8.8.8`→false; `192.168.2.241` opt-in=true→false, opt-in=false→true; `10.0.0.5` opt-in=false→true; `127.0.0.1`→false; `169.254.169.254` (metadata) opt-in=true→**true** (stays blocked).
+
+- [ ] **Step 2: Write failing integration tests** in `fallbackchain_test.go`: a local (`vllm`) cred with a private host + `AllowPrivateBaseURL=true` AND the host added to the test's allowlist resolves OK; same with `AllowPrivateBaseURL=false` → error mentioning `allow_private_base_url`; a local host NOT in the allowlist → allowlist error; and confirm a cloud (`anthropic`, `api.anthropic.com`) cred with `AllowPrivateBaseURL=false` still resolves OK (regression guard — this is the case the old plan would have broken). Reuse the existing `FakeCredResolver`/allowlist scaffolding; note that `TestResolveLaneCred`'s `vllm` fixture allowlist must be extended to include its private host.
+
+- [ ] **Step 3: Run — fails** (current code skips the check for local, so the `AllowPrivateBaseURL=false` case wrongly resolves).
+
+- [ ] **Step 4: Rewrite the guard in `laneCredFor`** (replace the current `if !isLocalProvider(lc.Provider) && !s.EgressAllow.Allows(lc.Host())` block):
 
 ```go
 	if !s.EgressAllow.Allows(lc.Host()) {
 		return AICredential{}, fmt.Errorf("provider host %q not in sandbox egress allowlist", lc.Host())
 	}
-	// A private/RFC1918 host (self-hosted local model) is permitted only with the
-	// credential's explicit AllowPrivateBaseURL opt-in; public hosts pass unchanged.
-	if localBaseURLBlocked(lc.Host(), lc.AllowPrivateBaseURL) {
+	// A private/RFC1918/ULA (or metadata/link-local) IP host is permitted only with the
+	// credential's explicit AllowPrivateBaseURL opt-in; DNS + public hosts pass unchanged.
+	if privateBaseURLBlocked(lc.Host(), lc.AllowPrivateBaseURL) {
 		return AICredential{}, fmt.Errorf("host %q requires allow_private_base_url", lc.Host())
 	}
 ```
 
-- [ ] **Step 4: Update the two enqueue pre-checks** (`service.go:240`, `:431`) — replace `if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host())` with the same two-part guard (allowlist membership for all providers, then `localBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL)`). Keep the existing client-safe error message for the allowlist branch; add the `allow_private_base_url` branch.
+- [ ] **Step 5: Update the two enqueue pre-checks** (`service.go:240`, `:431`) — replace `if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host())` with the same two-part guard (allowlist membership for all providers, then `privateBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL)`). Keep the existing client-safe error message for the allowlist branch; add the `allow_private_base_url` branch.
 
-- [ ] **Step 5: Run** `go test ./internal/agents/coding/ -run 'LaneCred|Egress|Enqueue' -v`. Expected: PASS. Then `go build ./...`.
+- [ ] **Step 6: Run** `go test ./internal/agents/coding/ -run 'LaneCred|Egress|Enqueue|PrivateBaseURL|Trigger' -v`. Expected: PASS (incl. the cloud-provider regression case). Then `go build ./...` and `make lint` (0 issues).
 
 - [ ] **Step 6: Commit**
 
@@ -446,10 +469,10 @@ git commit -m "feat(review): runtime fallback to cloud when a local lane fails (
 - Modify: `internal/agents/coding/service.go` (remove `localClient` if now unused)
 
 **Interfaces:**
-- KEEP (used by the sandbox/cloud path): `reviewInstructions`, `reviewSchemaLine`, `isLocalProvider`, `reviewMaxFileBytes`, `reviewMaxTotalBytes`, `localProviderMaxTotalBytes`, `codeExt`, `isNonReviewableDoc`, `assembleDiffPayload`, `commentableMap`, `localBaseURLBlocked`.
-- DELETE (direct-POST only): `localReview`, `streamLocalReview`, `completionOrChunks`, `streamPreview`, `reviewResponseFormat`, and constants `localReviewNumCtx`, `localReviewMaxTokens`, `localReviewMaxPlainAttempts`.
+- KEEP (used by the sandbox/cloud path): `reviewInstructions`, `reviewSchemaLine`, `isLocalProvider`, `reviewMaxFileBytes`, `reviewMaxTotalBytes`, `localProviderMaxTotalBytes`, `codeExt`, `isNonReviewableDoc`, `assembleDiffPayload`, `commentableMap`. (`privateBaseURLBlocked` lives in `fallbackchain.go` from Task 3 — not in this file, so the rename doesn't touch it.)
+- DELETE (direct-POST only): `localReview`, `streamLocalReview`, `completionOrChunks`, `streamPreview`, `reviewResponseFormat`, `localBaseURLBlocked` (its only caller was `localReview`; Task 3 uses `privateBaseURLBlocked` instead), and constants `localReviewNumCtx`, `localReviewMaxTokens`, `localReviewMaxPlainAttempts`. Removing `localBaseURLBlocked` breaks its pins **MF007-PIN-14** and **MF008-PIN-2** — update/remove those in `internal/security_regression/` in this same commit (the direct-POST SSRF guard they pin no longer exists; the sandbox path's egress is pinned separately).
 
-- [ ] **Step 1: Confirm the delete set is truly unreferenced.** Run: `grep -rn 'localReview\|streamLocalReview\|reviewResponseFormat\|completionOrChunks\|streamPreview\|localReviewNumCtx\|localReviewMaxTokens\|localReviewMaxPlainAttempts\|localClient' internal/agents/coding/ | grep -v _test`. After Tasks 4-5 the only hits should be their own definitions in `localreview.go` (+ possibly `localClient` in service.go). If `s.localClient()` has no remaining non-test caller, delete it and its field.
+- [ ] **Step 1: Confirm the delete set is truly unreferenced.** Run: `grep -rn 'localReview\|streamLocalReview\|reviewResponseFormat\|completionOrChunks\|streamPreview\|localBaseURLBlocked\|localReviewNumCtx\|localReviewMaxTokens\|localReviewMaxPlainAttempts\|localClient' internal/agents/coding/ | grep -v _test`. After Tasks 4-5 the only hits should be their own definitions in `localreview.go` (+ possibly `localClient` in service.go, and `localBaseURLBlocked` pins in `internal/security_regression/`). If `s.localClient()` has no remaining non-test caller, delete it and its field.
 
 - [ ] **Step 2: `git mv` and delete.**
 
@@ -458,9 +481,9 @@ git mv internal/agents/coding/localreview.go internal/agents/coding/reviewpayloa
 git mv internal/agents/coding/localreview_test.go internal/agents/coding/reviewpayload_test.go
 ```
 
-Then delete the functions/constants in the DELETE set from `reviewpayload.go`, and in `reviewpayload_test.go` delete every test that calls a deleted function (the `localReview(...)`-based tests). Keep tests for `assembleDiffPayload`, `isNonReviewableDoc`, `commentableMap`, `isLocalProvider`, `localBaseURLBlocked`. Update the file header comment to describe it as the shared review-payload/prompt/budget helpers.
+Then delete the functions/constants in the DELETE set from `reviewpayload.go` (including `localBaseURLBlocked` + its `TestLocalBaseURLBlocked` table test), and in `reviewpayload_test.go` delete every test that calls a deleted function (the `localReview(...)`-based tests + `TestLocalBaseURLBlocked`). Keep tests for `assembleDiffPayload`, `isNonReviewableDoc`, `commentableMap`, `isLocalProvider`. Update the file header comment to describe it as the shared review-payload/prompt/budget helpers.
 
-- [ ] **Step 3: Build + vet** — `go build ./... && go vet ./internal/agents/coding/`. Expected: 0 errors (no unused symbols; no dangling references).
+- [ ] **Step 3: Build + vet** — `go build ./... && go vet ./internal/agents/coding/` and `go test ./internal/security_regression/` (the MF007-PIN-14 / MF008-PIN-2 updates must pass). Expected: 0 errors (no unused symbols; no dangling references).
 
 - [ ] **Step 4: Run the package tests** — `go test ./internal/agents/coding/`. Expected: PASS (retained payload/guard tests still pass).
 
