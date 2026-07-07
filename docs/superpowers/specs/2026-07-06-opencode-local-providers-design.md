@@ -41,8 +41,8 @@ Read-only permission profile and `OPENCODE_DISABLE_*` flags unchanged. The GLM z
 - **Runtime fallback:** on a local lane failure, re-run the lane once with the dimension's fallback `(provider, model)`, re-resolving that credential (today `resolveLaneCred` returns only the *chosen* cred, so the fallback must be resolved again — or `resolveLaneCred` extended to surface both). Local-then-cloud both failing = honest lane failure.
 - Keep a slim `isLocalProvider` as the diff-budget / provider-mapping signal only.
 
-### C4. NetworkPolicy for LAN egress (`charts/manyforge/templates/sandbox-egress-proxy.yaml`, `values.yaml`)
-Add an egress rule permitting the proxy pod to reach `sandbox.privateEgressCIDRs` (new values key; default `["192.168.2.241/32"]`). Only the proxy pod gets this; the sandbox Job pods still have no external route except via the proxy.
+### C4. Egress allowlist for the LAN endpoint (`charts/manyforge/values.yaml`, `configmap.yaml`)
+**Planning correction:** the chart has **no NetworkPolicy** — sandbox isolation is enforced by forcing Job pods through the proxy (`HTTP_PROXY`) plus the proxy's static allowlist (`EGRESS_ALLOW` ← `.Values.sandbox.egressAllow`, threaded to the app as `MANYFORGE_SANDBOX_EGRESS_ALLOW`). So there is no NetworkPolicy to extend. Instead: add the local host (e.g. `192.168.2.241:1234`) to `sandbox.egressAllow` (the single value both the proxy and the app's pre-flight check read). The private-LAN reach is gated at the **service layer** — `laneCredFor` permits a local host only when the credential's `AllowPrivateBaseURL` is set. LAN routing from the sandbox namespace is a deploy-time verification (the app/worker pod already reaches the endpoint today, same cluster/CNI). No `privateEgressCIDRs` key is added.
 
 ### C5. Remove the direct-POST path
 Delete `internal/agents/coding/localreview.go` and `internal/agents/coding/localreview_test.go`. Migrate any still-needed constants (diff-budget sizes, `isNonReviewableDoc`, `isLocalProvider`) to a small retained helper file.
