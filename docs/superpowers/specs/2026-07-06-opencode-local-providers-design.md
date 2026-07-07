@@ -27,10 +27,13 @@
 Today the proxy handles only `CONNECT` (HTTPS tunneling) and 405s everything else; local endpoints are plain `http://`. Add a forward branch: a non-CONNECT request whose `r.Host` passes `allow.Allows(r.Host)` is reverse-proxied to the target (standard absolute-form proxied HTTP); non-allowlisted still 403. The allowlist stays the sole authority — no private-IP block is added or removed (the proxy already `net.Dial`s whatever is allowlisted). CONNECT behavior is unchanged.
 
 ### C2. Sandbox entrypoint — local provider mapping (`deploy/sandbox/entrypoint.sh`)
-Accept `LLM_PROVIDER ∈ {vllm, ollama}` (currently `exit 2`). Map them to opencode's compiled-in `openai` provider with a base-URL override:
-- `MODEL="openai/${LLM_MODEL}"`, `auth.json = {"openai":{"type":"api","key":"$LLM_API_KEY"}}` (local servers accept/ignore the key),
-- config `provider.openai.options.baseURL = "$LLM_BASE_URL"` so the compiled-in `@ai-sdk/openai` SDK targets the LAN endpoint (vLLM/LM Studio/Ollama all serve OpenAI `/v1`).
+Accept `LLM_PROVIDER ∈ {vllm, ollama}` (currently `exit 2`). Map them to a **custom opencode provider backed by `@ai-sdk/openai-compatible`** (verified bundled in the opencode binary — see Spike verdict below). NOT the built-in `openai` provider, which uses the Responses API (`/v1/responses`) that local servers don't serve.
+- config: `provider.local = { "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "$LLM_BASE_URL" }, "models": { "$LLM_MODEL": { "options": { "max_tokens": … } } } }`, `model = "local/$LLM_MODEL"`,
+- `auth.json = {"local":{"type":"api","key":"$LLM_API_KEY"}}` (local servers accept/ignore the key; the `local` id must match the provider key),
+- this drives `POST {baseURL}/chat/completions` — the OpenAI Chat Completions API that vLLM / LM Studio / Ollama all serve.
 Read-only permission profile and `OPENCODE_DISABLE_*` flags unchanged. The GLM z-ai routing block stays openrouter-only.
+
+**Spike verdict (2026-07-06, opencode 1.17.11 via `manyforge/opencode-sandbox:dev`):** Ran opencode from the real sandbox image against a stub OpenAI-compat server. (1) The built-in `openai` provider honors `options.baseURL` + `auth.json` with the catalog disabled, but calls `POST /v1/responses` — incompatible with local Chat-Completions servers. (2) A custom `@ai-sdk/openai-compatible` provider with `options.baseURL` calls `POST /v1/chat/completions`, is **bundled** (worked on a `--internal` no-internet/no-npm docker network, so no runtime npm fetch), and authed via `auth.json`. Approach (2) is adopted. Task 0 below is therefore already de-risked; it becomes a regression/characterization test rather than an open question.
 
 ### C3. Service routing + runtime fallback (`internal/agents/coding/service.go`, `fallbackchain.go`)
 - `reviewLane` (`service.go:674`) drops the `isLocalProvider → localReview` branch; **both** paths build a `SandboxSpec`. Local keeps the tighter diff budget (`localProviderMaxTotalBytes`) — small models still choke on large context.
@@ -56,7 +59,7 @@ Delete `internal/agents/coding/localreview.go` and `internal/agents/coding/local
 - **No new UUID/authz surface:** routing is internal; no new HTTP endpoints (no OpenAPI change).
 
 ## Test Plan
-- **Task 0 — feasibility spike (do first, de-risks everything):** verify opencode's `openai` provider + `options.baseURL` reaches a local OpenAI-compat server with `OPENCODE_DISABLE_MODELS_FETCH=1`. Throwaway sandbox run against a stub `/v1/chat/completions`. If it fails, fall back to a custom `@ai-sdk/openai-compatible` provider bundled into the sandbox image (documented alternative).
+- **Task 0 — DONE (spike complete, see C2 verdict):** opencode reaches a local Chat-Completions server via a bundled custom `@ai-sdk/openai-compatible` provider + `options.baseURL`. Codify as a characterization/regression test: an `entrypoint.sh`-shape config produces a `POST /v1/chat/completions` against a stub (e.g. a sandbox-image integration test, or a shell test asserting the generated `opencode.json` uses the `@ai-sdk/openai-compatible` npm provider — never the built-in `openai`/Responses path).
 - **Proxy unit tests** (`cmd/mf-egress-proxy/main_test.go`): allowlisted plain-HTTP request forwarded to a stub upstream; non-allowlisted plain-HTTP → 403; CONNECT still tunnels; allowlist parity with `netsafe`.
 - **Service unit/integration** (`internal/agents/coding/...`): `reviewLane` builds a `SandboxSpec` for a local cred (a fake runner asserts the spec: provider mapping, `EgressAllow=[localHost]`, tighter budget); runtime fallback to cloud when the local lane errors; local cred without `AllowPrivateBaseURL` is skipped with a reason.
 - **Regression (source-pin, `internal/security_regression/`):** assert no `isLocalProvider → localReview` branch survives, so the direct-POST path cannot silently return; assert the entrypoint rejects unknown providers.
