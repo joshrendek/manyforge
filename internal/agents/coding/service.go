@@ -110,10 +110,6 @@ type CodeReviewService struct {
 	Image    string        // opencode sandbox image tag
 	WorkRoot string        // host temp root for per-run checkouts; must be writable
 	Timeout  time.Duration // sandbox wall-clock cap (0 = 10 min default)
-	// LocalTimeout is the HTTP timeout for the host-side local-provider review path
-	// (Ollama/vLLM); 0 ⇒ 30 min default. Separate from Timeout (the sandbox cap) so a
-	// long local review (e.g. a 35b model) isn't killed at the 10-min sandbox limit.
-	LocalTimeout time.Duration
 
 	// EgressAllow is the boot-static set of provider hosts the sandbox egress
 	// proxy permits (from MANYFORGE_SANDBOX_EGRESS_ALLOW). The proxy is shared and
@@ -871,8 +867,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	}
 
 	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube
-	// mode each lane is its own Job/pod — bounded by the resolved bot's laneLimit so a
-	// many-dimension panel can't burst the cluster. Results are written BY INDEX so
+	// mode each lane is its own Job/pod — bounded PER-ENDPOINT by acquireEndpoint's
+	// laneLimit-sized semaphore above (manyforge-azy), not by a single global bound: a
+	// many-dimension panel spanning multiple endpoints can have more sandboxes running
+	// concurrently in total than any one endpoint's laneLimit, since each endpoint gets
+	// its own cap. Results are written BY INDEX so
 	// aggregation stays order-deterministic (aggregateReview / dedupeFindings /
 	// buildDimensionRuns depend on active's Order) regardless of completion order. A
 	// single lane still writes directly to outDir (byte-for-byte the legacy path);

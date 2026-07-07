@@ -3,10 +3,8 @@ package main
 import (
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
@@ -27,8 +25,19 @@ func main() {
 // proxyHandler builds the egress handler: CONNECT tunnels (HTTPS) and plain-HTTP
 // forwarding, both gated by the same host allowlist. Local providers use plain HTTP,
 // so a non-CONNECT request to an allowlisted host is round-tripped upstream.
+//
+// Both paths dial through netsafe.ScreenedDialContext, which re-resolves the host and
+// refuses any resolved IP that lands on cloud-metadata/link-local (unconditionally) or
+// loopback/private outside AllowLoopback/AllowPrivate. The allowlist check above is a
+// name-based gate; the screen is the resolved-IP gate — an allowlisted DNS name can
+// still rebind to a blocked address between the two, so both are required (manyforge-9er,
+// restoring the resolved-IP check the deleted host-side localReview dialer used to do).
 func proxyHandler(allow netsafe.HostAllowlist) http.Handler {
-	fwd := &http.Transport{Proxy: nil} // no upstream proxy; dial the target directly
+	// AllowLoopback+AllowPrivate permit the intended local-provider/private-LAN targets
+	// (e.g. LM Studio on a RFC1918 host); metadata/link-local stay blocked unconditionally
+	// regardless of these flags (see netsafe.blockedWith).
+	screen := netsafe.ScreenedDialContext(netsafe.Options{AllowLoopback: true, AllowPrivate: true})
+	fwd := &http.Transport{Proxy: nil, DialContext: screen} // no upstream proxy; dial the target directly
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {
 			if !allow.Allows(r.Host) {
@@ -56,7 +65,7 @@ func proxyHandler(allow netsafe.HostAllowlist) http.Handler {
 			http.Error(w, "egress not allowed", http.StatusForbidden)
 			return
 		}
-		dst, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+		dst, err := screen(r.Context(), "tcp", r.Host)
 		if err != nil {
 			http.Error(w, "dial failed", http.StatusBadGateway)
 			return
