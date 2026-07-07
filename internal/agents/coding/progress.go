@@ -12,9 +12,10 @@ import (
 const previewMaxBytes = 4 << 10
 
 // Progress is a goroutine-safe holder for a code review's live progress. runJob and
-// the streaming localReview mutate it in-memory; the worker heartbeat reads
-// Snapshot() every ~5s and persists it via renew_code_review_lease. All methods are
-// nil-safe so direct (non-worker) callers can pass a nil *Progress.
+// the sandbox lane's log-streaming writer (UpdateStream) mutate it in-memory; the
+// worker heartbeat reads Snapshot() every ~5s and persists it via
+// renew_code_review_lease. All methods are nil-safe so direct (non-worker) callers
+// can pass a nil *Progress.
 type Progress struct {
 	mu         sync.Mutex
 	phase      string

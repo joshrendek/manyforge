@@ -24,7 +24,7 @@ type Dimension struct {
 	// liveness probe (manyforge-azy). "" FallbackProvider ⇒ no fallback for this lane.
 	FallbackProvider string
 	FallbackModel    string
-	Prompt           string   // review instructions for this lane (reviewSchemaLine is appended by the caller)
+	Prompt           string   // review instructions for this lane, written host-side to review_instructions.txt for the sandbox to consume
 	ScopeGlobs       []string // file globs (doublestar); empty ⇒ all files
 	MinSeverity      string   // "info" | "warning" | "error" — floor below which findings are dropped
 	Enabled          bool

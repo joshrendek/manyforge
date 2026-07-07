@@ -34,10 +34,12 @@ func TestMF008PIN1(t *testing.T) {
 
 // MF008-PIN-2: per-dimension config must not open a NEW SSRF surface. A dimension carries a
 // provider + model but NO endpoint/URL — the review endpoint always comes from the SSRF-guarded
-// vault credential (create-time guard + localReview's localBaseURLBlocked dial-time guard). Pins
-// that the review_dimension schema has no base_url/endpoint column, and that the per-lane cloud
-// egress stays scoped to the credential host (laneCred.Host()), so a per-dimension model override
-// can't redirect a review at an internal target.
+// vault credential (create-time guard +, since manyforge-9er Tasks 4-5, the shared sandbox lane's
+// privateBaseURLBlocked dial-time guard in fallbackchain.go — the direct-POST path's own
+// localBaseURLBlocked guard this comment used to cite was deleted in Task 6 along with the
+// path it guarded). Pins that the review_dimension schema has no base_url/endpoint column, and
+// that the per-lane cloud egress stays scoped to the credential host (laneCred.Host()), so a
+// per-dimension model override can't redirect a review at an internal target.
 func TestMF008PIN2(t *testing.T) {
 	mig := strings.ToLower(mustRead(t, "../../migrations/0077_review_dimension.up.sql"))
 	for _, banned := range []string{"base_url", "endpoint"} {
@@ -54,26 +56,20 @@ func TestMF008PIN2(t *testing.T) {
 // MF008-PIN-3: the review prompt must be PER-DIMENSION, threaded from the resolved dimension
 // into the review path, not the single hardcoded reviewInstructions const. A regression back to
 // the const would collapse the panel to one blended prompt and defeat spec 008 — pins the
-// parameterized system message and the host-written per-dimension prompt file. Local and cloud
-// providers share ONE path since manyforge-9er Task 4 (runSandboxLane): reviewLane no longer
-// branches a local credential to localReview's separate host-side call, so this also pins that
-// regression away — a reintroduced isLocalProvider(laneCred.Provider) branch in reviewLane would
-// silently reopen the un-egress-gated direct-API path Task 3/4 closed. localReview itself is
-// unused dead code as of this task (deleted by Task 6); its own per-dimension prompt threading is
-// still pinned below for as long as the function exists.
+// host-written per-dimension prompt file. Local and cloud providers share ONE path since
+// manyforge-9er Task 4 (runSandboxLane): reviewLane no longer branches a local credential to a
+// separate host-side call, so this also pins that regression away — a reintroduced
+// isLocalProvider(laneCred.Provider) branch in reviewLane would silently reopen the un-egress-
+// gated direct-API path Task 3/4 closed. This test used to also assert localReview's own
+// per-dimension prompt threading (`prompt + "\n\n" + reviewSchemaLine` in localreview.go); Task 6
+// deleted localReview as dead code (no caller remained), so that half of the pin is gone with it
+// — there is nothing left to assert about a function that no longer exists.
 func TestMF008PIN3(t *testing.T) {
-	lr := mustRead(t, "../agents/coding/localreview.go")
-	if !strings.Contains(lr, `prompt + "\n\n" + reviewSchemaLine`) {
-		t.Fatal("localReview must build the system message from the passed prompt (per-dimension), not a hardcoded const (MF008-PIN-3)")
-	}
-	if strings.Contains(lr, `reviewInstructions + "\n\n" + reviewSchemaLine`) {
-		t.Fatal("localreview.go still hardcodes reviewInstructions in the system message — the per-dimension prompt is not plumbed (MF008-PIN-3)")
-	}
 	svc := mustRead(t, "../agents/coding/service.go")
 	if !strings.Contains(svc, "[]byte(dim.Prompt)") {
 		t.Fatal("the sandbox lane must write the dimension's prompt to review_instructions.txt (per-dimension), not the const (MF008-PIN-3)")
 	}
 	if strings.Contains(svc, "isLocalProvider(laneCred.Provider)") {
-		t.Fatal("reviewLane must not branch a local credential to localReview's separate host-side call — local and cloud share the egress-gated sandbox path (runSandboxLane, manyforge-9er Task 4) (MF008-PIN-3)")
+		t.Fatal("reviewLane must not branch a local credential to a separate host-side call — local and cloud share the egress-gated sandbox path (runSandboxLane, manyforge-9er Task 4) (MF008-PIN-3)")
 	}
 }
