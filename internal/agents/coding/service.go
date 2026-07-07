@@ -235,11 +235,19 @@ func (s *CodeReviewService) enqueueReview(
 	// The sandbox egress proxy is shared and boot-static; a provider host outside
 	// its allowlist would be silently CONNECT-blocked, so reject it up front with a
 	// clear, actionable error instead of launching a doomed sandbox (manyforge-0qj).
-	// Local providers (Ollama/vLLM) review host-side via the direct-API path — no
-	// sandbox, no egress proxy — so the allowlist check does not apply to them.
-	if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host()) {
+	// Local providers (Ollama/vLLM) now route through the sandbox too (manyforge-9er
+	// Task 4), so the allowlist check applies to every provider's host here.
+	if !s.EgressAllow.Allows(cred.Host()) {
 		return CodeReview{}, fmt.Errorf(
 			"coding: provider host %q is not in the sandbox egress allowlist (add it to MANYFORGE_SANDBOX_EGRESS_ALLOW): %w",
+			cred.Host(), errs.ErrValidation)
+	}
+	// An IP-literal private/RFC1918/ULA (or metadata/link-local) host is permitted only
+	// with the credential's explicit AllowPrivateBaseURL opt-in; DNS + public hosts pass
+	// unchanged (privateBaseURLBlocked, fallbackchain.go).
+	if privateBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL) {
+		return CodeReview{}, fmt.Errorf(
+			"coding: provider host %q requires allow_private_base_url: %w",
 			cred.Host(), errs.ErrValidation)
 	}
 
@@ -427,10 +435,18 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// sandbox proxy will CONNECT-block, instead of launching a doomed sandbox. Same
 	// expression as Enqueue — but this ALSO covers the app-triggered path, which is
 	// enqueued by the webhook DEFINER and never went through Enqueue's check. Local
-	// providers review host-side (no proxy), so the allowlist does not apply to them.
-	if !isLocalProvider(cred.Provider) && !s.EgressAllow.Allows(cred.Host()) {
+	// providers now route through the sandbox too (manyforge-9er Task 4), so the
+	// allowlist applies to every provider's host here.
+	if !s.EgressAllow.Allows(cred.Host()) {
 		return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
 			fmt.Errorf("coding: provider host %q not in sandbox egress allowlist: %w", cred.Host(), errs.ErrValidation))
+	}
+	// An IP-literal private/RFC1918/ULA (or metadata/link-local) host is permitted only
+	// with the credential's explicit AllowPrivateBaseURL opt-in; DNS + public hosts pass
+	// unchanged (privateBaseURLBlocked, fallbackchain.go).
+	if privateBaseURLBlocked(cred.Host(), cred.AllowPrivateBaseURL) {
+		return s.failJob(ctx, job.PrincipalID, job.BusinessID, job.ID, job.PRNumber,
+			fmt.Errorf("coding: provider host %q requires allow_private_base_url: %w", cred.Host(), errs.ErrValidation))
 	}
 
 	// From here on, any error must call s.failJob to mark the row failed.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
 // resolveFn resolves one agent's reviewbot credential (the runJob closure binds the
@@ -101,10 +103,27 @@ func (s *CodeReviewService) resolveLaneCred(ctx context.Context, principalID, bu
 	return AICredential{}, fmt.Sprintf("no reachable reviewbot for %q (check its provider credential and fallback)", dim.Key)
 }
 
+// privateBaseURLBlocked reports whether a base-URL host must be refused for a sandbox
+// lane given the credential's AllowPrivateBaseURL opt-in. Only IP-LITERAL hosts are
+// classified: a DNS hostname or a public IP returns false (governed solely by the egress
+// allowlist). A private/ULA IP is permitted only with the opt-in; loopback is always
+// permitted; cloud-metadata/link-local stay blocked even with the opt-in. NOTE: this is
+// deliberately NOT localBaseURLBlocked (the direct-POST SSRF guard, which blocks public/
+// DNS hosts) — cloud providers reach opencode via the allowlist-gated egress proxy.
+func privateBaseURLBlocked(host string, allowPrivate bool) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false // DNS name / not an IP literal — egress allowlist governs it
+	}
+	return netsafe.IsBlocked(ip, netsafe.Options{AllowLoopback: true, AllowPrivate: allowPrivate})
+}
+
 // laneCredFor resolves (provider, model) into a lane credential: a blank/same provider inherits
 // the review default (model overridden); a different provider resolves its own BYO credential.
-// It then requires a usable host and, for cloud providers, membership in the sandbox egress
-// allowlist (checked per-lane now that lanes may span endpoints).
+// It then requires a usable host, membership in the sandbox egress allowlist (checked per-lane
+// now that lanes may span endpoints — local providers now route through the sandbox too, so this
+// applies to every provider), and — for an IP-literal private/link-local host — the credential's
+// AllowPrivateBaseURL opt-in.
 func (s *CodeReviewService) laneCredFor(ctx context.Context, principalID, businessID uuid.UUID, def AICredential, provider, model string) (AICredential, error) {
 	lc := def
 	if provider != "" && !strings.EqualFold(provider, def.Provider) {
@@ -119,8 +138,13 @@ func (s *CodeReviewService) laneCredFor(ctx context.Context, principalID, busine
 	if lc.Host() == "" {
 		return AICredential{}, fmt.Errorf("no usable base url for provider %q", lc.Provider)
 	}
-	if !isLocalProvider(lc.Provider) && !s.EgressAllow.Allows(lc.Host()) {
+	if !s.EgressAllow.Allows(lc.Host()) {
 		return AICredential{}, fmt.Errorf("provider host %q not in sandbox egress allowlist", lc.Host())
+	}
+	// A private/RFC1918/ULA (or metadata/link-local) IP host is permitted only with the
+	// credential's explicit AllowPrivateBaseURL opt-in; DNS + public hosts pass unchanged.
+	if privateBaseURLBlocked(lc.Host(), lc.AllowPrivateBaseURL) {
+		return AICredential{}, fmt.Errorf("host %q requires allow_private_base_url", lc.Host())
 	}
 	return lc, nil
 }

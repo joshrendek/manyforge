@@ -25,7 +25,10 @@ func TestResolveLaneCred(t *testing.T) {
 			"https://openrouter.ai/api/v1": false, // down
 			"http://192.168.2.241:1234/v1": true,
 		},
-		EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com,openrouter.ai"),
+		// 192.168.2.241 is the vllm fixture's private-LAN host below — now that laneCredFor
+		// requires allowlist membership for every provider (manyforge-9er Task 3), it must be
+		// listed here too (its AllowPrivateBaseURL:true satisfies the private-host guard).
+		EgressAllow: netsafe.ParseHostAllowlist("api.anthropic.com,openrouter.ai,192.168.2.241"),
 	}
 	ctx := context.Background()
 	p, b := uuid.New(), uuid.New()
