@@ -75,7 +75,7 @@ func TestProxyForwardsAllowlistedPlainHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get through proxy: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 || string(b) != "upstream-ok" {
 		t.Fatalf("want 200/upstream-ok, got %d/%q", resp.StatusCode, b)
@@ -91,7 +91,7 @@ func TestProxyRejectsNonAllowlistedPlainHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected transport error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("want 403, got %d", resp.StatusCode)
 	}
@@ -131,7 +131,7 @@ func TestProxyStreamsChunksIncrementally(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get through proxy: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	br := bufio.NewReader(resp.Body)
 	line1, err := br.ReadString('\n')
 	if err != nil || line1 != "chunk1\n" {
