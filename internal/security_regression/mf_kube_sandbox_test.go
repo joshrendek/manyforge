@@ -127,8 +127,11 @@ func TestKubeSandboxOpencodePermissionProfile(t *testing.T) {
 	if !strings.Contains(entry, `"websearch": "deny",`) {
 		t.Error("MF-KUBE-SANDBOX-21: opencode config must deny the websearch tool — pin broken, update this pin in the same change if the refactor is intentional")
 	}
-	if !strings.Contains(entry, "openrouter|anthropic|openai) : ;;") {
-		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
+	if !strings.Contains(entry, "openrouter|anthropic|openai) LLM_LOCAL=0 ;;") {
+		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai|vllm|ollama allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
+	}
+	if !strings.Contains(entry, "vllm|ollama)                 LLM_LOCAL=1 ;;") {
+		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai|vllm|ollama allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
 	}
 }
 
