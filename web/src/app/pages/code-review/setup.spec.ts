@@ -29,6 +29,7 @@ function makeDim(over: Partial<ReviewDimension> = {}): ReviewDimension {
     dimension: 'security',
     provider: '',
     model: '',
+    fallback_chain: [],
     prompt: 'Security prompt',
     scope_globs: [],
     min_severity: 'warning',
@@ -134,14 +135,71 @@ describe('CodeReviewSetupComponent', () => {
     req.flush(makeDim({ dimension: 'security', model: 'x' }));
   });
 
-  it('sends per-dimension fallback provider+model in the save payload', () => {
+  it('adds, reorders, and removes fallback chain entries via the row controls', () => {
     mount([makeDim({ dimension: 'security', model: 'x' })]);
-    cmp.rows()[0].fallback_provider = 'openrouter';
-    cmp.rows()[0].fallback_model = 'deepseek';
+    expect(q('[data-testid="row-fallback-empty"]')).toBeTruthy();
+
+    // Add appends a blank entry each time.
+    (q('[data-testid="row-fallback-add"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    (q('[data-testid="row-fallback-add"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(cmp.rows()[0].fallback_chain).toEqual([
+      { provider: '', model: '' },
+      { provider: '', model: '' },
+    ]);
+    expect(q('[data-testid="row-fallback-empty"]')).toBeFalsy();
+
+    // Choosing a provider for entry 0 resets its model (onFallbackEntryProviderChange).
+    const p0 = q('[data-testid="row-fallback-provider-0"]') as HTMLSelectElement;
+    p0.value = 'ollama';
+    p0.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    expect(cmp.rows()[0].fallback_chain[0]).toEqual({ provider: 'ollama', model: '' });
+    const m0 = q('[data-testid="row-fallback-model-text-0"]') as HTMLInputElement;
+    m0.value = 'llama3';
+    m0.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    const p1 = q('[data-testid="row-fallback-provider-1"]') as HTMLSelectElement;
+    p1.value = 'openrouter';
+    p1.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    // Selecting openrouter lazily fetches its live model catalog for the typeahead datalist.
+    mock.expectOne('/api/v1/businesses/b1/agents/provider-models/openrouter').flush({ items: [] });
+    const m1 = q('[data-testid="row-fallback-model-text-1"]') as HTMLInputElement;
+    m1.value = 'deepseek';
+    m1.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(cmp.rows()[0].fallback_chain).toEqual([
+      { provider: 'ollama', model: 'llama3' },
+      { provider: 'openrouter', model: 'deepseek' },
+    ]);
+
+    // Reorder: move entry 1 up → it becomes the primary fallback.
+    (q('[data-testid="row-fallback-up-1"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(cmp.rows()[0].fallback_chain).toEqual([
+      { provider: 'openrouter', model: 'deepseek' },
+      { provider: 'ollama', model: 'llama3' },
+    ]);
+
+    // Remove the (now second) entry.
+    (q('[data-testid="row-fallback-remove-1"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(cmp.rows()[0].fallback_chain).toEqual([{ provider: 'openrouter', model: 'deepseek' }]);
+    expect(qAll('[data-testid="row-fallback-entry-1"]').length).toBe(0);
+  });
+
+  it('drops blank-provider fallback entries from the save payload', () => {
+    mount([makeDim({ dimension: 'security', model: 'x' })]);
+    cmp.rows()[0].fallback_chain = [
+      { provider: 'openrouter', model: 'deepseek' },
+      { provider: '', model: '' },
+    ];
     (q('[data-testid="row-save"]') as HTMLButtonElement).click();
     const req = mock.expectOne('/api/v1/businesses/b1/review-dimensions');
-    expect(req.request.body.fallback_provider).toBe('openrouter');
-    expect(req.request.body.fallback_model).toBe('deepseek');
+    expect(req.request.body.fallback_chain).toEqual([{ provider: 'openrouter', model: 'deepseek' }]);
     req.flush(makeDim({ dimension: 'security', model: 'x' }));
   });
 
