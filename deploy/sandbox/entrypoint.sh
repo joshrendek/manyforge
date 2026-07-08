@@ -79,10 +79,15 @@ if [ "$LLM_LOCAL" = 1 ]; then
   MODEL="local/${LLM_MODEL}"
   mkdir -p "$XDG_DATA_HOME/opencode"
   printf '{"local":{"type":"api","key":"%s"}}\n' "$LLM_API_KEY" > "$XDG_DATA_HOME/opencode/auth.json"
+  # small_model pins opencode's auxiliary model (session title/summary generation) to the
+  # same review model+key. Without it opencode defaults small_model to Claude Haiku and bills
+  # a throwaway title call to this provider/key on every run (manyforge discards the title —
+  # the check-run title is hardcoded). See manyforge-qxe.
   export OPENCODE_CONFIG=/tmp/opencode.json
   printf '%s\n' '{
   "$schema": "https://opencode.ai/config.json",
   "model": "'"${MODEL}"'",
+  "small_model": "'"${MODEL}"'",
   "provider": {
     "local": {
       "npm": "@ai-sdk/openai-compatible",
@@ -141,10 +146,14 @@ case "${LLM_PROVIDER}/${LLM_MODEL}" in
   openrouter/z-ai/*|openrouter/*glm*)
     MODEL_OPTIONS=${MODEL_OPTIONS}', "provider": { "order": ["z-ai"], "allow_fallbacks": false }' ;;
 esac
+# small_model pins opencode's auxiliary model (title/summary generation) to the same review
+# model+key. Without it opencode defaults small_model to Claude Haiku and bills a throwaway
+# title call to this provider/key on every run (manyforge discards the title). See manyforge-qxe.
 export OPENCODE_CONFIG=/tmp/opencode.json
 printf '%s\n' '{
   "$schema": "https://opencode.ai/config.json",
   "model": "'"${MODEL}"'",
+  "small_model": "'"${MODEL}"'",
   "provider": {
     "'"${LLM_PROVIDER}"'": {
       "models": {

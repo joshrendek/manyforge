@@ -983,21 +983,20 @@ type ReviewConfig struct {
 }
 
 type ReviewDimension struct {
-	ID               uuid.UUID      `json:"id"`
-	BusinessID       uuid.UUID      `json:"business_id"`
-	TenantRootID     uuid.UUID      `json:"tenant_root_id"`
-	Dimension        string         `json:"dimension"`
-	Provider         NullAiProvider `json:"provider"`
-	Model            string         `json:"model"`
-	FallbackProvider NullAiProvider `json:"fallback_provider"`
-	FallbackModel    string         `json:"fallback_model"`
-	Prompt           string         `json:"prompt"`
-	ScopeGlobs       []string       `json:"scope_globs"`
-	MinSeverity      string         `json:"min_severity"`
-	Enabled          bool           `json:"enabled"`
-	SortOrder        int32          `json:"sort_order"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
+	ID            uuid.UUID      `json:"id"`
+	BusinessID    uuid.UUID      `json:"business_id"`
+	TenantRootID  uuid.UUID      `json:"tenant_root_id"`
+	Dimension     string         `json:"dimension"`
+	Provider      NullAiProvider `json:"provider"`
+	Model         string         `json:"model"`
+	FallbackChain []byte         `json:"fallback_chain"`
+	Prompt        string         `json:"prompt"`
+	ScopeGlobs    []string       `json:"scope_globs"`
+	MinSeverity   string         `json:"min_severity"`
+	Enabled       bool           `json:"enabled"`
+	SortOrder     int32          `json:"sort_order"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 type Role struct {

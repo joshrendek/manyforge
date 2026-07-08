@@ -34,27 +34,27 @@ func TestResolveLaneCred(t *testing.T) {
 	p, b := uuid.New(), uuid.New()
 
 	// Blank provider ⇒ inherit the default, model overridden.
-	if lc, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Model: "m2"}); reason != "" || lc.Provider != "anthropic" || lc.Model != "m2" {
+	if lc, _, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Model: "m2"}); reason != "" || lc.Provider != "anthropic" || lc.Model != "m2" {
 		t.Fatalf("blank provider: %+v reason=%q", lc, reason)
 	}
 
 	// Distinct provider, primary live ⇒ that provider's cred.
-	if lc, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "vllm", Model: "orn"}); reason != "" || lc.Provider != "vllm" {
+	if lc, _, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "vllm", Model: "orn"}); reason != "" || lc.Provider != "vllm" {
 		t.Fatalf("vllm primary live: %+v reason=%q", lc, reason)
 	}
 
 	// Primary down + NO fallback ⇒ still returns the primary (let the real call fail → retry).
-	if lc, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "openrouter", Model: "or"}); reason != "" || lc.Provider != "openrouter" {
+	if lc, _, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "openrouter", Model: "or"}); reason != "" || lc.Provider != "openrouter" {
 		t.Fatalf("down no-fallback ⇒ primary: %+v reason=%q", lc, reason)
 	}
 
 	// Primary down ⇒ fallback provider chosen.
-	if lc, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "openrouter", Model: "or", FallbackProvider: "vllm", FallbackModel: "orn"}); reason != "" || lc.Provider != "vllm" {
+	if lc, _, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "x", Provider: "openrouter", Model: "or", FallbackChain: []FallbackEntry{{Provider: "vllm", Model: "orn"}}}); reason != "" || lc.Provider != "vllm" {
 		t.Fatalf("down ⇒ fallback vllm: %+v reason=%q", lc, reason)
 	}
 
 	// Unresolvable primary (no credential) + no fallback ⇒ skipped with a reason.
-	if lc, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "docs", Provider: "openai"}); reason == "" {
+	if lc, _, reason := svc.resolveLaneCred(ctx, p, b, def, Dimension{Key: "docs", Provider: "openai"}); reason == "" {
 		t.Fatalf("unknown provider must skip with a reason, got %+v", lc)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -629,19 +630,25 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	panel := s.resolvePanel(ctx, principalID, businessID)
 	changedPaths := changedFilePaths(changed)
 	active, skippedDims := activeDimensions(panel, changedPaths)
-	// Resolve each active dimension's own reviewbot (manyforge-azy, completes ubk): its
-	// provider's credential + model, probed live, else its fallback (provider, model). A lane
-	// whose primary AND fallback can't be resolved/reached is skipped with a reason (recorded,
-	// never silently misrouted). A blank provider inherits the review's default resolved cred.
+	// Resolve each active dimension's own reviewbot (manyforge-azy, extended to walk the whole
+	// fallback chain by manyforge-7lx T2): its provider's credential + model, probed live, else
+	// each fallback (provider, model) in order. A lane whose ENTIRE chain can't be
+	// resolved/reached is skipped with a reason (recorded, never silently misrouted). A blank
+	// provider inherits the review's default resolved cred.
 	laneCreds := make(map[string]AICredential, len(active))
+	// laneRest holds each lane's not-yet-tried fallback tail (manyforge-7lx T2): the chain
+	// candidates resolveLaneCred didn't choose. reviewLane (below) walks this tail as its
+	// runtime fallback when the chosen lane's real sandbox run fails (T3).
+	laneRest := make(map[string][]FallbackEntry, len(active))
 	kept := make([]Dimension, 0, len(active))
 	for _, dim := range active {
-		lc, reason := s.resolveLaneCred(ctx, principalID, businessID, cred, dim)
+		lc, rest, reason := s.resolveLaneCred(ctx, principalID, businessID, cred, dim)
 		if reason != "" {
 			skippedDims = append(skippedDims, SkippedDimension{Key: dim.Key, Reason: reason})
 			continue
 		}
 		laneCreds[dim.Key] = lc
+		laneRest[dim.Key] = rest
 		kept = append(kept, dim)
 	}
 	active = kept
@@ -823,47 +830,61 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	reviewLane := func(dim Dimension, laneOutDir string) laneResult {
 		chosen := laneCreds[dim.Key]
 		lr := runSandboxLane(dim, chosen, laneOutDir)
-		// Runtime fallback (manyforge-9er): if the chosen lane failed and it was NOT already the
-		// configured fallback, re-run once on the dimension's cloud fallback (provider, model).
-		if lr.Err != nil && dim.FallbackProvider != "" && !strings.EqualFold(chosen.Provider, dim.FallbackProvider) {
-			if fb, ferr := s.laneCredFor(ctx, principalID, businessID, cred, dim.FallbackProvider, dim.FallbackModel); ferr == nil {
-				slog.Default().InfoContext(ctx, "code review lane: falling back to cloud after local failure",
-					"dimension", dim.Key, "from", chosen.Provider, "to", fb.Provider)
-				// fbOutDir isolates the fallback run's output from the chosen lane's
-				// (manyforge-9er): DockerRunner reads back whatever review.json/usage.json
-				// exist in the dir and never clears it, so a fallback that fails before
-				// writing could otherwise pick up the chosen lane's stale output. Same
-				// creation pattern as the chosen lane's own laneOutDir below: host
-				// materialization only applies when the runner shares a host output
-				// directory (KubeRunner ignores it; s.ClonesInSandbox skips this).
-				fbOutDir := laneOutDir + "-fallback"
-				if !s.ClonesInSandbox {
-					if mkErr := os.MkdirAll(fbOutDir, 0o777); mkErr != nil {
-						slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
-							"dimension", dim.Key, "dir", fbOutDir, "err", mkErr)
-						return lr
-					}
-					if chErr := os.Chmod(fbOutDir, 0o777); chErr != nil {
-						slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
-							"dimension", dim.Key, "dir", fbOutDir, "err", chErr)
-						return lr
-					}
+		if lr.Err == nil {
+			return lr
+		}
+		// Runtime fallback (manyforge-7lx T3): the chosen lane's real sandbox run failed — walk
+		// the not-yet-tried tail of the fallback chain (laneRest, populated by resolveLaneCred in
+		// T2) in order, returning the first success. T1 only tried the chain's FIRST entry; this
+		// generalizes that to the whole chain. A tail entry that is an exact (provider, model)
+		// duplicate of the chosen lane is skipped without a run — laneRest is purely index-based
+		// (T2 doesn't dedup on its own), and re-running the identical endpoint+model a second
+		// time burns a full sandbox invocation for no chance of a different outcome (the same
+		// guard T1 applied, generalized past just FallbackChain[0]).
+		for i, fb := range laneRest[dim.Key] {
+			if strings.EqualFold(fb.Provider, chosen.Provider) && fb.Model == chosen.Model {
+				slog.Default().InfoContext(ctx, "code review lane: fallback entry duplicates the chosen lane, skipping",
+					"dimension", dim.Key, "index", i, "provider", fb.Provider, "model", fb.Model)
+				continue
+			}
+			fbCred, ferr := s.laneCredFor(ctx, principalID, businessID, cred, fb.Provider, fb.Model)
+			if ferr != nil {
+				slog.Default().InfoContext(ctx, "code review lane: fallback entry unusable",
+					"dimension", dim.Key, "index", i, "provider", fb.Provider, "err", ferr)
+				continue
+			}
+			slog.Default().InfoContext(ctx, "code review lane: falling back",
+				"dimension", dim.Key, "from", chosen.Provider, "to", fbCred.Provider, "index", i)
+			// fbOutDir isolates this fallback run's output from every other attempt at this lane
+			// (manyforge-9er): DockerRunner reads back whatever review.json/usage.json exist in
+			// the dir and never clears it, so a fallback that fails before writing could
+			// otherwise pick up a prior attempt's stale output. Same creation pattern as the
+			// chosen lane's own laneOutDir below: host materialization only applies when the
+			// runner shares a host output directory (KubeRunner ignores it; s.ClonesInSandbox
+			// skips this).
+			fbOutDir := laneOutDir + "-fallback-" + strconv.Itoa(i)
+			if !s.ClonesInSandbox {
+				if mkErr := os.MkdirAll(fbOutDir, 0o777); mkErr != nil {
+					slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
+						"dimension", dim.Key, "dir", fbOutDir, "err", mkErr)
+					continue
 				}
-				// runSandboxLane self-bounds against the fallback endpoint's own cap
-				// (manyforge-9er): the chosen endpoint's slot was already released before
-				// this call runs, so a mass local-endpoint outage can't serialize every
-				// dimension's cloud fallback behind a slot held on the (unrelated) local
-				// endpoint — each fallback only contends the fallback endpoint's own cap.
-				fbResult := runSandboxLane(dim, fb, fbOutDir)
-				if fbResult.Err == nil {
-					return fbResult
+				if chErr := os.Chmod(fbOutDir, 0o777); chErr != nil {
+					slog.Default().ErrorContext(ctx, "code review lane: fallback output dir unusable",
+						"dimension", dim.Key, "dir", fbOutDir, "err", chErr)
+					continue
 				}
-			} else {
-				slog.Default().InfoContext(ctx, "code review lane: fallback credential unusable",
-					"dimension", dim.Key, "fallback_provider", dim.FallbackProvider, "err", ferr)
+			}
+			// runSandboxLane self-bounds against this fallback's own endpoint cap
+			// (manyforge-9er): the previously-tried endpoint's slot was already released before
+			// this call runs, so a mass outage on one endpoint can't serialize every dimension's
+			// fallback behind a slot held on an unrelated endpoint — each attempt only contends
+			// its own endpoint's cap.
+			if fbResult := runSandboxLane(dim, fbCred, fbOutDir); fbResult.Err == nil {
+				return fbResult
 			}
 		}
-		return lr
+		return lr // chain exhausted → surface the ORIGINAL (primary) failure
 	}
 
 	// Parallel fan-out (manyforge-w54): run each dimension lane concurrently — in kube

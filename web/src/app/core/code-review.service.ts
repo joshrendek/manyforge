@@ -83,14 +83,20 @@ export interface CodeReview {
 export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter';
 export type PostMode = 'single' | 'per_dimension';
 
+// One (provider, model) step in a dimension's ordered fallback chain. Mirrors
+// internal/agents/coding.FallbackEntry.
+export interface ReviewDimensionFallbackEntry {
+  provider: string;
+  model: string;
+}
+
 // One configured reviewer lane (the persisted view returned by the API).
 export interface ReviewDimension {
   id: string;
   dimension: string;
   provider?: string; // "" ⇒ use the review's default resolved credential
   model: string;
-  fallback_provider?: string; // "" ⇒ no fallback for this lane
-  fallback_model?: string;
+  fallback_chain: ReviewDimensionFallbackEntry[]; // ordered fallback chain, tried after the primary; empty ⇒ no fallback
   prompt: string;
   scope_globs: string[];
   min_severity: FindingSeverity;
@@ -103,8 +109,7 @@ export interface ReviewDimensionInput {
   dimension: string;
   provider: string;
   model: string;
-  fallback_provider: string;
-  fallback_model: string;
+  fallback_chain: ReviewDimensionFallbackEntry[];
   prompt: string;
   scope_globs: string[];
   min_severity: FindingSeverity;

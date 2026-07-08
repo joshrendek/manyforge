@@ -404,7 +404,8 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
   expect(putBody!['review_agent_chain']).toEqual(['ag1']);
 });
 
-test('review setup: configure a per-dimension fallback (provider+model) and save it', async ({ page }) => {
+test('review setup: configure a per-dimension fallback chain (add, reorder, remove) and save it', async ({ page }) => {
+  // Fallback FIRST so unmocked shell/nav calls return empty instead of 401→logout.
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await auth(page);
   await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
@@ -413,6 +414,11 @@ test('review setup: configure a per-dimension fallback (provider+model) and save
   );
   await page.route('**/api/v1/businesses/b1/review-config', (r) =>
     r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] } }),
+  );
+  // The OpenRouter model field is free-text with a live typeahead <datalist>, populated from
+  // this endpoint the first time a row's (primary or fallback) provider is set to openrouter.
+  await page.route('**/api/v1/businesses/b1/agents/provider-models/openrouter', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'openrouter', model_id: 'deepseek-v4-pro' }] } }),
   );
   let posted: Record<string, unknown> | null = null;
   await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => {
@@ -423,7 +429,7 @@ test('review setup: configure a per-dimension fallback (provider+model) and save
     return r.fulfill({
       json: {
         items: [
-          { id: 'd1', dimension: 'security', provider: 'vllm', model: 'ornith', fallback_provider: '', fallback_model: '', prompt: '', scope_globs: [], min_severity: 'warning', enabled: true, sort_order: 1 },
+          { id: 'd1', dimension: 'security', provider: 'vllm', model: 'ornith', fallback_chain: [], prompt: '', scope_globs: [], min_severity: 'warning', enabled: true, sort_order: 1 },
         ],
       },
     });
@@ -432,15 +438,39 @@ test('review setup: configure a per-dimension fallback (provider+model) and save
   await page.goto('/code-review/setup');
   await expect(page.getByTestId('dimension-row')).toHaveCount(1);
 
-  // Route the fallback to openrouter/deepseek, then save the row.
-  await page.getByTestId('row-fallback-provider').selectOption('openrouter');
-  await page.getByTestId('row-fallback-model-text').fill('deepseek-v4-pro');
+  // No fallback configured initially.
+  await expect(page.getByTestId('row-fallback-empty')).toBeVisible();
+
+  // Add two fallback entries: first ollama (free-text model), second openrouter (typeahead).
+  await page.getByTestId('row-fallback-add').click();
+  await page.getByTestId('row-fallback-provider-0').selectOption('ollama');
+  await page.getByTestId('row-fallback-model-text-0').fill('llama3');
+
+  await page.getByTestId('row-fallback-add').click();
+  await page.getByTestId('row-fallback-provider-1').selectOption('openrouter');
+  await expect(page.locator('#setup-openrouter-models option')).toHaveCount(1);
+  await page.getByTestId('row-fallback-model-text-1').fill('deepseek-v4-pro');
+
+  // Reorder: move the 2nd (openrouter) entry up → it becomes the primary fallback.
+  await page.getByTestId('row-fallback-up-1').click();
+  await expect(page.getByTestId('row-fallback-provider-0')).toHaveValue('openrouter');
+  await expect(page.getByTestId('row-fallback-provider-1')).toHaveValue('ollama');
+
+  // Add a third, blank entry (no provider chosen yet), then remove it — proves Remove works
+  // and (via the save assertion below) that toInput drops blank-provider entries either way.
+  await page.getByTestId('row-fallback-add').click();
+  await expect(page.getByTestId('row-fallback-provider-2')).toHaveValue('');
+  await page.getByTestId('row-fallback-remove-2').click();
+  await expect(page.getByTestId('row-fallback-entry-2')).toHaveCount(0);
+
   await page.getByTestId('row-save').click();
   await expect(page.getByTestId('setup-saved')).toBeVisible();
 
   expect(posted).not.toBeNull();
-  expect(posted!['fallback_provider']).toBe('openrouter');
-  expect(posted!['fallback_model']).toBe('deepseek-v4-pro');
+  expect(posted!['fallback_chain']).toEqual([
+    { provider: 'openrouter', model: 'deepseek-v4-pro' },
+    { provider: 'ollama', model: 'llama3' },
+  ]);
 });
 
 test('code-review: connector list renders rows', async ({ page }) => {
