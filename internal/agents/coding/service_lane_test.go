@@ -207,11 +207,13 @@ func (r *callCountingRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (s
 
 // TestReviewLaneNoDoubleRunWhenChosenIsAlreadyFallback pins manyforge-9er (review MINOR 2): when
 // a dimension's chosen lane's provider IS ALREADY its own configured fallback provider (a no-op
-// fallback config), reviewLane's guard — `!strings.EqualFold(chosen.Provider,
-// dim.FallbackChain[0].Provider)` — must skip the runtime-fallback re-run entirely. Re-running the exact
-// same (down) provider a second time burns another full sandbox invocation for no chance of a
-// different outcome. This test fails red if that guard is removed/broken (the fake runner would
-// be invoked twice) and passes green with exactly one invocation.
+// fallback config), reviewLane's per-entry dedup guard — `strings.EqualFold(fb.Provider,
+// chosen.Provider) && fb.Model == chosen.Model`, checked against each entry in laneRest (the
+// not-yet-tried tail of the fallback chain, manyforge-7lx T3) — must skip that entry's
+// runtime-fallback re-run entirely. Re-running the exact same (down) provider+model a second time
+// burns another full sandbox invocation for no chance of a different outcome. This test fails red
+// if that guard is removed/broken (the fake runner would be invoked twice) and passes green with
+// exactly one invocation.
 func TestReviewLaneNoDoubleRunWhenChosenIsAlreadyFallback(t *testing.T) {
 	ctx, tdb, seed := startCoding(t)
 	prJSON := []byte(`{"number":1,"title":"T","state":"open","merged":false,"head":{"sha":"abc","ref":"f"},"base":{"ref":"main"}}`)
