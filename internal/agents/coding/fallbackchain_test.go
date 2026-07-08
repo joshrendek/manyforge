@@ -173,3 +173,84 @@ func TestLaneCredForEgressAndPrivateBaseURL(t *testing.T) {
 		}
 	})
 }
+
+// TestResolveLaneCredChainWalk pins resolveLaneCred's whole-chain probe (manyforge-7lx T2):
+// it walks [primary, ...FallbackChain] in order, returning the first LIVE candidate plus the
+// not-yet-tried tail (cands[i+1:]) so a caller can keep going down the chain at runtime (T3).
+// When nothing is live but some candidates resolve, it falls back to the first resolvable one
+// (the retry path) with the SAME tail-after-it semantics. Only when nothing resolves at all does
+// it return an empty cred with a reason.
+func TestResolveLaneCredChainWalk(t *testing.T) {
+	def := AICredential{Provider: "anthropic", BaseURL: "https://api.anthropic.com", Model: "def"}
+	ctx := context.Background()
+	p, b := uuid.New(), uuid.New()
+
+	creds := map[string]AICredential{
+		"primary": {Provider: "primary", BaseURL: "https://primary.example", Model: "p", APIKey: "k"},
+		"fb1":     {Provider: "fb1", BaseURL: "https://fb1.example", Model: "f1", APIKey: "k"},
+		"fb2":     {Provider: "fb2", BaseURL: "https://fb2.example", Model: "f2", APIKey: "k"},
+	}
+	allow := netsafe.ParseHostAllowlist("primary.example,fb1.example,fb2.example")
+	dim := Dimension{
+		Key: "x", Provider: "primary", Model: "p",
+		FallbackChain: []FallbackEntry{{Provider: "fb1", Model: "f1"}, {Provider: "fb2", Model: "f2"}},
+	}
+	newSvc := func(probe stubProbe, byProvider map[string]AICredential) *CodeReviewService {
+		return &CodeReviewService{
+			Creds:       &FakeCredResolver{ByProvider: byProvider},
+			Prober:      probe,
+			EgressAllow: allow,
+		}
+	}
+
+	t.Run("primary live: chosen=primary, rest=full chain", func(t *testing.T) {
+		svc := newSvc(stubProbe{"https://primary.example": true, "https://fb1.example": true, "https://fb2.example": true}, creds)
+		lc, rest, reason := svc.resolveLaneCred(ctx, p, b, def, dim)
+		if reason != "" || lc.Provider != "primary" {
+			t.Fatalf("got cred %+v reason=%q, want primary live", lc, reason)
+		}
+		if len(rest) != 2 || rest[0].Provider != "fb1" || rest[1].Provider != "fb2" {
+			t.Fatalf("rest = %+v, want the full chain [fb1 fb2]", rest)
+		}
+	})
+
+	t.Run("primary not live, fb1 live: chosen=fb1, rest=chain[1:]", func(t *testing.T) {
+		svc := newSvc(stubProbe{"https://fb1.example": true, "https://fb2.example": true}, creds)
+		lc, rest, reason := svc.resolveLaneCred(ctx, p, b, def, dim)
+		if reason != "" || lc.Provider != "fb1" {
+			t.Fatalf("got cred %+v reason=%q, want fb1 live", lc, reason)
+		}
+		if len(rest) != 1 || rest[0].Provider != "fb2" {
+			t.Fatalf("rest = %+v, want [fb2]", rest)
+		}
+	})
+
+	t.Run("none live but all resolvable: chosen=first resolvable (primary), rest=chain", func(t *testing.T) {
+		svc := newSvc(stubProbe{}, creds)
+		lc, rest, reason := svc.resolveLaneCred(ctx, p, b, def, dim)
+		if reason != "" || lc.Provider != "primary" {
+			t.Fatalf("got cred %+v reason=%q, want primary (first resolvable, none live)", lc, reason)
+		}
+		if len(rest) != 2 || rest[0].Provider != "fb1" || rest[1].Provider != "fb2" {
+			t.Fatalf("rest = %+v, want the full chain [fb1 fb2]", rest)
+		}
+	})
+
+	t.Run("none resolvable: empty cred + non-empty reason", func(t *testing.T) {
+		unresolvableDim := Dimension{
+			Key: "y", Provider: "primary", Model: "p",
+			FallbackChain: []FallbackEntry{{Provider: "fb1", Model: "f1"}},
+		}
+		svc := newSvc(stubProbe{}, map[string]AICredential{}) // ByProvider non-nil but empty ⇒ every candidate ErrNotFound
+		lc, rest, reason := svc.resolveLaneCred(ctx, p, b, def, unresolvableDim)
+		if reason == "" {
+			t.Fatalf("want a non-empty reason, got cred %+v rest=%+v", lc, rest)
+		}
+		if lc != (AICredential{}) {
+			t.Fatalf("want an empty cred, got %+v", lc)
+		}
+		if rest != nil {
+			t.Fatalf("want a nil rest, got %+v", rest)
+		}
+	})
+}

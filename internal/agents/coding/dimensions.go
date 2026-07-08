@@ -10,6 +10,12 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
+// FallbackEntry is one (provider, model) step in a dimension's ordered fallback chain.
+type FallbackEntry struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
 // Dimension is one specialized reviewer lane in a code-review panel (spec 008): its own
 // model, prompt, file scope, and severity floor. A review fans out across the active
 // dimensions and aggregates their findings. An empty Provider/Model means "use the
@@ -20,15 +26,15 @@ type Dimension struct {
 	Label    string // display label, e.g. "Security"
 	Provider string // resolves the per-provider BYO credential; "" ⇒ default
 	Model    string // "" ⇒ default (the review's resolved model)
-	// FallbackProvider/FallbackModel are tried when the primary endpoint fails the
-	// liveness probe (manyforge-azy). "" FallbackProvider ⇒ no fallback for this lane.
-	FallbackProvider string
-	FallbackModel    string
-	Prompt           string   // review instructions for this lane, written host-side to review_instructions.txt for the sandbox to consume
-	ScopeGlobs       []string // file globs (doublestar); empty ⇒ all files
-	MinSeverity      string   // "info" | "warning" | "error" — floor below which findings are dropped
-	Enabled          bool
-	Order            int
+	// FallbackChain is the ordered (provider, model) chain tried when the primary endpoint
+	// fails the liveness probe (manyforge-azy, extended to N entries by manyforge-7lx). An
+	// empty chain ⇒ no fallback for this lane.
+	FallbackChain []FallbackEntry
+	Prompt        string   // review instructions for this lane, written host-side to review_instructions.txt for the sandbox to consume
+	ScopeGlobs    []string // file globs (doublestar); empty ⇒ all files
+	MinSeverity   string   // "info" | "warning" | "error" — floor below which findings are dropped
+	Enabled       bool
+	Order         int
 }
 
 // SkippedDimension records a configured dimension that did not run this review, with why

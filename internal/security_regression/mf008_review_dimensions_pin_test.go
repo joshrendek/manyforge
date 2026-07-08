@@ -73,3 +73,22 @@ func TestMF008PIN3(t *testing.T) {
 		t.Fatal("reviewLane must not branch a local credential to a separate host-side call — local and cloud share the egress-gated sandbox path (runSandboxLane, manyforge-9er Task 4) (MF008-PIN-3)")
 	}
 }
+
+// MF008-PIN-4 (manyforge-7lx): the per-dimension fallback moved from a single (provider, model)
+// pair to an ordered fallback_chain (migration 0091). A back-compat regression that just adds the
+// new column without backfilling from the old one would silently drop every operator's already-
+// configured fallback on deploy. Pins that 0091's up-SQL converts each existing single fallback
+// into a 1-element chain — jsonb_build_array over the OLD fallback_provider/fallback_model columns
+// — before those columns are dropped.
+func TestMF008PIN4(t *testing.T) {
+	mig := mustRead(t, "../../migrations/0091_review_dimension_fallback_chain.up.sql")
+	if !strings.Contains(mig, "jsonb_build_array") {
+		t.Fatal("migration 0091 must backfill fallback_chain via jsonb_build_array — a plain column add with no backfill would silently drop every operator's existing fallback (MF008-PIN-4)")
+	}
+	if !strings.Contains(mig, "fallback_provider") || !strings.Contains(mig, "fallback_model") {
+		t.Fatal("migration 0091's backfill must read the OLD fallback_provider/fallback_model columns before they're dropped, or existing single-fallback configs are lost on deploy (MF008-PIN-4)")
+	}
+	if buildIdx, dropIdx := strings.Index(mig, "jsonb_build_array"), strings.Index(mig, "DROP COLUMN fallback_provider"); dropIdx != -1 && buildIdx > dropIdx {
+		t.Fatal("migration 0091 drops fallback_provider before backfilling fallback_chain from it — reordering would silently null out every existing fallback (MF008-PIN-4)")
+	}
+}
