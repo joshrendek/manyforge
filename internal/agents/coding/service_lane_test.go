@@ -93,12 +93,13 @@ func (r *failoverRunner) Run(_ context.Context, spec sandbox.SandboxSpec) (sandb
 	return sandbox.SandboxResult{ExitCode: 0, Outputs: map[string][]byte{"review.json": doc}}, nil
 }
 
-// TestReviewLaneFallsBackToCloudOnLocalFailure pins manyforge-9er Task 5: when a dimension's
-// chosen lane (its LIVE primary, per resolveLaneCred) fails the actual sandbox run, and that
-// lane was NOT already the dimension's configured cloud fallback, reviewLane re-runs the lane
-// once on the dimension's FallbackChain[0] (provider, model) before giving up. This is runtime
-// fallback (a real run failure), distinct from resolveLaneCred's config-time liveness-probe
-// fallback (manyforge-azy) exercised by TestCodeReviewPerDimensionProviderAndFallback.
+// TestReviewLaneFallsBackToCloudOnLocalFailure pins manyforge-9er Task 5 (as generalized by
+// manyforge-7lx): when a dimension's chosen lane (its LIVE primary, per resolveLaneCred) fails
+// the actual sandbox run, reviewLane walks the untried fallback tail (laneRest) in order,
+// re-running the lane on each entry until one succeeds. This test's dimension has a single
+// fallback, so the tail is one entry (the configured cloud fallback). This is runtime fallback
+// (a real run failure), distinct from resolveLaneCred's config-time liveness-probe fallback
+// (manyforge-azy) exercised by TestCodeReviewPerDimensionProviderAndFallback.
 //
 // Before Task 5, reviewLane is a bare `return runSandboxLane(dim, laneCreds[dim.Key], laneOutDir)`
 // with no retry on failure — this test fails red against that code (the "security" dimension_run

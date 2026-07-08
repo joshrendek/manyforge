@@ -199,7 +199,7 @@ function catalogLabel(key: string): string {
             </span>
             <span style="flex:2" role="cell">
               <div data-testid="row-fallback-list" style="display:flex;flex-direction:column;gap:6px">
-                @for (fb of row.fallback_chain; track $index; let i = $index) {
+                @for (fb of row.fallback_chain; track fb; let i = $index) {
                   <div style="display:flex;gap:6px;align-items:center" [attr.data-testid]="'row-fallback-entry-' + i">
                     <select class="mf-select" [attr.data-testid]="'row-fallback-provider-' + i" [ngModel]="fb.provider"
                             (ngModelChange)="onFallbackEntryProviderChange(row, i, $event)"

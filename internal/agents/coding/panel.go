@@ -57,7 +57,11 @@ func dimensionFromRow(r dbgen.ReviewDimension) Dimension {
 		d.Provider = string(r.Provider.AiProvider)
 	}
 	if len(r.FallbackChain) > 0 {
-		_ = json.Unmarshal(r.FallbackChain, &d.FallbackChain) // best-effort; malformed ⇒ empty chain
+		// Malformed jsonb ⇒ empty chain (the dimension still runs on its primary). Log it so a
+		// corrupt persisted chain is diagnosable rather than silently dropped (manyforge-cd3).
+		if err := json.Unmarshal(r.FallbackChain, &d.FallbackChain); err != nil {
+			slog.Default().Warn("coding: dropping malformed fallback_chain", "dimension", r.Dimension, "err", err)
+		}
 	}
 	return d
 }

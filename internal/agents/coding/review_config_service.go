@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -329,7 +330,9 @@ func dimensionViewFromRow(r dbgen.ReviewDimension) ReviewDimensionView {
 		v.ScopeGlobs = []string{}
 	}
 	if len(r.FallbackChain) > 0 {
-		_ = json.Unmarshal(r.FallbackChain, &v.FallbackChain)
+		if err := json.Unmarshal(r.FallbackChain, &v.FallbackChain); err != nil {
+			slog.Default().Warn("coding: dropping malformed fallback_chain in view", "dimension", r.Dimension, "err", err)
+		}
 	}
 	if v.FallbackChain == nil {
 		v.FallbackChain = []FallbackEntry{}
