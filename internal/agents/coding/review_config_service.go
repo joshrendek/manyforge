@@ -84,6 +84,10 @@ var (
 // then blown into every review's system message.
 const maxDimensionPromptBytes = 20000
 
+// maxFallbackChainEntries bounds a dimension's fallback chain so an unbounded list can't be
+// stored or then walked entry-by-entry (one sandbox invocation per hop) at review time.
+const maxFallbackChainEntries = 8
+
 // validateDimensionInput enforces the service-boundary invariants (spec 008 plan): dimension +
 // severity in their sets; provider (when set) known AND accompanied by a model; prompt bounded.
 func validateDimensionInput(in ReviewDimensionInput) error {
@@ -100,6 +104,9 @@ func validateDimensionInput(in ReviewDimensionInput) error {
 		if strings.TrimSpace(in.Model) == "" {
 			return fmt.Errorf("coding: model required when provider is set: %w", errs.ErrValidation)
 		}
+	}
+	if len(in.FallbackChain) > maxFallbackChainEntries {
+		return fmt.Errorf("coding: fallback_chain exceeds %d entries: %w", maxFallbackChainEntries, errs.ErrValidation)
 	}
 	for i, fb := range in.FallbackChain {
 		if fb.Provider == "" || !knownAIProviders[fb.Provider] {

@@ -91,6 +91,10 @@ func TestValidateDimensionInput(t *testing.T) {
 	if err := validateDimensionInput(okChain); err != nil {
 		t.Fatalf("valid 3-entry chain rejected: %v", err)
 	}
+	okChainAtCap := ReviewDimensionInput{Dimension: "docs", MinSeverity: "info", FallbackChain: fallbackChainOfLen(maxFallbackChainEntries)}
+	if err := validateDimensionInput(okChainAtCap); err != nil {
+		t.Fatalf("chain at the %d-entry cap rejected: %v", maxFallbackChainEntries, err)
+	}
 
 	bad := map[string]ReviewDimensionInput{
 		"unknown dimension":             {Dimension: "kitchen-sink", MinSeverity: "info"},
@@ -100,6 +104,7 @@ func TestValidateDimensionInput(t *testing.T) {
 		"unknown fallback provider":     {Dimension: "security", MinSeverity: "info", FallbackChain: []FallbackEntry{{Provider: "acme", Model: "m"}}},
 		"fallback provider no model":    {Dimension: "security", MinSeverity: "info", FallbackChain: []FallbackEntry{{Provider: "openai", Model: "  "}}},
 		"fallback entry blank provider": {Dimension: "security", MinSeverity: "info", FallbackChain: []FallbackEntry{{Provider: "", Model: "m"}}},
+		"fallback chain too long":       {Dimension: "security", MinSeverity: "info", FallbackChain: fallbackChainOfLen(maxFallbackChainEntries + 1)},
 		"prompt too long":               {Dimension: "security", MinSeverity: "info", Prompt: strings.Repeat("x", maxDimensionPromptBytes+1)},
 	}
 	for name, in := range bad {
@@ -107,4 +112,14 @@ func TestValidateDimensionInput(t *testing.T) {
 			t.Errorf("%s: want ErrValidation, got %v", name, err)
 		}
 	}
+}
+
+// fallbackChainOfLen builds n distinct, individually-valid fallback entries (used to pin the
+// maxFallbackChainEntries boundary without the length itself invalidating each entry).
+func fallbackChainOfLen(n int) []FallbackEntry {
+	out := make([]FallbackEntry, n)
+	for i := range out {
+		out[i] = FallbackEntry{Provider: "openrouter", Model: fmt.Sprintf("model-%d", i)}
+	}
+	return out
 }

@@ -637,8 +637,8 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// provider inherits the review's default resolved cred.
 	laneCreds := make(map[string]AICredential, len(active))
 	// laneRest holds each lane's not-yet-tried fallback tail (manyforge-7lx T2): the chain
-	// candidates resolveLaneCred didn't choose. Not yet consumed here — T3 wires it into
-	// reviewLane's runtime fallback so a failed real call keeps walking the chain.
+	// candidates resolveLaneCred didn't choose. reviewLane (below) walks this tail as its
+	// runtime fallback when the chosen lane's real sandbox run fails (T3).
 	laneRest := make(map[string][]FallbackEntry, len(active))
 	kept := make([]Dimension, 0, len(active))
 	for _, dim := range active {
