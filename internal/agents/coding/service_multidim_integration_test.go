@@ -327,24 +327,37 @@ func TestCodeReviewRetryBypassesDedup(t *testing.T) {
 // provider ⇒ NULL; empty fbProvider ⇒ an empty fallback_chain ('[]', no fallback).
 func seedDimFull(ctx context.Context, t *testing.T, tdb *testdb.TestDB, businessID uuid.UUID, dim, provider, model, fbProvider, fbModel string, order int) {
 	t.Helper()
+	var chain []FallbackEntry
+	if fbProvider != "" {
+		chain = []FallbackEntry{{Provider: fbProvider, Model: fbModel}}
+	}
+	seedDimChain(ctx, t, tdb, businessID, dim, provider, model, chain, order)
+}
+
+// seedDimChain inserts a review_dimension with an explicit primary + a full ORDERED fallback
+// chain (manyforge-7lx T3) — generalizes seedDimFull's single-entry chain to N entries so a
+// test can exercise the whole-chain runtime walk (reviewLane), not just one fallback hop. Empty
+// provider ⇒ NULL; empty/nil chain ⇒ an empty fallback_chain ('[]', no fallback).
+func seedDimChain(ctx context.Context, t *testing.T, tdb *testdb.TestDB, businessID uuid.UUID, dim, provider, model string, chain []FallbackEntry, order int) {
+	t.Helper()
 	var prov any
 	if provider != "" {
 		prov = provider
 	}
-	chain := "[]"
-	if fbProvider != "" {
-		b, err := json.Marshal([]FallbackEntry{{Provider: fbProvider, Model: fbModel}})
+	chainJSON := "[]"
+	if len(chain) > 0 {
+		b, err := json.Marshal(chain)
 		if err != nil {
 			t.Fatalf("marshal fallback chain: %v", err)
 		}
-		chain = string(b)
+		chainJSON = string(b)
 	}
 	if _, err := tdb.Super.Exec(ctx,
 		`INSERT INTO review_dimension
 		   (id, business_id, tenant_root_id, dimension, provider, model, fallback_chain,
 		    prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at)
 		 VALUES ($1,$2,$2,$3,$4::ai_provider,$5,$6::jsonb,$7,'{}','info',true,$8,now(),now())`,
-		uuid.New(), businessID, dim, prov, model, chain, "DIMPROMPT:"+dim, order); err != nil {
+		uuid.New(), businessID, dim, prov, model, chainJSON, "DIMPROMPT:"+dim, order); err != nil {
 		t.Fatalf("seed dim %q: %v", dim, err)
 	}
 }
