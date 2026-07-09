@@ -28,11 +28,12 @@ import (
 // 0025) so adding a provider to the enum + sqlc regen surfaces a new constant to add here
 // rather than a silently-untracked string. TestKnownProvidersTrackEnum pins coverage.
 var knownProviders = map[string]bool{
-	string(dbgen.AiProviderAnthropic):  true,
-	string(dbgen.AiProviderOpenai):     true,
-	string(dbgen.AiProviderOllama):     true,
-	string(dbgen.AiProviderVllm):       true,
-	string(dbgen.AiProviderOpenrouter): true,
+	string(dbgen.AiProviderAnthropic):   true,
+	string(dbgen.AiProviderOpenai):      true,
+	string(dbgen.AiProviderOllama):      true,
+	string(dbgen.AiProviderVllm):        true,
+	string(dbgen.AiProviderOpenrouter):  true,
+	string(dbgen.AiProviderHuggingface): true,
 }
 
 // credentialDB is the minimal DB surface this service needs — satisfied by the
@@ -137,8 +138,10 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 	if in.DefaultModel == "" {
 		return fmt.Errorf("agents: default_model required: %w", errs.ErrValidation)
 	}
-	// openai-compat providers (openai/ollama/vllm) route through a caller-supplied base_url;
-	// anthropic and openrouter have a default base_url, so theirs is optional.
+	// openai-compat providers (openai/ollama/vllm/huggingface) route through a caller-supplied
+	// base_url; anthropic and openrouter have a default base_url, so theirs is optional. A
+	// huggingface credential points at the operator's own ZeroGPU Space, whose host is per-user
+	// (https://<user>-<space>.hf.space/v1), so there is no default to fall back to.
 	if in.Provider != "anthropic" && in.Provider != "openrouter" && in.BaseURL == "" {
 		return fmt.Errorf("agents: base_url required for provider %q: %w", in.Provider, errs.ErrValidation)
 	}

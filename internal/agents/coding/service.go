@@ -599,12 +599,13 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		files = nil
 	}
 	changed := commentableMap(files)
-	// On-host local providers (Ollama/vLLM) get a tighter diff budget: small models can't
-	// prompt-eval a large diff in reasonable time. Cloud/opencode (capable models) uses the
-	// larger default. Prose/planning docs are filtered out in either case (see assembleDiffPayload).
+	// Providers serving small models on unbatched inference (Ollama/vLLM on-host, a HuggingFace
+	// ZeroGPU Space remotely) get a tighter diff budget: they can't prompt-eval a large diff in
+	// reasonable time. Capable cloud models use the larger default. Prose/planning docs are
+	// filtered out in either case (see assembleDiffPayload).
 	maxTotal := reviewMaxTotalBytes
-	if isLocalProvider(cred.Provider) {
-		maxTotal = localProviderMaxTotalBytes
+	if isConstrainedProvider(cred.Provider) {
+		maxTotal = constrainedProviderMaxTotalBytes
 	}
 	// The whole-PR dropped-file sets (skipped/omitted/filtered) are computed once here for the
 	// audit trail and the review body's "not reviewed" note; each dimension lane assembles its

@@ -7,16 +7,27 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors"
 )
 
-func TestIsLocalProvider(t *testing.T) {
-	for _, p := range []string{"ollama", "vllm"} {
-		if !isLocalProvider(p) {
-			t.Fatalf("%q should be local", p)
+// Constrained-ness tracks model capability, not network locality: huggingface is a public
+// ZeroGPU Space (remote) yet belongs with the on-host small-model providers, because the GPU
+// is released between opencode turns and every turn re-prefills the diff. See manyforge-bhx.
+func TestIsConstrainedProvider(t *testing.T) {
+	for _, p := range []string{"ollama", "vllm", "huggingface"} {
+		if !isConstrainedProvider(p) {
+			t.Fatalf("%q should be constrained (tight diff budget)", p)
 		}
 	}
 	for _, p := range []string{"openrouter", "anthropic", "openai"} {
-		if isLocalProvider(p) {
-			t.Fatalf("%q should NOT be local", p)
+		if isConstrainedProvider(p) {
+			t.Fatalf("%q should NOT be constrained", p)
 		}
+	}
+}
+
+// The whole point of the constrained budget is that it is strictly smaller than the default;
+// a refactor that inverts or equalizes them silently un-fixes manyforge-6h1/ornith:9b.
+func TestConstrainedBudgetIsTighterThanDefault(t *testing.T) {
+	if constrainedProviderMaxTotalBytes >= reviewMaxTotalBytes {
+		t.Fatalf("constrained budget %d must be < default %d", constrainedProviderMaxTotalBytes, reviewMaxTotalBytes)
 	}
 }
 

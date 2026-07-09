@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-hfzerogpu-2",
+  "object": "chat.completion",
+  "model": "Qwen/Qwen3-14B",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_hf_1",
+            "type": "function",
+            "function": { "name": "get_ticket", "arguments": "{\"id\":\"t-42\"}" }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 47, "completion_tokens": 15, "total_tokens": 62 }
+}

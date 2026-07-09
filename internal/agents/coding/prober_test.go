@@ -56,6 +56,43 @@ func TestHTTPProber_AnthropicAssumedLive(t *testing.T) {
 	}
 }
 
+// TestHTTPProber_HuggingFaceAssumedLive: a ZeroGPU Space sleeps after inactivity and takes
+// 30-60s to cold-start, which no probe budget can accommodate (defaultProbeTimeout is 3s).
+// Probing it would therefore skip the lane on a perfectly healthy-but-idle Space, every time.
+// It must short-circuit to live without any network call — the reactive worker retry and the
+// dimension's fallback_chain cover a Space that is genuinely down. See manyforge-bhx.
+func TestHTTPProber_HuggingFaceAssumedLive(t *testing.T) {
+	p := httpProber{Timeout: time.Millisecond}
+	for _, provider := range []string{"huggingface", "HuggingFace"} { // case-insensitive, like anthropic
+		if !p.Live(context.Background(), AICredential{Provider: provider, BaseURL: "https://josh-reviewbot.hf.space/v1"}) {
+			t.Fatalf("%q must be assumed live", provider)
+		}
+	}
+}
+
+// TestHTTPProber_HuggingFaceLiveWhenColdStarting is the regression this fix exists for: an
+// endpoint that takes longer than the probe timeout to answer (a waking Space) must still be
+// treated as live. A constrained-but-probeable provider like vllm correctly reports not-live
+// in exactly the same situation — that contrast is the point.
+func TestHTTPProber_HuggingFaceLiveWhenColdStarting(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond) // stands in for a 30-60s cold start
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	p := httpProber{Timeout: 5 * time.Millisecond}
+
+	cold := AICredential{Provider: "huggingface", BaseURL: srv.URL + "/v1", AllowPrivateBaseURL: true}
+	if !p.Live(context.Background(), cold) {
+		t.Fatal("a cold-starting ZeroGPU Space must still be considered live (lane would be skipped forever)")
+	}
+	// Same slow endpoint, a provider that IS probed: times out, reports not-live.
+	probed := AICredential{Provider: "vllm", BaseURL: srv.URL + "/v1", AllowPrivateBaseURL: true}
+	if p.Live(context.Background(), probed) {
+		t.Fatal("vllm is probed, so a timeout must report not-live — otherwise this test proves nothing")
+	}
+}
+
 // TestHTTPProber_PrivateBlockedWithoutFlag: a private LAN host is not live when the
 // credential lacks allow_private_base_url — netsafe refuses the dial (no SSRF regression),
 // so the probe fails closed regardless of whether the host is actually reachable.

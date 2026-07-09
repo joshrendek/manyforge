@@ -17,6 +17,7 @@ func TestFactoryDispatch(t *testing.T) {
 		{"openai", "openai-compat"},
 		{"ollama", "openai-compat"},
 		{"vllm", "openai-compat"},
+		{"huggingface", "openai-compat"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.provider, func(t *testing.T) {
@@ -43,7 +44,7 @@ func TestFactoryUnknownProvider(t *testing.T) {
 }
 
 func TestFactoryOpenAICompatRequiresBaseURL(t *testing.T) {
-	for _, name := range []string{ProviderOpenAI, ProviderOllama, ProviderVLLM} {
+	for _, name := range []string{ProviderOpenAI, ProviderOllama, ProviderVLLM, ProviderHuggingFace} {
 		_, err := New(Credential{Provider: name, APIKey: "k", BaseURL: ""})
 		if !errors.Is(err, ErrBadRequest) {
 			t.Fatalf("%s missing base_url err = %v, want Is(ErrBadRequest)", name, err)

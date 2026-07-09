@@ -24,6 +24,12 @@ const (
 	ProviderVLLM      = "vllm"
 
 	ProviderOpenRouter = "openrouter"
+
+	// ProviderHuggingFace is a user-hosted HF ZeroGPU Space serving an OpenAI-compatible
+	// /v1/chat/completions. The Space URL is per-user, so base_url is REQUIRED — unlike
+	// openrouter, there is no shared endpoint to default to. NOT the HF Inference Providers
+	// router (router.huggingface.co), which is a paid pass-through to third-party partners.
+	ProviderHuggingFace = "huggingface"
 )
 
 // Credential is the minimal resolved credential the factory needs to build a
@@ -45,8 +51,8 @@ type Credential struct {
 // Provider-name -> transport mapping (keep in sync with agents.knownProviders /
 // the ai_provider PG enum — see manyforge-uc2):
 //
-//	anthropic                            -> AnthropicProvider
-//	openai | ollama | vllm | openrouter  -> OpenAICompatProvider (openrouter defaults base_url)
+//	anthropic                                          -> AnthropicProvider
+//	openai | ollama | vllm | huggingface | openrouter  -> OpenAICompatProvider (openrouter defaults base_url)
 func New(cred Credential) (Provider, error) {
 	hc := netsafe.NewClientWithOptions(defaultRequestTimeout, netsafe.Options{
 		AllowLoopback: cred.AllowPrivateBaseURL,
@@ -55,7 +61,7 @@ func New(cred Credential) (Provider, error) {
 	switch cred.Provider {
 	case ProviderAnthropic:
 		return NewAnthropicProvider(cred.APIKey, cred.BaseURL, cred.Model, hc), nil
-	case ProviderOpenAI, ProviderOllama, ProviderVLLM:
+	case ProviderOpenAI, ProviderOllama, ProviderVLLM, ProviderHuggingFace:
 		if cred.BaseURL == "" {
 			return nil, fmt.Errorf("ai: provider %q requires a base_url: %w", cred.Provider, ErrBadRequest)
 		}

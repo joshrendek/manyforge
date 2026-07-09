@@ -4,6 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,22 +18,61 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
-// knownProviders must stay in lockstep with the ai_provider PG enum (manyforge-uc2):
-// every generated dbgen.AiProvider* constant is accepted, and the set size matches so a
-// new enum value (new constant) that isn't added here fails loudly.
-func TestKnownProvidersTrackEnum(t *testing.T) {
-	want := []dbgen.AiProvider{
-		dbgen.AiProviderAnthropic, dbgen.AiProviderOpenai, dbgen.AiProviderOllama, dbgen.AiProviderVllm,
-		dbgen.AiProviderOpenrouter,
+// aiProviderEnumRE extracts the ai_provider value list from the CREATE TYPE statement in
+// db/schema.sql (the schema sqlc generates from — see sqlc.yaml).
+var aiProviderEnumRE = regexp.MustCompile(`(?i)CREATE\s+TYPE\s+ai_provider\s+AS\s+ENUM\s*\(([^)]*)\)`)
+
+// aiProviderEnumValues reads the ai_provider enum straight out of db/schema.sql. Reading the
+// schema (rather than restating it in a Go slice) is what makes TestKnownProvidersTrackEnum a
+// real pin: a new enum value shows up here without anyone remembering to update the test.
+func aiProviderEnumValues(t *testing.T) []string {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("..", "..", "db", "schema.sql"))
+	if err != nil {
+		t.Fatalf("read db/schema.sql: %v", err)
 	}
-	for _, p := range want {
-		if !knownProviders[string(p)] {
-			t.Errorf("ai_provider enum value %q not accepted by knownProviders", p)
+	m := aiProviderEnumRE.FindSubmatch(src)
+	if m == nil {
+		t.Fatal("db/schema.sql: no CREATE TYPE ai_provider AS ENUM (...) found")
+	}
+	var out []string
+	for raw := range strings.SplitSeq(string(m[1]), ",") {
+		if v := strings.Trim(strings.TrimSpace(raw), "'"); v != "" {
+			out = append(out, v)
 		}
 	}
-	if len(knownProviders) != len(want) {
-		t.Errorf("knownProviders has %d entries, want %d — a new ai_provider enum value needs adding here and to this test", len(knownProviders), len(want))
+	return out
+}
+
+// knownProviders must stay in lockstep with the ai_provider PG enum (manyforge-uc2). The enum
+// is read from db/schema.sql, so adding a value there without adding it to knownProviders (or
+// vice-versa) fails loudly — no hand-maintained duplicate of the value list to drift.
+func TestKnownProvidersTrackEnum(t *testing.T) {
+	want := aiProviderEnumValues(t)
+	for _, p := range want {
+		if !knownProviders[p] {
+			t.Errorf("ai_provider enum value %q (db/schema.sql) not accepted by knownProviders", p)
+		}
 	}
+	for p := range knownProviders {
+		if !slices.Contains(want, p) {
+			t.Errorf("knownProviders accepts %q, which is not an ai_provider enum value in db/schema.sql", p)
+		}
+	}
+	// Every enum value must have a generated dbgen constant keyed off it; this catches a
+	// schema.sql edit that was never followed by `make generate`.
+	for _, p := range want {
+		if !slices.Contains(dbgenAiProviders, dbgen.AiProvider(p)) {
+			t.Errorf("ai_provider enum value %q has no dbgen.AiProvider constant — run `make generate`", p)
+		}
+	}
+}
+
+// dbgenAiProviders lists the generated constants. Adding an enum value regenerates models.go
+// with a new constant, which must be appended here — the compiler cannot enumerate them.
+var dbgenAiProviders = []dbgen.AiProvider{
+	dbgen.AiProviderAnthropic, dbgen.AiProviderOpenai, dbgen.AiProviderOllama, dbgen.AiProviderVllm,
+	dbgen.AiProviderOpenrouter, dbgen.AiProviderHuggingface,
 }
 
 func newTestSealer(t *testing.T) *crypto.Sealer {

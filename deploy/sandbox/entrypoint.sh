@@ -49,13 +49,22 @@ export OPENCODE_DISABLE_PRUNE=1
 cp -r /work /tmp/src
 cd /tmp/src
 
-# Provider gate: openrouter/anthropic/openai select the opencode built-in SDK (model
-# prefix + auth.json key). vllm/ollama are a local OpenAI-compatible server (LM
-# Studio, vLLM, Ollama) and route through the bundled @ai-sdk/openai-compatible
-# provider instead — see the LLM_LOCAL branch below.
+# Provider gate. LLM_OPENCODE_MODE selects WHICH OPENCODE MECHANISM serves the model, and
+# nothing else:
+#   builtin — opencode's built-in SDK provider (model prefix + auth.json key).
+#   compat  — the bundled @ai-sdk/openai-compatible provider, for any OpenAI-compatible
+#             /v1/chat/completions endpoint opencode has no built-in provider for.
+#
+# This deliberately does NOT encode network trust or model capability, which are separate
+# axes handled elsewhere (manyforge-bhx):
+#   trust      → the credential's allow_private_base_url flag (netsafe dial policy).
+#   capability → isConstrainedProvider() in internal/agents/coding/reviewpayload.go.
+# It used to be a single LLM_LOCAL=0|1 flag, which worked only while "uses the compat
+# provider" and "is a private on-host server" happened to coincide. huggingface — a public
+# ZeroGPU Space — is compat but not local, and broke that coincidence.
 case "${LLM_PROVIDER:-}" in
-  openrouter|anthropic|openai) LLM_LOCAL=0 ;;
-  vllm|ollama)                 LLM_LOCAL=1 ;;
+  openrouter|anthropic|openai)  LLM_OPENCODE_MODE=builtin ;;
+  vllm|ollama|huggingface)      LLM_OPENCODE_MODE=compat ;;
   *) echo "entrypoint: unsupported LLM_PROVIDER='${LLM_PROVIDER:-}'" >&2; exit 2 ;;
 esac
 
@@ -70,12 +79,17 @@ for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}"; do
   esac
 done
 
-if [ "$LLM_LOCAL" = 1 ]; then
-  # Local OpenAI-compatible server (vLLM/Ollama/LM Studio). Use the bundled
+if [ "$LLM_OPENCODE_MODE" = compat ]; then
+  # An OpenAI-compatible /v1/chat/completions server: vLLM/Ollama/LM Studio on-host, or a
+  # HuggingFace ZeroGPU Space over the public internet. Use the bundled
   # @ai-sdk/openai-compatible provider (Chat Completions) — NOT the built-in openai
-  # provider, which speaks the Responses API (/v1/responses) that local servers don't
+  # provider, which speaks the Responses API (/v1/responses) that these servers don't
   # serve. Verified: opencode loads this provider offline (no npm). LLM_BASE_URL is the
-  # server's OpenAI base (e.g. http://host:1234/v1). Provider id "local" must match auth.json.
+  # server's OpenAI base (e.g. http://host:1234/v1, or https://<user>-<space>.hf.space/v1).
+  #
+  # "local" here is OPENCODE'S provider id, not a claim about where the server runs; it must
+  # match the auth.json key and the MODEL prefix below. Renaming it would churn the
+  # manyforge-9er pin for no behavioral gain.
   MODEL="local/${LLM_MODEL}"
   mkdir -p "$XDG_DATA_HOME/opencode"
   printf '{"local":{"type":"api","key":"%s"}}\n' "$LLM_API_KEY" > "$XDG_DATA_HOME/opencode/auth.json"
