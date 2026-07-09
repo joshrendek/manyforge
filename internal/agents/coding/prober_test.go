@@ -56,40 +56,32 @@ func TestHTTPProber_AnthropicAssumedLive(t *testing.T) {
 	}
 }
 
-// TestHTTPProber_HuggingFaceAssumedLive: a ZeroGPU Space sleeps after inactivity and takes
-// 30-60s to cold-start, which no probe budget can accommodate (defaultProbeTimeout is 3s).
-// Probing it would therefore skip the lane on a perfectly healthy-but-idle Space, every time.
-// It must short-circuit to live without any network call — the reactive worker retry and the
-// dimension's fallback_chain cover a Space that is genuinely down. See manyforge-bhx.
-func TestHTTPProber_HuggingFaceAssumedLive(t *testing.T) {
-	p := httpProber{Timeout: time.Millisecond}
-	for _, provider := range []string{"huggingface", "HuggingFace"} { // case-insensitive, like anthropic
-		if !p.Live(context.Background(), AICredential{Provider: provider, BaseURL: "https://josh-reviewbot.hf.space/v1"}) {
-			t.Fatalf("%q must be assumed live", provider)
-		}
-	}
-}
-
-// TestHTTPProber_HuggingFaceLiveWhenColdStarting is the regression this fix exists for: an
-// endpoint that takes longer than the probe timeout to answer (a waking Space) must still be
-// treated as live. A constrained-but-probeable provider like vllm correctly reports not-live
-// in exactly the same situation — that contrast is the point.
-func TestHTTPProber_HuggingFaceLiveWhenColdStarting(t *testing.T) {
+// TestHTTPProber_HuggingFaceIsProbed: unlike anthropic, the HF router serves GET /v1/models
+// publicly and fast, so huggingface takes the normal probe path — a 200 is live, a timeout or
+// non-2xx is not. Anthropic is the ONLY assume-live provider; keep it that way unless a
+// provider genuinely has no cheap probe.
+func TestHTTPProber_HuggingFaceIsProbed(t *testing.T) {
+	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(150 * time.Millisecond) // stands in for a 30-60s cold start
+		gotPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	p := httpProber{Timeout: 5 * time.Millisecond}
-
-	cold := AICredential{Provider: "huggingface", BaseURL: srv.URL + "/v1", AllowPrivateBaseURL: true}
-	if !p.Live(context.Background(), cold) {
-		t.Fatal("a cold-starting ZeroGPU Space must still be considered live (lane would be skipped forever)")
+	p := httpProber{Timeout: time.Second}
+	if !p.Live(context.Background(), AICredential{Provider: "huggingface", BaseURL: srv.URL + "/v1", AllowPrivateBaseURL: true}) {
+		t.Fatal("huggingface answering 200 on /models must be live")
 	}
-	// Same slow endpoint, a provider that IS probed: times out, reports not-live.
-	probed := AICredential{Provider: "vllm", BaseURL: srv.URL + "/v1", AllowPrivateBaseURL: true}
-	if p.Live(context.Background(), probed) {
-		t.Fatal("vllm is probed, so a timeout must report not-live — otherwise this test proves nothing")
+	if gotPath != "/v1/models" {
+		t.Fatalf("probe path = %q, want /v1/models (a real network probe must have happened)", gotPath)
+	}
+
+	// A dead router endpoint reports not-live rather than being assumed up.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer dead.Close()
+	if p.Live(context.Background(), AICredential{Provider: "huggingface", BaseURL: dead.URL + "/v1", AllowPrivateBaseURL: true}) {
+		t.Fatal("huggingface returning 500 on /models must NOT be live")
 	}
 }
 

@@ -80,37 +80,53 @@ describe('CredentialFormComponent', () => {
     expect(c.error()).toContain('Rejected: model not available');
   });
 
-  // A huggingface credential points at the operator's own ZeroGPU Space, so base_url is
-  // required — there is no per-user default to fall back to (mirrors credential.go validate()).
-  it('requires a base URL for huggingface and blocks submit without one', () => {
+  // huggingface targets the HF Inference Providers router, which has one canonical endpoint —
+  // so it prefills like openrouter and base_url is optional (mirrors ai.DefaultBaseURL).
+  it('prefills the HuggingFace router base URL and posts a partner-pinned model id', () => {
     const c = fixture.componentInstance;
     c.onProviderChange('huggingface');
+    expect(c.baseUrlRequired()).toBe(false);
+    expect(c.baseUrl).toBe('https://router.huggingface.co/v1');
+
     c.apiKey = 'hf_test';
-    c.defaultModel = 'Qwen/Qwen3-14B';
-
-    expect(c.baseUrlRequired()).toBe(true);
-    expect(c.baseUrl).toBe(''); // nothing is prefilled: the Space host is per-user
-    expect(c.valid()).toBe(false);
-    c.submit();
-    http.expectNone('/api/v1/businesses/b1/ai_credentials');
-
-    c.baseUrl = 'https://josh-reviewbot.hf.space/v1';
+    c.defaultModel = 'zai-org/GLM-5.2:fireworks-ai';
     expect(c.valid()).toBe(true);
     c.submit();
     const req = http.expectOne('/api/v1/businesses/b1/ai_credentials');
     expect(req.request.body.provider).toBe('huggingface');
-    expect(req.request.body.base_url).toBe('https://josh-reviewbot.hf.space/v1');
+    expect(req.request.body.base_url).toBe('https://router.huggingface.co/v1');
+    // The ":partner" suffix pins pricing and routing; it must survive the form untouched.
+    expect(req.request.body.default_model).toBe('zai-org/GLM-5.2:fireworks-ai');
     req.flush({});
   });
 
-  // Anthropic and OpenRouter are the only providers the server defaults a base_url for.
-  it('treats base URL as optional only for anthropic and openrouter', () => {
+  // Switching between two prefilled providers must SWAP the default, not strand the old one.
+  it('swaps the prefilled base URL when moving between prefilled providers', () => {
     const c = fixture.componentInstance;
-    for (const p of ['anthropic', 'openrouter'] as const) {
+    c.onProviderChange('openrouter');
+    expect(c.baseUrl).toBe('https://openrouter.ai/api/v1');
+    c.onProviderChange('huggingface');
+    expect(c.baseUrl).toBe('https://router.huggingface.co/v1');
+    c.onProviderChange('openai');
+    expect(c.baseUrl).toBe('');
+  });
+
+  // A base_url the user typed themselves is never clobbered by a provider switch.
+  it('never clobbers a user-typed base URL', () => {
+    const c = fixture.componentInstance;
+    c.baseUrl = 'https://my-gateway.internal/v1';
+    c.onProviderChange('huggingface');
+    expect(c.baseUrl).toBe('https://my-gateway.internal/v1');
+  });
+
+  // Only providers ai.DefaultBaseURL knows about may omit base_url.
+  it('requires a base URL exactly for the providers with no server-side default', () => {
+    const c = fixture.componentInstance;
+    for (const p of ['anthropic', 'openrouter', 'huggingface'] as const) {
       c.provider.set(p);
       expect(c.baseUrlRequired()).toBe(false);
     }
-    for (const p of ['openai', 'ollama', 'vllm', 'huggingface'] as const) {
+    for (const p of ['openai', 'ollama', 'vllm'] as const) {
       c.provider.set(p);
       expect(c.baseUrlRequired()).toBe(true);
     }

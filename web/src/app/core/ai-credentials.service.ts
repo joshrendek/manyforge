@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 
 // The single source of truth for provider names on the client. Mirrors the ai_provider PG
 // enum (db/schema.sql) and agents.knownProviders — keep them in sync.
-// 'huggingface' is an operator-hosted HF ZeroGPU Space, not the HF Inference router.
+// 'huggingface' is the HF Inference Providers router (router.huggingface.co).
 export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter' | 'huggingface';
 
 // Read shape: no api_key — the secret is write-only.

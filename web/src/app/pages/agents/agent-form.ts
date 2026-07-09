@@ -6,17 +6,20 @@ import {
 } from '../../core/agents.service';
 import { AIProvider } from '../../core/ai-credentials.service';
 
-// Providers whose models are NOT in the model_pricing catalog → free-text model entry.
-// Providers whose models aren't in the static model_pricing catalog, so the form offers a
-// free-text model input instead of a <select>. huggingface is here because a ZeroGPU Space
-// serves exactly one operator-chosen model — there is no catalog to pick from.
+// Providers whose models are NOT in the static model_pricing catalog, so the form offers a
+// free-text model input instead of a <select>.
 const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter', 'huggingface'];
+
+// Providers that also serve a LIVE catalog over /provider-models/{provider}, used to back the
+// free-text field with a <datalist> typeahead. Mirrors agents.NewProviderCatalogs.
+const LIVE_CATALOG_PROVIDERS: AIProvider[] = ['openrouter', 'huggingface'];
 
 // Agent create/edit form. Standalone, template-driven, mirrors connector-form/credential-form.
 // On init it loads tools()/models()/mcpServers() to populate the pickers. Provider is immutable
 // on edit (disabled select, omitted from the PATCH). Model is a provider-filtered dropdown for
 // catalog providers (anthropic/openai) and a free-text input for providers whose models aren't in
-// the model_pricing catalog (ollama/vllm/openrouter). Budget is shown in dollars and sent as cents.
+// the model_pricing catalog (ollama/vllm/openrouter/huggingface); those with a live catalog
+// (openrouter/huggingface) also get a <datalist> typeahead. Budget is in dollars, sent as cents.
 @Component({
   selector: 'app-agent-form',
   imports: [FormsModule],
@@ -36,7 +39,7 @@ const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter',
           <option value="ollama">Ollama (self-host)</option>
           <option value="vllm">vLLM (self-host)</option>
           <option value="openrouter">OpenRouter</option>
-          <option value="huggingface">HuggingFace ZeroGPU Space (self-host)</option>
+          <option value="huggingface">HuggingFace (Inference Providers)</option>
         </select>
         @if (mode === 'edit') { <small class="mf-hint">Provider can't change after creation.</small> }
       </div>
@@ -45,11 +48,11 @@ const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter',
         <label for="ag-model">Model</label>
         @if (isFreeTextModel()) {
           <input id="ag-model" class="mf-input" type="text" data-testid="agent-model-text" name="model"
-                 [(ngModel)]="model" [attr.list]="isOpenRouter() ? 'openrouter-models' : null"
-                 placeholder="e.g. llama3.1:70b or openai/gpt-4o" />
-          @if (isOpenRouter()) {
-            <datalist id="openrouter-models" data-testid="openrouter-model-options">
-              @for (m of openrouterModels(); track m.model_id) {
+                 [(ngModel)]="model" [attr.list]="hasModelTypeahead() ? 'provider-models' : null"
+                 placeholder="e.g. llama3.1:70b, openai/gpt-4o, or zai-org/GLM-5.2:fireworks-ai" />
+          @if (hasModelTypeahead()) {
+            <datalist id="provider-models" data-testid="provider-model-options">
+              @for (m of providerModels(); track m.model_id) {
                 <option [value]="m.model_id"></option>
               }
             </datalist>
@@ -149,7 +152,9 @@ export class AgentFormComponent implements OnInit {
 
   tools = signal<ToolDescriptor[]>([]);
   allModels = signal<ModelDescriptor[]>([]);
-  openrouterModels = signal<ModelDescriptor[]>([]); // live OpenRouter catalog (typeahead)
+  // Live catalog for whichever provider is selected, fed to the free-text field's <datalist>.
+  // Named for its role, not for OpenRouter — huggingface has one too.
+  providerModels = signal<ModelDescriptor[]>([]);
   mcpServers = signal<MCPServer[]>([]);
   selectedTools = signal<Set<string>>(new Set());
   selectedMcp = signal<Set<string>>(new Set());
@@ -159,7 +164,7 @@ export class AgentFormComponent implements OnInit {
 
   modelsForProvider = computed(() => this.allModels().filter((m) => m.provider === this.provider()));
   isFreeTextModel = computed(() => FREE_TEXT_MODEL_PROVIDERS.includes(this.provider()));
-  isOpenRouter = computed(() => this.provider() === 'openrouter');
+  hasModelTypeahead = computed(() => LIVE_CATALOG_PROVIDERS.includes(this.provider()));
 
   ngOnInit(): void {
     this.api.tools(this.businessId).subscribe({ next: (r) => this.tools.set(r.items ?? []), error: () => {} });
@@ -182,16 +187,17 @@ export class AgentFormComponent implements OnInit {
     this.loadProviderModelsFor(this.provider());
   }
 
-  // loadProviderModelsFor fetches a provider's live model catalog (OpenRouter only,
-  // for now) into openrouterModels for the typeahead; clears it for other providers.
+  // loadProviderModelsFor fetches the selected provider's live model catalog into
+  // providerModels for the typeahead; clears it for providers that have none. A fetch error
+  // also clears it, so the field degrades to plain free-text rather than showing a stale list.
   private loadProviderModelsFor(p: AIProvider): void {
-    if (p !== 'openrouter') {
-      this.openrouterModels.set([]);
+    if (!LIVE_CATALOG_PROVIDERS.includes(p)) {
+      this.providerModels.set([]);
       return;
     }
-    this.api.providerModels(this.businessId, 'openrouter').subscribe({
-      next: (r) => this.openrouterModels.set(r.items ?? []),
-      error: () => this.openrouterModels.set([]),
+    this.api.providerModels(this.businessId, p).subscribe({
+      next: (r) => this.providerModels.set(r.items ?? []),
+      error: () => this.providerModels.set([]),
     });
   }
 

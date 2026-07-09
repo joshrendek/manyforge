@@ -34,29 +34,27 @@ You are given the changed code as unified-diff hunks: each block is headed by "=
 
 // isConstrainedProvider reports whether a provider serves a small/slow model that cannot
 // prompt-eval a large diff quickly, and so must be sent a tighter one. This is a statement
-// about MODEL CAPABILITY, not about network locality: ollama/vllm are on-host, while
-// huggingface is a public ZeroGPU Space, yet all three run modest models on unbatched
-// inference. (Network trust lives on the credential's AllowPrivateBaseURL flag; the opencode
-// provider mechanism lives in deploy/sandbox/entrypoint.sh's LLM_OPENCODE_MODE. Three
-// separate axes — see manyforge-bhx.)
+// about MODEL CAPABILITY, deliberately separate from two axes it used to be conflated with:
+// network trust (the credential's AllowPrivateBaseURL flag) and the opencode provider
+// mechanism (LLM_OPENCODE_MODE in deploy/sandbox/entrypoint.sh). huggingface is the provider
+// that forced them apart — it uses the openai-compat mechanism like ollama/vllm, but is a
+// public gateway serving frontier-class models, so it is NOT constrained. See manyforge-bhx.
 //
 // Every provider runs through the sandbox+opencode path (manyforge-9er Tasks 4-5); this is
 // consulted only to pick the constrainedProviderMaxTotalBytes diff budget.
 func isConstrainedProvider(provider string) bool {
-	return provider == "ollama" || provider == "vllm" || provider == "huggingface"
+	return provider == "ollama" || provider == "vllm"
 }
 
 const (
 	reviewMaxFileBytes  = 48 << 10 // skip any single file whose rendered hunks exceed this
 	reviewMaxTotalBytes = 96 << 10 // default total-diff budget (capable cloud models)
-	// constrainedProviderMaxTotalBytes is a TIGHTER total-diff budget for providers serving
-	// small models on unbatched inference (Ollama/vLLM on-host; a HuggingFace ZeroGPU Space
-	// remotely). Small models can't prompt-eval a large diff quickly — a ~28K-token diff wedged
-	// ornith:9b for minutes at every context size we tried — so these lanes send far less. On
-	// ZeroGPU the pressure is sharper still: the GPU is released between calls, so every opencode
-	// turn re-prefills the whole conversation against a hard per-call duration cap. Combined with
-	// the isNonReviewableDoc filter (which strips prose/plan files that both waste this budget and
-	// derail weak models), this keeps constrained reviews fast and code-focused.
+	// constrainedProviderMaxTotalBytes is a TIGHTER total-diff budget for on-host providers
+	// serving small models (Ollama/vLLM). Small models can't prompt-eval a large diff quickly —
+	// a ~28K-token diff wedged ornith:9b for minutes at every context size we tried — so these
+	// lanes send far less. Combined with the isNonReviewableDoc filter (which strips prose/plan
+	// files that both waste this budget and derail weak models), this keeps constrained reviews
+	// fast and code-focused.
 	constrainedProviderMaxTotalBytes = 32 << 10
 )
 

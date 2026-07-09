@@ -599,10 +599,9 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		files = nil
 	}
 	changed := commentableMap(files)
-	// Providers serving small models on unbatched inference (Ollama/vLLM on-host, a HuggingFace
-	// ZeroGPU Space remotely) get a tighter diff budget: they can't prompt-eval a large diff in
-	// reasonable time. Capable cloud models use the larger default. Prose/planning docs are
-	// filtered out in either case (see assembleDiffPayload).
+	// On-host providers serving small models (Ollama/vLLM) get a tighter diff budget: they
+	// can't prompt-eval a large diff in reasonable time. Capable cloud models use the larger
+	// default. Prose/planning docs are filtered out in either case (see assembleDiffPayload).
 	maxTotal := reviewMaxTotalBytes
 	if isConstrainedProvider(cred.Provider) {
 		maxTotal = constrainedProviderMaxTotalBytes

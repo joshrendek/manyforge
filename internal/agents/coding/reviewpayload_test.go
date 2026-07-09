@@ -7,16 +7,17 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors"
 )
 
-// Constrained-ness tracks model capability, not network locality: huggingface is a public
-// ZeroGPU Space (remote) yet belongs with the on-host small-model providers, because the GPU
-// is released between opencode turns and every turn re-prefills the diff. See manyforge-bhx.
+// Constrained-ness tracks MODEL CAPABILITY, not the opencode mechanism a provider uses.
+// huggingface shares the openai-compat mechanism with ollama/vllm (see entrypoint.sh) but is a
+// public gateway serving frontier-class models, so it gets the full diff budget. That
+// distinction is the whole reason the old LLM_LOCAL boolean had to be split. See manyforge-bhx.
 func TestIsConstrainedProvider(t *testing.T) {
-	for _, p := range []string{"ollama", "vllm", "huggingface"} {
+	for _, p := range []string{"ollama", "vllm"} {
 		if !isConstrainedProvider(p) {
 			t.Fatalf("%q should be constrained (tight diff budget)", p)
 		}
 	}
-	for _, p := range []string{"openrouter", "anthropic", "openai"} {
+	for _, p := range []string{"openrouter", "anthropic", "openai", "huggingface"} {
 		if isConstrainedProvider(p) {
 			t.Fatalf("%q should NOT be constrained", p)
 		}

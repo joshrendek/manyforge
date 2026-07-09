@@ -3,23 +3,27 @@ package ai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-// A huggingface credential points at the operator's own ZeroGPU Space, which serves an
-// OpenAI-compatible /v1/chat/completions. These tests pin the two things that make that
-// endpoint different from the other openai-compat providers:
+// A huggingface credential targets the HF Inference Providers router, an OpenAI-compatible
+// gateway that fans out to partner providers on one hf_ token. These tests pin the two things
+// that make it different from the other openai-compat providers:
 //
-//  1. base_url is REQUIRED (the Space host is per-user; there is no shared default), and
-//  2. model ids carry a "/" and may carry a ":" (Qwen/Qwen3-14B, org/model:sub-provider),
-//     which must survive to the wire verbatim.
+//  1. base_url defaults to the router (like openrouter) but stays overridable, and
+//  2. model ids carry a "/" and usually a ":" pinning the partner
+//     ("zai-org/GLM-5.2:fireworks-ai"), which must survive to the wire verbatim.
 //
 // The transport itself is OpenAICompatProvider — HF returns usage.prompt_tokens /
 // completion_tokens like everyone else, so there is no HF-specific parsing. See manyforge-bhx.
+//
+// The golden fixtures echo `model` as the PARTNER's internal id (e.g.
+// "accounts/fireworks/models/glm-5p2"), not the slug that was sent — that is what the live
+// router returns. Nothing reads it back, but a fixture that lies about the wire shape is worse
+// than no fixture: the next person to add streaming or model-echo validation would trust it.
 
 func TestHuggingFaceComplete_GoldenRoundTrip(t *testing.T) {
 	cases := []struct {
@@ -108,35 +112,37 @@ func TestHuggingFaceComplete_NamespacedModelIDReachesWireVerbatim(t *testing.T) 
 	}
 }
 
-// Unlike openrouter, huggingface has no shared endpoint to fall back to: the Space host is
-// per-user. A credential without base_url must fail closed rather than silently target
-// something else.
-func TestNew_HuggingFaceRequiresBaseURL(t *testing.T) {
-	_, err := New(Credential{Provider: ProviderHuggingFace, APIKey: "hf_test", Model: "Qwen/Qwen3-14B"})
-	if !errors.Is(err, ErrBadRequest) {
-		t.Fatalf("huggingface with empty base_url err = %v, want Is(ErrBadRequest)", err)
-	}
-}
-
-func TestNew_HuggingFaceUsesSuppliedBaseURL(t *testing.T) {
-	const base = "https://josh-reviewbot.hf.space/v1"
-	p, err := New(Credential{Provider: ProviderHuggingFace, APIKey: "hf_test", Model: "Qwen/Qwen3-14B", BaseURL: base})
+// Like openrouter, huggingface has one canonical endpoint, so an empty base_url resolves to
+// the router rather than failing.
+func TestNew_HuggingFaceDefaultsBaseURL(t *testing.T) {
+	p, err := New(Credential{Provider: ProviderHuggingFace, APIKey: "hf_test", Model: "zai-org/GLM-5.2:fireworks-ai"})
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("huggingface empty base_url should be ok, got %v", err)
 	}
 	oc, ok := p.(*OpenAICompatProvider)
 	if !ok {
 		t.Fatalf("want the openai-compat provider, got %T", p)
 	}
-	if oc.baseURL != base {
-		t.Fatalf("baseURL = %q, want %q", oc.baseURL, base)
+	if oc.baseURL != huggingFaceBaseURL {
+		t.Fatalf("baseURL = %q, want %q", oc.baseURL, huggingFaceBaseURL)
 	}
 	if oc.providerName != ProviderHuggingFace {
 		t.Fatalf("providerName = %q, want %q", oc.providerName, ProviderHuggingFace)
 	}
 }
 
-// A ZeroGPU Space is a plain chat-completions server with no OpenRouter-style server-side
+func TestNew_HuggingFaceRespectsCustomBaseURL(t *testing.T) {
+	const base = "https://gw.example/v1"
+	p, err := New(Credential{Provider: ProviderHuggingFace, APIKey: "hf_test", Model: "m", BaseURL: base})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if oc := p.(*OpenAICompatProvider); oc.baseURL != base {
+		t.Fatalf("baseURL = %q, want custom %q", oc.baseURL, base)
+	}
+}
+
+// The HF router is a plain chat-completions gateway with no OpenRouter-style server-side
 // tools; injecting them would 400 the request.
 func TestBuildOpenAIRequest_ServerTools_NotEmittedForHuggingFace(t *testing.T) {
 	req := Request{

@@ -23,23 +23,16 @@ const defaultProbeTimeout = 3 * time.Second
 // httpProber is the production reviewbotProber.
 type httpProber struct{ Timeout time.Duration }
 
-// assumeLiveProviders cannot be cheaply probed, so they are assumed live and covered
-// reactively by the worker retry + the dimension's fallback_chain:
-//
-//   - anthropic: no cheap unauthenticated probe endpoint.
-//   - huggingface: a ZeroGPU Space sleeps after inactivity and takes 30-60s to cold-start,
-//     which no probe budget can accommodate (defaultProbeTimeout is 3s, and raising it would
-//     stall every review behind a sleeping Space). Probing would therefore skip the lane on a
-//     perfectly healthy Space every time it had gone idle. See manyforge-bhx.
-var assumeLiveProviders = map[string]bool{"anthropic": true, "huggingface": true}
-
 // Live probes OpenAI-compatible providers with GET {base_url}/models through a netsafe
 // client that honors the credential's private-host opt-in — so a LAN address like
 // 192.168.x.x is reachable only when allow_private_base_url is set, matching every other
-// outbound path (no SSRF regression). Any transport error (connection refused, DNS failure,
-// blocked private IP, timeout) or non-2xx status ⇒ not live.
+// outbound path (no SSRF regression). Anthropic has no cheap unauthenticated probe
+// endpoint, so it is assumed live and covered reactively by the worker retry. Any
+// transport error (connection refused, DNS failure, blocked private IP, timeout) or
+// non-2xx status ⇒ not live. huggingface IS probed: the router serves GET /v1/models
+// publicly and fast.
 func (p httpProber) Live(ctx context.Context, cred AICredential) bool {
-	if assumeLiveProviders[strings.ToLower(cred.Provider)] {
+	if strings.EqualFold(cred.Provider, "anthropic") {
 		return true
 	}
 	if cred.BaseURL == "" {

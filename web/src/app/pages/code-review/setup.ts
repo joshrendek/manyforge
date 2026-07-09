@@ -18,8 +18,14 @@ import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
 
 // Providers whose model is free text (self-host / aggregator) rather than a catalog select —
-// mirrors agent-form.ts. OpenRouter additionally gets a live typeahead <datalist>.
+// mirrors agent-form.ts.
 const FREE_TEXT_MODEL_PROVIDERS = ['ollama', 'vllm', 'openrouter', 'huggingface'];
+
+// Providers that serve a LIVE model catalog, each backed by its own <datalist> typeahead.
+// Per-provider rather than shared: every dimension row (and every fallback-chain entry) picks
+// its own provider, so two rows can need two different catalogs on screen at once.
+// Mirrors agents.NewProviderCatalogs.
+const LIVE_CATALOG_PROVIDERS = ['openrouter', 'huggingface'];
 
 // DIMENSION_CATALOG mirrors internal/agents/coding/dimensions.go dimensionCatalog() — the
 // built-in specialist reviewer lanes. Kept in sync by hand (Slice 2 presets seed EDITABLE
@@ -84,7 +90,7 @@ const PROVIDERS: { value: string; label: string }[] = [
   { value: 'ollama', label: 'Ollama (self-host)' },
   { value: 'vllm', label: 'vLLM (self-host)' },
   { value: 'openrouter', label: 'OpenRouter' },
-  { value: 'huggingface', label: 'HuggingFace ZeroGPU Space (self-host)' },
+  { value: 'huggingface', label: 'HuggingFace (Inference Providers)' },
 ];
 
 const SEVERITIES: FindingSeverity[] = ['info', 'warning', 'error'];
@@ -183,7 +189,7 @@ function catalogLabel(key: string): string {
             <span style="flex:1" role="cell">
               @if (isFreeText(row.provider)) {
                 <input class="mf-input" type="text" data-testid="row-model-text" [(ngModel)]="row.model"
-                       [attr.list]="isOpenRouter(row.provider) ? 'setup-openrouter-models' : null"
+                       [attr.list]="modelListIdFor(row.provider)"
                        [attr.aria-label]="'Model for ' + row.label" placeholder="model id" />
               } @else if (row.provider === '') {
                 <input class="mf-input" type="text" data-testid="row-model-text" [(ngModel)]="row.model"
@@ -214,7 +220,7 @@ function catalogLabel(key: string): string {
                     </select>
                     @if (isFreeText(fb.provider)) {
                       <input class="mf-input" type="text" [attr.data-testid]="'row-fallback-model-text-' + i" [(ngModel)]="fb.model"
-                             [attr.list]="isOpenRouter(fb.provider) ? 'setup-openrouter-models' : null"
+                             [attr.list]="modelListIdFor(fb.provider)"
                              [attr.aria-label]="'Fallback ' + (i + 1) + ' model for ' + row.label" placeholder="model id" />
                     } @else {
                       <select class="mf-select" [attr.data-testid]="'row-fallback-model-select-' + i" [(ngModel)]="fb.model"
@@ -267,11 +273,13 @@ function catalogLabel(key: string): string {
         }
       </div>
 
-      <datalist id="setup-openrouter-models">
-        @for (m of openrouterModels(); track m.model_id) {
-          <option [value]="m.model_id"></option>
-        }
-      </datalist>
+      @for (p of liveCatalogProviders; track p) {
+        <datalist [id]="'setup-models-' + p">
+          @for (m of catalogModelsFor(p); track m.model_id) {
+            <option [value]="m.model_id"></option>
+          }
+        </datalist>
+      }
 
       <!-- Panel-level aggregation config -->
       <h3 style="margin:24px 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
@@ -352,8 +360,10 @@ export class CodeReviewSetupComponent implements OnInit {
   });
   agents = signal<Agent[]>([]);
   allModels = signal<ModelDescriptor[]>([]);
-  openrouterModels = signal<ModelDescriptor[]>([]);
-  private openrouterLoaded = false;
+  // provider → its live model catalog, each rendered as its own <datalist>.
+  catalogModels = signal<Record<string, ModelDescriptor[]>>({});
+  private loadedCatalogs = new Set<string>();
+  readonly liveCatalogProviders = LIVE_CATALOG_PROVIDERS;
 
   loading = signal(true);
   savingConfig = signal(false);
@@ -394,15 +404,20 @@ export class CodeReviewSetupComponent implements OnInit {
     this.loading.set(true);
     this.error.set('');
     this.saved.set('');
-    this.openrouterLoaded = false;
-    this.openrouterModels.set([]);
+    this.loadedCatalogs.clear();
+    this.catalogModels.set({});
 
     this.api.listDimensions(bid).subscribe({
       next: (r) => {
         const rows = (r.items ?? []).map((d) => this.rowFromServer(d));
         this.rows.set(rows);
         this.loading.set(false);
-        if (rows.some((row) => row.provider === 'openrouter')) this.ensureOpenrouterModels();
+        // Load a catalog for every provider already named on a row OR in its fallback chain —
+        // a chain entry drives the same typeahead and would otherwise render an empty list.
+        for (const row of rows) {
+          this.ensureProviderModels(row.provider);
+          for (const fb of row.fallback_chain) this.ensureProviderModels(fb.provider);
+        }
       },
       error: (e: HttpErrorResponse) => {
         this.loading.set(false);
@@ -490,7 +505,7 @@ export class CodeReviewSetupComponent implements OnInit {
   onProviderChange(row: DraftRow, provider: string): void {
     row.provider = provider;
     row.model = '';
-    if (provider === 'openrouter') this.ensureOpenrouterModels();
+    this.ensureProviderModels(provider);
     this.bumpRows();
   }
 
@@ -514,7 +529,7 @@ export class CodeReviewSetupComponent implements OnInit {
   onFallbackEntryProviderChange(row: DraftRow, i: number, provider: string): void {
     row.fallback_chain[i].provider = provider;
     row.fallback_chain[i].model = '';
-    if (provider === 'openrouter') this.ensureOpenrouterModels();
+    this.ensureProviderModels(provider);
     this.bumpRows();
   }
 
@@ -526,8 +541,15 @@ export class CodeReviewSetupComponent implements OnInit {
     return FREE_TEXT_MODEL_PROVIDERS.includes(provider);
   }
 
-  isOpenRouter(provider: string): boolean {
-    return provider === 'openrouter';
+  // The <datalist> id a free-text model input should bind to, or null when the provider has
+  // no live catalog (the input stays plain free-text — which is also how you reach a community
+  // fine-tune that the router serves but does not list, e.g. org/model:featherless-ai).
+  modelListIdFor(provider: string): string | null {
+    return LIVE_CATALOG_PROVIDERS.includes(provider) ? `setup-models-${provider}` : null;
+  }
+
+  catalogModelsFor(provider: string): ModelDescriptor[] {
+    return this.catalogModels()[provider] ?? [];
   }
 
   patchConfig(patch: Partial<ReviewConfig>): void {
@@ -572,14 +594,16 @@ export class CodeReviewSetupComponent implements OnInit {
     this.patchConfig({ review_agent_chain: chain });
   }
 
-  private ensureOpenrouterModels(): void {
-    if (this.openrouterLoaded) return;
-    this.openrouterLoaded = true;
+  // Fetch a provider's live catalog once per business. Providers without one are ignored, so
+  // callers can pass any provider string (including '' for "default (review credential)").
+  private ensureProviderModels(provider: string): void {
+    if (!LIVE_CATALOG_PROVIDERS.includes(provider) || this.loadedCatalogs.has(provider)) return;
     const bid = this.businessId();
-    if (!bid) return;
-    this.agentsApi.providerModels(bid, 'openrouter').subscribe({
-      next: (r) => this.openrouterModels.set(r.items ?? []),
-      error: () => this.openrouterModels.set([]),
+    if (!bid) return; // mark loaded only once we actually fetch, or a no-business call poisons the cache
+    this.loadedCatalogs.add(provider);
+    this.agentsApi.providerModels(bid, provider).subscribe({
+      next: (r) => this.catalogModels.set({ ...this.catalogModels(), [provider]: r.items ?? [] }),
+      error: () => this.catalogModels.set({ ...this.catalogModels(), [provider]: [] }),
     });
   }
 

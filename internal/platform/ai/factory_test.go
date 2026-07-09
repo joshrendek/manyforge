@@ -43,11 +43,34 @@ func TestFactoryUnknownProvider(t *testing.T) {
 	}
 }
 
+// Providers with no entry in defaultBaseURLs must fail closed without one.
 func TestFactoryOpenAICompatRequiresBaseURL(t *testing.T) {
-	for _, name := range []string{ProviderOpenAI, ProviderOllama, ProviderVLLM, ProviderHuggingFace} {
+	for _, name := range []string{ProviderOpenAI, ProviderOllama, ProviderVLLM} {
 		_, err := New(Credential{Provider: name, APIKey: "k", BaseURL: ""})
 		if !errors.Is(err, ErrBadRequest) {
 			t.Fatalf("%s missing base_url err = %v, want Is(ErrBadRequest)", name, err)
+		}
+	}
+}
+
+// DefaultBaseURL is the single source of truth consumed by New, agents.CredentialService, and
+// coding.AgentCredResolver. If these three sets drift, a credential validates in one layer and
+// dials somewhere else in another.
+func TestDefaultBaseURL(t *testing.T) {
+	withDefault := map[string]string{
+		ProviderAnthropic:   anthropicDefaultBaseURL,
+		ProviderOpenRouter:  openRouterBaseURL,
+		ProviderHuggingFace: huggingFaceBaseURL,
+	}
+	for provider, want := range withDefault {
+		got, ok := DefaultBaseURL(provider)
+		if !ok || got != want {
+			t.Errorf("DefaultBaseURL(%q) = (%q, %v), want (%q, true)", provider, got, ok, want)
+		}
+	}
+	for _, provider := range []string{ProviderOpenAI, ProviderOllama, ProviderVLLM, "nope"} {
+		if got, ok := DefaultBaseURL(provider); ok {
+			t.Errorf("DefaultBaseURL(%q) = (%q, true), want no default", provider, got)
 		}
 	}
 }

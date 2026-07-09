@@ -88,21 +88,54 @@ describe('AgentFormComponent', () => {
     fixture.detectChanges();
 
     expect(c.isFreeTextModel()).toBe(true);
-    expect(c.isOpenRouter()).toBe(true);
-    expect(c.openrouterModels().map((m) => m.model_id)).toEqual(['openai/gpt-4o', 'anthropic/claude-3-haiku']);
+    expect(c.hasModelTypeahead()).toBe(true);
+    expect(c.providerModels().map((m) => m.model_id)).toEqual(['openai/gpt-4o', 'anthropic/claude-3-haiku']);
 
     // the input is a typeahead bound to the datalist of live models
     const el = fixture.nativeElement as HTMLElement;
     const input = el.querySelector('[data-testid="agent-model-text"]') as HTMLInputElement;
-    expect(input.getAttribute('list')).toBe('openrouter-models');
-    const opts = el.querySelectorAll('[data-testid="openrouter-model-options"] option');
+    expect(input.getAttribute('list')).toBe('provider-models');
+    const opts = el.querySelectorAll('[data-testid="provider-model-options"] option');
     expect(opts.length).toBe(2);
     expect((opts[0] as HTMLOptionElement).value).toBe('openai/gpt-4o');
 
     // switching away clears the list and triggers no further fetch
     c.onProviderChange('anthropic');
     expect(c.isFreeTextModel()).toBe(false);
-    expect(c.openrouterModels().length).toBe(0);
+    expect(c.providerModels().length).toBe(0);
+  });
+
+  // The typeahead is provider-agnostic: huggingface has a live catalog too, and its model ids
+  // pin the routed partner with a ":" suffix (zai-org/GLM-5.2:fireworks-ai).
+  it('shows a HuggingFace typeahead from the same live-catalog seam', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('huggingface');
+    http.expectOne('/api/v1/businesses/b1/agents/provider-models/huggingface').flush({
+      items: [
+        { provider: 'huggingface', model_id: 'zai-org/GLM-5.2:fireworks-ai' },
+        { provider: 'huggingface', model_id: 'Qwen/Qwen3.6-27B:ovhcloud' },
+      ],
+    });
+    fixture.detectChanges();
+
+    expect(c.isFreeTextModel()).toBe(true);
+    expect(c.hasModelTypeahead()).toBe(true);
+    const el = fixture.nativeElement as HTMLElement;
+    const input = el.querySelector('[data-testid="agent-model-text"]') as HTMLInputElement;
+    expect(input.getAttribute('list')).toBe('provider-models');
+    const opts = el.querySelectorAll('[data-testid="provider-model-options"] option');
+    expect(opts.length).toBe(2);
+    expect((opts[0] as HTMLOptionElement).value).toBe('zai-org/GLM-5.2:fireworks-ai');
+  });
+
+  // Providers with no live catalog must not fetch one; the field stays plain free-text.
+  it('does not fetch a catalog for providers that have none', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('vllm');
+    http.expectNone('/api/v1/businesses/b1/agents/provider-models/vllm');
+    expect(c.isFreeTextModel()).toBe(true);
+    expect(c.hasModelTypeahead()).toBe(false);
+    expect(c.providerModels().length).toBe(0);
   });
 
 });

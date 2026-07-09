@@ -1,7 +1,7 @@
 {
-  "id": "chatcmpl-hfzerogpu-1",
+  "id": "chatcmpl-hf-router-1",
   "object": "chat.completion",
-  "model": "Qwen/Qwen3-14B",
+  "model": "accounts/fireworks/models/glm-5p2",
   "choices": [
     {
       "index": 0,

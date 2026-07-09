@@ -60,8 +60,10 @@ cd /tmp/src
 #   trust      → the credential's allow_private_base_url flag (netsafe dial policy).
 #   capability → isConstrainedProvider() in internal/agents/coding/reviewpayload.go.
 # It used to be a single LLM_LOCAL=0|1 flag, which worked only while "uses the compat
-# provider" and "is a private on-host server" happened to coincide. huggingface — a public
-# ZeroGPU Space — is compat but not local, and broke that coincidence.
+# provider" and "is a private on-host server serving a small model" happened to coincide.
+# huggingface broke that: opencode has no built-in provider for the HF router (its models.dev
+# catalog is disabled here), so it needs the compat mechanism — yet it is a public gateway
+# serving frontier-class models, so it is neither private nor constrained.
 case "${LLM_PROVIDER:-}" in
   openrouter|anthropic|openai)  LLM_OPENCODE_MODE=builtin ;;
   vllm|ollama|huggingface)      LLM_OPENCODE_MODE=compat ;;
@@ -80,12 +82,12 @@ for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}"; do
 done
 
 if [ "$LLM_OPENCODE_MODE" = compat ]; then
-  # An OpenAI-compatible /v1/chat/completions server: vLLM/Ollama/LM Studio on-host, or a
-  # HuggingFace ZeroGPU Space over the public internet. Use the bundled
+  # An OpenAI-compatible /v1/chat/completions server: vLLM/Ollama/LM Studio on-host, or the
+  # HuggingFace Inference Providers router over the public internet. Use the bundled
   # @ai-sdk/openai-compatible provider (Chat Completions) — NOT the built-in openai
   # provider, which speaks the Responses API (/v1/responses) that these servers don't
   # serve. Verified: opencode loads this provider offline (no npm). LLM_BASE_URL is the
-  # server's OpenAI base (e.g. http://host:1234/v1, or https://<user>-<space>.hf.space/v1).
+  # server's OpenAI base (e.g. http://host:1234/v1, or https://router.huggingface.co/v1).
   #
   # "local" here is OPENCODE'S provider id, not a claim about where the server runs; it must
   # match the auth.json key and the MODEL prefix below. Renaming it would churn the

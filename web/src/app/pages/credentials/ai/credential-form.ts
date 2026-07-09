@@ -3,17 +3,18 @@ import { Component, EventEmitter, Input, Output, computed, inject, signal } from
 import { FormsModule } from '@angular/forms';
 import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai-credentials.service';
 
-const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+// Providers with one canonical OpenAI-compatible endpoint. The form prefills it so the user
+// just pastes a key, and the server would default it anyway. Mirrors ai.DefaultBaseURL —
+// anthropic is defaulted server-side but has nothing to prefill (its transport applies it).
+const PREFILLED_BASE_URLS: Partial<Record<AIProvider, string>> = {
+  openrouter: 'https://openrouter.ai/api/v1',
+  huggingface: 'https://router.huggingface.co/v1',
+};
 
 // Providers the server defaults a base_url for; every other provider must supply one.
 // Mirrors validate() in internal/agents/credential.go — keep them in sync.
-const BASE_URL_DEFAULTED: readonly AIProvider[] = ['anthropic', 'openrouter'];
+const BASE_URL_DEFAULTED: readonly AIProvider[] = ['anthropic', 'openrouter', 'huggingface'];
 
-// A HuggingFace credential points at the operator's own ZeroGPU Space, whose host is
-// per-user, so there is nothing to prefill — only a shape to suggest.
-const BASE_URL_PLACEHOLDER: Partial<Record<AIProvider, string>> = {
-  huggingface: 'https://<user>-<space>.hf.space/v1',
-};
 const BASE_URL_PLACEHOLDER_DEFAULT = 'https://… (openai-compatible / self-host only)';
 
 // AI credential create form. Standalone, template-driven. The API key is write-only
@@ -34,7 +35,7 @@ const BASE_URL_PLACEHOLDER_DEFAULT = 'https://… (openai-compatible / self-host
           <option value="ollama">Ollama (self-host)</option>
           <option value="vllm">vLLM (self-host)</option>
           <option value="openrouter">OpenRouter</option>
-          <option value="huggingface">HuggingFace ZeroGPU Space (self-host)</option>
+          <option value="huggingface">HuggingFace (Inference Providers)</option>
         </select>
       </div>
 
@@ -56,8 +57,8 @@ const BASE_URL_PLACEHOLDER_DEFAULT = 'https://… (openai-compatible / self-host
           <span class="mf-hint">({{ baseUrlRequired() ? 'required' : 'optional' }})</span>
         </label>
         <input id="cred-base-url" class="mf-input" type="text" data-testid="cred-base-url"
-               name="base_url" [(ngModel)]="baseUrl" [placeholder]="baseUrlPlaceholder()" [disabled]="submitting()" />
-        <small class="mf-hint">Defaulted for Anthropic and OpenRouter. Required for OpenAI-compatible endpoints — self-hosted Ollama/vLLM, or a HuggingFace ZeroGPU Space.</small>
+               name="base_url" [(ngModel)]="baseUrl" placeholder="https://… (openai-compatible / self-host only)" [disabled]="submitting()" />
+        <small class="mf-hint">Prefilled for OpenRouter and HuggingFace; defaulted server-side for Anthropic. Required for OpenAI-compatible or self-hosted (OpenAI/Ollama/vLLM) endpoints.</small>
       </div>
 
       <label class="mf-field" data-testid="cred-allow-private-wrap"
@@ -106,7 +107,6 @@ export class CredentialFormComponent {
   error = signal('');
 
   baseUrlRequired = computed(() => !BASE_URL_DEFAULTED.includes(this.provider()));
-  baseUrlPlaceholder = computed(() => BASE_URL_PLACEHOLDER[this.provider()] ?? BASE_URL_PLACEHOLDER_DEFAULT);
 
   valid(): boolean {
     if (this.apiKey.trim().length === 0 || this.defaultModel.trim().length === 0) {
@@ -118,13 +118,17 @@ export class CredentialFormComponent {
   }
 
   onProviderChange(p: AIProvider): void {
-    // OpenRouter has one canonical OpenAI-compatible base URL — prefill it so the user
-    // just pastes a key. Only auto-manage base_url between blank and that default, so a
-    // custom value the user typed for another provider isn't clobbered.
-    if (p === 'openrouter' && this.baseUrl === '') {
-      this.baseUrl = OPENROUTER_BASE_URL;
-    } else if (this.provider() === 'openrouter' && this.baseUrl === OPENROUTER_BASE_URL) {
+    // Providers with one canonical endpoint get it prefilled so the user just pastes a key.
+    // Only ever auto-manage base_url between blank and the outgoing provider's own default, so
+    // a custom value the user typed is never clobbered — and so switching openrouter →
+    // huggingface swaps the default rather than leaving the wrong one behind.
+    const leaving = PREFILLED_BASE_URLS[this.provider()];
+    if (leaving && this.baseUrl === leaving) {
       this.baseUrl = '';
+    }
+    const arriving = PREFILLED_BASE_URLS[p];
+    if (arriving && this.baseUrl === '') {
+      this.baseUrl = arriving;
     }
     this.provider.set(p);
   }

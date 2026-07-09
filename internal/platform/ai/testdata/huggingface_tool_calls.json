@@ -1,5 +1,5 @@
 {
-  "id": "chatcmpl-hfzerogpu-2",
+  "id": "chatcmpl-hf-router-2",
   "object": "chat.completion",
   "model": "Qwen/Qwen3-14B",
   "choices": [
