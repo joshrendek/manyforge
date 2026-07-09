@@ -73,9 +73,46 @@ describe('CredentialFormComponent', () => {
     c.provider.set('openai');
     c.apiKey = 'k';
     c.defaultModel = 'gpt-5';
+    c.baseUrl = 'https://api.openai.com/v1'; // openai has no server-side default
     c.submit();
     const req = http.expectOne('/api/v1/businesses/b1/ai_credentials');
-    req.flush({ message: 'base_url not allowed' }, { status: 400, statusText: 'Bad Request' });
-    expect(c.error()).toContain('Rejected: base_url not allowed');
+    req.flush({ message: 'model not available' }, { status: 400, statusText: 'Bad Request' });
+    expect(c.error()).toContain('Rejected: model not available');
+  });
+
+  // A huggingface credential points at the operator's own ZeroGPU Space, so base_url is
+  // required — there is no per-user default to fall back to (mirrors credential.go validate()).
+  it('requires a base URL for huggingface and blocks submit without one', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('huggingface');
+    c.apiKey = 'hf_test';
+    c.defaultModel = 'Qwen/Qwen3-14B';
+
+    expect(c.baseUrlRequired()).toBe(true);
+    expect(c.baseUrl).toBe(''); // nothing is prefilled: the Space host is per-user
+    expect(c.valid()).toBe(false);
+    c.submit();
+    http.expectNone('/api/v1/businesses/b1/ai_credentials');
+
+    c.baseUrl = 'https://josh-reviewbot.hf.space/v1';
+    expect(c.valid()).toBe(true);
+    c.submit();
+    const req = http.expectOne('/api/v1/businesses/b1/ai_credentials');
+    expect(req.request.body.provider).toBe('huggingface');
+    expect(req.request.body.base_url).toBe('https://josh-reviewbot.hf.space/v1');
+    req.flush({});
+  });
+
+  // Anthropic and OpenRouter are the only providers the server defaults a base_url for.
+  it('treats base URL as optional only for anthropic and openrouter', () => {
+    const c = fixture.componentInstance;
+    for (const p of ['anthropic', 'openrouter'] as const) {
+      c.provider.set(p);
+      expect(c.baseUrlRequired()).toBe(false);
+    }
+    for (const p of ['openai', 'ollama', 'vllm', 'huggingface'] as const) {
+      c.provider.set(p);
+      expect(c.baseUrlRequired()).toBe(true);
+    }
   });
 });

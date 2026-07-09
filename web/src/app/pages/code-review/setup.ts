@@ -19,7 +19,7 @@ import { Spinner } from '../../ui/spinner/spinner';
 
 // Providers whose model is free text (self-host / aggregator) rather than a catalog select —
 // mirrors agent-form.ts. OpenRouter additionally gets a live typeahead <datalist>.
-const FREE_TEXT_MODEL_PROVIDERS = ['ollama', 'vllm', 'openrouter'];
+const FREE_TEXT_MODEL_PROVIDERS = ['ollama', 'vllm', 'openrouter', 'huggingface'];
 
 // DIMENSION_CATALOG mirrors internal/agents/coding/dimensions.go dimensionCatalog() — the
 // built-in specialist reviewer lanes. Kept in sync by hand (Slice 2 presets seed EDITABLE
@@ -84,6 +84,7 @@ const PROVIDERS: { value: string; label: string }[] = [
   { value: 'ollama', label: 'Ollama (self-host)' },
   { value: 'vllm', label: 'vLLM (self-host)' },
   { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'huggingface', label: 'HuggingFace ZeroGPU Space (self-host)' },
 ];
 
 const SEVERITIES: FindingSeverity[] = ['info', 'warning', 'error'];

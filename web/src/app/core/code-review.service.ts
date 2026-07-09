@@ -78,9 +78,12 @@ export interface CodeReview {
 }
 
 // ── Review panel config (spec 008 Slice 2) ───────────────────────────────────
-// Providers/severities/post-modes mirror the service-boundary allowlists in
+// Severities/post-modes mirror the service-boundary allowlists in
 // internal/agents/coding/review_config_service.go — keep them in sync.
-export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter';
+//
+// AIProvider is re-exported from its single source rather than restated: this file used to
+// carry a second copy of the union that nothing imported, which could only ever drift.
+export type { AIProvider } from './ai-credentials.service';
 export type PostMode = 'single' | 'per_dimension';
 
 // One (provider, model) step in a dimension's ordered fallback chain. Mirrors

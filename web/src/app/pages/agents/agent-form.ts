@@ -7,7 +7,10 @@ import {
 import { AIProvider } from '../../core/ai-credentials.service';
 
 // Providers whose models are NOT in the model_pricing catalog → free-text model entry.
-const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter'];
+// Providers whose models aren't in the static model_pricing catalog, so the form offers a
+// free-text model input instead of a <select>. huggingface is here because a ZeroGPU Space
+// serves exactly one operator-chosen model — there is no catalog to pick from.
+const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter', 'huggingface'];
 
 // Agent create/edit form. Standalone, template-driven, mirrors connector-form/credential-form.
 // On init it loads tools()/models()/mcpServers() to populate the pickers. Provider is immutable
@@ -33,6 +36,7 @@ const FREE_TEXT_MODEL_PROVIDERS: AIProvider[] = ['ollama', 'vllm', 'openrouter']
           <option value="ollama">Ollama (self-host)</option>
           <option value="vllm">vLLM (self-host)</option>
           <option value="openrouter">OpenRouter</option>
+          <option value="huggingface">HuggingFace ZeroGPU Space (self-host)</option>
         </select>
         @if (mode === 'edit') { <small class="mf-hint">Provider can't change after creation.</small> }
       </div>

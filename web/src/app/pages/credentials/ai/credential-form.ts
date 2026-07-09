@@ -1,9 +1,20 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, EventEmitter, Input, Output, inject, signal } from '@angular/core';
+import { Component, EventEmitter, Input, Output, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai-credentials.service';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+// Providers the server defaults a base_url for; every other provider must supply one.
+// Mirrors validate() in internal/agents/credential.go — keep them in sync.
+const BASE_URL_DEFAULTED: readonly AIProvider[] = ['anthropic', 'openrouter'];
+
+// A HuggingFace credential points at the operator's own ZeroGPU Space, whose host is
+// per-user, so there is nothing to prefill — only a shape to suggest.
+const BASE_URL_PLACEHOLDER: Partial<Record<AIProvider, string>> = {
+  huggingface: 'https://<user>-<space>.hf.space/v1',
+};
+const BASE_URL_PLACEHOLDER_DEFAULT = 'https://… (openai-compatible / self-host only)';
 
 // AI credential create form. Standalone, template-driven. The API key is write-only
 // (type=password, never prefilled). base_url + allow_private_base_url are ALWAYS visible
@@ -23,6 +34,7 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
           <option value="ollama">Ollama (self-host)</option>
           <option value="vllm">vLLM (self-host)</option>
           <option value="openrouter">OpenRouter</option>
+          <option value="huggingface">HuggingFace ZeroGPU Space (self-host)</option>
         </select>
       </div>
 
@@ -40,10 +52,12 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
       </div>
 
       <div class="mf-field">
-        <label for="cred-base-url">Base URL <span class="mf-hint">(optional)</span></label>
+        <label for="cred-base-url">Base URL
+          <span class="mf-hint">({{ baseUrlRequired() ? 'required' : 'optional' }})</span>
+        </label>
         <input id="cred-base-url" class="mf-input" type="text" data-testid="cred-base-url"
-               name="base_url" [(ngModel)]="baseUrl" placeholder="https://… (openai-compatible / self-host only)" [disabled]="submitting()" />
-        <small class="mf-hint">Defaulted for OpenRouter. Needed for OpenAI-compatible or self-hosted (Ollama/vLLM) endpoints; leave blank for the provider default.</small>
+               name="base_url" [(ngModel)]="baseUrl" [placeholder]="baseUrlPlaceholder()" [disabled]="submitting()" />
+        <small class="mf-hint">Defaulted for Anthropic and OpenRouter. Required for OpenAI-compatible endpoints — self-hosted Ollama/vLLM, or a HuggingFace ZeroGPU Space.</small>
       </div>
 
       <label class="mf-field" data-testid="cred-allow-private-wrap"
@@ -91,8 +105,16 @@ export class CredentialFormComponent {
   submitting = signal(false);
   error = signal('');
 
+  baseUrlRequired = computed(() => !BASE_URL_DEFAULTED.includes(this.provider()));
+  baseUrlPlaceholder = computed(() => BASE_URL_PLACEHOLDER[this.provider()] ?? BASE_URL_PLACEHOLDER_DEFAULT);
+
   valid(): boolean {
-    return this.apiKey.trim().length > 0 && this.defaultModel.trim().length > 0;
+    if (this.apiKey.trim().length === 0 || this.defaultModel.trim().length === 0) {
+      return false;
+    }
+    // The server rejects a missing base_url for every provider it has no default for
+    // (credential.go validate()); block it here rather than round-trip a 400.
+    return !this.baseUrlRequired() || this.baseUrl.trim().length > 0;
   }
 
   onProviderChange(p: AIProvider): void {
