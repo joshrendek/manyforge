@@ -16,11 +16,12 @@ import (
 type AiProvider string
 
 const (
-	AiProviderAnthropic  AiProvider = "anthropic"
-	AiProviderOpenai     AiProvider = "openai"
-	AiProviderOllama     AiProvider = "ollama"
-	AiProviderVllm       AiProvider = "vllm"
-	AiProviderOpenrouter AiProvider = "openrouter"
+	AiProviderAnthropic   AiProvider = "anthropic"
+	AiProviderOpenai      AiProvider = "openai"
+	AiProviderOllama      AiProvider = "ollama"
+	AiProviderVllm        AiProvider = "vllm"
+	AiProviderOpenrouter  AiProvider = "openrouter"
+	AiProviderHuggingface AiProvider = "huggingface"
 )
 
 func (e *AiProvider) Scan(src interface{}) error {

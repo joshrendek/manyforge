@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/manyforge/manyforge/internal/platform/ai"
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -28,11 +29,12 @@ import (
 // 0025) so adding a provider to the enum + sqlc regen surfaces a new constant to add here
 // rather than a silently-untracked string. TestKnownProvidersTrackEnum pins coverage.
 var knownProviders = map[string]bool{
-	string(dbgen.AiProviderAnthropic):  true,
-	string(dbgen.AiProviderOpenai):     true,
-	string(dbgen.AiProviderOllama):     true,
-	string(dbgen.AiProviderVllm):       true,
-	string(dbgen.AiProviderOpenrouter): true,
+	string(dbgen.AiProviderAnthropic):   true,
+	string(dbgen.AiProviderOpenai):      true,
+	string(dbgen.AiProviderOllama):      true,
+	string(dbgen.AiProviderVllm):        true,
+	string(dbgen.AiProviderOpenrouter):  true,
+	string(dbgen.AiProviderHuggingface): true,
 }
 
 // credentialDB is the minimal DB surface this service needs — satisfied by the
@@ -137,9 +139,10 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 	if in.DefaultModel == "" {
 		return fmt.Errorf("agents: default_model required: %w", errs.ErrValidation)
 	}
-	// openai-compat providers (openai/ollama/vllm) route through a caller-supplied base_url;
-	// anthropic and openrouter have a default base_url, so theirs is optional.
-	if in.Provider != "anthropic" && in.Provider != "openrouter" && in.BaseURL == "" {
+	// Self-host / OpenAI-compat providers (openai/ollama/vllm) route through a caller-supplied
+	// base_url. Providers with a default endpoint (anthropic/openrouter/huggingface) may omit
+	// it. ai.DefaultBaseURL is the single source of truth — do not restate the list here.
+	if _, hasDefault := ai.DefaultBaseURL(in.Provider); !hasDefault && in.BaseURL == "" {
 		return fmt.Errorf("agents: base_url required for provider %q: %w", in.Provider, errs.ErrValidation)
 	}
 	if in.BaseURL != "" {

@@ -32,23 +32,30 @@ Set the severity of each finding to exactly one of:
 
 You are given the changed code as unified-diff hunks: each block is headed by "=== <path> ===", and every changed line shows its current-file line number in the left gutter with a +/space marker. Use that real file path and gutter line number in each finding. Report each distinct issue once. Only return an empty findings array if the diff genuinely contains nothing worth surfacing.`
 
-// isLocalProvider reports whether a provider runs on-host (model never leaves the
-// machine). Local and cloud providers both run through the sandbox+opencode path
-// (manyforge-9er Tasks 4-5); this is now consulted only to pick the tighter
-// localProviderMaxTotalBytes diff budget for on-host models.
-func isLocalProvider(provider string) bool {
+// isConstrainedProvider reports whether a provider serves a small/slow model that cannot
+// prompt-eval a large diff quickly, and so must be sent a tighter one. This is a statement
+// about MODEL CAPABILITY, deliberately separate from two axes it used to be conflated with:
+// network trust (the credential's AllowPrivateBaseURL flag) and the opencode provider
+// mechanism (LLM_OPENCODE_MODE in deploy/sandbox/entrypoint.sh). huggingface is the provider
+// that forced them apart — it uses the openai-compat mechanism like ollama/vllm, but is a
+// public gateway serving frontier-class models, so it is NOT constrained. See manyforge-bhx.
+//
+// Every provider runs through the sandbox+opencode path (manyforge-9er Tasks 4-5); this is
+// consulted only to pick the constrainedProviderMaxTotalBytes diff budget.
+func isConstrainedProvider(provider string) bool {
 	return provider == "ollama" || provider == "vllm"
 }
 
 const (
 	reviewMaxFileBytes  = 48 << 10 // skip any single file whose rendered hunks exceed this
-	reviewMaxTotalBytes = 96 << 10 // default total-diff budget (cloud/opencode path — capable models)
-	// localProviderMaxTotalBytes is a TIGHTER total-diff budget for on-host local providers
-	// (Ollama/vLLM). Small models can't prompt-eval a large diff quickly — a ~28K-token diff
-	// wedged ornith:9b for minutes at every context size we tried — so the local path sends far
-	// less. Combined with the isNonReviewableDoc filter (which strips prose/plan files that both
-	// waste this budget and derail weak models), this keeps local reviews fast and code-focused.
-	localProviderMaxTotalBytes = 32 << 10
+	reviewMaxTotalBytes = 96 << 10 // default total-diff budget (capable cloud models)
+	// constrainedProviderMaxTotalBytes is a TIGHTER total-diff budget for on-host providers
+	// serving small models (Ollama/vLLM). Small models can't prompt-eval a large diff quickly —
+	// a ~28K-token diff wedged ornith:9b for minutes at every context size we tried — so these
+	// lanes send far less. Combined with the isNonReviewableDoc filter (which strips prose/plan
+	// files that both waste this budget and derail weak models), this keeps constrained reviews
+	// fast and code-focused.
+	constrainedProviderMaxTotalBytes = 32 << 10
 )
 
 // codeExt is the set of source extensions the local reviewer prioritizes — the

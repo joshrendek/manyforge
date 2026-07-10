@@ -300,7 +300,7 @@ CREATE TABLE notification (
 -- Agent runtime (spec 003) — mirrors migrations/0025.
 -- ============================================================================
 
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'ollama', 'vllm', 'openrouter');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'ollama', 'vllm', 'openrouter', 'huggingface');
 
 CREATE TABLE ai_provider_credential (
     id              uuid PRIMARY KEY,

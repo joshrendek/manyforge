@@ -20,6 +20,21 @@ func mustRead(t *testing.T, path string) string {
 	return string(b)
 }
 
+// collapseSpaces squeezes runs of intra-line whitespace to one space, so a source pin can
+// assert the SHAPE of a shell case arm or config line without column alignment being
+// load-bearing. Use it when the security property is the content, not the formatting.
+//
+// Line boundaries are preserved deliberately: collapsing them too would let a pinned
+// substring match across two unrelated lines, which is exactly the kind of accidental pass a
+// security pin must not have.
+func collapseSpaces(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.Join(strings.Fields(ln), " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
 // TestEscalationGuardsPinned asserts the FR-023 guard at each authority-conferring
 // site still exists in source. Paths are relative to this package directory.
 func TestEscalationGuardsPinned(t *testing.T) {

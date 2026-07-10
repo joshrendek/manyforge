@@ -7,16 +7,28 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors"
 )
 
-func TestIsLocalProvider(t *testing.T) {
+// Constrained-ness tracks MODEL CAPABILITY, not the opencode mechanism a provider uses.
+// huggingface shares the openai-compat mechanism with ollama/vllm (see entrypoint.sh) but is a
+// public gateway serving frontier-class models, so it gets the full diff budget. That
+// distinction is the whole reason the old LLM_LOCAL boolean had to be split. See manyforge-bhx.
+func TestIsConstrainedProvider(t *testing.T) {
 	for _, p := range []string{"ollama", "vllm"} {
-		if !isLocalProvider(p) {
-			t.Fatalf("%q should be local", p)
+		if !isConstrainedProvider(p) {
+			t.Fatalf("%q should be constrained (tight diff budget)", p)
 		}
 	}
-	for _, p := range []string{"openrouter", "anthropic", "openai"} {
-		if isLocalProvider(p) {
-			t.Fatalf("%q should NOT be local", p)
+	for _, p := range []string{"openrouter", "anthropic", "openai", "huggingface"} {
+		if isConstrainedProvider(p) {
+			t.Fatalf("%q should NOT be constrained", p)
 		}
+	}
+}
+
+// The whole point of the constrained budget is that it is strictly smaller than the default;
+// a refactor that inverts or equalizes them silently un-fixes manyforge-6h1/ornith:9b.
+func TestConstrainedBudgetIsTighterThanDefault(t *testing.T) {
+	if constrainedProviderMaxTotalBytes >= reviewMaxTotalBytes {
+		t.Fatalf("constrained budget %d must be < default %d", constrainedProviderMaxTotalBytes, reviewMaxTotalBytes)
 	}
 }
 
