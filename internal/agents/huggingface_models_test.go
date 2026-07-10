@@ -4,8 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/manyforge/manyforge/internal/platform/netsafe"
 )
 
 // A trimmed but structurally faithful capture of GET https://router.huggingface.co/v1/models.
@@ -127,6 +131,17 @@ func TestHuggingFaceModels_CostCentsUsesPinnedPartnerPricing(t *testing.T) {
 		t.Errorf("CostCents = %d, want 580", got)
 	}
 
+	// Token counts captured from a REAL sandboxed review lane (manyforge-bhx smoke): opencode
+	// reported input 4581 + cache_read 8540 = 13121 in, 1298 out. At $1.40/$4.40 per Mtok that
+	// is $0.0241 → 2 cents. This is the arithmetic the review's cost_cents column depends on.
+	lane, err := h.CostCents(ctx, "huggingface", "zai-org/GLM-5.2:fireworks-ai", 13121, 1298)
+	if err != nil {
+		t.Fatalf("CostCents(real lane): %v", err)
+	}
+	if lane != 2 {
+		t.Errorf("real review lane (13121 in, 1298 out) = %d cents, want 2", lane)
+	}
+
 	// A partner with no pricing block, a bare (unpinned) id, and an unknown slug are all
 	// unpriceable — 0 with no error, so usage capture never fails a review.
 	for _, model := range []string{
@@ -184,6 +199,66 @@ func TestHuggingFaceModels_UpstreamErrorSurfaces(t *testing.T) {
 	if _, err := h.ProviderModels(context.Background(), "huggingface"); err == nil {
 		t.Fatal("a 502 from the catalog must surface as an error so the handler can log and degrade")
 	}
+}
+
+// TestLiveHuggingFaceCatalog exercises the real, PUBLIC catalog endpoint (no key needed) so a
+// SHAPE change upstream is caught deliberately rather than in production. Skipped by default.
+//
+// It deliberately asserts nothing about which partner serves which model, or what a specific
+// pair costs: HF rotates partners (zai-org/GLM-5.2 was served by fireworks-ai one hour and not
+// the next) and repricing is theirs to do. Coupling CI to those decisions produces red builds
+// nobody can act on. Exact pricing arithmetic is pinned hermetically against a fixture in
+// TestHuggingFaceModels_CostCentsUsesPinnedPartnerPricing.
+//
+// Run: AI_RECORD=1 go test ./internal/agents/ -run TestLiveHuggingFaceCatalog -v
+func TestLiveHuggingFaceCatalog(t *testing.T) {
+	if os.Getenv("AI_RECORD") == "" {
+		t.Skip("set AI_RECORD=1 to hit the live HF catalog")
+	}
+	h := &HuggingFaceModels{HTTP: netsafe.NewClient(20 * time.Second)}
+	ctx := context.Background()
+	models, err := h.ProviderModels(ctx, "huggingface")
+	if err != nil {
+		t.Fatalf("live catalog: %v", err)
+	}
+	if len(models) < 50 {
+		t.Fatalf("live catalog returned %d offerable models, want >= 50 — did the shape change?", len(models))
+	}
+
+	// Every offered id must pin a partner: the router needs the suffix to route, and the pair
+	// is what makes pricing unambiguous.
+	for _, m := range models {
+		if !strings.Contains(m.ModelID, "/") || !strings.Contains(m.ModelID, ":") {
+			t.Errorf("model id %q is not of the form org/model:partner", m.ModelID)
+		}
+		if m.Provider != "huggingface" {
+			t.Errorf("model %q stamped provider %q, want huggingface", m.ModelID, m.Provider)
+		}
+	}
+
+	// Whatever is priced today must yield a positive cost for a realistic lane, and whatever is
+	// unpriced must yield exactly 0 rather than an error (usage capture must never fail a review).
+	var priced, unpriced string
+	for _, m := range models {
+		cents, cerr := h.CostCents(ctx, "huggingface", m.ModelID, 13121, 1298)
+		if cerr != nil {
+			t.Fatalf("CostCents(%s): %v", m.ModelID, cerr)
+		}
+		if cents > 0 && priced == "" {
+			priced = m.ModelID
+		}
+		if cents == 0 && unpriced == "" {
+			unpriced = m.ModelID
+		}
+	}
+	if priced == "" {
+		t.Error("no offered model priced a realistic lane above 0 cents — pricing parsing may be broken")
+	}
+	// A bare (unpinned) id can never be priced: it does not identify a partner.
+	if cents, _ := h.CostCents(ctx, "huggingface", "zai-org/GLM-5.2", 13121, 1298); cents != 0 {
+		t.Errorf("bare model id priced at %d cents, want 0 (partner unknown)", cents)
+	}
+	t.Logf("live catalog: %d offerable models; first priced=%q first unpriced=%q", len(models), priced, unpriced)
 }
 
 func ids(ms []ModelInfo) []string {

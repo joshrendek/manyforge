@@ -11,14 +11,17 @@
 #   LLM_API_KEY   — provider API key (forwarded only to the allowlisted LLM host)
 #   LLM_BASE_URL  — provider base URL. For openrouter/anthropic/openai this is used only
 #                   to derive the egress-allowlist host (opencode's built-in provider
-#                   already knows its endpoint). For vllm/ollama it IS the provider base —
-#                   passed straight through as the bundled openai-compatible provider's
-#                   options.baseURL (e.g. http://host:1234/v1).
-#   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro" or "claude-3-5-sonnet"
-#   LLM_PROVIDER  — opencode provider id: one of openrouter|anthropic|openai|vllm|ollama.
-#                   vllm/ollama are local OpenAI-compatible servers and map to a CUSTOM
-#                   opencode provider ("local", @ai-sdk/openai-compatible) below — NOT the
-#                   built-in openai provider, which speaks the Responses API.
+#                   already knows its endpoint). For vllm/ollama/huggingface it IS the
+#                   provider base — passed straight through as the bundled
+#                   openai-compatible provider's options.baseURL (e.g. http://host:1234/v1,
+#                   or https://router.huggingface.co/v1).
+#   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro", "claude-3-5-sonnet", or
+#                   "zai-org/GLM-5.2:fireworks-ai" (the HF router pins the partner with ":").
+#   LLM_PROVIDER  — one of openrouter|anthropic|openai|vllm|ollama|huggingface. The first
+#                   three use opencode's BUILT-IN SDK providers; the rest are OpenAI-compatible
+#                   endpoints with no built-in provider, and map to a CUSTOM opencode provider
+#                   ("local", @ai-sdk/openai-compatible) below — NOT the built-in openai
+#                   provider, which speaks the Responses API. See LLM_OPENCODE_MODE.
 set -eu
 
 mkdir -p /out
@@ -99,6 +102,16 @@ if [ "$LLM_OPENCODE_MODE" = compat ]; then
   # same review model+key. Without it opencode defaults small_model to Claude Haiku and bills
   # a throwaway title call to this provider/key on every run (manyforge discards the title —
   # the check-run title is hardcoded). See manyforge-qxe.
+  # Output-token budget. 8192 is tuned for the on-host small models (Ollama/vLLM), some of
+  # which reject a max_tokens above their configured context. huggingface reaches the HF
+  # router, whose frontier models are the SAME reasoning models the built-in branch already
+  # budgets 32000 for: glm-5.2 burns ~9k reasoning tokens before it emits a character, so an
+  # 8192 cap truncates the findings JSON mid-answer and ParseFindings fails (manyforge-6h1).
+  # Do not collapse these two numbers — they are tuned for different classes of model.
+  case "$LLM_PROVIDER" in
+    huggingface) COMPAT_MAX_TOKENS=32000 ;;
+    *)           COMPAT_MAX_TOKENS=8192 ;;
+  esac
   export OPENCODE_CONFIG=/tmp/opencode.json
   printf '%s\n' '{
   "$schema": "https://opencode.ai/config.json",
@@ -109,7 +122,7 @@ if [ "$LLM_OPENCODE_MODE" = compat ]; then
       "npm": "@ai-sdk/openai-compatible",
       "name": "Local",
       "options": { "baseURL": "'"${LLM_BASE_URL}"'" },
-      "models": { "'"${LLM_MODEL}"'": { "options": { "max_tokens": 8192 } } }
+      "models": { "'"${LLM_MODEL}"'": { "options": { "max_tokens": '"${COMPAT_MAX_TOKENS}"' } } }
     }
   },
   "permission": {
