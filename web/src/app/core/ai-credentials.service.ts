@@ -2,7 +2,10 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
-export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter';
+// The single source of truth for provider names on the client. Mirrors the ai_provider PG
+// enum (db/schema.sql) and agents.knownProviders — keep them in sync.
+// 'huggingface' is the HF Inference Providers router (router.huggingface.co).
+export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter' | 'huggingface';
 
 // Read shape: no api_key — the secret is write-only.
 export interface AICredential {

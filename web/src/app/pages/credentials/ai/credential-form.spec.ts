@@ -73,9 +73,80 @@ describe('CredentialFormComponent', () => {
     c.provider.set('openai');
     c.apiKey = 'k';
     c.defaultModel = 'gpt-5';
+    c.baseUrl = 'https://api.openai.com/v1'; // openai has no server-side default
     c.submit();
     const req = http.expectOne('/api/v1/businesses/b1/ai_credentials');
-    req.flush({ message: 'base_url not allowed' }, { status: 400, statusText: 'Bad Request' });
-    expect(c.error()).toContain('Rejected: base_url not allowed');
+    req.flush({ message: 'model not available' }, { status: 400, statusText: 'Bad Request' });
+    expect(c.error()).toContain('Rejected: model not available');
+  });
+
+  // huggingface targets the HF Inference Providers router, which has one canonical endpoint —
+  // so it prefills like openrouter and base_url is optional (mirrors ai.DefaultBaseURL).
+  it('prefills the HuggingFace router base URL and posts a partner-pinned model id', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('huggingface');
+    expect(c.baseUrlRequired()).toBe(false);
+    expect(c.baseUrl).toBe('https://router.huggingface.co/v1');
+
+    c.apiKey = 'hf_test';
+    c.defaultModel = 'zai-org/GLM-5.2:fireworks-ai';
+    expect(c.valid()).toBe(true);
+    c.submit();
+    const req = http.expectOne('/api/v1/businesses/b1/ai_credentials');
+    expect(req.request.body.provider).toBe('huggingface');
+    expect(req.request.body.base_url).toBe('https://router.huggingface.co/v1');
+    // The ":partner" suffix pins pricing and routing; it must survive the form untouched.
+    expect(req.request.body.default_model).toBe('zai-org/GLM-5.2:fireworks-ai');
+    req.flush({});
+  });
+
+  // Switching between two prefilled providers must SWAP the default, not strand the old one.
+  it('swaps the prefilled base URL when moving between prefilled providers', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('openrouter');
+    expect(c.baseUrl).toBe('https://openrouter.ai/api/v1');
+    c.onProviderChange('huggingface');
+    expect(c.baseUrl).toBe('https://router.huggingface.co/v1');
+    c.onProviderChange('openai');
+    expect(c.baseUrl).toBe('');
+  });
+
+  // A base_url the user typed themselves is never clobbered by a provider switch.
+  it('never clobbers a user-typed base URL', () => {
+    const c = fixture.componentInstance;
+    c.baseUrl = 'https://my-gateway.internal/v1';
+    c.onProviderChange('huggingface');
+    expect(c.baseUrl).toBe('https://my-gateway.internal/v1');
+  });
+
+  // "(required)" in the label is a visual cue only. Screen readers need the required state on the
+  // control itself, and the hint has to be associated with it rather than floating nearby.
+  it('exposes the base URL required state and hint to assistive tech', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('vllm');
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const input = el.querySelector('[data-testid="cred-base-url"]') as HTMLInputElement;
+    expect(input.getAttribute('aria-required')).toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBe('cred-base-url-hint');
+    expect(el.querySelector('#cred-base-url-hint')).not.toBeNull();
+
+    // A defaulted provider must not claim to be required.
+    c.onProviderChange('huggingface');
+    fixture.detectChanges();
+    expect(input.getAttribute('aria-required')).toBeNull();
+  });
+
+  // Only providers ai.DefaultBaseURL knows about may omit base_url.
+  it('requires a base URL exactly for the providers with no server-side default', () => {
+    const c = fixture.componentInstance;
+    for (const p of ['anthropic', 'openrouter', 'huggingface'] as const) {
+      c.provider.set(p);
+      expect(c.baseUrlRequired()).toBe(false);
+    }
+    for (const p of ['openai', 'ollama', 'vllm'] as const) {
+      c.provider.set(p);
+      expect(c.baseUrlRequired()).toBe(true);
+    }
   });
 });

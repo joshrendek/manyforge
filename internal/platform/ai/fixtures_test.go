@@ -98,6 +98,49 @@ func TestRecordOllamaFixture(t *testing.T) {
 	t.Logf("recorded ollama response: text=%q finish=%s usage=%+v", resp.Text, resp.FinishReason, resp.Usage)
 }
 
+// TestRecordHuggingFaceFixture exercises the live HF Inference Providers router end-to-end
+// through ai.New (not just the transport), which is the only place the base_url default and the
+// netsafe client are wired together. Model ids must pin a partner ("org/model:fireworks-ai");
+// a bare id may 404, and a cold community model on featherless can 503 on first call while it
+// loads — both map to ErrProviderUnavailable and are covered by the dimension fallback_chain.
+//
+// Run: AI_RECORD=1 HF_TOKEN=$(cat ~/.config/hf) \
+//
+//	go test ./internal/platform/ai/ -run TestRecordHuggingFaceFixture -v
+func TestRecordHuggingFaceFixture(t *testing.T) {
+	if !recording() {
+		t.Skip("set AI_RECORD=1 to exercise the live router")
+	}
+	key := os.Getenv("HF_TOKEN")
+	if key == "" {
+		t.Skip("HF_TOKEN not set")
+	}
+	model := os.Getenv("HF_MODEL")
+	if model == "" {
+		model = "zai-org/GLM-5.2:fireworks-ai"
+	}
+	// Empty BaseURL on purpose: this asserts DefaultBaseURL(huggingface) actually reaches HF.
+	p, err := New(Credential{Provider: ProviderHuggingFace, APIKey: key, Model: model})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resp, err := p.Complete(context.Background(), Request{
+		Model: model, MaxTokens: 64,
+		Messages: []Message{{Role: RoleUser, Text: "Say hello in one short sentence."}},
+	})
+	if err != nil {
+		t.Fatalf("live call: %v", err)
+	}
+	if resp.Text == "" {
+		t.Error("live router returned no text")
+	}
+	if resp.Usage.InputTokens == 0 || resp.Usage.OutputTokens == 0 {
+		t.Errorf("usage not parsed from the live response: %+v", resp.Usage)
+	}
+	t.Logf("recorded huggingface response: model=%q text=%q finish=%s usage=%+v",
+		model, resp.Text, resp.FinishReason, resp.Usage)
+}
+
 // TestRecordVLLMFixture mirrors the above for a live vLLM OpenAI-compatible server.
 // Run: AI_RECORD=1 VLLM_BASE_URL=http://localhost:8000/v1 \
 //

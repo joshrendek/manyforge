@@ -377,10 +377,10 @@ func main() {
 	// (CI / no-Docker dev) logs a warning and coding reviews fail at run time only.
 	var codingH *coding.Handler
 	var codingSvc *coding.CodeReviewService
-	// Shared live OpenRouter catalog: models for the agent form's typeahead AND
-	// pricing for code-review cost accounting. Fetched via the SSRF-safe netsafe
-	// client; cached in-process.
-	orModels := &agents.OpenRouterModels{HTTP: netsafe.NewClient(15 * time.Second)}
+	// Shared live provider catalogs (OpenRouter, HuggingFace): models for the agent form's
+	// typeahead AND pricing for code-review cost accounting. Fetched via the SSRF-safe
+	// netsafe client; cached in-process, per provider.
+	providerCatalogs := agents.NewProviderCatalogs(netsafe.NewClient(15 * time.Second))
 	{
 		var connVault *secrets.Vault
 		if len(cfg.ConnectorMasterKey) > 0 {
@@ -409,7 +409,7 @@ func main() {
 			// Same allowlist that boots the egress proxy above — Trigger validates the
 			// run's provider host against it up front (manyforge-0qj).
 			EgressAllow: netsafe.ParseHostAllowlist(cfg.SandboxEgressAllow),
-			Pricing:     orModels,
+			Pricing:     providerCatalogs,
 			// Kube mode's app pod is distroless (no git, no shell, read-only root FS):
 			// runJob must not clone host-side there — the KubeRunner clones in-cluster
 			// via its own init container instead. See CodeReviewService.ClonesInSandbox.
@@ -477,9 +477,9 @@ func main() {
 		agents.NewToolRegistry(ticketSvc, connGateway),
 		&agents.ModelCatalog{DB: database},
 	)
-	// Live per-provider model catalog (OpenRouter) for the agent form's typeahead.
-	// Fetched through the SSRF-safe netsafe client; cached in-process.
-	agentH.SetProviderModels(orModels)
+	// Live per-provider model catalogs (OpenRouter, HuggingFace) for the agent form's
+	// typeahead. Fetched through the SSRF-safe netsafe client; cached in-process.
+	agentH.SetProviderModels(providerCatalogs)
 
 	// SL-C event bus + transactional-outbox worker. Support-desk services
 	// (US1/US2) register their subscribers on eventBus before the worker starts,

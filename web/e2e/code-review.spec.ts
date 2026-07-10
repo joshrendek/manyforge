@@ -448,7 +448,7 @@ test('review setup: configure a per-dimension fallback chain (add, reorder, remo
 
   await page.getByTestId('row-fallback-add').click();
   await page.getByTestId('row-fallback-provider-1').selectOption('openrouter');
-  await expect(page.locator('#setup-openrouter-models option')).toHaveCount(1);
+  await expect(page.locator('#setup-models-openrouter option')).toHaveCount(1);
   await page.getByTestId('row-fallback-model-text-1').fill('deepseek-v4-pro');
 
   // Reorder: move the 2nd (openrouter) entry up → it becomes the primary fallback.

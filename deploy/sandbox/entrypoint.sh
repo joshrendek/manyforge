@@ -11,14 +11,17 @@
 #   LLM_API_KEY   — provider API key (forwarded only to the allowlisted LLM host)
 #   LLM_BASE_URL  — provider base URL. For openrouter/anthropic/openai this is used only
 #                   to derive the egress-allowlist host (opencode's built-in provider
-#                   already knows its endpoint). For vllm/ollama it IS the provider base —
-#                   passed straight through as the bundled openai-compatible provider's
-#                   options.baseURL (e.g. http://host:1234/v1).
-#   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro" or "claude-3-5-sonnet"
-#   LLM_PROVIDER  — opencode provider id: one of openrouter|anthropic|openai|vllm|ollama.
-#                   vllm/ollama are local OpenAI-compatible servers and map to a CUSTOM
-#                   opencode provider ("local", @ai-sdk/openai-compatible) below — NOT the
-#                   built-in openai provider, which speaks the Responses API.
+#                   already knows its endpoint). For vllm/ollama/huggingface it IS the
+#                   provider base — passed straight through as the bundled
+#                   openai-compatible provider's options.baseURL (e.g. http://host:1234/v1,
+#                   or https://router.huggingface.co/v1).
+#   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro", "claude-3-5-sonnet", or
+#                   "zai-org/GLM-5.2:fireworks-ai" (the HF router pins the partner with ":").
+#   LLM_PROVIDER  — one of openrouter|anthropic|openai|vllm|ollama|huggingface. The first
+#                   three use opencode's BUILT-IN SDK providers; the rest are OpenAI-compatible
+#                   endpoints with no built-in provider, and map to a CUSTOM opencode provider
+#                   ("local", @ai-sdk/openai-compatible) below — NOT the built-in openai
+#                   provider, which speaks the Responses API. See LLM_OPENCODE_MODE.
 set -eu
 
 mkdir -p /out
@@ -49,13 +52,24 @@ export OPENCODE_DISABLE_PRUNE=1
 cp -r /work /tmp/src
 cd /tmp/src
 
-# Provider gate: openrouter/anthropic/openai select the opencode built-in SDK (model
-# prefix + auth.json key). vllm/ollama are a local OpenAI-compatible server (LM
-# Studio, vLLM, Ollama) and route through the bundled @ai-sdk/openai-compatible
-# provider instead — see the LLM_LOCAL branch below.
+# Provider gate. LLM_OPENCODE_MODE selects WHICH OPENCODE MECHANISM serves the model, and
+# nothing else:
+#   builtin — opencode's built-in SDK provider (model prefix + auth.json key).
+#   compat  — the bundled @ai-sdk/openai-compatible provider, for any OpenAI-compatible
+#             /v1/chat/completions endpoint opencode has no built-in provider for.
+#
+# This deliberately does NOT encode network trust or model capability, which are separate
+# axes handled elsewhere (manyforge-bhx):
+#   trust      → the credential's allow_private_base_url flag (netsafe dial policy).
+#   capability → isConstrainedProvider() in internal/agents/coding/reviewpayload.go.
+# It used to be a single LLM_LOCAL=0|1 flag, which worked only while "uses the compat
+# provider" and "is a private on-host server serving a small model" happened to coincide.
+# huggingface broke that: opencode has no built-in provider for the HF router (its models.dev
+# catalog is disabled here), so it needs the compat mechanism — yet it is a public gateway
+# serving frontier-class models, so it is neither private nor constrained.
 case "${LLM_PROVIDER:-}" in
-  openrouter|anthropic|openai) LLM_LOCAL=0 ;;
-  vllm|ollama)                 LLM_LOCAL=1 ;;
+  openrouter|anthropic|openai)  LLM_OPENCODE_MODE=builtin ;;
+  vllm|ollama|huggingface)      LLM_OPENCODE_MODE=compat ;;
   *) echo "entrypoint: unsupported LLM_PROVIDER='${LLM_PROVIDER:-}'" >&2; exit 2 ;;
 esac
 
@@ -70,12 +84,17 @@ for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}"; do
   esac
 done
 
-if [ "$LLM_LOCAL" = 1 ]; then
-  # Local OpenAI-compatible server (vLLM/Ollama/LM Studio). Use the bundled
+if [ "$LLM_OPENCODE_MODE" = compat ]; then
+  # An OpenAI-compatible /v1/chat/completions server: vLLM/Ollama/LM Studio on-host, or the
+  # HuggingFace Inference Providers router over the public internet. Use the bundled
   # @ai-sdk/openai-compatible provider (Chat Completions) — NOT the built-in openai
-  # provider, which speaks the Responses API (/v1/responses) that local servers don't
+  # provider, which speaks the Responses API (/v1/responses) that these servers don't
   # serve. Verified: opencode loads this provider offline (no npm). LLM_BASE_URL is the
-  # server's OpenAI base (e.g. http://host:1234/v1). Provider id "local" must match auth.json.
+  # server's OpenAI base (e.g. http://host:1234/v1, or https://router.huggingface.co/v1).
+  #
+  # "local" here is OPENCODE'S provider id, not a claim about where the server runs; it must
+  # match the auth.json key and the MODEL prefix below. Renaming it would churn the
+  # manyforge-9er pin for no behavioral gain.
   MODEL="local/${LLM_MODEL}"
   mkdir -p "$XDG_DATA_HOME/opencode"
   printf '{"local":{"type":"api","key":"%s"}}\n' "$LLM_API_KEY" > "$XDG_DATA_HOME/opencode/auth.json"
@@ -83,6 +102,16 @@ if [ "$LLM_LOCAL" = 1 ]; then
   # same review model+key. Without it opencode defaults small_model to Claude Haiku and bills
   # a throwaway title call to this provider/key on every run (manyforge discards the title —
   # the check-run title is hardcoded). See manyforge-qxe.
+  # Output-token budget. 8192 is tuned for the on-host small models (Ollama/vLLM), some of
+  # which reject a max_tokens above their configured context. huggingface reaches the HF
+  # router, whose frontier models are the SAME reasoning models the built-in branch already
+  # budgets 32000 for: glm-5.2 burns ~9k reasoning tokens before it emits a character, so an
+  # 8192 cap truncates the findings JSON mid-answer and ParseFindings fails (manyforge-6h1).
+  # Do not collapse these two numbers — they are tuned for different classes of model.
+  case "$LLM_PROVIDER" in
+    huggingface) COMPAT_MAX_TOKENS=32000 ;;
+    *)           COMPAT_MAX_TOKENS=8192 ;;
+  esac
   export OPENCODE_CONFIG=/tmp/opencode.json
   printf '%s\n' '{
   "$schema": "https://opencode.ai/config.json",
@@ -93,7 +122,7 @@ if [ "$LLM_LOCAL" = 1 ]; then
       "npm": "@ai-sdk/openai-compatible",
       "name": "Local",
       "options": { "baseURL": "'"${LLM_BASE_URL}"'" },
-      "models": { "'"${LLM_MODEL}"'": { "options": { "max_tokens": 8192 } } }
+      "models": { "'"${LLM_MODEL}"'": { "options": { "max_tokens": '"${COMPAT_MAX_TOKENS}"' } } }
     }
   },
   "permission": {

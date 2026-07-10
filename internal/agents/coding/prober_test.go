@@ -56,6 +56,35 @@ func TestHTTPProber_AnthropicAssumedLive(t *testing.T) {
 	}
 }
 
+// TestHTTPProber_HuggingFaceIsProbed: unlike anthropic, the HF router serves GET /v1/models
+// publicly and fast, so huggingface takes the normal probe path — a 200 is live, a timeout or
+// non-2xx is not. Anthropic is the ONLY assume-live provider; keep it that way unless a
+// provider genuinely has no cheap probe.
+func TestHTTPProber_HuggingFaceIsProbed(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	p := httpProber{Timeout: time.Second}
+	if !p.Live(context.Background(), AICredential{Provider: "huggingface", BaseURL: srv.URL + "/v1", AllowPrivateBaseURL: true}) {
+		t.Fatal("huggingface answering 200 on /models must be live")
+	}
+	if gotPath != "/v1/models" {
+		t.Fatalf("probe path = %q, want /v1/models (a real network probe must have happened)", gotPath)
+	}
+
+	// A dead router endpoint reports not-live rather than being assumed up.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer dead.Close()
+	if p.Live(context.Background(), AICredential{Provider: "huggingface", BaseURL: dead.URL + "/v1", AllowPrivateBaseURL: true}) {
+		t.Fatal("huggingface returning 500 on /models must NOT be live")
+	}
+}
+
 // TestHTTPProber_PrivateBlockedWithoutFlag: a private LAN host is not live when the
 // credential lacks allow_private_base_url — netsafe refuses the dial (no SSRF regression),
 // so the probe fails closed regardless of whether the host is actually reachable.

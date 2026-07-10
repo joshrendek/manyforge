@@ -127,11 +127,20 @@ func TestKubeSandboxOpencodePermissionProfile(t *testing.T) {
 	if !strings.Contains(entry, `"websearch": "deny",`) {
 		t.Error("MF-KUBE-SANDBOX-21: opencode config must deny the websearch tool — pin broken, update this pin in the same change if the refactor is intentional")
 	}
-	if !strings.Contains(entry, "openrouter|anthropic|openai) LLM_LOCAL=0 ;;") {
-		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai|vllm|ollama allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
+	// MF-KUBE-SANDBOX-22: LLM_PROVIDER must be validated against a CLOSED allowlist, with every
+	// other value rejected before it can reach the config/auth.json interpolation below.
+	// Whitespace is collapsed first so column alignment in the case arms isn't load-bearing.
+	entryNorm := collapseSpaces(entry)
+	for _, arm := range []string{
+		"openrouter|anthropic|openai) LLM_OPENCODE_MODE=builtin ;;",
+		"vllm|ollama|huggingface) LLM_OPENCODE_MODE=compat ;;",
+	} {
+		if !strings.Contains(entryNorm, arm) {
+			t.Errorf("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the closed allowlist arm %q before use — pin broken, update this pin in the same change if the refactor is intentional", arm)
+		}
 	}
-	if !strings.Contains(entry, "vllm|ollama)                 LLM_LOCAL=1 ;;") {
-		t.Error("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the openrouter|anthropic|openai|vllm|ollama allowlist before use — pin broken, update this pin in the same change if the refactor is intentional")
+	if !strings.Contains(entryNorm, `*) echo "entrypoint: unsupported LLM_PROVIDER=`) || !strings.Contains(entryNorm, "exit 2 ;;") {
+		t.Error("MF-KUBE-SANDBOX-22: entrypoint must reject any LLM_PROVIDER outside the allowlist with exit 2 — an open default would let an unvalidated provider name reach auth.json")
 	}
 	// manyforge-9er: entrypoint.sh interpolates LLM_BASE_URL/LLM_MODEL/LLM_API_KEY
 	// into JSON string literals (and, for LLM_MODEL, a JSON object key) with no

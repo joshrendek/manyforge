@@ -1,0 +1,4 @@
+-- Reverse 0092. NOTE: PostgreSQL cannot remove a value from an enum type, so the
+-- 'huggingface' value added to ai_provider PERSISTS after this down-migration. That is
+-- acceptable and matches how every other enum addition in this schema is irreversible.
+-- Nothing references 'huggingface' once the credentials/agents using it are removed.

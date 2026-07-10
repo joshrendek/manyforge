@@ -74,8 +74,11 @@ var (
 		"security": true, "correctness": true, "performance": true,
 		"ui": true, "docs": true, "tests": true, "general": true,
 	}
+	// knownAIProviders gates a dimension's provider, each fallback_chain[].provider, and
+	// verify_provider. Mirrors agents.knownProviders / the ai_provider PG enum — keep in sync.
 	knownAIProviders = map[string]bool{
 		"anthropic": true, "openai": true, "ollama": true, "vllm": true, "openrouter": true,
+		"huggingface": true,
 	}
 	knownSeverities = map[string]bool{"info": true, "warning": true, "error": true}
 	knownPostModes  = map[string]bool{"single": true, "per_dimension": true}

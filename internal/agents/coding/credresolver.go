@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/manyforge/manyforge/internal/agents"
+	"github.com/manyforge/manyforge/internal/platform/ai"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
@@ -81,13 +82,17 @@ func (f *FakeCredResolver) ResolveProvider(_ context.Context, _, _ uuid.UUID, pr
 	return c, nil
 }
 
-// defaultBaseURLs mirrors the defaults in internal/platform/ai/factory.go so the egress
-// allowlist host is computed the same way as the provider factory. Providers NOT listed here
-// (openai, ollama, vllm) require a user-supplied base_url and will have a non-empty
-// ResolvedCredential.BaseURL already.
-var defaultBaseURLs = map[string]string{
-	"anthropic":  "https://api.anthropic.com",
-	"openrouter": "https://openrouter.ai/api/v1",
+// effectiveBaseURL resolves the endpoint a credential will actually dial: its stored value,
+// or the provider's default. It delegates to ai.DefaultBaseURL rather than keeping a local
+// copy of the defaults, so the egress allowlist host is computed from exactly the same table
+// the provider factory dials. Providers with no default (openai/ollama/vllm) always carry a
+// non-empty stored BaseURL — the service boundary rejects them otherwise.
+func effectiveBaseURL(provider, storedBaseURL string) string {
+	if storedBaseURL != "" {
+		return storedBaseURL
+	}
+	d, _ := ai.DefaultBaseURL(provider) // "" when the provider has no default
+	return d
 }
 
 // agentGetter is the minimal AgentService surface AgentCredResolver needs; satisfied
@@ -128,12 +133,7 @@ func (r *AgentCredResolver) Resolve(ctx context.Context, principalID, businessID
 		return AICredential{}, fmt.Errorf("coding: agent %q has no api key configured: %w", agentID, errs.ErrValidation)
 	}
 
-	// Compute the effective base URL: use the credential's stored value when present;
-	// fall back to the same defaults the ai.New factory uses (anthropic / openrouter).
-	baseURL := rc.BaseURL
-	if baseURL == "" {
-		baseURL = defaultBaseURLs[ag.Provider] // "" for providers that require user-supplied base_url
-	}
+	baseURL := effectiveBaseURL(ag.Provider, rc.BaseURL)
 
 	// The review model comes from the AGENT's configured model (what the user set on
 	// the code-review agent); the credential supplies the key + base_url, with its
@@ -165,10 +165,7 @@ func (r *AgentCredResolver) ResolveProvider(ctx context.Context, principalID, bu
 	if rc.APIKey == "" {
 		return AICredential{}, fmt.Errorf("coding: provider %q has no api key configured: %w", provider, errs.ErrValidation)
 	}
-	baseURL := rc.BaseURL
-	if baseURL == "" {
-		baseURL = defaultBaseURLs[provider]
-	}
+	baseURL := effectiveBaseURL(provider, rc.BaseURL)
 	m := model
 	if m == "" {
 		m = rc.Model

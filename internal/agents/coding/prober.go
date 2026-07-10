@@ -29,7 +29,8 @@ type httpProber struct{ Timeout time.Duration }
 // outbound path (no SSRF regression). Anthropic has no cheap unauthenticated probe
 // endpoint, so it is assumed live and covered reactively by the worker retry. Any
 // transport error (connection refused, DNS failure, blocked private IP, timeout) or
-// non-2xx status ⇒ not live.
+// non-2xx status ⇒ not live. huggingface IS probed: the router serves GET /v1/models
+// publicly and fast.
 func (p httpProber) Live(ctx context.Context, cred AICredential) bool {
 	if strings.EqualFold(cred.Provider, "anthropic") {
 		return true
