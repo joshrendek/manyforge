@@ -190,14 +190,22 @@ export class AgentFormComponent implements OnInit {
   // loadProviderModelsFor fetches the selected provider's live model catalog into
   // providerModels for the typeahead; clears it for providers that have none. A fetch error
   // also clears it, so the field degrades to plain free-text rather than showing a stale list.
+  //
+  // Responses are discarded unless the provider is STILL the one that asked for them: switching
+  // openrouter → huggingface while the first request is in flight would otherwise let the older,
+  // slower response land last and populate the typeahead with the wrong provider's models.
   private loadProviderModelsFor(p: AIProvider): void {
     if (!LIVE_CATALOG_PROVIDERS.includes(p)) {
       this.providerModels.set([]);
       return;
     }
     this.api.providerModels(this.businessId, p).subscribe({
-      next: (r) => this.providerModels.set(r.items ?? []),
-      error: () => this.providerModels.set([]),
+      next: (r) => {
+        if (this.provider() === p) this.providerModels.set(r.items ?? []);
+      },
+      error: () => {
+        if (this.provider() === p) this.providerModels.set([]);
+      },
     });
   }
 

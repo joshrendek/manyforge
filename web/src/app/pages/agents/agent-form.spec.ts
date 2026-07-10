@@ -128,6 +128,23 @@ describe('AgentFormComponent', () => {
     expect((opts[0] as HTMLOptionElement).value).toBe('zai-org/GLM-5.2:fireworks-ai');
   });
 
+  // Switching providers while a catalog request is in flight must not let the older, slower
+  // response land last and populate the typeahead with the wrong provider's models.
+  it('discards a stale catalog response after the provider changed', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('openrouter');
+    const openrouterReq = http.expectOne('/api/v1/businesses/b1/agents/provider-models/openrouter');
+
+    c.onProviderChange('huggingface');
+    const hfReq = http.expectOne('/api/v1/businesses/b1/agents/provider-models/huggingface');
+    hfReq.flush({ items: [{ provider: 'huggingface', model_id: 'zai-org/GLM-5.2:fireworks-ai' }] });
+
+    // The openrouter response arrives late — it must be ignored.
+    openrouterReq.flush({ items: [{ provider: 'openrouter', model_id: 'openai/gpt-4o' }] });
+
+    expect(c.providerModels().map((m) => m.model_id)).toEqual(['zai-org/GLM-5.2:fireworks-ai']);
+  });
+
   // Providers with no live catalog must not fetch one; the field stays plain free-text.
   it('does not fetch a catalog for providers that have none', () => {
     const c = fixture.componentInstance;

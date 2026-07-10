@@ -15,8 +15,6 @@ const PREFILLED_BASE_URLS: Partial<Record<AIProvider, string>> = {
 // Mirrors validate() in internal/agents/credential.go — keep them in sync.
 const BASE_URL_DEFAULTED: readonly AIProvider[] = ['anthropic', 'openrouter', 'huggingface'];
 
-const BASE_URL_PLACEHOLDER_DEFAULT = 'https://… (openai-compatible / self-host only)';
-
 // AI credential create form. Standalone, template-driven. The API key is write-only
 // (type=password, never prefilled). base_url + allow_private_base_url are ALWAYS visible
 // with helper text (design decision: not conditional on provider) so an operator can point
@@ -57,8 +55,12 @@ const BASE_URL_PLACEHOLDER_DEFAULT = 'https://… (openai-compatible / self-host
           <span class="mf-hint">({{ baseUrlRequired() ? 'required' : 'optional' }})</span>
         </label>
         <input id="cred-base-url" class="mf-input" type="text" data-testid="cred-base-url"
-               name="base_url" [(ngModel)]="baseUrl" placeholder="https://… (openai-compatible / self-host only)" [disabled]="submitting()" />
-        <small class="mf-hint">Prefilled for OpenRouter and HuggingFace; defaulted server-side for Anthropic. Required for OpenAI-compatible or self-hosted (OpenAI/Ollama/vLLM) endpoints.</small>
+               name="base_url" [(ngModel)]="baseUrl" placeholder="https://… (openai-compatible / self-host only)"
+               [disabled]="submitting()"
+               [required]="baseUrlRequired()"
+               [attr.aria-required]="baseUrlRequired() ? 'true' : null"
+               aria-describedby="cred-base-url-hint" />
+        <small id="cred-base-url-hint" class="mf-hint">Prefilled for OpenRouter and HuggingFace; defaulted server-side for Anthropic. Required for OpenAI-compatible or self-hosted (OpenAI/Ollama/vLLM) endpoints.</small>
       </div>
 
       <label class="mf-field" data-testid="cred-allow-private-wrap"

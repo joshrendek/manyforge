@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,11 +41,13 @@ const hfCatalogFixture = `{
   ]
 }`
 
-func newHFTestServer(t *testing.T, body string) (*HuggingFaceModels, *int) {
+// hits is atomic: net/http serves each request on its own goroutine, so a plain int would race
+// the moment a test drives concurrent callers (and -race would fail it).
+func newHFTestServer(t *testing.T, body string) (*HuggingFaceModels, *atomic.Int64) {
 	t.Helper()
-	var hits int
+	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
+		hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}))
@@ -168,8 +172,8 @@ func TestHuggingFaceModels_IgnoresOtherProviders(t *testing.T) {
 	if err != nil || c != 0 {
 		t.Errorf("CostCents(openrouter) = (%d, %v), want (0, nil)", c, err)
 	}
-	if *hits != 0 {
-		t.Errorf("made %d HTTP calls for a provider it does not own, want 0", *hits)
+	if hits.Load() != 0 {
+		t.Errorf("made %d HTTP calls for a provider it does not own, want 0", hits.Load())
 	}
 }
 
@@ -185,8 +189,66 @@ func TestHuggingFaceModels_CachesWithinTTL(t *testing.T) {
 	if _, err := h.CostCents(ctx, "huggingface", "zai-org/GLM-5.2:fireworks-ai", 1, 1); err != nil {
 		t.Fatalf("CostCents: %v", err)
 	}
-	if *hits != 1 {
-		t.Errorf("fetched %d times, want 1 (cached within TTL)", *hits)
+	if hits.Load() != 1 {
+		t.Errorf("fetched %d times, want 1 (cached within TTL)", hits.Load())
+	}
+}
+
+// Every review lane calls CostCents. If the cache refresh held the mutex across its HTTP fetch,
+// a slow catalog would serialize all of them behind one request. Prove the fetch runs unlocked:
+// with a deliberately slow server, N concurrent callers must all return well before N*latency.
+// Run under -race, which also guards the cache publish. See manyforge-bhx / PR #31 review.
+func TestHuggingFaceModels_ConcurrentCallersDoNotSerializeOnTheFetch(t *testing.T) {
+	const latency = 150 * time.Millisecond
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		time.Sleep(latency)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(hfCatalogFixture))
+	}))
+	defer srv.Close()
+	h := &HuggingFaceModels{HTTP: srv.Client(), URL: srv.URL, TTL: time.Hour}
+
+	const callers = 8
+	start := time.Now()
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := range callers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			var err error
+			if i%2 == 0 {
+				_, err = h.ProviderModels(context.Background(), "huggingface")
+			} else {
+				_, err = h.CostCents(context.Background(), "huggingface", "zai-org/GLM-5.2:fireworks-ai", 1, 1)
+			}
+			if err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent caller: %v", err)
+	}
+
+	// Serialized behind the lock, 8 callers would take >= 8*latency. Unlocked, they overlap and
+	// finish in roughly one latency. Allow generous slack for CI scheduling.
+	if elapsed := time.Since(start); elapsed > 4*latency {
+		t.Errorf("8 concurrent callers took %v (> %v) — the fetch appears to hold the mutex", elapsed, 4*latency)
+	}
+	// Duplicate in-flight fetches are acceptable and bounded; a cached-forever result is not.
+	if n := hits.Load(); n < 1 || n > callers {
+		t.Errorf("fetched %d times, want between 1 and %d", n, callers)
+	}
+	if _, err := h.ProviderModels(context.Background(), "huggingface"); err != nil {
+		t.Fatalf("post-warm read: %v", err)
+	}
+	if n := hits.Load(); n > callers {
+		t.Errorf("a warm cache refetched: %d hits", n)
 	}
 }
 

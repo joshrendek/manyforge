@@ -63,11 +63,11 @@ func (h *HuggingFaceModels) ProviderModels(ctx context.Context, provider string)
 	if provider != "huggingface" {
 		return nil, nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.load(ctx); err != nil {
+	if err := h.ensure(ctx); err != nil {
 		return nil, err
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.cache, nil
 }
 
@@ -79,12 +79,12 @@ func (h *HuggingFaceModels) CostCents(ctx context.Context, provider, model strin
 	if provider != "huggingface" {
 		return 0, nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.load(ctx); err != nil {
+	if err := h.ensure(ctx); err != nil {
 		return 0, err
 	}
+	h.mu.Lock()
 	p, ok := h.prices[model]
+	h.mu.Unlock()
 	if !ok {
 		return 0, nil // bare id (partner unpinned) or an unknown slug: unpriceable, not an error
 	}
@@ -109,30 +109,49 @@ type hfCatalogDoc struct {
 	} `json:"data"`
 }
 
-// load fetches and caches the catalog. Caller MUST hold h.mu. No-op within the TTL.
-func (h *HuggingFaceModels) load(ctx context.Context) error {
-	if h.cache != nil && time.Since(h.fetchedAt) < h.ttl() {
+// ensure refreshes the cache if it is empty or past its TTL. The lock is held only to read the
+// cache and to publish the result — NEVER across the blocking HTTP fetch, which would serialize
+// every concurrent review lane behind one refresh (each lane calls CostCents). Two callers that
+// both find the cache stale may both fetch; that is a bounded, once-an-hour duplicate request,
+// and far cheaper than making cost accounting a global mutex on network latency.
+func (h *HuggingFaceModels) ensure(ctx context.Context) error {
+	h.mu.Lock()
+	fresh := h.cache != nil && time.Since(h.fetchedAt) < h.ttl()
+	h.mu.Unlock()
+	if fresh {
 		return nil
 	}
+	models, prices, err := h.fetch(ctx)
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.cache, h.prices, h.fetchedAt = models, prices, time.Now()
+	h.mu.Unlock()
+	return nil
+}
+
+// fetch pulls and parses the catalog. It touches no shared state, so it runs unlocked.
+func (h *HuggingFaceModels) fetch(ctx context.Context) ([]ModelInfo, map[string]hfPrice, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.url(), nil)
 	if err != nil {
-		return fmt.Errorf("huggingface models: build request: %w", err)
+		return nil, nil, fmt.Errorf("huggingface models: build request: %w", err)
 	}
 	resp, err := h.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("huggingface models: fetch: %w", err)
+		return nil, nil, fmt.Errorf("huggingface models: fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("huggingface models: upstream status %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("huggingface models: upstream status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20)) // cap at 8MiB
 	if err != nil {
-		return fmt.Errorf("huggingface models: read body: %w", err)
+		return nil, nil, fmt.Errorf("huggingface models: read body: %w", err)
 	}
 	var doc hfCatalogDoc
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return fmt.Errorf("huggingface models: parse: %w", err)
+		return nil, nil, fmt.Errorf("huggingface models: parse: %w", err)
 	}
 
 	out := make([]ModelInfo, 0, len(doc.Data))
@@ -163,8 +182,5 @@ func (h *HuggingFaceModels) load(ctx context.Context) error {
 			}
 		}
 	}
-	h.cache = out
-	h.prices = prices
-	h.fetchedAt = time.Now()
-	return nil
+	return out, prices, nil
 }

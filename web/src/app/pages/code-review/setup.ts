@@ -603,7 +603,12 @@ export class CodeReviewSetupComponent implements OnInit {
     this.loadedCatalogs.add(provider);
     this.agentsApi.providerModels(bid, provider).subscribe({
       next: (r) => this.catalogModels.set({ ...this.catalogModels(), [provider]: r.items ?? [] }),
-      error: () => this.catalogModels.set({ ...this.catalogModels(), [provider]: [] }),
+      error: () => {
+        // Release the marker so selecting this provider again retries. Keeping it would make a
+        // single transient 5xx disable the typeahead for the rest of the page's life.
+        this.loadedCatalogs.delete(provider);
+        this.catalogModels.set({ ...this.catalogModels(), [provider]: [] });
+      },
     });
   }
 

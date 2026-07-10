@@ -119,6 +119,24 @@ describe('CredentialFormComponent', () => {
     expect(c.baseUrl).toBe('https://my-gateway.internal/v1');
   });
 
+  // "(required)" in the label is a visual cue only. Screen readers need the required state on the
+  // control itself, and the hint has to be associated with it rather than floating nearby.
+  it('exposes the base URL required state and hint to assistive tech', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('vllm');
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const input = el.querySelector('[data-testid="cred-base-url"]') as HTMLInputElement;
+    expect(input.getAttribute('aria-required')).toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBe('cred-base-url-hint');
+    expect(el.querySelector('#cred-base-url-hint')).not.toBeNull();
+
+    // A defaulted provider must not claim to be required.
+    c.onProviderChange('huggingface');
+    fixture.detectChanges();
+    expect(input.getAttribute('aria-required')).toBeNull();
+  });
+
   // Only providers ai.DefaultBaseURL knows about may omit base_url.
   it('requires a base URL exactly for the providers with no server-side default', () => {
     const c = fixture.componentInstance;
