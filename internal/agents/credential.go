@@ -35,6 +35,7 @@ var knownProviders = map[string]bool{
 	string(dbgen.AiProviderVllm):        true,
 	string(dbgen.AiProviderOpenrouter):  true,
 	string(dbgen.AiProviderHuggingface): true,
+	string(dbgen.AiProviderOpenaiCodex): true,
 }
 
 // credentialDB is the minimal DB surface this service needs — satisfied by the

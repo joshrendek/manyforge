@@ -1,0 +1,3 @@
+-- Reverse 0093. PostgreSQL cannot remove a value from an enum type, so 'openai_codex'
+-- PERSISTS after this down-migration. That matches every other enum addition in this schema
+-- and is acceptable — nothing references it once its credentials are removed.

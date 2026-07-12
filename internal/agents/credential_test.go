@@ -72,7 +72,7 @@ func TestKnownProvidersTrackEnum(t *testing.T) {
 // with a new constant, which must be appended here — the compiler cannot enumerate them.
 var dbgenAiProviders = []dbgen.AiProvider{
 	dbgen.AiProviderAnthropic, dbgen.AiProviderOpenai, dbgen.AiProviderOllama, dbgen.AiProviderVllm,
-	dbgen.AiProviderOpenrouter, dbgen.AiProviderHuggingface,
+	dbgen.AiProviderOpenrouter, dbgen.AiProviderHuggingface, dbgen.AiProviderOpenaiCodex,
 }
 
 func newTestSealer(t *testing.T) *crypto.Sealer {
