@@ -29,6 +29,9 @@ type AICredential struct {
 	// dimension lanes may run at once when THIS bot drives the review). 0 ⇒ the caller
 	// applies defaultConcurrentLanes. Not a secret.
 	MaxConcurrentLanes int
+	// ChatGPTAccountID is the ChatGPT-Account-Id header value for openai_codex credentials
+	// (non-secret). "" for every other provider. Injected as LLM_CHATGPT_ACCOUNT_ID.
+	ChatGPTAccountID string
 }
 
 // Host returns the bare hostname of BaseURL for use in the sandbox egress allowlist.
@@ -151,6 +154,7 @@ func (r *AgentCredResolver) Resolve(ctx context.Context, principalID, businessID
 		Provider:            ag.Provider,
 		AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
 		MaxConcurrentLanes:  rc.MaxConcurrentLanes,
+		ChatGPTAccountID:    rc.ChatGPTAccountID,
 	}, nil
 }
 
@@ -177,5 +181,6 @@ func (r *AgentCredResolver) ResolveProvider(ctx context.Context, principalID, bu
 		Provider:            provider,
 		AllowPrivateBaseURL: rc.AllowPrivateBaseURL,
 		MaxConcurrentLanes:  rc.MaxConcurrentLanes,
+		ChatGPTAccountID:    rc.ChatGPTAccountID,
 	}, nil
 }
