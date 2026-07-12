@@ -119,6 +119,10 @@ func assertNoKeyField(t *testing.T, v CredentialView) {
 	allowed := map[string]bool{
 		"ID": true, "BusinessID": true, "Provider": true, "BaseURL": true,
 		"DefaultModel": true, "AllowPrivateBaseURL": true, "CreatedAt": true, "UpdatedAt": true,
+		// ChatGPTAccountID is the openai_codex account id — a non-secret identifier, NOT
+		// the OAuth access token (that stays sealed in sealed_key_ref and is never on this
+		// view). Safe to allowlist here; see CreateCredentialInput.ChatGPTAccountID.
+		"ChatGPTAccountID": true,
 	}
 	rt := reflect.TypeOf(v)
 	for i := 0; i < rt.NumField(); i++ {

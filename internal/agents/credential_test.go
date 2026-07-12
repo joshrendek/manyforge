@@ -205,3 +205,24 @@ func TestValidateOpenRouterBaseURLOptional(t *testing.T) {
 		t.Fatal("openai with empty base_url must still be rejected")
 	}
 }
+
+// TestOpenAICodexRequiresAccountID pins the extra invariant on the ChatGPT-subscription
+// provider: the sealed_key_ref alone (the OAuth access token) isn't enough to call the
+// codex backend — the account id is a required, non-secret companion value. validate()
+// touches no DB/sealer fields, so a zero-value CredentialService is enough (mirrors
+// TestValidateInput/TestValidateBaseURL above).
+func TestOpenAICodexRequiresAccountID(t *testing.T) {
+	s := &CredentialService{}
+	err := s.validate(CreateCredentialInput{
+		Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("openai_codex without chatgpt_account_id: err = %v; want ErrValidation", err)
+	}
+	if err := s.validate(CreateCredentialInput{
+		Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+		ChatGPTAccountID: "acct-abc-123",
+	}); err != nil {
+		t.Fatalf("openai_codex with chatgpt_account_id should validate, got %v", err)
+	}
+}

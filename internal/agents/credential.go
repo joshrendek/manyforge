@@ -59,6 +59,9 @@ type CreateCredentialInput struct {
 	DefaultModel        string
 	AllowPrivateBaseURL bool // self-host opt-in: permit a loopback/RFC1918 base_url
 	MaxConcurrentLanes  int  // 0 ⇒ default 4; review-lane cap for this endpoint (1–16)
+	// ChatGPTAccountID is the ChatGPT-Account-Id header value for openai_codex credentials
+	// (non-secret). Required when Provider == "openai_codex"; ignored otherwise.
+	ChatGPTAccountID string
 }
 
 // credLanes clamps the endpoint concurrency cap into the DB's [1,16] (0/unset ⇒ 4), so a
@@ -86,6 +89,7 @@ type ResolvedCredential struct {
 	// MaxConcurrentLanes caps how many code-review lanes may hit THIS endpoint at once
 	// (a credential is one provider+base_url); the review fan-out serializes per endpoint.
 	MaxConcurrentLanes int
+	ChatGPTAccountID   string // openai_codex only; "" for other providers
 }
 
 // CredentialView is the safe, key-free projection of a stored credential for
@@ -100,6 +104,7 @@ type CredentialView struct {
 	AllowPrivateBaseURL bool
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	ChatGPTAccountID    string // openai_codex only; "" for other providers; non-secret
 }
 
 // credViewFromRow projects a dbgen row into a key-free CredentialView,
@@ -108,6 +113,10 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 	base := ""
 	if row.BaseUrl != nil {
 		base = *row.BaseUrl
+	}
+	acct := ""
+	if row.ChatgptAccountID != nil {
+		acct = *row.ChatgptAccountID
 	}
 	return CredentialView{
 		ID:                  row.ID,
@@ -118,6 +127,7 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
+		ChatGPTAccountID:    acct,
 	}
 }
 
@@ -131,6 +141,7 @@ type storedCredential struct {
 	DefaultModel        string
 	AllowPrivateBaseURL bool
 	MaxConcurrentLanes  int32
+	ChatGPTAccountID    *string
 }
 
 func (s *CredentialService) validate(in CreateCredentialInput) error {
@@ -150,6 +161,13 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 		if err := validateBaseURL(in.BaseURL, in.AllowPrivateBaseURL); err != nil {
 			return err
 		}
+	}
+	// The ChatGPT-subscription provider authenticates with an OAuth access token (sealed
+	// in sealed_key_ref like any other key) PLUS a non-secret account id the codex backend
+	// requires on every call — without it Resolve would hand the gateway a credential it
+	// cannot actually use.
+	if in.Provider == string(dbgen.AiProviderOpenaiCodex) && in.ChatGPTAccountID == "" {
+		return fmt.Errorf("openai_codex credential requires chatgpt_account_id: %w", errs.ErrValidation)
 	}
 	return nil
 }
@@ -196,6 +214,9 @@ func (s *CredentialService) resolveRow(row storedCredential) (ResolvedCredential
 	}
 	out.AllowPrivateBaseURL = row.AllowPrivateBaseURL
 	out.MaxConcurrentLanes = int(row.MaxConcurrentLanes)
+	if row.ChatGPTAccountID != nil {
+		out.ChatGPTAccountID = *row.ChatGPTAccountID
+	}
 	if row.SealedKeyRef != nil && *row.SealedKeyRef != "" {
 		// A sealed key with a nil Sealer (master key unset since the row was written)
 		// → clean validation error, never a nil-pointer panic on Open.
@@ -229,6 +250,10 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 	if in.BaseURL != "" {
 		baseArg = &in.BaseURL
 	}
+	var acctArg *string
+	if in.ChatGPTAccountID != "" {
+		acctArg = &in.ChatGPTAccountID
+	}
 	var row dbgen.AiProviderCredential
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		r, qerr := dbgen.New(tx).InsertAIProviderCredential(ctx, dbgen.InsertAIProviderCredentialParams{
@@ -240,6 +265,7 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 			DefaultModel:        in.DefaultModel,
 			AllowPrivateBaseUrl: in.AllowPrivateBaseURL,
 			MaxConcurrentLanes:  credLanes(in.MaxConcurrentLanes),
+			ChatgptAccountID:    acctArg,
 		})
 		if qerr != nil {
 			return qerr
@@ -328,6 +354,7 @@ func (s *CredentialService) Resolve(ctx context.Context, principalID, businessID
 		BaseURL: row.BaseUrl, DefaultModel: row.DefaultModel,
 		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
 		MaxConcurrentLanes:  row.MaxConcurrentLanes,
+		ChatGPTAccountID:    row.ChatgptAccountID,
 	})
 }
 
