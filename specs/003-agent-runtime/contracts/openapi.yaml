@@ -511,7 +511,7 @@ components:
         business_id: { type: string, format: uuid }
         principal_id: { type: string, format: uuid }
         name: { type: string }
-        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface] }
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface, openai_codex] }
         model: { type: string }
         system_prompt: { type: string }
         allowed_tools: { type: array, items: { type: string } }
@@ -574,7 +574,7 @@ components:
       required: [name, provider, model]
       properties:
         name: { type: string, minLength: 1 }
-        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface] }
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface, openai_codex] }
         model: { type: string, minLength: 1 }
         system_prompt: { type: string }
         allowed_tools: { type: array, items: { type: string } }
@@ -753,7 +753,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         business_id: { type: string, format: uuid }
-        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface] }
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface, openai_codex] }
         base_url: { type: string }
         default_model: { type: string }
         allow_private_base_url: { type: boolean }
@@ -764,7 +764,7 @@ components:
       type: object
       required: [provider, api_key, default_model]
       properties:
-        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface] }
+        provider: { type: string, enum: [anthropic, openai, ollama, vllm, openrouter, huggingface, openai_codex] }
         api_key:
           type: string
           writeOnly: true
@@ -784,3 +784,6 @@ components:
           description: >-
             How many code-review lanes may hit this endpoint at once. A single-GPU
             self-host sets this to 1; cloud is fine at 4.
+        chatgpt_account_id:
+          type: string
+          description: ChatGPT-Account-Id for an openai_codex credential (required when provider is openai_codex).
