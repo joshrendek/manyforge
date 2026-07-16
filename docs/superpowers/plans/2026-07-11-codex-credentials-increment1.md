@@ -516,17 +516,25 @@ git commit -m "feat(codex): inject LLM_CHATGPT_ACCOUNT_ID into the review sandbo
 
 ---
 
-### Task 5: Add the `openai_codex` arm to the sandbox entrypoint (transcribe the spike-validated config)
+### Task 5: Add the `openai_codex` arm to the sandbox entrypoint
 
-> **Precondition:** Task 0 passed with Approach A. If Task 0 selected Approach B, re-plan this task for the baked-in plugin before proceeding.
+> **⚠️ REVISED 2026-07-16 after the Phase 0 spike — the code below (api-key + custom baseURL/headers)
+> is SUPERSEDED and DOES NOT WORK** (it made opencode send `store:true` → the ChatGPT backend 400s,
+> and the config-only approach hangs). The spike proved **Approach A′**: opencode's built-in `openai`
+> provider has NATIVE codex support — feed it a `type:"oauth"` auth entry and it targets the codex
+> endpoint and sets `store:false` + `ChatGPT-Account-Id` + `originator:opencode` itself. **The
+> authoritative task spec is the brief at `.superpowers/sdd/task-5-brief.md` and design §15a**; the
+> superseded api-key code below is retained only for history. Do NOT implement it as written.
 
 **Files:**
-- Modify: `deploy/sandbox/entrypoint.sh` (provider gate + a new config arm; extend the metacharacter guard)
-- Test: `deploy/sandbox/entrypoint_openai_codex_test.sh` (a small POSIX-sh test that runs the config-writing portion and asserts the emitted JSON) OR a Go source-pin test under `internal/security_regression/` if the repo prefers (see Step 4).
+- Modify: `deploy/sandbox/entrypoint.sh` (add the `openai_codex → codex` mode arm + a `codex` config branch writing the oauth `auth.json`; add `LLM_CHATGPT_ACCOUNT_ID` to the metacharacter guard).
+- Modify: `internal/security_regression/mf_kube_sandbox_test.go` (update the MF-KUBE-SANDBOX-22 allowlist pin to include the new arm; add source-level pins for the codex branch — matches the repo's "read entrypoint.sh + strings.Contains" test convention, hermetic, no Docker/egress).
 
 **Interfaces:**
-- Consumes: env `LLM_PROVIDER=openai_codex`, `LLM_API_KEY` (access token), `LLM_BASE_URL` (`https://chatgpt.com/backend-api/codex`), `LLM_MODEL` (e.g. `gpt-5`), `LLM_CHATGPT_ACCOUNT_ID`.
-- Produces: opencode `auth.json` `{"openai":{"type":"api","key":"<access_token>"}}` and an `OPENCODE_CONFIG` pointing the built-in `openai` provider at the ChatGPT backend with the impersonation headers; `MODEL=openai/<slug>`.
+- Consumes: env `LLM_PROVIDER=openai_codex`, `LLM_API_KEY` (OAuth **access token**), `LLM_MODEL` (`gpt-5.5`), `LLM_CHATGPT_ACCOUNT_ID`.
+- Produces: opencode `auth.json` `{"openai":{"type":"oauth","access":"<access_token>","refresh":"unused-host-side-only","expires":<far-future ms>,"accountId":"<account_id>"}}`; `OPENCODE_CONFIG` declaring `model:"openai/<slug>"` with NO baseURL/headers override; `MODEL=openai/<slug>`.
+
+**➡️ Implement from `.superpowers/sdd/task-5-brief.md`. The steps/code below are the superseded api-key version — ignore.**
 
 - [ ] **Step 1: Extend the provider gate.** In the `case "${LLM_PROVIDER:-}" in` block, add `openai_codex` as its own mode (it uses the built-in `openai` provider but with custom base URL + headers, so it is neither the plain `builtin` nor `compat` arm):
 

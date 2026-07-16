@@ -224,12 +224,70 @@ header-carrying sandbox config; secret-scan coverage of the new token columns.
    integration isolated behind the provider enum so it can be disabled without touching the
    api-key providers.
 
-## 15. Open items to resolve during the spike
+## 15. Spike outcome (2026-07-15/16) — credential path PROVEN; Approach A needs work
 
-- Does opencode's built-in `openai` provider forward `options.headers` and `options.baseURL`
-  to the AI SDK request? (A vs B.)
-- Exact required `User-Agent`/client-version string and whether a stale version 403s.
-- What opencode's session DB reports for cost/tokens on the ChatGPT backend.
+**The ChatGPT-subscription path is validated end-to-end via direct `curl`** (using the real
+`~/.codex/auth.json` access token on codex-cli 0.141.0):
+
+- **Endpoint:** `POST https://chatgpt.com/backend-api/codex/responses` (Responses wire).
+- **Auth/headers accepted:** `Authorization: Bearer <access_token>`, `ChatGPT-Account-Id: <account_id>`,
+  `originator: codex_exec`, `User-Agent: codex_exec/0.141.0`. No 401/403 — reaches OpenAI backend
+  (`x-oai-request-id`, `x-openai-proxy-wasm`), ~1s, not Cloudflare-blocked.
+- **Required body params (discovered iteratively via 400s):** `store: false` (400 "Store must be
+  set to false" otherwise), `stream: true` (400 "Stream must be set to true" otherwise),
+  `input: [ {role,content}, … ]` (400 "Input must be a list" otherwise), `model: gpt-5.5`.
+- **Result:** HTTP 200 + a proper SSE Responses stream; gpt-5.5 returned the expected answer.
+  Note responses carry `reasoning` items with `encrypted_content` before the message.
+
+**Why the config-only Approach A stalled:** opencode's generic built-in `openai` provider does NOT
+emit `store:false` (Responses default is `store:true`), so the ChatGPT backend 400s it — the
+original opencode run hung/failed for this reason, not an auth/endpoint problem. So Approach A as
+written (just point `provider.openai.options.baseURL` at the backend) is INSUFFICIENT: opencode
+must be made to send the codex-specific body contract (`store:false` + `stream:true` + list input).
+
+**Revised A/B decision — the remaining fork:** getting opencode to speak that exact contract.
+Candidate paths: (A′) opencode's OWN built-in codex/ChatGPT-OAuth support, if present in the pinned
+sst/opencode 1.17.11 build — feed it an oauth-shaped `auth.json` and let its codex path set
+store/stream/headers itself (cleanest if it exists/works); (A″) force the params via opencode
+config passthrough (`provider.openai…options`), if opencode surfaces `store`/`stream` — uncertain;
+(B) a tiny in-sandbox adapter that accepts opencode's standard OpenAI/Responses calls and rewrites
+to the codex contract (adds `store:false`, headers) before forwarding to `chatgpt.com` — robust,
+more work. To be decided next.
+
+**Operational notes for the eventual Task 5 / entrypoint arm & the local spike harness:**
+- Real `originator` is `codex_exec` (not `codex_cli_rs`); UA `codex_exec/0.141.0`. Model is `gpt-5.5`.
+- Local spike gotchas (macOS): build the sandbox image for the host arch
+  (`docker build --platform linux/arm64 --build-arg TARGETARCH=arm64 -f deploy/sandbox/Dockerfile -t … .`
+  — context = REPO ROOT, not `deploy/sandbox`); Docker Desktop won't bind-mount `/private/tmp`
+  (mount from `~/.cache`); run the ad-hoc container `--user 0:0`. ALWAYS wrap opencode runs in a
+  hard timeout — an unbounded run hung silently for ~5.7h.
+- Still open: what opencode's session DB reports for cost/tokens on this backend (deferred until
+  opencode actually completes a review here).
+
+### 15a. Approach decision — A′ (opencode's native codex path) is the winner
+
+opencode's built-in `openai` provider (sst/opencode 1.17.11) HAS native ChatGPT/codex support,
+verified by disassembling the binary: when the `auth.json` entry is `type:"oauth"` it targets
+`https://chatgpt.com/backend-api/codex/responses`, sets `store:false`, `ChatGPT-Account-Id` (from
+`accountId`), `originator:"opencode"`, and a `User-Agent`/`session-id`. The backend ACCEPTS
+`originator:opencode` (curl-confirmed HTTP 200). So **Approach A works via opencode's own codex
+path — no adapter (B) needed.** The required config:
+
+- `auth.json`: `{"openai":{"type":"oauth","access":"<access_token>","refresh":"<dummy-host-side-only>","expires":<future_ms>,"accountId":"<account_id>"}}`.
+  A far-future `expires` + dummy `refresh` makes opencode use `.access` directly and never refresh
+  → the real refresh token stays host-side (the design's security posture holds).
+- `opencode.json`: `model:"openai/gpt-5.5"`, declare the model under `provider.openai.models`,
+  read-only permission block. Do NOT set a custom `baseURL`/headers — opencode's oauth path does it.
+
+**Local end-to-end run is BLOCKED by a dev-host infra issue, not the epic:** the Colima VM has no
+HTTPS egress (DNS resolves, TCP :443 times out to *every* external host incl. neutral ones, on both
+bridge and `--network host`, no proxy set) — so opencode loops on `ProviderHeaderTimeoutError` and
+the raw request from inside the container times out. Host `curl` works fine. This matches the fact
+that the manyforge sandbox routes egress through a CONNECT proxy in prod. **Conclusion: Approach A
+is validated at every epic-relevant layer; the only unrun step (in-container opencode review) is
+gated on fixing Colima egress or running in the real sandbox runtime.** Task 5 can proceed as: host
+mints a fresh access token → entrypoint writes the oauth `auth.json` above → opencode's native codex
+path handles the rest.
 
 ## 16. References
 
