@@ -108,7 +108,7 @@ type CredentialView struct {
 }
 
 // credViewFromRow projects a dbgen row into a key-free CredentialView,
-// dereferencing the nullable base_url to "" when absent.
+// dereferencing the nullable base_url and chatgpt_account_id to "" when absent.
 func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 	base := ""
 	if row.BaseUrl != nil {
@@ -251,7 +251,7 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 		baseArg = &in.BaseURL
 	}
 	var acctArg *string
-	if in.ChatGPTAccountID != "" {
+	if in.Provider == string(dbgen.AiProviderOpenaiCodex) && in.ChatGPTAccountID != "" {
 		acctArg = &in.ChatGPTAccountID
 	}
 	var row dbgen.AiProviderCredential

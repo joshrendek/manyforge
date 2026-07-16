@@ -17,11 +17,15 @@
 #                   or https://router.huggingface.co/v1).
 #   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro", "claude-3-5-sonnet", or
 #                   "zai-org/GLM-5.2:fireworks-ai" (the HF router pins the partner with ":").
-#   LLM_PROVIDER  — one of openrouter|anthropic|openai|vllm|ollama|huggingface. The first
-#                   three use opencode's BUILT-IN SDK providers; the rest are OpenAI-compatible
-#                   endpoints with no built-in provider, and map to a CUSTOM opencode provider
-#                   ("local", @ai-sdk/openai-compatible) below — NOT the built-in openai
-#                   provider, which speaks the Responses API. See LLM_OPENCODE_MODE.
+#   LLM_PROVIDER  — one of openrouter|anthropic|openai|vllm|ollama|huggingface|openai_codex. The
+#                   first three use opencode's BUILT-IN SDK providers; vllm/ollama/huggingface are
+#                   OpenAI-compatible endpoints with no built-in provider, and map to a CUSTOM
+#                   opencode provider ("local", @ai-sdk/openai-compatible) below — NOT the
+#                   built-in openai provider, which speaks the Responses API. openai_codex drives
+#                   opencode's built-in openai provider via a type:"oauth" auth.json entry instead
+#                   of type:"api" (see LLM_OPENCODE_MODE below).
+#   LLM_CHATGPT_ACCOUNT_ID — the ChatGPT account id for LLM_PROVIDER=openai_codex, injected into
+#                   the oauth auth.json entry's accountId field. Unused by every other provider.
 set -eu
 
 mkdir -p /out
@@ -57,6 +61,9 @@ cd /tmp/src
 #   builtin — opencode's built-in SDK provider (model prefix + auth.json key).
 #   compat  — the bundled @ai-sdk/openai-compatible provider, for any OpenAI-compatible
 #             /v1/chat/completions endpoint opencode has no built-in provider for.
+#   codex   — opencode's built-in openai provider, driven via a type:"oauth" auth.json entry
+#             (instead of type:"api") that targets the ChatGPT backend and sets store:false +
+#             the ChatGPT-Account-Id/originator headers itself; the openai_codex path.
 #
 # This deliberately does NOT encode network trust or model capability, which are separate
 # axes handled elsewhere (manyforge-bhx):

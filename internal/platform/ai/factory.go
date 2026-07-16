@@ -86,6 +86,8 @@ type Credential struct {
 //
 //	anthropic                                          -> AnthropicProvider
 //	openai | ollama | vllm | openrouter | huggingface  -> OpenAICompatProvider
+//	openai_codex                                       -> rejected (ErrBadRequest); review-sandbox-only,
+//	                                                       never a direct transport
 //
 // base_url falls back to DefaultBaseURL(provider); a provider without a default and without a
 // caller-supplied base_url fails closed rather than silently targeting something else.
