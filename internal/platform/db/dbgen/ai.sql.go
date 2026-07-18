@@ -7,8 +7,10 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteAIProviderCredential = `-- name: DeleteAIProviderCredential :execrows
@@ -31,9 +33,37 @@ func (q *Queries) DeleteAIProviderCredential(ctx context.Context, arg DeleteAIPr
 	return result.RowsAffected(), nil
 }
 
+const deleteCodexPending = `-- name: DeleteCodexPending :exec
+DELETE FROM codex_oauth_pending WHERE jti = $1 AND business_id = $2
+`
+
+type DeleteCodexPendingParams struct {
+	Jti        uuid.UUID `json:"jti"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// DeleteCodexPending consumes the pending row (same tx as UpsertCodexCredential).
+func (q *Queries) DeleteCodexPending(ctx context.Context, arg DeleteCodexPendingParams) error {
+	_, err := q.db.Exec(ctx, deleteCodexPending, arg.Jti, arg.BusinessID)
+	return err
+}
+
+const disconnectCodexCredential = `-- name: DisconnectCodexCredential :exec
+UPDATE ai_provider_credential
+SET sealed_key_ref = NULL, oauth_refresh_token = NULL, oauth_access_expiry = NULL, updated_at = now()
+WHERE business_id = $1 AND provider = 'openai_codex'
+`
+
+// DisconnectCodexCredential clears the tokens after an invalid_grant (dead refresh token) so the
+// derived connection_status becomes 'disconnected' and the user is prompted to reconnect.
+func (q *Queries) DisconnectCodexCredential(ctx context.Context, businessID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, disconnectCodexCredential, businessID)
+	return err
+}
+
 const getAIProviderCredential = `-- name: GetAIProviderCredential :one
 
-SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at FROM ai_provider_credential
+SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token, oauth_access_expiry, chatgpt_plan, created_at, updated_at FROM ai_provider_credential
 WHERE business_id = $1 AND provider = $2
 `
 
@@ -66,6 +96,9 @@ func (q *Queries) GetAIProviderCredential(ctx context.Context, arg GetAIProvider
 		&i.AllowPrivateBaseUrl,
 		&i.MaxConcurrentLanes,
 		&i.ChatgptAccountID,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptPlan,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -73,7 +106,7 @@ func (q *Queries) GetAIProviderCredential(ctx context.Context, arg GetAIProvider
 }
 
 const getAIProviderCredentialByID = `-- name: GetAIProviderCredentialByID :one
-SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at FROM ai_provider_credential
+SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token, oauth_access_expiry, chatgpt_plan, created_at, updated_at FROM ai_provider_credential
 WHERE id = $1 AND business_id = $2
 `
 
@@ -98,8 +131,111 @@ func (q *Queries) GetAIProviderCredentialByID(ctx context.Context, arg GetAIProv
 		&i.AllowPrivateBaseUrl,
 		&i.MaxConcurrentLanes,
 		&i.ChatgptAccountID,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptPlan,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCodexCredentialForRefresh = `-- name: GetCodexCredentialForRefresh :one
+
+SELECT id, sealed_key_ref, oauth_refresh_token, oauth_access_expiry, chatgpt_account_id, chatgpt_plan
+FROM ai_provider_credential
+WHERE business_id = $1 AND provider = 'openai_codex'
+FOR UPDATE
+`
+
+type GetCodexCredentialForRefreshRow struct {
+	ID                uuid.UUID          `json:"id"`
+	SealedKeyRef      *string            `json:"sealed_key_ref"`
+	OauthRefreshToken *string            `json:"oauth_refresh_token"`
+	OauthAccessExpiry pgtype.Timestamptz `json:"oauth_access_expiry"`
+	ChatgptAccountID  *string            `json:"chatgpt_account_id"`
+	ChatgptPlan       *string            `json:"chatgpt_plan"`
+}
+
+// === Codex Increment 2 (manyforge-gi9u) ===
+// GetCodexCredentialForRefresh row-locks the codex credential (FOR UPDATE) so exactly one
+// refresher touches it at a time — serializing the refresh-token rotation against concurrent
+// lazy + scheduled refreshers. Returns the sealed token set + expiry for the double-checked
+// refresh decision. Run inside the same tx as UpdateCodexOAuthTokens.
+func (q *Queries) GetCodexCredentialForRefresh(ctx context.Context, businessID uuid.UUID) (GetCodexCredentialForRefreshRow, error) {
+	row := q.db.QueryRow(ctx, getCodexCredentialForRefresh, businessID)
+	var i GetCodexCredentialForRefreshRow
+	err := row.Scan(
+		&i.ID,
+		&i.SealedKeyRef,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptAccountID,
+		&i.ChatgptPlan,
+	)
+	return i, err
+}
+
+const getCodexCredentialForRefreshSkipLocked = `-- name: GetCodexCredentialForRefreshSkipLocked :one
+SELECT id, sealed_key_ref, oauth_refresh_token, oauth_access_expiry, chatgpt_account_id, chatgpt_plan
+FROM ai_provider_credential
+WHERE business_id = $1 AND provider = 'openai_codex'
+FOR UPDATE SKIP LOCKED
+`
+
+type GetCodexCredentialForRefreshSkipLockedRow struct {
+	ID                uuid.UUID          `json:"id"`
+	SealedKeyRef      *string            `json:"sealed_key_ref"`
+	OauthRefreshToken *string            `json:"oauth_refresh_token"`
+	OauthAccessExpiry pgtype.Timestamptz `json:"oauth_access_expiry"`
+	ChatgptAccountID  *string            `json:"chatgpt_account_id"`
+	ChatgptPlan       *string            `json:"chatgpt_plan"`
+}
+
+// GetCodexCredentialForRefreshSkipLocked is the scheduler variant: if a lazy refresh already
+// holds the row lock, skip it (it is being handled) rather than block the sweep.
+func (q *Queries) GetCodexCredentialForRefreshSkipLocked(ctx context.Context, businessID uuid.UUID) (GetCodexCredentialForRefreshSkipLockedRow, error) {
+	row := q.db.QueryRow(ctx, getCodexCredentialForRefreshSkipLocked, businessID)
+	var i GetCodexCredentialForRefreshSkipLockedRow
+	err := row.Scan(
+		&i.ID,
+		&i.SealedKeyRef,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptAccountID,
+		&i.ChatgptPlan,
+	)
+	return i, err
+}
+
+const getCodexPendingForUpdate = `-- name: GetCodexPendingForUpdate :one
+SELECT jti, business_id, tenant_root_id, flow, sealed_device_code, sealed_pkce_verifier, default_model, base_url, max_concurrent_lanes, status, created_at, expires_at FROM codex_oauth_pending
+WHERE jti = $1 AND business_id = $2
+FOR UPDATE
+`
+
+type GetCodexPendingForUpdateParams struct {
+	Jti        uuid.UUID `json:"jti"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// GetCodexPendingForUpdate locks the pending row for the poll/exchange step (single-use).
+func (q *Queries) GetCodexPendingForUpdate(ctx context.Context, arg GetCodexPendingForUpdateParams) (CodexOauthPending, error) {
+	row := q.db.QueryRow(ctx, getCodexPendingForUpdate, arg.Jti, arg.BusinessID)
+	var i CodexOauthPending
+	err := row.Scan(
+		&i.Jti,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Flow,
+		&i.SealedDeviceCode,
+		&i.SealedPkceVerifier,
+		&i.DefaultModel,
+		&i.BaseUrl,
+		&i.MaxConcurrentLanes,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -123,7 +259,7 @@ SELECT
     now(), now()
 FROM business b
 WHERE b.id = $9::uuid
-RETURNING id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token, oauth_access_expiry, chatgpt_plan, created_at, updated_at
 `
 
 type InsertAIProviderCredentialParams struct {
@@ -171,14 +307,74 @@ func (q *Queries) InsertAIProviderCredential(ctx context.Context, arg InsertAIPr
 		&i.AllowPrivateBaseUrl,
 		&i.MaxConcurrentLanes,
 		&i.ChatgptAccountID,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptPlan,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const insertCodexPending = `-- name: InsertCodexPending :one
+INSERT INTO codex_oauth_pending (
+    jti, business_id, tenant_root_id, flow, sealed_device_code, sealed_pkce_verifier,
+    default_model, base_url, max_concurrent_lanes, expires_at)
+SELECT
+    $1, b.id, b.tenant_root_id, $2,
+    $3, $4,
+    $5, $6, $7::integer,
+    $8
+FROM business b
+WHERE b.id = $9::uuid
+RETURNING jti, business_id, tenant_root_id, flow, sealed_device_code, sealed_pkce_verifier, default_model, base_url, max_concurrent_lanes, status, created_at, expires_at
+`
+
+type InsertCodexPendingParams struct {
+	Jti                uuid.UUID `json:"jti"`
+	Flow               string    `json:"flow"`
+	SealedDeviceCode   *string   `json:"sealed_device_code"`
+	SealedPkceVerifier *string   `json:"sealed_pkce_verifier"`
+	DefaultModel       string    `json:"default_model"`
+	BaseUrl            *string   `json:"base_url"`
+	MaxConcurrentLanes int32     `json:"max_concurrent_lanes"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	BusinessID         uuid.UUID `json:"business_id"`
+}
+
+// InsertCodexPending stores an in-flight connect. tenant_root_id derived from the business row.
+func (q *Queries) InsertCodexPending(ctx context.Context, arg InsertCodexPendingParams) (CodexOauthPending, error) {
+	row := q.db.QueryRow(ctx, insertCodexPending,
+		arg.Jti,
+		arg.Flow,
+		arg.SealedDeviceCode,
+		arg.SealedPkceVerifier,
+		arg.DefaultModel,
+		arg.BaseUrl,
+		arg.MaxConcurrentLanes,
+		arg.ExpiresAt,
+		arg.BusinessID,
+	)
+	var i CodexOauthPending
+	err := row.Scan(
+		&i.Jti,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Flow,
+		&i.SealedDeviceCode,
+		&i.SealedPkceVerifier,
+		&i.DefaultModel,
+		&i.BaseUrl,
+		&i.MaxConcurrentLanes,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const listAIProviderCredentials = `-- name: ListAIProviderCredentials :many
-SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at FROM ai_provider_credential
+SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token, oauth_access_expiry, chatgpt_plan, created_at, updated_at FROM ai_provider_credential
 WHERE business_id = $1
 ORDER BY provider
 `
@@ -205,6 +401,9 @@ func (q *Queries) ListAIProviderCredentials(ctx context.Context, businessID uuid
 			&i.AllowPrivateBaseUrl,
 			&i.MaxConcurrentLanes,
 			&i.ChatgptAccountID,
+			&i.OauthRefreshToken,
+			&i.OauthAccessExpiry,
+			&i.ChatgptPlan,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -216,4 +415,174 @@ func (q *Queries) ListAIProviderCredentials(ctx context.Context, businessID uuid
 		return nil, err
 	}
 	return items, nil
+}
+
+const readCodexCredential = `-- name: ReadCodexCredential :one
+SELECT id, sealed_key_ref, oauth_refresh_token, oauth_access_expiry, chatgpt_account_id, chatgpt_plan
+FROM ai_provider_credential
+WHERE business_id = $1 AND provider = 'openai_codex'
+`
+
+type ReadCodexCredentialRow struct {
+	ID                uuid.UUID          `json:"id"`
+	SealedKeyRef      *string            `json:"sealed_key_ref"`
+	OauthRefreshToken *string            `json:"oauth_refresh_token"`
+	OauthAccessExpiry pgtype.Timestamptz `json:"oauth_access_expiry"`
+	ChatgptAccountID  *string            `json:"chatgpt_account_id"`
+	ChatgptPlan       *string            `json:"chatgpt_plan"`
+}
+
+// ReadCodexCredential is the lazy fast-path read (no lock): if the access token is still fresh
+// the caller returns it without a network refresh.
+func (q *Queries) ReadCodexCredential(ctx context.Context, businessID uuid.UUID) (ReadCodexCredentialRow, error) {
+	row := q.db.QueryRow(ctx, readCodexCredential, businessID)
+	var i ReadCodexCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.SealedKeyRef,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptAccountID,
+		&i.ChatgptPlan,
+	)
+	return i, err
+}
+
+const selectCodexCredentialsDueRefresh = `-- name: SelectCodexCredentialsDueRefresh :many
+SELECT business_id
+FROM ai_provider_credential
+WHERE provider = 'openai_codex'
+  AND oauth_refresh_token IS NOT NULL
+  AND oauth_access_expiry IS NOT NULL
+  AND oauth_access_expiry < $1
+`
+
+// SelectCodexCredentialsDueRefresh returns the businesses whose codex access token expires within
+// the scheduler margin and still has a refresh token. No lock here (cheap candidate scan); each
+// id is then claimed with GetCodexCredentialForRefreshSkipLocked.
+func (q *Queries) SelectCodexCredentialsDueRefresh(ctx context.Context, oauthAccessExpiry pgtype.Timestamptz) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, selectCodexCredentialsDueRefresh, oauthAccessExpiry)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var business_id uuid.UUID
+		if err := rows.Scan(&business_id); err != nil {
+			return nil, err
+		}
+		items = append(items, business_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateCodexOAuthTokens = `-- name: UpdateCodexOAuthTokens :exec
+UPDATE ai_provider_credential
+SET sealed_key_ref = $1,
+    oauth_refresh_token = $2,
+    oauth_access_expiry = $3,
+    chatgpt_plan = $4,
+    updated_at = now()
+WHERE business_id = $5 AND provider = 'openai_codex'
+`
+
+type UpdateCodexOAuthTokensParams struct {
+	SealedKeyRef      *string            `json:"sealed_key_ref"`
+	OauthRefreshToken *string            `json:"oauth_refresh_token"`
+	OauthAccessExpiry pgtype.Timestamptz `json:"oauth_access_expiry"`
+	ChatgptPlan       *string            `json:"chatgpt_plan"`
+	BusinessID        uuid.UUID          `json:"business_id"`
+}
+
+// UpdateCodexOAuthTokens writes a freshly-rotated token set. Scoped to (business_id, provider);
+// deliberately does NOT touch allow_private_base_url (it is not a config update — see the
+// ai_credential_update pin).
+func (q *Queries) UpdateCodexOAuthTokens(ctx context.Context, arg UpdateCodexOAuthTokensParams) error {
+	_, err := q.db.Exec(ctx, updateCodexOAuthTokens,
+		arg.SealedKeyRef,
+		arg.OauthRefreshToken,
+		arg.OauthAccessExpiry,
+		arg.ChatgptPlan,
+		arg.BusinessID,
+	)
+	return err
+}
+
+const upsertCodexCredential = `-- name: UpsertCodexCredential :one
+INSERT INTO ai_provider_credential (
+    id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model,
+    allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token,
+    oauth_access_expiry, chatgpt_plan, created_at, updated_at)
+SELECT
+    $1, b.id, b.tenant_root_id, 'openai_codex',
+    $2, $3, $4,
+    false, $5::integer, $6,
+    $7, $8, $9,
+    now(), now()
+FROM business b
+WHERE b.id = $10::uuid
+ON CONFLICT (business_id, provider) DO UPDATE
+SET sealed_key_ref = EXCLUDED.sealed_key_ref,
+    default_model = EXCLUDED.default_model,
+    max_concurrent_lanes = EXCLUDED.max_concurrent_lanes,
+    chatgpt_account_id = EXCLUDED.chatgpt_account_id,
+    oauth_refresh_token = EXCLUDED.oauth_refresh_token,
+    oauth_access_expiry = EXCLUDED.oauth_access_expiry,
+    chatgpt_plan = EXCLUDED.chatgpt_plan,
+    updated_at = now()
+RETURNING id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token, oauth_access_expiry, chatgpt_plan, created_at, updated_at
+`
+
+type UpsertCodexCredentialParams struct {
+	ID                 uuid.UUID          `json:"id"`
+	SealedKeyRef       *string            `json:"sealed_key_ref"`
+	BaseUrl            *string            `json:"base_url"`
+	DefaultModel       string             `json:"default_model"`
+	MaxConcurrentLanes int32              `json:"max_concurrent_lanes"`
+	ChatgptAccountID   *string            `json:"chatgpt_account_id"`
+	OauthRefreshToken  *string            `json:"oauth_refresh_token"`
+	OauthAccessExpiry  pgtype.Timestamptz `json:"oauth_access_expiry"`
+	ChatgptPlan        *string            `json:"chatgpt_plan"`
+	BusinessID         uuid.UUID          `json:"business_id"`
+}
+
+// UpsertCodexCredential creates or replaces the codex credential on a successful connect. Mirrors
+// InsertAIProviderCredential's tenant_root_id derivation; ON CONFLICT (business_id, provider)
+// replaces the token set + account id/plan/expiry (a re-connect after a manual-token credential).
+func (q *Queries) UpsertCodexCredential(ctx context.Context, arg UpsertCodexCredentialParams) (AiProviderCredential, error) {
+	row := q.db.QueryRow(ctx, upsertCodexCredential,
+		arg.ID,
+		arg.SealedKeyRef,
+		arg.BaseUrl,
+		arg.DefaultModel,
+		arg.MaxConcurrentLanes,
+		arg.ChatgptAccountID,
+		arg.OauthRefreshToken,
+		arg.OauthAccessExpiry,
+		arg.ChatgptPlan,
+		arg.BusinessID,
+	)
+	var i AiProviderCredential
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Provider,
+		&i.SealedKeyRef,
+		&i.BaseUrl,
+		&i.DefaultModel,
+		&i.AllowPrivateBaseUrl,
+		&i.MaxConcurrentLanes,
+		&i.ChatgptAccountID,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptPlan,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

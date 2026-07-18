@@ -569,18 +569,21 @@ type AgentRun struct {
 }
 
 type AiProviderCredential struct {
-	ID                  uuid.UUID  `json:"id"`
-	BusinessID          uuid.UUID  `json:"business_id"`
-	TenantRootID        uuid.UUID  `json:"tenant_root_id"`
-	Provider            AiProvider `json:"provider"`
-	SealedKeyRef        *string    `json:"sealed_key_ref"`
-	BaseUrl             *string    `json:"base_url"`
-	DefaultModel        string     `json:"default_model"`
-	AllowPrivateBaseUrl bool       `json:"allow_private_base_url"`
-	MaxConcurrentLanes  int32      `json:"max_concurrent_lanes"`
-	ChatgptAccountID    *string    `json:"chatgpt_account_id"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	TenantRootID        uuid.UUID          `json:"tenant_root_id"`
+	Provider            AiProvider         `json:"provider"`
+	SealedKeyRef        *string            `json:"sealed_key_ref"`
+	BaseUrl             *string            `json:"base_url"`
+	DefaultModel        string             `json:"default_model"`
+	AllowPrivateBaseUrl bool               `json:"allow_private_base_url"`
+	MaxConcurrentLanes  int32              `json:"max_concurrent_lanes"`
+	ChatgptAccountID    *string            `json:"chatgpt_account_id"`
+	OauthRefreshToken   *string            `json:"oauth_refresh_token"`
+	OauthAccessExpiry   pgtype.Timestamptz `json:"oauth_access_expiry"`
+	ChatgptPlan         *string            `json:"chatgpt_plan"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
 }
 
 type ApprovalItem struct {
@@ -676,6 +679,21 @@ type CodeReview struct {
 	Progress          []byte             `json:"progress"`
 	DimensionRuns     []byte             `json:"dimension_runs"`
 	Force             bool               `json:"force"`
+}
+
+type CodexOauthPending struct {
+	Jti                uuid.UUID `json:"jti"`
+	BusinessID         uuid.UUID `json:"business_id"`
+	TenantRootID       uuid.UUID `json:"tenant_root_id"`
+	Flow               string    `json:"flow"`
+	SealedDeviceCode   *string   `json:"sealed_device_code"`
+	SealedPkceVerifier *string   `json:"sealed_pkce_verifier"`
+	DefaultModel       string    `json:"default_model"`
+	BaseUrl            *string   `json:"base_url"`
+	MaxConcurrentLanes int32     `json:"max_concurrent_lanes"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	ExpiresAt          time.Time `json:"expires_at"`
 }
 
 type Company struct {

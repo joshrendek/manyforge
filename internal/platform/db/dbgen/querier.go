@@ -112,6 +112,8 @@ type Querier interface {
 	// row is deleted first (it FKs the principal), then the principal. rows-affected (the
 	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
 	DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error)
+	// DeleteCodexPending consumes the pending row (same tx as UpsertCodexCredential).
+	DeleteCodexPending(ctx context.Context, arg DeleteCodexPendingParams) error
 	// DeleteCompany hard-deletes a company scoped to (id, tenant_root_id) (companies carry no
 	// PII / soft-delete column). The contact.company_id → company FK is NO ACTION (restrict),
 	// so the service nulls out contacts' company_id (DetachContactsFromCompany) in the same tx
@@ -158,6 +160,9 @@ type Querier interface {
 	// CHECK(connector_id IS NULL OR external_id IS NOT NULL) — the NULL-connector clause passes.
 	// Scoped by connector_id (a globally-unique uuid the caller already confirmed it owns).
 	DetachTicketsFromConnector(ctx context.Context, connectorID pgtype.UUID) (int64, error)
+	// DisconnectCodexCredential clears the tokens after an invalid_grant (dead refresh token) so the
+	// derived connection_status becomes 'disconnected' and the user is prompted to reconnect.
+	DisconnectCodexCredential(ctx context.Context, businessID uuid.UUID) error
 	// DismissFailedOps acknowledges a connector's failed outbound ops without retrying: failed →
 	// dismissed (a terminal, non-degrading state kept for audit/forensics). Health counts
 	// status='failed', so dismissing clears 'degraded' (manyforge-xfj). Same (connector_id,
@@ -225,6 +230,17 @@ type Querier interface {
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (CodeReview, error)
+	// === Codex Increment 2 (manyforge-gi9u) ===
+	// GetCodexCredentialForRefresh row-locks the codex credential (FOR UPDATE) so exactly one
+	// refresher touches it at a time — serializing the refresh-token rotation against concurrent
+	// lazy + scheduled refreshers. Returns the sealed token set + expiry for the double-checked
+	// refresh decision. Run inside the same tx as UpdateCodexOAuthTokens.
+	GetCodexCredentialForRefresh(ctx context.Context, businessID uuid.UUID) (GetCodexCredentialForRefreshRow, error)
+	// GetCodexCredentialForRefreshSkipLocked is the scheduler variant: if a lazy refresh already
+	// holds the row lock, skip it (it is being handled) rather than block the sweep.
+	GetCodexCredentialForRefreshSkipLocked(ctx context.Context, businessID uuid.UUID) (GetCodexCredentialForRefreshSkipLockedRow, error)
+	// GetCodexPendingForUpdate locks the pending row for the poll/exchange step (single-use).
+	GetCodexPendingForUpdate(ctx context.Context, arg GetCodexPendingForUpdateParams) (CodexOauthPending, error)
 	// GetCompany loads a single company scoped to (id, tenant_root_id) — the ownership
 	// predicate. pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
 	GetCompany(ctx context.Context, arg GetCompanyParams) (Company, error)
@@ -333,6 +349,8 @@ type Querier interface {
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
 	InsertClosureSelf(ctx context.Context, arg InsertClosureSelfParams) error
 	InsertCodeReview(ctx context.Context, arg InsertCodeReviewParams) (CodeReview, error)
+	// InsertCodexPending stores an in-flight connect. tenant_root_id derived from the business row.
+	InsertCodexPending(ctx context.Context, arg InsertCodexPendingParams) (CodexOauthPending, error)
 	// ---- companies ----
 	// InsertCompany creates a company unconditionally (no upsert).
 	InsertCompany(ctx context.Context, arg InsertCompanyParams) (Company, error)
@@ -620,6 +638,9 @@ type Querier interface {
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).
 	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
+	// ReadCodexCredential is the lazy fast-path read (no lock): if the access token is still fresh
+	// the caller returns it without a network refresh.
+	ReadCodexCredential(ctx context.Context, businessID uuid.UUID) (ReadCodexCredentialRow, error)
 	// Relink the newest detached ticket per external_id (for this business + provider host) to the
 	// new connector; duplicates (older rows sharing an external_id) stay detached so the
 	// (connector_id, external_id) unique index is never violated. Returns the relinked ticket ids.
@@ -677,6 +698,10 @@ type Querier interface {
 	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
 	// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
 	ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error
+	// SelectCodexCredentialsDueRefresh returns the businesses whose codex access token expires within
+	// the scheduler margin and still has a refresh token. No lock here (cheap candidate scan); each
+	// id is then claimed with GetCodexCredentialForRefreshSkipLocked.
+	SelectCodexCredentialsDueRefresh(ctx context.Context, oauthAccessExpiry pgtype.Timestamptz) ([]uuid.UUID, error)
 	// Records token usage + cost on the review row WITHOUT touching status/findings.
 	// Used on the failure path so a run that burned tokens before failing still shows
 	// its cost; the worker's requeue_code_review/fail_code_review own status/last_error/
@@ -698,6 +723,10 @@ type Querier interface {
 	// Final/intermediate state write. status + token/cost totals + optional error.
 	UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRunProgressParams) (AgentRun, error)
 	UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeReviewResultParams) (CodeReview, error)
+	// UpdateCodexOAuthTokens writes a freshly-rotated token set. Scoped to (business_id, provider);
+	// deliberately does NOT touch allow_private_base_url (it is not a config update — see the
+	// ai_credential_update pin).
+	UpdateCodexOAuthTokens(ctx context.Context, arg UpdateCodexOAuthTokensParams) error
 	// UpdateCompany is a partial update: NULL nargs preserve the current value via COALESCE.
 	// NOTE: COALESCE cannot clear domain to NULL (a NULL narg is read as "unchanged", not
 	// "detach") — acceptable for Phase A. Scoped to (id, tenant_root_id).
@@ -746,6 +775,10 @@ type Querier interface {
 	// updated_at but NEVER last_message_at — triage is not a message. Scoped to
 	// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
 	UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatusParams) error
+	// UpsertCodexCredential creates or replaces the codex credential on a successful connect. Mirrors
+	// InsertAIProviderCredential's tenant_root_id derivation; ON CONFLICT (business_id, provider)
+	// replaces the token set + account id/plan/expiry (a re-connect after a manual-token credential).
+	UpsertCodexCredential(ctx context.Context, arg UpsertCodexCredentialParams) (AiProviderCredential, error)
 	// MCP per-tool effect policy (manyforge-k0d). Every query runs in the caller's RLS principal
 	// context AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement).
 	// Derives (business_id, tenant_root_id) from the RLS-visible mcp_server row, so an invisible or
