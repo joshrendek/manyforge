@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +38,14 @@ var knownProviders = map[string]bool{
 	string(dbgen.AiProviderHuggingface): true,
 	string(dbgen.AiProviderOpenaiCodex): true,
 }
+
+// chatgptAccountIDRe is the trust-boundary format guard for openai_codex's
+// ChatGPTAccountID: it is interpolated into the sandbox auth.json AND sent as the
+// ChatGPT-Account-Id HTTP header, so beyond the entrypoint's generic `"`/`\`
+// metacharacter guard (defense in depth, not a substitute for it) this pins the
+// shape to what real account ids look like — no whitespace, newlines, control
+// chars, or other injection metacharacters.
+var chatgptAccountIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 // credentialDB is the minimal DB surface this service needs — satisfied by the
 // real *db.DB. Declared as an interface so unit tests can omit it.
@@ -166,8 +175,13 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 	// in sealed_key_ref like any other key) PLUS a non-secret account id the codex backend
 	// requires on every call — without it Resolve would hand the gateway a credential it
 	// cannot actually use.
-	if in.Provider == string(dbgen.AiProviderOpenaiCodex) && in.ChatGPTAccountID == "" {
-		return fmt.Errorf("openai_codex credential requires chatgpt_account_id: %w", errs.ErrValidation)
+	if in.Provider == string(dbgen.AiProviderOpenaiCodex) {
+		if in.ChatGPTAccountID == "" {
+			return fmt.Errorf("openai_codex credential requires chatgpt_account_id: %w", errs.ErrValidation)
+		}
+		if !chatgptAccountIDRe.MatchString(in.ChatGPTAccountID) {
+			return fmt.Errorf("openai_codex chatgpt_account_id has an invalid format: %w", errs.ErrValidation)
+		}
 	}
 	return nil
 }

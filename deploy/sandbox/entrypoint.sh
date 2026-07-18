@@ -103,7 +103,7 @@ if [ "$LLM_OPENCODE_MODE" = codex ]; then
   _mf_exp=$(( ($(date +%s) + 2592000) * 1000 ))
   mkdir -p "$XDG_DATA_HOME/opencode"
   printf '{"openai":{"type":"oauth","access":"%s","refresh":"unused-host-side-only","expires":%s,"accountId":"%s"}}\n' \
-    "$LLM_API_KEY" "$_mf_exp" "$LLM_CHATGPT_ACCOUNT_ID" > "$XDG_DATA_HOME/opencode/auth.json"
+    "$LLM_API_KEY" "$_mf_exp" "${LLM_CHATGPT_ACCOUNT_ID:?openai_codex requires LLM_CHATGPT_ACCOUNT_ID}" > "$XDG_DATA_HOME/opencode/auth.json"
   # No baseURL/headers override — opencode's oauth path handles the codex endpoint + headers itself.
   # Declare the model so opencode knows it with the models.dev catalog disabled; 32000 output budget
   # matches the built-in reasoning-model budget (glm/gpt-5.x burn reasoning tokens before the answer).

@@ -227,6 +227,48 @@ func TestOpenAICodexRequiresAccountID(t *testing.T) {
 	}
 }
 
+// TestOpenAICodexAccountIDFormat pins the trust-boundary format guard on
+// ChatGPTAccountID (manyforge-6fx PR #32 review round 2): the value is interpolated
+// into the sandbox auth.json AND sent as the ChatGPT-Account-Id HTTP header, so
+// beyond the entrypoint's generic `"`/`\` metacharacter guard, validate() must reject
+// whitespace, newlines, and other injection metacharacters — real account ids are
+// UUID-shaped. validate() touches no DB/sealer fields, so a zero-value
+// CredentialService is enough (mirrors TestOpenAICodexRequiresAccountID above).
+func TestOpenAICodexAccountIDFormat(t *testing.T) {
+	s := &CredentialService{}
+
+	t.Run("valid UUID-shaped id passes", func(t *testing.T) {
+		err := s.validate(CreateCredentialInput{
+			Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+			ChatGPTAccountID: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+		})
+		if err != nil {
+			t.Fatalf("valid UUID-shaped chatgpt_account_id should validate, got %v", err)
+		}
+	})
+
+	rejectCases := []struct {
+		name string
+		id   string
+	}{
+		{"space", "acct 123"},
+		{"newline", "a\nb"},
+		{"double quote", "a\"b"},
+		{"over-long", strings.Repeat("a", 129)},
+	}
+	for _, tc := range rejectCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := s.validate(CreateCredentialInput{
+				Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+				ChatGPTAccountID: tc.id,
+			})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("chatgpt_account_id %q: err = %v; want ErrValidation", tc.id, err)
+			}
+		})
+	}
+}
+
 func TestOpenAICodexCreateRejectsMissingAccountID(t *testing.T) {
 	// Create() runs validate() first and returns before any sealer/DB access, so a zero-value
 	// service proves the boundary (not just validate() directly) rejects a codex credential with

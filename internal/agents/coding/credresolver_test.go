@@ -88,3 +88,19 @@ func TestSandboxEnvOmitsAccountIDForOtherProviders(t *testing.T) {
 		t.Fatal("non-codex providers must not set LLM_CHATGPT_ACCOUNT_ID")
 	}
 }
+
+// TestSandboxEnvGatesAccountIDOnProvider pins the provider gate (manyforge-6fx PR #32
+// review round 2): sandboxEnv must check cred.Provider == ai.ProviderOpenAICodex, not just
+// ChatGPTAccountID != "". A non-codex credential that somehow carries a non-empty
+// ChatGPTAccountID (e.g. a stale/misrouted resolve) must NOT emit the header — proves the
+// provider gate itself, not merely the emptiness check covered by
+// TestSandboxEnvOmitsAccountIDForOtherProviders above.
+func TestSandboxEnvGatesAccountIDOnProvider(t *testing.T) {
+	env := sandboxEnv(AICredential{
+		APIKey: "sk-x", BaseURL: "https://openrouter.ai/api/v1", Model: "m",
+		Provider: "openrouter", ChatGPTAccountID: "acct-abc-123",
+	})
+	if _, ok := env["LLM_CHATGPT_ACCOUNT_ID"]; ok {
+		t.Fatal("a non-openai_codex credential must not emit LLM_CHATGPT_ACCOUNT_ID even with a non-empty ChatGPTAccountID")
+	}
+}

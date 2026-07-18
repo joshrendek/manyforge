@@ -23,6 +23,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/github"
+	"github.com/manyforge/manyforge/internal/platform/ai"
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -1388,8 +1389,10 @@ func sandboxEnv(cred AICredential) map[string]string {
 		"LLM_PROVIDER": cred.Provider,
 	}
 	// openai_codex needs the ChatGPT-Account-Id header; carried as a dedicated env var so the
-	// entrypoint can place it in the request headers. Omitted for every other provider.
-	if cred.ChatGPTAccountID != "" {
+	// entrypoint can place it in the request headers. Omitted for every other provider — the
+	// provider check is defense in depth alongside the emptiness check: a non-codex credential
+	// can never emit this header, even if ChatGPTAccountID were somehow populated on it.
+	if cred.Provider == ai.ProviderOpenAICodex && cred.ChatGPTAccountID != "" {
 		env["LLM_CHATGPT_ACCOUNT_ID"] = cred.ChatGPTAccountID
 	}
 	return env
