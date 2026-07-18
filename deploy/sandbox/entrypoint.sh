@@ -17,11 +17,15 @@
 #                   or https://router.huggingface.co/v1).
 #   LLM_MODEL     — model slug, e.g. "google/gemini-2.5-pro", "claude-3-5-sonnet", or
 #                   "zai-org/GLM-5.2:fireworks-ai" (the HF router pins the partner with ":").
-#   LLM_PROVIDER  — one of openrouter|anthropic|openai|vllm|ollama|huggingface. The first
-#                   three use opencode's BUILT-IN SDK providers; the rest are OpenAI-compatible
-#                   endpoints with no built-in provider, and map to a CUSTOM opencode provider
-#                   ("local", @ai-sdk/openai-compatible) below — NOT the built-in openai
-#                   provider, which speaks the Responses API. See LLM_OPENCODE_MODE.
+#   LLM_PROVIDER  — one of openrouter|anthropic|openai|vllm|ollama|huggingface|openai_codex. The
+#                   first three use opencode's BUILT-IN SDK providers; vllm/ollama/huggingface are
+#                   OpenAI-compatible endpoints with no built-in provider, and map to a CUSTOM
+#                   opencode provider ("local", @ai-sdk/openai-compatible) below — NOT the
+#                   built-in openai provider, which speaks the Responses API. openai_codex drives
+#                   opencode's built-in openai provider via a type:"oauth" auth.json entry instead
+#                   of type:"api" (see LLM_OPENCODE_MODE below).
+#   LLM_CHATGPT_ACCOUNT_ID — the ChatGPT account id for LLM_PROVIDER=openai_codex, injected into
+#                   the oauth auth.json entry's accountId field. Unused by every other provider.
 set -eu
 
 mkdir -p /out
@@ -57,6 +61,9 @@ cd /tmp/src
 #   builtin — opencode's built-in SDK provider (model prefix + auth.json key).
 #   compat  — the bundled @ai-sdk/openai-compatible provider, for any OpenAI-compatible
 #             /v1/chat/completions endpoint opencode has no built-in provider for.
+#   codex   — opencode's built-in openai provider, driven via a type:"oauth" auth.json entry
+#             (instead of type:"api") that targets the ChatGPT backend and sets store:false +
+#             the ChatGPT-Account-Id/originator headers itself; the openai_codex path.
 #
 # This deliberately does NOT encode network trust or model capability, which are separate
 # axes handled elsewhere (manyforge-bhx):
@@ -70,6 +77,7 @@ cd /tmp/src
 case "${LLM_PROVIDER:-}" in
   openrouter|anthropic|openai)  LLM_OPENCODE_MODE=builtin ;;
   vllm|ollama|huggingface)      LLM_OPENCODE_MODE=compat ;;
+  openai_codex)                 LLM_OPENCODE_MODE=codex ;;
   *) echo "entrypoint: unsupported LLM_PROVIDER='${LLM_PROVIDER:-}'" >&2; exit 2 ;;
 esac
 
@@ -77,14 +85,45 @@ esac
 # values into JSON string literals and keys. A value containing a JSON metacharacter
 # (" or \) could break out of its string and inject config keys — e.g. overriding the
 # read-only "permission" block (pins MF-KUBE-SANDBOX-19/20/21). Legitimate base URLs,
-# model slugs, and API keys never contain these; reject any that do.
-for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}"; do
+# model slugs, API keys, and account IDs never contain these; reject any that do.
+for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}" "${LLM_CHATGPT_ACCOUNT_ID:-}"; do
   case "$_mfval" in
     *'"'*|*'\'*) echo "entrypoint: LLM_* value contains a JSON metacharacter" >&2; exit 2 ;;
   esac
 done
 
-if [ "$LLM_OPENCODE_MODE" = compat ]; then
+if [ "$LLM_OPENCODE_MODE" = codex ]; then
+  # ChatGPT-subscription path via opencode's BUILT-IN codex support. A type:"oauth" auth.json entry
+  # makes opencode itself target chatgpt.com/backend-api/codex/responses and set store:false +
+  # ChatGPT-Account-Id + originator:opencode (all backend-accepted; spike-validated, design §15a).
+  # LLM_API_KEY is the OAuth ACCESS token (minted host-side); LLM_CHATGPT_ACCOUNT_ID is the account
+  # id. A dummy refresh + far-future (30d) expires makes opencode use .access directly and NEVER
+  # refresh, so the real refresh token stays host-side. A stale access token 401s → retried next run.
+  MODEL="openai/${LLM_MODEL}"
+  _mf_exp=$(( ($(date +%s) + 2592000) * 1000 ))
+  mkdir -p "$XDG_DATA_HOME/opencode"
+  printf '{"openai":{"type":"oauth","access":"%s","refresh":"unused-host-side-only","expires":%s,"accountId":"%s"}}\n' \
+    "$LLM_API_KEY" "$_mf_exp" "${LLM_CHATGPT_ACCOUNT_ID:?openai_codex requires LLM_CHATGPT_ACCOUNT_ID}" > "$XDG_DATA_HOME/opencode/auth.json"
+  # No baseURL/headers override — opencode's oauth path handles the codex endpoint + headers itself.
+  # Declare the model so opencode knows it with the models.dev catalog disabled; 32000 output budget
+  # matches the built-in reasoning-model budget (glm/gpt-5.x burn reasoning tokens before the answer).
+  export OPENCODE_CONFIG=/tmp/opencode.json
+  printf '%s\n' '{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "'"${MODEL}"'",
+  "small_model": "'"${MODEL}"'",
+  "provider": {
+    "openai": {
+      "models": { "'"${LLM_MODEL}"'": { "options": { "max_tokens": 32000 } } }
+    }
+  },
+  "permission": {
+    "read": "allow", "glob": "allow", "grep": "allow",
+    "edit": "deny", "bash": "deny", "webfetch": "deny", "websearch": "deny",
+    "task": "deny", "external_directory": "deny"
+  }
+}' > "$OPENCODE_CONFIG"
+elif [ "$LLM_OPENCODE_MODE" = compat ]; then
   # An OpenAI-compatible /v1/chat/completions server: vLLM/Ollama/LM Studio on-host, or the
   # HuggingFace Inference Providers router over the public internet. Use the bundled
   # @ai-sdk/openai-compatible provider (Chat Completions) — NOT the built-in openai

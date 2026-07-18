@@ -300,7 +300,7 @@ CREATE TABLE notification (
 -- Agent runtime (spec 003) — mirrors migrations/0025.
 -- ============================================================================
 
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'ollama', 'vllm', 'openrouter', 'huggingface');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'ollama', 'vllm', 'openrouter', 'huggingface', 'openai_codex');
 
 CREATE TABLE ai_provider_credential (
     id              uuid PRIMARY KEY,
@@ -312,6 +312,7 @@ CREATE TABLE ai_provider_credential (
     default_model   text NOT NULL,
     allow_private_base_url boolean NOT NULL,
     max_concurrent_lanes integer NOT NULL,
+    chatgpt_account_id text,
     created_at      timestamptz NOT NULL,
     updated_at      timestamptz NOT NULL,
     UNIQUE (business_id, provider),

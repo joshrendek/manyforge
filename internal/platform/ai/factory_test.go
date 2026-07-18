@@ -133,6 +133,22 @@ func TestNew_OpenRouterRespectsCustomBaseURL(t *testing.T) {
 	}
 }
 
+func TestOpenAICodexDefaultBaseURL(t *testing.T) {
+	got, ok := DefaultBaseURL(ProviderOpenAICodex)
+	if !ok || got != "https://chatgpt.com/backend-api/codex" {
+		t.Fatalf("DefaultBaseURL(openai_codex) = %q,%v; want chatgpt backend,true", got, ok)
+	}
+}
+
+func TestNewRejectsOpenAICodexForDirectCalls(t *testing.T) {
+	// openai_codex is a sandbox/opencode-only provider (Responses wire + impersonation
+	// headers); it must NOT be constructed as a direct gateway transport.
+	_, err := New(Credential{Provider: ProviderOpenAICodex, APIKey: "codex-test-token", Model: "gpt-5"})
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("New(openai_codex) err = %v; want ErrBadRequest", err)
+	}
+}
+
 func TestFactoryWiresNonNilClient(t *testing.T) {
 	anth, err := New(Credential{Provider: ProviderAnthropic, APIKey: "k", Model: "m"})
 	if err != nil {

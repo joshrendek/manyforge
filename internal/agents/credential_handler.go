@@ -109,6 +109,7 @@ func (h *CredentialHandler) createCredential(w http.ResponseWriter, r *http.Requ
 		BaseURL             string `json:"base_url"`
 		DefaultModel        string `json:"default_model"`
 		AllowPrivateBaseURL bool   `json:"allow_private_base_url"`
+		ChatGPTAccountID    string `json:"chatgpt_account_id"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -119,6 +120,7 @@ func (h *CredentialHandler) createCredential(w http.ResponseWriter, r *http.Requ
 		BaseURL:             in.BaseURL,
 		DefaultModel:        in.DefaultModel,
 		AllowPrivateBaseURL: in.AllowPrivateBaseURL,
+		ChatGPTAccountID:    in.ChatGPTAccountID,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)

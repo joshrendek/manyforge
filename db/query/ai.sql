@@ -11,7 +11,7 @@
 -- name: InsertAIProviderCredential :one
 INSERT INTO ai_provider_credential (
     id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model,
-    allow_private_base_url, max_concurrent_lanes, created_at, updated_at)
+    allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at)
 SELECT
     $1,
     b.id,
@@ -22,6 +22,7 @@ SELECT
     sqlc.arg('default_model'),
     sqlc.arg('allow_private_base_url'),
     sqlc.arg('max_concurrent_lanes')::integer,
+    sqlc.arg('chatgpt_account_id'),
     now(), now()
 FROM business b
 WHERE b.id = sqlc.arg('business_id')::uuid

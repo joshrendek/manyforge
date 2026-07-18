@@ -64,3 +64,43 @@ func TestFakeCredResolver(t *testing.T) {
 		}
 	})
 }
+
+// TestSandboxEnvIncludesChatGPTAccountID verifies openai_codex credentials carry
+// ChatGPTAccountID through to the LLM_CHATGPT_ACCOUNT_ID sandbox env var.
+func TestSandboxEnvIncludesChatGPTAccountID(t *testing.T) {
+	env := sandboxEnv(AICredential{
+		APIKey: "codex-test-token", BaseURL: "https://chatgpt.com/backend-api/codex",
+		Model: "gpt-5", Provider: "openai_codex", ChatGPTAccountID: "acct-abc-123",
+	})
+	if env["LLM_CHATGPT_ACCOUNT_ID"] != "acct-abc-123" {
+		t.Fatalf("LLM_CHATGPT_ACCOUNT_ID = %q; want acct-abc-123", env["LLM_CHATGPT_ACCOUNT_ID"])
+	}
+	if env["LLM_PROVIDER"] != "openai_codex" || env["LLM_BASE_URL"] != "https://chatgpt.com/backend-api/codex" {
+		t.Fatalf("unexpected provider/base env: %v", env)
+	}
+}
+
+// TestSandboxEnvOmitsAccountIDForOtherProviders verifies non-codex providers never set
+// LLM_CHATGPT_ACCOUNT_ID (the key must be entirely absent, not just empty).
+func TestSandboxEnvOmitsAccountIDForOtherProviders(t *testing.T) {
+	env := sandboxEnv(AICredential{APIKey: "sk-x", BaseURL: "https://openrouter.ai/api/v1", Model: "m", Provider: "openrouter"})
+	if _, ok := env["LLM_CHATGPT_ACCOUNT_ID"]; ok {
+		t.Fatal("non-codex providers must not set LLM_CHATGPT_ACCOUNT_ID")
+	}
+}
+
+// TestSandboxEnvGatesAccountIDOnProvider pins the provider gate (manyforge-6fx PR #32
+// review round 2): sandboxEnv must check cred.Provider == ai.ProviderOpenAICodex, not just
+// ChatGPTAccountID != "". A non-codex credential that somehow carries a non-empty
+// ChatGPTAccountID (e.g. a stale/misrouted resolve) must NOT emit the header — proves the
+// provider gate itself, not merely the emptiness check covered by
+// TestSandboxEnvOmitsAccountIDForOtherProviders above.
+func TestSandboxEnvGatesAccountIDOnProvider(t *testing.T) {
+	env := sandboxEnv(AICredential{
+		APIKey: "sk-x", BaseURL: "https://openrouter.ai/api/v1", Model: "m",
+		Provider: "openrouter", ChatGPTAccountID: "acct-abc-123",
+	})
+	if _, ok := env["LLM_CHATGPT_ACCOUNT_ID"]; ok {
+		t.Fatal("a non-openai_codex credential must not emit LLM_CHATGPT_ACCOUNT_ID even with a non-empty ChatGPTAccountID")
+	}
+}
