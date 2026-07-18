@@ -157,7 +157,7 @@ func TestOpenAICodexAccountIDRoundTrips(t *testing.T) {
 	ten := seedAgentTenant(ctx, t, tdb)
 	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
 
-	_, err = svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+	view, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
 		Provider:         "openai_codex",
 		APIKey:           "codex-test-token", // stands in for the OAuth access token
 		DefaultModel:     "gpt-5",
@@ -165,6 +165,11 @@ func TestOpenAICodexAccountIDRoundTrips(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
+	}
+	// The returned view exercises credViewFromRow's deref of a populated (non-nil)
+	// chatgpt_account_id — the account id is non-secret and IS surfaced on CredentialView.
+	if view.ChatGPTAccountID != "acct-abc-123" {
+		t.Fatalf("create view acct = %q; want acct-abc-123", view.ChatGPTAccountID)
 	}
 
 	got, err := svc.Resolve(ctx, ten.principalID, ten.businessID, "openai_codex")

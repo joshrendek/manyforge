@@ -173,8 +173,9 @@ func (s *CredentialService) validate(in CreateCredentialInput) error {
 	}
 	// The ChatGPT-subscription provider authenticates with an OAuth access token (sealed
 	// in sealed_key_ref like any other key) PLUS a non-secret account id the codex backend
-	// requires on every call — without it Resolve would hand the gateway a credential it
-	// cannot actually use.
+	// requires on every call — without it the sandbox review would send an incomplete
+	// request the backend rejects. (openai_codex is review-sandbox-only; it never reaches
+	// the direct ai.New gateway, which rejects it.)
 	if in.Provider == string(dbgen.AiProviderOpenaiCodex) {
 		if in.ChatGPTAccountID == "" {
 			return fmt.Errorf("openai_codex credential requires chatgpt_account_id: %w", errs.ErrValidation)
