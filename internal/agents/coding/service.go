@@ -1377,7 +1377,9 @@ func codingAudit(
 
 // sandboxEnv builds the env the opencode entrypoint consumes. LLM_PROVIDER selects
 // the opencode built-in provider (model prefix + auth.json key); LLM_BASE_URL is
-// used only to derive the egress-allowlist host.
+// used only to derive the egress-allowlist host. For the openai_codex provider it
+// additionally emits LLM_CHATGPT_ACCOUNT_ID (the ChatGPT account id for the request
+// header).
 func sandboxEnv(cred AICredential) map[string]string {
 	env := map[string]string{
 		"LLM_API_KEY":  cred.APIKey,

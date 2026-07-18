@@ -226,3 +226,16 @@ func TestOpenAICodexRequiresAccountID(t *testing.T) {
 		t.Fatalf("openai_codex with chatgpt_account_id should validate, got %v", err)
 	}
 }
+
+func TestOpenAICodexCreateRejectsMissingAccountID(t *testing.T) {
+	// Create() runs validate() first and returns before any sealer/DB access, so a zero-value
+	// service proves the boundary (not just validate() directly) rejects a codex credential with
+	// no account id. Companion to TestOpenAICodexRequiresAccountID.
+	s := &CredentialService{}
+	_, err := s.Create(context.Background(), uuid.New(), uuid.New(), CreateCredentialInput{
+		Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("Create(openai_codex) without chatgpt_account_id: err = %v; want ErrValidation", err)
+	}
+}

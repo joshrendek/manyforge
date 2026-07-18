@@ -85,7 +85,7 @@ esac
 # values into JSON string literals and keys. A value containing a JSON metacharacter
 # (" or \) could break out of its string and inject config keys — e.g. overriding the
 # read-only "permission" block (pins MF-KUBE-SANDBOX-19/20/21). Legitimate base URLs,
-# model slugs, and API keys never contain these; reject any that do.
+# model slugs, API keys, and account IDs never contain these; reject any that do.
 for _mfval in "${LLM_BASE_URL:-}" "${LLM_MODEL:-}" "${LLM_API_KEY:-}" "${LLM_CHATGPT_ACCOUNT_ID:-}"; do
   case "$_mfval" in
     *'"'*|*'\'*) echo "entrypoint: LLM_* value contains a JSON metacharacter" >&2; exit 2 ;;

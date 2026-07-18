@@ -297,6 +297,10 @@ func TestSandboxReviewTimeout(t *testing.T) {
 }
 
 func TestSandboxEgressAllowsChatGPTBackend(t *testing.T) {
+	// Force the default: env() returns the default when the var is empty, so this makes the
+	// test assert the built-in default regardless of any ambient MANYFORGE_SANDBOX_EGRESS_ALLOW.
+	t.Setenv("MANYFORGE_SANDBOX_EGRESS_ALLOW", "")
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
