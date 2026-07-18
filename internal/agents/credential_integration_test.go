@@ -142,3 +142,41 @@ func TestCredentialTrustGrantAudited(t *testing.T) {
 		t.Fatalf("untrusted credential must write no trust-grant row, got %d", n)
 	}
 }
+
+// TestOpenAICodexAccountIDRoundTrips pins the openai_codex-specific column end to end:
+// Create persists chatgpt_account_id (a non-secret account identifier, NOT the sealed
+// OAuth access token) and Resolve returns it alongside the unsealed key.
+func TestOpenAICodexAccountIDRoundTrips(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	ten := seedAgentTenant(ctx, t, tdb)
+	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
+
+	view, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+		Provider:         "openai_codex",
+		APIKey:           "codex-test-token", // stands in for the OAuth access token
+		DefaultModel:     "gpt-5",
+		ChatGPTAccountID: "acct-abc-123",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The returned view exercises credViewFromRow's deref of a populated (non-nil)
+	// chatgpt_account_id — the account id is non-secret and IS surfaced on CredentialView.
+	if view.ChatGPTAccountID != "acct-abc-123" {
+		t.Fatalf("create view acct = %q; want acct-abc-123", view.ChatGPTAccountID)
+	}
+
+	got, err := svc.Resolve(ctx, ten.principalID, ten.businessID, "openai_codex")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.APIKey != "codex-test-token" || got.ChatGPTAccountID != "acct-abc-123" {
+		t.Fatalf("got key=%q acct=%q; want token + acct-abc-123", got.APIKey, got.ChatGPTAccountID)
+	}
+}

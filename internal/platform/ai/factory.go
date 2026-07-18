@@ -19,6 +19,10 @@ const openRouterBaseURL = "https://openrouter.ai/api/v1"
 // gateway that fans out to third-party partners (groq/together/fireworks/…) on one hf_ token.
 const huggingFaceBaseURL = "https://router.huggingface.co/v1"
 
+// openAICodexBaseURL is the ChatGPT-subscription backend (Responses wire), reached with the
+// OAuth access token + ChatGPT-Account-Id/originator headers. NOT api.openai.com.
+const openAICodexBaseURL = "https://chatgpt.com/backend-api/codex"
+
 // defaultBaseURLs is the SINGLE source of truth for which providers have a default endpoint.
 // Providers absent from it (openai/ollama/vllm) require a caller-supplied base_url. Consumed
 // by New below, by agents.CredentialService.validate, and by coding.AgentCredResolver — all of
@@ -27,6 +31,7 @@ var defaultBaseURLs = map[string]string{
 	ProviderAnthropic:   anthropicDefaultBaseURL,
 	ProviderOpenRouter:  openRouterBaseURL,
 	ProviderHuggingFace: huggingFaceBaseURL,
+	ProviderOpenAICodex: openAICodexBaseURL,
 }
 
 // DefaultBaseURL returns a provider's default endpoint and whether it has one. A provider
@@ -52,6 +57,12 @@ const (
 	// billed pass-through at partner rates. Model ids pin the partner with a suffix, e.g.
 	// "zai-org/GLM-5.2:fireworks-ai". base_url defaults to the router but may be overridden.
 	ProviderHuggingFace = "huggingface"
+
+	// ProviderOpenAICodex is a ChatGPT-subscription credential ("Sign in with ChatGPT").
+	// The key is a short-lived OAuth access token and completions go to the ChatGPT backend
+	// (Responses wire) with impersonation headers — served ONLY via the code-review sandbox
+	// (opencode's built-in openai provider), never as a direct gateway transport here.
+	ProviderOpenAICodex = "openai_codex"
 )
 
 // Credential is the minimal resolved credential the factory needs to build a
@@ -75,6 +86,8 @@ type Credential struct {
 //
 //	anthropic                                          -> AnthropicProvider
 //	openai | ollama | vllm | openrouter | huggingface  -> OpenAICompatProvider
+//	openai_codex                                       -> rejected (ErrBadRequest); review-sandbox-only,
+//	                                                       never a direct transport
 //
 // base_url falls back to DefaultBaseURL(provider); a provider without a default and without a
 // caller-supplied base_url fails closed rather than silently targeting something else.
@@ -97,6 +110,8 @@ func New(cred Credential) (Provider, error) {
 			base = d
 		}
 		return NewOpenAICompatProvider(cred.APIKey, base, cred.Model, cred.Provider, hc), nil
+	case ProviderOpenAICodex:
+		return nil, fmt.Errorf("ai: provider %q is only available via the code-review sandbox, not direct gateway calls: %w", cred.Provider, ErrBadRequest)
 	default:
 		return nil, fmt.Errorf("ai: unknown provider %q: %w", cred.Provider, ErrBadRequest)
 	}

@@ -72,7 +72,7 @@ func TestKnownProvidersTrackEnum(t *testing.T) {
 // with a new constant, which must be appended here — the compiler cannot enumerate them.
 var dbgenAiProviders = []dbgen.AiProvider{
 	dbgen.AiProviderAnthropic, dbgen.AiProviderOpenai, dbgen.AiProviderOllama, dbgen.AiProviderVllm,
-	dbgen.AiProviderOpenrouter, dbgen.AiProviderHuggingface,
+	dbgen.AiProviderOpenrouter, dbgen.AiProviderHuggingface, dbgen.AiProviderOpenaiCodex,
 }
 
 func newTestSealer(t *testing.T) *crypto.Sealer {
@@ -203,5 +203,81 @@ func TestValidateOpenRouterBaseURLOptional(t *testing.T) {
 	}
 	if err := s.validate(CreateCredentialInput{Provider: "openai", DefaultModel: "gpt-5"}); err == nil {
 		t.Fatal("openai with empty base_url must still be rejected")
+	}
+}
+
+// TestOpenAICodexRequiresAccountID pins the extra invariant on the ChatGPT-subscription
+// provider: the sealed_key_ref alone (the OAuth access token) isn't enough to call the
+// codex backend — the account id is a required, non-secret companion value. validate()
+// touches no DB/sealer fields, so a zero-value CredentialService is enough (mirrors
+// TestValidateInput/TestValidateBaseURL above).
+func TestOpenAICodexRequiresAccountID(t *testing.T) {
+	s := &CredentialService{}
+	err := s.validate(CreateCredentialInput{
+		Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("openai_codex without chatgpt_account_id: err = %v; want ErrValidation", err)
+	}
+	if err := s.validate(CreateCredentialInput{
+		Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+		ChatGPTAccountID: "acct-abc-123",
+	}); err != nil {
+		t.Fatalf("openai_codex with chatgpt_account_id should validate, got %v", err)
+	}
+}
+
+// TestOpenAICodexAccountIDFormat pins the trust-boundary format guard on
+// ChatGPTAccountID (manyforge-6fx PR #32 review round 2): the value is interpolated
+// into the sandbox auth.json AND sent as the ChatGPT-Account-Id HTTP header, so
+// beyond the entrypoint's generic `"`/`\` metacharacter guard, validate() must reject
+// whitespace, newlines, and other injection metacharacters — real account ids are
+// UUID-shaped. validate() touches no DB/sealer fields, so a zero-value
+// CredentialService is enough (mirrors TestOpenAICodexRequiresAccountID above).
+func TestOpenAICodexAccountIDFormat(t *testing.T) {
+	s := &CredentialService{}
+
+	t.Run("valid UUID-shaped id passes", func(t *testing.T) {
+		err := s.validate(CreateCredentialInput{
+			Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+			ChatGPTAccountID: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+		})
+		if err != nil {
+			t.Fatalf("valid UUID-shaped chatgpt_account_id should validate, got %v", err)
+		}
+	})
+
+	rejectCases := []struct {
+		name string
+		id   string
+	}{
+		{"space", "acct 123"},
+		{"newline", "a\nb"},
+		{"double quote", "a\"b"},
+		{"over-long", strings.Repeat("a", 129)},
+	}
+	for _, tc := range rejectCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := s.validate(CreateCredentialInput{
+				Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+				ChatGPTAccountID: tc.id,
+			})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("chatgpt_account_id %q: err = %v; want ErrValidation", tc.id, err)
+			}
+		})
+	}
+}
+
+func TestOpenAICodexCreateRejectsMissingAccountID(t *testing.T) {
+	// Create() runs validate() first and returns before any sealer/DB access, so a zero-value
+	// service proves the boundary (not just validate() directly) rejects a codex credential with
+	// no account id. Companion to TestOpenAICodexRequiresAccountID.
+	s := &CredentialService{}
+	_, err := s.Create(context.Background(), uuid.New(), uuid.New(), CreateCredentialInput{
+		Provider: "openai_codex", APIKey: "codex-test-token", DefaultModel: "gpt-5",
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("Create(openai_codex) without chatgpt_account_id: err = %v; want ErrValidation", err)
 	}
 }

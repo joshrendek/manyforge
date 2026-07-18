@@ -134,6 +134,7 @@ func TestKubeSandboxOpencodePermissionProfile(t *testing.T) {
 	for _, arm := range []string{
 		"openrouter|anthropic|openai) LLM_OPENCODE_MODE=builtin ;;",
 		"vllm|ollama|huggingface) LLM_OPENCODE_MODE=compat ;;",
+		"openai_codex) LLM_OPENCODE_MODE=codex ;;",
 	} {
 		if !strings.Contains(entryNorm, arm) {
 			t.Errorf("MF-KUBE-SANDBOX-22: entrypoint must validate LLM_PROVIDER against the closed allowlist arm %q before use — pin broken, update this pin in the same change if the refactor is intentional", arm)
@@ -173,5 +174,38 @@ func TestKubeSandboxHostSideSSRFGuardRetained(t *testing.T) {
 
 	if !strings.Contains(svc, "checkCloneURL(conn.CloneURL(), rc.AllowPrivateBaseURL)") {
 		t.Error("MF-KUBE-SANDBOX-23: runJob must always validate the clone URL via checkCloneURL (the SSRF guard) before any runner (docker or kube) executes the review — pin broken, update this pin in the same change if the refactor is intentional")
+	}
+}
+
+// TestSandboxOpenAICodexOAuthArm pins the openai_codex entrypoint arm (manyforge-6fx): opencode's
+// NATIVE codex path requires a type:"oauth" auth.json (NOT api-key) so opencode sends store:false +
+// the codex headers itself; the account id is metacharacter-guarded; the refresh token stays a
+// host-side dummy so it never enters the sandbox.
+func TestSandboxOpenAICodexOAuthArm(t *testing.T) {
+	entry := mustRead(t, "../../deploy/sandbox/entrypoint.sh")
+	for _, lit := range []string{
+		`"type":"oauth"`,
+		`"accountId":"`,
+		`"refresh":"unused-host-side-only"`,
+		`"${LLM_CHATGPT_ACCOUNT_ID:-}"`, // guarded alongside the other injected values
+	} {
+		if !strings.Contains(entry, lit) {
+			t.Errorf("openai_codex codex branch must contain %q (oauth auth.json / metachar guard) — pin broken, update in the same change if intentional", lit)
+		}
+	}
+
+	// MF-KUBE-SANDBOX-25 (negative pin): the codex branch must NOT set an OpenAI-compatible
+	// "baseURL" — opencode's built-in oauth-driven codex path targets the ChatGPT backend
+	// itself and must never be redirected via a custom base URL. The compat branch (vLLM/
+	// Ollama/HuggingFace) legitimately sets "baseURL", so this assertion is scoped to ONLY the
+	// codex branch's text via the if/elif markers, not the whole file.
+	codexStart := strings.Index(entry, `if [ "$LLM_OPENCODE_MODE" = codex ]`)
+	compatStart := strings.Index(entry, `elif [ "$LLM_OPENCODE_MODE" = compat ]`)
+	if codexStart == -1 || compatStart == -1 || compatStart <= codexStart {
+		t.Fatal("MF-KUBE-SANDBOX-25: could not locate the codex/compat branch markers in entrypoint.sh — pin broken, update in the same change if intentional")
+	}
+	codexBranch := entry[codexStart:compatStart]
+	if strings.Contains(codexBranch, `"baseURL"`) {
+		t.Error("MF-KUBE-SANDBOX-25: the codex branch must not set a \"baseURL\" — opencode's built-in oauth path targets the ChatGPT backend itself; a baseURL here would silently redirect codex traffic to an attacker-controlled or wrong endpoint — pin broken, update in the same change if intentional")
 	}
 }

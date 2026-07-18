@@ -33,7 +33,7 @@ func (q *Queries) DeleteAIProviderCredential(ctx context.Context, arg DeleteAIPr
 
 const getAIProviderCredential = `-- name: GetAIProviderCredential :one
 
-SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, created_at, updated_at FROM ai_provider_credential
+SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at FROM ai_provider_credential
 WHERE business_id = $1 AND provider = $2
 `
 
@@ -65,6 +65,7 @@ func (q *Queries) GetAIProviderCredential(ctx context.Context, arg GetAIProvider
 		&i.DefaultModel,
 		&i.AllowPrivateBaseUrl,
 		&i.MaxConcurrentLanes,
+		&i.ChatgptAccountID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -72,7 +73,7 @@ func (q *Queries) GetAIProviderCredential(ctx context.Context, arg GetAIProvider
 }
 
 const getAIProviderCredentialByID = `-- name: GetAIProviderCredentialByID :one
-SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, created_at, updated_at FROM ai_provider_credential
+SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at FROM ai_provider_credential
 WHERE id = $1 AND business_id = $2
 `
 
@@ -96,6 +97,7 @@ func (q *Queries) GetAIProviderCredentialByID(ctx context.Context, arg GetAIProv
 		&i.DefaultModel,
 		&i.AllowPrivateBaseUrl,
 		&i.MaxConcurrentLanes,
+		&i.ChatgptAccountID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -106,7 +108,7 @@ const insertAIProviderCredential = `-- name: InsertAIProviderCredential :one
 
 INSERT INTO ai_provider_credential (
     id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model,
-    allow_private_base_url, max_concurrent_lanes, created_at, updated_at)
+    allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at)
 SELECT
     $1,
     b.id,
@@ -117,10 +119,11 @@ SELECT
     $5,
     $6,
     $7::integer,
+    $8,
     now(), now()
 FROM business b
-WHERE b.id = $8::uuid
-RETURNING id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, created_at, updated_at
+WHERE b.id = $9::uuid
+RETURNING id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at
 `
 
 type InsertAIProviderCredentialParams struct {
@@ -131,6 +134,7 @@ type InsertAIProviderCredentialParams struct {
 	DefaultModel        string     `json:"default_model"`
 	AllowPrivateBaseUrl bool       `json:"allow_private_base_url"`
 	MaxConcurrentLanes  int32      `json:"max_concurrent_lanes"`
+	ChatgptAccountID    *string    `json:"chatgpt_account_id"`
 	BusinessID          uuid.UUID  `json:"business_id"`
 }
 
@@ -152,6 +156,7 @@ func (q *Queries) InsertAIProviderCredential(ctx context.Context, arg InsertAIPr
 		arg.DefaultModel,
 		arg.AllowPrivateBaseUrl,
 		arg.MaxConcurrentLanes,
+		arg.ChatgptAccountID,
 		arg.BusinessID,
 	)
 	var i AiProviderCredential
@@ -165,6 +170,7 @@ func (q *Queries) InsertAIProviderCredential(ctx context.Context, arg InsertAIPr
 		&i.DefaultModel,
 		&i.AllowPrivateBaseUrl,
 		&i.MaxConcurrentLanes,
+		&i.ChatgptAccountID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -172,7 +178,7 @@ func (q *Queries) InsertAIProviderCredential(ctx context.Context, arg InsertAIPr
 }
 
 const listAIProviderCredentials = `-- name: ListAIProviderCredentials :many
-SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, created_at, updated_at FROM ai_provider_credential
+SELECT id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, created_at, updated_at FROM ai_provider_credential
 WHERE business_id = $1
 ORDER BY provider
 `
@@ -198,6 +204,7 @@ func (q *Queries) ListAIProviderCredentials(ctx context.Context, businessID uuid
 			&i.DefaultModel,
 			&i.AllowPrivateBaseUrl,
 			&i.MaxConcurrentLanes,
+			&i.ChatgptAccountID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

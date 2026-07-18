@@ -22,6 +22,7 @@ const (
 	AiProviderVllm        AiProvider = "vllm"
 	AiProviderOpenrouter  AiProvider = "openrouter"
 	AiProviderHuggingface AiProvider = "huggingface"
+	AiProviderOpenaiCodex AiProvider = "openai_codex"
 )
 
 func (e *AiProvider) Scan(src interface{}) error {
@@ -577,6 +578,7 @@ type AiProviderCredential struct {
 	DefaultModel        string     `json:"default_model"`
 	AllowPrivateBaseUrl bool       `json:"allow_private_base_url"`
 	MaxConcurrentLanes  int32      `json:"max_concurrent_lanes"`
+	ChatgptAccountID    *string    `json:"chatgpt_account_id"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 }

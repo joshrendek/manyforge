@@ -162,7 +162,7 @@ sandbox:
   # sufficient for a private host. Do NOT add the deployment-specific LAN IP here: the
   # default below stays cloud-only; the actual LAN host lives only in the hub's Flux
   # HelmRelease values (out of this repo).
-  egressAllow: "api.anthropic.com,openrouter.ai,api.openai.com,router.huggingface.co"
+  egressAllow: "api.anthropic.com,openrouter.ai,api.openai.com,router.huggingface.co,chatgpt.com"
   mode: "kube"
   # Name of the image-pull Secret the KubeRunner attaches to every per-review
   # Job's PodSpec (internal/platform/config/config.go SandboxPullSecret, env

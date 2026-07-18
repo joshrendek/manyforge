@@ -129,7 +129,7 @@ type Config struct {
 	EgressProxyImage string
 	// SandboxEgressAllow is a comma-separated list of provider hostnames the
 	// sandbox is allowed to reach through the egress proxy.
-	// Default: api.anthropic.com,openrouter.ai,api.openai.com,router.huggingface.co.
+	// Default: api.anthropic.com,openrouter.ai,api.openai.com,router.huggingface.co,chatgpt.com.
 	SandboxEgressAllow string
 	// SandboxWorkRoot is the host-side directory used for per-run checkouts.
 	// MUST be a path visible inside the Docker VM (on Colima/Mac that means
@@ -347,7 +347,7 @@ func Load() (Config, error) {
 	// so we default to $HOME/.cache/manyforge/sandbox (never os.TempDir()/tmp).
 	cfg.SandboxImage = env("MANYFORGE_SANDBOX_IMAGE", "manyforge/opencode-sandbox:dev")
 	cfg.EgressProxyImage = env("MANYFORGE_EGRESS_PROXY_IMAGE", "manyforge/egress-proxy:dev")
-	cfg.SandboxEgressAllow = env("MANYFORGE_SANDBOX_EGRESS_ALLOW", "api.anthropic.com,openrouter.ai,api.openai.com,router.huggingface.co")
+	cfg.SandboxEgressAllow = env("MANYFORGE_SANDBOX_EGRESS_ALLOW", "api.anthropic.com,openrouter.ai,api.openai.com,router.huggingface.co,chatgpt.com")
 	sandboxWorkRootDefault := "/tmp/mf-sandbox" // fallback only; overridden below when $HOME is available
 	if home, herr := os.UserHomeDir(); herr == nil {
 		sandboxWorkRootDefault = home + "/.cache/manyforge/sandbox"

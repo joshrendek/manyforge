@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 )
@@ -293,4 +294,18 @@ func TestSandboxReviewTimeout(t *testing.T) {
 			t.Fatal("malformed duration must be a config error")
 		}
 	})
+}
+
+func TestSandboxEgressAllowsChatGPTBackend(t *testing.T) {
+	// Force the default: env() returns the default when the var is empty, so this makes the
+	// test assert the built-in default regardless of any ambient MANYFORGE_SANDBOX_EGRESS_ALLOW.
+	t.Setenv("MANYFORGE_SANDBOX_EGRESS_ALLOW", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !strings.Contains(cfg.SandboxEgressAllow, "chatgpt.com") {
+		t.Fatalf("SandboxEgressAllow %q must include chatgpt.com", cfg.SandboxEgressAllow)
+	}
 }
