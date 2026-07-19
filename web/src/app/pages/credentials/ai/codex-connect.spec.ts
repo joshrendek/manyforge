@@ -118,4 +118,22 @@ describe('CodexConnectComponent', () => {
     expect(openSpy).not.toHaveBeenCalled();
     openSpy.mockRestore();
   });
+
+  it('stops the device poll once the user switches to the paste fallback', () => {
+    const c = mount();
+    c.model.set('gpt-5-codex');
+    vi.useFakeTimers();
+    try {
+      c.startDevice();
+      http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/start').flush({ pending_id: 'p1', user_code: 'X', verification_uri: 'u', verification_uri_complete: 'u', interval: 5, expires_in: 900 });
+      vi.advanceTimersByTime(5000);
+      http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/p1/status').flush({ status: 'pending' });
+      c.startPaste();
+      http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/pkce/start').flush({ pending_id: 'p2', authorize_url: 'https://auth.openai.com/authorize?x=1' });
+      vi.advanceTimersByTime(20000);
+      http.expectNone('/api/v1/businesses/b1/ai_credentials/codex/device/p1/status');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

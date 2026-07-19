@@ -102,6 +102,7 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
 
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private resolved = false;
+  private deviceAbandoned = false;
 
   ngOnInit(): void {
     this.agents.models(this.businessId).subscribe({
@@ -150,8 +151,9 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
         // A 4xx means the pending flow is gone/denied server-side — terminal, surface it.
         // Network blips / 5xx are transient: keep polling.
         if (e.status >= 400 && e.status < 500) {
+          this.resolved = true;
           this.stopPolling();
-          this.error.set(this.describe(e));
+          this.error.set('This sign-in request expired or was revoked — please try again.');
           this.phase.set('expired');
           return;
         }
@@ -163,6 +165,7 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
   startPaste(): void {
     if (!this.model()) return;
     this.stopPolling(); // don't let the device-code poll keep racing once we switch to paste
+    this.deviceAbandoned = true; // the paste flow supersedes the device poll
     this.error.set('');
     this.api.codexPKCEStart(this.businessId, this.body()).subscribe({
       next: (p) => {
@@ -193,6 +196,7 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
   reset(): void {
     this.stopPolling();
     this.resolved = false;
+    this.deviceAbandoned = false;
     this.device.set(null);
     this.pkce.set(null);
     this.showPaste.set(false);
@@ -210,11 +214,13 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
       return;
     }
     if (s.status === 'expired') {
+      this.resolved = true;
       this.stopPolling();
       this.phase.set('expired');
       return;
     }
     if (s.status === 'denied') {
+      this.resolved = true;
       this.stopPolling();
       this.error.set('Sign-in was denied. Try again.');
       this.phase.set('expired');
@@ -224,6 +230,7 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
   }
 
   private scheduleNextPoll(): void {
+    if (this.deviceAbandoned) return; // user switched to the paste fallback
     const d = this.device();
     if (!d) return;
     this.stopPolling();
