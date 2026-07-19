@@ -27,4 +27,12 @@ var (
 	// ErrRateLimited marks an action refused because a rate/abuse limit was hit
 	// (e.g. outbound reply volume per business/recipient). Maps to HTTP 429.
 	ErrRateLimited = errors.New("rate limited")
+
+	// ErrUpstream marks a failed call to an external provider (e.g. auth.openai.com). Maps to
+	// HTTP 502; the upstream body is logged server-side and never surfaced to the client.
+	ErrUpstream = errors.New("upstream")
+
+	// ErrCodexDisconnected marks an openai_codex credential whose refresh token is dead
+	// (revoked/rotated-out). The user must reconnect their ChatGPT account. Maps to HTTP 409.
+	ErrCodexDisconnected = errors.New("codex disconnected")
 )
