@@ -490,6 +490,28 @@ func (s *CodexTokenService) persistConnect(ctx context.Context, pid, bid, jti uu
 	return id, nil
 }
 
+// codexDB is the DB surface the codex service needs: WithPrincipal (lazy, tenant-scoped) and
+// WithTx (the cross-tenant sweep). Satisfied by *db.DB.
+type codexDB interface {
+	WithPrincipal(ctx context.Context, principalID uuid.UUID, fn func(pgx.Tx) error) error
+	WithTx(ctx context.Context, fn func(pgx.Tx) error) error
+}
+
+// NewCodexTokenService assembles a production CodexTokenService (WithPrincipal lazy store +
+// WithTx system-sweep store + the auth.openai.com OAuth client). oauth is the codexOAuth seam —
+// pass codexoauth.NewClient(...). lazyMargin is cfg.CodexAccessRefreshMargin.
+func NewCodexTokenService(db codexDB, sealer *crypto.Sealer, oauth codexOAuth, lazyMargin time.Duration) *CodexTokenService {
+	return &CodexTokenService{
+		DB:          db,
+		Sealer:      sealer,
+		OAuth:       oauth,
+		Store:       dbCodexStore{DB: db},
+		SystemStore: dbSystemCodexStore{DB: db},
+		LazyMargin:  lazyMargin,
+		Now:         time.Now,
+	}
+}
+
 // dbCodexStore is the production codexStore: one WithPrincipal tx per method.
 type dbCodexStore struct{ DB credentialDB }
 
