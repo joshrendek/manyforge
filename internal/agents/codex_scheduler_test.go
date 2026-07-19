@@ -65,6 +65,35 @@ func TestCodexRefreshWorker_TicksAndStopsOnCancel(t *testing.T) {
 	}
 }
 
+// TestCodexRefreshWorker_ZeroEveryDoesNotPanic asserts Run with a non-positive Every falls back
+// to defaultCodexRefreshEvery instead of panicking (time.NewTicker panics on a zero/negative
+// interval). The context is cancelled before Run is even started, so a passing Run.C tick can
+// never fire: the only way this test returns within the bound is if time.NewTicker did not
+// panic and the ctx.Done() branch was taken. Deterministic — no sleep-and-hope.
+func TestCodexRefreshWorker_ZeroEveryDoesNotPanic(t *testing.T) {
+	f := &fakeRefresher{called: make(chan struct{}, 1)}
+	w := &CodexRefreshWorker{
+		Svc:    f,
+		Logger: slog.Default(),
+		Every:  0,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before Run starts
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Run(ctx)
+	}()
+
+	select {
+	case <-done:
+		// Run returned promptly without panicking on the zero interval.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after ctx cancel (or panicked)")
+	}
+}
+
 // TestCodexRefreshWorker_ErrorDoesNotStopLoop asserts an error from RefreshDue is logged (not
 // fatal) and the ticker keeps running — verified by observing a second call after the first.
 func TestCodexRefreshWorker_ErrorDoesNotStopLoop(t *testing.T) {
