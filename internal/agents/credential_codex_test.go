@@ -429,6 +429,219 @@ func TestMint_invalidGrantDisconnects(t *testing.T) {
 	}
 }
 
+// --- Task 6b: cross-tenant sweep (RefreshDue / systemCodexStore) ---
+
+// fakeSystemStep scripts one claim (or "no credential due") for fakeSystemCodexStore.
+// refreshErr/disconnect are documentation of the intended outcome for the reader; the actual
+// outcome is driven end-to-end through the real fn (doRefresh -> Sealer -> fakeCodexOAuth), keyed
+// off claim.SealedRefresh, exactly like the production path.
+type fakeSystemStep struct {
+	claim      claimedCodex
+	none       bool  // no credential due
+	refreshErr error // fn is expected to return this (simulate upstream failure)
+	disconnect bool  // fn is expected to return disconnect=true
+}
+
+// fakeSystemCodexStore is the systemCodexStore test double: pops scripted steps in call order,
+// skipping any step whose claim id is already in the caller's exclude list (mirrors
+// `id <> ALL(p_exclude)` in codex_claim_for_refresh), and records what fn actually did with each
+// claim so tests can assert apply vs. disconnect vs. failure without a real database.
+type fakeSystemCodexStore struct {
+	steps []fakeSystemStep
+	idx   int
+
+	applied      []uuid.UUID // ids where fn returned (toks, false, nil) — apply path
+	disconnected []uuid.UUID // ids where fn returned (nil, true, nil) — disconnect path
+	failed       []uuid.UUID // ids where fn returned a non-nil error
+	excludeSeen  [][]string  // exclude slice as observed on each call, for assertions
+}
+
+func (f *fakeSystemCodexStore) refreshOneDue(_ context.Context, _ time.Time, exclude []string,
+	fn func(claimedCodex) (*upsertTokens, bool, error)) (uuid.UUID, bool, error) {
+	f.excludeSeen = append(f.excludeSeen, append([]string(nil), exclude...))
+	for f.idx < len(f.steps) {
+		step := f.steps[f.idx]
+		f.idx++
+		if step.none {
+			return uuid.Nil, false, nil
+		}
+		if containsStr(exclude, step.claim.ID.String()) {
+			continue // already handled this sweep — the DB wouldn't re-serve it either
+		}
+		toks, disconnect, err := fn(step.claim)
+		switch {
+		case err != nil:
+			f.failed = append(f.failed, step.claim.ID)
+		case disconnect:
+			f.disconnected = append(f.disconnected, step.claim.ID)
+		case toks != nil:
+			f.applied = append(f.applied, step.claim.ID)
+		}
+		return step.claim.ID, true, err
+	}
+	return uuid.Nil, false, nil
+}
+
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func sealFor(t *testing.T, sealer *crypto.Sealer, plaintext string) string {
+	t.Helper()
+	s, err := sealer.Seal([]byte(plaintext))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestRefreshDue_refreshesAllDue(t *testing.T) {
+	sealer := testSealer(t)
+	claim1 := claimedCodex{ID: uuid.New(), SealedRefresh: sealFor(t, sealer, "r1"), Plan: "pro"}
+	claim2 := claimedCodex{ID: uuid.New(), SealedRefresh: sealFor(t, sealer, "r2"), Plan: "plus"}
+	oauth := &fakeCodexOAuth{refresh: func(rt string) (codexoauth.TokenSet, error) {
+		switch rt {
+		case "r1":
+			return codexoauth.TokenSet{AccessToken: "a1", RefreshToken: "nr1", Expiry: time.Now().Add(time.Hour), Claims: codexoauth.Claims{Plan: "pro"}}, nil
+		case "r2":
+			return codexoauth.TokenSet{AccessToken: "a2", RefreshToken: "nr2", Expiry: time.Now().Add(time.Hour), Claims: codexoauth.Claims{Plan: "plus"}}, nil
+		default:
+			t.Fatalf("unexpected refresh token %q", rt)
+			return codexoauth.TokenSet{}, nil
+		}
+	}}
+	store := &fakeSystemCodexStore{steps: []fakeSystemStep{{claim: claim1}, {claim: claim2}, {none: true}}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, OAuth: oauth, SystemStore: store}
+
+	n, err := svc.RefreshDue(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("refreshed = %d, want 2", n)
+	}
+	if len(store.applied) != 2 || store.applied[0] != claim1.ID || store.applied[1] != claim2.ID {
+		t.Fatalf("applied = %v, want [%v %v]", store.applied, claim1.ID, claim2.ID)
+	}
+	if len(store.excludeSeen) != 3 {
+		t.Fatalf("expected 3 refreshOneDue calls, got %d", len(store.excludeSeen))
+	}
+	if len(store.excludeSeen[0]) != 0 {
+		t.Fatalf("first call exclude should be empty, got %v", store.excludeSeen[0])
+	}
+	if len(store.excludeSeen[1]) != 1 || store.excludeSeen[1][0] != claim1.ID.String() {
+		t.Fatalf("second call exclude = %v, want [%v]", store.excludeSeen[1], claim1.ID)
+	}
+	if len(store.excludeSeen[2]) != 2 {
+		t.Fatalf("third call exclude = %v, want 2 entries", store.excludeSeen[2])
+	}
+}
+
+func TestRefreshDue_disconnectsDeadToken(t *testing.T) {
+	sealer := testSealer(t)
+	claim := claimedCodex{ID: uuid.New(), SealedRefresh: sealFor(t, sealer, "dead"), Plan: "pro"}
+	oauth := &fakeCodexOAuth{refresh: func(rt string) (codexoauth.TokenSet, error) {
+		if rt != "dead" {
+			t.Fatalf("unexpected refresh token %q", rt)
+		}
+		return codexoauth.TokenSet{}, codexoauth.ErrInvalidGrant
+	}}
+	store := &fakeSystemCodexStore{steps: []fakeSystemStep{{claim: claim, disconnect: true}, {none: true}}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, OAuth: oauth, SystemStore: store}
+
+	n, err := svc.RefreshDue(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("refreshed = %d, want 0", n)
+	}
+	if len(store.disconnected) != 1 || store.disconnected[0] != claim.ID {
+		t.Fatalf("disconnected = %v, want [%v]", store.disconnected, claim.ID)
+	}
+	if len(store.excludeSeen) != 2 {
+		t.Fatalf("expected the sweep to terminate after 2 calls (claim + none), got %d", len(store.excludeSeen))
+	}
+	if len(store.excludeSeen[1]) != 1 || store.excludeSeen[1][0] != claim.ID.String() {
+		t.Fatalf("disconnected id must be excluded from the rest of the sweep, got %v", store.excludeSeen[1])
+	}
+}
+
+func TestRefreshDue_skipsUpstreamFailure(t *testing.T) {
+	sealer := testSealer(t)
+	claimA := claimedCodex{ID: uuid.New(), SealedRefresh: sealFor(t, sealer, "bad"), Plan: "pro"}
+	claimB := claimedCodex{ID: uuid.New(), SealedRefresh: sealFor(t, sealer, "good"), Plan: "plus"}
+	upstreamErr := errors.New("network fail")
+	oauth := &fakeCodexOAuth{refresh: func(rt string) (codexoauth.TokenSet, error) {
+		switch rt {
+		case "bad":
+			return codexoauth.TokenSet{}, upstreamErr
+		case "good":
+			return codexoauth.TokenSet{AccessToken: "ab", RefreshToken: "nb", Expiry: time.Now().Add(time.Hour), Claims: codexoauth.Claims{Plan: "plus"}}, nil
+		default:
+			t.Fatalf("unexpected refresh token %q", rt)
+			return codexoauth.TokenSet{}, nil
+		}
+	}}
+	store := &fakeSystemCodexStore{steps: []fakeSystemStep{
+		{claim: claimA, refreshErr: errs.ErrUpstream},
+		{claim: claimB},
+		{none: true},
+	}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, OAuth: oauth, SystemStore: store}
+
+	n, err := svc.RefreshDue(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("refreshed = %d, want 1", n)
+	}
+	if len(store.failed) != 1 || store.failed[0] != claimA.ID {
+		t.Fatalf("failed = %v, want [%v]", store.failed, claimA.ID)
+	}
+	if len(store.applied) != 1 || store.applied[0] != claimB.ID {
+		t.Fatalf("applied = %v, want [%v]", store.applied, claimB.ID)
+	}
+	if len(store.excludeSeen) != 3 {
+		t.Fatalf("expected 3 refreshOneDue calls, got %d", len(store.excludeSeen))
+	}
+	last := store.excludeSeen[2]
+	if !containsStr(last, claimA.ID.String()) || !containsStr(last, claimB.ID.String()) {
+		t.Fatalf("both A (failed) and B (applied) must be excluded from further claims, got %v", last)
+	}
+}
+
+func TestRefreshDue_boundedLoop(t *testing.T) {
+	sealer := testSealer(t)
+	oauth := &fakeCodexOAuth{refresh: func(string) (codexoauth.TokenSet, error) {
+		return codexoauth.TokenSet{AccessToken: "a", RefreshToken: "nr", Expiry: time.Now().Add(time.Hour), Claims: codexoauth.Claims{Plan: "pro"}}, nil
+	}}
+	sealedRefresh := sealFor(t, sealer, "r")
+	steps := make([]fakeSystemStep, 0, maxCodexSweep+1)
+	for i := 0; i < maxCodexSweep+1; i++ {
+		steps = append(steps, fakeSystemStep{claim: claimedCodex{ID: uuid.New(), SealedRefresh: sealedRefresh, Plan: "pro"}})
+	}
+	store := &fakeSystemCodexStore{steps: steps}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, OAuth: oauth, SystemStore: store}
+
+	n, err := svc.RefreshDue(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != maxCodexSweep {
+		t.Fatalf("refreshed = %d, want %d (bounded)", n, maxCodexSweep)
+	}
+	if store.idx != maxCodexSweep {
+		t.Fatalf("store.idx = %d, want %d (a fresh due credential must have been left unconsumed)", store.idx, maxCodexSweep)
+	}
+}
+
 func TestRefresh_preservesPlanWhenIdTokenOmitted(t *testing.T) {
 	sealer := testSealer(t)
 	sealedOldAccess, err := sealer.Seal([]byte("old-token"))

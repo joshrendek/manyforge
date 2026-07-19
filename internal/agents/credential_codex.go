@@ -82,15 +82,40 @@ type codexStore interface {
 	refreshLockedTx(ctx context.Context, pid, bid uuid.UUID, fn func(codexCredRow) (*upsertTokens, bool, error)) error
 }
 
-// CodexTokenService owns the codex connect flows + the refresh/mint state machine (Task 6).
+// claimedCodex is one credential claimed by the cross-tenant sweep (sealed refresh + current plan).
+type claimedCodex struct {
+	ID            uuid.UUID
+	SealedRefresh string
+	Plan          string
+}
+
+// codexTxRunner is the principal-less tx seam (satisfied by *db.DB via WithTx) — the sweep is
+// cross-tenant and runs through SECURITY DEFINER functions, so it must NOT use WithPrincipal.
+type codexTxRunner interface {
+	WithTx(ctx context.Context, fn func(pgx.Tx) error) error
+}
+
+// systemCodexStore is the scheduler's RLS-exempt seam (Task 6b).
+type systemCodexStore interface {
+	// refreshOneDue claims the next due codex credential (excluding ids already handled this
+	// sweep), runs fn under the claim's row lock, and applies fn's result — all in ONE WithTx.
+	// Returns handled=false when nothing is due. On an fn error the tx rolls back (no write) but
+	// the claimed id is still returned so the caller can exclude it from the rest of the sweep.
+	refreshOneDue(ctx context.Context, cutoff time.Time, exclude []string,
+		fn func(claimedCodex) (*upsertTokens, bool, error)) (id uuid.UUID, handled bool, err error)
+}
+
+// CodexTokenService owns the codex connect flows + the refresh/mint state machine (Task 6) and
+// the cross-tenant background sweep (Task 6b).
 type CodexTokenService struct {
-	DB         credentialDB
-	Sealer     *crypto.Sealer
-	OAuth      codexOAuth
-	Store      codexStore    // prod: dbCodexStore{DB}; tests: a fake
-	PendingTTL time.Duration // default 15m
-	LazyMargin time.Duration // default 5m (Task 6)
-	Now        func() time.Time
+	DB          credentialDB
+	Sealer      *crypto.Sealer
+	OAuth       codexOAuth
+	Store       codexStore       // prod: dbCodexStore{DB}; tests: a fake
+	SystemStore systemCodexStore // prod: dbSystemCodexStore{DB}; tests: a fake (Task 6b sweep)
+	PendingTTL  time.Duration    // default 15m
+	LazyMargin  time.Duration    // default 5m (Task 6)
+	Now         func() time.Time
 }
 
 // CodexConnectInput is the credential shape to create on a successful connect.
@@ -234,6 +259,46 @@ func (s *CodexTokenService) refreshLocked(ctx context.Context, pid, bid uuid.UUI
 		return "", errs.ErrCodexDisconnected
 	}
 	return access, nil
+}
+
+// maxCodexSweep bounds one sweep so a persistently-failing credential can't monopolize it.
+const maxCodexSweep = 500
+
+// RefreshDue proactively refreshes near-expiry codex credentials across all tenants. Each
+// credential is claimed FOR UPDATE SKIP LOCKED and refreshed under that lock; a per-credential
+// upstream failure is logged and skipped (excluded from the rest of this sweep), not fatal.
+func (s *CodexTokenService) RefreshDue(ctx context.Context) (int, error) {
+	if s.Sealer == nil {
+		return 0, fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)
+	}
+	cutoff := s.now().Add(s.lazyMargin())
+	var refreshed int
+	exclude := make([]string, 0, 8)
+	for i := 0; i < maxCodexSweep; i++ {
+		var disconnected bool
+		id, handled, err := s.SystemStore.refreshOneDue(ctx, cutoff, exclude,
+			func(c claimedCodex) (*upsertTokens, bool, error) {
+				toks, disc, derr := s.doRefresh(ctx, c.SealedRefresh, c.Plan)
+				disconnected = disc
+				return toks, disc, derr
+			})
+		if !handled {
+			break // nothing left due
+		}
+		exclude = append(exclude, id.String())
+		if err != nil {
+			if errors.Is(err, errs.ErrCodexDisconnected) {
+				continue // shouldn't reach here (disconnect is applied inside the tx), defensive
+			}
+			slog.WarnContext(ctx, "codex refresh sweep: credential failed", "id", id, "err", err)
+			continue // upstream/transport failure for one credential — skip, keep sweeping
+		}
+		if disconnected {
+			continue // dead refresh token: disconnected inside the tx, not counted as refreshed
+		}
+		refreshed++
+	}
+	return refreshed, nil
 }
 
 func (s *CodexTokenService) validateConnect(in CodexConnectInput) error {
@@ -524,4 +589,44 @@ func (d dbCodexStore) refreshLockedTx(ctx context.Context, pid, bid uuid.UUID, f
 			BusinessID:        bid,
 		})
 	})
+}
+
+// dbSystemCodexStore is the production systemCodexStore (Task 6b): raw pgx + the 0096
+// SECURITY DEFINER functions, run via WithTx (no principal — cross-tenant by design).
+type dbSystemCodexStore struct{ DB codexTxRunner }
+
+func (d dbSystemCodexStore) refreshOneDue(ctx context.Context, cutoff time.Time, exclude []string,
+	fn func(claimedCodex) (*upsertTokens, bool, error)) (uuid.UUID, bool, error) {
+	var claimedID uuid.UUID
+	var handled bool
+	err := d.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		var c claimedCodex
+		var sealedKeyRef *string // returned by claim but unused here (we refresh regardless)
+		var plan *string
+		row := tx.QueryRow(ctx, `SELECT id, sealed_key_ref, oauth_refresh_token, chatgpt_plan
+			FROM codex_claim_for_refresh($1, $2)`, cutoff, exclude)
+		if err := row.Scan(&c.ID, &sealedKeyRef, &c.SealedRefresh, &plan); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil // nothing due; handled stays false
+			}
+			return err
+		}
+		if plan != nil {
+			c.Plan = *plan
+		}
+		claimedID = c.ID
+		handled = true
+		toks, disconnect, ferr := fn(c)
+		if ferr != nil {
+			return ferr // rolls back; lock released; credential left for next sweep
+		}
+		if disconnect {
+			_, e := tx.Exec(ctx, `SELECT codex_disconnect_system($1)`, c.ID)
+			return e
+		}
+		_, e := tx.Exec(ctx, `SELECT codex_apply_refresh($1,$2,$3,$4,$5)`,
+			c.ID, toks.SealedAccess, toks.SealedRefresh, toks.AccessExpiry, toks.Plan)
+		return e
+	})
+	return claimedID, handled, err
 }
