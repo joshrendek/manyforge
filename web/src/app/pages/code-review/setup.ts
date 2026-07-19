@@ -92,6 +92,7 @@ const PROVIDERS: { value: string; label: string }[] = [
   { value: 'vllm', label: 'vLLM (self-host)' },
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'huggingface', label: 'HuggingFace (Inference Providers)' },
+  { value: 'openai_codex', label: 'OpenAI Codex (ChatGPT)' },
 ];
 
 const SEVERITIES: FindingSeverity[] = ['info', 'warning', 'error'];

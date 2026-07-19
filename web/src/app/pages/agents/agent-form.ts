@@ -40,6 +40,7 @@ const LIVE_CATALOG_PROVIDERS: AIProvider[] = ['openrouter', 'huggingface'];
           <option value="vllm">vLLM (self-host)</option>
           <option value="openrouter">OpenRouter</option>
           <option value="huggingface">HuggingFace (Inference Providers)</option>
+          <option value="openai_codex">OpenAI Codex (ChatGPT)</option>
         </select>
         @if (mode === 'edit') { <small class="mf-hint">Provider can't change after creation.</small> }
       </div>
