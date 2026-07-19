@@ -286,7 +286,7 @@ test('review setup a11y: every per-row control has an accessible name naming its
   // named controls — no more unlabeled checkbox/selects/buttons (manyforge-0h0).
   await expect(page.getByRole('table', { name: 'Review dimensions' })).toBeVisible();
   await expect(page.getByRole('checkbox', { name: 'Enable Security dimension' })).toBeVisible();
-  await expect(page.getByRole('combobox', { name: 'Provider for Security' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Provider 1 for Security' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save Security' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Remove Security' })).toBeVisible();
 });
@@ -455,7 +455,7 @@ test('review setup: drag-reorder the reviewbot fallback chain by its grip handle
   await expect(page.getByTestId('chain-name-1')).toContainText('LM Studio');
 });
 
-test('review setup: drag-reorder a per-dimension model fallback chain by its grip handle', async ({ page }) => {
+test('review setup: drag a fallback to the top of the provider priority list to promote it to primary', async ({ page }) => {
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await auth(page);
   await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
@@ -465,7 +465,8 @@ test('review setup: drag-reorder a per-dimension model fallback chain by its gri
   await page.route('**/api/v1/businesses/b1/review-config', (r) =>
     r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] } }),
   );
-  // Seed a dimension whose model fallback chain already has two entries (OpenRouter then vLLM).
+  // Seed a dimension: primary anthropic, then two fallbacks (openrouter, vLLM). In the unified
+  // priority list that renders as #1 anthropic, #2 openrouter, #3 vLLM.
   await page.route('**/api/v1/businesses/b1/review-dimensions', (r) =>
     r.fulfill({
       json: {
@@ -484,25 +485,28 @@ test('review setup: drag-reorder a per-dimension model fallback chain by its gri
   );
 
   await page.goto('/code-review/setup');
-  await expect(page.getByTestId('row-fallback-provider-0')).toHaveValue('openrouter');
-  await expect(page.getByTestId('row-fallback-provider-1')).toHaveValue('vllm');
+  await expect(page.getByTestId('row-priority-provider-0')).toHaveValue('anthropic'); // #1 primary
+  await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('openrouter');
+  await expect(page.getByTestId('row-priority-provider-2')).toHaveValue('vllm');
 
-  // Drag entry #2 (vLLM) up onto entry #1 by its grip handle. The row contains a <select>/<input>,
-  // so this also proves dragging starts from the handle only (not the form controls).
-  const source = page.getByTestId('row-fallback-drag-1');
-  const target = page.getByTestId('row-fallback-drag-0');
+  // Drag vLLM (#3, index 2) up to the very top by its grip handle — this is the whole point: a
+  // fallback becomes the primary, across the old primary↔fallback boundary. Angular CDK DragDrop
+  // uses pointer/mouse events (not HTML5 dragTo), so drive page.mouse manually, from the handle.
+  const source = page.getByTestId('row-priority-drag-2');
+  const target = page.getByTestId('row-priority-drag-0');
   const sb = (await source.boundingBox())!;
   const tb = (await target.boundingBox())!;
   await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
   await page.mouse.down();
-  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2 - 4, { steps: 3 });
-  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 12 });
-  await page.mouse.move(tb.x + tb.width / 2, tb.y - 6, { steps: 4 });
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2 - 4, { steps: 3 }); // start the drag
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 16 });
+  await page.mouse.move(tb.x + tb.width / 2, tb.y - 6, { steps: 4 }); // above #1 → drop before it
   await page.mouse.up();
 
-  // vLLM is now the primary fallback; OpenRouter moved down.
-  await expect(page.getByTestId('row-fallback-provider-0')).toHaveValue('vllm');
-  await expect(page.getByTestId('row-fallback-provider-1')).toHaveValue('openrouter');
+  // vLLM promoted to primary (#1); anthropic and openrouter shifted down.
+  await expect(page.getByTestId('row-priority-provider-0')).toHaveValue('vllm');
+  await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('anthropic');
+  await expect(page.getByTestId('row-priority-provider-2')).toHaveValue('openrouter');
 });
 
 test('review setup: configure a per-dimension fallback chain (add, reorder, remove) and save it', async ({ page }) => {
@@ -539,37 +543,43 @@ test('review setup: configure a per-dimension fallback chain (add, reorder, remo
   await page.goto('/code-review/setup');
   await expect(page.getByTestId('dimension-row')).toHaveCount(1);
 
-  // No fallback configured initially.
-  await expect(page.getByTestId('row-fallback-empty')).toBeVisible();
+  // The unified list starts with exactly one entry — the primary (seeded vLLM / ornith).
+  await expect(page.getByTestId('row-priority-provider-0')).toHaveValue('vllm');
+  await expect(page.getByTestId('row-priority-entry-1')).toHaveCount(0);
 
-  // Add two fallback entries: first ollama (free-text model), second openrouter (typeahead).
-  await page.getByTestId('row-fallback-add').click();
-  await page.getByTestId('row-fallback-provider-0').selectOption('ollama');
-  await page.getByTestId('row-fallback-model-text-0').fill('llama3');
+  // Add ollama (free-text model) as #2, then openrouter (typeahead) as #3.
+  await page.getByTestId('row-priority-add').click();
+  await page.getByTestId('row-priority-provider-1').selectOption('ollama');
+  await page.getByTestId('row-priority-model-text-1').fill('llama3');
 
-  await page.getByTestId('row-fallback-add').click();
-  await page.getByTestId('row-fallback-provider-1').selectOption('openrouter');
+  await page.getByTestId('row-priority-add').click();
+  await page.getByTestId('row-priority-provider-2').selectOption('openrouter');
   await expect(page.locator('#setup-models-openrouter option')).toHaveCount(1);
-  await page.getByTestId('row-fallback-model-text-1').fill('deepseek-v4-pro');
+  await page.getByTestId('row-priority-model-text-2').fill('deepseek-v4-pro');
 
-  // Reorder: move the 2nd (openrouter) entry up → it becomes the primary fallback.
-  await page.getByTestId('row-fallback-up-1').click();
-  await expect(page.getByTestId('row-fallback-provider-0')).toHaveValue('openrouter');
-  await expect(page.getByTestId('row-fallback-provider-1')).toHaveValue('ollama');
+  // Promote openrouter (#3) to primary with ↑↑ → order becomes openrouter, vLLM, ollama. Assert the
+  // intermediate state between clicks so each reorder settles before the next (avoids a click race).
+  await page.getByTestId('row-priority-up-2').click();
+  await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('openrouter');
+  await page.getByTestId('row-priority-up-1').click();
+  await expect(page.getByTestId('row-priority-provider-0')).toHaveValue('openrouter');
+  await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('vllm');
 
-  // Add a third, blank entry (no provider chosen yet), then remove it — proves Remove works
-  // and (via the save assertion below) that toInput drops blank-provider entries either way.
-  await page.getByTestId('row-fallback-add').click();
-  await expect(page.getByTestId('row-fallback-provider-2')).toHaveValue('');
-  await page.getByTestId('row-fallback-remove-2').click();
-  await expect(page.getByTestId('row-fallback-entry-2')).toHaveCount(0);
+  // Add a blank entry then remove it (proves Remove works; blank entries are dropped on save anyway).
+  await page.getByTestId('row-priority-add').click();
+  await expect(page.getByTestId('row-priority-provider-3')).toHaveValue('');
+  await page.getByTestId('row-priority-remove-3').click();
+  await expect(page.getByTestId('row-priority-entry-3')).toHaveCount(0);
 
   await page.getByTestId('row-save').click();
   await expect(page.getByTestId('setup-saved')).toBeVisible();
 
   expect(posted).not.toBeNull();
+  // #1 (primary) → provider/model; the rest → fallback_chain in priority order.
+  expect(posted!['provider']).toBe('openrouter');
+  expect(posted!['model']).toBe('deepseek-v4-pro');
   expect(posted!['fallback_chain']).toEqual([
-    { provider: 'openrouter', model: 'deepseek-v4-pro' },
+    { provider: 'vllm', model: 'ornith' },
     { provider: 'ollama', model: 'llama3' },
   ]);
 });
