@@ -48,6 +48,9 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     WHERE id = p_id AND provider = 'openai_codex';
 $$;
 
+REVOKE ALL ON FUNCTION codex_claim_for_refresh(timestamptz, text[]) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION codex_claim_for_refresh(timestamptz, text[]) TO manyforge_app;
+REVOKE ALL ON FUNCTION codex_apply_refresh(uuid, text, text, timestamptz, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION codex_apply_refresh(uuid, text, text, timestamptz, text) TO manyforge_app;
+REVOKE ALL ON FUNCTION codex_disconnect_system(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION codex_disconnect_system(uuid) TO manyforge_app;

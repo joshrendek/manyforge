@@ -283,6 +283,12 @@ func (s *CodexTokenService) RefreshDue(ctx context.Context) (int, error) {
 				return toks, disc, derr
 			})
 		if !handled {
+			if err != nil {
+				// claim/tx failure (WithTx/Begin, or the claim's QueryRow.Scan failed with
+				// something other than pgx.ErrNoRows) — distinct from "nothing due". Surface it
+				// so the sweep doesn't silently look empty forever.
+				return refreshed, fmt.Errorf("codex refresh sweep claim: %w", err)
+			}
 			break // nothing left due
 		}
 		exclude = append(exclude, id.String())

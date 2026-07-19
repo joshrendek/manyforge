@@ -450,6 +450,11 @@ type fakeSystemCodexStore struct {
 	steps []fakeSystemStep
 	idx   int
 
+	// claimErr, when set, makes the FIRST call return (uuid.Nil, false, claimErr) — simulating a
+	// claim/tx failure (WithTx/Begin error, or the claim QueryRow.Scan failing with something
+	// other than pgx.ErrNoRows) rather than "nothing due". Consumed once, before any steps run.
+	claimErr error
+
 	applied      []uuid.UUID // ids where fn returned (toks, false, nil) — apply path
 	disconnected []uuid.UUID // ids where fn returned (nil, true, nil) — disconnect path
 	failed       []uuid.UUID // ids where fn returned a non-nil error
@@ -459,6 +464,11 @@ type fakeSystemCodexStore struct {
 func (f *fakeSystemCodexStore) refreshOneDue(_ context.Context, _ time.Time, exclude []string,
 	fn func(claimedCodex) (*upsertTokens, bool, error)) (uuid.UUID, bool, error) {
 	f.excludeSeen = append(f.excludeSeen, append([]string(nil), exclude...))
+	if f.claimErr != nil {
+		err := f.claimErr
+		f.claimErr = nil
+		return uuid.Nil, false, err
+	}
 	for f.idx < len(f.steps) {
 		step := f.steps[f.idx]
 		f.idx++
@@ -639,6 +649,31 @@ func TestRefreshDue_boundedLoop(t *testing.T) {
 	}
 	if store.idx != maxCodexSweep {
 		t.Fatalf("store.idx = %d, want %d (a fresh due credential must have been left unconsumed)", store.idx, maxCodexSweep)
+	}
+}
+
+// TestRefreshDue_surfacesClaimFailure asserts that a claim/tx failure (handled=false, err!=nil —
+// e.g. WithTx/Begin failing, or the claim's QueryRow.Scan erroring with something other than
+// pgx.ErrNoRows) is NOT swallowed as "nothing due". Before the fix, RefreshDue checked `!handled`
+// before `err`, so this case silently returned (0, nil) forever.
+func TestRefreshDue_surfacesClaimFailure(t *testing.T) {
+	sealer := testSealer(t)
+	claimErr := errors.New("claim: tx begin failed")
+	store := &fakeSystemCodexStore{claimErr: claimErr}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, SystemStore: store}
+
+	n, err := svc.RefreshDue(context.Background())
+	if err == nil {
+		t.Fatal("expected a non-nil error from RefreshDue, got nil")
+	}
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("expected error to wrap claimErr, got %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("refreshed = %d, want 0", n)
+	}
+	if len(store.excludeSeen) != 1 {
+		t.Fatalf("expected exactly 1 refreshOneDue call (sweep must stop on claim failure), got %d", len(store.excludeSeen))
 	}
 }
 
