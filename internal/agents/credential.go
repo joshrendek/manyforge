@@ -53,11 +53,21 @@ type credentialDB interface {
 	WithPrincipal(ctx context.Context, principalID uuid.UUID, fn func(pgx.Tx) error) error
 }
 
+// codexMinter mints a fresh access token for an openai_codex credential (Increment 2). Nil
+// when the codex OAuth service isn't wired (Task 10 wires *CodexTokenService in; manual-token
+// credentials for every other provider still resolve via sealed_key_ref regardless).
+type codexMinter interface {
+	Mint(ctx context.Context, principalID, businessID uuid.UUID) (string, error)
+}
+
 // CredentialService manages per-business BYO provider credentials. DB is the
 // RLS-scoped handle (nil in pure unit tests that only exercise seal/resolve).
 type CredentialService struct {
 	DB     credentialDB
 	Sealer *crypto.Sealer
+	// Codex mints a fresh per-run access token for openai_codex credentials (Task 7/10). Nil
+	// is a valid, common state (Increment 2 not fully wired yet, or a deployment without codex).
+	Codex codexMinter
 }
 
 // CreateCredentialInput is the caller-supplied credential to store.
@@ -114,6 +124,23 @@ type CredentialView struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	ChatGPTAccountID    string // openai_codex only; "" for other providers; non-secret
+	// ConnectionStatus, Plan, and AccessExpiry are read-side connection-health fields
+	// (Task 9, manyforge-gi9u), populated only for openai_codex — left zero/empty for
+	// every other provider. Kept warm by the scheduler (Task 6/7's refresh loop) without
+	// requiring a run, so a future FE can render a "Connected as Pro" badge. No secret
+	// (sealed_key_ref / oauth_refresh_token) is ever projected here.
+	ConnectionStatus string
+	Plan             string
+	AccessExpiry     *time.Time
+}
+
+// deriveConnectionStatus reports whether a codex credential can still authenticate. "disconnected"
+// means no usable token remains (cleared after invalid_grant, or never connected).
+func deriveConnectionStatus(sealedKeyRef, oauthRefresh *string) string {
+	if (sealedKeyRef != nil && *sealedKeyRef != "") || (oauthRefresh != nil && *oauthRefresh != "") {
+		return "connected"
+	}
+	return "disconnected"
 }
 
 // credViewFromRow projects a dbgen row into a key-free CredentialView,
@@ -127,7 +154,7 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 	if row.ChatgptAccountID != nil {
 		acct = *row.ChatgptAccountID
 	}
-	return CredentialView{
+	v := CredentialView{
 		ID:                  row.ID,
 		BusinessID:          row.BusinessID,
 		Provider:            string(row.Provider),
@@ -138,6 +165,20 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 		UpdatedAt:           row.UpdatedAt,
 		ChatGPTAccountID:    acct,
 	}
+	// Connection-health fields are only meaningful for openai_codex; leave them
+	// zero/empty for every other provider (no sealed_key_ref/oauth_refresh_token
+	// projection either way — only the derived status, plan, and expiry).
+	if row.Provider == dbgen.AiProviderOpenaiCodex {
+		v.ConnectionStatus = deriveConnectionStatus(row.SealedKeyRef, row.OauthRefreshToken)
+		if row.ChatgptPlan != nil {
+			v.Plan = *row.ChatgptPlan
+		}
+		if row.OauthAccessExpiry.Valid {
+			t := row.OauthAccessExpiry.Time
+			v.AccessExpiry = &t
+		}
+	}
+	return v
 }
 
 // storedCredential is the unsealed-at-rest shape (mirrors the dbgen row; defined
@@ -351,7 +392,9 @@ func (s *CredentialService) Delete(ctx context.Context, principalID, businessID,
 	return nil
 }
 
-// Resolve fetches + unseals the credential for (business, provider).
+// Resolve fetches + unseals the credential for (business, provider), then — for
+// openai_codex — overwrites APIKey with a freshly-minted access token (applyCodexMint)
+// before it reaches the sandbox.
 func (s *CredentialService) Resolve(ctx context.Context, principalID, businessID uuid.UUID, provider string) (ResolvedCredential, error) {
 	var row dbgen.AiProviderCredential
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -364,13 +407,34 @@ func (s *CredentialService) Resolve(ctx context.Context, principalID, businessID
 	if err != nil {
 		return ResolvedCredential{}, mapCredErr(err)
 	}
-	return s.resolveRow(storedCredential{
+	resolved, err := s.resolveRow(storedCredential{
 		Provider: string(row.Provider), SealedKeyRef: row.SealedKeyRef,
 		BaseURL: row.BaseUrl, DefaultModel: row.DefaultModel,
 		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
 		MaxConcurrentLanes:  row.MaxConcurrentLanes,
 		ChatGPTAccountID:    row.ChatgptAccountID,
 	})
+	if err != nil {
+		return ResolvedCredential{}, err
+	}
+	return s.applyCodexMint(ctx, principalID, businessID, resolved)
+}
+
+// applyCodexMint overwrites APIKey with a freshly-minted access token for openai_codex
+// credentials; a no-op for every other provider and when no minter is wired (Codex == nil).
+// Both AICredentialResolver entry points in package coding — Resolve (agent-scoped) and
+// ResolveProvider (per-dimension lane, manyforge-azy) — route through CredentialService.Resolve,
+// so wiring the hook here alone covers both call sites without a second copy of this check.
+func (s *CredentialService) applyCodexMint(ctx context.Context, principalID, businessID uuid.UUID, rc ResolvedCredential) (ResolvedCredential, error) {
+	if rc.Provider != string(dbgen.AiProviderOpenaiCodex) || s.Codex == nil {
+		return rc, nil
+	}
+	tok, err := s.Codex.Mint(ctx, principalID, businessID)
+	if err != nil {
+		return ResolvedCredential{}, err
+	}
+	rc.APIKey = tok
+	return rc, nil
 }
 
 // mapCredErr converts a query/closure error into a stable service-layer sentinel.

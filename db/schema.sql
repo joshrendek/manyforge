@@ -313,6 +313,9 @@ CREATE TABLE ai_provider_credential (
     allow_private_base_url boolean NOT NULL,
     max_concurrent_lanes integer NOT NULL,
     chatgpt_account_id text,
+    oauth_refresh_token text,
+    oauth_access_expiry timestamptz,
+    chatgpt_plan text,
     created_at      timestamptz NOT NULL,
     updated_at      timestamptz NOT NULL,
     UNIQUE (business_id, provider),
@@ -724,4 +727,22 @@ CREATE TABLE github_webhook_delivery (
     external_delivery_id text NOT NULL,
     received_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (installation_id, external_delivery_id)
+);
+
+-- Codex OAuth pending state. migrations/0095.
+CREATE TABLE codex_oauth_pending (
+    jti                  uuid PRIMARY KEY,
+    business_id          uuid NOT NULL,
+    tenant_root_id       uuid NOT NULL,
+    flow                 text NOT NULL,
+    sealed_device_code   text,
+    sealed_pkce_verifier text,
+    default_model        text NOT NULL,
+    base_url             text,
+    max_concurrent_lanes integer NOT NULL,
+    status               text NOT NULL DEFAULT 'pending',
+    created_at           timestamptz NOT NULL DEFAULT now(),
+    expires_at           timestamptz NOT NULL,
+    UNIQUE (jti, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );

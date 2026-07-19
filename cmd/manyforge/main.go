@@ -27,6 +27,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox/kube"
 	"github.com/manyforge/manyforge/internal/authz"
+	"github.com/manyforge/manyforge/internal/codexoauth"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/jira"
 	"github.com/manyforge/manyforge/internal/connectors/zendesk"
@@ -201,8 +202,22 @@ func main() {
 	// Credential HTTP surface is only mounted when the AI sealer is configured —
 	// without it, Create would return a config error. Mirrors the connectors nil-guard.
 	var credH *agents.CredentialHandler
+	// codexSvc is declared here (outer scope) but only STARTED as a background worker much later,
+	// after workerCtx exists (~line 696: the codex-refresh-worker block below `agentReaper.Run`).
+	// It is constructed + wired into credSvc/credH here, in the AI-credential block, because that's
+	// where aiSealer/database are already in scope and where every other credential dependency is
+	// wired — splitting construction from Run() start is just how workerCtx's declaration position
+	// forces this file to be ordered.
+	var codexSvc *agents.CodexTokenService
 	if aiSealer != nil {
 		credH = agents.NewCredentialHandler(credSvc)
+		// Codex Increment 2: assemble the codex OAuth service, wire it as the resolver's minter
+		// (per-run token mint) and the handler's connect API. The background refresh sweep is
+		// started later, once workerCtx exists (see the `if codexSvc != nil` block near the
+		// agent reaper below).
+		codexSvc = agents.NewCodexTokenService(database, aiSealer, codexoauth.NewClient(30*time.Second), cfg.CodexAccessRefreshMargin)
+		credSvc.Codex = codexSvc // typed-nil-safe: codexSvc is a concrete non-nil pointer here (aiSealer != nil block)
+		credH.SetCodex(codexSvc)
 	}
 	aiReg, err := agents.LoadModelRegistry(ctx, database)
 	if err != nil {
@@ -784,6 +799,18 @@ func main() {
 	// reap-all — so it stays correct under the horizontal scaling the drainer already anticipates.
 	agentReaper := &agents.Reaper{DB: database, Logger: logger, Every: 2 * time.Minute, StaleAfter: 10 * time.Minute}
 	go agentReaper.Run(workerCtx)
+
+	// Codex Increment 2 background refresh sweep: codexSvc was constructed (and wired into
+	// credSvc/credH) way up in the AI-credential block (~line 200), but workerCtx doesn't exist
+	// yet at that point — it's created just above (~line 696). Started here instead, guarded by
+	// the aiSealer-derived nil check, and cancelled by the existing workerCancel() on shutdown.
+	if codexSvc != nil {
+		go (&agents.CodexRefreshWorker{
+			Svc:    codexSvc,
+			Logger: logger,
+			Every:  cfg.CodexRefreshInterval,
+		}).Run(workerCtx)
+	}
 
 	// In-process inbound SMTP receiver (US1). Started ONLY when MANYFORGE_SMTP_ADDR
 	// is set; in dev it is empty and the receiver is disabled. STARTTLS is

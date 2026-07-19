@@ -142,6 +142,12 @@ type Config struct {
 	// Default 8m matches the prior hardcoded cloud-sandbox cap; operators running a
 	// slow local model can raise it. Env: MANYFORGE_SANDBOX_REVIEW_TIMEOUT.
 	SandboxReviewTimeout time.Duration
+	// CodexRefreshInterval is how often the background codex token-refresh sweep runs.
+	// Env: MANYFORGE_CODEX_REFRESH_INTERVAL (default 30m).
+	CodexRefreshInterval time.Duration
+	// CodexAccessRefreshMargin: refresh a codex access token this far before expiry, both in the
+	// lazy run-path and as the scheduler's cutoff. Env: MANYFORGE_CODEX_ACCESS_REFRESH_MARGIN (default 5m).
+	CodexAccessRefreshMargin time.Duration
 
 	// SandboxMode selects which sandbox runner backs the code-review sandbox:
 	// "off" (disabled), "docker" (DockerRunner), or "kube" (KubeRunner, Task 4.5).
@@ -356,6 +362,12 @@ func Load() (Config, error) {
 
 	if cfg.SandboxReviewTimeout, err = envDuration("MANYFORGE_SANDBOX_REVIEW_TIMEOUT", 8*time.Minute); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_SANDBOX_REVIEW_TIMEOUT: %w", err)
+	}
+	if cfg.CodexRefreshInterval, err = envDuration("MANYFORGE_CODEX_REFRESH_INTERVAL", 30*time.Minute); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_CODEX_REFRESH_INTERVAL: %w", err)
+	}
+	if cfg.CodexAccessRefreshMargin, err = envDuration("MANYFORGE_CODEX_ACCESS_REFRESH_MARGIN", 5*time.Minute); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_CODEX_ACCESS_REFRESH_MARGIN: %w", err)
 	}
 
 	// Sandbox mode (Task 4.1, Phase 4 k8s-native sandbox). Defaults to "kube" when

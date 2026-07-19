@@ -123,6 +123,10 @@ func assertNoKeyField(t *testing.T, v CredentialView) {
 		// the OAuth access token (that stays sealed in sealed_key_ref and is never on this
 		// view). Safe to allowlist here; see CreateCredentialInput.ChatGPTAccountID.
 		"ChatGPTAccountID": true,
+		// Codex Increment 2 read-side connection-health fields — all non-secret: the derived
+		// connection status (connected/disconnected), the ChatGPT plan name, and the access-token
+		// expiry timestamp. None carry key/token material (tokens stay sealed, off this view).
+		"ConnectionStatus": true, "Plan": true, "AccessExpiry": true,
 	}
 	rt := reflect.TypeOf(v)
 	for i := 0; i < rt.NumField(); i++ {

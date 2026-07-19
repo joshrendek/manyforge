@@ -269,6 +269,87 @@ func TestOpenAICodexAccountIDFormat(t *testing.T) {
 	}
 }
 
+// TestDeriveConnectionStatus pins the read-side connection-health derivation (Task 9,
+// manyforge-gi9u): "connected" whenever a usable token exists — either a sealed API key
+// (Increment-1 manual-token codex creds, which never get a refresh token) or an OAuth
+// refresh token (Increment-2 connect flow) — else "disconnected".
+func TestDeriveConnectionStatus(t *testing.T) {
+	sealed := "sealed-ref-abc"
+	refresh := "refresh-token-xyz"
+	empty := ""
+
+	cases := []struct {
+		name         string
+		sealedKeyRef *string
+		oauthRefresh *string
+		want         string
+	}{
+		{"both nil -> disconnected", nil, nil, "disconnected"},
+		{"both empty string -> disconnected", &empty, &empty, "disconnected"},
+		{"sealed key only (manual-token codex cred) -> connected", &sealed, nil, "connected"},
+		{"refresh token only (oauth-connected codex cred) -> connected", nil, &refresh, "connected"},
+		{"both set -> connected", &sealed, &refresh, "connected"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveConnectionStatus(tc.sealedKeyRef, tc.oauthRefresh)
+			if got != tc.want {
+				t.Errorf("deriveConnectionStatus(%v, %v) = %q, want %q", tc.sealedKeyRef, tc.oauthRefresh, got, tc.want)
+			}
+		})
+	}
+}
+
+// fakeMinter is a codexMinter test double (Task 7). failIfCalled, when set, fails the
+// test if Mint is invoked — used to pin the non-codex no-op path.
+type fakeMinter struct {
+	tok          string
+	err          error
+	failIfCalled *testing.T
+}
+
+func (f fakeMinter) Mint(_ context.Context, _, _ uuid.UUID) (string, error) {
+	if f.failIfCalled != nil {
+		f.failIfCalled.Fatal("codexMinter.Mint called for non-codex provider")
+	}
+	return f.tok, f.err
+}
+
+// TestResolve_codexMintsFreshToken pins the per-run mint hook (Task 7, manyforge-gi9u):
+// an openai_codex ResolvedCredential's APIKey is overwritten with a freshly-minted access
+// token, not left as whatever resolveRow unsealed from sealed_key_ref.
+func TestResolve_codexMintsFreshToken(t *testing.T) {
+	svc := &CredentialService{Codex: fakeMinter{tok: "fresh-abc"}}
+	rc := ResolvedCredential{Provider: "openai_codex", APIKey: "stale-sealed-open"}
+	out, err := svc.applyCodexMint(context.Background(), uuid.New(), uuid.New(), rc)
+	if err != nil || out.APIKey != "fresh-abc" {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+}
+
+// TestResolve_nonCodexUnchanged pins the no-op path: for every other provider the mint
+// hook must not touch APIKey and must not even call Mint.
+func TestResolve_nonCodexUnchanged(t *testing.T) {
+	svc := &CredentialService{Codex: fakeMinter{failIfCalled: t}}
+	rc := ResolvedCredential{Provider: "openai", APIKey: "sk-x"}
+	out, _ := svc.applyCodexMint(context.Background(), uuid.New(), uuid.New(), rc)
+	if out.APIKey != "sk-x" {
+		t.Fatalf("non-codex APIKey changed: %q", out.APIKey)
+	}
+}
+
+// TestResolve_nilMinterUnchanged pins the other no-op path (manyforge-gi9u): when Codex is
+// nil (not wired — Increment 2 stops before Task 10), an openai_codex credential's APIKey
+// resolves via sealed_key_ref like any other provider instead of panicking.
+func TestResolve_nilMinterUnchanged(t *testing.T) {
+	svc := &CredentialService{}
+	rc := ResolvedCredential{Provider: "openai_codex", APIKey: "sealed-open-value"}
+	out, err := svc.applyCodexMint(context.Background(), uuid.New(), uuid.New(), rc)
+	if err != nil || out.APIKey != "sealed-open-value" {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+}
+
 func TestOpenAICodexCreateRejectsMissingAccountID(t *testing.T) {
 	// Create() runs validate() first and returns before any sealer/DB access, so a zero-value
 	// service proves the boundary (not just validate() directly) rejects a codex credential with

@@ -22,6 +22,8 @@ func TestWriteErrorMapping(t *testing.T) {
 		{"forbidden collapses to 404", fmt.Errorf("nope: %w", errs.ErrForbidden), 404, "NOT_FOUND"},
 		{"validation", fmt.Errorf("bad email: %w", errs.ErrValidation), 400, "VALIDATION"},
 		{"conflict", errs.ErrConflict, 409, "CONFLICT"},
+		{"codex disconnected -> 409", fmt.Errorf("mint: %w", errs.ErrCodexDisconnected), 409, "CODEX_DISCONNECTED"},
+		{"upstream -> 502", fmt.Errorf("codex refresh: %w", errs.ErrUpstream), 502, "UPSTREAM"},
 		{"unknown -> 500", errors.New("boom"), 500, "INTERNAL"},
 	}
 	for _, c := range cases {

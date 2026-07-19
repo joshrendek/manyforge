@@ -446,6 +446,97 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/ai_credentials/codex/device/start:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: startCodexDeviceConnect
+      summary: Begin the OpenAI Codex device-code connect flow
+      description: >
+        Starts the OAuth device-code flow against auth.openai.com and stores a
+        single-use pending row (15m TTL). Poll GET .../codex/device/{pendingID}/status
+        with the returned pending_id to complete the connection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CodexConnectRequest" }
+      responses:
+        "200":
+          description: Device flow started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodexDeviceStart" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+  /businesses/{id}/ai_credentials/codex/device/{pendingID}/status:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: pendingID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getCodexDeviceStatus
+      summary: Poll a pending Codex device-code connect flow
+      description: >
+        Polls auth.openai.com once for the pending device code. On approval, seals
+        and persists the resulting openai_codex credential and consumes the
+        pending row (single-use). Returns status pending|approved|expired|denied.
+      responses:
+        "200":
+          description: Poll result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodexConnectStatus" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+  /businesses/{id}/ai_credentials/codex/pkce/start:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: startCodexPKCEConnect
+      summary: Begin the OpenAI Codex PKCE (paste-redirect) connect flow
+      description: >
+        Generates a PKCE verifier/challenge and stores a single-use pending row
+        (15m TTL). The returned authorize_url is opened by the user; the resulting
+        redirect URL is then posted to .../codex/pkce/exchange.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CodexConnectRequest" }
+      responses:
+        "200":
+          description: PKCE flow started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodexPKCEStart" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/ai_credentials/codex/pkce/exchange:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: exchangeCodexPKCEConnect
+      summary: Complete the OpenAI Codex PKCE connect flow
+      description: >
+        Parses the pasted redirect URL, validates state == pending_id, exchanges
+        the code with auth.openai.com, and — on success — seals and persists the
+        resulting openai_codex credential, consuming the pending row (single-use).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CodexPKCEExchangeRequest" }
+      responses:
+        "200":
+          description: Exchange result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodexConnectStatus" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
   /businesses/{id}/approvals/{approvalID}/deny:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -493,6 +584,13 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadGateway:
+      description: >
+        Upstream provider error (e.g. auth.openai.com failed or timed out during
+        a Codex connect call)
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -760,6 +858,25 @@ components:
         max_concurrent_lanes: { type: integer, minimum: 1, maximum: 16, default: 4 }
         created_at: { type: string }
         updated_at: { type: string }
+        chatgpt_plan:
+          type: string
+          description: >-
+            openai_codex only, empty for every other provider. The ChatGPT
+            subscription plan reported by the last successful token refresh
+            (e.g. "plus", "pro").
+        connection_status:
+          type: string
+          enum: [connected, disconnected]
+          description: >-
+            openai_codex only, empty for every other provider. "connected"
+            when a usable token exists (sealed API key or OAuth refresh
+            token); "disconnected" otherwise. Never returns the api key —
+            this is a derived status, not the secret itself.
+        oauth_access_expiry:
+          type: string
+          description: >-
+            openai_codex only, empty for every other provider. Expiry of the
+            last-minted OAuth access token.
     CreateAICredentialRequest:
       type: object
       required: [provider, api_key, default_model]
@@ -787,3 +904,50 @@ components:
         chatgpt_account_id:
           type: string
           description: ChatGPT-Account-Id for an openai_codex credential (required when provider is openai_codex).
+    CodexConnectRequest:
+      type: object
+      description: Shared request body for the codex device/start and pkce/start endpoints.
+      required: [default_model]
+      properties:
+        default_model: { type: string }
+        base_url:
+          type: string
+          description: Optional. Overrides the default ChatGPT Codex backend endpoint.
+        max_concurrent_lanes:
+          type: integer
+          minimum: 1
+          maximum: 16
+          default: 4
+    CodexDeviceStart:
+      type: object
+      description: Result of starting the OpenAI device-code flow.
+      required: [pending_id, user_code, verification_uri, verification_uri_complete, interval, expires_in]
+      properties:
+        pending_id: { type: string, format: uuid }
+        user_code: { type: string }
+        verification_uri: { type: string }
+        verification_uri_complete: { type: string }
+        interval: { type: integer, description: Poll interval in seconds. }
+        expires_in: { type: integer, description: Device code TTL in seconds. }
+    CodexPKCEStart:
+      type: object
+      description: Result of starting the PKCE (paste-redirect) flow.
+      required: [pending_id, authorize_url]
+      properties:
+        pending_id: { type: string, format: uuid }
+        authorize_url: { type: string }
+    CodexPKCEExchangeRequest:
+      type: object
+      required: [pending_id, redirect_url]
+      properties:
+        pending_id: { type: string, format: uuid }
+        redirect_url:
+          type: string
+          description: The full redirect URL the user was sent to, pasted back verbatim (must carry code and a state matching pending_id).
+    CodexConnectStatus:
+      type: object
+      description: Poll/exchange result. credential_id is present only once status is approved.
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, approved, expired, denied] }
+        credential_id: { type: string, format: uuid }
