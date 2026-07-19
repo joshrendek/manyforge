@@ -3,7 +3,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ReviewConfig, ReviewDimension } from '../../core/code-review.service';
+import { ReviewConfig, ReviewDimension, ReviewDimensionFallbackEntry } from '../../core/code-review.service';
+import { CdkDragDrop } from '@angular/cdk/drag-drop';
 import { CodeReviewSetupComponent } from './setup';
 
 const businesses = {
@@ -282,5 +283,22 @@ describe('CodeReviewSetupComponent', () => {
     mock.expectOne('/api/v1/businesses/b2/agents').flush({ items: [] });
     fixture.detectChanges();
     expect(cmp.businessId()).toBe('b2');
+  });
+
+  it('reorders the fallback chain via drag-drop (onFallbackDrop)', () => {
+    mount([makeDim({ dimension: 'security', model: 'x' })]);
+    const row = cmp.rows()[0];
+    row.fallback_chain = [
+      { provider: 'openrouter', model: 'gpt-4o' },
+      { provider: 'vllm', model: 'qwen' },
+    ];
+    cmp.onFallbackDrop(row, { previousIndex: 0, currentIndex: 1 } as CdkDragDrop<ReviewDimensionFallbackEntry[]>);
+    expect(cmp.rows()[0].fallback_chain.map((f) => f.provider)).toEqual(['vllm', 'openrouter']);
+  });
+
+  it('reorders the reviewbot chain via drag-drop (onChainDrop)', () => {
+    mount([makeDim()], { ...defaultConfig, review_agent_chain: ['ag1', 'ag2'] });
+    cmp.onChainDrop({ previousIndex: 0, currentIndex: 1 } as CdkDragDrop<string[]>);
+    expect(cmp.config().review_agent_chain).toEqual(['ag2', 'ag1']);
   });
 });

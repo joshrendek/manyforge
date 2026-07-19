@@ -404,6 +404,107 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
   expect(putBody!['review_agent_chain']).toEqual(['ag1']);
 });
 
+test('review setup: drag-reorder the reviewbot fallback chain by its grip handle', async ({ page }) => {
+  // Fallback FIRST so unmocked shell/nav calls return empty instead of 401→logout.
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
+  await auth(page);
+  await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/agents', (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          { ...agent, id: 'ag1', name: 'LM Studio', provider: 'vllm', model: 'ornith-1.0-9b', max_concurrent_lanes: 1 },
+          { ...agent, id: 'ag2', name: 'Cloud', provider: 'openrouter', model: 'x-ai/grok', max_concurrent_lanes: 4 },
+        ],
+      },
+    }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-config', (r) =>
+    r.fulfill({
+      json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] },
+    }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => r.fulfill({ json: { items: [] } }));
+
+  await page.goto('/code-review/setup');
+
+  // Seed two entries: LM Studio (primary), Cloud (fallback).
+  await page.getByTestId('chain-add').selectOption('ag1');
+  await page.getByTestId('chain-add').selectOption('ag2');
+  await expect(page.getByTestId('chain-name-0')).toContainText('LM Studio');
+  await expect(page.getByTestId('chain-name-1')).toContainText('Cloud');
+
+  // Drag Cloud (row 1) up onto row 0 by its grip handle. Angular CDK DragDrop uses pointer/mouse
+  // events (NOT the HTML5 dragTo protocol), so drive page.mouse manually with incremental moves.
+  const source = page.getByTestId('chain-drag-1');
+  const target = page.getByTestId('chain-drag-0');
+  const sb = (await source.boundingBox())!;
+  const tb = (await target.boundingBox())!;
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2 - 4, { steps: 3 }); // exceed the CDK drag threshold
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 12 });
+  await page.mouse.move(tb.x + tb.width / 2, tb.y - 6, { steps: 4 }); // above row 0 → drop before it
+  await page.mouse.up();
+
+  // Cloud is now primary; LM Studio moved to fallback.
+  await expect(page.getByTestId('chain-name-0')).toContainText('Cloud');
+  await expect(page.getByTestId('chain-name-1')).toContainText('LM Studio');
+});
+
+test('review setup: drag-reorder a per-dimension model fallback chain by its grip handle', async ({ page }) => {
+  await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
+  await auth(page);
+  await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/review-config', (r) =>
+    r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] } }),
+  );
+  // Seed a dimension whose model fallback chain already has two entries (OpenRouter then vLLM).
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            id: 'd1', dimension: 'security', provider: 'anthropic', model: 'claude-opus-4-8',
+            fallback_chain: [
+              { provider: 'openrouter', model: 'gpt-4o' },
+              { provider: 'vllm', model: 'qwen' },
+            ],
+            prompt: 'Security prompt', scope_globs: [], min_severity: 'warning', enabled: true, sort_order: 1,
+          },
+        ],
+      },
+    }),
+  );
+
+  await page.goto('/code-review/setup');
+  await expect(page.getByTestId('row-fallback-provider-0')).toHaveValue('openrouter');
+  await expect(page.getByTestId('row-fallback-provider-1')).toHaveValue('vllm');
+
+  // Drag entry #2 (vLLM) up onto entry #1 by its grip handle. The row contains a <select>/<input>,
+  // so this also proves dragging starts from the handle only (not the form controls).
+  const source = page.getByTestId('row-fallback-drag-1');
+  const target = page.getByTestId('row-fallback-drag-0');
+  const sb = (await source.boundingBox())!;
+  const tb = (await target.boundingBox())!;
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2 - 4, { steps: 3 });
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 12 });
+  await page.mouse.move(tb.x + tb.width / 2, tb.y - 6, { steps: 4 });
+  await page.mouse.up();
+
+  // vLLM is now the primary fallback; OpenRouter moved down.
+  await expect(page.getByTestId('row-fallback-provider-0')).toHaveValue('vllm');
+  await expect(page.getByTestId('row-fallback-provider-1')).toHaveValue('openrouter');
+});
+
 test('review setup: configure a per-dimension fallback chain (add, reorder, remove) and save it', async ({ page }) => {
   // Fallback FIRST so unmocked shell/nav calls return empty instead of 401→logout.
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));

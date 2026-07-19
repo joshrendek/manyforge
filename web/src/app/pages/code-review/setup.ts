@@ -16,6 +16,7 @@ import { CurrentBusinessService } from '../../core/current-business.service';
 import { EmptyState } from '../../ui/empty-state/empty-state';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
+import { CdkDropList, CdkDrag, CdkDragHandle, CdkDragDrop, moveItemInArray } from '@angular/cdk/drag-drop';
 
 // Providers whose model is free text (self-host / aggregator) rather than a catalog select —
 // mirrors agent-form.ts.
@@ -123,7 +124,7 @@ function catalogLabel(key: string): string {
 @Component({
   selector: 'app-code-review-setup',
   standalone: true,
-  imports: [FormsModule, PageHeader, Spinner, EmptyState],
+  imports: [FormsModule, PageHeader, Spinner, EmptyState, CdkDropList, CdkDrag, CdkDragHandle],
   template: `
     <div class="mf-card" data-testid="code-review-setup">
       <mf-page-header title="Review Setup" subtitle="Configure the multi-dimension reviewer panel for a business.">
@@ -205,9 +206,11 @@ function catalogLabel(key: string): string {
               }
             </span>
             <span style="flex:2" role="cell">
-              <div data-testid="row-fallback-list" style="display:flex;flex-direction:column;gap:6px">
+              <div data-testid="row-fallback-list" cdkDropList (cdkDropListDropped)="onFallbackDrop(row, $event)" style="display:flex;flex-direction:column;gap:6px">
                 @for (fb of row.fallback_chain; track fb; let i = $index) {
-                  <div style="display:flex;gap:6px;align-items:center" [attr.data-testid]="'row-fallback-entry-' + i">
+                  <div style="display:flex;gap:6px;align-items:center" cdkDrag [attr.data-testid]="'row-fallback-entry-' + i">
+                    <span class="mf-drag-handle" cdkDragHandle role="button" tabindex="-1" [attr.data-testid]="'row-fallback-drag-' + i"
+                          [attr.aria-label]="'Drag to reorder fallback ' + (i + 1) + ' for ' + row.label" style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
                     <select class="mf-select" [attr.data-testid]="'row-fallback-provider-' + i" [ngModel]="fb.provider"
                             (ngModelChange)="onFallbackEntryProviderChange(row, i, $event)"
                             [attr.aria-label]="'Fallback ' + (i + 1) + ' provider for ' + row.label">
@@ -306,9 +309,11 @@ function catalogLabel(key: string): string {
           <legend style="font-weight:500;margin-bottom:2px;padding:0">Reviewbot fallback chain</legend>
           <small class="mf-hint" style="display:block">Ordered — the first reachable bot reviews; if it's down, the next one does.
             Empty means no fallback (the triggering agent reviews).</small>
-          <div data-testid="chain-list" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+          <div data-testid="chain-list" cdkDropList (cdkDropListDropped)="onChainDrop($event)" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
             @for (id of config().review_agent_chain; track id; let i = $index) {
-              <div style="display:flex;gap:8px;align-items:center" [attr.data-testid]="'chain-row-' + i">
+              <div style="display:flex;gap:8px;align-items:center" cdkDrag [attr.data-testid]="'chain-row-' + i">
+                <span class="mf-drag-handle" cdkDragHandle role="button" tabindex="-1" [attr.data-testid]="'chain-drag-' + i"
+                      [attr.aria-label]="'Drag to reorder ' + agentName(id)" style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
                 <span style="min-width:20px;color:var(--mf-text-muted)">{{ i + 1 }}.</span>
                 <span style="flex:1" [attr.data-testid]="'chain-name-' + i">{{ agentName(id) }}</span>
                 <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-up-' + i"
@@ -526,6 +531,12 @@ export class CodeReviewSetupComponent implements OnInit {
     this.bumpRows();
   }
 
+  // onFallbackDrop reorders the chain by array position (drag equivalent of moveFallback).
+  onFallbackDrop(row: DraftRow, e: CdkDragDrop<ReviewDimensionFallbackEntry[]>): void {
+    moveItemInArray(row.fallback_chain, e.previousIndex, e.currentIndex);
+    this.bumpRows();
+  }
+
   onFallbackEntryProviderChange(row: DraftRow, i: number, provider: string): void {
     row.fallback_chain[i].provider = provider;
     row.fallback_chain[i].model = '';
@@ -591,6 +602,13 @@ export class CodeReviewSetupComponent implements OnInit {
     const j = i + delta;
     if (j < 0 || j >= chain.length) return;
     [chain[i], chain[j]] = [chain[j], chain[i]];
+    this.patchConfig({ review_agent_chain: chain });
+  }
+
+  // onChainDrop reorders the agent chain by array position (drag equivalent of moveChain).
+  onChainDrop(e: CdkDragDrop<string[]>): void {
+    const chain = [...this.config().review_agent_chain];
+    moveItemInArray(chain, e.previousIndex, e.currentIndex);
     this.patchConfig({ review_agent_chain: chain });
   }
 
