@@ -2095,3 +2095,25 @@ Then open a PR into `master` (base `master`, do not stack), and update `manyforg
 **Placeholder scan:** the one deliberately-open item is `deviceAuthPath` (Task 4) — flagged inline, isolated in a constant, and test-injectable, so it blocks nothing. No "TBD"/"add error handling"/"similar to Task N" placeholders; each code step carries real code.
 
 **Type consistency:** `CodexTokenService` fields, `codexStore`/`codexMinter` seams, `TokenSet`/`Claims`/`DeviceAuth`/`PollStatus`, `ConnectStatus`/`DeviceStart`/`PKCEStart`, and `Mint`/`RefreshDue`/`refreshLocked`/`applyCodexMint` signatures are used consistently across Tasks 4–10. sqlc method/param names (`InsertCodexPending`, `UpsertCodexCredential`, `SealedPkceVerifier`, `OauthRefreshToken`, …) are called out in Task 5 as "confirm exact spelling from generated dbgen" since sqlc derives them — the fakes keep the unit tests independent of that.
+
+---
+
+## REVISION (2026-07-18) — scheduler via SECURITY DEFINER (user decision)
+
+The app DB role is RLS-enforced, so the background scheduler's cross-tenant sweep needs
+SECURITY DEFINER functions (precedent: `agent_run_reaper` 0067, `expire_stale_approvals`).
+Original Task 6 is split; Task 10 unchanged in intent.
+
+- **Task 6 (revised) — lazy path only:** `Mint` + `refreshLocked` under `WithPrincipal`
+  (correctness-critical run-path). No `RefreshDue`, no `skipLocked`. Adds plan-preserve
+  (don't blank `chatgpt_plan` when a refresh response omits `id_token`). See
+  `.superpowers/sdd/task-6-brief.md`.
+- **Task 6b (new) — scheduler DB layer:** migration `0096_codex_refresh_sweep` with three
+  DEFINER functions (`codex_claim_for_refresh` FOR UPDATE SKIP LOCKED, `codex_apply_refresh`,
+  `codex_disconnect_system`) applied cross-tenant; a `systemCodexStore` using **raw pgx via
+  `WithTx`** (not sqlc — mirrors the approvals sweep's raw `tx.QueryRow`) that runs
+  claim→[Go OpenAI refresh]→apply in ONE tx (lock held across the network call); and
+  `RefreshDue` looping until no credential is due. See `.superpowers/sdd/task-6b-brief.md`.
+- **Task 10 (unchanged intent):** wire the `CodexRefreshWorker` goroutine off `workerCtx`
+  calling `RefreshDue` via `WithTx` (principal-less); construct client+service; attach
+  `credSvc.Codex`. Definer functions do NOT go in `db/schema.sql` (raw pgx, sqlc never parses them).
