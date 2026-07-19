@@ -1,7 +1,8 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, EventEmitter, Input, Output, computed, inject, signal } from '@angular/core';
+import { Component, EventEmitter, Input, OnInit, Output, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai-credentials.service';
+import { AICredentialsService, AIProvider } from '../../../core/ai-credentials.service';
+import { CodexConnectComponent } from './codex-connect';
 
 // Providers with one canonical OpenAI-compatible endpoint. The form prefills it so the user
 // just pastes a key, and the server would default it anyway. Mirrors ai.DefaultBaseURL —
@@ -21,7 +22,7 @@ const BASE_URL_DEFAULTED: readonly AIProvider[] = ['anthropic', 'openrouter', 'h
 // any provider at an OpenAI-compatible / self-hosted endpoint.
 @Component({
   selector: 'app-credential-form',
-  imports: [FormsModule],
+  imports: [FormsModule, CodexConnectComponent],
   template: `
     <form class="mf-card" style="display:flex;flex-direction:column;gap:14px" (ngSubmit)="submit()" data-testid="credential-form">
       <div class="mf-field">
@@ -34,66 +35,73 @@ const BASE_URL_DEFAULTED: readonly AIProvider[] = ['anthropic', 'openrouter', 'h
           <option value="vllm">vLLM (self-host)</option>
           <option value="openrouter">OpenRouter</option>
           <option value="huggingface">HuggingFace (Inference Providers)</option>
+          <option value="openai_codex">OpenAI Codex (ChatGPT)</option>
         </select>
       </div>
 
-      <div class="mf-field">
-        <label for="cred-key">API key</label>
-        <input id="cred-key" class="mf-input" type="password" autocomplete="off"
-               data-testid="cred-api-key" name="api_key"
-               [(ngModel)]="apiKey" placeholder="••••••••" [disabled]="submitting()" />
-      </div>
+      @if (provider() === 'openai_codex') {
+        <app-codex-connect [businessId]="businessId"
+                           (connected)="saved.emit()" (cancelled)="cancelled.emit()" />
+      } @else {
+        <div class="mf-field">
+          <label for="cred-key">API key</label>
+          <input id="cred-key" class="mf-input" type="password" autocomplete="off"
+                 data-testid="cred-api-key" name="api_key"
+                 [(ngModel)]="apiKey" placeholder="••••••••" [disabled]="submitting()" />
+        </div>
 
-      <div class="mf-field">
-        <label for="cred-model">Default model</label>
-        <input id="cred-model" class="mf-input" type="text" data-testid="cred-default-model"
-               name="default_model" [(ngModel)]="defaultModel" placeholder="e.g. claude-opus-4-8" [disabled]="submitting()" />
-      </div>
+        <div class="mf-field">
+          <label for="cred-model">Default model</label>
+          <input id="cred-model" class="mf-input" type="text" data-testid="cred-default-model"
+                 name="default_model" [(ngModel)]="defaultModel" placeholder="e.g. claude-opus-4-8" [disabled]="submitting()" />
+        </div>
 
-      <div class="mf-field">
-        <label for="cred-base-url">Base URL
-          <span class="mf-hint">({{ baseUrlRequired() ? 'required' : 'optional' }})</span>
+        <div class="mf-field">
+          <label for="cred-base-url">Base URL
+            <span class="mf-hint">({{ baseUrlRequired() ? 'required' : 'optional' }})</span>
+          </label>
+          <input id="cred-base-url" class="mf-input" type="text" data-testid="cred-base-url"
+                 name="base_url" [(ngModel)]="baseUrl" placeholder="https://… (openai-compatible / self-host only)"
+                 [disabled]="submitting()"
+                 [required]="baseUrlRequired()"
+                 [attr.aria-required]="baseUrlRequired() ? 'true' : null"
+                 aria-describedby="cred-base-url-hint" />
+          <small id="cred-base-url-hint" class="mf-hint">Prefilled for OpenRouter and HuggingFace; defaulted server-side for Anthropic. Required for OpenAI-compatible or self-hosted (OpenAI/Ollama/vLLM) endpoints.</small>
+        </div>
+
+        <label class="mf-field" data-testid="cred-allow-private-wrap"
+               style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" data-testid="cred-allow-private" name="allow_private_base_url"
+                 [(ngModel)]="allowPrivateBaseUrl" [disabled]="submitting()" />
+          Allow a private / loopback base URL (self-host only)
         </label>
-        <input id="cred-base-url" class="mf-input" type="text" data-testid="cred-base-url"
-               name="base_url" [(ngModel)]="baseUrl" placeholder="https://… (openai-compatible / self-host only)"
-               [disabled]="submitting()"
-               [required]="baseUrlRequired()"
-               [attr.aria-required]="baseUrlRequired() ? 'true' : null"
-               aria-describedby="cred-base-url-hint" />
-        <small id="cred-base-url-hint" class="mf-hint">Prefilled for OpenRouter and HuggingFace; defaulted server-side for Anthropic. Required for OpenAI-compatible or self-hosted (OpenAI/Ollama/vLLM) endpoints.</small>
-      </div>
 
-      <label class="mf-field" data-testid="cred-allow-private-wrap"
-             style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" data-testid="cred-allow-private" name="allow_private_base_url"
-               [(ngModel)]="allowPrivateBaseUrl" [disabled]="submitting()" />
-        Allow a private / loopback base URL (self-host only)
-      </label>
+        <div class="mf-field">
+          <label for="cred-lanes">Max concurrent review lanes</label>
+          <input id="cred-lanes" class="mf-input" type="number" min="1" max="16" step="1" data-testid="cred-lanes"
+                 name="max_concurrent_lanes" aria-describedby="cred-lanes-hint" [(ngModel)]="maxConcurrentLanes" [disabled]="submitting()" />
+          <small id="cred-lanes-hint" class="mf-hint">How many code-review lanes may hit this endpoint at once. A single-GPU self-host: 1; cloud: 4.</small>
+        </div>
 
-      <div class="mf-field">
-        <label for="cred-lanes">Max concurrent review lanes</label>
-        <input id="cred-lanes" class="mf-input" type="number" min="1" max="16" step="1" data-testid="cred-lanes"
-               name="max_concurrent_lanes" aria-describedby="cred-lanes-hint" [(ngModel)]="maxConcurrentLanes" [disabled]="submitting()" />
-        <small id="cred-lanes-hint" class="mf-hint">How many code-review lanes may hit this endpoint at once. A single-GPU self-host: 1; cloud: 4.</small>
-      </div>
+        @if (error()) {
+          <p class="mf-err" data-testid="credential-form-error">{{ error() }}</p>
+        }
 
-      @if (error()) {
-        <p class="mf-err" data-testid="credential-form-error">{{ error() }}</p>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <button type="submit" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="credential-form-submit"
+                  [disabled]="submitting() || !valid()">
+            {{ submitting() ? 'Saving…' : 'Add credential' }}
+          </button>
+          <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" (click)="cancelled.emit()" [disabled]="submitting()">Cancel</button>
+        </div>
       }
-
-      <div style="display:flex;gap:8px;align-items:flex-end">
-        <button type="submit" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="credential-form-submit"
-                [disabled]="submitting() || !valid()">
-          {{ submitting() ? 'Saving…' : 'Add credential' }}
-        </button>
-        <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" (click)="cancelled.emit()" [disabled]="submitting()">Cancel</button>
-      </div>
     </form>
   `,
 })
-export class CredentialFormComponent {
+export class CredentialFormComponent implements OnInit {
   @Input() businessId = '';
-  @Output() saved = new EventEmitter<AICredential>();
+  @Input() initialProvider: AIProvider | null = null;
+  @Output() saved = new EventEmitter<void>();
   @Output() cancelled = new EventEmitter<void>();
 
   private api = inject(AICredentialsService);
@@ -109,6 +117,12 @@ export class CredentialFormComponent {
   error = signal('');
 
   baseUrlRequired = computed(() => !BASE_URL_DEFAULTED.includes(this.provider()));
+
+  ngOnInit(): void {
+    if (this.initialProvider) {
+      this.provider.set(this.initialProvider);
+    }
+  }
 
   valid(): boolean {
     if (this.apiKey.trim().length === 0 || this.defaultModel.trim().length === 0) {
@@ -149,10 +163,10 @@ export class CredentialFormComponent {
         max_concurrent_lanes: Math.min(16, Math.max(1, Math.round(Number(this.maxConcurrentLanes) || 4))),
       })
       .subscribe({
-        next: (c) => {
+        next: () => {
           this.reset();
           this.submitting.set(false);
-          this.saved.emit(c);
+          this.saved.emit();
         },
         error: (e: HttpErrorResponse) => {
           this.submitting.set(false);
