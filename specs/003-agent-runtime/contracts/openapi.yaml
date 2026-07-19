@@ -469,7 +469,7 @@ paths:
               schema: { $ref: "#/components/schemas/CodexDeviceStart" }
         "400": { $ref: "#/components/responses/ValidationError" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
   /businesses/{id}/ai_credentials/codex/device/{pendingID}/status:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -489,7 +489,7 @@ paths:
               schema: { $ref: "#/components/schemas/CodexConnectStatus" }
         "400": { $ref: "#/components/responses/ValidationError" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
   /businesses/{id}/ai_credentials/codex/pkce/start:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -513,7 +513,6 @@ paths:
               schema: { $ref: "#/components/schemas/CodexPKCEStart" }
         "400": { $ref: "#/components/responses/ValidationError" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
   /businesses/{id}/ai_credentials/codex/pkce/exchange:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -537,7 +536,7 @@ paths:
               schema: { $ref: "#/components/schemas/CodexConnectStatus" }
         "400": { $ref: "#/components/responses/ValidationError" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
   /businesses/{id}/approvals/{approvalID}/deny:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -585,6 +584,13 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadGateway:
+      description: >
+        Upstream provider error (e.g. auth.openai.com failed or timed out during
+        a Codex connect call)
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
