@@ -61,3 +61,92 @@ ORDER BY provider;
 -- name: DeleteAIProviderCredential :execrows
 DELETE FROM ai_provider_credential
 WHERE id = $1 AND business_id = $2;
+
+-- === Codex Increment 2 (manyforge-gi9u) ===
+
+-- GetCodexCredentialForRefresh row-locks the codex credential (FOR UPDATE) so exactly one
+-- refresher touches it at a time — serializing the refresh-token rotation against concurrent
+-- lazy + scheduled refreshers. Returns the sealed token set + expiry for the double-checked
+-- refresh decision. Run inside the same tx as UpdateCodexOAuthTokens.
+-- name: GetCodexCredentialForRefresh :one
+SELECT id, sealed_key_ref, oauth_refresh_token, oauth_access_expiry, chatgpt_account_id, chatgpt_plan
+FROM ai_provider_credential
+WHERE business_id = $1 AND provider = 'openai_codex'
+FOR UPDATE;
+
+-- ReadCodexCredential is the lazy fast-path read (no lock): if the access token is still fresh
+-- the caller returns it without a network refresh.
+-- name: ReadCodexCredential :one
+SELECT id, sealed_key_ref, oauth_refresh_token, oauth_access_expiry, chatgpt_account_id, chatgpt_plan
+FROM ai_provider_credential
+WHERE business_id = $1 AND provider = 'openai_codex';
+
+-- UpdateCodexOAuthTokens writes a freshly-rotated token set. Scoped to (business_id, provider);
+-- deliberately does NOT touch allow_private_base_url (it is not a config update — see the
+-- ai_credential_update pin).
+-- name: UpdateCodexOAuthTokens :exec
+UPDATE ai_provider_credential
+SET sealed_key_ref = sqlc.arg('sealed_key_ref'),
+    oauth_refresh_token = sqlc.arg('oauth_refresh_token'),
+    oauth_access_expiry = sqlc.arg('oauth_access_expiry'),
+    chatgpt_plan = sqlc.arg('chatgpt_plan'),
+    updated_at = now()
+WHERE business_id = sqlc.arg('business_id') AND provider = 'openai_codex';
+
+-- DisconnectCodexCredential clears the tokens after an invalid_grant (dead refresh token) so the
+-- derived connection_status becomes 'disconnected' and the user is prompted to reconnect.
+-- name: DisconnectCodexCredential :exec
+UPDATE ai_provider_credential
+SET sealed_key_ref = NULL, oauth_refresh_token = NULL, oauth_access_expiry = NULL, updated_at = now()
+WHERE business_id = $1 AND provider = 'openai_codex';
+
+-- UpsertCodexCredential creates or replaces the codex credential on a successful connect. Mirrors
+-- InsertAIProviderCredential's tenant_root_id derivation; ON CONFLICT (business_id, provider)
+-- replaces the token set + account id/plan/expiry (a re-connect after a manual-token credential).
+-- name: UpsertCodexCredential :one
+INSERT INTO ai_provider_credential (
+    id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model,
+    allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token,
+    oauth_access_expiry, chatgpt_plan, created_at, updated_at)
+SELECT
+    $1, b.id, b.tenant_root_id, 'openai_codex',
+    sqlc.arg('sealed_key_ref'), sqlc.arg('base_url'), sqlc.arg('default_model'),
+    false, sqlc.arg('max_concurrent_lanes')::integer, sqlc.arg('chatgpt_account_id'),
+    sqlc.arg('oauth_refresh_token'), sqlc.arg('oauth_access_expiry'), sqlc.arg('chatgpt_plan'),
+    now(), now()
+FROM business b
+WHERE b.id = sqlc.arg('business_id')::uuid
+ON CONFLICT (business_id, provider) DO UPDATE
+SET sealed_key_ref = EXCLUDED.sealed_key_ref,
+    default_model = EXCLUDED.default_model,
+    max_concurrent_lanes = EXCLUDED.max_concurrent_lanes,
+    chatgpt_account_id = EXCLUDED.chatgpt_account_id,
+    oauth_refresh_token = EXCLUDED.oauth_refresh_token,
+    oauth_access_expiry = EXCLUDED.oauth_access_expiry,
+    chatgpt_plan = EXCLUDED.chatgpt_plan,
+    updated_at = now()
+RETURNING *;
+
+-- InsertCodexPending stores an in-flight connect. tenant_root_id derived from the business row.
+-- name: InsertCodexPending :one
+INSERT INTO codex_oauth_pending (
+    jti, business_id, tenant_root_id, flow, sealed_device_code, sealed_pkce_verifier,
+    default_model, base_url, max_concurrent_lanes, expires_at)
+SELECT
+    sqlc.arg('jti'), b.id, b.tenant_root_id, sqlc.arg('flow'),
+    sqlc.arg('sealed_device_code'), sqlc.arg('sealed_pkce_verifier'),
+    sqlc.arg('default_model'), sqlc.arg('base_url'), sqlc.arg('max_concurrent_lanes')::integer,
+    sqlc.arg('expires_at')
+FROM business b
+WHERE b.id = sqlc.arg('business_id')::uuid
+RETURNING *;
+
+-- GetCodexPendingForUpdate locks the pending row for the poll/exchange step (single-use).
+-- name: GetCodexPendingForUpdate :one
+SELECT * FROM codex_oauth_pending
+WHERE jti = $1 AND business_id = $2
+FOR UPDATE;
+
+-- DeleteCodexPending consumes the pending row (same tx as UpsertCodexCredential).
+-- name: DeleteCodexPending :exec
+DELETE FROM codex_oauth_pending WHERE jti = $1 AND business_id = $2;

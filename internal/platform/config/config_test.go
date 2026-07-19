@@ -296,6 +296,64 @@ func TestSandboxReviewTimeout(t *testing.T) {
 	})
 }
 
+func TestCodexRefreshInterval(t *testing.T) {
+	t.Run("default 30m", func(t *testing.T) {
+		t.Setenv("MANYFORGE_CODEX_REFRESH_INTERVAL", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CodexRefreshInterval != 30*time.Minute {
+			t.Fatalf("default = %v, want 30m", cfg.CodexRefreshInterval)
+		}
+	})
+	t.Run("override", func(t *testing.T) {
+		t.Setenv("MANYFORGE_CODEX_REFRESH_INTERVAL", "10m")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CodexRefreshInterval != 10*time.Minute {
+			t.Fatalf("override = %v, want 10m", cfg.CodexRefreshInterval)
+		}
+	})
+	t.Run("malformed is a hard error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_CODEX_REFRESH_INTERVAL", "notaduration")
+		if _, err := Load(); err == nil {
+			t.Fatal("malformed duration must be a config error")
+		}
+	})
+}
+
+func TestCodexAccessRefreshMargin(t *testing.T) {
+	t.Run("default 5m", func(t *testing.T) {
+		t.Setenv("MANYFORGE_CODEX_ACCESS_REFRESH_MARGIN", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CodexAccessRefreshMargin != 5*time.Minute {
+			t.Fatalf("default = %v, want 5m", cfg.CodexAccessRefreshMargin)
+		}
+	})
+	t.Run("override", func(t *testing.T) {
+		t.Setenv("MANYFORGE_CODEX_ACCESS_REFRESH_MARGIN", "2m")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CodexAccessRefreshMargin != 2*time.Minute {
+			t.Fatalf("override = %v, want 2m", cfg.CodexAccessRefreshMargin)
+		}
+	})
+	t.Run("malformed is a hard error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_CODEX_ACCESS_REFRESH_MARGIN", "notaduration")
+		if _, err := Load(); err == nil {
+			t.Fatal("malformed duration must be a config error")
+		}
+	})
+}
+
 func TestSandboxEgressAllowsChatGPTBackend(t *testing.T) {
 	// Force the default: env() returns the default when the var is empty, so this makes the
 	// test assert the built-in default regardless of any ambient MANYFORGE_SANDBOX_EGRESS_ALLOW.
