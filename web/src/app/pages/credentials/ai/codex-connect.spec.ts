@@ -1,7 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CodexConnectComponent } from './codex-connect';
 
 describe('CodexConnectComponent', () => {
@@ -80,5 +80,42 @@ describe('CodexConnectComponent', () => {
     c.submitPaste();
     http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/pkce/exchange').flush({ status: 'approved', credential_id: 'cred9' });
     expect(emitted).toBe('cred9');
+  });
+
+  it('moves to the expired phase when the device flow is denied', () => {
+    const c = mount();
+    c.model.set('gpt-5-codex');
+    c.startDevice();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/start').flush({ pending_id: 'p1', user_code: 'X', verification_uri: 'u', verification_uri_complete: 'u', interval: 5, expires_in: 900 });
+    c.pollOnce();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/p1/status').flush({ status: 'denied' });
+    expect(c.phase()).toBe('expired');
+  });
+
+  it('stops polling and surfaces an error when the status poll returns a 4xx', () => {
+    const c = mount();
+    c.model.set('gpt-5-codex');
+    c.startDevice();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/start').flush({ pending_id: 'p1', user_code: 'X', verification_uri: 'u', verification_uri_complete: 'u', interval: 5, expires_in: 900 });
+    c.pollOnce();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/p1/status').flush({ message: 'gone' }, { status: 404, statusText: 'Not Found' });
+    expect(c.phase()).toBe('expired');
+    expect(c.error()).not.toBe('');
+  });
+
+  it('renders an authorize link (no popup) for the paste fallback', () => {
+    const openSpy = vi.spyOn(window, 'open');
+    const c = mount();
+    c.model.set('gpt-5-codex');
+    c.startDevice();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/start').flush({ pending_id: 'p1', user_code: 'X', verification_uri: 'u', verification_uri_complete: 'u', interval: 5, expires_in: 900 });
+    fixture.detectChanges();
+    c.startPaste();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/pkce/start').flush({ pending_id: 'p1', authorize_url: 'https://auth.openai.com/authorize?x=1' });
+    fixture.detectChanges();
+    const link = fixture.nativeElement.querySelector('[data-testid="codex-paste-open"]');
+    expect(link?.getAttribute('href')).toBe('https://auth.openai.com/authorize?x=1');
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
   });
 });

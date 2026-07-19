@@ -59,6 +59,7 @@ import { AgentsService, ModelDescriptor } from '../../../core/agents.service';
             <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="codex-paste-start"
                     style="margin:6px 0" (click)="startPaste()">Open sign-in page</button>
             @if (showPaste()) {
+              <p><a class="mf-btn mf-btn-primary mf-btn-sm" [href]="pkce()?.authorize_url" target="_blank" rel="noopener" data-testid="codex-paste-open">Open ChatGPT sign-in</a></p>
               <div class="mf-field">
                 <label for="codex-paste">Paste the redirect URL from the address bar</label>
                 <input id="codex-paste" class="mf-input" type="text" name="codex-paste" [(ngModel)]="pasteUrl"
@@ -100,6 +101,7 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
   error = signal('');
 
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private resolved = false;
 
   ngOnInit(): void {
     this.agents.models(this.businessId).subscribe({
@@ -144,18 +146,28 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
     if (!d) return;
     this.api.codexDeviceStatus(this.businessId, d.pending_id).subscribe({
       next: (s) => this.applyStatus(s),
-      error: () => this.scheduleNextPoll(), // transient error: keep polling
+      error: (e: HttpErrorResponse) => {
+        // A 4xx means the pending flow is gone/denied server-side — terminal, surface it.
+        // Network blips / 5xx are transient: keep polling.
+        if (e.status >= 400 && e.status < 500) {
+          this.stopPolling();
+          this.error.set(this.describe(e));
+          this.phase.set('expired');
+          return;
+        }
+        this.scheduleNextPoll();
+      },
     });
   }
 
   startPaste(): void {
     if (!this.model()) return;
+    this.stopPolling(); // don't let the device-code poll keep racing once we switch to paste
     this.error.set('');
     this.api.codexPKCEStart(this.businessId, this.body()).subscribe({
       next: (p) => {
         this.pkce.set(p);
         this.showPaste.set(true);
-        window.open(p.authorize_url, '_blank', 'noopener');
       },
       error: (e: HttpErrorResponse) => this.error.set(this.describe(e)),
     });
@@ -180,6 +192,7 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
 
   reset(): void {
     this.stopPolling();
+    this.resolved = false;
     this.device.set(null);
     this.pkce.set(null);
     this.showPaste.set(false);
@@ -189,7 +202,9 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
   }
 
   private applyStatus(s: CodexConnectStatus): void {
+    if (this.resolved) return; // a terminal status already fired — ignore any in-flight stale poll
     if (s.status === 'approved' && s.credential_id) {
+      this.resolved = true;
       this.stopPolling();
       this.connected.emit(s.credential_id);
       return;
