@@ -330,6 +330,60 @@ func TestPersistConnect_missingAccountID(t *testing.T) {
 	}
 }
 
+// TestPersistConnect_rejectsMalformedAccountID pins the same chatgptAccountIDRe guard the manual
+// create path already enforces (internal/agents/credential.go): the OAuth account id is
+// interpolated into the sandbox auth.json AND sent as the ChatGPT-Account-Id header, so it must
+// not be allowed to carry newlines/spaces/other injection metacharacters just because it arrived
+// via the id_token instead of a manually-typed field.
+func TestPersistConnect_rejectsMalformedAccountID(t *testing.T) {
+	store := &fakeCodexStore{}
+	svc := &CodexTokenService{Sealer: testSealer(t), Now: time.Now, Store: store}
+	ts := codexoauth.TokenSet{
+		AccessToken: "acc", RefreshToken: "ref",
+		Claims: codexoauth.Claims{AccountID: "acc\nbad", Plan: "pro"},
+	}
+	_, err := svc.persistConnect(context.Background(), uuid.New(), uuid.New(), uuid.New(), ts, pendingRow{})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("expected ErrValidation, got %v", err)
+	}
+	if store.finishCalled {
+		t.Fatal("finishConnect must not be called when account id has an invalid format")
+	}
+}
+
+// TestPollDevice_rejectsMalformedAccountID drives the same guard end-to-end through PollDevice
+// (device flow), confirming nothing is stored when the approved poll's id_token carries a
+// malformed account id.
+func TestPollDevice_rejectsMalformedAccountID(t *testing.T) {
+	sealer := testSealer(t)
+	sealedDC, err := sealer.Seal([]byte("device-code-123"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeCodexStore{pending: pendingRow{
+		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
+		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
+	}}
+	ts := approvedTokenSet()
+	ts.Claims.AccountID = "acc id"
+	svc := &CodexTokenService{
+		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
+		OAuth: &fakeCodexOAuth{poll: []struct {
+			ts  codexoauth.TokenSet
+			st  codexoauth.PollStatus
+			err error
+		}{{ts: ts, st: codexoauth.PollApproved}}},
+		Store: store,
+	}
+	_, err = svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("expected ErrValidation, got %v", err)
+	}
+	if store.finishCalled {
+		t.Fatal("finishConnect must not be called when account id has an invalid format")
+	}
+}
+
 // --- Task 6: lazy get-or-refresh (Mint / refreshLocked / doRefresh) ---
 
 func TestMint_freshTokenNoNetwork(t *testing.T) {
@@ -354,6 +408,35 @@ func TestMint_freshTokenNoNetwork(t *testing.T) {
 	}
 	if got != "live-token" {
 		t.Fatalf("token = %q", got)
+	}
+}
+
+// TestMint_manualTokenNoRefresh pins the Increment-1 manual-token regression fix: a credential
+// with a sealed access token but no OAuth lifecycle (OAuthAccessExpiry == nil,
+// OAuthRefreshToken == nil) must return the pasted token as-is instead of falling into
+// refreshLocked (which would 409 with ErrCodexDisconnected — there is no refresh token).
+func TestMint_manualTokenNoRefresh(t *testing.T) {
+	sealer := testSealer(t)
+	sealedAccess, err := sealer.Seal([]byte("pasted-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeCodexStore{cred: codexCredRow{
+		SealedKeyRef:      &sealedAccess,
+		OAuthAccessExpiry: nil,
+		OAuthRefreshToken: nil,
+	}}
+	oauth := &fakeCodexOAuth{refresh: func(string) (codexoauth.TokenSet, error) {
+		t.Fatal("refresh must NEVER be called for a manual-token credential")
+		return codexoauth.TokenSet{}, nil
+	}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, Store: store, OAuth: oauth}
+	got, err := svc.Mint(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "pasted-token" {
+		t.Fatalf("token = %q, want pasted-token", got)
 	}
 }
 

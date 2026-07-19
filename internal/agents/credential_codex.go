@@ -204,6 +204,16 @@ func (s *CodexTokenService) Mint(ctx context.Context, pid, bid uuid.UUID) (strin
 	if err != nil {
 		return "", mapCredErr(err)
 	}
+	if row.OAuthAccessExpiry == nil && row.OAuthRefreshToken == nil && row.SealedKeyRef != nil {
+		// Increment-1 manual-token credential: a pasted access token with no OAuth lifecycle.
+		// There is nothing to refresh — use the pasted token as-is; if it has since expired the
+		// sandbox call fails (that is the Increment-1 behavior, unchanged here).
+		tok, oerr := s.Sealer.Open(*row.SealedKeyRef)
+		if oerr != nil {
+			return "", fmt.Errorf("codex unseal access: %w", oerr)
+		}
+		return string(tok), nil
+	}
 	if row.OAuthAccessExpiry != nil && row.SealedKeyRef != nil &&
 		s.now().Before(row.OAuthAccessExpiry.Add(-s.lazyMargin())) {
 		tok, oerr := s.Sealer.Open(*row.SealedKeyRef)
@@ -467,6 +477,9 @@ func (s *CodexTokenService) ExchangePKCE(ctx context.Context, pid, bid, jti uuid
 func (s *CodexTokenService) persistConnect(ctx context.Context, pid, bid, jti uuid.UUID, ts codexoauth.TokenSet, p pendingRow) (uuid.UUID, error) {
 	if ts.Claims.AccountID == "" {
 		return uuid.Nil, fmt.Errorf("codex connect: missing account id: %w", errs.ErrValidation)
+	}
+	if !chatgptAccountIDRe.MatchString(ts.Claims.AccountID) {
+		return uuid.Nil, fmt.Errorf("codex connect: account id has an invalid format: %w", errs.ErrValidation)
 	}
 	if s.Sealer == nil {
 		return uuid.Nil, fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)

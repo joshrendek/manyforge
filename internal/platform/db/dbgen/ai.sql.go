@@ -176,38 +176,6 @@ func (q *Queries) GetCodexCredentialForRefresh(ctx context.Context, businessID u
 	return i, err
 }
 
-const getCodexCredentialForRefreshSkipLocked = `-- name: GetCodexCredentialForRefreshSkipLocked :one
-SELECT id, sealed_key_ref, oauth_refresh_token, oauth_access_expiry, chatgpt_account_id, chatgpt_plan
-FROM ai_provider_credential
-WHERE business_id = $1 AND provider = 'openai_codex'
-FOR UPDATE SKIP LOCKED
-`
-
-type GetCodexCredentialForRefreshSkipLockedRow struct {
-	ID                uuid.UUID          `json:"id"`
-	SealedKeyRef      *string            `json:"sealed_key_ref"`
-	OauthRefreshToken *string            `json:"oauth_refresh_token"`
-	OauthAccessExpiry pgtype.Timestamptz `json:"oauth_access_expiry"`
-	ChatgptAccountID  *string            `json:"chatgpt_account_id"`
-	ChatgptPlan       *string            `json:"chatgpt_plan"`
-}
-
-// GetCodexCredentialForRefreshSkipLocked is the scheduler variant: if a lazy refresh already
-// holds the row lock, skip it (it is being handled) rather than block the sweep.
-func (q *Queries) GetCodexCredentialForRefreshSkipLocked(ctx context.Context, businessID uuid.UUID) (GetCodexCredentialForRefreshSkipLockedRow, error) {
-	row := q.db.QueryRow(ctx, getCodexCredentialForRefreshSkipLocked, businessID)
-	var i GetCodexCredentialForRefreshSkipLockedRow
-	err := row.Scan(
-		&i.ID,
-		&i.SealedKeyRef,
-		&i.OauthRefreshToken,
-		&i.OauthAccessExpiry,
-		&i.ChatgptAccountID,
-		&i.ChatgptPlan,
-	)
-	return i, err
-}
-
 const getCodexPendingForUpdate = `-- name: GetCodexPendingForUpdate :one
 SELECT jti, business_id, tenant_root_id, flow, sealed_device_code, sealed_pkce_verifier, default_model, base_url, max_concurrent_lanes, status, created_at, expires_at FROM codex_oauth_pending
 WHERE jti = $1 AND business_id = $2
@@ -446,38 +414,6 @@ func (q *Queries) ReadCodexCredential(ctx context.Context, businessID uuid.UUID)
 		&i.ChatgptPlan,
 	)
 	return i, err
-}
-
-const selectCodexCredentialsDueRefresh = `-- name: SelectCodexCredentialsDueRefresh :many
-SELECT business_id
-FROM ai_provider_credential
-WHERE provider = 'openai_codex'
-  AND oauth_refresh_token IS NOT NULL
-  AND oauth_access_expiry IS NOT NULL
-  AND oauth_access_expiry < $1
-`
-
-// SelectCodexCredentialsDueRefresh returns the businesses whose codex access token expires within
-// the scheduler margin and still has a refresh token. No lock here (cheap candidate scan); each
-// id is then claimed with GetCodexCredentialForRefreshSkipLocked.
-func (q *Queries) SelectCodexCredentialsDueRefresh(ctx context.Context, oauthAccessExpiry pgtype.Timestamptz) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, selectCodexCredentialsDueRefresh, oauthAccessExpiry)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []uuid.UUID
-	for rows.Next() {
-		var business_id uuid.UUID
-		if err := rows.Scan(&business_id); err != nil {
-			return nil, err
-		}
-		items = append(items, business_id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const updateCodexOAuthTokens = `-- name: UpdateCodexOAuthTokens :exec

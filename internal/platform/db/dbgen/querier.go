@@ -236,9 +236,6 @@ type Querier interface {
 	// lazy + scheduled refreshers. Returns the sealed token set + expiry for the double-checked
 	// refresh decision. Run inside the same tx as UpdateCodexOAuthTokens.
 	GetCodexCredentialForRefresh(ctx context.Context, businessID uuid.UUID) (GetCodexCredentialForRefreshRow, error)
-	// GetCodexCredentialForRefreshSkipLocked is the scheduler variant: if a lazy refresh already
-	// holds the row lock, skip it (it is being handled) rather than block the sweep.
-	GetCodexCredentialForRefreshSkipLocked(ctx context.Context, businessID uuid.UUID) (GetCodexCredentialForRefreshSkipLockedRow, error)
 	// GetCodexPendingForUpdate locks the pending row for the poll/exchange step (single-use).
 	GetCodexPendingForUpdate(ctx context.Context, arg GetCodexPendingForUpdateParams) (CodexOauthPending, error)
 	// GetCompany loads a single company scoped to (id, tenant_root_id) — the ownership
@@ -698,10 +695,6 @@ type Querier interface {
 	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
 	// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
 	ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error
-	// SelectCodexCredentialsDueRefresh returns the businesses whose codex access token expires within
-	// the scheduler margin and still has a refresh token. No lock here (cheap candidate scan); each
-	// id is then claimed with GetCodexCredentialForRefreshSkipLocked.
-	SelectCodexCredentialsDueRefresh(ctx context.Context, oauthAccessExpiry pgtype.Timestamptz) ([]uuid.UUID, error)
 	// Records token usage + cost on the review row WITHOUT touching status/findings.
 	// Used on the failure path so a run that burned tokens before failing still shows
 	// its cost; the worker's requeue_code_review/fail_code_review own status/last_error/

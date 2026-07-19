@@ -74,14 +74,6 @@ FROM ai_provider_credential
 WHERE business_id = $1 AND provider = 'openai_codex'
 FOR UPDATE;
 
--- GetCodexCredentialForRefreshSkipLocked is the scheduler variant: if a lazy refresh already
--- holds the row lock, skip it (it is being handled) rather than block the sweep.
--- name: GetCodexCredentialForRefreshSkipLocked :one
-SELECT id, sealed_key_ref, oauth_refresh_token, oauth_access_expiry, chatgpt_account_id, chatgpt_plan
-FROM ai_provider_credential
-WHERE business_id = $1 AND provider = 'openai_codex'
-FOR UPDATE SKIP LOCKED;
-
 -- ReadCodexCredential is the lazy fast-path read (no lock): if the access token is still fresh
 -- the caller returns it without a network refresh.
 -- name: ReadCodexCredential :one
@@ -107,17 +99,6 @@ WHERE business_id = sqlc.arg('business_id') AND provider = 'openai_codex';
 UPDATE ai_provider_credential
 SET sealed_key_ref = NULL, oauth_refresh_token = NULL, oauth_access_expiry = NULL, updated_at = now()
 WHERE business_id = $1 AND provider = 'openai_codex';
-
--- SelectCodexCredentialsDueRefresh returns the businesses whose codex access token expires within
--- the scheduler margin and still has a refresh token. No lock here (cheap candidate scan); each
--- id is then claimed with GetCodexCredentialForRefreshSkipLocked.
--- name: SelectCodexCredentialsDueRefresh :many
-SELECT business_id
-FROM ai_provider_credential
-WHERE provider = 'openai_codex'
-  AND oauth_refresh_token IS NOT NULL
-  AND oauth_access_expiry IS NOT NULL
-  AND oauth_access_expiry < $1;
 
 -- UpsertCodexCredential creates or replaces the codex credential on a successful connect. Mirrors
 -- InsertAIProviderCredential's tenant_root_id derivation; ON CONFLICT (business_id, provider)
