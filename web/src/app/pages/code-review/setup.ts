@@ -103,9 +103,7 @@ interface DraftRow {
   dimension: string;
   label: string;
   enabled: boolean;
-  provider: string;
-  model: string;
-  fallback_chain: ReviewDimensionFallbackEntry[];
+  chain: ReviewDimensionFallbackEntry[]; // ordered priority: chain[0] = primary (#1), chain[1..] = fallbacks
   min_severity: FindingSeverity;
   scope: string;
   prompt: string;
@@ -165,9 +163,7 @@ function catalogLabel(key: string): string {
         <div class="mf-tr mf-th" role="row">
           <span style="width:56px" role="columnheader">On</span>
           <span style="flex:1" role="columnheader">Dimension</span>
-          <span style="flex:1" role="columnheader">Provider</span>
-          <span style="flex:1" role="columnheader">Model</span>
-          <span style="flex:2" role="columnheader">Fallback chain</span>
+          <span style="flex:4" role="columnheader">Provider priority</span>
           <span style="width:110px" role="columnheader">Min severity</span>
           <span style="flex:1" role="columnheader">Scope globs</span>
           <span style="width:150px" role="columnheader" aria-label="Actions"></span>
@@ -179,74 +175,46 @@ function catalogLabel(key: string): string {
                      [attr.aria-label]="'Enable ' + row.label + ' dimension'" />
             </span>
             <span style="flex:1;font-weight:500" role="cell">{{ row.label }}</span>
-            <span style="flex:1" role="cell">
-              <select class="mf-select" data-testid="row-provider" [ngModel]="row.provider" (ngModelChange)="onProviderChange(row, $event)"
-                      [attr.aria-label]="'Provider for ' + row.label">
-                @for (p of providers; track p.value) {
-                  <option [value]="p.value">{{ p.label }}</option>
-                }
-              </select>
-            </span>
-            <span style="flex:1" role="cell">
-              @if (isFreeText(row.provider)) {
-                <input class="mf-input" type="text" data-testid="row-model-text" [(ngModel)]="row.model"
-                       [attr.list]="modelListIdFor(row.provider)"
-                       [attr.aria-label]="'Model for ' + row.label" placeholder="model id" />
-              } @else if (row.provider === '') {
-                <input class="mf-input" type="text" data-testid="row-model-text" [(ngModel)]="row.model"
-                       [attr.aria-label]="'Model for ' + row.label" placeholder="(default)" />
-              } @else {
-                <select class="mf-select" data-testid="row-model-select" [(ngModel)]="row.model"
-                        [attr.aria-label]="'Model for ' + row.label">
-                  <option value="">Choose a model…</option>
-                  @for (m of modelsForProvider(row.provider); track m.model_id) {
-                    <option [value]="m.model_id">{{ m.model_id }}</option>
-                  }
-                </select>
-              }
-            </span>
-            <span style="flex:2" role="cell">
-              <div data-testid="row-fallback-list" cdkDropList (cdkDropListDropped)="onFallbackDrop(row, $event)" style="display:flex;flex-direction:column;gap:6px">
-                @for (fb of row.fallback_chain; track fb; let i = $index) {
-                  <div style="display:flex;gap:6px;align-items:center" cdkDrag [attr.data-testid]="'row-fallback-entry-' + i">
-                    <span class="mf-drag-handle" cdkDragHandle role="button" tabindex="-1" [attr.data-testid]="'row-fallback-drag-' + i"
-                          [attr.aria-label]="'Drag to reorder fallback ' + (i + 1) + ' for ' + row.label" style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
-                    <select class="mf-select" [attr.data-testid]="'row-fallback-provider-' + i" [ngModel]="fb.provider"
-                            (ngModelChange)="onFallbackEntryProviderChange(row, i, $event)"
-                            [attr.aria-label]="'Fallback ' + (i + 1) + ' provider for ' + row.label">
-                      <option value="">Choose provider…</option>
+            <span style="flex:4" role="cell">
+              <div data-testid="row-priority-list" cdkDropList (cdkDropListDropped)="onPriorityDrop(row, $event)" style="display:flex;flex-direction:column;gap:6px">
+                @for (entry of row.chain; track entry; let i = $index) {
+                  <div style="display:flex;gap:6px;align-items:center" cdkDrag [attr.data-testid]="'row-priority-entry-' + i">
+                    <span class="mf-drag-handle" cdkDragHandle role="button" tabindex="-1" [attr.data-testid]="'row-priority-drag-' + i"
+                          [attr.aria-label]="'Drag to reorder provider ' + (i + 1) + ' for ' + row.label" style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
+                    <span style="min-width:66px;color:var(--mf-text-muted);font-size:0.85em">{{ i === 0 ? '1. primary' : (i + 1) + '.' }}</span>
+                    <select class="mf-select" [attr.data-testid]="'row-priority-provider-' + i" [ngModel]="entry.provider"
+                            (ngModelChange)="onPriorityProviderChange(row, i, $event)"
+                            [attr.aria-label]="'Provider ' + (i + 1) + ' for ' + row.label">
                       @for (p of providers; track p.value) {
-                        @if (p.value) {
-                          <option [value]="p.value">{{ p.label }}</option>
-                        }
+                        <option [value]="p.value">{{ p.label }}</option>
                       }
                     </select>
-                    @if (isFreeText(fb.provider)) {
-                      <input class="mf-input" type="text" [attr.data-testid]="'row-fallback-model-text-' + i" [(ngModel)]="fb.model"
-                             [attr.list]="modelListIdFor(fb.provider)"
-                             [attr.aria-label]="'Fallback ' + (i + 1) + ' model for ' + row.label" placeholder="model id" />
+                    @if (isFreeText(entry.provider)) {
+                      <input class="mf-input" type="text" [attr.data-testid]="'row-priority-model-text-' + i" [(ngModel)]="entry.model"
+                             [attr.list]="modelListIdFor(entry.provider)"
+                             [attr.aria-label]="'Model ' + (i + 1) + ' for ' + row.label" placeholder="model id" />
+                    } @else if (entry.provider === '') {
+                      <input class="mf-input" type="text" [attr.data-testid]="'row-priority-model-text-' + i" [(ngModel)]="entry.model"
+                             [attr.aria-label]="'Model ' + (i + 1) + ' for ' + row.label" placeholder="(default)" />
                     } @else {
-                      <select class="mf-select" [attr.data-testid]="'row-fallback-model-select-' + i" [(ngModel)]="fb.model"
-                              [attr.aria-label]="'Fallback ' + (i + 1) + ' model for ' + row.label">
+                      <select class="mf-select" [attr.data-testid]="'row-priority-model-select-' + i" [(ngModel)]="entry.model"
+                              [attr.aria-label]="'Model ' + (i + 1) + ' for ' + row.label">
                         <option value="">Choose a model…</option>
-                        @for (m of modelsForProvider(fb.provider); track m.model_id) {
+                        @for (m of modelsForProvider(entry.provider); track m.model_id) {
                           <option [value]="m.model_id">{{ m.model_id }}</option>
                         }
                       </select>
                     }
-                    <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'row-fallback-up-' + i"
-                            [disabled]="i === 0" (click)="moveFallback(row, i, -1)" [attr.aria-label]="'Move fallback ' + (i + 1) + ' up for ' + row.label">↑</button>
-                    <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'row-fallback-down-' + i"
-                            [disabled]="i === row.fallback_chain.length - 1" (click)="moveFallback(row, i, 1)" [attr.aria-label]="'Move fallback ' + (i + 1) + ' down for ' + row.label">↓</button>
-                    <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'row-fallback-remove-' + i"
-                            (click)="removeFallback(row, i)" [attr.aria-label]="'Remove fallback ' + (i + 1) + ' for ' + row.label">Remove</button>
+                    <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'row-priority-up-' + i"
+                            [disabled]="i === 0" (click)="movePriority(row, i, -1)" [attr.aria-label]="'Move provider ' + (i + 1) + ' up for ' + row.label">↑</button>
+                    <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'row-priority-down-' + i"
+                            [disabled]="i === row.chain.length - 1" (click)="movePriority(row, i, 1)" [attr.aria-label]="'Move provider ' + (i + 1) + ' down for ' + row.label">↓</button>
+                    <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'row-priority-remove-' + i"
+                            [disabled]="row.chain.length <= 1" (click)="removePriority(row, i)" [attr.aria-label]="'Remove provider ' + (i + 1) + ' for ' + row.label">Remove</button>
                   </div>
                 }
-                @if (!row.fallback_chain.length) {
-                  <span class="mf-hint" data-testid="row-fallback-empty">No fallback configured.</span>
-                }
-                <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="row-fallback-add" style="align-self:flex-start"
-                        (click)="addFallback(row)" [attr.aria-label]="'Add fallback for ' + row.label">+ Add fallback</button>
+                <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="row-priority-add" style="align-self:flex-start"
+                        (click)="addPriority(row)" [attr.aria-label]="'Add provider for ' + row.label">+ Add provider</button>
               </div>
             </span>
             <span style="width:110px" role="cell">
@@ -420,8 +388,7 @@ export class CodeReviewSetupComponent implements OnInit {
         // Load a catalog for every provider already named on a row OR in its fallback chain —
         // a chain entry drives the same typeahead and would otherwise render an empty list.
         for (const row of rows) {
-          this.ensureProviderModels(row.provider);
-          for (const fb of row.fallback_chain) this.ensureProviderModels(fb.provider);
+          for (const entry of row.chain) this.ensureProviderModels(entry.provider);
         }
       },
       error: (e: HttpErrorResponse) => {
@@ -449,7 +416,7 @@ export class CodeReviewSetupComponent implements OnInit {
     const next = DIMENSION_CATALOG.find((c) => !present.has(c.key));
     const row = next
       ? this.rowFromCatalog(next)
-      : { id: null, dimension: 'general', label: 'General', enabled: true, provider: '', model: '', fallback_chain: [], min_severity: 'info' as FindingSeverity, scope: '', prompt: '', saving: false };
+      : { id: null, dimension: 'general', label: 'General', enabled: true, chain: [{ provider: '', model: '' }], min_severity: 'info' as FindingSeverity, scope: '', prompt: '', saving: false };
     this.rows.set([...this.rows(), row]);
   }
 
@@ -507,40 +474,36 @@ export class CodeReviewSetupComponent implements OnInit {
     });
   }
 
-  onProviderChange(row: DraftRow, provider: string): void {
-    row.provider = provider;
-    row.model = '';
+  // The dimension provider-priority list: chain[0] is the primary (#1), chain[1..] are fallbacks.
+  onPriorityProviderChange(row: DraftRow, i: number, provider: string): void {
+    row.chain[i].provider = provider;
+    row.chain[i].model = '';
     this.ensureProviderModels(provider);
     this.bumpRows();
   }
 
-  addFallback(row: DraftRow): void {
-    row.fallback_chain.push({ provider: '', model: '' });
+  addPriority(row: DraftRow): void {
+    row.chain.push({ provider: '', model: '' });
     this.bumpRows();
   }
 
-  removeFallback(row: DraftRow, i: number): void {
-    row.fallback_chain.splice(i, 1);
+  removePriority(row: DraftRow, i: number): void {
+    if (row.chain.length <= 1) return; // a dimension always keeps a primary (#1)
+    row.chain.splice(i, 1);
     this.bumpRows();
   }
 
-  moveFallback(row: DraftRow, i: number, dir: -1 | 1): void {
+  movePriority(row: DraftRow, i: number, dir: -1 | 1): void {
     const j = i + dir;
-    if (j < 0 || j >= row.fallback_chain.length) return;
-    [row.fallback_chain[i], row.fallback_chain[j]] = [row.fallback_chain[j], row.fallback_chain[i]];
+    if (j < 0 || j >= row.chain.length) return;
+    [row.chain[i], row.chain[j]] = [row.chain[j], row.chain[i]];
     this.bumpRows();
   }
 
-  // onFallbackDrop reorders the chain by array position (drag equivalent of moveFallback).
-  onFallbackDrop(row: DraftRow, e: CdkDragDrop<ReviewDimensionFallbackEntry[]>): void {
-    moveItemInArray(row.fallback_chain, e.previousIndex, e.currentIndex);
-    this.bumpRows();
-  }
-
-  onFallbackEntryProviderChange(row: DraftRow, i: number, provider: string): void {
-    row.fallback_chain[i].provider = provider;
-    row.fallback_chain[i].model = '';
-    this.ensureProviderModels(provider);
+  // onPriorityDrop reorders the whole priority list (drag equivalent of movePriority); a fallback
+  // dragged to index 0 becomes the primary.
+  onPriorityDrop(row: DraftRow, e: CdkDragDrop<ReviewDimensionFallbackEntry[]>): void {
+    moveItemInArray(row.chain, e.previousIndex, e.currentIndex);
     this.bumpRows();
   }
 
@@ -640,9 +603,7 @@ export class CodeReviewSetupComponent implements OnInit {
       dimension: d.dimension,
       label: catalogLabel(d.dimension),
       enabled: d.enabled,
-      provider: d.provider ?? '',
-      model: d.model,
-      fallback_chain: (d.fallback_chain ?? []).map((f) => ({ ...f })),
+      chain: [{ provider: d.provider ?? '', model: d.model }, ...(d.fallback_chain ?? []).map((f) => ({ ...f }))],
       min_severity: d.min_severity,
       scope: (d.scope_globs ?? []).join(', '),
       prompt: d.prompt,
@@ -656,9 +617,7 @@ export class CodeReviewSetupComponent implements OnInit {
       dimension: c.key,
       label: c.label,
       enabled: true,
-      provider: '',
-      model: '',
-      fallback_chain: [],
+      chain: [{ provider: '', model: '' }],
       min_severity: c.min_severity,
       scope: c.scope_globs.join(', '),
       prompt: c.prompt,
@@ -670,9 +629,9 @@ export class CodeReviewSetupComponent implements OnInit {
     const idx = this.rows().indexOf(row);
     return {
       dimension: row.dimension,
-      provider: row.provider,
-      model: row.model,
-      fallback_chain: row.fallback_chain.filter((f) => f.provider),
+      provider: row.chain[0].provider,
+      model: row.chain[0].model,
+      fallback_chain: row.chain.slice(1).filter((f) => f.provider),
       prompt: row.prompt,
       scope_globs: row.scope.split(',').map((s) => s.trim()).filter(Boolean),
       min_severity: row.min_severity,
