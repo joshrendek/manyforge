@@ -144,7 +144,7 @@ setup UI (listed regardless of whether a credential is connected).
 Per repo policy: automated tests at every layer, real-browser verification for the visible UI
 before "done," then codify verification as a regression spec.
 
-**Frontend unit (Jasmine/Karma, co-located `*.spec.ts`):**
+**Frontend unit (Vitest + Angular TestBed, co-located `*.spec.ts`):**
 - `codex-connect.spec.ts` — state machine (configure → pending → approved), poll stop
   conditions (approved/expired/denied/timeout), PKCE-paste fallback, model dropdown reflects
   the catalog.
