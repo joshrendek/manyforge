@@ -269,6 +269,56 @@ func TestOpenAICodexAccountIDFormat(t *testing.T) {
 	}
 }
 
+// fakeMinter is a codexMinter test double (Task 7). failIfCalled, when set, fails the
+// test if Mint is invoked — used to pin the non-codex no-op path.
+type fakeMinter struct {
+	tok          string
+	err          error
+	failIfCalled *testing.T
+}
+
+func (f fakeMinter) Mint(_ context.Context, _, _ uuid.UUID) (string, error) {
+	if f.failIfCalled != nil {
+		f.failIfCalled.Fatal("codexMinter.Mint called for non-codex provider")
+	}
+	return f.tok, f.err
+}
+
+// TestResolve_codexMintsFreshToken pins the per-run mint hook (Task 7, manyforge-gi9u):
+// an openai_codex ResolvedCredential's APIKey is overwritten with a freshly-minted access
+// token, not left as whatever resolveRow unsealed from sealed_key_ref.
+func TestResolve_codexMintsFreshToken(t *testing.T) {
+	svc := &CredentialService{Codex: fakeMinter{tok: "fresh-abc"}}
+	rc := ResolvedCredential{Provider: "openai_codex", APIKey: "stale-sealed-open"}
+	out, err := svc.applyCodexMint(context.Background(), uuid.New(), uuid.New(), rc)
+	if err != nil || out.APIKey != "fresh-abc" {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+}
+
+// TestResolve_nonCodexUnchanged pins the no-op path: for every other provider the mint
+// hook must not touch APIKey and must not even call Mint.
+func TestResolve_nonCodexUnchanged(t *testing.T) {
+	svc := &CredentialService{Codex: fakeMinter{failIfCalled: t}}
+	rc := ResolvedCredential{Provider: "openai", APIKey: "sk-x"}
+	out, _ := svc.applyCodexMint(context.Background(), uuid.New(), uuid.New(), rc)
+	if out.APIKey != "sk-x" {
+		t.Fatalf("non-codex APIKey changed: %q", out.APIKey)
+	}
+}
+
+// TestResolve_nilMinterUnchanged pins the other no-op path (manyforge-gi9u): when Codex is
+// nil (not wired — Increment 2 stops before Task 10), an openai_codex credential's APIKey
+// resolves via sealed_key_ref like any other provider instead of panicking.
+func TestResolve_nilMinterUnchanged(t *testing.T) {
+	svc := &CredentialService{}
+	rc := ResolvedCredential{Provider: "openai_codex", APIKey: "sealed-open-value"}
+	out, err := svc.applyCodexMint(context.Background(), uuid.New(), uuid.New(), rc)
+	if err != nil || out.APIKey != "sealed-open-value" {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+}
+
 func TestOpenAICodexCreateRejectsMissingAccountID(t *testing.T) {
 	// Create() runs validate() first and returns before any sealer/DB access, so a zero-value
 	// service proves the boundary (not just validate() directly) rejects a codex credential with
