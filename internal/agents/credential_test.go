@@ -269,6 +269,37 @@ func TestOpenAICodexAccountIDFormat(t *testing.T) {
 	}
 }
 
+// TestDeriveConnectionStatus pins the read-side connection-health derivation (Task 9,
+// manyforge-gi9u): "connected" whenever a usable token exists — either a sealed API key
+// (Increment-1 manual-token codex creds, which never get a refresh token) or an OAuth
+// refresh token (Increment-2 connect flow) — else "disconnected".
+func TestDeriveConnectionStatus(t *testing.T) {
+	sealed := "sealed-ref-abc"
+	refresh := "refresh-token-xyz"
+	empty := ""
+
+	cases := []struct {
+		name         string
+		sealedKeyRef *string
+		oauthRefresh *string
+		want         string
+	}{
+		{"both nil -> disconnected", nil, nil, "disconnected"},
+		{"both empty string -> disconnected", &empty, &empty, "disconnected"},
+		{"sealed key only (manual-token codex cred) -> connected", &sealed, nil, "connected"},
+		{"refresh token only (oauth-connected codex cred) -> connected", nil, &refresh, "connected"},
+		{"both set -> connected", &sealed, &refresh, "connected"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveConnectionStatus(tc.sealedKeyRef, tc.oauthRefresh)
+			if got != tc.want {
+				t.Errorf("deriveConnectionStatus(%v, %v) = %q, want %q", tc.sealedKeyRef, tc.oauthRefresh, got, tc.want)
+			}
+		})
+	}
+}
+
 // fakeMinter is a codexMinter test double (Task 7). failIfCalled, when set, fails the
 // test if Mint is invoked — used to pin the non-codex no-op path.
 type fakeMinter struct {

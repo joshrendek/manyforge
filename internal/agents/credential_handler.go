@@ -89,10 +89,18 @@ type credentialResp struct {
 	AllowPrivateBaseURL bool   `json:"allow_private_base_url"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`
+	// ChatGPTPlan, ConnectionStatus, and OAuthAccessExpiry are read-side
+	// connection-health fields (Task 9, manyforge-gi9u): openai_codex only, empty
+	// for every other provider. omitempty keeps every other provider's response
+	// shape unchanged. No secret (sealed_key_ref / oauth_refresh_token) is ever
+	// projected here.
+	ChatGPTPlan       string `json:"chatgpt_plan,omitempty"`
+	ConnectionStatus  string `json:"connection_status,omitempty"`
+	OAuthAccessExpiry string `json:"oauth_access_expiry,omitempty"`
 }
 
 func toCredentialResp(v CredentialView) credentialResp {
-	return credentialResp{
+	r := credentialResp{
 		ID:                  v.ID.String(),
 		BusinessID:          v.BusinessID.String(),
 		Provider:            v.Provider,
@@ -101,7 +109,13 @@ func toCredentialResp(v CredentialView) credentialResp {
 		AllowPrivateBaseURL: v.AllowPrivateBaseURL,
 		CreatedAt:           v.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:           v.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		ChatGPTPlan:         v.Plan,
+		ConnectionStatus:    v.ConnectionStatus,
 	}
+	if v.AccessExpiry != nil {
+		r.OAuthAccessExpiry = v.AccessExpiry.UTC().Format("2006-01-02T15:04:05Z07:00")
+	}
+	return r
 }
 
 func (h *CredentialHandler) listCredentials(w http.ResponseWriter, r *http.Request) {

@@ -858,6 +858,25 @@ components:
         max_concurrent_lanes: { type: integer, minimum: 1, maximum: 16, default: 4 }
         created_at: { type: string }
         updated_at: { type: string }
+        chatgpt_plan:
+          type: string
+          description: >-
+            openai_codex only, empty for every other provider. The ChatGPT
+            subscription plan reported by the last successful token refresh
+            (e.g. "plus", "pro").
+        connection_status:
+          type: string
+          enum: [connected, disconnected]
+          description: >-
+            openai_codex only, empty for every other provider. "connected"
+            when a usable token exists (sealed API key or OAuth refresh
+            token); "disconnected" otherwise. Never returns the api key —
+            this is a derived status, not the secret itself.
+        oauth_access_expiry:
+          type: string
+          description: >-
+            openai_codex only, empty for every other provider. Expiry of the
+            last-minted OAuth access token.
     CreateAICredentialRequest:
       type: object
       required: [provider, api_key, default_model]

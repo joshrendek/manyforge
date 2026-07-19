@@ -124,6 +124,23 @@ type CredentialView struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	ChatGPTAccountID    string // openai_codex only; "" for other providers; non-secret
+	// ConnectionStatus, Plan, and AccessExpiry are read-side connection-health fields
+	// (Task 9, manyforge-gi9u), populated only for openai_codex — left zero/empty for
+	// every other provider. Kept warm by the scheduler (Task 6/7's refresh loop) without
+	// requiring a run, so a future FE can render a "Connected as Pro" badge. No secret
+	// (sealed_key_ref / oauth_refresh_token) is ever projected here.
+	ConnectionStatus string
+	Plan             string
+	AccessExpiry     *time.Time
+}
+
+// deriveConnectionStatus reports whether a codex credential can still authenticate. "disconnected"
+// means no usable token remains (cleared after invalid_grant, or never connected).
+func deriveConnectionStatus(sealedKeyRef, oauthRefresh *string) string {
+	if (sealedKeyRef != nil && *sealedKeyRef != "") || (oauthRefresh != nil && *oauthRefresh != "") {
+		return "connected"
+	}
+	return "disconnected"
 }
 
 // credViewFromRow projects a dbgen row into a key-free CredentialView,
@@ -137,7 +154,7 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 	if row.ChatgptAccountID != nil {
 		acct = *row.ChatgptAccountID
 	}
-	return CredentialView{
+	v := CredentialView{
 		ID:                  row.ID,
 		BusinessID:          row.BusinessID,
 		Provider:            string(row.Provider),
@@ -148,6 +165,20 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 		UpdatedAt:           row.UpdatedAt,
 		ChatGPTAccountID:    acct,
 	}
+	// Connection-health fields are only meaningful for openai_codex; leave them
+	// zero/empty for every other provider (no sealed_key_ref/oauth_refresh_token
+	// projection either way — only the derived status, plan, and expiry).
+	if row.Provider == dbgen.AiProviderOpenaiCodex {
+		v.ConnectionStatus = deriveConnectionStatus(row.SealedKeyRef, row.OauthRefreshToken)
+		if row.ChatgptPlan != nil {
+			v.Plan = *row.ChatgptPlan
+		}
+		if row.OauthAccessExpiry.Valid {
+			t := row.OauthAccessExpiry.Time
+			v.AccessExpiry = &t
+		}
+	}
+	return v
 }
 
 // storedCredential is the unsealed-at-rest shape (mirrors the dbgen row; defined
