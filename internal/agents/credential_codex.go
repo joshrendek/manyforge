@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"time"
 
@@ -132,6 +133,7 @@ func (s *CodexTokenService) StartDevice(ctx context.Context, pid, bid uuid.UUID,
 	}
 	da, err := s.OAuth.StartDeviceAuth(ctx)
 	if err != nil {
+		slog.ErrorContext(ctx, "codex device start failed", "err", err)
 		return DeviceStart{}, fmt.Errorf("codex device start: %w", errs.ErrUpstream)
 	}
 	sealedDC, err := s.Sealer.Seal([]byte(da.DeviceCode))
@@ -165,6 +167,9 @@ func (s *CodexTokenService) PollDevice(ctx context.Context, pid, bid, jti uuid.U
 	if p.Flow != "device" || p.SealedDeviceCode == nil {
 		return ConnectStatus{}, fmt.Errorf("codex pending is not a device flow: %w", errs.ErrValidation)
 	}
+	if s.Sealer == nil {
+		return ConnectStatus{}, fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)
+	}
 	dc, err := s.Sealer.Open(*p.SealedDeviceCode)
 	if err != nil {
 		return ConnectStatus{}, fmt.Errorf("codex unseal device code: %w", err)
@@ -174,6 +179,7 @@ func (s *CodexTokenService) PollDevice(ctx context.Context, pid, bid, jti uuid.U
 		if errors.Is(err, codexoauth.ErrMissingAccountID) {
 			return ConnectStatus{}, fmt.Errorf("codex id_token missing account id: %w", errs.ErrValidation)
 		}
+		slog.ErrorContext(ctx, "codex device poll failed", "err", err)
 		return ConnectStatus{}, fmt.Errorf("codex device poll: %w", errs.ErrUpstream)
 	}
 	switch st {
@@ -244,6 +250,9 @@ func (s *CodexTokenService) ExchangePKCE(ctx context.Context, pid, bid, jti uuid
 	if code == "" {
 		return ConnectStatus{}, fmt.Errorf("codex redirect url missing code: %w", errs.ErrValidation)
 	}
+	if s.Sealer == nil {
+		return ConnectStatus{}, fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)
+	}
 	verifier, err := s.Sealer.Open(*p.SealedPKCEVerifier)
 	if err != nil {
 		return ConnectStatus{}, fmt.Errorf("codex unseal verifier: %w", err)
@@ -253,6 +262,7 @@ func (s *CodexTokenService) ExchangePKCE(ctx context.Context, pid, bid, jti uuid
 		if errors.Is(err, codexoauth.ErrMissingAccountID) {
 			return ConnectStatus{}, fmt.Errorf("codex id_token missing account id: %w", errs.ErrValidation)
 		}
+		slog.ErrorContext(ctx, "codex pkce exchange failed", "err", err)
 		return ConnectStatus{}, fmt.Errorf("codex pkce exchange: %w", errs.ErrUpstream)
 	}
 	id, err := s.persistConnect(ctx, pid, bid, jti, ts, p)
@@ -266,6 +276,9 @@ func (s *CodexTokenService) ExchangePKCE(ctx context.Context, pid, bid, jti uuid
 func (s *CodexTokenService) persistConnect(ctx context.Context, pid, bid, jti uuid.UUID, ts codexoauth.TokenSet, p pendingRow) (uuid.UUID, error) {
 	if ts.Claims.AccountID == "" {
 		return uuid.Nil, fmt.Errorf("codex connect: missing account id: %w", errs.ErrValidation)
+	}
+	if s.Sealer == nil {
+		return uuid.Nil, fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)
 	}
 	sa, err := s.Sealer.Seal([]byte(ts.AccessToken))
 	if err != nil {

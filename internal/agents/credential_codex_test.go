@@ -189,6 +189,70 @@ func TestPollDevice_approvedSealsAndUpserts(t *testing.T) {
 	}
 }
 
+func TestPollDevice_expiredReturnsExpired(t *testing.T) {
+	// An expired poll must NOT create a credential and must NOT touch the DB write path.
+	sealer := testSealer(t)
+	sealedDC, err := sealer.Seal([]byte("device-code-123"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeCodexStore{pending: pendingRow{
+		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
+		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
+	}}
+	svc := &CodexTokenService{
+		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
+		OAuth: &fakeCodexOAuth{poll: []struct {
+			ts  codexoauth.TokenSet
+			st  codexoauth.PollStatus
+			err error
+		}{{st: codexoauth.PollExpired}}},
+		Store: store,
+	}
+	got, err := svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "expired" {
+		t.Fatalf("status = %q", got.Status)
+	}
+	if store.finishCalled {
+		t.Fatal("finishConnect must not be called for an expired poll")
+	}
+}
+
+func TestPollDevice_deniedReturnsDenied(t *testing.T) {
+	// A denied poll must NOT create a credential and must NOT touch the DB write path.
+	sealer := testSealer(t)
+	sealedDC, err := sealer.Seal([]byte("device-code-123"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeCodexStore{pending: pendingRow{
+		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
+		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
+	}}
+	svc := &CodexTokenService{
+		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
+		OAuth: &fakeCodexOAuth{poll: []struct {
+			ts  codexoauth.TokenSet
+			st  codexoauth.PollStatus
+			err error
+		}{{st: codexoauth.PollDenied}}},
+		Store: store,
+	}
+	got, err := svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "denied" {
+		t.Fatalf("status = %q", got.Status)
+	}
+	if store.finishCalled {
+		t.Fatal("finishConnect must not be called for a denied poll")
+	}
+}
+
 func TestExchangePKCE_stateMismatch(t *testing.T) {
 	sealer := testSealer(t)
 	sealedV, err := sealer.Seal([]byte("verifier-abc"))
