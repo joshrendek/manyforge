@@ -44,6 +44,15 @@ type codexCredRow struct {
 	OAuthRefreshToken *string
 	OAuthAccessExpiry *time.Time
 	ChatGPTAccountID  *string
+	ChatGPTPlan       *string
+}
+
+// upsertTokens is a freshly-rotated + sealed token set to write back.
+type upsertTokens struct {
+	SealedAccess  string
+	SealedRefresh string
+	AccessExpiry  time.Time
+	Plan          string
 }
 
 // upsertCredInput is what a successful connect persists.
@@ -65,6 +74,12 @@ type codexStore interface {
 	getPendingLocked(ctx context.Context, pid, bid, jti uuid.UUID) (pendingRow, error)
 	// finishConnect upserts the credential and deletes the pending row in ONE tx.
 	finishConnect(ctx context.Context, pid, bid, jti uuid.UUID, in upsertCredInput) (uuid.UUID, error)
+	// readCodex is the lazy fast-path read (no lock).
+	readCodex(ctx context.Context, pid, bid uuid.UUID) (codexCredRow, error)
+	// refreshLockedTx row-locks the codex credential (FOR UPDATE, WithPrincipal), runs fn under
+	// the lock, and applies fn's result: *upsertTokens -> UpdateCodexOAuthTokens; disconnect=true
+	// -> DisconnectCodexCredential; (nil,false) -> no write. All in ONE tx.
+	refreshLockedTx(ctx context.Context, pid, bid uuid.UUID, fn func(codexCredRow) (*upsertTokens, bool, error)) error
 }
 
 // CodexTokenService owns the codex connect flows + the refresh/mint state machine (Task 6).
@@ -114,6 +129,111 @@ func (s *CodexTokenService) pendingTTL() time.Duration {
 		return s.PendingTTL
 	}
 	return 15 * time.Minute
+}
+
+func (s *CodexTokenService) lazyMargin() time.Duration {
+	if s.LazyMargin > 0 {
+		return s.LazyMargin
+	}
+	return 5 * time.Minute
+}
+
+// doRefresh unseals the refresh token, calls OpenAI, and seals the rotated set. Returns
+// (tokens,false,nil) on success, (nil,true,nil) on invalid_grant (caller disconnects), or
+// (nil,false,ErrUpstream) on any other failure. existingPlan preserves chatgpt_plan when the
+// refresh response omits the id_token (Task 4 note: decodeToken leaves Claims empty then).
+func (s *CodexTokenService) doRefresh(ctx context.Context, sealedRefresh, existingPlan string) (*upsertTokens, bool, error) {
+	rt, err := s.Sealer.Open(sealedRefresh)
+	if err != nil {
+		return nil, false, fmt.Errorf("codex unseal refresh: %w", err)
+	}
+	ts, rerr := s.OAuth.Refresh(ctx, string(rt))
+	if rerr != nil {
+		if errors.Is(rerr, codexoauth.ErrInvalidGrant) {
+			return nil, true, nil
+		}
+		slog.ErrorContext(ctx, "codex token refresh failed", "err", rerr)
+		return nil, false, fmt.Errorf("codex refresh: %w", errs.ErrUpstream)
+	}
+	sa, err := s.Sealer.Seal([]byte(ts.AccessToken))
+	if err != nil {
+		return nil, false, fmt.Errorf("codex seal access: %w", err)
+	}
+	sr, err := s.Sealer.Seal([]byte(ts.RefreshToken))
+	if err != nil {
+		return nil, false, fmt.Errorf("codex seal refresh: %w", err)
+	}
+	plan := ts.Claims.Plan
+	if plan == "" {
+		plan = existingPlan
+	}
+	return &upsertTokens{SealedAccess: sa, SealedRefresh: sr, AccessExpiry: ts.Expiry, Plan: plan}, false, nil
+}
+
+// Mint returns a live access token: fast-path read (no lock) if still fresh, else refreshLocked.
+func (s *CodexTokenService) Mint(ctx context.Context, pid, bid uuid.UUID) (string, error) {
+	if s.Sealer == nil {
+		return "", fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)
+	}
+	row, err := s.Store.readCodex(ctx, pid, bid)
+	if err != nil {
+		return "", mapCredErr(err)
+	}
+	if row.OAuthAccessExpiry != nil && row.SealedKeyRef != nil &&
+		s.now().Before(row.OAuthAccessExpiry.Add(-s.lazyMargin())) {
+		tok, oerr := s.Sealer.Open(*row.SealedKeyRef)
+		if oerr != nil {
+			return "", fmt.Errorf("codex unseal access: %w", oerr)
+		}
+		return string(tok), nil
+	}
+	return s.refreshLocked(ctx, pid, bid)
+}
+
+// refreshLocked row-locks the credential, double-checks freshness, and refreshes under the lock
+// (serializing rotation). Returns the fresh access token, or ErrCodexDisconnected on a dead token.
+func (s *CodexTokenService) refreshLocked(ctx context.Context, pid, bid uuid.UUID) (string, error) {
+	var access string
+	err := s.Store.refreshLockedTx(ctx, pid, bid, func(row codexCredRow) (*upsertTokens, bool, error) {
+		// double-check: another refresher may have run while we waited for the lock
+		if row.OAuthAccessExpiry != nil && row.SealedKeyRef != nil &&
+			s.now().Before(row.OAuthAccessExpiry.Add(-s.lazyMargin())) {
+			tok, oerr := s.Sealer.Open(*row.SealedKeyRef)
+			if oerr != nil {
+				return nil, false, oerr
+			}
+			access = string(tok)
+			return nil, false, nil
+		}
+		if row.OAuthRefreshToken == nil {
+			return nil, false, errs.ErrCodexDisconnected // manual-token cred or already cleared
+		}
+		existingPlan := ""
+		if row.ChatGPTPlan != nil {
+			existingPlan = *row.ChatGPTPlan
+		}
+		toks, disconnect, derr := s.doRefresh(ctx, *row.OAuthRefreshToken, existingPlan)
+		if derr != nil {
+			return nil, false, derr
+		}
+		if disconnect {
+			return nil, true, nil
+		}
+		accBytes, oerr := s.Sealer.Open(toks.SealedAccess)
+		if oerr != nil {
+			return nil, false, oerr
+		}
+		access = string(accBytes)
+		return toks, false, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if access == "" {
+		// fn signalled a disconnect (wrote nulls) without an error → surface the typed sentinel
+		return "", errs.ErrCodexDisconnected
+	}
+	return access, nil
 }
 
 func (s *CodexTokenService) validateConnect(in CodexConnectInput) error {
@@ -349,4 +469,59 @@ func (d dbCodexStore) finishConnect(ctx context.Context, pid, bid, jti uuid.UUID
 		return q.DeleteCodexPending(ctx, dbgen.DeleteCodexPendingParams{Jti: jti, BusinessID: bid})
 	})
 	return id, err
+}
+
+func (d dbCodexStore) readCodex(ctx context.Context, pid, bid uuid.UUID) (codexCredRow, error) {
+	var out codexCredRow
+	err := d.DB.WithPrincipal(ctx, pid, func(tx pgx.Tx) error {
+		r, err := dbgen.New(tx).ReadCodexCredential(ctx, bid)
+		if err != nil {
+			return err
+		}
+		out = codexCredRow{
+			SealedKeyRef: r.SealedKeyRef, OAuthRefreshToken: r.OauthRefreshToken,
+			ChatGPTAccountID: r.ChatgptAccountID, ChatGPTPlan: r.ChatgptPlan,
+		}
+		if r.OauthAccessExpiry.Valid {
+			t := r.OauthAccessExpiry.Time
+			out.OAuthAccessExpiry = &t
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (d dbCodexStore) refreshLockedTx(ctx context.Context, pid, bid uuid.UUID, fn func(codexCredRow) (*upsertTokens, bool, error)) error {
+	return d.DB.WithPrincipal(ctx, pid, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		r, err := q.GetCodexCredentialForRefresh(ctx, bid)
+		if err != nil {
+			return err
+		}
+		row := codexCredRow{
+			SealedKeyRef: r.SealedKeyRef, OAuthRefreshToken: r.OauthRefreshToken,
+			ChatGPTAccountID: r.ChatgptAccountID, ChatGPTPlan: r.ChatgptPlan,
+		}
+		if r.OauthAccessExpiry.Valid {
+			t := r.OauthAccessExpiry.Time
+			row.OAuthAccessExpiry = &t
+		}
+		toks, disconnect, ferr := fn(row)
+		if ferr != nil {
+			return ferr
+		}
+		if disconnect {
+			return q.DisconnectCodexCredential(ctx, bid)
+		}
+		if toks == nil {
+			return nil // fresh; no write
+		}
+		return q.UpdateCodexOAuthTokens(ctx, dbgen.UpdateCodexOAuthTokensParams{
+			SealedKeyRef:      &toks.SealedAccess,
+			OauthRefreshToken: &toks.SealedRefresh,
+			OauthAccessExpiry: pgtype.Timestamptz{Time: toks.AccessExpiry, Valid: true},
+			ChatgptPlan:       &toks.Plan,
+			BusinessID:        bid,
+		})
+	})
 }

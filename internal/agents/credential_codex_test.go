@@ -63,6 +63,14 @@ type fakeCodexStore struct {
 	finishID     uuid.UUID
 	finishInput  upsertCredInput
 	finishCalled bool
+
+	// readCodex / refreshLockedTx (Task 6 — lazy get-or-refresh)
+	cred         codexCredRow
+	readErr      error
+	wroteAccess  string
+	wroteRefresh string
+	wrotePlan    string
+	disconnected bool
 }
 
 func (f *fakeCodexStore) insertPending(_ context.Context, _, _ uuid.UUID, p pendingRow, jti uuid.UUID) error {
@@ -86,6 +94,29 @@ func (f *fakeCodexStore) finishConnect(_ context.Context, _, _, _ uuid.UUID, in 
 		f.finishID = uuid.New()
 	}
 	return f.finishID, nil
+}
+
+func (f *fakeCodexStore) readCodex(_ context.Context, _, _ uuid.UUID) (codexCredRow, error) {
+	return f.cred, f.readErr
+}
+
+// refreshLockedTx mimics the prod tx boundary closely enough for unit tests: it runs fn against
+// the scripted row and records the effect fn asked for (write-back vs. disconnect vs. no-op).
+func (f *fakeCodexStore) refreshLockedTx(_ context.Context, _, _ uuid.UUID, fn func(codexCredRow) (*upsertTokens, bool, error)) error {
+	toks, disconnect, err := fn(f.cred)
+	if err != nil {
+		return err
+	}
+	if disconnect {
+		f.disconnected = true
+		return nil
+	}
+	if toks != nil {
+		f.wroteAccess = toks.SealedAccess
+		f.wroteRefresh = toks.SealedRefresh
+		f.wrotePlan = toks.Plan
+	}
+	return nil
 }
 
 // testSealer builds a real Sealer from a 32-byte key (seal/open must round-trip).
@@ -296,5 +327,137 @@ func TestPersistConnect_missingAccountID(t *testing.T) {
 	}
 	if store.finishCalled {
 		t.Fatal("finishConnect must not be called when account id is missing")
+	}
+}
+
+// --- Task 6: lazy get-or-refresh (Mint / refreshLocked / doRefresh) ---
+
+func TestMint_freshTokenNoNetwork(t *testing.T) {
+	sealer := testSealer(t)
+	sealedAccess, err := sealer.Seal([]byte("live-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(30 * time.Minute)
+	store := &fakeCodexStore{cred: codexCredRow{
+		SealedKeyRef:      &sealedAccess,
+		OAuthAccessExpiry: &expiry,
+	}}
+	oauth := &fakeCodexOAuth{refresh: func(string) (codexoauth.TokenSet, error) {
+		t.Fatal("refresh must not be called for a still-fresh token")
+		return codexoauth.TokenSet{}, nil
+	}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, Store: store, OAuth: oauth}
+	got, err := svc.Mint(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "live-token" {
+		t.Fatalf("token = %q", got)
+	}
+}
+
+func TestMint_expiredRefreshesRotatesWritesBack(t *testing.T) {
+	sealer := testSealer(t)
+	sealedOldAccess, err := sealer.Seal([]byte("old-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedOldRefresh, err := sealer.Seal([]byte("r-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pastExpiry := time.Now().Add(-time.Hour)
+	store := &fakeCodexStore{cred: codexCredRow{
+		SealedKeyRef:      &sealedOldAccess,
+		OAuthRefreshToken: &sealedOldRefresh,
+		OAuthAccessExpiry: &pastExpiry,
+	}}
+	oauth := &fakeCodexOAuth{refresh: func(rt string) (codexoauth.TokenSet, error) {
+		if rt != "r-old" {
+			t.Fatalf("refresh called with %q, want r-old", rt)
+		}
+		return codexoauth.TokenSet{
+			AccessToken: "new", RefreshToken: "r-new", Expiry: time.Now().Add(time.Hour),
+			Claims: codexoauth.Claims{Plan: "pro"},
+		}, nil
+	}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, Store: store, OAuth: oauth}
+	got, err := svc.Mint(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "new" {
+		t.Fatalf("token = %q", got)
+	}
+	openedAccess, err := sealer.Open(store.wroteAccess)
+	if err != nil || string(openedAccess) != "new" {
+		t.Fatalf("wrote access round-trip: got %q, err %v", openedAccess, err)
+	}
+	openedRefresh, err := sealer.Open(store.wroteRefresh)
+	if err != nil || string(openedRefresh) != "r-new" {
+		t.Fatalf("wrote refresh round-trip: got %q, err %v", openedRefresh, err)
+	}
+}
+
+func TestMint_invalidGrantDisconnects(t *testing.T) {
+	sealer := testSealer(t)
+	sealedOldAccess, err := sealer.Seal([]byte("old-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedOldRefresh, err := sealer.Seal([]byte("r-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pastExpiry := time.Now().Add(-time.Hour)
+	store := &fakeCodexStore{cred: codexCredRow{
+		SealedKeyRef:      &sealedOldAccess,
+		OAuthRefreshToken: &sealedOldRefresh,
+		OAuthAccessExpiry: &pastExpiry,
+	}}
+	oauth := &fakeCodexOAuth{refresh: func(string) (codexoauth.TokenSet, error) {
+		return codexoauth.TokenSet{}, codexoauth.ErrInvalidGrant
+	}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, Store: store, OAuth: oauth}
+	_, err = svc.Mint(context.Background(), uuid.New(), uuid.New())
+	if !errors.Is(err, errs.ErrCodexDisconnected) {
+		t.Fatalf("expected ErrCodexDisconnected, got %v", err)
+	}
+	if !store.disconnected {
+		t.Fatal("expected store.disconnected == true")
+	}
+}
+
+func TestRefresh_preservesPlanWhenIdTokenOmitted(t *testing.T) {
+	sealer := testSealer(t)
+	sealedOldAccess, err := sealer.Seal([]byte("old-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedOldRefresh, err := sealer.Seal([]byte("r-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pastExpiry := time.Now().Add(-time.Hour)
+	existingPlan := "pro"
+	store := &fakeCodexStore{cred: codexCredRow{
+		SealedKeyRef:      &sealedOldAccess,
+		OAuthRefreshToken: &sealedOldRefresh,
+		OAuthAccessExpiry: &pastExpiry,
+		ChatGPTPlan:       &existingPlan,
+	}}
+	oauth := &fakeCodexOAuth{refresh: func(string) (codexoauth.TokenSet, error) {
+		return codexoauth.TokenSet{
+			AccessToken: "new", RefreshToken: "r-new", Expiry: time.Now().Add(time.Hour),
+			Claims: codexoauth.Claims{Plan: ""}, // id_token omitted this round -> Claims empty
+		}, nil
+	}}
+	svc := &CodexTokenService{Sealer: sealer, Now: time.Now, Store: store, OAuth: oauth}
+	if _, err := svc.Mint(context.Background(), uuid.New(), uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	if store.wrotePlan != "pro" {
+		t.Fatalf("wrotePlan = %q, want preserved existing plan %q", store.wrotePlan, "pro")
 	}
 }
