@@ -9,7 +9,7 @@
 -- codex_claim_for_refresh locks and returns ONE codex credential whose access token expires within
 -- p_cutoff and still has a refresh token, skipping rows already locked by another refresher and
 -- any id in p_exclude (already handled this sweep).
-CREATE FUNCTION codex_claim_for_refresh(p_cutoff timestamptz, p_exclude uuid[])
+CREATE FUNCTION codex_claim_for_refresh(p_cutoff timestamptz, p_exclude text[])
 RETURNS TABLE (id uuid, sealed_key_ref text, oauth_refresh_token text, chatgpt_plan text)
 LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     SELECT c.id, c.sealed_key_ref, c.oauth_refresh_token, c.chatgpt_plan
@@ -18,7 +18,7 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
       AND c.oauth_refresh_token IS NOT NULL
       AND c.oauth_access_expiry IS NOT NULL
       AND c.oauth_access_expiry < p_cutoff
-      AND c.id <> ALL(p_exclude)
+      AND c.id::text <> ALL(p_exclude)
     ORDER BY c.oauth_access_expiry
     FOR UPDATE SKIP LOCKED
     LIMIT 1;
@@ -48,6 +48,6 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     WHERE id = p_id AND provider = 'openai_codex';
 $$;
 
-GRANT EXECUTE ON FUNCTION codex_claim_for_refresh(timestamptz, uuid[]) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION codex_claim_for_refresh(timestamptz, text[]) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION codex_apply_refresh(uuid, text, text, timestamptz, text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION codex_disconnect_system(uuid) TO manyforge_app;
