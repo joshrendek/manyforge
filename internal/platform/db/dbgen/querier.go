@@ -709,6 +709,11 @@ type Querier interface {
 	// rows, so the service maps pgx.ErrNoRows ⇒ ErrNotFound.
 	SoftDeleteContact(ctx context.Context, arg SoftDeleteContactParams) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
+	// UpdateAICredentialConfig partially updates the two SAFE config columns of a credential
+	// (PATCH): COALESCE(narg, col) preserves any field the caller omitted. Scoped to (id,
+	// business_id). Deliberately does NOT touch allow_private_base_url / base_url / sealed_key_ref
+	// (config-only, no SSRF trust surface — see manyforge-deo.11).
+	UpdateAICredentialConfig(ctx context.Context, arg UpdateAICredentialConfigParams) (AiProviderCredential, error)
 	// UpdateAgent partially updates an agent (PATCH): COALESCE(narg, col) preserves any
 	// field the caller omitted (narg NULL = absent). provider is immutable (not settable
 	// here). No match → ErrNoRows → 404.
