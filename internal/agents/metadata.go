@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -48,5 +49,19 @@ func (c *ModelCatalog) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	for _, r := range rows {
 		out = append(out, ModelInfo{Provider: r.Provider, ModelID: r.ModelID})
 	}
-	return out, nil
+	return filterCodexPro(out), nil
+}
+
+// filterCodexPro drops openai_codex *-pro models: the ChatGPT-account backend refuses them
+// with a 403 even when advertised, so they must never reach the model picker. Defense in depth
+// on top of not seeding them (migration 0097). Non-codex providers are untouched.
+func filterCodexPro(models []ModelInfo) []ModelInfo {
+	out := make([]ModelInfo, 0, len(models))
+	for _, m := range models {
+		if m.Provider == "openai_codex" && strings.HasSuffix(m.ModelID, "-pro") {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }

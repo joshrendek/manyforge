@@ -99,6 +99,15 @@ describe('CodeReviewSetupComponent', () => {
     expect(opts).toEqual(['b1', 'b2']);
   });
 
+  it('offers openai_codex as a review provider', () => {
+    // PROVIDERS is rendered into every fallback-chain provider <select>; assert the option exists.
+    mount();
+    const opts = Array.from(qAll('[data-testid="row-priority-provider-0"] option')).map(
+      (o) => (o as HTMLOptionElement).value,
+    );
+    expect(opts).toContain('openai_codex');
+  });
+
   it('loads and renders configured dimension rows', () => {
     mount([makeDim({ dimension: 'security' }), makeDim({ id: 'd2', dimension: 'correctness', min_severity: 'info' })]);
     expect(qAll('[data-testid="dimension-row"]').length).toBe(2);
