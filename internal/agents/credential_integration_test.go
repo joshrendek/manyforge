@@ -183,3 +183,70 @@ func TestOpenAICodexAccountIDRoundTrips(t *testing.T) {
 		t.Fatalf("got key=%q acct=%q; want token + acct-abc-123", got.APIKey, got.ChatGPTAccountID)
 	}
 }
+
+// TestCredentialService_Update exercises the scoped config-edit (Task 3, bxev): only
+// default_model / max_concurrent_lanes are editable via PATCH; base_url /
+// allow_private_base_url / api_key / provider are immutable (delete+recreate, see
+// manyforge-deo.11) and must round-trip UNCHANGED through an Update call.
+func TestCredentialService_Update(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	ten := seedAgentTenant(ctx, t, tdb)
+	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
+
+	created, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+		Provider: "anthropic", APIKey: "sk-live", DefaultModel: "claude-sonnet-4-6",
+		MaxConcurrentLanes: 4,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.MaxConcurrentLanes != 4 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 4", created.MaxConcurrentLanes)
+	}
+
+	// Updating lanes + model leaves allow_private_base_url (and everything else not
+	// named in the input) UNCHANGED — COALESCE preserves omitted columns.
+	lanes := 9
+	model := "gpt-5"
+	updated, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		DefaultModel: &model, MaxConcurrentLanes: &lanes,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.MaxConcurrentLanes != 9 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 9", updated.MaxConcurrentLanes)
+	}
+	if updated.DefaultModel != "gpt-5" {
+		t.Fatalf("DefaultModel: got %q, want gpt-5", updated.DefaultModel)
+	}
+	if updated.AllowPrivateBaseURL != created.AllowPrivateBaseURL {
+		t.Fatalf("AllowPrivateBaseURL changed by a config-only Update: got %v, want %v", updated.AllowPrivateBaseURL, created.AllowPrivateBaseURL)
+	}
+
+	// Out-of-range lanes clamp to 16 (credLanes), same as Create.
+	tooMany := 99
+	clamped, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		MaxConcurrentLanes: &tooMany,
+	})
+	if err != nil {
+		t.Fatalf("update clamp: %v", err)
+	}
+	if clamped.MaxConcurrentLanes != 16 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 16 (clamped)", clamped.MaxConcurrentLanes)
+	}
+
+	// Updating an unknown id => ErrNotFound (rows-affected 0, no oracle).
+	if _, err := svc.Update(ctx, ten.principalID, ten.businessID, uuid.New(), UpdateCredentialInput{
+		DefaultModel: &model,
+	}); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("update unknown id: want ErrNotFound, got %v", err)
+	}
+}
