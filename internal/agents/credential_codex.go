@@ -25,6 +25,14 @@ type codexOAuth interface {
 	AuthorizeURL(string, string) string
 }
 
+// codexModelLister is the seam to the ChatGPT Codex backend's live per-account model list.
+// Satisfied by *CodexBackendModels; nil in tests/deployments that don't wire it.
+type codexModelLister interface {
+	ListModels(ctx context.Context, accessToken, accountID string) ([]string, error)
+}
+
+var _ codexModelLister = (*CodexBackendModels)(nil)
+
 // pendingRow / codexCredRow are the store's return shapes (decoupled from dbgen for testability).
 type pendingRow struct {
 	Flow               string
@@ -109,6 +117,7 @@ type CodexTokenService struct {
 	DB          credentialDB
 	Sealer      *crypto.Sealer
 	OAuth       codexOAuth
+	Models      codexModelLister // live per-account catalog (nil = feature off → static fallback)
 	Store       codexStore       // prod: dbCodexStore{DB}; tests: a fake
 	SystemStore systemCodexStore // prod: dbSystemCodexStore{DB}; tests: a fake (Task 6b sweep)
 	PendingTTL  time.Duration    // default 15m
@@ -386,6 +395,40 @@ func (s *CodexTokenService) ExchangePKCE(ctx context.Context, pid, bid, jti uuid
 		return ConnectStatus{}, err
 	}
 	return ConnectStatus{Status: "approved", CredentialID: id}, nil
+}
+
+// ListAccountModels returns the connected account's live, user-visible Codex models (via the
+// ChatGPT Codex backend). It is best-effort: any problem (feature off, not a connected OAuth codex
+// credential, mint/fetch failure) returns an empty list with a nil error so the caller degrades to
+// the static model_pricing catalog rather than erroring the UI.
+func (s *CodexTokenService) ListAccountModels(ctx context.Context, pid, bid uuid.UUID) ([]ModelInfo, error) {
+	if s.Models == nil {
+		return nil, nil
+	}
+	row, err := s.Store.readCodex(ctx, pid, bid)
+	if err != nil {
+		return nil, nil // no codex credential / read error → static fallback
+	}
+	// Only a connected OAuth codex credential has a live per-account catalog (a pasted Increment-1
+	// manual token has no refresh token / account id).
+	if row.ChatGPTAccountID == nil || *row.ChatGPTAccountID == "" || row.OAuthRefreshToken == nil {
+		return nil, nil
+	}
+	token, err := s.Mint(ctx, pid, bid)
+	if err != nil {
+		slog.WarnContext(ctx, "codex live models: mint failed", "err", err)
+		return nil, nil
+	}
+	slugs, err := s.Models.ListModels(ctx, token, *row.ChatGPTAccountID)
+	if err != nil {
+		slog.WarnContext(ctx, "codex live models: fetch failed", "err", err)
+		return nil, nil
+	}
+	out := make([]ModelInfo, 0, len(slugs))
+	for _, sl := range slugs {
+		out = append(out, ModelInfo{Provider: "openai_codex", ModelID: sl})
+	}
+	return out, nil
 }
 
 // persistConnect seals the token set and upserts the credential + consumes the pending row.

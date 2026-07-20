@@ -466,6 +466,32 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/NotFound" }
+  /businesses/{id}/ai_credentials/codex/models:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listCodexAccountModels
+      summary: List the connected account's live Codex models
+      description: >
+        Returns the connected openai_codex account's live, user-visible model list fetched from the
+        ChatGPT Codex backend (per-plan + client_version gated), shaped like /agents/models so the
+        model picker can reuse it. Best-effort: any failure (feature off, not connected, upstream
+        error) returns an empty list with 200 so the client falls back to the static model catalog.
+      responses:
+        "200":
+          description: The account's live model list (possibly empty)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        provider: { type: string }
+                        model_id: { type: string }
   /businesses/{id}/ai_credentials/codex/pkce/start:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }

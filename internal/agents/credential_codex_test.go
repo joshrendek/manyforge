@@ -13,6 +13,13 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
+// fakeCodexModelLister is a scripted codexModelLister seam (the live per-account catalog).
+type fakeCodexModelLister func(context.Context, string, string) ([]string, error)
+
+func (f fakeCodexModelLister) ListModels(ctx context.Context, token, account string) ([]string, error) {
+	return f(ctx, token, account)
+}
+
 // fakeCodexOAuth is a scripted codexOAuth seam (PKCE exchange + refresh).
 type fakeCodexOAuth struct {
 	exchangeTS  codexoauth.TokenSet
@@ -119,6 +126,67 @@ func approvedTokenSet() codexoauth.TokenSet {
 		AccessToken: "acc", RefreshToken: "ref", IDToken: "id",
 		Expiry: time.Now().Add(time.Hour),
 		Claims: codexoauth.Claims{AccountID: "acc_1", Plan: "pro"},
+	}
+}
+
+func TestListAccountModels_returnsLiveVisibleModels(t *testing.T) {
+	sealer := testSealer(t)
+	sealedAccess, err := sealer.Seal([]byte("live-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedRefresh, err := sealer.Seal([]byte("r"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct := "acct-42"
+	future := time.Now().Add(time.Hour) // fresh → Mint fast path, no refresh
+	store := &fakeCodexStore{cred: codexCredRow{
+		SealedKeyRef: &sealedAccess, OAuthRefreshToken: &sealedRefresh,
+		OAuthAccessExpiry: &future, ChatGPTAccountID: &acct,
+	}}
+	var gotToken, gotAccount string
+	svc := &CodexTokenService{
+		Sealer: sealer, Now: time.Now, Store: store,
+		Models: fakeCodexModelLister(func(_ context.Context, token, account string) ([]string, error) {
+			gotToken, gotAccount = token, account
+			return []string{"gpt-5.6-sol", "gpt-5.5"}, nil
+		}),
+	}
+	got, err := svc.ListAccountModels(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotToken != "live-token" || gotAccount != "acct-42" {
+		t.Fatalf("passed token=%q account=%q (want live-token/acct-42)", gotToken, gotAccount)
+	}
+	if len(got) != 2 || got[0].Provider != "openai_codex" || got[0].ModelID != "gpt-5.6-sol" || got[1].ModelID != "gpt-5.5" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestListAccountModels_degradesToEmptyOnFetchError(t *testing.T) {
+	sealer := testSealer(t)
+	sealedAccess, _ := sealer.Seal([]byte("live-token"))
+	sealedRefresh, _ := sealer.Seal([]byte("r"))
+	acct := "acct-42"
+	future := time.Now().Add(time.Hour)
+	store := &fakeCodexStore{cred: codexCredRow{
+		SealedKeyRef: &sealedAccess, OAuthRefreshToken: &sealedRefresh,
+		OAuthAccessExpiry: &future, ChatGPTAccountID: &acct,
+	}}
+	svc := &CodexTokenService{
+		Sealer: sealer, Now: time.Now, Store: store,
+		Models: fakeCodexModelLister(func(context.Context, string, string) ([]string, error) {
+			return nil, errors.New("upstream boom")
+		}),
+	}
+	got, err := svc.ListAccountModels(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatalf("want graceful degrade (nil err), got %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want empty on fetch error, got %+v", got)
 	}
 }
 

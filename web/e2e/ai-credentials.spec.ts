@@ -181,12 +181,12 @@ test('ai-credentials: editing an openai_codex credential offers a model dropdown
   await page.route('**/api/v1/businesses/b1/ai_credentials', (r) =>
     r.fulfill({ json: { items: [edited ? { ...cx, default_model: 'gpt-5.6-sol' } : cx] } }),
   );
-  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+  // editor prefers the live per-account catalog
+  await page.route('**/api/v1/businesses/b1/ai_credentials/codex/models', (r) =>
     r.fulfill({ json: { items: [
       { provider: 'openai_codex', model_id: 'gpt-5.6-sol' },
       { provider: 'openai_codex', model_id: 'gpt-5.6-terra' },
-      { provider: 'openai_codex', model_id: 'gpt-5.4' },
-      { provider: 'anthropic', model_id: 'claude-opus-4-8' },
+      { provider: 'openai_codex', model_id: 'gpt-5.5' },
     ] } }),
   );
   await page.route('**/api/v1/businesses/b1/ai_credentials/cx1', (r) => {
@@ -198,8 +198,8 @@ test('ai-credentials: editing an openai_codex credential offers a model dropdown
   await page.getByTestId('credential-edit').click();
   const sel = page.getByTestId('credential-edit-model');
   await expect(sel).toBeVisible();
-  // it is a <select> populated from the codex catalog (anthropic filtered out), not a text box
-  await expect(sel.locator('option')).toHaveText(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.4']);
+  // it is a <select> populated from the LIVE per-account codex catalog, not a text box
+  await expect(sel.locator('option')).toHaveText(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5']);
   await sel.selectOption('gpt-5.6-sol');
   await page.getByTestId('credential-edit-save').click();
   await expect(page.getByTestId('credential-edit-model')).toHaveCount(0);

@@ -76,6 +76,12 @@ export class AICredentialsService {
   update(businessId: string, id: string, body: UpdateAICredentialBody): Observable<AICredential> {
     return this.http.patch<AICredential>(`${this.base(businessId)}/${id}`, body);
   }
+  // liveCodexModels returns the connected account's live per-plan Codex models (shaped like
+  // /agents/models). Empty when the feature is off / not connected / upstream fails — callers then
+  // fall back to the static catalog.
+  liveCodexModels(businessId: string): Observable<{ items: { provider: string; model_id: string }[] }> {
+    return this.http.get<{ items: { provider: string; model_id: string }[] }>(`${this.base(businessId)}/codex/models`);
+  }
   codexPKCEStart(businessId: string, body: CodexConnectBody): Observable<CodexPKCEStart> {
     return this.http.post<CodexPKCEStart>(`${this.base(businessId)}/codex/pkce/start`, body);
   }

@@ -218,15 +218,29 @@ export class AICredentialsListComponent implements OnInit {
     this.editModel = c.default_model;
     this.editLanes = c.max_concurrent_lanes ?? 4;
     this.editId.set(c.id);
-    // openai_codex has a known catalog → offer a real picker instead of free text. Other providers
-    // (ollama/vllm/openrouter free-text, or stale static lists) keep the free-text input for now.
+    // openai_codex has a known catalog → offer a real picker instead of free text. Prefer the LIVE
+    // per-account list (exact plan + client_version set); fall back to the static catalog when the
+    // live fetch is empty or fails. Other providers keep the free-text input for now.
     if (c.provider === 'openai_codex') {
       this.codexModels.set([]);
-      this.agents.models(this.businessId()).subscribe({
-        next: (r) => this.codexModels.set((r.items ?? []).filter((m) => m.provider === 'openai_codex')),
-        error: () => this.codexModels.set([]),
+      this.api.liveCodexModels(this.businessId()).subscribe({
+        next: (r) => {
+          const live = (r.items ?? []).filter((m) => m.provider === 'openai_codex');
+          if (live.length) this.codexModels.set(live);
+          else this.loadStaticCodexModels();
+        },
+        error: () => this.loadStaticCodexModels(),
       });
     }
+  }
+
+  // loadStaticCodexModels populates the editor picker from the static model_pricing catalog — the
+  // fallback when the live per-account list is unavailable.
+  private loadStaticCodexModels(): void {
+    this.agents.models(this.businessId()).subscribe({
+      next: (r) => this.codexModels.set((r.items ?? []).filter((m) => m.provider === 'openai_codex')),
+      error: () => this.codexModels.set([]),
+    });
   }
 
   saveEdit(c: AICredential): void {

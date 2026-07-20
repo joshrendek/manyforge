@@ -254,10 +254,12 @@ func TestCredentialHandler_DuplicateIs409(t *testing.T) {
 // fakeCodexSvc implements agents.CodexConnectAPI for handler tests (no DB, no
 // OAuth). Each method returns a preconfigured (out, err) pair.
 type fakeCodexSvc struct {
-	startPKCEOut agents.PKCEStart
-	startPKCEErr error
-	exchangeOut  agents.ConnectStatus
-	exchangeErr  error
+	startPKCEOut     agents.PKCEStart
+	startPKCEErr     error
+	exchangeOut      agents.ConnectStatus
+	exchangeErr      error
+	accountModels    []agents.ModelInfo
+	accountModelsErr error
 
 	gotExchangePendingID uuid.UUID
 	gotExchangeRedirect  string
@@ -265,6 +267,9 @@ type fakeCodexSvc struct {
 
 func (f *fakeCodexSvc) StartPKCE(_ context.Context, _, _ uuid.UUID, _ agents.CodexConnectInput) (agents.PKCEStart, error) {
 	return f.startPKCEOut, f.startPKCEErr
+}
+func (f *fakeCodexSvc) ListAccountModels(_ context.Context, _, _ uuid.UUID) ([]agents.ModelInfo, error) {
+	return f.accountModels, f.accountModelsErr
 }
 func (f *fakeCodexSvc) ExchangePKCE(_ context.Context, _, _, pendingID uuid.UUID, redirectURL string) (agents.ConnectStatus, error) {
 	f.gotExchangePendingID = pendingID
@@ -292,6 +297,43 @@ func serveCredCodex(credSvc agents.CredentialCRUD, codex agents.CodexConnectAPI,
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestCodexHandler_ModelsReturnsLiveList(t *testing.T) {
+	ring := newCredTestRing(t)
+	codex := &fakeCodexSvc{accountModels: []agents.ModelInfo{
+		{Provider: "openai_codex", ModelID: "gpt-5.6-sol"},
+		{Provider: "openai_codex", ModelID: "gpt-5.5"},
+	}}
+	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodGet,
+		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/models",
+		mintCredBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Items) != 2 || got.Items[0]["provider"] != "openai_codex" || got.Items[0]["model_id"] != "gpt-5.6-sol" {
+		t.Fatalf("got %+v", got.Items)
+	}
+}
+
+func TestCodexHandler_ModelsDegradesToEmptyOnError(t *testing.T) {
+	ring := newCredTestRing(t)
+	codex := &fakeCodexSvc{accountModelsErr: errs.ErrUpstream}
+	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodGet,
+		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/models",
+		mintCredBearer(t, ring, uuid.New()), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 (graceful degrade), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"items":[]`) {
+		t.Fatalf("want empty items on degrade, got %s", rec.Body.String())
+	}
 }
 
 func TestCodexHandler_PKCEStartMissingPrincipalIs401(t *testing.T) {

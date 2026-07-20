@@ -26,6 +26,9 @@ var _ CredentialCRUD = (*CredentialService)(nil)
 type CodexConnectAPI interface {
 	StartPKCE(ctx context.Context, pid, bid uuid.UUID, in CodexConnectInput) (PKCEStart, error)
 	ExchangePKCE(ctx context.Context, pid, bid, pendingID uuid.UUID, redirectURL string) (ConnectStatus, error)
+	// ListAccountModels returns the connected account's live per-plan Codex models (best-effort;
+	// empty on any failure so the caller degrades to the static catalog).
+	ListAccountModels(ctx context.Context, pid, bid uuid.UUID) ([]ModelInfo, error)
 }
 
 var _ CodexConnectAPI = (*CodexTokenService)(nil)
@@ -63,6 +66,7 @@ func (h *CredentialHandler) ProtectedRoutes(r chi.Router) {
 		// Gated on h.codex != nil so the routes stay absent until it is wired up (mirrors the
 		// nil-guard pattern main.go uses for the connectors/credentials handlers).
 		if h.codex != nil {
+			r.Get("/codex/models", h.codexModels)
 			r.Post("/codex/pkce/start", h.codexPKCEStart)
 			r.Post("/codex/pkce/exchange", h.codexPKCEExchange)
 		}
@@ -251,6 +255,31 @@ func codexStatusResp(cs ConnectStatus) map[string]any {
 		out["credential_id"] = cs.CredentialID.String()
 	}
 	return out
+}
+
+// codexModels serves the connected account's live per-plan Codex model list, shaped like
+// /agents/models ({items:[{provider,model_id}]}) so the frontend can reuse the same picker. It is
+// best-effort: any failure yields an empty list (200) so the client falls back to the static catalog.
+func (h *CredentialHandler) codexModels(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := credBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	models, err := h.codex.ListAccountModels(r.Context(), pid, bid)
+	if err != nil {
+		models = nil // degrade to empty → client uses the static catalog
+	}
+	out := make([]map[string]string, 0, len(models))
+	for _, m := range models {
+		out = append(out, map[string]string{"provider": m.Provider, "model_id": m.ModelID})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (h *CredentialHandler) codexPKCEStart(w http.ResponseWriter, r *http.Request) {
