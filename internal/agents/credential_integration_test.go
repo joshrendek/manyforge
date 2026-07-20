@@ -200,8 +200,13 @@ func TestCredentialService_Update(t *testing.T) {
 	ten := seedAgentTenant(ctx, t, tdb)
 	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
 
+	// Seed a TRUSTED self-host credential (allow_private_base_url=true is what permits
+	// the loopback base_url below) so the "unchanged by Update" assertion further down
+	// is non-trivial: if it were seeded false (the Go zero-value), a bug that reset the
+	// trust flag on Update would be invisible (false == false trivially passes).
 	created, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
-		Provider: "anthropic", APIKey: "sk-live", DefaultModel: "claude-sonnet-4-6",
+		Provider: "ollama", DefaultModel: "llama3",
+		BaseURL: "http://127.0.0.1:11434/v1", AllowPrivateBaseURL: true,
 		MaxConcurrentLanes: 4,
 	})
 	if err != nil {
@@ -209,6 +214,9 @@ func TestCredentialService_Update(t *testing.T) {
 	}
 	if created.MaxConcurrentLanes != 4 {
 		t.Fatalf("MaxConcurrentLanes: got %d, want 4", created.MaxConcurrentLanes)
+	}
+	if !created.AllowPrivateBaseURL {
+		t.Fatalf("seed AllowPrivateBaseURL: got %v, want true", created.AllowPrivateBaseURL)
 	}
 
 	// Updating lanes + model leaves allow_private_base_url (and everything else not
@@ -227,8 +235,11 @@ func TestCredentialService_Update(t *testing.T) {
 	if updated.DefaultModel != "gpt-5" {
 		t.Fatalf("DefaultModel: got %q, want gpt-5", updated.DefaultModel)
 	}
-	if updated.AllowPrivateBaseURL != created.AllowPrivateBaseURL {
-		t.Fatalf("AllowPrivateBaseURL changed by a config-only Update: got %v, want %v", updated.AllowPrivateBaseURL, created.AllowPrivateBaseURL)
+	// deo.11: a config-only Update must never touch the SSRF trust flag. Pinned against
+	// `true` (not merely `== created.AllowPrivateBaseURL`) so a bug that reset it to the
+	// Go zero-value false would actually fail this assertion.
+	if !updated.AllowPrivateBaseURL {
+		t.Fatalf("AllowPrivateBaseURL changed by a config-only Update: got %v, want true (unchanged from create)", updated.AllowPrivateBaseURL)
 	}
 
 	// Out-of-range lanes clamp to 16 (credLanes), same as Create.
@@ -241,6 +252,36 @@ func TestCredentialService_Update(t *testing.T) {
 	}
 	if clamped.MaxConcurrentLanes != 16 {
 		t.Fatalf("MaxConcurrentLanes: got %d, want 16 (clamped)", clamped.MaxConcurrentLanes)
+	}
+	// This Update omits DefaultModel entirely (clamp-only) — the COALESCE in
+	// UpdateAICredentialConfig must preserve the value set by the PRIOR Update ("gpt-5"),
+	// not reset it to "" or the create-time seed value.
+	if clamped.DefaultModel != "gpt-5" { // omitted field must be preserved by COALESCE
+		t.Fatalf("DefaultModel: got %q, want it preserved as gpt-5", clamped.DefaultModel)
+	}
+
+	// Lanes clamp at the floor too: 0 (explicitly set, not omitted) ⇒ default 4;
+	// a negative value ⇒ 1. Mirrors credLanes' two floor branches, exercised here via
+	// Update rather than only Create.
+	zero := 0
+	zeroClamped, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		MaxConcurrentLanes: &zero,
+	})
+	if err != nil {
+		t.Fatalf("update clamp zero: %v", err)
+	}
+	if zeroClamped.MaxConcurrentLanes != 4 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 4 (0 clamps to default per credLanes)", zeroClamped.MaxConcurrentLanes)
+	}
+	negative := -5
+	negClamped, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		MaxConcurrentLanes: &negative,
+	})
+	if err != nil {
+		t.Fatalf("update clamp negative: %v", err)
+	}
+	if negClamped.MaxConcurrentLanes != 1 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 1 (negative clamps to floor per credLanes)", negClamped.MaxConcurrentLanes)
 	}
 
 	// Updating an unknown id => ErrNotFound (rows-affected 0, no oracle).
