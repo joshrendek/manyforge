@@ -149,4 +149,26 @@ describe('CredentialFormComponent', () => {
       expect(c.baseUrlRequired()).toBe(true);
     }
   });
+
+  it('renders the codex connect panel when provider is openai_codex', () => {
+    const c = fixture.componentInstance;
+    c.onProviderChange('openai_codex');
+    fixture.detectChanges();
+    // ngOnInit of the child fetches the model catalog
+    http.expectOne('/api/v1/businesses/b1/agents/models').flush({ items: [] });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="codex-connect"]')).toBeTruthy();
+    // the api-key field is hidden for codex
+    expect(fixture.nativeElement.querySelector('[data-testid="credential-form-submit"]')).toBeNull();
+  });
+
+  it('starts on the codex provider when initialProvider is set', () => {
+    const f = TestBed.createComponent(CredentialFormComponent);
+    f.componentInstance.businessId = 'b1';
+    f.componentInstance.initialProvider = 'openai_codex';
+    f.detectChanges();
+    http.expectOne('/api/v1/businesses/b1/agents/models').flush({ items: [] });
+    f.detectChanges();
+    expect(f.componentInstance.provider()).toBe('openai_codex');
+  });
 });

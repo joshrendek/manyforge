@@ -18,6 +18,15 @@ const credentials = {
     },
   ],
 };
+const codexCredentials = {
+  items: [
+    {
+      id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5-codex',
+      allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '', updated_at: '',
+      chatgpt_plan: 'plus', connection_status: 'disconnected', oauth_access_expiry: '2026-01-01T00:00:00Z',
+    },
+  ],
+};
 
 describe('AICredentialsListComponent', () => {
   let mock: HttpTestingController;
@@ -82,5 +91,24 @@ describe('AICredentialsListComponent', () => {
   it('renders in dark theme', () => {
     document.documentElement.setAttribute('data-theme', 'dark');
     expect(mount().nativeElement.querySelector('.mf-table, .mf-card')).toBeTruthy();
+  });
+
+  it('shows a codex health badge and a Reconnect button when disconnected', () => {
+    const f = TestBed.createComponent(AICredentialsListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/ai_credentials').flush(codexCredentials);
+    f.detectChanges();
+    const el: HTMLElement = f.nativeElement;
+    expect(el.querySelector('[data-testid="codex-health"]')?.textContent).toContain('disconnected');
+    const reconnect = el.querySelector('[data-testid="codex-reconnect"]') as HTMLButtonElement;
+    expect(reconnect).toBeTruthy();
+    reconnect.click();
+    f.detectChanges();
+    // Reconnect opens the add form; the child form fetches the model catalog on init.
+    mock.expectOne('/api/v1/businesses/b1/agents/models').flush({ items: [] });
+    f.detectChanges();
+    expect(el.querySelector('[data-testid="codex-connect"]')).toBeTruthy();
   });
 });

@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AICredential, AICredentialsService } from '../../../core/ai-credentials.service';
+import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai-credentials.service';
 import { BusinessService } from '../../../core/business.service';
 import { CurrentBusinessService } from '../../../core/current-business.service';
 import { Business } from '../../../core/tree';
@@ -39,14 +39,15 @@ import { CredentialFormComponent } from './credential-form';
         </div>
         <div style="display:flex;align-items:flex-end">
           <button class="mf-btn mf-btn-primary mf-btn-sm" data-testid="credential-add-toggle"
-                  (click)="showAdd.set(!showAdd())" [disabled]="!businessId()">
+                  (click)="toggleAdd()" [disabled]="!businessId()">
             {{ showAdd() ? 'Close' : 'Add credential' }}
           </button>
         </div>
       </div>
 
       @if (showAdd() && businessId()) {
-        <app-credential-form [businessId]="businessId()" (saved)="onCreated()" (cancelled)="showAdd.set(false)" />
+        <app-credential-form [businessId]="businessId()" [initialProvider]="reconnectProvider()"
+                             (saved)="onCreated()" (cancelled)="showAdd.set(false)" />
       }
 
       <div class="mf-table" data-testid="credentials-list">
@@ -59,11 +60,26 @@ import { CredentialFormComponent } from './credential-form';
         </div>
         @for (c of items(); track c.id) {
           <div class="mf-tr" data-testid="credential-row" [attr.data-credential-id]="c.id">
-            <span style="width:120px;text-transform:capitalize" data-testid="credential-provider">{{ c.provider }}</span>
+            <span style="width:120px;text-transform:capitalize" data-testid="credential-provider">{{ c.provider }}
+              @if (c.provider === 'openai_codex') {
+                <span data-testid="codex-health"
+                      [style.color]="c.connection_status === 'connected' ? 'var(--mf-ok, green)' : 'var(--mf-danger, crimson)'"
+                      style="font-size:var(--mf-fs-xs);display:block">
+                  {{ c.connection_status || 'unknown' }}@if (c.chatgpt_plan) { · {{ c.chatgpt_plan }} }
+                </span>
+              }
+            </span>
             <span style="flex:1">{{ c.default_model }}</span>
-            <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ c.base_url || '—' }}</span>
+            <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">
+              @if (c.provider === 'openai_codex') { {{ c.oauth_access_expiry ? ('expires ' + c.oauth_access_expiry) : '—' }} }
+              @else { {{ c.base_url || '—' }} }
+            </span>
             <span style="width:110px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ c.allow_private_base_url ? 'allowed' : '—' }}</span>
             <span style="width:220px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+              @if (c.provider === 'openai_codex' && c.connection_status !== 'connected') {
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="codex-reconnect"
+                        [attr.aria-label]="'Reconnect ' + c.provider" (click)="reconnect()">Reconnect</button>
+              }
               @if (confirmDeleteId() === c.id) {
                 <span class="mf-err" data-testid="credential-delete-confirm" style="font-size:var(--mf-fs-xs);align-self:center">
                   Delete {{ c.provider }} credential?
@@ -102,6 +118,7 @@ export class AICredentialsListComponent implements OnInit {
   error = signal('');
   showAdd = signal(false);
   confirmDeleteId = signal<string>('');
+  reconnectProvider = signal<AIProvider | null>(null);
 
   ngOnInit(): void {
     this.bizApi.list().subscribe({
@@ -151,6 +168,20 @@ export class AICredentialsListComponent implements OnInit {
     this.showAdd.set(false);
     this.toast.success('Credential added');
     this.reload();
+  }
+
+  toggleAdd(): void {
+    if (this.showAdd()) {
+      this.showAdd.set(false);
+      return;
+    }
+    this.reconnectProvider.set(null);
+    this.showAdd.set(true);
+  }
+
+  reconnect(): void {
+    this.reconnectProvider.set('openai_codex');
+    this.showAdd.set(true);
   }
 
   remove(c: AICredential): void {

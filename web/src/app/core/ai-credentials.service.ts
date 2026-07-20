@@ -5,7 +5,7 @@ import { Observable } from 'rxjs';
 // The single source of truth for provider names on the client. Mirrors the ai_provider PG
 // enum (db/schema.sql) and agents.knownProviders — keep them in sync.
 // 'huggingface' is the HF Inference Providers router (router.huggingface.co).
-export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter' | 'huggingface';
+export type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'vllm' | 'openrouter' | 'huggingface' | 'openai_codex';
 
 // Read shape: no api_key — the secret is write-only.
 export interface AICredential {
@@ -18,6 +18,10 @@ export interface AICredential {
   max_concurrent_lanes: number;
   created_at: string;
   updated_at: string;
+  // openai_codex-only connection health (omitted/empty for other providers; never secret-bearing).
+  chatgpt_plan?: string;
+  connection_status?: 'connected' | 'disconnected';
+  oauth_access_expiry?: string;
 }
 
 export interface CreateAICredentialBody {
@@ -27,6 +31,32 @@ export interface CreateAICredentialBody {
   base_url?: string;
   allow_private_base_url?: boolean;
   max_concurrent_lanes?: number;
+}
+
+// Request body shared by the codex device-code and PKCE start endpoints.
+export interface CodexConnectBody {
+  default_model: string;
+  base_url?: string;
+  max_concurrent_lanes?: number;
+}
+// Response from starting a device-code flow: the code + URL to show the user, plus poll timing.
+export interface CodexDeviceStart {
+  pending_id: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  interval: number;
+  expires_in: number;
+}
+// Response from starting a PKCE (paste-the-redirect-URL) flow: where to send the user.
+export interface CodexPKCEStart {
+  pending_id: string;
+  authorize_url: string;
+}
+// Poll/exchange result for either flow; credential_id is set once status is 'approved'.
+export interface CodexConnectStatus {
+  status: 'pending' | 'approved' | 'expired' | 'denied';
+  credential_id?: string;
 }
 
 // AICredentialsService talks to the agents.configure-gated credential API.
@@ -46,5 +76,20 @@ export class AICredentialsService {
   }
   remove(businessId: string, id: string): Observable<void> {
     return this.http.delete<void>(`${this.base(businessId)}/${id}`);
+  }
+  codexDeviceStart(businessId: string, body: CodexConnectBody): Observable<CodexDeviceStart> {
+    return this.http.post<CodexDeviceStart>(`${this.base(businessId)}/codex/device/start`, body);
+  }
+  codexDeviceStatus(businessId: string, pendingId: string): Observable<CodexConnectStatus> {
+    return this.http.get<CodexConnectStatus>(`${this.base(businessId)}/codex/device/${pendingId}/status`);
+  }
+  codexPKCEStart(businessId: string, body: CodexConnectBody): Observable<CodexPKCEStart> {
+    return this.http.post<CodexPKCEStart>(`${this.base(businessId)}/codex/pkce/start`, body);
+  }
+  codexPKCEExchange(businessId: string, pendingId: string, redirectUrl: string): Observable<CodexConnectStatus> {
+    return this.http.post<CodexConnectStatus>(`${this.base(businessId)}/codex/pkce/exchange`, {
+      pending_id: pendingId,
+      redirect_url: redirectUrl,
+    });
   }
 }
