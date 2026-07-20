@@ -1,5 +1,6 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, EventEmitter, Input, OnDestroy, OnInit, Output, inject, signal } from '@angular/core';
+import { Component, DestroyRef, EventEmitter, Input, OnDestroy, OnInit, Output, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import {
   AICredentialsService,
@@ -36,7 +37,7 @@ import { AgentsService, ModelDescriptor } from '../../../core/agents.service';
           <input id="codex-lanes" class="mf-input" type="number" min="1" max="16"
                  name="codex-lanes" [(ngModel)]="maxLanes" />
         </div>
-        @if (error()) { <p class="mf-err" data-testid="codex-error">{{ error() }}</p> }
+        @if (error()) { <p class="mf-err" data-testid="codex-error" role="alert">{{ error() }}</p> }
         <div style="display:flex;gap:8px">
           <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="codex-signin"
                   [disabled]="submitting() || !model()" (click)="startDevice()">
@@ -51,9 +52,10 @@ import { AgentsService, ModelDescriptor } from '../../../core/agents.service';
           <p>Enter this code at ChatGPT to authorize this connection:</p>
           <p class="mf-code" data-testid="codex-user-code" style="font-size:var(--mf-fs-lg);letter-spacing:2px">{{ device()?.user_code }}</p>
           <a class="mf-btn mf-btn-primary mf-btn-sm" [href]="device()?.verification_uri_complete"
-             target="_blank" rel="noopener" data-testid="codex-open">Open ChatGPT</a>
-          <p class="mf-hint" data-testid="codex-waiting">Waiting for approval…</p>
-          @if (error()) { <p class="mf-err" data-testid="codex-error">{{ error() }}</p> }
+             target="_blank" rel="noopener" data-testid="codex-open"
+             aria-label="Open ChatGPT to authorize — opens in a new tab">Open ChatGPT</a>
+          <p class="mf-hint" data-testid="codex-waiting" role="status" aria-live="polite">Waiting for approval…</p>
+          @if (error()) { <p class="mf-err" data-testid="codex-error" role="alert">{{ error() }}</p> }
           <details style="margin-top:8px">
             <summary data-testid="codex-paste-toggle">Trouble signing in? Paste a link instead</summary>
             <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="codex-paste-start"
@@ -83,11 +85,13 @@ import { AgentsService, ModelDescriptor } from '../../../core/agents.service';
 })
 export class CodexConnectComponent implements OnInit, OnDestroy {
   @Input() businessId = '';
+  // connected emits the newly-created/refreshed credential_id once the flow resolves.
   @Output() connected = new EventEmitter<string>();
   @Output() cancelled = new EventEmitter<void>();
 
   private api = inject(AICredentialsService);
   private agents = inject(AgentsService);
+  private destroyRef = inject(DestroyRef);
 
   phase = signal<'configure' | 'authorizing' | 'expired'>('configure');
   codexModels = signal<ModelDescriptor[]>([]);
@@ -105,10 +109,13 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
   private deviceAbandoned = false;
 
   ngOnInit(): void {
-    this.agents.models(this.businessId).subscribe({
-      next: (r) => this.codexModels.set((r.items ?? []).filter((m) => m.provider === 'openai_codex')),
-      error: () => this.codexModels.set([]),
-    });
+    this.agents
+      .models(this.businessId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (r) => this.codexModels.set((r.items ?? []).filter((m) => m.provider === 'openai_codex')),
+        error: () => this.codexModels.set([]),
+      });
   }
 
   ngOnDestroy(): void {
@@ -126,40 +133,50 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
     if (this.submitting() || !this.model()) return;
     this.submitting.set(true);
     this.error.set('');
-    this.api.codexDeviceStart(this.businessId, this.body()).subscribe({
-      next: (d) => {
-        this.device.set(d);
-        this.phase.set('authorizing');
-        this.submitting.set(false);
-        this.scheduleNextPoll();
-      },
-      error: (e: HttpErrorResponse) => {
-        this.submitting.set(false);
-        this.error.set(this.describe(e));
-      },
-    });
+    this.api
+      .codexDeviceStart(this.businessId, this.body())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (d) => {
+          this.device.set(d);
+          this.phase.set('authorizing');
+          this.submitting.set(false);
+          this.scheduleNextPoll();
+        },
+        error: (e: HttpErrorResponse) => {
+          this.submitting.set(false);
+          this.error.set(this.describe(e));
+        },
+      });
   }
 
   // pollOnce fetches the pending status once and applies it. Production schedules repeated calls
   // via scheduleNextPoll; tests call it directly and flush the HTTP response.
   pollOnce(): void {
     const d = this.device();
-    if (!d) return;
-    this.api.codexDeviceStatus(this.businessId, d.pending_id).subscribe({
-      next: (s) => this.applyStatus(s),
-      error: (e: HttpErrorResponse) => {
-        // A 4xx means the pending flow is gone/denied server-side — terminal, surface it.
-        // Network blips / 5xx are transient: keep polling.
-        if (e.status >= 400 && e.status < 500) {
-          this.resolved = true;
-          this.stopPolling();
-          this.error.set('This sign-in request expired or was revoked — please try again.');
-          this.phase.set('expired');
-          return;
-        }
-        this.scheduleNextPoll();
-      },
-    });
+    if (!d || this.deviceAbandoned || this.resolved) return;
+    this.api
+      .codexDeviceStatus(this.businessId, d.pending_id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (s) => {
+          if (this.deviceAbandoned || this.resolved) return;
+          this.applyStatus(s);
+        },
+        error: (e: HttpErrorResponse) => {
+          if (this.deviceAbandoned || this.resolved) return;
+          // A 4xx means the pending flow is gone/denied server-side — terminal, surface it.
+          // Network blips / 5xx are transient: keep polling.
+          if (e.status >= 400 && e.status < 500) {
+            this.resolved = true;
+            this.stopPolling();
+            this.error.set('This sign-in request expired or was revoked — please try again.');
+            this.phase.set('expired');
+            return;
+          }
+          this.scheduleNextPoll();
+        },
+      });
   }
 
   startPaste(): void {
@@ -167,13 +184,16 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
     this.stopPolling(); // don't let the device-code poll keep racing once we switch to paste
     this.deviceAbandoned = true; // the paste flow supersedes the device poll
     this.error.set('');
-    this.api.codexPKCEStart(this.businessId, this.body()).subscribe({
-      next: (p) => {
-        this.pkce.set(p);
-        this.showPaste.set(true);
-      },
-      error: (e: HttpErrorResponse) => this.error.set(this.describe(e)),
-    });
+    this.api
+      .codexPKCEStart(this.businessId, this.body())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (p) => {
+          this.pkce.set(p);
+          this.showPaste.set(true);
+        },
+        error: (e: HttpErrorResponse) => this.error.set(this.describe(e)),
+      });
   }
 
   submitPaste(): void {
@@ -181,16 +201,19 @@ export class CodexConnectComponent implements OnInit, OnDestroy {
     if (!p || !this.pasteUrl.trim()) return;
     this.submitting.set(true);
     this.error.set('');
-    this.api.codexPKCEExchange(this.businessId, p.pending_id, this.pasteUrl.trim()).subscribe({
-      next: (s) => {
-        this.submitting.set(false);
-        this.applyStatus(s);
-      },
-      error: (e: HttpErrorResponse) => {
-        this.submitting.set(false);
-        this.error.set(this.describe(e));
-      },
-    });
+    this.api
+      .codexPKCEExchange(this.businessId, p.pending_id, this.pasteUrl.trim())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (s) => {
+          this.submitting.set(false);
+          this.applyStatus(s);
+        },
+        error: (e: HttpErrorResponse) => {
+          this.submitting.set(false);
+          this.error.set(this.describe(e));
+        },
+      });
   }
 
   reset(): void {

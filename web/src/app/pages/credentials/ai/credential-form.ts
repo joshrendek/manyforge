@@ -84,7 +84,7 @@ const BASE_URL_DEFAULTED: readonly AIProvider[] = ['anthropic', 'openrouter', 'h
         </div>
 
         @if (error()) {
-          <p class="mf-err" data-testid="credential-form-error">{{ error() }}</p>
+          <p class="mf-err" data-testid="credential-form-error" role="alert">{{ error() }}</p>
         }
 
         <div style="display:flex;gap:8px;align-items:flex-end">

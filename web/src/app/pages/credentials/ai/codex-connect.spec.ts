@@ -136,4 +136,18 @@ describe('CodexConnectComponent', () => {
       vi.useRealTimers();
     }
   });
+
+  it('ignores a stale device-poll response received after switching to paste', () => {
+    const c = mount();
+    c.model.set('gpt-5-codex');
+    c.startDevice();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/start').flush({ pending_id: 'p1', user_code: 'X', verification_uri: 'u', verification_uri_complete: 'u', interval: 999, expires_in: 900 });
+    c.pollOnce();
+    const stale = http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/device/p1/status');
+    c.startPaste();
+    http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/pkce/start').flush({ pending_id: 'p2', authorize_url: 'https://a' });
+    // the stale device poll now resolves with a terminal 4xx — must be IGNORED (paste UI intact)
+    stale.flush({ message: 'gone' }, { status: 404, statusText: 'Not Found' });
+    expect(c.phase()).toBe('authorizing');
+  });
 });

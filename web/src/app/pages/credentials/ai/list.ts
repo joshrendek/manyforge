@@ -77,7 +77,8 @@ import { CredentialFormComponent } from './credential-form';
             <span style="width:110px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ c.allow_private_base_url ? 'allowed' : '—' }}</span>
             <span style="width:220px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
               @if (c.provider === 'openai_codex' && c.connection_status !== 'connected') {
-                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="codex-reconnect" (click)="reconnect()">Reconnect</button>
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="codex-reconnect"
+                        [attr.aria-label]="'Reconnect ' + c.provider" (click)="reconnect()">Reconnect</button>
               }
               @if (confirmDeleteId() === c.id) {
                 <span class="mf-err" data-testid="credential-delete-confirm" style="font-size:var(--mf-fs-xs);align-self:center">

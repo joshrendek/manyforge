@@ -33,11 +33,13 @@ export interface CreateAICredentialBody {
   max_concurrent_lanes?: number;
 }
 
+// Request body shared by the codex device-code and PKCE start endpoints.
 export interface CodexConnectBody {
   default_model: string;
   base_url?: string;
   max_concurrent_lanes?: number;
 }
+// Response from starting a device-code flow: the code + URL to show the user, plus poll timing.
 export interface CodexDeviceStart {
   pending_id: string;
   user_code: string;
@@ -46,10 +48,12 @@ export interface CodexDeviceStart {
   interval: number;
   expires_in: number;
 }
+// Response from starting a PKCE (paste-the-redirect-URL) flow: where to send the user.
 export interface CodexPKCEStart {
   pending_id: string;
   authorize_url: string;
 }
+// Poll/exchange result for either flow; credential_id is set once status is 'approved'.
 export interface CodexConnectStatus {
   status: 'pending' | 'approved' | 'expired' | 'denied';
   credential_id?: string;
