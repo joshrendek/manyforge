@@ -29,6 +29,10 @@ type fakeCredSvc struct {
 	listErr     error
 	deleteErr   error
 	gotDeleteID uuid.UUID
+	updateView  agents.CredentialView
+	updateErr   error
+	gotUpdateID uuid.UUID
+	gotUpdateIn agents.UpdateCredentialInput
 }
 
 func (f *fakeCredSvc) Create(_ context.Context, _, _ uuid.UUID, _ agents.CreateCredentialInput) (agents.CredentialView, error) {
@@ -40,6 +44,11 @@ func (f *fakeCredSvc) List(_ context.Context, _, _ uuid.UUID) ([]agents.Credenti
 func (f *fakeCredSvc) Delete(_ context.Context, _, _, id uuid.UUID) error {
 	f.gotDeleteID = id
 	return f.deleteErr
+}
+func (f *fakeCredSvc) Update(_ context.Context, _, _, id uuid.UUID, in agents.UpdateCredentialInput) (agents.CredentialView, error) {
+	f.gotUpdateID = id
+	f.gotUpdateIn = in
+	return f.updateView, f.updateErr
 }
 
 // newCredTestRing builds an in-memory Ed25519 key ring (no DB / no network), the
@@ -109,6 +118,24 @@ func TestCredentialHandler_CreateReturnsViewWithoutKey(t *testing.T) {
 	}
 }
 
+func TestCredentialHandler_CreateIncludesMaxConcurrentLanes(t *testing.T) {
+	ring := newCredTestRing(t)
+	id := uuid.New()
+	svc := &fakeCredSvc{createView: agents.CredentialView{
+		ID: id, Provider: "anthropic", DefaultModel: "claude-opus-4-8", MaxConcurrentLanes: 4,
+	}}
+	body := `{"provider":"anthropic","api_key":"k","default_model":"claude-opus-4-8"}`
+	rec := serveCred(svc, ring, http.MethodPost, "/businesses/"+uuid.New().String()+"/ai_credentials",
+		mintCredBearer(t, ring, uuid.New()), strings.NewReader(body))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"max_concurrent_lanes":4`) {
+		t.Fatalf("want max_concurrent_lanes:4 in response, got %s", rec.Body.String())
+	}
+}
+
 func TestCredentialHandler_ListShape(t *testing.T) {
 	ring := newCredTestRing(t)
 	svc := &fakeCredSvc{listViews: []agents.CredentialView{{ID: uuid.New(), Provider: "openai"}}}
@@ -149,6 +176,68 @@ func TestCredentialHandler_DeleteUnknownIs404(t *testing.T) {
 		mintCredBearer(t, ring, uuid.New()), nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", rec.Code)
+	}
+}
+
+func TestCredentialHandler_UpdateOK(t *testing.T) {
+	ring := newCredTestRing(t)
+	id := uuid.New()
+	svc := &fakeCredSvc{updateView: agents.CredentialView{
+		ID: id, Provider: "anthropic", DefaultModel: "gpt-5", MaxConcurrentLanes: 9,
+	}}
+	body := `{"default_model":"gpt-5","max_concurrent_lanes":9}`
+	rec := serveCred(svc, ring, http.MethodPatch, "/businesses/"+uuid.New().String()+"/ai_credentials/"+id.String(),
+		mintCredBearer(t, ring, uuid.New()), strings.NewReader(body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if svc.gotUpdateID != id {
+		t.Fatalf("want update id %s, got %s", id, svc.gotUpdateID)
+	}
+	if svc.gotUpdateIn.DefaultModel == nil || *svc.gotUpdateIn.DefaultModel != "gpt-5" {
+		t.Fatalf("want default_model gpt-5 passed through, got %+v", svc.gotUpdateIn)
+	}
+	if svc.gotUpdateIn.MaxConcurrentLanes == nil || *svc.gotUpdateIn.MaxConcurrentLanes != 9 {
+		t.Fatalf("want max_concurrent_lanes 9 passed through, got %+v", svc.gotUpdateIn)
+	}
+	if !strings.Contains(rec.Body.String(), `"max_concurrent_lanes":9`) {
+		t.Fatalf("want max_concurrent_lanes:9 in response, got %s", rec.Body.String())
+	}
+}
+
+func TestCredentialHandler_UpdatePartialOmitsAbsentFields(t *testing.T) {
+	ring := newCredTestRing(t)
+	id := uuid.New()
+	svc := &fakeCredSvc{updateView: agents.CredentialView{ID: id, Provider: "anthropic"}}
+	rec := serveCred(svc, ring, http.MethodPatch, "/businesses/"+uuid.New().String()+"/ai_credentials/"+id.String(),
+		mintCredBearer(t, ring, uuid.New()), strings.NewReader(`{"max_concurrent_lanes":9}`))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if svc.gotUpdateIn.DefaultModel != nil {
+		t.Fatalf("want default_model absent (nil), got %v", *svc.gotUpdateIn.DefaultModel)
+	}
+}
+
+func TestCredentialHandler_UpdateUnknownIs404(t *testing.T) {
+	ring := newCredTestRing(t)
+	svc := &fakeCredSvc{updateErr: errs.ErrNotFound}
+	rec := serveCred(svc, ring, http.MethodPatch, "/businesses/"+uuid.New().String()+"/ai_credentials/"+uuid.New().String(),
+		mintCredBearer(t, ring, uuid.New()), strings.NewReader(`{"default_model":"gpt-5"}`))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCredentialHandler_UpdateBlankModelIs400(t *testing.T) {
+	ring := newCredTestRing(t)
+	svc := &fakeCredSvc{updateErr: errs.ErrValidation}
+	rec := serveCred(svc, ring, http.MethodPatch, "/businesses/"+uuid.New().String()+"/ai_credentials/"+uuid.New().String(),
+		mintCredBearer(t, ring, uuid.New()), strings.NewReader(`{"default_model":""}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 

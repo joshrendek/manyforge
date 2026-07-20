@@ -14,7 +14,7 @@ const credentials = {
   items: [
     {
       id: 'cred1', business_id: 'b1', provider: 'anthropic', base_url: '', default_model: 'claude-opus-4-8',
-      allow_private_base_url: false, created_at: '', updated_at: '',
+      allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '', updated_at: '',
     },
   ],
 };
@@ -68,6 +68,34 @@ describe('AICredentialsListComponent', () => {
     mock.expectOne('/api/v1/businesses/b1/ai_credentials/cred1').flush(null);
     f.detectChanges();
     expect(f.nativeElement.querySelector('[data-testid="credential-row"]')).toBeNull();
+  });
+
+  it('edits default model and lanes inline via PATCH', async () => {
+    const f = mount();
+    const el: HTMLElement = f.nativeElement;
+    (el.querySelector('[data-testid="credential-edit"]') as HTMLButtonElement).click();
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+
+    const modelInput = el.querySelector('[data-testid="credential-edit-model"]') as HTMLInputElement;
+    const lanesInput = el.querySelector('[data-testid="credential-edit-lanes"]') as HTMLInputElement;
+    expect(modelInput).toBeTruthy();
+    expect(modelInput.value).toBe('claude-opus-4-8');
+    expect(lanesInput.value).toBe('4');
+
+    lanesInput.value = '8';
+    lanesInput.dispatchEvent(new Event('input'));
+    f.detectChanges();
+
+    (el.querySelector('[data-testid="credential-edit-save"]') as HTMLButtonElement).click();
+    const req = mock.expectOne('/api/v1/businesses/b1/ai_credentials/cred1');
+    expect(req.request.method).toBe('PATCH');
+    req.flush({ ...credentials.items[0], default_model: 'claude-opus-4-8', max_concurrent_lanes: 8 });
+    f.detectChanges();
+
+    expect(el.querySelector('[data-testid="credential-edit-model"]')).toBeNull();
+    expect(el.querySelector('[data-testid="credential-lanes"]')?.textContent?.trim()).toBe('8');
   });
 
   it('toggles the add form via the add toggle', () => {

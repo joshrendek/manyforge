@@ -40,6 +40,9 @@ func TestCredentialCRUDRoundTrip(t *testing.T) {
 	if view.Provider != "anthropic" {
 		t.Fatalf("create view provider = %q, want anthropic", view.Provider)
 	}
+	if view.MaxConcurrentLanes != 4 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 4 (DB default)", view.MaxConcurrentLanes)
+	}
 	id := view.ID
 
 	got, err := svc.Resolve(ctx, ten.principalID, ten.businessID, "anthropic")
@@ -178,5 +181,113 @@ func TestOpenAICodexAccountIDRoundTrips(t *testing.T) {
 	}
 	if got.APIKey != "codex-test-token" || got.ChatGPTAccountID != "acct-abc-123" {
 		t.Fatalf("got key=%q acct=%q; want token + acct-abc-123", got.APIKey, got.ChatGPTAccountID)
+	}
+}
+
+// TestCredentialService_Update exercises the scoped config-edit (Task 3, bxev): only
+// default_model / max_concurrent_lanes are editable via PATCH; base_url /
+// allow_private_base_url / api_key / provider are immutable (delete+recreate, see
+// manyforge-deo.11) and must round-trip UNCHANGED through an Update call.
+func TestCredentialService_Update(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	ten := seedAgentTenant(ctx, t, tdb)
+	svc := &CredentialService{DB: tdb.App, Sealer: newTestSealer(t)}
+
+	// Seed a TRUSTED self-host credential (allow_private_base_url=true is what permits
+	// the loopback base_url below) so the "unchanged by Update" assertion further down
+	// is non-trivial: if it were seeded false (the Go zero-value), a bug that reset the
+	// trust flag on Update would be invisible (false == false trivially passes).
+	created, err := svc.Create(ctx, ten.principalID, ten.businessID, CreateCredentialInput{
+		Provider: "ollama", DefaultModel: "llama3",
+		BaseURL: "http://127.0.0.1:11434/v1", AllowPrivateBaseURL: true,
+		MaxConcurrentLanes: 4,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.MaxConcurrentLanes != 4 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 4", created.MaxConcurrentLanes)
+	}
+	if !created.AllowPrivateBaseURL {
+		t.Fatalf("seed AllowPrivateBaseURL: got %v, want true", created.AllowPrivateBaseURL)
+	}
+
+	// Updating lanes + model leaves allow_private_base_url (and everything else not
+	// named in the input) UNCHANGED — COALESCE preserves omitted columns.
+	lanes := 9
+	model := "gpt-5"
+	updated, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		DefaultModel: &model, MaxConcurrentLanes: &lanes,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.MaxConcurrentLanes != 9 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 9", updated.MaxConcurrentLanes)
+	}
+	if updated.DefaultModel != "gpt-5" {
+		t.Fatalf("DefaultModel: got %q, want gpt-5", updated.DefaultModel)
+	}
+	// deo.11: a config-only Update must never touch the SSRF trust flag. Pinned against
+	// `true` (not merely `== created.AllowPrivateBaseURL`) so a bug that reset it to the
+	// Go zero-value false would actually fail this assertion.
+	if !updated.AllowPrivateBaseURL {
+		t.Fatalf("AllowPrivateBaseURL changed by a config-only Update: got %v, want true (unchanged from create)", updated.AllowPrivateBaseURL)
+	}
+
+	// Out-of-range lanes clamp to 16 (credLanes), same as Create.
+	tooMany := 99
+	clamped, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		MaxConcurrentLanes: &tooMany,
+	})
+	if err != nil {
+		t.Fatalf("update clamp: %v", err)
+	}
+	if clamped.MaxConcurrentLanes != 16 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 16 (clamped)", clamped.MaxConcurrentLanes)
+	}
+	// This Update omits DefaultModel entirely (clamp-only) — the COALESCE in
+	// UpdateAICredentialConfig must preserve the value set by the PRIOR Update ("gpt-5"),
+	// not reset it to "" or the create-time seed value.
+	if clamped.DefaultModel != "gpt-5" { // omitted field must be preserved by COALESCE
+		t.Fatalf("DefaultModel: got %q, want it preserved as gpt-5", clamped.DefaultModel)
+	}
+
+	// Lanes clamp at the floor too: 0 (explicitly set, not omitted) ⇒ default 4;
+	// a negative value ⇒ 1. Mirrors credLanes' two floor branches, exercised here via
+	// Update rather than only Create.
+	zero := 0
+	zeroClamped, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		MaxConcurrentLanes: &zero,
+	})
+	if err != nil {
+		t.Fatalf("update clamp zero: %v", err)
+	}
+	if zeroClamped.MaxConcurrentLanes != 4 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 4 (0 clamps to default per credLanes)", zeroClamped.MaxConcurrentLanes)
+	}
+	negative := -5
+	negClamped, err := svc.Update(ctx, ten.principalID, ten.businessID, created.ID, UpdateCredentialInput{
+		MaxConcurrentLanes: &negative,
+	})
+	if err != nil {
+		t.Fatalf("update clamp negative: %v", err)
+	}
+	if negClamped.MaxConcurrentLanes != 1 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 1 (negative clamps to floor per credLanes)", negClamped.MaxConcurrentLanes)
+	}
+
+	// Updating an unknown id => ErrNotFound (rows-affected 0, no oracle).
+	if _, err := svc.Update(ctx, ten.principalID, ten.businessID, uuid.New(), UpdateCredentialInput{
+		DefaultModel: &model,
+	}); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("update unknown id: want ErrNotFound, got %v", err)
 	}
 }

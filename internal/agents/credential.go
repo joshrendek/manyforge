@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -120,6 +121,7 @@ type CredentialView struct {
 	Provider            string
 	BaseURL             string
 	DefaultModel        string
+	MaxConcurrentLanes  int32
 	AllowPrivateBaseURL bool
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -160,6 +162,7 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 		Provider:            string(row.Provider),
 		BaseURL:             base,
 		DefaultModel:        row.DefaultModel,
+		MaxConcurrentLanes:  row.MaxConcurrentLanes,
 		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
@@ -344,6 +347,49 @@ func (s *CredentialService) Create(ctx context.Context, principalID, businessID 
 			})
 		}
 		return nil
+	})
+	if err != nil {
+		return CredentialView{}, mapCredErr(err)
+	}
+	return credViewFromRow(row), nil
+}
+
+// UpdateCredentialInput is a partial (PATCH) config update — nil fields are preserved.
+// Only the two SAFE config columns are editable; base_url / allow_private_base_url /
+// api_key / provider are immutable (delete+recreate) — see manyforge-deo.11.
+type UpdateCredentialInput struct {
+	DefaultModel       *string // nil = absent (preserve); "" = invalid (NOT NULL)
+	MaxConcurrentLanes *int    // nil = absent (preserve); clamped via credLanes when set
+}
+
+func validateUpdateCredential(in UpdateCredentialInput) error {
+	if in.DefaultModel != nil && strings.TrimSpace(*in.DefaultModel) == "" {
+		return fmt.Errorf("agents: default_model cannot be empty: %w", errs.ErrValidation)
+	}
+	return nil
+}
+
+// Update applies a partial config change (default_model / max_concurrent_lanes). Omitted
+// (nil) fields are preserved via COALESCE. No matching (id, business_id) → ErrNotFound (no
+// oracle). Deliberately cannot touch the SSRF trust flag or the sealed key (deo.11).
+func (s *CredentialService) Update(ctx context.Context, principalID, businessID, credentialID uuid.UUID, in UpdateCredentialInput) (CredentialView, error) {
+	if err := validateUpdateCredential(in); err != nil {
+		return CredentialView{}, err
+	}
+	params := dbgen.UpdateAICredentialConfigParams{ID: credentialID, BusinessID: businessID}
+	if in.DefaultModel != nil {
+		m := strings.TrimSpace(*in.DefaultModel)
+		params.DefaultModel = &m
+	}
+	if in.MaxConcurrentLanes != nil {
+		n := credLanes(*in.MaxConcurrentLanes)
+		params.MaxConcurrentLanes = &n
+	}
+	var row dbgen.AiProviderCredential
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		r, qerr := dbgen.New(tx).UpdateAICredentialConfig(ctx, params)
+		row = r
+		return qerr
 	})
 	if err != nil {
 		return CredentialView{}, mapCredErr(err)

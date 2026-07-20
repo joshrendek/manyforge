@@ -440,6 +440,26 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       - { name: credentialID, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: updateAICredential
+      summary: Partially update an AI-provider credential's config
+      description: >
+        Scoped config-only edit: only default_model and max_concurrent_lanes are
+        editable. base_url, allow_private_base_url, api_key, and provider are
+        immutable — change them by deleting and recreating the credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAICredentialRequest" }
+      responses:
+        "200":
+          description: Updated credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AICredential" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteAICredential
       summary: Delete an AI-provider credential
@@ -904,6 +924,20 @@ components:
         chatgpt_account_id:
           type: string
           description: ChatGPT-Account-Id for an openai_codex credential (required when provider is openai_codex).
+    UpdateAICredentialRequest:
+      type: object
+      description: >-
+        Partial config-only update — omit a field to leave it unchanged. base_url,
+        allow_private_base_url, api_key, and provider are immutable (delete+recreate).
+      properties:
+        default_model: { type: string, minLength: 1 }
+        max_concurrent_lanes:
+          type: integer
+          minimum: 1
+          maximum: 16
+          description: >-
+            How many code-review lanes may hit this endpoint at once. Out-of-range
+            values are clamped into [1,16] rather than rejected.
     CodexConnectRequest:
       type: object
       description: Shared request body for the codex device/start and pkce/start endpoints.

@@ -191,3 +191,22 @@ test('ai-credentials: connect openai_codex via the paste (PKCE) fallback', async
   await page.getByTestId('codex-paste-submit').click();
   await expect(page.getByTestId('codex-health')).toContainText('connected');
 });
+
+test('ai-credentials: edit a credential concurrency limit', async ({ page }) => {
+  await auth(page);
+  const base = { id: 'cred1', business_id: 'b1', provider: 'openai', base_url: 'https://api.openai.com/v1', default_model: 'gpt-4o', allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '2026-07-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' };
+  let edited = false;
+  await page.route('**/api/v1/businesses/b1/ai_credentials', (r) =>
+    r.fulfill({ json: { items: [edited ? { ...base, max_concurrent_lanes: 9 } : base] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/ai_credentials/cred1', (r) => {
+    if (r.request().method() === 'PATCH') { edited = true; return r.fulfill({ json: { ...base, max_concurrent_lanes: 9 } }); }
+    return r.fallback();
+  });
+  await page.goto('/credentials/ai');
+  await expect(page.getByTestId('credential-lanes')).toHaveText('4');
+  await page.getByTestId('credential-edit').click();
+  await page.getByTestId('credential-edit-lanes').fill('9');
+  await page.getByTestId('credential-edit-save').click();
+  await expect(page.getByTestId('credential-lanes')).toHaveText('9');
+});

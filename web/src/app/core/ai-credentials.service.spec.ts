@@ -52,4 +52,14 @@ describe('AICredentialsService codex methods', () => {
     req.flush({ pending_id: 'p1', authorize_url: 'https://auth.openai.com/authorize?x=1' });
     expect(url).toBe('https://auth.openai.com/authorize?x=1');
   });
+
+  it('update PATCHes config fields to the credential path', () => {
+    let ok = false;
+    svc.update('b1', 'cred1', { max_concurrent_lanes: 9, default_model: 'gpt-5' }).subscribe(() => (ok = true));
+    const req = http.expectOne('/api/v1/businesses/b1/ai_credentials/cred1');
+    expect(req.request.method).toBe('PATCH');
+    expect(req.request.body).toEqual({ max_concurrent_lanes: 9, default_model: 'gpt-5' });
+    req.flush({ id: 'cred1', business_id: 'b1', provider: 'openai', base_url: '', default_model: 'gpt-5', allow_private_base_url: false, max_concurrent_lanes: 9, created_at: '', updated_at: '' });
+    expect(ok).toBe(true);
+  });
 });
