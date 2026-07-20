@@ -17,7 +17,9 @@ import (
 // hardcode it at all.
 func TestCodexModelCatalogIsCurrent(t *testing.T) {
 	up := mustRead(t, "../../migrations/0098_codex_model_catalog_refresh.up.sql")
-	for _, want := range []string{"gpt-5.4", "gpt-5.4-mini"} {
+	// The full per-plan set a current client_version returns (verified live): the gpt-5.6 flagship
+	// family plus the gpt-5.5 / gpt-5.4 tail. Spot-check the ends of that range.
+	for _, want := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"} {
 		if !strings.Contains(up, want) {
 			t.Errorf("0098 must seed current codex model %q — pin broken, update in the same change if intentional", want)
 		}

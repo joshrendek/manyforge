@@ -169,3 +169,39 @@ test('ai-credentials: edit a credential concurrency limit', async ({ page }) => 
   await page.getByTestId('credential-edit-save').click();
   await expect(page.getByTestId('credential-lanes')).toHaveText('9');
 });
+
+test('ai-credentials: editing an openai_codex credential offers a model dropdown (not free text)', async ({ page }) => {
+  await auth(page);
+  const cx = {
+    id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5.4',
+    allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '2026-07-19T00:00:00Z', updated_at: '2026-07-19T00:00:00Z',
+    chatgpt_plan: 'plus', connection_status: 'connected', oauth_access_expiry: '2026-08-01T00:00:00Z',
+  };
+  let edited = false;
+  await page.route('**/api/v1/businesses/b1/ai_credentials', (r) =>
+    r.fulfill({ json: { items: [edited ? { ...cx, default_model: 'gpt-5.6-sol' } : cx] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
+    r.fulfill({ json: { items: [
+      { provider: 'openai_codex', model_id: 'gpt-5.6-sol' },
+      { provider: 'openai_codex', model_id: 'gpt-5.6-terra' },
+      { provider: 'openai_codex', model_id: 'gpt-5.4' },
+      { provider: 'anthropic', model_id: 'claude-opus-4-8' },
+    ] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/ai_credentials/cx1', (r) => {
+    if (r.request().method() === 'PATCH') { edited = true; return r.fulfill({ json: { ...cx, default_model: 'gpt-5.6-sol' } }); }
+    return r.fallback();
+  });
+
+  await page.goto('/credentials/ai');
+  await page.getByTestId('credential-edit').click();
+  const sel = page.getByTestId('credential-edit-model');
+  await expect(sel).toBeVisible();
+  // it is a <select> populated from the codex catalog (anthropic filtered out), not a text box
+  await expect(sel.locator('option')).toHaveText(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.4']);
+  await sel.selectOption('gpt-5.6-sol');
+  await page.getByTestId('credential-edit-save').click();
+  await expect(page.getByTestId('credential-edit-model')).toHaveCount(0);
+  await expect(page.getByText('gpt-5.6-sol')).toBeVisible();
+});

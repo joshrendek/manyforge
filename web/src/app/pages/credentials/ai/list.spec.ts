@@ -98,6 +98,35 @@ describe('AICredentialsListComponent', () => {
     expect(el.querySelector('[data-testid="credential-lanes"]')?.textContent?.trim()).toBe('8');
   });
 
+  it('editing an openai_codex credential shows a model dropdown from the catalog (filtered to codex)', async () => {
+    const f = TestBed.createComponent(AICredentialsListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/ai_credentials').flush(codexCredentials);
+    f.detectChanges();
+    const el: HTMLElement = f.nativeElement;
+    (el.querySelector('[data-testid="credential-edit"]') as HTMLButtonElement).click();
+    f.detectChanges();
+    // startEdit fetches the model catalog for an openai_codex credential
+    mock.expectOne('/api/v1/businesses/b1/agents/models').flush({
+      items: [
+        { provider: 'openai_codex', model_id: 'gpt-5.6-sol' },
+        { provider: 'openai_codex', model_id: 'gpt-5.4' },
+        { provider: 'anthropic', model_id: 'claude-opus-4-8' },
+      ],
+    });
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+    const sel = el.querySelector('[data-testid="credential-edit-model"]') as HTMLSelectElement;
+    expect(sel.tagName).toBe('SELECT');
+    const opts = Array.from(sel.querySelectorAll('option')).map((o) => o.value);
+    expect(opts).toContain('gpt-5.6-sol');
+    expect(opts).toContain('gpt-5.4');
+    expect(opts).not.toContain('claude-opus-4-8'); // filtered to openai_codex only
+  });
+
   it('toggles the add form via the add toggle', () => {
     const f = mount();
     const el: HTMLElement = f.nativeElement;

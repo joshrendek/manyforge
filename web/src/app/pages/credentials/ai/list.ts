@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AICredential, AICredentialsService, AIProvider, UpdateAICredentialBody } from '../../../core/ai-credentials.service';
+import { AgentsService, ModelDescriptor } from '../../../core/agents.service';
 import { BusinessService } from '../../../core/business.service';
 import { CurrentBusinessService } from '../../../core/current-business.service';
 import { Business } from '../../../core/tree';
@@ -83,8 +84,17 @@ import { CredentialFormComponent } from './credential-form';
                         [attr.aria-label]="'Reconnect ' + c.provider" (click)="reconnect()">Reconnect</button>
               }
               @if (editId() === c.id) {
-                <input type="text" class="mf-input mf-input-sm" data-testid="credential-edit-model"
-                       [(ngModel)]="editModel" name="editModel" style="width:130px" aria-label="Default model" />
+                @if (c.provider === 'openai_codex') {
+                  <select class="mf-select mf-input-sm" data-testid="credential-edit-model"
+                          [(ngModel)]="editModel" name="editModel" style="width:150px" aria-label="Default model">
+                    @for (m of codexModels(); track m.model_id) {
+                      <option [value]="m.model_id">{{ m.model_id }}</option>
+                    }
+                  </select>
+                } @else {
+                  <input type="text" class="mf-input mf-input-sm" data-testid="credential-edit-model"
+                         [(ngModel)]="editModel" name="editModel" style="width:130px" aria-label="Default model" />
+                }
                 <input type="number" min="1" max="16" class="mf-input mf-input-sm" data-testid="credential-edit-lanes"
                        [(ngModel)]="editLanes" name="editLanes" style="width:64px" aria-label="Max concurrent lanes" />
                 <button class="mf-btn mf-btn-primary mf-btn-sm" data-testid="credential-edit-save" (click)="saveEdit(c)">Save</button>
@@ -121,6 +131,7 @@ import { CredentialFormComponent } from './credential-form';
 export class AICredentialsListComponent implements OnInit {
   private bizApi = inject(BusinessService);
   private api = inject(AICredentialsService);
+  private agents = inject(AgentsService);
   private current = inject(CurrentBusinessService);
   private toast = inject(ToastService);
 
@@ -135,6 +146,8 @@ export class AICredentialsListComponent implements OnInit {
   editId = signal<string>('');
   editModel = '';
   editLanes = 4;
+  // Codex model catalog for the inline editor's <select> (openai_codex only); fetched lazily on Edit.
+  codexModels = signal<ModelDescriptor[]>([]);
 
   ngOnInit(): void {
     this.bizApi.list().subscribe({
@@ -205,6 +218,15 @@ export class AICredentialsListComponent implements OnInit {
     this.editModel = c.default_model;
     this.editLanes = c.max_concurrent_lanes ?? 4;
     this.editId.set(c.id);
+    // openai_codex has a known catalog → offer a real picker instead of free text. Other providers
+    // (ollama/vllm/openrouter free-text, or stale static lists) keep the free-text input for now.
+    if (c.provider === 'openai_codex') {
+      this.codexModels.set([]);
+      this.agents.models(this.businessId()).subscribe({
+        next: (r) => this.codexModels.set((r.items ?? []).filter((m) => m.provider === 'openai_codex')),
+        error: () => this.codexModels.set([]),
+      });
+    }
   }
 
   saveEdit(c: AICredential): void {
