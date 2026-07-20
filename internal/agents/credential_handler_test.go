@@ -109,6 +109,24 @@ func TestCredentialHandler_CreateReturnsViewWithoutKey(t *testing.T) {
 	}
 }
 
+func TestCredentialHandler_CreateIncludesMaxConcurrentLanes(t *testing.T) {
+	ring := newCredTestRing(t)
+	id := uuid.New()
+	svc := &fakeCredSvc{createView: agents.CredentialView{
+		ID: id, Provider: "anthropic", DefaultModel: "claude-opus-4-8", MaxConcurrentLanes: 4,
+	}}
+	body := `{"provider":"anthropic","api_key":"k","default_model":"claude-opus-4-8"}`
+	rec := serveCred(svc, ring, http.MethodPost, "/businesses/"+uuid.New().String()+"/ai_credentials",
+		mintCredBearer(t, ring, uuid.New()), strings.NewReader(body))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"max_concurrent_lanes":4`) {
+		t.Fatalf("want max_concurrent_lanes:4 in response, got %s", rec.Body.String())
+	}
+}
+
 func TestCredentialHandler_ListShape(t *testing.T) {
 	ring := newCredTestRing(t)
 	svc := &fakeCredSvc{listViews: []agents.CredentialView{{ID: uuid.New(), Provider: "openai"}}}

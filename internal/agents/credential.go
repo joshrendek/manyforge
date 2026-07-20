@@ -120,6 +120,7 @@ type CredentialView struct {
 	Provider            string
 	BaseURL             string
 	DefaultModel        string
+	MaxConcurrentLanes  int32
 	AllowPrivateBaseURL bool
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -160,6 +161,7 @@ func credViewFromRow(row dbgen.AiProviderCredential) CredentialView {
 		Provider:            string(row.Provider),
 		BaseURL:             base,
 		DefaultModel:        row.DefaultModel,
+		MaxConcurrentLanes:  row.MaxConcurrentLanes,
 		AllowPrivateBaseURL: row.AllowPrivateBaseUrl,
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,

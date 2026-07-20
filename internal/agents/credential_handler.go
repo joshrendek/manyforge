@@ -86,6 +86,7 @@ type credentialResp struct {
 	Provider            string `json:"provider"`
 	BaseURL             string `json:"base_url"`
 	DefaultModel        string `json:"default_model"`
+	MaxConcurrentLanes  int    `json:"max_concurrent_lanes"`
 	AllowPrivateBaseURL bool   `json:"allow_private_base_url"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`
@@ -106,6 +107,7 @@ func toCredentialResp(v CredentialView) credentialResp {
 		Provider:            v.Provider,
 		BaseURL:             v.BaseURL,
 		DefaultModel:        v.DefaultModel,
+		MaxConcurrentLanes:  int(v.MaxConcurrentLanes),
 		AllowPrivateBaseURL: v.AllowPrivateBaseURL,
 		CreatedAt:           v.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:           v.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
