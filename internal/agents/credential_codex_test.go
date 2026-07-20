@@ -13,30 +13,15 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
-// fakeCodexOAuth is a scripted codexOAuth seam.
+// fakeCodexOAuth is a scripted codexOAuth seam (PKCE exchange + refresh).
 type fakeCodexOAuth struct {
-	device codexoauth.DeviceAuth
-	poll   []struct {
-		ts  codexoauth.TokenSet
-		st  codexoauth.PollStatus
-		err error
-	}
-	pollIdx int
-	refresh func(string) (codexoauth.TokenSet, error)
+	exchangeTS  codexoauth.TokenSet
+	exchangeErr error
+	refresh     func(string) (codexoauth.TokenSet, error)
 }
 
-func (f *fakeCodexOAuth) StartDeviceAuth(context.Context) (codexoauth.DeviceAuth, error) {
-	return f.device, nil
-}
-func (f *fakeCodexOAuth) PollDeviceToken(context.Context, string) (codexoauth.TokenSet, codexoauth.PollStatus, error) {
-	r := f.poll[f.pollIdx]
-	if f.pollIdx < len(f.poll)-1 {
-		f.pollIdx++
-	}
-	return r.ts, r.st, r.err
-}
 func (f *fakeCodexOAuth) ExchangePKCE(context.Context, string, string) (codexoauth.TokenSet, error) {
-	return f.poll[0].ts, f.poll[0].err
+	return f.exchangeTS, f.exchangeErr
 }
 func (f *fakeCodexOAuth) Refresh(_ context.Context, rt string) (codexoauth.TokenSet, error) {
 	return f.refresh(rt)
@@ -137,58 +122,24 @@ func approvedTokenSet() codexoauth.TokenSet {
 	}
 }
 
-func TestPollDevice_pendingReturnsPending(t *testing.T) {
-	// A pending poll must NOT create a credential and must NOT touch the DB write path.
+func TestExchangePKCE_approvedSealsAndUpserts(t *testing.T) {
 	sealer := testSealer(t)
-	sealedDC, err := sealer.Seal([]byte("device-code-123"))
+	sealedV, err := sealer.Seal([]byte("verifier-abc"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	jti := uuid.New()
 	store := &fakeCodexStore{pending: pendingRow{
-		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
+		Flow: "pkce", SealedPKCEVerifier: &sealedV, DefaultModel: "gpt-5.6-sol",
 		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
 	}}
 	svc := &CodexTokenService{
 		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth: &fakeCodexOAuth{poll: []struct {
-			ts  codexoauth.TokenSet
-			st  codexoauth.PollStatus
-			err error
-		}{{st: codexoauth.PollPending}}},
-		Store: store,
+		OAuth:  &fakeCodexOAuth{exchangeTS: approvedTokenSet()},
+		Store:  store,
 	}
-	got, err := svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != "pending" {
-		t.Fatalf("status = %q", got.Status)
-	}
-	if store.finishCalled {
-		t.Fatal("finishConnect must not be called for a pending poll")
-	}
-}
-
-func TestPollDevice_approvedSealsAndUpserts(t *testing.T) {
-	sealer := testSealer(t)
-	sealedDC, err := sealer.Seal([]byte("device-code-123"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &fakeCodexStore{pending: pendingRow{
-		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
-		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
-	}}
-	svc := &CodexTokenService{
-		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth: &fakeCodexOAuth{poll: []struct {
-			ts  codexoauth.TokenSet
-			st  codexoauth.PollStatus
-			err error
-		}{{ts: approvedTokenSet(), st: codexoauth.PollApproved}}},
-		Store: store,
-	}
-	got, err := svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	got, err := svc.ExchangePKCE(context.Background(), uuid.New(), uuid.New(), jti,
+		"https://localhost/callback?state="+jti.String()+"&code=abc123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,72 +166,8 @@ func TestPollDevice_approvedSealsAndUpserts(t *testing.T) {
 	if store.finishInput.Plan != "pro" {
 		t.Fatalf("plan = %q", store.finishInput.Plan)
 	}
-	if store.finishInput.DefaultModel != "gpt-5-codex" {
+	if store.finishInput.DefaultModel != "gpt-5.6-sol" {
 		t.Fatalf("default model = %q", store.finishInput.DefaultModel)
-	}
-}
-
-func TestPollDevice_expiredReturnsExpired(t *testing.T) {
-	// An expired poll must NOT create a credential and must NOT touch the DB write path.
-	sealer := testSealer(t)
-	sealedDC, err := sealer.Seal([]byte("device-code-123"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &fakeCodexStore{pending: pendingRow{
-		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
-		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
-	}}
-	svc := &CodexTokenService{
-		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth: &fakeCodexOAuth{poll: []struct {
-			ts  codexoauth.TokenSet
-			st  codexoauth.PollStatus
-			err error
-		}{{st: codexoauth.PollExpired}}},
-		Store: store,
-	}
-	got, err := svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != "expired" {
-		t.Fatalf("status = %q", got.Status)
-	}
-	if store.finishCalled {
-		t.Fatal("finishConnect must not be called for an expired poll")
-	}
-}
-
-func TestPollDevice_deniedReturnsDenied(t *testing.T) {
-	// A denied poll must NOT create a credential and must NOT touch the DB write path.
-	sealer := testSealer(t)
-	sealedDC, err := sealer.Seal([]byte("device-code-123"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &fakeCodexStore{pending: pendingRow{
-		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
-		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
-	}}
-	svc := &CodexTokenService{
-		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth: &fakeCodexOAuth{poll: []struct {
-			ts  codexoauth.TokenSet
-			st  codexoauth.PollStatus
-			err error
-		}{{st: codexoauth.PollDenied}}},
-		Store: store,
-	}
-	got, err := svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != "denied" {
-		t.Fatalf("status = %q", got.Status)
-	}
-	if store.finishCalled {
-		t.Fatal("finishConnect must not be called for a denied poll")
 	}
 }
 
@@ -297,12 +184,8 @@ func TestExchangePKCE_stateMismatch(t *testing.T) {
 	}}
 	svc := &CodexTokenService{
 		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth: &fakeCodexOAuth{poll: []struct {
-			ts  codexoauth.TokenSet
-			st  codexoauth.PollStatus
-			err error
-		}{{ts: approvedTokenSet()}}},
-		Store: store,
+		OAuth:  &fakeCodexOAuth{exchangeTS: approvedTokenSet()},
+		Store:  store,
 	}
 	_, err = svc.ExchangePKCE(context.Background(), uuid.New(), uuid.New(), jti,
 		"https://localhost/callback?state=not-the-jti&code=abc123")
@@ -351,31 +234,30 @@ func TestPersistConnect_rejectsMalformedAccountID(t *testing.T) {
 	}
 }
 
-// TestPollDevice_rejectsMalformedAccountID drives the same guard end-to-end through PollDevice
-// (device flow), confirming nothing is stored when the approved poll's id_token carries a
-// malformed account id.
-func TestPollDevice_rejectsMalformedAccountID(t *testing.T) {
+// TestExchangePKCE_rejectsMalformedAccountID drives the chatgptAccountIDRe guard end-to-end
+// through the PKCE exchange, confirming nothing is stored when the exchanged id_token carries a
+// malformed account id (the account id is interpolated into the sandbox auth.json AND sent as the
+// ChatGPT-Account-Id header, so it must not carry injection metacharacters).
+func TestExchangePKCE_rejectsMalformedAccountID(t *testing.T) {
 	sealer := testSealer(t)
-	sealedDC, err := sealer.Seal([]byte("device-code-123"))
+	sealedV, err := sealer.Seal([]byte("verifier-abc"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	jti := uuid.New()
 	store := &fakeCodexStore{pending: pendingRow{
-		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: "gpt-5-codex",
+		Flow: "pkce", SealedPKCEVerifier: &sealedV, DefaultModel: "gpt-5.6-sol",
 		MaxConcurrentLanes: 4, ExpiresAt: time.Now().Add(15 * time.Minute),
 	}}
 	ts := approvedTokenSet()
 	ts.Claims.AccountID = "acc id"
 	svc := &CodexTokenService{
 		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth: &fakeCodexOAuth{poll: []struct {
-			ts  codexoauth.TokenSet
-			st  codexoauth.PollStatus
-			err error
-		}{{ts: ts, st: codexoauth.PollApproved}}},
-		Store: store,
+		OAuth:  &fakeCodexOAuth{exchangeTS: ts},
+		Store:  store,
 	}
-	_, err = svc.PollDevice(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	_, err = svc.ExchangePKCE(context.Background(), uuid.New(), uuid.New(), jti,
+		"https://localhost/callback?state="+jti.String()+"&code=abc123")
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("expected ErrValidation, got %v", err)
 	}

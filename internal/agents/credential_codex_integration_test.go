@@ -50,16 +50,14 @@ const (
 	codexRefreshDeny
 )
 
-// codexMockServer fakes auth.openai.com's device + token endpoints. The device grant
-// always approves immediately (single poll); the refresh_token grant's behavior is
-// switched between sub-steps via an atomic mode, and each OK refresh mints a new
-// incrementing token pair so the test can pin exactly which rotation landed in the DB.
+// codexMockServer fakes auth.openai.com's /oauth/token endpoint. The authorization_code grant
+// (the PKCE paste-redirect exchange) always mints the initial token pair; the refresh_token
+// grant's behavior is switched between sub-steps via an atomic mode, and each OK refresh mints a
+// new incrementing token pair so the test can pin exactly which rotation landed in the DB.
 type codexMockServer struct {
 	srv        *httptest.Server
 	mode       atomic.Int32
 	refreshSeq atomic.Int32
-	deviceCode string
-	userCode   string
 	accountID  string
 	plan       string
 }
@@ -67,10 +65,8 @@ type codexMockServer struct {
 func newCodexMockServer(t *testing.T) *codexMockServer {
 	t.Helper()
 	m := &codexMockServer{
-		deviceCode: "dev-" + uuid.NewString(),
-		userCode:   "WXYZ-1234",
-		accountID:  "acct-int-test",
-		plan:       "pro",
+		accountID: "acct-int-test",
+		plan:      "pro",
 	}
 	m.srv = httptest.NewServer(http.HandlerFunc(m.handle))
 	t.Cleanup(m.srv.Close)
@@ -80,37 +76,27 @@ func newCodexMockServer(t *testing.T) *codexMockServer {
 func (m *codexMockServer) setMode(mode codexRefreshMode) { m.mode.Store(int32(mode)) }
 
 func (m *codexMockServer) handle(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/oauth/device/code":
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"device_code":               m.deviceCode,
-			"user_code":                 m.userCode,
-			"verification_uri":          m.srv.URL + "/device",
-			"verification_uri_complete": m.srv.URL + "/device?user_code=" + m.userCode,
-			"interval":                  1,
-			"expires_in":                900,
-		})
-	case "/oauth/token":
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
+	if r.URL.Path != "/oauth/token" {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	switch r.Form.Get("grant_type") {
+	case "authorization_code":
+		m.writeTokenSet(w, "access-initial", "refresh-initial")
+	case "refresh_token":
+		if codexRefreshMode(m.mode.Load()) == codexRefreshDeny {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
 			return
 		}
-		switch r.Form.Get("grant_type") {
-		case "urn:ietf:params:oauth:grant-type:device_code":
-			m.writeTokenSet(w, "access-initial", "refresh-initial")
-		case "refresh_token":
-			if codexRefreshMode(m.mode.Load()) == codexRefreshDeny {
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
-				return
-			}
-			n := m.refreshSeq.Add(1)
-			m.writeTokenSet(w, "access-rotated-"+strconv.Itoa(int(n)), "refresh-rotated-"+strconv.Itoa(int(n)))
-		default:
-			http.Error(w, "unknown grant_type: "+r.Form.Get("grant_type"), http.StatusBadRequest)
-		}
+		n := m.refreshSeq.Add(1)
+		m.writeTokenSet(w, "access-rotated-"+strconv.Itoa(int(n)), "refresh-rotated-"+strconv.Itoa(int(n)))
 	default:
-		http.NotFound(w, r)
+		http.Error(w, "unknown grant_type: "+r.Form.Get("grant_type"), http.StatusBadRequest)
 	}
 }
 
@@ -153,7 +139,7 @@ func codexReadTokens(ctx context.Context, t *testing.T, tdb *testdb.TestDB, busi
 
 // TestCodexOAuthIntegration drives the whole Codex OAuth path against a real Postgres (the
 // testdb harness runs every migration, including 0096's SECURITY DEFINER refresh-sweep
-// functions) and a mocked OpenAI auth server: device connect, a per-run Resolve mint, a lazy
+// functions) and a mocked OpenAI auth server: PKCE connect, a per-run Resolve mint, a lazy
 // refresh-on-expiry, the cross-tenant RefreshDue sweep (the first real-Postgres exercise of
 // codex_claim_for_refresh's []string->text[] exclude param), and disconnect-on-invalid_grant.
 // Steps share one tenant + mock server + service pair and run in sequence — each step's DB
@@ -176,33 +162,35 @@ func TestCodexOAuthIntegration(t *testing.T) {
 
 	var pendingID uuid.UUID
 
-	t.Run("device_connect", func(t *testing.T) {
-		ds, err := codexSvc.StartDevice(ctx, ten.principalID, ten.businessID, CodexConnectInput{DefaultModel: "gpt-5.5"})
+	t.Run("pkce_connect", func(t *testing.T) {
+		ps, err := codexSvc.StartPKCE(ctx, ten.principalID, ten.businessID, CodexConnectInput{DefaultModel: "gpt-5.6-sol"})
 		if err != nil {
-			t.Fatalf("StartDevice: %v", err)
+			t.Fatalf("StartPKCE: %v", err)
 		}
-		if ds.PendingID == uuid.Nil {
-			t.Fatal("StartDevice: PendingID is nil")
+		if ps.PendingID == uuid.Nil {
+			t.Fatal("StartPKCE: PendingID is nil")
 		}
-		if ds.UserCode == "" {
-			t.Fatal("StartDevice: UserCode empty")
+		if ps.AuthorizeURL == "" {
+			t.Fatal("StartPKCE: AuthorizeURL empty")
 		}
-		pendingID = ds.PendingID
+		pendingID = ps.PendingID
 
-		cs, err := codexSvc.PollDevice(ctx, ten.principalID, ten.businessID, pendingID)
+		// Reproduce the pasted redirect URL: state must equal the pending jti, plus an auth code.
+		redirectURL := "http://localhost:1455/auth/callback?state=" + pendingID.String() + "&code=auth-code-1"
+		cs, err := codexSvc.ExchangePKCE(ctx, ten.principalID, ten.businessID, pendingID, redirectURL)
 		if err != nil {
-			t.Fatalf("PollDevice: %v", err)
+			t.Fatalf("ExchangePKCE: %v", err)
 		}
 		if cs.Status != "approved" {
-			t.Fatalf("PollDevice status = %q, want approved", cs.Status)
+			t.Fatalf("ExchangePKCE status = %q, want approved", cs.Status)
 		}
 		if cs.CredentialID == uuid.Nil {
-			t.Fatal("PollDevice: CredentialID is nil")
+			t.Fatal("ExchangePKCE: CredentialID is nil")
 		}
 
-		// The pending row is single-use: a second poll for the same jti must not find it.
-		if _, err := codexSvc.PollDevice(ctx, ten.principalID, ten.businessID, pendingID); !errors.Is(err, errs.ErrNotFound) {
-			t.Fatalf("second PollDevice: want ErrNotFound, got %v", err)
+		// The pending row is single-use: a second exchange for the same jti must not find it.
+		if _, err := codexSvc.ExchangePKCE(ctx, ten.principalID, ten.businessID, pendingID, redirectURL); !errors.Is(err, errs.ErrNotFound) {
+			t.Fatalf("second ExchangePKCE: want ErrNotFound, got %v", err)
 		}
 	})
 
@@ -259,20 +247,21 @@ func TestCodexOAuthIntegration(t *testing.T) {
 
 	t.Run("cross_tenant_sweep_refresh_due", func(t *testing.T) {
 		// Seed a second, wholly independent tenant and connect its own openai_codex credential
-		// through the same device-connect flow used for tenant 1. The whole reason the 0096
+		// through the same PKCE-connect flow used for tenant 1. The whole reason the 0096
 		// functions are SECURITY DEFINER is to see across tenants — a sweep proven against only
 		// one tenant's row never actually exercises that, so this sub-test needs two.
 		ten2 := seedAgentTenant(ctx, t, tdb)
-		ds2, err := codexSvc.StartDevice(ctx, ten2.principalID, ten2.businessID, CodexConnectInput{DefaultModel: "gpt-5.5"})
+		ps2, err := codexSvc.StartPKCE(ctx, ten2.principalID, ten2.businessID, CodexConnectInput{DefaultModel: "gpt-5.6-sol"})
 		if err != nil {
-			t.Fatalf("StartDevice (tenant 2): %v", err)
+			t.Fatalf("StartPKCE (tenant 2): %v", err)
 		}
-		cs2, err := codexSvc.PollDevice(ctx, ten2.principalID, ten2.businessID, ds2.PendingID)
+		redirect2 := "http://localhost:1455/auth/callback?state=" + ps2.PendingID.String() + "&code=auth-code-2"
+		cs2, err := codexSvc.ExchangePKCE(ctx, ten2.principalID, ten2.businessID, ps2.PendingID, redirect2)
 		if err != nil {
-			t.Fatalf("PollDevice (tenant 2): %v", err)
+			t.Fatalf("ExchangePKCE (tenant 2): %v", err)
 		}
 		if cs2.Status != "approved" {
-			t.Fatalf("PollDevice (tenant 2) status = %q, want approved", cs2.Status)
+			t.Fatalf("ExchangePKCE (tenant 2) status = %q, want approved", cs2.Status)
 		}
 
 		// Force BOTH tenants' codex credentials due for refresh in a single statement.
@@ -303,7 +292,7 @@ func TestCodexOAuthIntegration(t *testing.T) {
 		// the future.
 		priorRefreshToken := map[uuid.UUID]string{
 			ten.businessID:  "refresh-rotated-1", // set by the lazy_refresh_on_expiry sub-test
-			ten2.businessID: "refresh-initial",   // set by tenant 2's device-connect grant
+			ten2.businessID: "refresh-initial",   // set by tenant 2's pkce-connect grant
 		}
 		seenRefreshToken := make(map[string]uuid.UUID, 2)
 		for _, biz := range []uuid.UUID{ten.businessID, ten2.businessID} {

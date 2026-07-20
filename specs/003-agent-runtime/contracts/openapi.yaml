@@ -466,60 +466,17 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/NotFound" }
-  /businesses/{id}/ai_credentials/codex/device/start:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
-    post:
-      operationId: startCodexDeviceConnect
-      summary: Begin the OpenAI Codex device-code connect flow
-      description: >
-        Starts the OAuth device-code flow against auth.openai.com and stores a
-        single-use pending row (15m TTL). Poll GET .../codex/device/{pendingID}/status
-        with the returned pending_id to complete the connection.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CodexConnectRequest" }
-      responses:
-        "200":
-          description: Device flow started
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CodexDeviceStart" }
-        "400": { $ref: "#/components/responses/ValidationError" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        "502": { $ref: "#/components/responses/BadGateway" }
-  /businesses/{id}/ai_credentials/codex/device/{pendingID}/status:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
-      - { name: pendingID, in: path, required: true, schema: { type: string, format: uuid } }
-    get:
-      operationId: getCodexDeviceStatus
-      summary: Poll a pending Codex device-code connect flow
-      description: >
-        Polls auth.openai.com once for the pending device code. On approval, seals
-        and persists the resulting openai_codex credential and consumes the
-        pending row (single-use). Returns status pending|approved|expired|denied.
-      responses:
-        "200":
-          description: Poll result
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CodexConnectStatus" }
-        "400": { $ref: "#/components/responses/ValidationError" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        "502": { $ref: "#/components/responses/BadGateway" }
   /businesses/{id}/ai_credentials/codex/pkce/start:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       operationId: startCodexPKCEConnect
-      summary: Begin the OpenAI Codex PKCE (paste-redirect) connect flow
+      summary: Begin the OpenAI Codex "Sign in with ChatGPT" (PKCE paste-redirect) connect flow
       description: >
         Generates a PKCE verifier/challenge and stores a single-use pending row
         (15m TTL). The returned authorize_url is opened by the user; the resulting
-        redirect URL is then posted to .../codex/pkce/exchange.
+        redirect URL is then posted to .../codex/pkce/exchange. This is the only
+        Codex connect flow — OpenAI's ChatGPT auth has no device-authorization grant.
       requestBody:
         required: true
         content:
@@ -940,7 +897,7 @@ components:
             values are clamped into [1,16] rather than rejected.
     CodexConnectRequest:
       type: object
-      description: Shared request body for the codex device/start and pkce/start endpoints.
+      description: Request body for the codex pkce/start endpoint.
       required: [default_model]
       properties:
         default_model: { type: string }
@@ -952,17 +909,6 @@ components:
           minimum: 1
           maximum: 16
           default: 4
-    CodexDeviceStart:
-      type: object
-      description: Result of starting the OpenAI device-code flow.
-      required: [pending_id, user_code, verification_uri, verification_uri_complete, interval, expires_in]
-      properties:
-        pending_id: { type: string, format: uuid }
-        user_code: { type: string }
-        verification_uri: { type: string }
-        verification_uri_complete: { type: string }
-        interval: { type: integer, description: Poll interval in seconds. }
-        expires_in: { type: integer, description: Device code TTL in seconds. }
     CodexPKCEStart:
       type: object
       description: Result of starting the PKCE (paste-redirect) flow.

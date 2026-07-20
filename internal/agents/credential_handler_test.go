@@ -254,25 +254,15 @@ func TestCredentialHandler_DuplicateIs409(t *testing.T) {
 // fakeCodexSvc implements agents.CodexConnectAPI for handler tests (no DB, no
 // OAuth). Each method returns a preconfigured (out, err) pair.
 type fakeCodexSvc struct {
-	startDeviceOut agents.DeviceStart
-	startDeviceErr error
-	pollDeviceOut  agents.ConnectStatus
-	pollDeviceErr  error
-	startPKCEOut   agents.PKCEStart
-	startPKCEErr   error
-	exchangeOut    agents.ConnectStatus
-	exchangeErr    error
+	startPKCEOut agents.PKCEStart
+	startPKCEErr error
+	exchangeOut  agents.ConnectStatus
+	exchangeErr  error
 
 	gotExchangePendingID uuid.UUID
 	gotExchangeRedirect  string
 }
 
-func (f *fakeCodexSvc) StartDevice(_ context.Context, _, _ uuid.UUID, _ agents.CodexConnectInput) (agents.DeviceStart, error) {
-	return f.startDeviceOut, f.startDeviceErr
-}
-func (f *fakeCodexSvc) PollDevice(_ context.Context, _, _, _ uuid.UUID) (agents.ConnectStatus, error) {
-	return f.pollDeviceOut, f.pollDeviceErr
-}
 func (f *fakeCodexSvc) StartPKCE(_ context.Context, _, _ uuid.UUID, _ agents.CodexConnectInput) (agents.PKCEStart, error) {
 	return f.startPKCEOut, f.startPKCEErr
 }
@@ -286,7 +276,7 @@ var _ agents.CodexConnectAPI = (*fakeCodexSvc)(nil)
 
 // serveCredCodex mirrors serveCred but also wires a fake CodexConnectAPI onto the
 // handler via SetCodex, so the h.codex != nil route gate mounts the codex
-// device/PKCE endpoints.
+// PKCE connect endpoints.
 func serveCredCodex(credSvc agents.CredentialCRUD, codex agents.CodexConnectAPI, ring *auth.KeyRing, method, target, bearer string, body io.Reader) *httptest.ResponseRecorder {
 	h := agents.NewCredentialHandler(credSvc)
 	h.SetCodex(codex)
@@ -304,128 +294,26 @@ func serveCredCodex(credSvc agents.CredentialCRUD, codex agents.CodexConnectAPI,
 	return rec
 }
 
-func TestCodexHandler_DeviceStartReturnsPendingAndUserCode(t *testing.T) {
-	ring := newCredTestRing(t)
-	pendingID := uuid.New()
-	codex := &fakeCodexSvc{startDeviceOut: agents.DeviceStart{
-		PendingID: pendingID, UserCode: "ABCD-1234",
-		VerificationURI:         "https://chatgpt.com/device",
-		VerificationURIComplete: "https://chatgpt.com/device?user_code=ABCD-1234",
-		Interval:                5, ExpiresIn: 900,
-	}}
-	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodPost,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/start",
-		mintCredBearer(t, ring, uuid.New()), strings.NewReader(`{"default_model":"gpt-5.5"}`))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if got["pending_id"] != pendingID.String() {
-		t.Fatalf("want pending_id %s, got %v", pendingID, got["pending_id"])
-	}
-	if got["user_code"] != "ABCD-1234" {
-		t.Fatalf("want user_code ABCD-1234, got %v", got["user_code"])
-	}
-}
-
-func TestCodexHandler_DeviceStartMissingPrincipalIs401(t *testing.T) {
+func TestCodexHandler_PKCEStartMissingPrincipalIs401(t *testing.T) {
 	ring := newCredTestRing(t)
 	codex := &fakeCodexSvc{}
 	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodPost,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/start",
-		"", strings.NewReader(`{"default_model":"gpt-5.5"}`))
+		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/pkce/start",
+		"", strings.NewReader(`{"default_model":"gpt-5.6-sol"}`))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
-func TestCodexHandler_DeviceStartEmptyModelIs400(t *testing.T) {
+func TestCodexHandler_PKCEExchangeUpstreamIs502(t *testing.T) {
 	ring := newCredTestRing(t)
-	codex := &fakeCodexSvc{startDeviceErr: errs.ErrValidation}
+	codex := &fakeCodexSvc{exchangeErr: errs.ErrUpstream}
 	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodPost,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/start",
-		mintCredBearer(t, ring, uuid.New()), strings.NewReader(`{"default_model":""}`))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
-	}
-}
-
-func TestCodexHandler_DeviceStatusApproved(t *testing.T) {
-	ring := newCredTestRing(t)
-	credID := uuid.New()
-	codex := &fakeCodexSvc{pollDeviceOut: agents.ConnectStatus{Status: "approved", CredentialID: credID}}
-	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodGet,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/"+uuid.New().String()+"/status",
-		mintCredBearer(t, ring, uuid.New()), nil)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if got["status"] != "approved" {
-		t.Fatalf("want status approved, got %v", got["status"])
-	}
-	if got["credential_id"] != credID.String() {
-		t.Fatalf("want credential_id %s, got %v", credID, got["credential_id"])
-	}
-}
-
-func TestCodexHandler_DeviceStatusPendingOmitsCredentialID(t *testing.T) {
-	ring := newCredTestRing(t)
-	codex := &fakeCodexSvc{pollDeviceOut: agents.ConnectStatus{Status: "pending"}}
-	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodGet,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/"+uuid.New().String()+"/status",
-		mintCredBearer(t, ring, uuid.New()), nil)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if _, ok := got["credential_id"]; ok {
-		t.Fatalf("want no credential_id while pending, got %v", got["credential_id"])
-	}
-}
-
-func TestCodexHandler_DeviceStatusDisconnectedIs409(t *testing.T) {
-	ring := newCredTestRing(t)
-	codex := &fakeCodexSvc{pollDeviceErr: errs.ErrCodexDisconnected}
-	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodGet,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/"+uuid.New().String()+"/status",
-		mintCredBearer(t, ring, uuid.New()), nil)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("want 409, got %d (%s)", rec.Code, rec.Body.String())
-	}
-}
-
-func TestCodexHandler_DeviceStatusUpstreamIs502(t *testing.T) {
-	ring := newCredTestRing(t)
-	codex := &fakeCodexSvc{pollDeviceErr: errs.ErrUpstream}
-	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodGet,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/"+uuid.New().String()+"/status",
-		mintCredBearer(t, ring, uuid.New()), nil)
+		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/pkce/exchange",
+		mintCredBearer(t, ring, uuid.New()),
+		strings.NewReader(`{"pending_id":"`+uuid.New().String()+`","redirect_url":"http://x"}`))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("want 502, got %d (%s)", rec.Code, rec.Body.String())
-	}
-}
-
-func TestCodexHandler_DeviceStatusBadPendingIDIs404(t *testing.T) {
-	ring := newCredTestRing(t)
-	codex := &fakeCodexSvc{}
-	rec := serveCredCodex(&fakeCredSvc{}, codex, ring, http.MethodGet,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/not-a-uuid/status",
-		mintCredBearer(t, ring, uuid.New()), nil)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -518,8 +406,8 @@ func TestCodexHandler_RoutesAbsentWithoutCodex(t *testing.T) {
 	// dereferences a nil h.codex).
 	ring := newCredTestRing(t)
 	rec := serveCred(&fakeCredSvc{}, ring, http.MethodPost,
-		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/device/start",
-		mintCredBearer(t, ring, uuid.New()), strings.NewReader(`{"default_model":"gpt-5.5"}`))
+		"/businesses/"+uuid.New().String()+"/ai_credentials/codex/pkce/start",
+		mintCredBearer(t, ring, uuid.New()), strings.NewReader(`{"default_model":"gpt-5.6-sol"}`))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("want 404 (route not mounted), got %d (%s)", rec.Code, rec.Body.String())
 	}

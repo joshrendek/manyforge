@@ -20,8 +20,6 @@ import (
 
 // codexOAuth is the fakeable OAuth seam (satisfied by *codexoauth.Client).
 type codexOAuth interface {
-	StartDeviceAuth(context.Context) (codexoauth.DeviceAuth, error)
-	PollDeviceToken(context.Context, string) (codexoauth.TokenSet, codexoauth.PollStatus, error)
 	ExchangePKCE(context.Context, string, string) (codexoauth.TokenSet, error)
 	Refresh(context.Context, string) (codexoauth.TokenSet, error)
 	AuthorizeURL(string, string) string
@@ -125,14 +123,6 @@ type CodexConnectInput struct {
 	MaxConcurrentLanes int
 }
 
-type DeviceStart struct {
-	PendingID               uuid.UUID
-	UserCode                string
-	VerificationURI         string
-	VerificationURIComplete string
-	Interval                int
-	ExpiresIn               int
-}
 type PKCEStart struct {
 	PendingID    uuid.UUID
 	AuthorizeURL string
@@ -322,81 +312,6 @@ func (s *CodexTokenService) validateConnect(in CodexConnectInput) error {
 		return fmt.Errorf("codex connect requires default_model: %w", errs.ErrValidation)
 	}
 	return nil
-}
-
-// StartDevice begins the device-code flow and stores the pending row.
-func (s *CodexTokenService) StartDevice(ctx context.Context, pid, bid uuid.UUID, in CodexConnectInput) (DeviceStart, error) {
-	if err := s.validateConnect(in); err != nil {
-		return DeviceStart{}, err
-	}
-	if s.Sealer == nil {
-		return DeviceStart{}, fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)
-	}
-	da, err := s.OAuth.StartDeviceAuth(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "codex device start failed", "err", err)
-		return DeviceStart{}, fmt.Errorf("codex device start: %w", errs.ErrUpstream)
-	}
-	sealedDC, err := s.Sealer.Seal([]byte(da.DeviceCode))
-	if err != nil {
-		return DeviceStart{}, fmt.Errorf("codex seal device code: %w", err)
-	}
-	jti := uuid.New()
-	row := pendingRow{
-		Flow: "device", SealedDeviceCode: &sealedDC, DefaultModel: in.DefaultModel,
-		MaxConcurrentLanes: int32(credLanes(in.MaxConcurrentLanes)),
-		ExpiresAt:          s.now().Add(s.pendingTTL()),
-	}
-	if in.BaseURL != "" {
-		row.BaseURL = &in.BaseURL
-	}
-	if err := s.Store.insertPending(ctx, pid, bid, row, jti); err != nil {
-		return DeviceStart{}, mapCredErr(err)
-	}
-	return DeviceStart{
-		PendingID: jti, UserCode: da.UserCode, VerificationURI: da.VerificationURI,
-		VerificationURIComplete: da.VerificationURIComplete, Interval: da.Interval, ExpiresIn: da.ExpiresIn,
-	}, nil
-}
-
-// PollDevice polls once; on approval seals + upserts the credential and consumes the pending row.
-func (s *CodexTokenService) PollDevice(ctx context.Context, pid, bid, jti uuid.UUID) (ConnectStatus, error) {
-	p, err := s.Store.getPendingLocked(ctx, pid, bid, jti)
-	if err != nil {
-		return ConnectStatus{}, mapCredErr(err)
-	}
-	if p.Flow != "device" || p.SealedDeviceCode == nil {
-		return ConnectStatus{}, fmt.Errorf("codex pending is not a device flow: %w", errs.ErrValidation)
-	}
-	if s.Sealer == nil {
-		return ConnectStatus{}, fmt.Errorf("agents: AI master key not configured: %w", errs.ErrValidation)
-	}
-	dc, err := s.Sealer.Open(*p.SealedDeviceCode)
-	if err != nil {
-		return ConnectStatus{}, fmt.Errorf("codex unseal device code: %w", err)
-	}
-	ts, st, err := s.OAuth.PollDeviceToken(ctx, string(dc))
-	if err != nil {
-		if errors.Is(err, codexoauth.ErrMissingAccountID) {
-			return ConnectStatus{}, fmt.Errorf("codex id_token missing account id: %w", errs.ErrValidation)
-		}
-		slog.ErrorContext(ctx, "codex device poll failed", "err", err)
-		return ConnectStatus{}, fmt.Errorf("codex device poll: %w", errs.ErrUpstream)
-	}
-	switch st {
-	case codexoauth.PollApproved:
-		id, err := s.persistConnect(ctx, pid, bid, jti, ts, p)
-		if err != nil {
-			return ConnectStatus{}, err
-		}
-		return ConnectStatus{Status: "approved", CredentialID: id}, nil
-	case codexoauth.PollExpired:
-		return ConnectStatus{Status: "expired"}, nil
-	case codexoauth.PollDenied:
-		return ConnectStatus{Status: "denied"}, nil
-	default:
-		return ConnectStatus{Status: "pending"}, nil
-	}
 }
 
 // StartPKCE begins the paste-redirect flow.

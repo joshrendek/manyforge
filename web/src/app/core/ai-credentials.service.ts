@@ -38,20 +38,11 @@ export interface UpdateAICredentialBody {
   max_concurrent_lanes?: number;
 }
 
-// Request body shared by the codex device-code and PKCE start endpoints.
+// Request body for the codex PKCE start endpoint.
 export interface CodexConnectBody {
   default_model: string;
   base_url?: string;
   max_concurrent_lanes?: number;
-}
-// Response from starting a device-code flow: the code + URL to show the user, plus poll timing.
-export interface CodexDeviceStart {
-  pending_id: string;
-  user_code: string;
-  verification_uri: string;
-  verification_uri_complete: string;
-  interval: number;
-  expires_in: number;
 }
 // Response from starting a PKCE (paste-the-redirect-URL) flow: where to send the user.
 export interface CodexPKCEStart {
@@ -84,12 +75,6 @@ export class AICredentialsService {
   }
   update(businessId: string, id: string, body: UpdateAICredentialBody): Observable<AICredential> {
     return this.http.patch<AICredential>(`${this.base(businessId)}/${id}`, body);
-  }
-  codexDeviceStart(businessId: string, body: CodexConnectBody): Observable<CodexDeviceStart> {
-    return this.http.post<CodexDeviceStart>(`${this.base(businessId)}/codex/device/start`, body);
-  }
-  codexDeviceStatus(businessId: string, pendingId: string): Observable<CodexConnectStatus> {
-    return this.http.get<CodexConnectStatus>(`${this.base(businessId)}/codex/device/${pendingId}/status`);
   }
   codexPKCEStart(businessId: string, body: CodexConnectBody): Observable<CodexPKCEStart> {
     return this.http.post<CodexPKCEStart>(`${this.base(businessId)}/codex/pkce/start`, body);
