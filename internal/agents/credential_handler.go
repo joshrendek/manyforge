@@ -16,6 +16,7 @@ type CredentialCRUD interface {
 	Create(ctx context.Context, principalID, businessID uuid.UUID, in CreateCredentialInput) (CredentialView, error)
 	List(ctx context.Context, principalID, businessID uuid.UUID) ([]CredentialView, error)
 	Delete(ctx context.Context, principalID, businessID, credentialID uuid.UUID) error
+	Update(ctx context.Context, principalID, businessID, credentialID uuid.UUID, in UpdateCredentialInput) (CredentialView, error)
 }
 
 var _ CredentialCRUD = (*CredentialService)(nil)
@@ -58,6 +59,7 @@ func (h *CredentialHandler) ProtectedRoutes(r chi.Router) {
 		r.Get("/", h.listCredentials)
 		r.Post("/", h.createCredential)
 		r.Delete("/{credentialID}", h.deleteCredential)
+		r.Patch("/{credentialID}", h.updateCredential)
 		// Codex device/PKCE connect flows (Task 5's CodexTokenService). Gated on
 		// h.codex != nil so the routes stay absent until Task 10 wires it up (mirrors
 		// the nil-guard pattern main.go uses for the connectors/credentials handlers).
@@ -86,6 +88,7 @@ type credentialResp struct {
 	Provider            string `json:"provider"`
 	BaseURL             string `json:"base_url"`
 	DefaultModel        string `json:"default_model"`
+	MaxConcurrentLanes  int    `json:"max_concurrent_lanes"`
 	AllowPrivateBaseURL bool   `json:"allow_private_base_url"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`
@@ -106,6 +109,7 @@ func toCredentialResp(v CredentialView) credentialResp {
 		Provider:            v.Provider,
 		BaseURL:             v.BaseURL,
 		DefaultModel:        v.DefaultModel,
+		MaxConcurrentLanes:  int(v.MaxConcurrentLanes),
 		AllowPrivateBaseURL: v.AllowPrivateBaseURL,
 		CreatedAt:           v.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:           v.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
@@ -176,6 +180,41 @@ func (h *CredentialHandler) createCredential(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, toCredentialResp(view))
+}
+
+func (h *CredentialHandler) updateCredential(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := credBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	cid, err := credPathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	// Pointer fields distinguish "absent" from "set" for PATCH semantics.
+	var in struct {
+		DefaultModel       *string `json:"default_model"`
+		MaxConcurrentLanes *int    `json:"max_concurrent_lanes"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	view, err := h.svc.Update(r.Context(), pid, bid, cid, UpdateCredentialInput{
+		DefaultModel:       in.DefaultModel,
+		MaxConcurrentLanes: in.MaxConcurrentLanes,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toCredentialResp(view))
 }
 
 func (h *CredentialHandler) deleteCredential(w http.ResponseWriter, r *http.Request) {

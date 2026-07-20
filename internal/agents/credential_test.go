@@ -350,6 +350,19 @@ func TestResolve_nilMinterUnchanged(t *testing.T) {
 	}
 }
 
+// TestValidateUpdateCredential pins the PATCH input guard (Task 3): a blank
+// (non-nil, empty) default_model is rejected — the column is NOT NULL, and an
+// omitted (nil) field is always valid (no-op preserve via COALESCE).
+func TestValidateUpdateCredential(t *testing.T) {
+	empty := ""
+	if err := validateUpdateCredential(UpdateCredentialInput{DefaultModel: &empty}); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("blank default_model should be ErrValidation, got %v", err)
+	}
+	if err := validateUpdateCredential(UpdateCredentialInput{}); err != nil {
+		t.Fatalf("empty patch is valid (no-op preserve), got %v", err)
+	}
+}
+
 func TestOpenAICodexCreateRejectsMissingAccountID(t *testing.T) {
 	// Create() runs validate() first and returns before any sealer/DB access, so a zero-value
 	// service proves the boundary (not just validate() directly) rejects a codex credential with

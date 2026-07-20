@@ -93,6 +93,18 @@ SET sealed_key_ref = sqlc.arg('sealed_key_ref'),
     updated_at = now()
 WHERE business_id = sqlc.arg('business_id') AND provider = 'openai_codex';
 
+-- UpdateAICredentialConfig partially updates the two SAFE config columns of a credential
+-- (PATCH): COALESCE(narg, col) preserves any field the caller omitted. Scoped to (id,
+-- business_id). Deliberately does NOT touch allow_private_base_url / base_url / sealed_key_ref
+-- (config-only, no SSRF trust surface — see manyforge-deo.11).
+-- name: UpdateAICredentialConfig :one
+UPDATE ai_provider_credential
+SET default_model        = COALESCE(sqlc.narg('default_model'), default_model),
+    max_concurrent_lanes = COALESCE(sqlc.narg('max_concurrent_lanes')::integer, max_concurrent_lanes),
+    updated_at           = now()
+WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid
+RETURNING *;
+
 -- DisconnectCodexCredential clears the tokens after an invalid_grant (dead refresh token) so the
 -- derived connection_status becomes 'disconnected' and the user is prompted to reconnect.
 -- name: DisconnectCodexCredential :exec

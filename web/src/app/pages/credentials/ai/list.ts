@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AICredential, AICredentialsService, AIProvider } from '../../../core/ai-credentials.service';
+import { AICredential, AICredentialsService, AIProvider, UpdateAICredentialBody } from '../../../core/ai-credentials.service';
 import { BusinessService } from '../../../core/business.service';
 import { CurrentBusinessService } from '../../../core/current-business.service';
 import { Business } from '../../../core/tree';
@@ -56,7 +56,8 @@ import { CredentialFormComponent } from './credential-form';
           <span style="flex:1">Default model</span>
           <span style="flex:1">Base URL</span>
           <span style="width:110px">Private URL</span>
-          <span style="width:220px"></span>
+          <span style="width:90px">Lanes</span>
+          <span style="width:300px"></span>
         </div>
         @for (c of items(); track c.id) {
           <div class="mf-tr" data-testid="credential-row" [attr.data-credential-id]="c.id">
@@ -75,10 +76,22 @@ import { CredentialFormComponent } from './credential-form';
               @else { {{ c.base_url || '—' }} }
             </span>
             <span style="width:110px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ c.allow_private_base_url ? 'allowed' : '—' }}</span>
-            <span style="width:220px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+            <span style="width:90px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="credential-lanes">{{ c.max_concurrent_lanes }}</span>
+            <span style="width:300px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
               @if (c.provider === 'openai_codex' && c.connection_status !== 'connected') {
                 <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="codex-reconnect"
                         [attr.aria-label]="'Reconnect ' + c.provider" (click)="reconnect()">Reconnect</button>
+              }
+              @if (editId() === c.id) {
+                <input type="text" class="mf-input mf-input-sm" data-testid="credential-edit-model"
+                       [(ngModel)]="editModel" name="editModel" style="width:130px" aria-label="Default model" />
+                <input type="number" min="1" max="16" class="mf-input mf-input-sm" data-testid="credential-edit-lanes"
+                       [(ngModel)]="editLanes" name="editLanes" style="width:64px" aria-label="Max concurrent lanes" />
+                <button class="mf-btn mf-btn-primary mf-btn-sm" data-testid="credential-edit-save" (click)="saveEdit(c)">Save</button>
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="credential-edit-cancel" (click)="editId.set('')">Cancel</button>
+              } @else {
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="credential-edit"
+                        [attr.aria-label]="'Edit ' + c.provider" (click)="startEdit(c)">Edit</button>
               }
               @if (confirmDeleteId() === c.id) {
                 <span class="mf-err" data-testid="credential-delete-confirm" style="font-size:var(--mf-fs-xs);align-self:center">
@@ -119,6 +132,9 @@ export class AICredentialsListComponent implements OnInit {
   showAdd = signal(false);
   confirmDeleteId = signal<string>('');
   reconnectProvider = signal<AIProvider | null>(null);
+  editId = signal<string>('');
+  editModel = '';
+  editLanes = 4;
 
   ngOnInit(): void {
     this.bizApi.list().subscribe({
@@ -182,6 +198,30 @@ export class AICredentialsListComponent implements OnInit {
   reconnect(): void {
     this.reconnectProvider.set('openai_codex');
     this.showAdd.set(true);
+  }
+
+  startEdit(c: AICredential): void {
+    this.confirmDeleteId.set('');
+    this.editModel = c.default_model;
+    this.editLanes = c.max_concurrent_lanes ?? 4;
+    this.editId.set(c.id);
+  }
+
+  saveEdit(c: AICredential): void {
+    const body: UpdateAICredentialBody = {
+      default_model: this.editModel.trim(),
+      max_concurrent_lanes: Math.min(16, Math.max(1, Math.round(Number(this.editLanes) || 4))),
+    };
+    this.api.update(this.businessId(), c.id, body).subscribe({
+      next: (updated) => {
+        this.items.update((xs) => xs.map((x) => (x.id === c.id ? updated : x)));
+        this.editId.set('');
+        this.toast.success('Credential updated');
+      },
+      error: (e: HttpErrorResponse) => {
+        this.toast.error(e.status === 404 ? 'Not found' : e.status === 400 ? 'Invalid values' : 'Update failed');
+      },
+    });
   }
 
   remove(c: AICredential): void {

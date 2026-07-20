@@ -119,6 +119,10 @@ func assertNoKeyField(t *testing.T, v CredentialView) {
 	allowed := map[string]bool{
 		"ID": true, "BusinessID": true, "Provider": true, "BaseURL": true,
 		"DefaultModel": true, "AllowPrivateBaseURL": true, "CreatedAt": true, "UpdatedAt": true,
+		// MaxConcurrentLanes is the non-secret review-lane concurrency cap (1-16, see
+		// credLanes) — added to CredentialView alongside the scoped PATCH config-edit
+		// (Task 1/3, bxev). No key/token material.
+		"MaxConcurrentLanes": true,
 		// ChatGPTAccountID is the openai_codex account id — a non-secret identifier, NOT
 		// the OAuth access token (that stays sealed in sealed_key_ref and is never on this
 		// view). Safe to allowlist here; see CreateCredentialInput.ChatGPTAccountID.

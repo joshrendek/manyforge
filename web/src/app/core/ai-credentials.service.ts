@@ -33,6 +33,11 @@ export interface CreateAICredentialBody {
   max_concurrent_lanes?: number;
 }
 
+export interface UpdateAICredentialBody {
+  default_model?: string;
+  max_concurrent_lanes?: number;
+}
+
 // Request body shared by the codex device-code and PKCE start endpoints.
 export interface CodexConnectBody {
   default_model: string;
@@ -76,6 +81,9 @@ export class AICredentialsService {
   }
   remove(businessId: string, id: string): Observable<void> {
     return this.http.delete<void>(`${this.base(businessId)}/${id}`);
+  }
+  update(businessId: string, id: string, body: UpdateAICredentialBody): Observable<AICredential> {
+    return this.http.patch<AICredential>(`${this.base(businessId)}/${id}`, body);
   }
   codexDeviceStart(businessId: string, body: CodexConnectBody): Observable<CodexDeviceStart> {
     return this.http.post<CodexDeviceStart>(`${this.base(businessId)}/codex/device/start`, body);

@@ -416,6 +416,54 @@ func (q *Queries) ReadCodexCredential(ctx context.Context, businessID uuid.UUID)
 	return i, err
 }
 
+const updateAICredentialConfig = `-- name: UpdateAICredentialConfig :one
+UPDATE ai_provider_credential
+SET default_model        = COALESCE($1, default_model),
+    max_concurrent_lanes = COALESCE($2::integer, max_concurrent_lanes),
+    updated_at           = now()
+WHERE id = $3::uuid AND business_id = $4::uuid
+RETURNING id, business_id, tenant_root_id, provider, sealed_key_ref, base_url, default_model, allow_private_base_url, max_concurrent_lanes, chatgpt_account_id, oauth_refresh_token, oauth_access_expiry, chatgpt_plan, created_at, updated_at
+`
+
+type UpdateAICredentialConfigParams struct {
+	DefaultModel       *string   `json:"default_model"`
+	MaxConcurrentLanes *int32    `json:"max_concurrent_lanes"`
+	ID                 uuid.UUID `json:"id"`
+	BusinessID         uuid.UUID `json:"business_id"`
+}
+
+// UpdateAICredentialConfig partially updates the two SAFE config columns of a credential
+// (PATCH): COALESCE(narg, col) preserves any field the caller omitted. Scoped to (id,
+// business_id). Deliberately does NOT touch allow_private_base_url / base_url / sealed_key_ref
+// (config-only, no SSRF trust surface — see manyforge-deo.11).
+func (q *Queries) UpdateAICredentialConfig(ctx context.Context, arg UpdateAICredentialConfigParams) (AiProviderCredential, error) {
+	row := q.db.QueryRow(ctx, updateAICredentialConfig,
+		arg.DefaultModel,
+		arg.MaxConcurrentLanes,
+		arg.ID,
+		arg.BusinessID,
+	)
+	var i AiProviderCredential
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Provider,
+		&i.SealedKeyRef,
+		&i.BaseUrl,
+		&i.DefaultModel,
+		&i.AllowPrivateBaseUrl,
+		&i.MaxConcurrentLanes,
+		&i.ChatgptAccountID,
+		&i.OauthRefreshToken,
+		&i.OauthAccessExpiry,
+		&i.ChatgptPlan,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateCodexOAuthTokens = `-- name: UpdateCodexOAuthTokens :exec
 UPDATE ai_provider_credential
 SET sealed_key_ref = $1,
