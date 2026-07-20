@@ -14,8 +14,8 @@ describe('CodexConnectComponent', () => {
     fixture.detectChanges(); // triggers ngOnInit → models() fetch
     http.expectOne('/api/v1/businesses/b1/agents/models').flush({
       items: [
-        { provider: 'openai_codex', model_id: 'gpt-5.6-sol' },
-        { provider: 'openai_codex', model_id: 'gpt-5.6-terra' },
+        { provider: 'openai_codex', model_id: 'gpt-5.4' },
+        { provider: 'openai_codex', model_id: 'gpt-5.4-mini' },
         { provider: 'anthropic', model_id: 'claude-opus-4-8' },
       ],
     });
@@ -33,15 +33,15 @@ describe('CodexConnectComponent', () => {
 
   it('lists only openai_codex models and pre-selects the first', () => {
     const c = mount();
-    expect(c.codexModels().map((m) => m.model_id)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra']);
-    expect(c.model()).toBe('gpt-5.6-sol');
+    expect(c.codexModels().map((m) => m.model_id)).toEqual(['gpt-5.4', 'gpt-5.4-mini']);
+    expect(c.model()).toBe('gpt-5.4');
   });
 
   it('startSignin posts the PKCE body and moves to the signin phase with an authorize link', () => {
     const c = mount();
     c.startSignin();
     const req = http.expectOne('/api/v1/businesses/b1/ai_credentials/codex/pkce/start');
-    expect(req.request.body).toEqual(expect.objectContaining({ default_model: 'gpt-5.6-sol' }));
+    expect(req.request.body).toEqual(expect.objectContaining({ default_model: 'gpt-5.4' }));
     req.flush({ pending_id: 'p1', authorize_url: 'https://auth.openai.com/oauth/authorize?x=1' });
     fixture.detectChanges();
     expect(c.phase()).toBe('signin');

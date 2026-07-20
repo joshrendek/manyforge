@@ -119,7 +119,7 @@ test('ai-credentials: delete asks to confirm then removes the row', async ({ pag
 test('ai-credentials: connect an openai_codex credential via Sign in with ChatGPT (PKCE paste)', async ({ page }) => {
   await auth(page);
   const codexCred = {
-    id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5.6-sol',
+    id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5.4',
     allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '2026-07-19T00:00:00Z', updated_at: '2026-07-19T00:00:00Z',
     chatgpt_plan: 'plus', connection_status: 'connected', oauth_access_expiry: '2026-08-01T00:00:00Z',
   };
@@ -128,7 +128,7 @@ test('ai-credentials: connect an openai_codex credential via Sign in with ChatGP
     r.fulfill({ json: { items: connected ? [codexCred] : [] } }),
   );
   await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
-    r.fulfill({ json: { items: [{ provider: 'openai_codex', model_id: 'gpt-5.6-sol' }] } }),
+    r.fulfill({ json: { items: [{ provider: 'openai_codex', model_id: 'gpt-5.4' }] } }),
   );
   await page.route('**/api/v1/businesses/b1/ai_credentials/codex/pkce/start', (r) =>
     r.fulfill({ json: { pending_id: 'p2', authorize_url: 'https://auth.openai.com/oauth/authorize?x=1' } }),
@@ -141,7 +141,7 @@ test('ai-credentials: connect an openai_codex credential via Sign in with ChatGP
   await page.goto('/credentials/ai');
   await page.getByTestId('credential-add-toggle').click();
   await page.getByTestId('cred-provider').selectOption('openai_codex');
-  await page.getByTestId('codex-model').selectOption('gpt-5.6-sol');
+  await page.getByTestId('codex-model').selectOption('gpt-5.4');
   // Primary "Sign in with ChatGPT" starts PKCE and reveals the authorize link + paste field.
   await page.getByTestId('codex-signin').click();
   await expect(page.getByTestId('codex-open')).toHaveAttribute('href', 'https://auth.openai.com/oauth/authorize?x=1');
