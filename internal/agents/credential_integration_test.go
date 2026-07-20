@@ -40,6 +40,9 @@ func TestCredentialCRUDRoundTrip(t *testing.T) {
 	if view.Provider != "anthropic" {
 		t.Fatalf("create view provider = %q, want anthropic", view.Provider)
 	}
+	if view.MaxConcurrentLanes != 4 {
+		t.Fatalf("MaxConcurrentLanes: got %d, want 4 (DB default)", view.MaxConcurrentLanes)
+	}
 	id := view.ID
 
 	got, err := svc.Resolve(ctx, ten.principalID, ten.businessID, "anthropic")
