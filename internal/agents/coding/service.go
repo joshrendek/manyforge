@@ -90,11 +90,14 @@ type installationTokenSource interface {
 	Token(ctx context.Context, installationID int64, repo string) (string, error)
 }
 
-// CostEstimator prices a run from its token counts. Implemented by
-// *agents.OpenRouterModels (live OpenRouter pricing). Returns 0 (no error) for
-// providers/models it can't price, so usage capture never fails a review.
+// CostEstimator prices a run from its token counts. Implemented by *agents.ProviderCatalogs (live
+// OpenRouter/HuggingFace pricing). Returns 0 (no error) for providers/models it can't price, so
+// usage capture never fails a review. CostMicroCents is CostCents at micro-cent resolution — the
+// review accountant uses it so sub-cent per-lane costs sum to a real total instead of each
+// rounding to 0 (manyforge-hdn9).
 type CostEstimator interface {
 	CostCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error)
+	CostMicroCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error)
 }
 
 // CodeReviewService orchestrates the code-review agent lifecycle.
@@ -802,16 +805,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		// which dominate the agentic loop (opencode re-reads the cached context every turn).
 		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider,
 			TokensIn: clampInt32(totalUsage.Input + totalUsage.CacheRead), TokensOut: clampInt32(totalUsage.Output + totalUsage.Reasoning)}
-		// Prefer opencode's own cost (it prices cache-read tokens correctly), kept at micro-cent
-		// precision so sub-cent lanes still sum to a real total (manyforge cost-rounding fix); fall
-		// back to catalog pricing only when opencode couldn't price the model (custom slug ⇒ cost 0).
-		if mc, priced := microCentsFromUsage(totalUsage); priced {
-			lr.CostMicroCents = mc
-		} else if s.Pricing != nil {
-			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
-				lr.CostMicroCents = c * microCentsPerCent // catalog is cent-granular (rare fallback path)
-			}
-		}
+		// Price the lane in micro-cents (opencode's own cost, else catalog); the review total sums
+		// lanes in this unit and rounds to whole cents ONCE, so cheap-model sub-cent lanes aren't
+		// each zeroed (manyforge-hdn9).
+		lr.CostMicroCents = laneCostMicroCents(ctx, totalUsage, s.Pricing,
+			laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut))
 		lr.CostCents = roundMicroCentsToCents(lr.CostMicroCents) // per-lane rounded view for display
 		if laneErr != nil {
 			lr.Err = laneErr
@@ -1461,6 +1459,24 @@ func microCentsFromUsage(u sandboxUsage) (microCents int64, priced bool) {
 		return int64(math.Round(u.Cost * 1e8)), true // USD → micro-cents: × 100 (cents) × 1e6 (micro)
 	}
 	return 0, false
+}
+
+// laneCostMicroCents prices one review lane in micro-cents (cents × 1e6). It prefers opencode's own
+// USD cost (which prices cache-read tokens correctly, at sub-cent precision) and falls back to the
+// catalog's live per-token price only when opencode couldn't price the model (custom slug ⇒ Cost
+// 0). Working in micro-cents lets the review total sum sub-cent lanes and round to whole cents
+// once — never per lane (manyforge-hdn9). A nil pricing seam or a pricing error yields 0 (usage
+// capture never fails a review).
+func laneCostMicroCents(ctx context.Context, usage sandboxUsage, pricing CostEstimator, provider, model string, tokensIn, tokensOut int64) int64 {
+	if mc, priced := microCentsFromUsage(usage); priced {
+		return mc
+	}
+	if pricing != nil {
+		if mc, err := pricing.CostMicroCents(ctx, provider, model, tokensIn, tokensOut); err == nil {
+			return mc
+		}
+	}
+	return 0
 }
 
 // errNoReviewOutput indicates the sandbox run's Outputs carried no review.json — e.g. a

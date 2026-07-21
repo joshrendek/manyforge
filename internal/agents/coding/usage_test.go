@@ -1,6 +1,8 @@
 package coding
 
 import (
+	"context"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -84,6 +86,85 @@ func TestMicroCentsFromUsage(t *testing.T) {
 	if mc, priced := microCentsFromUsage(sandboxUsage{Cost: 0, Input: 100}); priced || mc != 0 {
 		t.Fatalf("cost=0 must fall through to catalog (priced=false), got microCents=%d priced=%v", mc, priced)
 	}
+}
+
+// TestRoundMicroCentsToCents pins round-half-UP and the never-negative clamp — the review total is
+// rounded here exactly once. (Disproves the auto-review claim that 500_000 µ¢ rounds down.)
+func TestRoundMicroCentsToCents(t *testing.T) {
+	for _, c := range []struct {
+		micro, want int64
+	}{
+		{0, 0},
+		{1, 0},
+		{499_999, 0},                   // just below half a cent → 0
+		{500_000, 1},                   // exactly half a cent → rounds UP to 1
+		{500_001, 1},
+		{999_999, 1},
+		{1_000_000, 1},                 // exactly 1¢
+		{1_499_999, 1},
+		{1_500_000, 2},                 // 1.5¢ → 2 (round half up)
+		{1_721_600, 2},                 // the threat.gg #36 total
+		{-1, 0},                        // cost is never negative → clamp to 0
+		{1_000_000_000_000, 1_000_000}, // 1e12 µ¢ = 1e6¢, no overflow
+	} {
+		if got := roundMicroCentsToCents(c.micro); got != c.want {
+			t.Errorf("roundMicroCentsToCents(%d) = %d, want %d", c.micro, got, c.want)
+		}
+	}
+}
+
+// stubEstimator is a CostEstimator whose CostMicroCents returns a fixed value (and records that it
+// was consulted) so the lane-cost branch can be exercised in isolation.
+type stubEstimator struct {
+	microCents int64
+	err        error
+	called     bool
+}
+
+func (s *stubEstimator) CostCents(context.Context, string, string, int64, int64) (int64, error) {
+	return s.microCents / microCentsPerCent, s.err
+}
+func (s *stubEstimator) CostMicroCents(context.Context, string, string, int64, int64) (int64, error) {
+	s.called = true
+	return s.microCents, s.err
+}
+
+// TestLaneCostMicroCents pins the four-way per-lane pricing branch — the path that sets the cost
+// recorded for every review lane.
+func TestLaneCostMicroCents(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("opencode priced the lane → use its sub-cent cost, catalog untouched", func(t *testing.T) {
+		est := &stubEstimator{microCents: 999_999}
+		got := laneCostMicroCents(ctx, sandboxUsage{Cost: 0.002026}, est, "openrouter", "m", 1, 1)
+		if got != 202_600 {
+			t.Fatalf("got %d, want 202600 (opencode's own cost)", got)
+		}
+		if est.called {
+			t.Fatal("catalog must NOT be consulted when opencode priced the lane")
+		}
+	})
+	t.Run("opencode couldn't price → catalog fallback keeps sub-cent precision", func(t *testing.T) {
+		est := &stubEstimator{microCents: 202_600}
+		got := laneCostMicroCents(ctx, sandboxUsage{Cost: 0, Input: 100}, est, "openrouter", "m", 1, 1)
+		if got != 202_600 {
+			t.Fatalf("got %d, want 202600 (catalog micro-cents, not rounded to 0)", got)
+		}
+		if !est.called {
+			t.Fatal("catalog must be consulted when opencode couldn't price the model")
+		}
+	})
+	t.Run("catalog error → 0 (usage never fails a review)", func(t *testing.T) {
+		est := &stubEstimator{err: errors.New("boom")}
+		if got := laneCostMicroCents(ctx, sandboxUsage{Cost: 0}, est, "openrouter", "m", 1, 1); got != 0 {
+			t.Fatalf("got %d, want 0 on pricing error", got)
+		}
+	})
+	t.Run("nil pricing seam → 0", func(t *testing.T) {
+		if got := laneCostMicroCents(ctx, sandboxUsage{Cost: 0}, nil, "openrouter", "m", 1, 1); got != 0 {
+			t.Fatalf("got %d, want 0 with nil pricing", got)
+		}
+	})
 }
 
 func TestClampInt32(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 type providerCatalog interface {
 	ProviderModels(ctx context.Context, provider string) ([]ModelInfo, error)
 	CostCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error)
+	CostMicroCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error)
 }
 
 // ProviderCatalogs dispatches live-catalog lookups to the right per-provider catalog. It
@@ -48,4 +49,14 @@ func (p *ProviderCatalogs) CostCents(ctx context.Context, provider, model string
 		return 0, nil
 	}
 	return c.CostCents(ctx, provider, model, tokensIn, tokensOut)
+}
+
+// CostMicroCents prices a run at micro-cent resolution (cents × 1e6), or 0 when the provider has
+// no live catalog. The review accountant uses this so sub-cent lanes sum to a real total.
+func (p *ProviderCatalogs) CostMicroCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error) {
+	c, ok := p.byProvider[provider]
+	if !ok {
+		return 0, nil
+	}
+	return c.CostMicroCents(ctx, provider, model, tokensIn, tokensOut)
 }
