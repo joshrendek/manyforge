@@ -802,15 +802,17 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		// which dominate the agentic loop (opencode re-reads the cached context every turn).
 		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider,
 			TokensIn: clampInt32(totalUsage.Input + totalUsage.CacheRead), TokensOut: clampInt32(totalUsage.Output + totalUsage.Reasoning)}
-		// Prefer opencode's own cost (it prices cache-read tokens correctly); fall back to
-		// catalog pricing only when opencode couldn't price the model (custom slug ⇒ cost 0).
-		if c, priced := costCentsFromUsage(totalUsage); priced {
-			lr.CostCents = c
+		// Prefer opencode's own cost (it prices cache-read tokens correctly), kept at micro-cent
+		// precision so sub-cent lanes still sum to a real total (manyforge cost-rounding fix); fall
+		// back to catalog pricing only when opencode couldn't price the model (custom slug ⇒ cost 0).
+		if mc, priced := microCentsFromUsage(totalUsage); priced {
+			lr.CostMicroCents = mc
 		} else if s.Pricing != nil {
 			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
-				lr.CostCents = c
+				lr.CostMicroCents = c * microCentsPerCent // catalog is cent-granular (rare fallback path)
 			}
 		}
+		lr.CostCents = roundMicroCentsToCents(lr.CostMicroCents) // per-lane rounded view for display
 		if laneErr != nil {
 			lr.Err = laneErr
 			lr.FailReason = reason
@@ -1450,9 +1452,13 @@ func addUsage(a, b sandboxUsage) sandboxUsage {
 // catalog pricing because opencode prices cache-read tokens correctly (the host's token
 // catalog does not). A zero cost means opencode couldn't price the model (e.g. a custom
 // slug) → priced=false so the caller falls back to catalog pricing.
-func costCentsFromUsage(u sandboxUsage) (cents int64, priced bool) {
+// microCentsFromUsage converts opencode's own USD cost into micro-cents (cents × 1e6), keeping
+// sub-cent precision. priced is false when opencode couldn't price the model (Cost == 0), so the
+// caller falls back to the catalog. Rounding to whole cents happens ONCE on the summed review
+// total — never per lane — so a review of cheap models across many lanes isn't recorded as $0.
+func microCentsFromUsage(u sandboxUsage) (microCents int64, priced bool) {
 	if u.Cost > 0 {
-		return int64(math.Round(u.Cost * 100)), true
+		return int64(math.Round(u.Cost * 1e8)), true // USD → micro-cents: × 100 (cents) × 1e6 (micro)
 	}
 	return 0, false
 }

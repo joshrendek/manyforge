@@ -71,12 +71,18 @@ func TestAddUsage(t *testing.T) {
 	}
 }
 
-func TestCostCentsFromUsage(t *testing.T) {
-	if cents, priced := costCentsFromUsage(sandboxUsage{Cost: 0.0582}); !priced || cents != 6 {
-		t.Fatalf("cost=0.0582 → cents=%d priced=%v, want 6/true", cents, priced)
+func TestMicroCentsFromUsage(t *testing.T) {
+	// $0.0582 = 5.82¢ = 5_820_000 micro-cents (kept precise; the review total rounds later).
+	if mc, priced := microCentsFromUsage(sandboxUsage{Cost: 0.0582}); !priced || mc != 5_820_000 {
+		t.Fatalf("cost=0.0582 → microCents=%d priced=%v, want 5_820_000/true", mc, priced)
 	}
-	if cents, priced := costCentsFromUsage(sandboxUsage{Cost: 0, Input: 100}); priced || cents != 0 {
-		t.Fatalf("cost=0 must fall through to catalog (priced=false), got cents=%d priced=%v", cents, priced)
+	// Sub-cent lane (the threat.gg case): 0.2026¢ must survive as 202_600 µ¢, NOT round to 0.
+	if mc, priced := microCentsFromUsage(sandboxUsage{Cost: 0.002026}); !priced || mc != 202_600 {
+		t.Fatalf("cost=0.002026 → microCents=%d priced=%v, want 202_600/true (sub-cent must not vanish)", mc, priced)
+	}
+	// Zero cost → opencode couldn't price the model; caller falls back to the catalog.
+	if mc, priced := microCentsFromUsage(sandboxUsage{Cost: 0, Input: 100}); priced || mc != 0 {
+		t.Fatalf("cost=0 must fall through to catalog (priced=false), got microCents=%d priced=%v", mc, priced)
 	}
 }
 

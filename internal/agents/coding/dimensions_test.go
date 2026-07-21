@@ -165,11 +165,11 @@ func TestAggregateReview(t *testing.T) {
 
 	t.Run("multi-lane tags, floors, dedupes, sums", func(t *testing.T) {
 		res := []laneResult{
-			{Dim: sec, TokensIn: 10, TokensOut: 5, CostCents: 3, Doc: FindingsDoc{Summary: "sec", Findings: []connectors.Finding{
+			{Dim: sec, TokensIn: 10, TokensOut: 5, CostMicroCents: 3 * microCentsPerCent, Doc: FindingsDoc{Summary: "sec", Findings: []connectors.Finding{
 				{File: "a.go", Line: iptr(1), Severity: "error", Title: "SQL injection"}, // kept (>= warning)
 				{File: "a.go", Line: iptr(2), Severity: "info", Title: "nit"},            // dropped by warning floor
 			}}},
-			{Dim: corr, TokensIn: 20, TokensOut: 7, CostCents: 4, Doc: FindingsDoc{Summary: "corr", Findings: []connectors.Finding{
+			{Dim: corr, TokensIn: 20, TokensOut: 7, CostMicroCents: 4 * microCentsPerCent, Doc: FindingsDoc{Summary: "corr", Findings: []connectors.Finding{
 				{File: "a.go", Line: iptr(1), Severity: "warning", Title: "sql injection"}, // dup of sec's (case-insensitive) → merged
 				{File: "b.go", Line: iptr(9), Severity: "info", Title: "logic"},            // kept (info floor)
 			}}},
@@ -203,7 +203,7 @@ func TestAggregateReview(t *testing.T) {
 
 	t.Run("partial success: one lane fails, survivors proceed, all tokens summed", func(t *testing.T) {
 		res := []laneResult{
-			{Dim: sec, TokensIn: 50, TokensOut: 10, CostCents: 2, Err: errors.New("lane boom")}, // failed but billed
+			{Dim: sec, TokensIn: 50, TokensOut: 10, CostMicroCents: 2 * microCentsPerCent, Err: errors.New("lane boom")}, // failed but billed
 			{Dim: corr, TokensIn: 5, TokensOut: 1, Doc: FindingsDoc{Summary: "ok", Findings: []connectors.Finding{
 				{File: "b.go", Line: iptr(3), Severity: "error", Title: "bug"},
 			}}},
@@ -235,6 +235,27 @@ func TestAggregateReview(t *testing.T) {
 		}
 		if in != 7 {
 			t.Fatalf("tokens summed even when all fail: in=%d, want 7", in)
+		}
+	})
+
+	t.Run("sub-cent lanes sum to a real total (per-lane cent rounding must not zero it)", func(t *testing.T) {
+		// The threat.gg #36 regression: cheap OpenRouter models across 6 lanes, each costing a
+		// fraction of a cent but summing to ~1.72 cents. Rounding to whole cents PER LANE recorded
+		// $0.00 for the whole review; summing in micro-cents and rounding once must not.
+		res := []laneResult{
+			{Dim: sec, CostMicroCents: 202_600},                        // 0.2026¢
+			{Dim: corr, CostMicroCents: 225_800},                       // 0.2258¢
+			{Dim: Dimension{Key: "performance"}, CostMicroCents: 200_300},
+			{Dim: Dimension{Key: "ui"}, CostMicroCents: 260_500},
+			{Dim: Dimension{Key: "tests"}, CostMicroCents: 661_900},
+			{Dim: Dimension{Key: "docs"}, CostMicroCents: 170_500},
+		}
+		_, _, _, cost, err := aggregateReview(res) // total = 1_721_600 µ¢ → 2¢
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if cost != 2 {
+			t.Fatalf("six sub-cent lanes must sum to 2 cents, got %d (per-lane rounding regression)", cost)
 		}
 	})
 }

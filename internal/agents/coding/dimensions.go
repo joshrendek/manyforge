@@ -299,8 +299,13 @@ type laneResult struct {
 	Provider  string // the provider actually used
 	TokensIn  int32
 	TokensOut int32
-	CostCents int64
-	Err       error
+	// CostMicroCents is the lane's cost in micro-cents (cents × 1e6) — the ACCURATE accumulator.
+	// The total is summed in this unit and rounded to cents ONCE (see aggregateReview), so many
+	// sub-cent lanes (cheap models × modest tokens) still sum to a real total. CostCents is the
+	// per-lane rounded-to-cents view for display only; summing CostCents would drop sub-cent lanes.
+	CostMicroCents int64
+	CostCents      int64
+	Err            error
 	// FailReason is a short, client-safe category for a failed lane ("timed out",
 	// "no output produced", "unparseable model output", "sandbox error") — persisted so the
 	// UI can show WHY a lane failed. The full Err is logged server-side, never surfaced
@@ -312,16 +317,17 @@ type laneResult struct {
 // code_review.dimension_runs JSONB array. status is "succeeded"/"failed" for a lane that ran,
 // or "skipped" (with SkippedReason) for a configured dimension that did not run this review.
 type dimensionRun struct {
-	Dimension     string `json:"dimension"`
-	Model         string `json:"model,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	TokensIn      int32  `json:"tokens_in"`
-	TokensOut     int32  `json:"tokens_out"`
-	CostCents     int64  `json:"cost_cents"`
-	Status        string `json:"status"`
-	SkippedReason string `json:"skipped_reason,omitempty"`
-	LastError     string `json:"last_error,omitempty"` // client-safe reason a "failed" lane failed (e.g. "timed out")
-	FindingCount  int    `json:"finding_count"`
+	Dimension      string `json:"dimension"`
+	Model          string `json:"model,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	TokensIn       int32  `json:"tokens_in"`
+	TokensOut      int32  `json:"tokens_out"`
+	CostCents      int64  `json:"cost_cents"`      // rounded-to-cents view (0 for a sub-cent lane)
+	CostMicroCents int64  `json:"cost_microcents"` // accurate sub-cent cost; lanes sum to the review total
+	Status         string `json:"status"`
+	SkippedReason  string `json:"skipped_reason,omitempty"`
+	LastError      string `json:"last_error,omitempty"` // client-safe reason a "failed" lane failed (e.g. "timed out")
+	FindingCount   int    `json:"finding_count"`
 }
 
 // buildDimensionRuns turns the fan-out's lane results + skipped dimensions into the persisted
@@ -341,15 +347,16 @@ func buildDimensionRuns(results []laneResult, skipped []SkippedDimension) []dime
 			}
 		}
 		runs = append(runs, dimensionRun{
-			Dimension:    lr.Dim.Key,
-			Model:        lr.Model,
-			Provider:     lr.Provider,
-			TokensIn:     lr.TokensIn,
-			TokensOut:    lr.TokensOut,
-			CostCents:    lr.CostCents,
-			Status:       status,
-			LastError:    lastErr,
-			FindingCount: len(lr.Doc.Findings),
+			Dimension:      lr.Dim.Key,
+			Model:          lr.Model,
+			Provider:       lr.Provider,
+			TokensIn:       lr.TokensIn,
+			TokensOut:      lr.TokensOut,
+			CostCents:      lr.CostCents,
+			CostMicroCents: lr.CostMicroCents,
+			Status:         status,
+			LastError:      lastErr,
+			FindingCount:   len(lr.Doc.Findings),
 		})
 	}
 	for _, sd := range skipped {
@@ -366,15 +373,29 @@ func buildDimensionRuns(results []laneResult, skipped []SkippedDimension) []dime
 // ALL lanes, including failed ones. Partial success (FR-013): if ANY lane produced a doc the
 // review proceeds with the survivors; only if EVERY lane failed does it return an error — the
 // first lane's error, so the failure surfaced to the user is a real one.
+// microCentsPerCent is the scale for CostMicroCents (1 cent = 1e6 micro-cents). Sub-cent lane
+// costs are kept at this resolution and only rounded to whole cents on the final sum.
+const microCentsPerCent = 1_000_000
+
+// roundMicroCentsToCents rounds a micro-cent amount to whole cents (round half up). Applied ONCE
+// to the summed total, never per lane — so N sub-cent lanes don't each vanish to 0.
+func roundMicroCentsToCents(microCents int64) int64 {
+	if microCents <= 0 {
+		return 0
+	}
+	return (microCents + microCentsPerCent/2) / microCentsPerCent
+}
+
 func aggregateReview(results []laneResult) (doc FindingsDoc, tokensIn, tokensOut int32, costCents int64, err error) {
 	var findings []connectors.Finding
 	var summaries []string
 	anyOK := false
 	var firstErr error
+	var microTotal int64 // sum cost in micro-cents; round to whole cents ONCE, after the loop
 	for _, lr := range results {
 		tokensIn += lr.TokensIn
 		tokensOut += lr.TokensOut
-		costCents += lr.CostCents
+		microTotal += lr.CostMicroCents
 		if lr.Err != nil {
 			if firstErr == nil {
 				firstErr = lr.Err
@@ -393,6 +414,7 @@ func aggregateReview(results []laneResult) (doc FindingsDoc, tokensIn, tokensOut
 			summaries = append(summaries, s)
 		}
 	}
+	costCents = roundMicroCentsToCents(microTotal)
 	if !anyOK {
 		if firstErr == nil {
 			// No lane ran at all (every dimension skipped). Never return a nil error with an
