@@ -99,6 +99,26 @@ func (o *OpenRouterModels) CostCents(ctx context.Context, provider, model string
 	return cents, nil
 }
 
+// CostMicroCents is CostCents at micro-cent resolution (cents × 1e6). The review accountant sums
+// lanes in this unit and rounds to whole cents ONCE, so a cheap model's sub-cent lane cost isn't
+// rounded to 0 before it can add up (manyforge-hdn9).
+func (o *OpenRouterModels) CostMicroCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error) {
+	if provider != "openrouter" {
+		return 0, nil
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.load(ctx); err != nil {
+		return 0, err
+	}
+	p, ok := o.prices[model]
+	if !ok {
+		return 0, nil
+	}
+	usd := float64(tokensIn)*p.inPerTok + float64(tokensOut)*p.outPerTok
+	return max(int64(math.Round(usd*1e8)), 0), nil // USD → micro-cents: × 100 (cents) × 1e6 (micro)
+}
+
 // load fetches and caches the OpenRouter catalog (models + pricing). Caller MUST
 // hold o.mu. No-op within the TTL.
 func (o *OpenRouterModels) load(ctx context.Context) error {
@@ -140,7 +160,7 @@ func (o *OpenRouterModels) load(ctx context.Context) error {
 			continue
 		}
 		out = append(out, ModelInfo{Provider: "openrouter", ModelID: m.ID})
-		in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)      // "" → 0
+		in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)       // "" → 0
 		outp, _ := strconv.ParseFloat(m.Pricing.Completion, 64) // "" → 0
 		prices[m.ID] = orPrice{inPerTok: in, outPerTok: outp}
 	}

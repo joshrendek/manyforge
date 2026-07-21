@@ -268,6 +268,10 @@ func (f *fixedPricing) CostCents(_ context.Context, _, _ string, _, _ int64) (in
 	return f.cents, nil
 }
 
+func (f *fixedPricing) CostMicroCents(_ context.Context, _, _ string, _, _ int64) (int64, error) {
+	return f.cents * 1_000_000, nil
+}
+
 // fakeClone is the injectable clone seam: just creates destDir and a placeholder file.
 // The allowPrivate parameter is accepted but ignored — no real network is involved.
 func fakeClone(_ context.Context, _, _, _, destDir string, _ bool) error {

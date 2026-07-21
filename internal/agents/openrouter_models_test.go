@@ -72,6 +72,18 @@ func TestOpenRouterModels_CostCents(t *testing.T) {
 	if c, err := o.CostCents(ctx, "anthropic", "x", 1, 1); err != nil || c != 0 {
 		t.Fatalf("non-openrouter cost = %d (err %v), want 0", c, err)
 	}
+
+	// CostMicroCents is the same price at cents×1e6 resolution (1125c → 1_125_000_000 µ¢), with the
+	// same unknown-model / non-openrouter → 0 behavior.
+	if mc, err := o.CostMicroCents(ctx, "openrouter", "google/gemini-2.5-pro", 1_000_000, 1_000_000); err != nil || mc != 1_125_000_000 {
+		t.Fatalf("microCents = %d (err %v), want 1125000000", mc, err)
+	}
+	if mc, err := o.CostMicroCents(ctx, "openrouter", "no/such-model", 1000, 1000); err != nil || mc != 0 {
+		t.Fatalf("unknown model microCents = %d (err %v), want 0", mc, err)
+	}
+	if mc, err := o.CostMicroCents(ctx, "anthropic", "x", 1, 1); err != nil || mc != 0 {
+		t.Fatalf("non-openrouter microCents = %d (err %v), want 0", mc, err)
+	}
 }
 
 func TestOpenRouterModels_Caches(t *testing.T) {
