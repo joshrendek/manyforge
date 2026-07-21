@@ -24,10 +24,11 @@ var _ CredentialCRUD = (*CredentialService)(nil)
 // CodexConnectAPI is the codex device/PKCE connect-flow seam the handler depends on
 // (so unit tests can supply a fake). Satisfied by *CodexTokenService (Task 5).
 type CodexConnectAPI interface {
-	StartDevice(ctx context.Context, pid, bid uuid.UUID, in CodexConnectInput) (DeviceStart, error)
-	PollDevice(ctx context.Context, pid, bid, pendingID uuid.UUID) (ConnectStatus, error)
 	StartPKCE(ctx context.Context, pid, bid uuid.UUID, in CodexConnectInput) (PKCEStart, error)
 	ExchangePKCE(ctx context.Context, pid, bid, pendingID uuid.UUID, redirectURL string) (ConnectStatus, error)
+	// ListAccountModels returns the connected account's live per-plan Codex models (best-effort;
+	// empty on any failure so the caller degrades to the static catalog).
+	ListAccountModels(ctx context.Context, pid, bid uuid.UUID) ([]ModelInfo, error)
 }
 
 var _ CodexConnectAPI = (*CodexTokenService)(nil)
@@ -60,12 +61,12 @@ func (h *CredentialHandler) ProtectedRoutes(r chi.Router) {
 		r.Post("/", h.createCredential)
 		r.Delete("/{credentialID}", h.deleteCredential)
 		r.Patch("/{credentialID}", h.updateCredential)
-		// Codex device/PKCE connect flows (Task 5's CodexTokenService). Gated on
-		// h.codex != nil so the routes stay absent until Task 10 wires it up (mirrors
-		// the nil-guard pattern main.go uses for the connectors/credentials handlers).
+		// Codex "Sign in with ChatGPT" connect flow (CodexTokenService). PKCE authorize +
+		// paste-the-redirect-URL is the only flow — OpenAI's ChatGPT auth has no device grant.
+		// Gated on h.codex != nil so the routes stay absent until it is wired up (mirrors the
+		// nil-guard pattern main.go uses for the connectors/credentials handlers).
 		if h.codex != nil {
-			r.Post("/codex/device/start", h.codexDeviceStart)
-			r.Get("/codex/device/{pendingID}/status", h.codexDeviceStatus)
+			r.Get("/codex/models", h.codexModels)
 			r.Post("/codex/pkce/start", h.codexPKCEStart)
 			r.Post("/codex/pkce/exchange", h.codexPKCEExchange)
 		}
@@ -75,9 +76,6 @@ func (h *CredentialHandler) ProtectedRoutes(r chi.Router) {
 func credBusinessID(r *http.Request) (uuid.UUID, error) { return uuid.Parse(chi.URLParam(r, "id")) }
 func credPathID(r *http.Request) (uuid.UUID, error) {
 	return uuid.Parse(chi.URLParam(r, "credentialID"))
-}
-func codexPendingID(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "pendingID"))
 }
 
 // credentialResp is the non-secret response DTO. CRITICAL: there is no api_key /
@@ -240,16 +238,15 @@ func (h *CredentialHandler) deleteCredential(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// codexConnectBody is the shared request DTO for the device/start and pkce/start
-// endpoints (both accept the same connect input).
+// codexConnectBody is the request DTO for the pkce/start endpoint (the connect input).
 type codexConnectBody struct {
 	DefaultModel       string `json:"default_model"`
 	BaseURL            string `json:"base_url"`
 	MaxConcurrentLanes int    `json:"max_concurrent_lanes"`
 }
 
-// codexStatusResp is the shared response shape for the device/status and
-// pkce/exchange endpoints. credential_id is only populated once the connect flow
+// codexStatusResp is the response shape for the pkce/exchange endpoint.
+// credential_id is only populated once the connect flow
 // has actually produced a credential (status == "approved"); omitting it otherwise
 // avoids sending a misleading all-zero UUID.
 func codexStatusResp(cs ConnectStatus) map[string]any {
@@ -260,7 +257,10 @@ func codexStatusResp(cs ConnectStatus) map[string]any {
 	return out
 }
 
-func (h *CredentialHandler) codexDeviceStart(w http.ResponseWriter, r *http.Request) {
+// codexModels serves the connected account's live per-plan Codex model list, shaped like
+// /agents/models ({items:[{provider,model_id}]}) so the frontend can reuse the same picker. It is
+// best-effort: any failure yields an empty list (200) so the client falls back to the static catalog.
+func (h *CredentialHandler) codexModels(w http.ResponseWriter, r *http.Request) {
 	pid, ok := httpx.PrincipalFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, r, errs.ErrNotFound)
@@ -271,44 +271,15 @@ func (h *CredentialHandler) codexDeviceStart(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
-	var in codexConnectBody
-	if !httpx.DecodeJSON(w, r, &in) {
-		return
-	}
-	out, err := h.codex.StartDevice(r.Context(), pid, bid, CodexConnectInput(in))
+	models, err := h.codex.ListAccountModels(r.Context(), pid, bid)
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
+		models = nil // degrade to empty → client uses the static catalog
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"pending_id": out.PendingID.String(), "user_code": out.UserCode,
-		"verification_uri": out.VerificationURI, "verification_uri_complete": out.VerificationURIComplete,
-		"interval": out.Interval, "expires_in": out.ExpiresIn,
-	})
-}
-
-func (h *CredentialHandler) codexDeviceStatus(w http.ResponseWriter, r *http.Request) {
-	pid, ok := httpx.PrincipalFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, r, errs.ErrNotFound)
-		return
+	out := make([]map[string]string, 0, len(models))
+	for _, m := range models {
+		out = append(out, map[string]string{"provider": m.Provider, "model_id": m.ModelID})
 	}
-	bid, err := credBusinessID(r)
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrNotFound)
-		return
-	}
-	pendingID, err := codexPendingID(r)
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrNotFound)
-		return
-	}
-	out, err := h.codex.PollDevice(r.Context(), pid, bid, pendingID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, codexStatusResp(out))
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (h *CredentialHandler) codexPKCEStart(w http.ResponseWriter, r *http.Request) {

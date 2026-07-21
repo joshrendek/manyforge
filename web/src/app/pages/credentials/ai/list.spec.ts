@@ -98,6 +98,59 @@ describe('AICredentialsListComponent', () => {
     expect(el.querySelector('[data-testid="credential-lanes"]')?.textContent?.trim()).toBe('8');
   });
 
+  it('editing an openai_codex credential shows a dropdown from the LIVE per-account catalog', async () => {
+    const f = TestBed.createComponent(AICredentialsListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/ai_credentials').flush(codexCredentials);
+    f.detectChanges();
+    const el: HTMLElement = f.nativeElement;
+    (el.querySelector('[data-testid="credential-edit"]') as HTMLButtonElement).click();
+    f.detectChanges();
+    // startEdit prefers the live per-account list
+    mock.expectOne('/api/v1/businesses/b1/ai_credentials/codex/models').flush({
+      items: [
+        { provider: 'openai_codex', model_id: 'gpt-5.6-sol' },
+        { provider: 'openai_codex', model_id: 'gpt-5.5' },
+      ],
+    });
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+    const sel = el.querySelector('[data-testid="credential-edit-model"]') as HTMLSelectElement;
+    expect(sel.tagName).toBe('SELECT');
+    const opts = Array.from(sel.querySelectorAll('option')).map((o) => o.value);
+    expect(opts).toEqual(['gpt-5.6-sol', 'gpt-5.5']);
+  });
+
+  it('falls back to the static catalog when the live codex list is empty', async () => {
+    const f = TestBed.createComponent(AICredentialsListComponent);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses').flush(biz);
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/ai_credentials').flush(codexCredentials);
+    f.detectChanges();
+    const el: HTMLElement = f.nativeElement;
+    (el.querySelector('[data-testid="credential-edit"]') as HTMLButtonElement).click();
+    f.detectChanges();
+    // live returns empty → editor falls back to the static /agents/models catalog
+    mock.expectOne('/api/v1/businesses/b1/ai_credentials/codex/models').flush({ items: [] });
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/agents/models').flush({
+      items: [
+        { provider: 'openai_codex', model_id: 'gpt-5.6-sol' },
+        { provider: 'anthropic', model_id: 'claude-opus-4-8' },
+      ],
+    });
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+    const sel = el.querySelector('[data-testid="credential-edit-model"]') as HTMLSelectElement;
+    const opts = Array.from(sel.querySelectorAll('option')).map((o) => o.value);
+    expect(opts).toEqual(['gpt-5.6-sol']); // static, filtered to openai_codex
+  });
+
   it('toggles the add form via the add toggle', () => {
     const f = mount();
     const el: HTMLElement = f.nativeElement;
