@@ -377,8 +377,10 @@ func buildDimensionRuns(results []laneResult, skipped []SkippedDimension) []dime
 // costs are kept at this resolution and only rounded to whole cents on the final sum.
 const microCentsPerCent = 1_000_000
 
-// roundMicroCentsToCents rounds a micro-cent amount to whole cents (round half up). Applied ONCE
-// to the summed total, never per lane — so N sub-cent lanes don't each vanish to 0.
+// roundMicroCentsToCents rounds a micro-cent amount to whole cents (round half up), clamping the
+// never-expected negative case to 0 (cost is never negative). The REVIEW TOTAL is rounded from the
+// summed micro-cents exactly once here, so N sub-cent lanes don't each vanish to 0; it's also used
+// for the per-lane cost_cents display view, where a sub-cent lane legitimately shows 0¢.
 func roundMicroCentsToCents(microCents int64) int64 {
 	if microCents <= 0 {
 		return 0

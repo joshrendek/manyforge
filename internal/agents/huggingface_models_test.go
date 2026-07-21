@@ -135,6 +135,12 @@ func TestHuggingFaceModels_CostCentsUsesPinnedPartnerPricing(t *testing.T) {
 		t.Errorf("CostCents = %d, want 580", got)
 	}
 
+	// CostMicroCents is the same price at cents×1e6 resolution (580c → 580_000_000 µ¢) — what the
+	// review accountant sums so sub-cent lanes aren't each rounded to 0.
+	if mc, err := h.CostMicroCents(ctx, "huggingface", "zai-org/GLM-5.2:fireworks-ai", 1_000_000, 1_000_000); err != nil || mc != 580_000_000 {
+		t.Fatalf("CostMicroCents = %d (err %v), want 580000000", mc, err)
+	}
+
 	// Token counts captured from a REAL sandboxed review lane (manyforge-bhx smoke): opencode
 	// reported input 4581 + cache_read 8540 = 13121 in, 1298 out. At $1.40/$4.40 per Mtok that
 	// is $0.0241 → 2 cents. This is the arithmetic the review's cost_cents column depends on.

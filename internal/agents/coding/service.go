@@ -1451,9 +1451,9 @@ func addUsage(a, b sandboxUsage) sandboxUsage {
 // catalog does not). A zero cost means opencode couldn't price the model (e.g. a custom
 // slug) → priced=false so the caller falls back to catalog pricing.
 // microCentsFromUsage converts opencode's own USD cost into micro-cents (cents × 1e6), keeping
-// sub-cent precision. priced is false when opencode couldn't price the model (Cost == 0), so the
-// caller falls back to the catalog. Rounding to whole cents happens ONCE on the summed review
-// total — never per lane — so a review of cheap models across many lanes isn't recorded as $0.
+// sub-cent precision. priced is false when opencode's Cost is not > 0 (it couldn't price the
+// model), so the caller falls back to the catalog. Rounding to whole cents happens ONCE on the
+// summed review total, so a review of cheap models across many lanes isn't recorded as $0.
 func microCentsFromUsage(u sandboxUsage) (microCents int64, priced bool) {
 	if u.Cost > 0 {
 		return int64(math.Round(u.Cost * 1e8)), true // USD → micro-cents: × 100 (cents) × 1e6 (micro)
