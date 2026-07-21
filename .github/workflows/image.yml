@@ -3,6 +3,14 @@ name: images
 on:
   push:
     branches: [main, master]
+    # Don't build/deploy a new image for pushes that only touch bookkeeping or docs — the app image
+    # is unchanged, and each build triggers a Flux rollout that restarts the app pod (which orphans
+    # in-flight reviews). A push that also changes real code still builds. See manyforge-g993.
+    paths-ignore:
+      - '.beads/**'
+      - 'docs/**'
+      - '**/*.md'
+      - '.claude/**'
 
 permissions:
   contents: read
