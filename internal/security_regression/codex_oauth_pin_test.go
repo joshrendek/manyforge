@@ -37,6 +37,27 @@ func TestCodexOAuthClientTargetsOpenAIAuth(t *testing.T) {
 	}
 }
 
+// TestCodexOAuthHasNoDeviceGrant pins that the device-authorization flow stays removed. OpenAI's
+// ChatGPT auth advertises only authorization_code + refresh_token grants (no device endpoint), so
+// a server-initiated device flow hits a Cloudflare 403 challenge instead of a device authorization
+// — which is exactly why the "Sign in with ChatGPT" button erred in prod. The only viable flow is
+// authorization_code + PKCE reproduced via the paste-the-redirect-URL step. Do not reintroduce a
+// device path unless OpenAI actually starts advertising a device_authorization_endpoint.
+func TestCodexOAuthHasNoDeviceGrant(t *testing.T) {
+	src := mustRead(t, "../codexoauth/oauth.go")
+	for _, forbidden := range []string{"deviceAuthPath", "StartDeviceAuth", "PollDeviceToken", "grant-type:device_code"} {
+		if strings.Contains(src, forbidden) {
+			t.Errorf("codexoauth/oauth.go must NOT contain %q — OpenAI has no device grant; the paste-redirect PKCE flow is the only viable one. Pin broken, update in the same change only if OpenAI adds a real device endpoint.", forbidden)
+		}
+	}
+	// It must still use the codex CLI's confirmed endpoints (openai/codex, codex-rs/login).
+	for _, want := range []string{`"/oauth/authorize"`, `"/oauth/token"`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("codexoauth/oauth.go must contain %q (codex CLI endpoints) — pin broken, update in the same change if intentional", want)
+		}
+	}
+}
+
 // TestCodexDefinerFunctionsRevokePublic pins that every Codex refresh-sweep SECURITY DEFINER
 // function (RLS-exempt, cross-tenant credential access) has PUBLIC execute revoked. These
 // functions run as their owner regardless of the calling role's RLS policies, so leaving them

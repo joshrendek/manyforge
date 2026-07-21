@@ -216,6 +216,10 @@ func main() {
 		// started later, once workerCtx exists (see the `if codexSvc != nil` block near the
 		// agent reaper below).
 		codexSvc = agents.NewCodexTokenService(database, aiSealer, codexoauth.NewClient(30*time.Second), cfg.CodexAccessRefreshMargin)
+		// Live per-account model catalog (chatgpt.com/backend-api/codex): the editor's model picker
+		// reads this so it shows exactly what the connected plan+client_version returns, instead of a
+		// static seed. SSRF-screened host client; degrades to the static catalog on any failure.
+		codexSvc.Models = &agents.CodexBackendModels{HTTP: netsafe.NewClient(15 * time.Second)}
 		credSvc.Codex = codexSvc // typed-nil-safe: codexSvc is a concrete non-nil pointer here (aiSealer != nil block)
 		credH.SetCodex(codexSvc)
 	}

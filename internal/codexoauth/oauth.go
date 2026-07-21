@@ -25,12 +25,15 @@ const (
 	// redirectURI matches the codex CLI loopback the PKCE paste-redirect flow reproduces.
 	redirectURI = "http://localhost:1455/auth/callback"
 
-	// Paths on AuthBase. OPEN ITEM: confirm deviceAuthPath against codex-rs /
-	// tumf/opencode-openai-device-auth before shipping; the value is isolated here and the
-	// tests inject AuthBase, so only the prod constant depends on it.
-	deviceAuthPath = "/oauth/device/code"
-	tokenPath      = "/oauth/token"
-	authorizePath  = "/oauth/authorize"
+	// Paths on AuthBase. These mirror the official codex CLI's login flow (openai/codex,
+	// codex-rs/login): an authorization_code + PKCE grant authorized at /oauth/authorize and
+	// exchanged/refreshed at /oauth/token. OpenAI's ChatGPT auth advertises ONLY authorization_code
+	// and refresh_token grants (its OIDC discovery has no device_authorization_endpoint), so there
+	// is deliberately NO device-code path: a server POST to /oauth/device/code returns a Cloudflare
+	// 403 challenge, never a device_code. The web app reproduces the CLI's localhost loopback via
+	// the paste-the-redirect-URL flow (see AuthorizeURL / ExchangePKCE).
+	tokenPath     = "/oauth/token"
+	authorizePath = "/oauth/authorize"
 )
 
 // ErrInvalidGrant wraps a token-endpoint invalid_grant (dead/rotated refresh token, expired
@@ -58,27 +61,6 @@ type TokenSet struct {
 	Expiry       time.Time
 	Claims       Claims
 }
-
-// DeviceAuth is the device-authorization response.
-type DeviceAuth struct {
-	DeviceCode              string
-	UserCode                string
-	VerificationURI         string
-	VerificationURIComplete string
-	Interval                int
-	ExpiresIn               int
-}
-
-// PollStatus is the outcome of one device-token poll.
-type PollStatus int
-
-const (
-	PollPending PollStatus = iota
-	PollSlowDown
-	PollApproved
-	PollDenied
-	PollExpired
-)
 
 // tokenResp is the shared token-endpoint success shape.
 type tokenResp struct {
@@ -138,65 +120,6 @@ func decodeToken(body []byte) (TokenSet, error) {
 		ts.Claims = c
 	}
 	return ts, nil
-}
-
-// StartDeviceAuth initiates the device-authorization flow.
-func (c *Client) StartDeviceAuth(ctx context.Context) (DeviceAuth, error) {
-	body, err := c.postForm(ctx, deviceAuthPath, url.Values{
-		"client_id": {clientID}, "scope": {scope},
-	})
-	if err != nil {
-		return DeviceAuth{}, err
-	}
-	var r struct {
-		DeviceCode              string `json:"device_code"`
-		UserCode                string `json:"user_code"`
-		VerificationURI         string `json:"verification_uri"`
-		VerificationURIComplete string `json:"verification_uri_complete"`
-		Interval                int    `json:"interval"`
-		ExpiresIn               int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &r); err != nil {
-		return DeviceAuth{}, fmt.Errorf("codexoauth: decode device auth: %w", err)
-	}
-	if r.DeviceCode == "" {
-		return DeviceAuth{}, fmt.Errorf("codexoauth: empty device_code")
-	}
-	if r.Interval == 0 {
-		r.Interval = 5
-	}
-	return DeviceAuth(r), nil
-}
-
-// PollDeviceToken polls once for the device token. A pending/slow_down/expired/denied maps to a
-// PollStatus with a nil error; a real transport error returns (…, 0, err).
-func (c *Client) PollDeviceToken(ctx context.Context, deviceCode string) (TokenSet, PollStatus, error) {
-	body, err := c.postForm(ctx, tokenPath, url.Values{
-		"client_id":   {clientID},
-		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
-		"device_code": {deviceCode},
-	})
-	if err != nil {
-		var oe errResp
-		_ = json.Unmarshal(body, &oe)
-		switch oe.Error {
-		case "authorization_pending":
-			return TokenSet{}, PollPending, nil
-		case "slow_down":
-			return TokenSet{}, PollSlowDown, nil
-		case "expired_token":
-			return TokenSet{}, PollExpired, nil
-		case "access_denied":
-			return TokenSet{}, PollDenied, nil
-		default:
-			return TokenSet{}, 0, err
-		}
-	}
-	ts, derr := decodeToken(body)
-	if derr != nil {
-		return TokenSet{}, 0, derr
-	}
-	return ts, PollApproved, nil
 }
 
 // ExchangePKCE trades an authorization code (from the pasted redirect) for tokens.

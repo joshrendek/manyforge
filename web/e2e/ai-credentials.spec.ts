@@ -116,10 +116,10 @@ test('ai-credentials: delete asks to confirm then removes the row', async ({ pag
   await expect(page.getByTestId('credential-row')).toHaveCount(0);
 });
 
-test('ai-credentials: connect an openai_codex credential via device code', async ({ page }) => {
+test('ai-credentials: connect an openai_codex credential via Sign in with ChatGPT (PKCE paste)', async ({ page }) => {
   await auth(page);
   const codexCred = {
-    id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5-codex',
+    id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5.4',
     allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '2026-07-19T00:00:00Z', updated_at: '2026-07-19T00:00:00Z',
     chatgpt_plan: 'plus', connection_status: 'connected', oauth_access_expiry: '2026-08-01T00:00:00Z',
   };
@@ -128,49 +128,10 @@ test('ai-credentials: connect an openai_codex credential via device code', async
     r.fulfill({ json: { items: connected ? [codexCred] : [] } }),
   );
   await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
-    r.fulfill({ json: { items: [{ provider: 'openai_codex', model_id: 'gpt-5-codex' }] } }),
-  );
-  await page.route('**/api/v1/businesses/b1/ai_credentials/codex/device/start', (r) =>
-    r.fulfill({ json: { pending_id: 'p1', user_code: 'ABCD-1234', verification_uri: 'https://auth.openai.com/device', verification_uri_complete: 'https://auth.openai.com/device?c=ABCD-1234', interval: 1, expires_in: 900 } }),
-  );
-  await page.route('**/api/v1/businesses/b1/ai_credentials/codex/device/p1/status', (r) => {
-    connected = true;
-    return r.fulfill({ json: { status: 'approved', credential_id: 'cx1' } });
-  });
-
-  await page.goto('/credentials/ai');
-  await page.getByTestId('credential-add-toggle').click();
-  await page.getByTestId('cred-provider').selectOption('openai_codex');
-  await page.getByTestId('codex-model').selectOption('gpt-5-codex');
-  await page.getByTestId('codex-signin').click();
-  await expect(page.getByTestId('codex-user-code')).toContainText('ABCD-1234');
-  // device poll (interval 1s) → approved → connected → list reload shows the codex row + health badge
-  await expect(page.getByTestId('codex-health')).toContainText('connected');
-});
-
-test('ai-credentials: connect openai_codex via the paste (PKCE) fallback', async ({ page }) => {
-  await auth(page);
-  const codexCred = {
-    id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5-codex',
-    allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '2026-07-19T00:00:00Z', updated_at: '2026-07-19T00:00:00Z',
-    chatgpt_plan: 'plus', connection_status: 'connected', oauth_access_expiry: '2026-08-01T00:00:00Z',
-  };
-  let connected = false;
-  await page.route('**/api/v1/businesses/b1/ai_credentials', (r) =>
-    r.fulfill({ json: { items: connected ? [codexCred] : [] } }),
-  );
-  await page.route('**/api/v1/businesses/b1/agents/models', (r) =>
-    r.fulfill({ json: { items: [{ provider: 'openai_codex', model_id: 'gpt-5-codex' }] } }),
-  );
-  // High interval so the device poll never fires during the test; switching to paste abandons it anyway.
-  await page.route('**/api/v1/businesses/b1/ai_credentials/codex/device/start', (r) =>
-    r.fulfill({ json: { pending_id: 'p1', user_code: 'ABCD-1234', verification_uri: 'https://x', verification_uri_complete: 'https://x?c=ABCD', interval: 999, expires_in: 900 } }),
-  );
-  await page.route('**/api/v1/businesses/b1/ai_credentials/codex/device/p1/status', (r) =>
-    r.fulfill({ json: { status: 'pending' } }),
+    r.fulfill({ json: { items: [{ provider: 'openai_codex', model_id: 'gpt-5.4' }] } }),
   );
   await page.route('**/api/v1/businesses/b1/ai_credentials/codex/pkce/start', (r) =>
-    r.fulfill({ json: { pending_id: 'p2', authorize_url: 'https://auth.openai.com/authorize?x=1' } }),
+    r.fulfill({ json: { pending_id: 'p2', authorize_url: 'https://auth.openai.com/oauth/authorize?x=1' } }),
   );
   await page.route('**/api/v1/businesses/b1/ai_credentials/codex/pkce/exchange', (r) => {
     connected = true;
@@ -180,13 +141,11 @@ test('ai-credentials: connect openai_codex via the paste (PKCE) fallback', async
   await page.goto('/credentials/ai');
   await page.getByTestId('credential-add-toggle').click();
   await page.getByTestId('cred-provider').selectOption('openai_codex');
-  await page.getByTestId('codex-model').selectOption('gpt-5-codex');
+  await page.getByTestId('codex-model').selectOption('gpt-5.4');
+  // Primary "Sign in with ChatGPT" starts PKCE and reveals the authorize link + paste field.
   await page.getByTestId('codex-signin').click();
-  await expect(page.getByTestId('codex-user-code')).toContainText('ABCD-1234');
-  // expand the paste disclosure, start PKCE, verify the anchor, paste the redirect URL, finish
-  await page.getByTestId('codex-paste-toggle').click();
-  await page.getByTestId('codex-paste-start').click();
-  await expect(page.getByTestId('codex-paste-open')).toHaveAttribute('href', 'https://auth.openai.com/authorize?x=1');
+  await expect(page.getByTestId('codex-open')).toHaveAttribute('href', 'https://auth.openai.com/oauth/authorize?x=1');
+  // paste the redirect URL from the localhost:1455 tab and finish
   await page.getByTestId('codex-paste-url').fill('http://localhost:1455/auth/callback?code=z&state=p2');
   await page.getByTestId('codex-paste-submit').click();
   await expect(page.getByTestId('codex-health')).toContainText('connected');
@@ -209,4 +168,40 @@ test('ai-credentials: edit a credential concurrency limit', async ({ page }) => 
   await page.getByTestId('credential-edit-lanes').fill('9');
   await page.getByTestId('credential-edit-save').click();
   await expect(page.getByTestId('credential-lanes')).toHaveText('9');
+});
+
+test('ai-credentials: editing an openai_codex credential offers a model dropdown (not free text)', async ({ page }) => {
+  await auth(page);
+  const cx = {
+    id: 'cx1', business_id: 'b1', provider: 'openai_codex', base_url: '', default_model: 'gpt-5.4',
+    allow_private_base_url: false, max_concurrent_lanes: 4, created_at: '2026-07-19T00:00:00Z', updated_at: '2026-07-19T00:00:00Z',
+    chatgpt_plan: 'plus', connection_status: 'connected', oauth_access_expiry: '2026-08-01T00:00:00Z',
+  };
+  let edited = false;
+  await page.route('**/api/v1/businesses/b1/ai_credentials', (r) =>
+    r.fulfill({ json: { items: [edited ? { ...cx, default_model: 'gpt-5.6-sol' } : cx] } }),
+  );
+  // editor prefers the live per-account catalog
+  await page.route('**/api/v1/businesses/b1/ai_credentials/codex/models', (r) =>
+    r.fulfill({ json: { items: [
+      { provider: 'openai_codex', model_id: 'gpt-5.6-sol' },
+      { provider: 'openai_codex', model_id: 'gpt-5.6-terra' },
+      { provider: 'openai_codex', model_id: 'gpt-5.5' },
+    ] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/ai_credentials/cx1', (r) => {
+    if (r.request().method() === 'PATCH') { edited = true; return r.fulfill({ json: { ...cx, default_model: 'gpt-5.6-sol' } }); }
+    return r.fallback();
+  });
+
+  await page.goto('/credentials/ai');
+  await page.getByTestId('credential-edit').click();
+  const sel = page.getByTestId('credential-edit-model');
+  await expect(sel).toBeVisible();
+  // it is a <select> populated from the LIVE per-account codex catalog, not a text box
+  await expect(sel.locator('option')).toHaveText(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5']);
+  await sel.selectOption('gpt-5.6-sol');
+  await page.getByTestId('credential-edit-save').click();
+  await expect(page.getByTestId('credential-edit-model')).toHaveCount(0);
+  await expect(page.getByText('gpt-5.6-sol')).toBeVisible();
 });
