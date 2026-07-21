@@ -24,6 +24,11 @@ func (f *fakeCatalog) CostCents(_ context.Context, _, _ string, _, _ int64) (int
 	return f.cents, f.err
 }
 
+func (f *fakeCatalog) CostMicroCents(_ context.Context, _, _ string, _, _ int64) (int64, error) {
+	f.calls++
+	return f.cents * 1_000_000, f.err
+}
+
 func TestProviderCatalogs_DispatchesByProvider(t *testing.T) {
 	or := &fakeCatalog{models: []ModelInfo{{Provider: "openrouter", ModelID: "a/b"}}, cents: 7}
 	hf := &fakeCatalog{models: []ModelInfo{{Provider: "huggingface", ModelID: "c/d:groq"}}, cents: 11}

@@ -92,6 +92,25 @@ func (h *HuggingFaceModels) CostCents(ctx context.Context, provider, model strin
 	return max(int64(math.Round(usd*100)), 0), nil
 }
 
+// CostMicroCents is CostCents at micro-cent resolution (cents × 1e6) so the review accountant can
+// sum sub-cent lanes and round to whole cents once (manyforge-hdn9).
+func (h *HuggingFaceModels) CostMicroCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error) {
+	if provider != "huggingface" {
+		return 0, nil
+	}
+	if err := h.ensure(ctx); err != nil {
+		return 0, err
+	}
+	h.mu.Lock()
+	p, ok := h.prices[model]
+	h.mu.Unlock()
+	if !ok {
+		return 0, nil
+	}
+	usd := (float64(tokensIn)*p.inPerMTok + float64(tokensOut)*p.outPerMTok) / 1e6
+	return max(int64(math.Round(usd*1e8)), 0), nil
+}
+
 // hfCatalogDoc is the subset of GET /v1/models this cares about.
 type hfCatalogDoc struct {
 	Data []struct {

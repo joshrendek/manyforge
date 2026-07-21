@@ -90,11 +90,14 @@ type installationTokenSource interface {
 	Token(ctx context.Context, installationID int64, repo string) (string, error)
 }
 
-// CostEstimator prices a run from its token counts. Implemented by
-// *agents.OpenRouterModels (live OpenRouter pricing). Returns 0 (no error) for
-// providers/models it can't price, so usage capture never fails a review.
+// CostEstimator prices a run from its token counts. Implemented by *agents.ProviderCatalogs (live
+// OpenRouter/HuggingFace pricing). Returns 0 (no error) for providers/models it can't price, so
+// usage capture never fails a review. CostMicroCents is CostCents at micro-cent resolution — the
+// review accountant uses it so sub-cent per-lane costs sum to a real total instead of each
+// rounding to 0 (manyforge-hdn9).
 type CostEstimator interface {
 	CostCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error)
+	CostMicroCents(ctx context.Context, provider, model string, tokensIn, tokensOut int64) (int64, error)
 }
 
 // CodeReviewService orchestrates the code-review agent lifecycle.
@@ -802,15 +805,12 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		// which dominate the agentic loop (opencode re-reads the cached context every turn).
 		lr := laneResult{Dim: dim, Model: laneCred.Model, Provider: laneCred.Provider,
 			TokensIn: clampInt32(totalUsage.Input + totalUsage.CacheRead), TokensOut: clampInt32(totalUsage.Output + totalUsage.Reasoning)}
-		// Prefer opencode's own cost (it prices cache-read tokens correctly); fall back to
-		// catalog pricing only when opencode couldn't price the model (custom slug ⇒ cost 0).
-		if c, priced := costCentsFromUsage(totalUsage); priced {
-			lr.CostCents = c
-		} else if s.Pricing != nil {
-			if c, perr := s.Pricing.CostCents(ctx, laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut)); perr == nil {
-				lr.CostCents = c
-			}
-		}
+		// Price the lane in micro-cents (opencode's own cost, else catalog); the review total sums
+		// lanes in this unit and rounds to whole cents ONCE, so cheap-model sub-cent lanes aren't
+		// each zeroed (manyforge-hdn9).
+		lr.CostMicroCents = laneCostMicroCents(ctx, totalUsage, s.Pricing,
+			laneCred.Provider, laneCred.Model, int64(lr.TokensIn), int64(lr.TokensOut))
+		lr.CostCents = roundMicroCentsToCents(lr.CostMicroCents) // per-lane rounded view for display
 		if laneErr != nil {
 			lr.Err = laneErr
 			lr.FailReason = reason
@@ -1450,11 +1450,33 @@ func addUsage(a, b sandboxUsage) sandboxUsage {
 // catalog pricing because opencode prices cache-read tokens correctly (the host's token
 // catalog does not). A zero cost means opencode couldn't price the model (e.g. a custom
 // slug) → priced=false so the caller falls back to catalog pricing.
-func costCentsFromUsage(u sandboxUsage) (cents int64, priced bool) {
+// microCentsFromUsage converts opencode's own USD cost into micro-cents (cents × 1e6), keeping
+// sub-cent precision. priced is false when opencode's Cost is not > 0 (it couldn't price the
+// model), so the caller falls back to the catalog. Rounding to whole cents happens ONCE on the
+// summed review total, so a review of cheap models across many lanes isn't recorded as $0.
+func microCentsFromUsage(u sandboxUsage) (microCents int64, priced bool) {
 	if u.Cost > 0 {
-		return int64(math.Round(u.Cost * 100)), true
+		return int64(math.Round(u.Cost * 1e8)), true // USD → micro-cents: × 100 (cents) × 1e6 (micro)
 	}
 	return 0, false
+}
+
+// laneCostMicroCents prices one review lane in micro-cents (cents × 1e6). It prefers opencode's own
+// USD cost (which prices cache-read tokens correctly, at sub-cent precision) and falls back to the
+// catalog's live per-token price only when opencode couldn't price the model (custom slug ⇒ Cost
+// 0). Working in micro-cents lets the review total sum sub-cent lanes and round to whole cents
+// once — never per lane (manyforge-hdn9). A nil pricing seam or a pricing error yields 0 (usage
+// capture never fails a review).
+func laneCostMicroCents(ctx context.Context, usage sandboxUsage, pricing CostEstimator, provider, model string, tokensIn, tokensOut int64) int64 {
+	if mc, priced := microCentsFromUsage(usage); priced {
+		return mc
+	}
+	if pricing != nil {
+		if mc, err := pricing.CostMicroCents(ctx, provider, model, tokensIn, tokensOut); err == nil {
+			return mc
+		}
+	}
+	return 0
 }
 
 // errNoReviewOutput indicates the sandbox run's Outputs carried no review.json — e.g. a
