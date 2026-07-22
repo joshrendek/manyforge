@@ -183,9 +183,11 @@ func TestRun_BudgetReachedMidRun(t *testing.T) {
 	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	ag := loadedAgent()
 	ag.MonthlyBudgetCents = 5 // < the 6-cent response cost → tripped only after the priced call
+	// A mid-run limit is a terminal run STATE (run.Status/run.Error), not a Go error — unlike
+	// the refuse-at-start path above. Mirrors TestRun_MaxTokensBound.
 	run, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
-	if err == nil {
-		t.Fatal("a run that crosses budget mid-run must return an error")
+	if err != nil {
+		t.Fatalf("mid-run budget abort is a terminal state, not a Go error; got err=%v", err)
 	}
 	if run.Status != RunFailed || run.Error == nil || *run.Error != "monthly budget exceeded mid-run" {
 		t.Fatalf("want RunFailed 'monthly budget exceeded mid-run'; got status=%s err=%v", run.Status, run.Error)
