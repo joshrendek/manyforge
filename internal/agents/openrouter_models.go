@@ -65,11 +65,11 @@ func (o *OpenRouterModels) ProviderModels(ctx context.Context, provider string) 
 	if provider != "openrouter" {
 		return nil, nil
 	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if err := o.load(ctx); err != nil {
+	if err := o.ensure(ctx); err != nil {
 		return nil, err
 	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	return o.cache, nil
 }
 
@@ -82,21 +82,17 @@ func (o *OpenRouterModels) CostCents(ctx context.Context, provider, model string
 	if provider != "openrouter" {
 		return 0, nil
 	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if err := o.load(ctx); err != nil {
+	if err := o.ensure(ctx); err != nil {
 		return 0, err
 	}
+	o.mu.Lock()
 	p, ok := o.prices[model]
+	o.mu.Unlock()
 	if !ok {
 		return 0, nil
 	}
 	usd := float64(tokensIn)*p.inPerTok + float64(tokensOut)*p.outPerTok
-	cents := int64(math.Round(usd * 100))
-	if cents < 0 {
-		cents = 0
-	}
-	return cents, nil
+	return max(int64(math.Round(usd*100)), 0), nil
 }
 
 // CostMicroCents is CostCents at micro-cent resolution (cents × 1e6). The review accountant sums
@@ -106,12 +102,12 @@ func (o *OpenRouterModels) CostMicroCents(ctx context.Context, provider, model s
 	if provider != "openrouter" {
 		return 0, nil
 	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if err := o.load(ctx); err != nil {
+	if err := o.ensure(ctx); err != nil {
 		return 0, err
 	}
+	o.mu.Lock()
 	p, ok := o.prices[model]
+	o.mu.Unlock()
 	if !ok {
 		return 0, nil
 	}
@@ -119,27 +115,44 @@ func (o *OpenRouterModels) CostMicroCents(ctx context.Context, provider, model s
 	return max(int64(math.Round(usd*1e8)), 0), nil // USD → micro-cents: × 100 (cents) × 1e6 (micro)
 }
 
-// load fetches and caches the OpenRouter catalog (models + pricing). Caller MUST
-// hold o.mu. No-op within the TTL.
-func (o *OpenRouterModels) load(ctx context.Context) error {
-	if o.cache != nil && time.Since(o.fetchedAt) < o.ttl() {
+// ensure refreshes the cache when empty/stale. The HTTP fetch runs OUTSIDE o.mu (manyforge-9v9):
+// the lock only guards the fast freshness check and the store, never the ~network-latency call, so
+// concurrent review lanes aren't serialized behind one fetch. Mirrors HuggingFaceModels.ensure.
+func (o *OpenRouterModels) ensure(ctx context.Context) error {
+	o.mu.Lock()
+	fresh := o.cache != nil && time.Since(o.fetchedAt) < o.ttl()
+	o.mu.Unlock()
+	if fresh {
 		return nil
 	}
+	models, prices, err := o.fetch(ctx)
+	if err != nil {
+		return err
+	}
+	o.mu.Lock()
+	o.cache, o.prices, o.fetchedAt = models, prices, time.Now()
+	o.mu.Unlock()
+	return nil
+}
+
+// fetch pulls and parses the OpenRouter catalog (models + pricing). It touches no shared state, so
+// it runs unlocked.
+func (o *OpenRouterModels) fetch(ctx context.Context) ([]ModelInfo, map[string]orPrice, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.url(), nil)
 	if err != nil {
-		return fmt.Errorf("openrouter models: build request: %w", err)
+		return nil, nil, fmt.Errorf("openrouter models: build request: %w", err)
 	}
 	resp, err := o.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("openrouter models: fetch: %w", err)
+		return nil, nil, fmt.Errorf("openrouter models: fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("openrouter models: upstream status %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("openrouter models: upstream status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20)) // cap at 8MiB
 	if err != nil {
-		return fmt.Errorf("openrouter models: read body: %w", err)
+		return nil, nil, fmt.Errorf("openrouter models: read body: %w", err)
 	}
 	var doc struct {
 		Data []struct {
@@ -151,7 +164,7 @@ func (o *OpenRouterModels) load(ctx context.Context) error {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return fmt.Errorf("openrouter models: parse: %w", err)
+		return nil, nil, fmt.Errorf("openrouter models: parse: %w", err)
 	}
 	out := make([]ModelInfo, 0, len(doc.Data))
 	prices := make(map[string]orPrice, len(doc.Data))
@@ -164,8 +177,5 @@ func (o *OpenRouterModels) load(ctx context.Context) error {
 		outp, _ := strconv.ParseFloat(m.Pricing.Completion, 64) // "" → 0
 		prices[m.ID] = orPrice{inPerTok: in, outPerTok: outp}
 	}
-	o.cache = out
-	o.prices = prices
-	o.fetchedAt = time.Now()
-	return nil
+	return out, prices, nil
 }

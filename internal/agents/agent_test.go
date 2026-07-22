@@ -125,6 +125,7 @@ func TestValidateCreateAgent(t *testing.T) {
 	}{
 		{"empty name", func(in *CreateAgentInput) { in.Name = "" }},
 		{"unknown provider", func(in *CreateAgentInput) { in.Provider = "bedrock" }},
+		{"review-only provider (codex)", func(in *CreateAgentInput) { in.Provider = "openai_codex" }},
 		{"empty model", func(in *CreateAgentInput) { in.Model = "" }},
 		{"mode 0", func(in *CreateAgentInput) { in.AutonomyMode = 0 }},
 		{"mode 4", func(in *CreateAgentInput) { in.AutonomyMode = 4 }},
