@@ -1,10 +1,11 @@
 // Finding: manyforge-6fx.2 — model_pricing pricing key must be provider-aware.
-// The original sole model_id PRIMARY KEY (0038) let a $0 openai_codex 'gpt-5' (seeds
-// 0097/0098) claim the id globally: a metered same-named model of another provider would
-// be dropped by ON CONFLICT (model_id) DO NOTHING and any run with that id would resolve
-// to the $0 codex row. The fix widens the DB PK to (provider, model_id) and keys ai.Registry
-// the same way. These pins fail loudly if either half is reverted (they must move together:
-// a composite DB PK with a provider-blind in-memory registry would collide non-deterministically).
+// The original sole model_id PRIMARY KEY (0038) let one model_id be claimed globally by any
+// provider (0097 first seeded ('gpt-5','openai_codex',0,0); 0098 later swapped the codex catalog
+// to gpt-5.4/5.5/5.6-*, all $0): a metered same-named model of another provider would be dropped
+// by ON CONFLICT (model_id) DO NOTHING and any run with that id would resolve to the $0 codex row.
+// The fix widens the DB PK to (provider, model_id) and keys ai.Registry the same way. These pins
+// fail loudly if either half is reverted (they must move together: a composite DB PK with a
+// provider-blind in-memory registry would collide non-deterministically).
 package security_regression
 
 import (

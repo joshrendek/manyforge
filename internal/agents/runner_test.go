@@ -173,6 +173,28 @@ func TestRun_BudgetRefusesStart(t *testing.T) {
 	}
 }
 
+// TestRun_BudgetReachedMidRun: a run that STARTS under budget but whose priced response pushes
+// month-to-date at/over MonthlyBudgetCents aborts with the mid-run budget reason — distinct from
+// the refuse-at-start path above. Exercises the cost-accumulation → budget-guard seam the
+// provider-scoped Cost change feeds (manyforge-6fx.2 review follow-up).
+func TestRun_BudgetReachedMidRun(t *testing.T) {
+	prov := ai.NewMockProvider(finalText("done")) // usage 4/2 → 6 cents under the token-total test Cost fn
+	store := &fakeRunStore{}                       // mtd = 0: the run starts strictly under budget
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	ag := loadedAgent()
+	ag.MonthlyBudgetCents = 5 // < the 6-cent response cost → tripped only after the priced call
+	run, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
+	if err == nil {
+		t.Fatal("a run that crosses budget mid-run must return an error")
+	}
+	if run.Status != RunFailed || run.Error == nil || *run.Error != "monthly budget exceeded mid-run" {
+		t.Fatalf("want RunFailed 'monthly budget exceeded mid-run'; got status=%s err=%v", run.Status, run.Error)
+	}
+	if len(prov.Requests()) != 1 {
+		t.Fatalf("provider should be called once before the budget aborts; got %d", len(prov.Requests()))
+	}
+}
+
 func TestRun_AllowlistDenied(t *testing.T) {
 	tid := uuid.New()
 	prov := ai.NewMockProvider(
