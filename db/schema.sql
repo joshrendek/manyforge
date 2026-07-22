@@ -427,7 +427,7 @@ CREATE INDEX mcp_tool_policy_business_idx ON mcp_tool_policy (business_id, tenan
 -- security: system catalog, no tenant scoping (like permission in 0003) — no RLS,
 -- SELECT-only grant; writes happen via migration, never from the app.
 CREATE TABLE model_pricing (
-    model_id              text PRIMARY KEY,
+    model_id              text NOT NULL,
     provider              text NOT NULL,
     display_name          text NOT NULL,
     context_window        integer NOT NULL,
@@ -436,7 +436,10 @@ CREATE TABLE model_pricing (
     supports_tools        boolean NOT NULL,
     enabled               boolean NOT NULL,
     created_at            timestamptz NOT NULL,
-    updated_at            timestamptz NOT NULL
+    updated_at            timestamptz NOT NULL,
+    -- Provider-aware PK (manyforge-6fx.2): a $0 openai_codex 'gpt-5' must not claim the
+    -- model_id globally and shadow a metered same-named model of another provider.
+    PRIMARY KEY (provider, model_id)
 );
 
 -- ============================================================================

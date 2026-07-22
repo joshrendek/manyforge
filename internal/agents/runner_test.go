@@ -81,7 +81,7 @@ func newTestEngine(prov ai.Provider, store runStore, perms map[string]bool, reg 
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return prov, "claude-sonnet-4-5", nil
 		},
-		Cost:   func(_ string, u ai.Usage) int64 { return int64(u.Total()) },
+		Cost:   func(_, _ string, u ai.Usage) int64 { return int64(u.Total()) },
 		Limits: RunLimits{MaxIterations: 4, MaxTokensPerRun: 1000, MaxOutputTokens: 256, WallClock: defaultWallClock},
 	}
 	return eng, aud, ap
@@ -170,6 +170,30 @@ func TestRun_BudgetRefusesStart(t *testing.T) {
 	}
 	if len(prov.Requests()) != 0 {
 		t.Fatal("provider must not be called when budget refuses start")
+	}
+}
+
+// TestRun_BudgetReachedMidRun: a run that STARTS under budget but whose priced response pushes
+// month-to-date at/over MonthlyBudgetCents aborts with the mid-run budget reason — distinct from
+// the refuse-at-start path above. Exercises the cost-accumulation → budget-guard seam the
+// provider-scoped Cost change feeds (manyforge-6fx.2 review follow-up).
+func TestRun_BudgetReachedMidRun(t *testing.T) {
+	prov := ai.NewMockProvider(finalText("done")) // usage 4/2 → 6 cents under the token-total test Cost fn
+	store := &fakeRunStore{}                       // mtd = 0: the run starts strictly under budget
+	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	ag := loadedAgent()
+	ag.MonthlyBudgetCents = 5 // < the 6-cent response cost → tripped only after the priced call
+	// A mid-run limit is a terminal run STATE (run.Status/run.Error), not a Go error — unlike
+	// the refuse-at-start path above. Mirrors TestRun_MaxTokensBound.
+	run, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil)
+	if err != nil {
+		t.Fatalf("mid-run budget abort is a terminal state, not a Go error; got err=%v", err)
+	}
+	if run.Status != RunFailed || run.Error == nil || *run.Error != "monthly budget exceeded mid-run" {
+		t.Fatalf("want RunFailed 'monthly budget exceeded mid-run'; got status=%s err=%v", run.Status, run.Error)
+	}
+	if len(prov.Requests()) != 1 {
+		t.Fatalf("provider should be called once before the budget aborts; got %d", len(prov.Requests()))
 	}
 }
 
@@ -354,6 +378,24 @@ func TestRun_CostAndTokensAccumulated(t *testing.T) {
 	}
 }
 
+// TestRun_CostReceivesProviderAndModel: the runner forwards the agent's provider AND resolved
+// model to the Cost seam (runner.go passes ag.Provider) — so provider-scoped pricing (6fx.2)
+// keys on the right provider at RUNTIME, not merely in the registry/cost-fn unit tests where the
+// injected Cost discards both args.
+func TestRun_CostReceivesProviderAndModel(t *testing.T) {
+	var gotProvider, gotModel string
+	prov := ai.NewMockProvider(finalText("done"))
+	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	eng.Cost = func(provider, model string, _ ai.Usage) int64 { gotProvider, gotModel = provider, model; return 0 }
+	ag := loadedAgent() // Provider "anthropic"; newTestEngine's NewProvider resolves model "claude-sonnet-4-5"
+	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if gotProvider != "anthropic" || gotModel != "claude-sonnet-4-5" {
+		t.Fatalf("Cost got (%q, %q), want (anthropic, claude-sonnet-4-5) — runner must forward ag.Provider + resolved model", gotProvider, gotModel)
+	}
+}
+
 func TestRun_ProviderErrorFailsRun(t *testing.T) {
 	prov := ai.NewMockProvider() // empty queue → exhausted on first Complete
 	store := &fakeRunStore{}
@@ -392,7 +434,7 @@ func TestRun_ResolverErrorDeniesTool(t *testing.T) {
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return prov, "claude-sonnet-4-5", nil
 		},
-		Cost:   func(_ string, u ai.Usage) int64 { return int64(u.Total()) },
+		Cost:   func(_, _ string, u ai.Usage) int64 { return int64(u.Total()) },
 		Limits: RunLimits{MaxIterations: 4, MaxTokensPerRun: 1000, MaxOutputTokens: 256, WallClock: defaultWallClock},
 	}
 	_, _ = eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)
