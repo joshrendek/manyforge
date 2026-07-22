@@ -88,8 +88,10 @@ type Engine struct {
 	Resolver    permChecker
 	Approvals   approvalWriter
 	NewProvider providerFactory
-	Cost        func(provider, model string, u ai.Usage) int64
-	Limits      RunLimits
+	// Cost prices one call's usage. Keyed by (provider, model) — pricing is provider-scoped
+	// so a $0 openai_codex model can't shadow a metered same-named model (manyforge-6fx.2).
+	Cost   func(provider, model string, u ai.Usage) int64
+	Limits RunLimits
 }
 
 // Run executes the loop. agentPrincipalID is the agent's kind='agent' principal (its
