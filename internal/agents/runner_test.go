@@ -81,7 +81,7 @@ func newTestEngine(prov ai.Provider, store runStore, perms map[string]bool, reg 
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return prov, "claude-sonnet-4-5", nil
 		},
-		Cost:   func(_ string, u ai.Usage) int64 { return int64(u.Total()) },
+		Cost:   func(_, _ string, u ai.Usage) int64 { return int64(u.Total()) },
 		Limits: RunLimits{MaxIterations: 4, MaxTokensPerRun: 1000, MaxOutputTokens: 256, WallClock: defaultWallClock},
 	}
 	return eng, aud, ap
@@ -392,7 +392,7 @@ func TestRun_ResolverErrorDeniesTool(t *testing.T) {
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return prov, "claude-sonnet-4-5", nil
 		},
-		Cost:   func(_ string, u ai.Usage) int64 { return int64(u.Total()) },
+		Cost:   func(_, _ string, u ai.Usage) int64 { return int64(u.Total()) },
 		Limits: RunLimits{MaxIterations: 4, MaxTokensPerRun: 1000, MaxOutputTokens: 256, WallClock: defaultWallClock},
 	}
 	_, _ = eng.run(context.Background(), uuid.New(), loadedAgent("set_status"), "manual", nil, nil)

@@ -88,7 +88,7 @@ type Engine struct {
 	Resolver    permChecker
 	Approvals   approvalWriter
 	NewProvider providerFactory
-	Cost        func(model string, u ai.Usage) int64
+	Cost        func(provider, model string, u ai.Usage) int64
 	Limits      RunLimits
 }
 
@@ -277,7 +277,7 @@ func (e *Engine) execute(ctx context.Context, agentPrincipalID uuid.UUID, ag Age
 		}
 		tokIn += resp.Usage.InputTokens
 		tokOut += resp.Usage.OutputTokens
-		costCents += e.Cost(model, resp.Usage)
+		costCents += e.Cost(ag.Provider, model, resp.Usage)
 
 		// Token check is strictly-greater (a run that lands exactly on the cap is
 		// allowed to finish); the budget check below is >= (any run at/over the
