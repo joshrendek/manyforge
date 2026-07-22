@@ -26,13 +26,21 @@ type httpProber struct{ Timeout time.Duration }
 // Live probes OpenAI-compatible providers with GET {base_url}/models through a netsafe
 // client that honors the credential's private-host opt-in — so a LAN address like
 // 192.168.x.x is reachable only when allow_private_base_url is set, matching every other
-// outbound path (no SSRF regression). Anthropic has no cheap unauthenticated probe
-// endpoint, so it is assumed live and covered reactively by the worker retry. Any
-// transport error (connection refused, DNS failure, blocked private IP, timeout) or
-// non-2xx status ⇒ not live. huggingface IS probed: the router serves GET /v1/models
-// publicly and fast.
+// outbound path (no SSRF regression). Any transport error (connection refused, DNS
+// failure, blocked private IP, timeout) or non-2xx status ⇒ not live. huggingface IS
+// probed: the router serves GET /v1/models publicly and fast.
+//
+// Two providers are assumed live (no HTTP probe): anthropic has no cheap unauthenticated
+// probe endpoint; openai_codex's ChatGPT backend answers GET /models only to a request
+// carrying ChatGPT-Account-Id + originator + a versioned codex User-Agent + a fresh OAuth
+// access token (a bare Bearer GET 403s — manyforge-6fx), so a generic probe here would
+// ALWAYS mark a healthy codex down. Codex liveness is instead enforced at credential-resolve
+// time: the access token is refreshed-or-fails just before launch, so a genuinely dead codex
+// surfaces as an unresolvable candidate the fallback chain already skips. Both are covered
+// reactively by the worker retry.
 func (p httpProber) Live(ctx context.Context, cred AICredential) bool {
-	if strings.EqualFold(cred.Provider, "anthropic") {
+	switch strings.ToLower(cred.Provider) {
+	case "anthropic", "openai_codex":
 		return true
 	}
 	if cred.BaseURL == "" {
