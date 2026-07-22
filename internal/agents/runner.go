@@ -88,8 +88,9 @@ type Engine struct {
 	Resolver    permChecker
 	Approvals   approvalWriter
 	NewProvider providerFactory
-	// Cost prices one call's usage. Keyed by (provider, model) — pricing is provider-scoped
-	// so a $0 openai_codex model can't shadow a metered same-named model (manyforge-6fx.2).
+	// Cost returns one call's cost in integer cents. Keyed by (provider, model) — pricing is
+	// provider-scoped so a $0 openai_codex model can't shadow a metered same-named model
+	// (manyforge-6fx.2). An uncatalogued model returns 0 (self-host has no marginal cost).
 	Cost   func(provider, model string, u ai.Usage) int64
 	Limits RunLimits
 }
