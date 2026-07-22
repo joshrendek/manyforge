@@ -76,9 +76,13 @@ var (
 	}
 	// knownAIProviders gates a dimension's provider, each fallback_chain[].provider, and
 	// verify_provider. Mirrors agents.knownProviders / the ai_provider PG enum — keep in sync.
+	// openai_codex IS allowed here (unlike agent creation, which rejects it): a review runs in the
+	// opencode sandbox, which supports the ChatGPT-subscription Codex backend, so a dimension can
+	// legitimately run on a connected codex credential (manyforge-6fx). Omitting it made the review
+	// setup UI reject "Sign in with ChatGPT" providers with "invalid dimension config".
 	knownAIProviders = map[string]bool{
 		"anthropic": true, "openai": true, "ollama": true, "vllm": true, "openrouter": true,
-		"huggingface": true,
+		"huggingface": true, "openai_codex": true,
 	}
 	knownSeverities = map[string]bool{"info": true, "warning": true, "error": true}
 	knownPostModes  = map[string]bool{"single": true, "per_dimension": true}
