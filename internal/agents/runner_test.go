@@ -378,6 +378,24 @@ func TestRun_CostAndTokensAccumulated(t *testing.T) {
 	}
 }
 
+// TestRun_CostReceivesProviderAndModel: the runner forwards the agent's provider AND resolved
+// model to the Cost seam (runner.go passes ag.Provider) — so provider-scoped pricing (6fx.2)
+// keys on the right provider at RUNTIME, not merely in the registry/cost-fn unit tests where the
+// injected Cost discards both args.
+func TestRun_CostReceivesProviderAndModel(t *testing.T) {
+	var gotProvider, gotModel string
+	prov := ai.NewMockProvider(finalText("done"))
+	eng, _, _ := newTestEngine(prov, &fakeRunStore{}, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
+	eng.Cost = func(provider, model string, _ ai.Usage) int64 { gotProvider, gotModel = provider, model; return 0 }
+	ag := loadedAgent() // Provider "anthropic"; newTestEngine's NewProvider resolves model "claude-sonnet-4-5"
+	if _, err := eng.run(context.Background(), uuid.New(), ag, "manual", nil, nil); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if gotProvider != "anthropic" || gotModel != "claude-sonnet-4-5" {
+		t.Fatalf("Cost got (%q, %q), want (anthropic, claude-sonnet-4-5) — runner must forward ag.Provider + resolved model", gotProvider, gotModel)
+	}
+}
+
 func TestRun_ProviderErrorFailsRun(t *testing.T) {
 	prov := ai.NewMockProvider() // empty queue → exhausted on first Complete
 	store := &fakeRunStore{}
