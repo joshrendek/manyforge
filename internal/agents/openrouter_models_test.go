@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,5 +103,77 @@ func TestOpenRouterModels_Caches(t *testing.T) {
 	}
 	if atomic.LoadInt32(&hits) != 1 {
 		t.Errorf("expected 1 upstream fetch (cached after), got %d", hits)
+	}
+}
+
+// Every review lane calls CostCents; the cold-cache refresh must NOT hold o.mu across its HTTP
+// fetch, or concurrent lanes serialize behind one request (manyforge-9v9).
+//
+// A wall-clock assertion can't pin this: with a cold cache, the buggy (locked) path also finishes
+// in ~1*latency because the first fetch warms the cache and the blocked callers then short-circuit
+// on the freshness check — only the *number* of overlapping fetches differs, not the elapsed time.
+// So we assert overlap directly with a barrier: each fetch parks until at least two are in-flight
+// at once. If the fetch runs unlocked (fixed), all callers reach the barrier together and it
+// releases immediately. If the fetch runs under o.mu (regressed), callers serialize, only ever one
+// reaches the handler, the barrier never opens, and the guard timeout trips the failure. Run under
+// -race, which also guards the cache publish.
+func TestOpenRouterModels_ConcurrentCallersDoNotSerializeOnTheFetch(t *testing.T) {
+	const callers = 8
+	var inflight, maxInflight atomic.Int64
+	opened := make(chan struct{})
+	var openOnce sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := inflight.Add(1)
+		defer inflight.Add(-1)
+		for m := maxInflight.Load(); n > m; m = maxInflight.Load() {
+			if maxInflight.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		if n >= 2 {
+			openOnce.Do(func() { close(opened) })
+		}
+		select {
+		case <-opened: // fixed path: a second concurrent fetch arrived → release
+		case <-time.After(2 * time.Second): // regressed path: serialized, no overlap ever comes
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(sampleOpenRouterModels))
+	}))
+	defer srv.Close()
+	o := &OpenRouterModels{HTTP: srv.Client(), URL: srv.URL, TTL: time.Hour}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := range callers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			var err error
+			if i%2 == 0 {
+				_, err = o.ProviderModels(context.Background(), "openrouter")
+			} else {
+				_, err = o.CostCents(context.Background(), "openrouter", "openai/gpt-4o", 1, 1)
+			}
+			if err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent caller: %v", err)
+	}
+
+	if maxInflight.Load() < 2 {
+		t.Errorf("catalog fetches never overlapped (max concurrent in-flight = %d) — the fetch appears to run under o.mu, serializing review lanes", maxInflight.Load())
+	}
+	// A warm cache must not refetch: the counters stay put on a subsequent read.
+	if _, err := o.ProviderModels(context.Background(), "openrouter"); err != nil {
+		t.Fatalf("post-warm read: %v", err)
+	}
+	if n := inflight.Load(); n != 0 {
+		t.Errorf("a fetch is still in flight after warm read: %d", n)
 	}
 }
