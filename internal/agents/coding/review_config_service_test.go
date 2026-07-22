@@ -85,6 +85,17 @@ func TestValidateDimensionInput(t *testing.T) {
 	if err := validateDimensionInput(okFb); err != nil {
 		t.Fatalf("valid primary+fallback rejected: %v", err)
 	}
+	// openai_codex is a valid REVIEW provider (opencode runs it in the sandbox) — as primary and as
+	// a fallback entry — even though agent creation rejects it (manyforge-6fx). Regression for the
+	// "invalid dimension config" the setup UI raised on "Sign in with ChatGPT" providers.
+	okCodex := ReviewDimensionInput{Dimension: "security", MinSeverity: "warning", Provider: "openai_codex", Model: "gpt-5.6-sol"}
+	if err := validateDimensionInput(okCodex); err != nil {
+		t.Fatalf("openai_codex primary rejected: %v", err)
+	}
+	okCodexFb := ReviewDimensionInput{Dimension: "tests", MinSeverity: "info", Provider: "openrouter", Model: "deepseek", FallbackChain: []FallbackEntry{{Provider: "openai_codex", Model: "gpt-5.6-sol"}}}
+	if err := validateDimensionInput(okCodexFb); err != nil {
+		t.Fatalf("openai_codex fallback entry rejected: %v", err)
+	}
 	okChain := ReviewDimensionInput{Dimension: "docs", MinSeverity: "info", FallbackChain: []FallbackEntry{
 		{Provider: "openrouter", Model: "a"}, {Provider: "vllm", Model: "b"}, {Provider: "anthropic", Model: "c"},
 	}}
