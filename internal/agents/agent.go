@@ -97,6 +97,13 @@ func validateCreateAgent(in CreateAgentInput) error {
 	if !knownProviders[in.Provider] {
 		return fmt.Errorf("agents: unknown provider %q: %w", in.Provider, errs.ErrValidation)
 	}
+	if in.Provider == "openai_codex" {
+		// openai_codex ("Sign in with ChatGPT") is a review-sandbox-only credential — opencode
+		// impersonates the Codex CLI against the ChatGPT backend, and ai.New refuses to build a
+		// general client for it. Reject it up front so an agent can't be created stuck on a
+		// provider that only fails at run time (manyforge-3n8l).
+		return fmt.Errorf("agents: provider %q is review-only and cannot back an agent: %w", in.Provider, errs.ErrValidation)
+	}
 	if in.Model == "" {
 		return fmt.Errorf("agents: model required: %w", errs.ErrValidation)
 	}
