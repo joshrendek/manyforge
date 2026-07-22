@@ -241,8 +241,8 @@ func TestUS5_TriageAcceptanceThread(t *testing.T) {
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return mock, ag.Model, nil
 		},
-		Cost: func(model string, u ai.Usage) int64 {
-			m, ok := reg.Lookup(model)
+		Cost: func(provider, model string, u ai.Usage) int64 {
+			m, ok := reg.Lookup(provider, model)
 			if !ok {
 				return 0
 			}

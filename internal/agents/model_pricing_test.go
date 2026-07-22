@@ -81,11 +81,15 @@ func TestRegistryCostFn_UnknownModelIsFree(t *testing.T) {
 	cost := NewRegistryCostFn(reg, nil)
 
 	// A self-hosted model absent from the catalog costs 0 — never an error/panic.
-	if c := cost("llama3.1:70b", ai.Usage{InputTokens: 1000, OutputTokens: 1000}); c != 0 {
+	if c := cost("ollama", "llama3.1:70b", ai.Usage{InputTokens: 1000, OutputTokens: 1000}); c != 0 {
 		t.Fatalf("unknown model cost = %d, want 0", c)
 	}
 	// Sanity: a known model still prices > 0 (the fn isn't always-zero).
-	if c := cost("gpt-4o", ai.Usage{InputTokens: 1_000_000, OutputTokens: 0}); c <= 0 {
+	if c := cost("openai", "gpt-4o", ai.Usage{InputTokens: 1_000_000, OutputTokens: 0}); c <= 0 {
 		t.Fatalf("known model cost = %d, want > 0", c)
+	}
+	// A known id under the WRONG provider misses (provider-scoped) → free, not mispriced.
+	if c := cost("openai_codex", "gpt-4o", ai.Usage{InputTokens: 1_000_000, OutputTokens: 0}); c != 0 {
+		t.Fatalf("gpt-4o under a non-owning provider cost = %d, want 0 (provider-scoped)", c)
 	}
 }

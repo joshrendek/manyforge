@@ -50,8 +50,8 @@ func buildMCPEngine(tdb *testdb.TestDB, mc mcp.ClientLike) (*Engine, *ApprovalSt
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return nil, "", errors.New("provider not scripted for this sub-test")
 		},
-		Cost: func(model string, u ai.Usage) int64 {
-			m, ok := reg.Lookup(model)
+		Cost: func(provider, model string, u ai.Usage) int64 {
+			m, ok := reg.Lookup(provider, model)
 			if !ok {
 				return 0
 			}
@@ -287,8 +287,8 @@ func testMCPDiscoveryFailOpen(t *testing.T) {
 		NewProvider: func(_ context.Context, _, _ uuid.UUID, _ string) (ai.Provider, string, error) {
 			return mockAI, ag.Model, nil
 		},
-		Cost: func(model string, u ai.Usage) int64 {
-			m, ok := reg.Lookup(model)
+		Cost: func(provider, model string, u ai.Usage) int64 {
+			m, ok := reg.Lookup(provider, model)
 			if !ok {
 				return 0
 			}

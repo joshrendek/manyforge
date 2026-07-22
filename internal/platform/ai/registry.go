@@ -30,28 +30,35 @@ func ceilDiv(a, b int64) int64 {
 	return (a + b - 1) / b
 }
 
+// modelKey identifies a model by (provider, id). Pricing is keyed provider-first so a
+// $0 openai_codex 'gpt-5' cannot shadow a metered same-named model of another provider —
+// mirrors the model_pricing composite PK (provider, model_id). manyforge-6fx.2.
+type modelKey struct{ provider, id string }
+
 // Registry is a concurrency-safe model catalog. Seeded with known models at
 // startup; self-hosters register local models (e.g. an ollama tag) too.
 type Registry struct {
 	mu     sync.RWMutex
-	models map[string]Model
+	models map[modelKey]Model
 }
 
 // NewRegistry returns an empty registry.
-func NewRegistry() *Registry { return &Registry{models: map[string]Model{}} }
+func NewRegistry() *Registry { return &Registry{models: map[modelKey]Model{}} }
 
-// Register adds or replaces a model by ID.
+// Register adds or replaces a model, keyed by its (Provider, ID).
 func (r *Registry) Register(m Model) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.models[m.ID] = m
+	r.models[modelKey{m.Provider, m.ID}] = m
 }
 
-// Lookup returns the model by ID and whether it is known.
-func (r *Registry) Lookup(id string) (Model, bool) {
+// Lookup returns the model for a (provider, id) and whether it is known. The provider
+// is required: pricing is provider-scoped, so the same id under a different provider is
+// a different model (or a miss).
+func (r *Registry) Lookup(provider, id string) (Model, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	m, ok := r.models[id]
+	m, ok := r.models[modelKey{provider, id}]
 	return m, ok
 }
 

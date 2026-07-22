@@ -15,7 +15,7 @@ func TestUS8_UnknownSelfHostModelCostsZero(t *testing.T) {
 	reg := ai.NewRegistry()
 	ai.RegisterDefaults(reg)
 	cost := agents.NewRegistryCostFn(reg, nil)
-	if c := cost("qwen2.5:32b", ai.Usage{InputTokens: 50_000, OutputTokens: 50_000}); c != 0 {
+	if c := cost("ollama", "qwen2.5:32b", ai.Usage{InputTokens: 50_000, OutputTokens: 50_000}); c != 0 {
 		t.Fatalf("unknown self-host model cost = %d, want 0", c)
 	}
 }

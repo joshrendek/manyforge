@@ -31,12 +31,12 @@ func modelRowToAIModel(r dbgen.ListModelPricingRow) ai.Model {
 // the pricing catalog (e.g. a self-hosted Ollama/vLLM tag, whose ids are user-defined
 // and unbounded) costs 0 — self-hosting has no marginal token cost — and the miss is
 // debug-logged so a missing-but-paid model is still noticeable. logger may be nil.
-func NewRegistryCostFn(reg *ai.Registry, logger *slog.Logger) func(model string, u ai.Usage) int64 {
-	return func(model string, u ai.Usage) int64 {
-		m, ok := reg.Lookup(model)
+func NewRegistryCostFn(reg *ai.Registry, logger *slog.Logger) func(provider, model string, u ai.Usage) int64 {
+	return func(provider, model string, u ai.Usage) int64 {
+		m, ok := reg.Lookup(provider, model)
 		if !ok {
 			if logger != nil {
-				logger.Debug("model not in pricing catalog; cost=0", "model", model)
+				logger.Debug("model not in pricing catalog; cost=0", "provider", provider, "model", model)
 			}
 			return 0
 		}
