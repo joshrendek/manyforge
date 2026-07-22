@@ -56,10 +56,24 @@ func TestHTTPProber_AnthropicAssumedLive(t *testing.T) {
 	}
 }
 
+// TestHTTPProber_CodexAssumedLive: openai_codex's ChatGPT backend (chatgpt.com/backend-api/codex)
+// answers only to a request carrying ChatGPT-Account-Id + originator + a versioned codex User-Agent
+// + a fresh OAuth token — a bare GET /models 403s — so there is no cheap unauthenticated probe. Its
+// token validity is instead enforced at credential-resolve time (a dead codex resolves to an
+// unresolvable candidate the fallback chain already skips), so codex is assumed live here and
+// short-circuits without any network call (a 1ms timeout still returns true). manyforge-6fx.
+func TestHTTPProber_CodexAssumedLive(t *testing.T) {
+	p := httpProber{Timeout: time.Millisecond}
+	if !p.Live(context.Background(), AICredential{Provider: "openai_codex", BaseURL: "https://chatgpt.com/backend-api/codex"}) {
+		t.Fatal("openai_codex must be assumed live (no cheap unauthenticated probe; liveness enforced at resolve time)")
+	}
+}
+
 // TestHTTPProber_HuggingFaceIsProbed: unlike anthropic, the HF router serves GET /v1/models
 // publicly and fast, so huggingface takes the normal probe path — a 200 is live, a timeout or
-// non-2xx is not. Anthropic is the ONLY assume-live provider; keep it that way unless a
-// provider genuinely has no cheap probe.
+// non-2xx is not. Only anthropic and openai_codex are assume-live (neither has a cheap
+// unauthenticated probe); keep the assume-live set that small unless a provider genuinely
+// has no cheap probe.
 func TestHTTPProber_HuggingFaceIsProbed(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
