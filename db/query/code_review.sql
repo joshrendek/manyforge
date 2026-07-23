@@ -88,3 +88,44 @@ FROM code_review
 WHERE business_id = $1 AND status = 'succeeded' AND dimension_runs IS NOT NULL
 ORDER BY created_at DESC
 LIMIT $2;
+
+-- name: ListFindingSeen :many
+-- The fingerprints already seen for a PR across prior review iterations (Spec 008 Slice 4,
+-- manyforge-e54.1), for NEW/CARRYOVER/RESOLVED classification. Business-scoped (RLS + predicate).
+SELECT fingerprint, status, first_seen_sha, last_seen_sha
+FROM code_review_finding_seen
+WHERE business_id = $1 AND repo = $2 AND pr_number = $3;
+
+-- name: UpsertFindingSeen :exec
+-- Record (or refresh) one finding fingerprint seen on a PR. tenant_root_id is derived from the
+-- RLS-visible business (foreign business ⇒ no row inserted). On conflict the finding is still
+-- present in the latest review, so it is re-opened and its last_seen_sha advanced; first_seen_sha
+-- and created_at are preserved.
+INSERT INTO code_review_finding_seen (
+    id, business_id, tenant_root_id, repo, pr_number, fingerprint,
+    first_seen_sha, last_seen_sha, status, created_at, updated_at)
+SELECT
+    sqlc.arg('id')::uuid, b.id, b.tenant_root_id,
+    sqlc.arg('repo')::text,
+    sqlc.arg('pr_number')::int,
+    sqlc.arg('fingerprint')::text,
+    sqlc.arg('head_sha')::text,
+    sqlc.arg('head_sha')::text,
+    'open',
+    now(), now()
+FROM business b
+WHERE b.id = sqlc.arg('business_id')::uuid
+ON CONFLICT (business_id, repo, pr_number, fingerprint) DO UPDATE
+    SET last_seen_sha = EXCLUDED.last_seen_sha,
+        status        = 'open',
+        updated_at    = now();
+
+-- name: MarkFindingsResolved :execrows
+-- Mark every still-open fingerprint on a PR that is NOT in the current review's set as resolved
+-- (Spec 008 Slice 4): it was flagged before and is gone now. Idempotent — already-resolved rows
+-- are excluded by the status filter.
+UPDATE code_review_finding_seen
+SET status = 'resolved', updated_at = now()
+WHERE business_id = $1 AND repo = $2 AND pr_number = $3
+  AND status = 'open'
+  AND fingerprint <> ALL(sqlc.arg('current_fingerprints')::text[]);
