@@ -321,6 +321,7 @@ func TestCodingReviewLifecycleAudited(t *testing.T) {
 		"agent.coding.review.posted",             // terminal success
 		"agent.coding.review.failed",             // terminal failure
 		"agent.coding.review.skipped_superseded", // terminal: newer review superseded this run
+		"agent.coding.review.finding_dropped",    // verify pass dropped a finding / failed open (8qs.1)
 	} {
 		if !strings.Contains(src, `"`+action+`"`) {
 			t.Fatalf("coding audit action %q missing from service.go — a review lifecycle step lost its audit entry (MF007-PIN-15)", action)

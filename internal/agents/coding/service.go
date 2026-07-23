@@ -945,6 +945,52 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	if aggErr != nil {
 		return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, aggErr, tokensIn, tokensOut, costCents)
 	}
+
+	// Verify pass (manyforge-8qs.1): optional false-positive filter. A single verifier lane
+	// re-examines the deduped findings against the diff and confirms the true positives; every
+	// unconfirmed candidate is dropped and audited. FAIL OPEN — a verifier that can't be resolved
+	// or whose lane errors keeps ALL findings, so a broken verifier never silently swallows real
+	// ones. The verify lane runs through the same egress-gated sandbox path (its own endpoint
+	// slot) and its usage rolls into the review totals + a "verify" dimension_run.
+	if vcfg := s.resolveVerifyConfig(ctx, principalID, businessID); vcfg.Enabled && len(doc.Findings) > 0 {
+		verifyCred, verr := s.laneCredFor(ctx, principalID, businessID, cred, vcfg.Provider, vcfg.Model)
+		if verr != nil {
+			slog.Default().WarnContext(ctx, "coding: verify credential unresolved, keeping all findings",
+				"err", verr, "business_id", businessID, "verify_provider", vcfg.Provider)
+			_ = s.auditStep(ctx, principalID, businessID, crID, "agent.coding.review.finding_dropped",
+				map[string]any{"candidates": len(doc.Findings)},
+				map[string]any{"dropped": 0, "reason": "verify credential unresolved"}, ptr("verify_failed_open"))
+		} else {
+			verifyOutDir := outDir
+			if !s.ClonesInSandbox {
+				verifyOutDir = filepath.Join(outDir, "lane-verify")
+				if err := os.MkdirAll(verifyOutDir, 0o777); err != nil {
+					return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)
+				}
+				if err := os.Chmod(verifyOutDir, 0o777); err != nil {
+					return s.failJobWithUsage(ctx, principalID, businessID, job.AgentID, crID, prNumber, err, tokensIn, tokensOut, costCents)
+				}
+			}
+			vres := runSandboxLane(Dimension{Key: verifyDimensionKey, Prompt: buildVerifyPrompt(doc.Findings)}, verifyCred, verifyOutDir)
+			kept, dropped, failedOpen := verifyOutcome(doc.Findings, vres)
+			doc.Findings = kept
+			tokensIn += vres.TokensIn
+			tokensOut += vres.TokensOut
+			costCents += vres.CostCents
+			laneResults = append(laneResults, vres) // surface verify usage/status as its own dimension_run
+			if failedOpen {
+				_ = s.auditStep(ctx, principalID, businessID, crID, "agent.coding.review.finding_dropped",
+					map[string]any{"candidates": len(kept)},
+					map[string]any{"dropped": 0, "reason": vres.FailReason}, ptr("verify_failed_open"))
+			} else {
+				for _, d := range dropped {
+					_ = s.auditStep(ctx, principalID, businessID, crID, "agent.coding.review.finding_dropped",
+						map[string]any{"file": d.File, "line": d.Line, "title": d.Title, "dimension": d.Dimension},
+						nil, ptr("dropped"))
+				}
+			}
+		}
+	}
 	// Per-lane accounting persisted on the review row (spec 008): each ran lane's model/usage/
 	// status/finding-count, plus any skipped dimensions with their reason. Empty for a default
 	// single-lane review only in the sense that it holds one "general" entry.
