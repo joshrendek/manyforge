@@ -65,6 +65,11 @@ type Finding struct {
 	// de-duplicates the same issue flagged by multiple lanes, it holds the joined set
 	// (e.g. "correctness, security"). Omitted from JSON when empty for back-compat.
 	Dimension string `json:"dimension,omitempty"`
+	// RuleID is a free-form citation of the project rule the finding relates to (spec 008
+	// Slice 3, manyforge-8qs.2): populated only when the business enables "Cite rules" and the
+	// reviewed repo ships rule docs (CLAUDE.md / constitution / AGENTS.md) that seed the prompt.
+	// Empty (and omitted) otherwise — an advisory hint, never required.
+	RuleID string `json:"rule_id,omitempty"`
 }
 
 // ReviewComment is a single inline review comment anchored to a line of the PR

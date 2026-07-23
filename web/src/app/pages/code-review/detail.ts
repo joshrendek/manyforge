@@ -122,7 +122,7 @@ import { runStatusTone } from '../../ui/status';
                     <span style="width:80px;font-size:var(--mf-fs-sm)" role="cell">
                       <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" [ariaLabel]="'severity ' + f.severity" />
                     </span>
-                    <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500" role="cell">{{ f.title }}</span>
+                    <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500" role="cell">{{ f.title }}@if (f.rule_id) {<span data-testid="finding-rule" style="margin-left:6px;padding:1px 6px;border-radius:4px;background:var(--mf-surface-2);color:var(--mf-text-muted);font-size:var(--mf-fs-xs);font-weight:400">rule: {{ f.rule_id }}</span>}</span>
                     <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.detail }}</span>
                   </div>
                 }
@@ -145,7 +145,7 @@ import { runStatusTone } from '../../ui/status';
                 <span style="width:80px;font-size:var(--mf-fs-sm)" role="cell">
                   <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" [ariaLabel]="'severity ' + f.severity" />
                 </span>
-                <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500" role="cell">{{ f.title }}</span>
+                <span style="flex:2;font-size:var(--mf-fs-sm);font-weight:500" role="cell">{{ f.title }}@if (f.rule_id) {<span data-testid="finding-rule" style="margin-left:6px;padding:1px 6px;border-radius:4px;background:var(--mf-surface-2);color:var(--mf-text-muted);font-size:var(--mf-fs-xs);font-weight:400">rule: {{ f.rule_id }}</span>}</span>
                 <span style="flex:3;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.detail }}</span>
               </div>
             }

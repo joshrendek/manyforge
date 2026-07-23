@@ -23,32 +23,51 @@ type verifySettings struct {
 	Model    string
 }
 
-// resolveVerifyConfig loads the business's verify-pass settings from review_config, degrading to
-// DISABLED on a missing row or any error (a config-read hiccup must never block a review, and
-// never silently enable dropping). Mirrors resolveReviewChain's read-and-degrade pattern; the row
-// is small and read once per job.
-func (s *CodeReviewService) resolveVerifyConfig(ctx context.Context, principalID, businessID uuid.UUID) verifySettings {
-	var vs verifySettings
+// reviewRuntimeConfig is the review_config subset the worker needs at run time: the verify-pass
+// settings (8qs.1) and the cite-rules flag (8qs.2). Loaded once per job.
+type reviewRuntimeConfig struct {
+	Verify    verifySettings
+	CiteRules bool
+}
+
+// resolveReviewRuntimeConfig loads the business's run-time review settings from review_config,
+// degrading to the ZERO value (verify disabled, cite-rules off) on a missing row or any error — a
+// config-read hiccup must never block a review, never silently enable dropping, and never silently
+// enable rule seeding. Mirrors resolveReviewChain's read-and-degrade pattern; the row is small and
+// read once per job.
+func (s *CodeReviewService) resolveReviewRuntimeConfig(ctx context.Context, principalID, businessID uuid.UUID) reviewRuntimeConfig {
+	var rc reviewRuntimeConfig
 	if err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		row, err := dbgen.New(tx).GetReviewConfig(ctx, businessID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil // no config row ⇒ verify disabled
+			return nil // no config row ⇒ zero value (verify off, cite-rules off)
 		}
 		if err != nil {
 			return err
 		}
-		vs.Enabled = row.VerifyEnabled
-		vs.Model = row.VerifyModel
+		rc.Verify.Enabled = row.VerifyEnabled
+		rc.Verify.Model = row.VerifyModel
 		if row.VerifyProvider.Valid {
-			vs.Provider = string(row.VerifyProvider.AiProvider)
+			rc.Verify.Provider = string(row.VerifyProvider.AiProvider)
 		}
+		rc.CiteRules = row.CiteRules
 		return nil
 	}); err != nil {
-		slog.Default().WarnContext(ctx, "coding: resolve verify config failed, verify disabled",
+		slog.Default().WarnContext(ctx, "coding: resolve review runtime config failed, using defaults",
 			"err", err, "business_id", businessID)
-		return verifySettings{}
+		return reviewRuntimeConfig{}
 	}
-	return vs
+	return rc
+}
+
+// laneEnv augments a lane's sandbox env with the cite-rules flag when enabled, so the entrypoint
+// seeds the reviewed repo's own rule docs into the prompt (manyforge-8qs.2). Mutates and returns
+// the same map for call-site brevity.
+func laneEnv(env map[string]string, citeRules bool) map[string]string {
+	if citeRules {
+		env["CITE_RULES"] = "1"
+	}
+	return env
 }
 
 // verifyDimensionKey is the lane Key used for the verify pass — surfaced in dimension_runs
