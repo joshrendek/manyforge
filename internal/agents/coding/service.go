@@ -632,6 +632,9 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	prog.SetPhase("reviewing")
 
 	panel := s.resolvePanel(ctx, principalID, businessID)
+	// Run-time review settings (verify pass 8qs.1 + cite-rules 8qs.2), loaded once. Degrades to
+	// defaults on any error — never blocks a review.
+	rtc := s.resolveReviewRuntimeConfig(ctx, principalID, businessID)
 	changedPaths := changedFilePaths(changed)
 	active, skippedDims := activeDimensions(panel, changedPaths)
 	// Resolve each active dimension's own reviewbot (manyforge-azy, extended to walk the whole
@@ -731,7 +734,7 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 			ReadOnlyDir: checkout,
 			OutputDir:   laneOutDir,
 			Cmd:         opencodeCmd(laneCred.Model),
-			Env:         sandboxEnv(laneCred),
+			Env:         laneEnv(sandboxEnv(laneCred), rtc.CiteRules),
 			EgressAllow: []string{laneCred.Host()},
 			Timeout:     s.timeout(),
 			// Stream opencode's live tool-call narration into the review heartbeat so a cloud
@@ -952,11 +955,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// or whose lane errors keeps ALL findings, so a broken verifier never silently swallows real
 	// ones. The verify lane runs through the same egress-gated sandbox path (its own endpoint
 	// slot) and its usage rolls into the review totals + a "verify" dimension_run.
-	if vcfg := s.resolveVerifyConfig(ctx, principalID, businessID); vcfg.Enabled && len(doc.Findings) > 0 {
-		verifyCred, verr := s.laneCredFor(ctx, principalID, businessID, cred, vcfg.Provider, vcfg.Model)
+	if rtc.Verify.Enabled && len(doc.Findings) > 0 {
+		verifyCred, verr := s.laneCredFor(ctx, principalID, businessID, cred, rtc.Verify.Provider, rtc.Verify.Model)
 		if verr != nil {
 			slog.Default().WarnContext(ctx, "coding: verify credential unresolved, keeping all findings",
-				"err", verr, "business_id", businessID, "verify_provider", vcfg.Provider)
+				"err", verr, "business_id", businessID, "verify_provider", rtc.Verify.Provider)
 			_ = s.auditStep(ctx, principalID, businessID, crID, "agent.coding.review.finding_dropped",
 				map[string]any{"candidates": len(doc.Findings)},
 				map[string]any{"dropped": 0, "reason": "verify credential unresolved"}, ptr("verify_failed_open"))

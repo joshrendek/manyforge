@@ -268,6 +268,20 @@ Set the severity of each finding to exactly one of:
 You are given the changed code as unified-diff hunks: each block is headed by "=== <path> ===", and every changed line shows its current-file line number in the left gutter with a +/space marker. Use that real file path and gutter line number in each finding. Report each distinct issue once. Only return an empty findings array if the diff genuinely contains nothing worth surfacing.'
 fi
 
+# Project-rule seeding (manyforge-8qs.2): when the host enables "Cite rules" (CITE_RULES=1),
+# prepend the reviewed repo's OWN rule docs (read from /work by rules.sh — only fixed doc paths,
+# never globbed) so a finding can cite the project's conventions via rule_id. A no-op when the
+# repo ships no such docs.
+if [ "${CITE_RULES:-}" = "1" ] && [ -f /usr/local/bin/rules.sh ]; then
+  . /usr/local/bin/rules.sh
+  RULES="$(emit_project_rules /work)"
+  if [ -n "$RULES" ]; then
+    INSTRUCTIONS="${INSTRUCTIONS}
+
+${RULES}"
+  fi
+fi
+
 SCOPE='Review the code in the current project.'
 if [ -s /out/review_diff.txt ]; then
   DIFF=$(cat /out/review_diff.txt)
@@ -283,7 +297,7 @@ PROMPT="${INSTRUCTIONS}
 ${SCOPE}
 Output ONLY a single JSON object to stdout — no prose, no markdown fences, no explanation —
 matching exactly this schema:
-{\"summary\": string, \"findings\": [{\"file\": string, \"line\": number|null, \"severity\": \"info\"|\"warning\"|\"error\", \"title\": string, \"detail\": string}]}"
+{\"summary\": string, \"findings\": [{\"file\": string, \"line\": number|null, \"severity\": \"info\"|\"warning\"|\"error\", \"title\": string, \"detail\": string, \"rule_id\": string}]}"
 
 # `opencode run` executes a single prompt headlessly (no TUI) and prints the
 # assistant's final text to stdout → review.json. -m pins the model
