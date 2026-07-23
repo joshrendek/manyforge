@@ -328,3 +328,35 @@ func TestCodingReviewLifecycleAudited(t *testing.T) {
 		}
 	}
 }
+
+// MF007-PIN-16 (manyforge-8qs.2): the "cite rules" feature seeds the reviewed repo's OWN rule
+// docs into the review prompt from inside the sandbox (the host can't read /work under KubeRunner).
+// Its security property: the extractor reads ONLY a fixed allowlist of doc paths under /work —
+// never a glob or directory walk — so a secret file (.env, credentials) can't be pulled into the
+// model prompt. This pins the entrypoint wiring AND that rules.sh stays fixed-path.
+func TestCiteRulesSandboxWiringPinned(t *testing.T) {
+	ep := mustRead(t, "../../deploy/sandbox/entrypoint.sh")
+	for _, frag := range []string{
+		`\"rule_id\": string`, // rule_id in the baked output schema (escaped inside the bash string)
+		`CITE_RULES`,          // host-set gate
+		`emit_project_rules`,  // seeds via the extractor when gated on
+	} {
+		if !strings.Contains(ep, frag) {
+			t.Fatalf("entrypoint.sh missing cite-rules wiring %q (MF007-PIN-16)", frag)
+		}
+	}
+
+	rules := mustRead(t, "../../deploy/sandbox/rules.sh")
+	for _, frag := range []string{"CLAUDE.md", ".specify/memory/constitution.md", "AGENTS.md"} {
+		if !strings.Contains(rules, frag) {
+			t.Fatalf("rules.sh missing fixed rule-doc path %q (MF007-PIN-16)", frag)
+		}
+	}
+	// A future refactor must not turn the fixed reads into a glob/scan — that would be a
+	// secret-file exfiltration surface (an .env in the repo root would enter the prompt).
+	for _, banned := range []string{"find ", "*.md", "ls ", "*.txt"} {
+		if strings.Contains(rules, banned) {
+			t.Fatalf("rules.sh must NOT glob/scan for docs (found %q) — only fixed paths keep secrets out of the prompt (MF007-PIN-16)", banned)
+		}
+	}
+}

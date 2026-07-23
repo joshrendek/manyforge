@@ -81,12 +81,22 @@ as its own `dimension_runs` entry (`dimension = "verify"`).
 **Data.** Add `RuleID string \`json:"rule_id,omitempty"\`` to `connectors.Finding` and to
 the findings JSON schema the model emits.
 
-**Seeding.** When `CiteRules` is on, the service reads, from the **cloned repo being
-reviewed** (host-side, like `review_instructions.txt`): `CLAUDE.md`,
-`.specify/memory/constitution.md`, `AGENTS.md` (first that exist). Their content is
-concatenated into a byte-capped "project rules" block injected into each dimension prompt,
-with an instruction to cite the most relevant rule as a free-form `rule_id` on each finding.
-No docs present → no rules block, no citations (a no-op, never an error).
+**Seeding.** When `CiteRules` is on, the reviewer prompt is seeded with the reviewed repo's
+own rule docs — `CLAUDE.md`, `.specify/memory/constitution.md`, `AGENTS.md` (whichever
+exist) — concatenated into a byte-capped "project rules" block, with an instruction to cite
+the most relevant rule as a free-form `rule_id`. No docs present → no rules block, no
+citations (a no-op, never an error).
+
+**Correction (kube clone).** The spec assumed the service reads these docs host-side. In
+prod the sandbox runs under **KubeRunner with `ClonesInSandbox=true`** — an init container
+clones the repo into `/work` *inside* the pod, so the host never has the checkout. The
+`RepoConnector` interface also exposes no file-fetch method (deliberately minimal). So the
+seeding is done **in the sandbox entrypoint**, which already operates on `/work`: the host
+passes a `CITE_RULES` env flag (set from config), and a sourceable `deploy/sandbox/rules.sh`
+helper reads ONLY the three fixed doc paths under `/work` (never globbed — no secret-leak
+surface), byte-caps them, and emits the rules block the entrypoint prepends to the prompt.
+`rule_id` is added to the baked output schema. The `rules.sh` helper is unit-tested via
+`bash` against a temp `/work`; `RuleID` round-trips the lenient `ParseFindings`.
 
 **Byte budget.** The rules block is capped (e.g. 16 KB) and counted against the existing
 per-lane payload budget so it can't blow the diff budget; overflow truncates the rules block

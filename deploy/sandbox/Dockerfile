@@ -50,6 +50,9 @@ RUN opencode --version
 # Entrypoint maps ManyForge's injected LLM_* env onto sst/opencode's config +
 # flags and runs the review, writing /out/review.json.
 COPY deploy/sandbox/entrypoint.sh /usr/local/bin/review
+# rules.sh (manyforge-8qs.2): sourced by the entrypoint to extract the reviewed repo's own
+# rule docs from /work when CITE_RULES=1. Kept separate so it is unit-testable via bash.
+COPY deploy/sandbox/rules.sh /usr/local/bin/rules.sh
 RUN chmod +x /usr/local/bin/review
 
 # Non-root: entrypoint.sh only ever writes under /tmp (HOME/XDG_*, and its

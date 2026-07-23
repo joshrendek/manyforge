@@ -53,12 +53,21 @@ func buildReview(doc FindingsDoc, changed map[string]map[int]bool, commitID stri
 // renderInlineComment formats one finding as an inline review-comment body.
 func renderInlineComment(f connectors.Finding) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "**[%s] %s**", strings.ToUpper(f.Severity), f.Title)
+	fmt.Fprintf(&b, "**[%s] %s**%s", strings.ToUpper(f.Severity), f.Title, ruleSuffix(f))
 	if strings.TrimSpace(f.Detail) != "" {
 		b.WriteString("\n\n")
 		b.WriteString(f.Detail)
 	}
 	return b.String()
+}
+
+// ruleSuffix renders a finding's cited project rule as an inline markdown suffix, or "" when the
+// finding cites none (manyforge-8qs.2).
+func ruleSuffix(f connectors.Finding) string {
+	if strings.TrimSpace(f.RuleID) == "" {
+		return ""
+	}
+	return fmt.Sprintf(" _(rule: %s)_", f.RuleID)
 }
 
 // renderReviewBody renders the top-level review body: header, the model's summary,
@@ -79,7 +88,7 @@ func renderReviewBody(summary string, leftover []connectors.Finding, inlineCount
 			if f.Line != nil {
 				loc = fmt.Sprintf("%s:%d", f.File, *f.Line)
 			}
-			fmt.Fprintf(&b, "- **[%s]** `%s` — %s\n", strings.ToUpper(f.Severity), loc, f.Title)
+			fmt.Fprintf(&b, "- **[%s]** `%s` — %s%s\n", strings.ToUpper(f.Severity), loc, f.Title, ruleSuffix(f))
 			if strings.TrimSpace(f.Detail) != "" {
 				b.WriteString("  " + f.Detail + "\n")
 			}

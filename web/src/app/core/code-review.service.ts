@@ -36,6 +36,10 @@ export interface Finding {
   // single-lane review; may be a joined set (e.g. "correctness, security") when the
   // same issue was flagged by multiple lanes and de-duplicated during aggregation.
   dimension?: string;
+  // Free-form citation of the project rule this finding relates to (spec 008 Slice 3).
+  // Present only when the business enabled "Cite rules" and the reviewed repo ships rule
+  // docs that seeded the prompt; absent otherwise.
+  rule_id?: string;
 }
 
 export type DimensionRunStatus = 'succeeded' | 'failed' | 'skipped';

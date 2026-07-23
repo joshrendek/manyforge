@@ -132,6 +132,19 @@ describe('CodeReviewDetailComponent', () => {
     expect(text).toContain('Use parameterized queries.');
   });
 
+  it('renders a rule_id badge only when a finding cites a rule (spec 008 Slice 3)', () => {
+    mount(makeReview({
+      findings: [
+        makeFinding({ title: 'Raw SQL', rule_id: 'no-raw-sql' }),
+        makeFinding({ title: 'No citation' }),
+      ],
+      findings_count: 2,
+    }));
+    const badges = qAll('[data-testid="finding-rule"]');
+    expect(badges.length).toBe(1);
+    expect(badges[0].textContent ?? '').toContain('no-raw-sql');
+  });
+
   it('renders a null line as em-dash', () => {
     mount(makeReview({ findings: [makeFinding({ line: null })], findings_count: 1 }));
     const row = q('[data-testid="finding-row"]') as HTMLElement;
