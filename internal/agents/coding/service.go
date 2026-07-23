@@ -999,6 +999,22 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	// single-lane review only in the sense that it holds one "general" entry.
 	dimRunsJSON, _ := json.Marshal(buildDimensionRuns(laneResults, skippedDims))
 
+	// Cross-iteration tracking (manyforge-e54.1): classify this review's findings against the PR's
+	// prior iterations and prepend a delta line to the summary — which flows into BOTH the posted
+	// body and the stored row (both read doc.Summary). The fingerprints are persisted in the finalize
+	// tx below, so tracking commits atomically with the review row. A read failure just skips the
+	// delta (advisory, never fatal); the delta is shown only once the PR has prior history.
+	prior, perr := s.priorFindingFingerprints(ctx, principalID, businessID, rc.Repo, prNumber)
+	if perr != nil {
+		slog.Default().WarnContext(ctx, "coding: prior fingerprints read failed, skipping cross-iteration delta",
+			"err", perr, "business_id", businessID)
+		prior = nil
+	}
+	iterDelta, currentFps := classifyCrossIteration(prior, doc.Findings)
+	if len(prior) > 0 {
+		doc.Summary = iterDelta.summaryLine() + "\n\n" + doc.Summary
+	}
+
 	// Post the review to the PR (intentionally ungated — advisory only). Findings on
 	// changed lines become inline diff comments; the rest land in the summary body.
 	// DedupKey makes the post idempotent: a worker retry (e.g. a transient sandbox
@@ -1057,6 +1073,11 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 		})
 		if uerr != nil {
 			return uerr
+		}
+		// Persist this iteration's fingerprints (open) + resolve the ones gone since last review,
+		// in the SAME tx as the review row so cross-iteration tracking can't diverge (manyforge-e54.1).
+		if ferr := persistFindingSeen(ctx, q, businessID, rc.Repo, prNumber, pr.HeadSHA, currentFps); ferr != nil {
+			return ferr
 		}
 		return audit.Write(ctx, tx, codingAudit(businessID, principalID, crID,
 			"agent.coding.review.posted",

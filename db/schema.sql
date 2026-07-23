@@ -675,6 +675,26 @@ CREATE TABLE review_dimension (
         CHECK (min_severity IN ('info', 'warning', 'error'))
 );
 
+-- Cross-iteration finding tracking (Spec 008 Slice 4, manyforge-e54.1). See migration 0100.
+CREATE TABLE code_review_finding_seen (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    repo            text NOT NULL,
+    pr_number       integer NOT NULL,
+    fingerprint     text NOT NULL,
+    first_seen_sha  text NOT NULL,
+    last_seen_sha   text NOT NULL,
+    status          text NOT NULL DEFAULT 'open',
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (business_id, repo, pr_number, fingerprint),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    CONSTRAINT code_review_finding_seen_status_chk
+        CHECK (status IN ('open', 'resolved'))
+);
+
 CREATE TABLE review_config (
     business_id     uuid PRIMARY KEY,
     tenant_root_id  uuid NOT NULL,
