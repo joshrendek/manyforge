@@ -29,6 +29,10 @@ func (h *Handler) RepoConnectorRoutes(r chi.Router) {
 		r.Post("/", h.createRepoConnector)
 		r.Get("/", h.listRepoConnectors)
 		r.Delete("/{rcID}", h.deleteRepoConnector)
+		// Per-repo dimension overrides (manyforge-e54.2).
+		r.Get("/{rcID}/dimension-overrides", h.listRepoOverrides)
+		r.Put("/{rcID}/dimension-overrides", h.upsertRepoOverride)
+		r.Delete("/{rcID}/dimension-overrides/{key}", h.deleteRepoOverride)
 	})
 }
 
@@ -283,6 +287,65 @@ func (h *Handler) upsertDimension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
+// repoConnParam parses the caller + {rcID} for the per-repo override endpoints (manyforge-e54.2).
+// Ownership is enforced by the RLS-scoped service reads (the override rows derive their business
+// from the RLS-visible repo_connector).
+func (h *Handler) repoConnParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return uuid.Nil, uuid.Nil, false
+	}
+	rcID, err := uuid.Parse(chi.URLParam(r, "rcID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return uuid.Nil, uuid.Nil, false
+	}
+	return pid, rcID, true
+}
+
+func (h *Handler) listRepoOverrides(w http.ResponseWriter, r *http.Request) {
+	pid, rcID, ok := h.repoConnParam(w, r)
+	if !ok {
+		return
+	}
+	items, err := h.ReviewDimSvc.ListRepoOverrides(r.Context(), pid, rcID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) upsertRepoOverride(w http.ResponseWriter, r *http.Request) {
+	pid, rcID, ok := h.repoConnParam(w, r)
+	if !ok {
+		return
+	}
+	var in RepoDimensionOverrideInput
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	view, err := h.ReviewDimSvc.UpsertRepoOverride(r.Context(), pid, rcID, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
+func (h *Handler) deleteRepoOverride(w http.ResponseWriter, r *http.Request) {
+	pid, rcID, ok := h.repoConnParam(w, r)
+	if !ok {
+		return
+	}
+	if err := h.ReviewDimSvc.DeleteRepoOverride(r.Context(), pid, rcID, chi.URLParam(r, "key")); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) deleteDimension(w http.ResponseWriter, r *http.Request) {

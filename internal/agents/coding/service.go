@@ -632,6 +632,10 @@ func (s *CodeReviewService) runJob(ctx context.Context, job ClaimedReview, prog 
 	prog.SetPhase("reviewing")
 
 	panel := s.resolvePanel(ctx, principalID, businessID)
+	// Layer this repo's per-dimension overrides onto the business panel (manyforge-e54.2):
+	// enable/disable a dimension and/or set a per-repo severity floor for THIS repo. Degrades to
+	// the un-overridden panel on any error.
+	panel = s.applyRepoOverrides(ctx, principalID, job.RepoConnectorID, panel)
 	// Run-time review settings (verify pass 8qs.1 + cite-rules 8qs.2), loaded once. Degrades to
 	// defaults on any error — never blocks a review.
 	rtc := s.resolveReviewRuntimeConfig(ctx, principalID, businessID)

@@ -381,3 +381,24 @@ func TestFindingSeenTableRLSPinned(t *testing.T) {
 		}
 	}
 }
+
+// MF007-PIN-18 (manyforge-e54.2): the per-repo dimension-override table review_dimension_repo_override
+// holds per-business review config — it MUST be RLS-protected with the business-scoped policy so one
+// tenant can't read/alter another's per-repo review overrides. Pins the migration (0101).
+func TestRepoDimensionOverrideTableRLSPinned(t *testing.T) {
+	matches, err := filepath.Glob("../../migrations/0101_*.up.sql")
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("migration 0101 (review_dimension_repo_override) not found: %v", err)
+	}
+	src := mustRead(t, matches[0])
+	for _, frag := range []string{
+		"CREATE TABLE review_dimension_repo_override",
+		"ENABLE ROW LEVEL SECURITY",
+		"authorized_businesses(current_principal())",
+		"tenant_root_id",
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("migration 0101 missing %q — the per-repo override table must be tenant-isolated (MF007-PIN-18)", frag)
+		}
+	}
+}

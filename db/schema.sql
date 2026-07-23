@@ -675,6 +675,27 @@ CREATE TABLE review_dimension (
         CHECK (min_severity IN ('info', 'warning', 'error'))
 );
 
+-- Per-repo dimension overrides (Spec 008 Slice 4, manyforge-e54.2). See migration 0101.
+CREATE TABLE review_dimension_repo_override (
+    id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id       uuid NOT NULL,
+    tenant_root_id    uuid NOT NULL,
+    repo_connector_id uuid NOT NULL,
+    dimension_key     text NOT NULL,
+    enabled           boolean NOT NULL DEFAULT true,
+    min_severity      text,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (repo_connector_id, dimension_key),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (repo_connector_id, tenant_root_id) REFERENCES repo_connector (id, tenant_root_id),
+    CONSTRAINT review_dimension_repo_override_dimension_chk
+        CHECK (dimension_key IN ('security', 'correctness', 'performance', 'ui', 'docs', 'tests', 'general')),
+    CONSTRAINT review_dimension_repo_override_min_severity_chk
+        CHECK (min_severity IS NULL OR min_severity IN ('info', 'warning', 'error'))
+);
+
 -- Cross-iteration finding tracking (Spec 008 Slice 4, manyforge-e54.1). See migration 0100.
 CREATE TABLE code_review_finding_seen (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),

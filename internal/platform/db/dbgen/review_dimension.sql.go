@@ -11,6 +11,25 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteRepoDimensionOverride = `-- name: DeleteRepoDimensionOverride :execrows
+DELETE FROM review_dimension_repo_override
+WHERE repo_connector_id = $1 AND dimension_key = $2
+`
+
+type DeleteRepoDimensionOverrideParams struct {
+	RepoConnectorID uuid.UUID `json:"repo_connector_id"`
+	DimensionKey    string    `json:"dimension_key"`
+}
+
+// Remove one per-repo override (revert to inheriting the business dimension).
+func (q *Queries) DeleteRepoDimensionOverride(ctx context.Context, arg DeleteRepoDimensionOverrideParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRepoDimensionOverride, arg.RepoConnectorID, arg.DimensionKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteReviewDimension = `-- name: DeleteReviewDimension :execrows
 DELETE FROM review_dimension
 WHERE id = $1::uuid AND business_id = $2::uuid
@@ -102,6 +121,80 @@ func (q *Queries) InsertReviewDimension(ctx context.Context, arg InsertReviewDim
 	return i, err
 }
 
+const listRepoDimensionOverrides = `-- name: ListRepoDimensionOverrides :many
+SELECT dimension_key, enabled, min_severity
+FROM review_dimension_repo_override
+WHERE repo_connector_id = $1
+ORDER BY dimension_key
+`
+
+type ListRepoDimensionOverridesRow struct {
+	DimensionKey string  `json:"dimension_key"`
+	Enabled      bool    `json:"enabled"`
+	MinSeverity  *string `json:"min_severity"`
+}
+
+// Per-repo dimension overrides for one repo connector (Spec 008 Slice 4, manyforge-e54.2).
+// Business-scoped via RLS on the underlying table.
+func (q *Queries) ListRepoDimensionOverrides(ctx context.Context, repoConnectorID uuid.UUID) ([]ListRepoDimensionOverridesRow, error) {
+	rows, err := q.db.Query(ctx, listRepoDimensionOverrides, repoConnectorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRepoDimensionOverridesRow
+	for rows.Next() {
+		var i ListRepoDimensionOverridesRow
+		if err := rows.Scan(&i.DimensionKey, &i.Enabled, &i.MinSeverity); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRepoDimensionOverridesForBusiness = `-- name: ListRepoDimensionOverridesForBusiness :many
+SELECT repo_connector_id, dimension_key, enabled, min_severity
+FROM review_dimension_repo_override
+WHERE business_id = $1
+`
+
+type ListRepoDimensionOverridesForBusinessRow struct {
+	RepoConnectorID uuid.UUID `json:"repo_connector_id"`
+	DimensionKey    string    `json:"dimension_key"`
+	Enabled         bool      `json:"enabled"`
+	MinSeverity     *string   `json:"min_severity"`
+}
+
+// All per-repo overrides for a business (Review UI aggregate).
+func (q *Queries) ListRepoDimensionOverridesForBusiness(ctx context.Context, businessID uuid.UUID) ([]ListRepoDimensionOverridesForBusinessRow, error) {
+	rows, err := q.db.Query(ctx, listRepoDimensionOverridesForBusiness, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRepoDimensionOverridesForBusinessRow
+	for rows.Next() {
+		var i ListRepoDimensionOverridesForBusinessRow
+		if err := rows.Scan(
+			&i.RepoConnectorID,
+			&i.DimensionKey,
+			&i.Enabled,
+			&i.MinSeverity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReviewDimensions = `-- name: ListReviewDimensions :many
 SELECT id, business_id, tenant_root_id, dimension, provider, model, fallback_chain, prompt, scope_globs, min_severity, enabled, sort_order, created_at, updated_at FROM review_dimension
 WHERE business_id = $1
@@ -144,6 +237,60 @@ func (q *Queries) ListReviewDimensions(ctx context.Context, businessID uuid.UUID
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertRepoDimensionOverride = `-- name: UpsertRepoDimensionOverride :one
+INSERT INTO review_dimension_repo_override (
+    id, business_id, tenant_root_id, repo_connector_id, dimension_key,
+    enabled, min_severity, created_at, updated_at)
+SELECT
+    $1::uuid, rc.business_id, rc.tenant_root_id,
+    rc.id,
+    $2::text,
+    $3::boolean,
+    $4::text,
+    now(), now()
+FROM repo_connector rc
+WHERE rc.id = $5::uuid
+ON CONFLICT (repo_connector_id, dimension_key) DO UPDATE
+    SET enabled      = EXCLUDED.enabled,
+        min_severity = EXCLUDED.min_severity,
+        updated_at   = now()
+RETURNING id, business_id, tenant_root_id, repo_connector_id, dimension_key, enabled, min_severity, created_at, updated_at
+`
+
+type UpsertRepoDimensionOverrideParams struct {
+	ID              uuid.UUID `json:"id"`
+	DimensionKey    string    `json:"dimension_key"`
+	Enabled         bool      `json:"enabled"`
+	MinSeverity     *string   `json:"min_severity"`
+	RepoConnectorID uuid.UUID `json:"repo_connector_id"`
+}
+
+// Insert-or-update one per-repo override, keyed on UNIQUE(repo_connector_id, dimension_key).
+// business_id + tenant_root_id are derived from the RLS-visible repo_connector (foreign connector
+// ⇒ no row ⇒ ErrNotFound), which also enforces connector ownership. min_severity NULL ⇒ inherit.
+func (q *Queries) UpsertRepoDimensionOverride(ctx context.Context, arg UpsertRepoDimensionOverrideParams) (ReviewDimensionRepoOverride, error) {
+	row := q.db.QueryRow(ctx, upsertRepoDimensionOverride,
+		arg.ID,
+		arg.DimensionKey,
+		arg.Enabled,
+		arg.MinSeverity,
+		arg.RepoConnectorID,
+	)
+	var i ReviewDimensionRepoOverride
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.RepoConnectorID,
+		&i.DimensionKey,
+		&i.Enabled,
+		&i.MinSeverity,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const upsertReviewDimension = `-- name: UpsertReviewDimension :one

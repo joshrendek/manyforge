@@ -79,6 +79,34 @@ describe('CodeReviewListComponent', () => {
     expect(row?.textContent).toContain('acme/api');
   });
 
+  it('opens the per-repo dimension editor and toggles an override (spec 008 Slice 4)', () => {
+    const f = mount();
+    const el = f.nativeElement as HTMLElement;
+    (el.querySelector('[data-testid="connector-dimensions"]') as HTMLButtonElement).click();
+    f.detectChanges();
+    mock.expectOne('/api/v1/businesses/b1/review-dimensions').flush({
+      items: [
+        {
+          id: 'd1', dimension: 'security', provider: '', model: '', fallback_chain: [],
+          prompt: '', scope_globs: [], min_severity: 'info', enabled: true, sort_order: 1,
+        },
+      ],
+    });
+    mock.expectOne('/api/v1/businesses/b1/repo-connectors/c1/dimension-overrides').flush({ items: [] });
+    f.detectChanges();
+
+    const cb = el.querySelector('[data-testid="override-security"]') as HTMLInputElement;
+    expect(cb).toBeTruthy();
+    expect(cb.checked).toBe(true); // no override yet ⇒ inherits the business dimension (enabled)
+
+    cb.click(); // disable security for this repo
+    f.detectChanges();
+    const put = mock.expectOne('/api/v1/businesses/b1/repo-connectors/c1/dimension-overrides');
+    expect(put.request.method).toBe('PUT');
+    expect(put.request.body).toEqual({ dimension_key: 'security', enabled: false });
+    put.flush({ dimension_key: 'security', enabled: false });
+  });
+
   // ── Add-connector form ───────────────────────────────────────────────────────
 
   it('add toggle reveals the add form', () => {

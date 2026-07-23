@@ -53,6 +53,95 @@ type ReviewDimensionInput struct {
 	SortOrder     int             `json:"sort_order"`
 }
 
+// RepoDimensionOverrideView / …Input are one repo's override of a business dimension
+// (manyforge-e54.2). MinSeverity "" ⇒ inherit the business dimension's floor.
+type RepoDimensionOverrideView struct {
+	DimensionKey string `json:"dimension_key"`
+	Enabled      bool   `json:"enabled"`
+	MinSeverity  string `json:"min_severity,omitempty"`
+}
+
+type RepoDimensionOverrideInput struct {
+	DimensionKey string `json:"dimension_key"`
+	Enabled      bool   `json:"enabled"`
+	MinSeverity  string `json:"min_severity"`
+}
+
+// ListRepoOverrides returns a repo connector's per-dimension overrides (RLS-scoped; a foreign
+// connector yields an empty list, never another tenant's rows).
+func (s *ReviewDimensionService) ListRepoOverrides(ctx context.Context, principalID, repoConnectorID uuid.UUID) ([]RepoDimensionOverrideView, error) {
+	var out []RepoDimensionOverrideView
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		rows, qerr := dbgen.New(tx).ListRepoDimensionOverrides(ctx, repoConnectorID)
+		if qerr != nil {
+			return qerr
+		}
+		out = make([]RepoDimensionOverrideView, 0, len(rows))
+		for _, r := range rows {
+			v := RepoDimensionOverrideView{DimensionKey: r.DimensionKey, Enabled: r.Enabled}
+			if r.MinSeverity != nil {
+				v.MinSeverity = *r.MinSeverity
+			}
+			out = append(out, v)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, mapReviewCfgErr(err)
+	}
+	return out, nil
+}
+
+// UpsertRepoOverride validates and inserts-or-updates one per-repo override. business_id +
+// tenant_root_id are derived from the RLS-visible repo_connector, so a foreign/unknown connector
+// yields ErrNotFound rather than a forged row.
+func (s *ReviewDimensionService) UpsertRepoOverride(ctx context.Context, principalID, repoConnectorID uuid.UUID, in RepoDimensionOverrideInput) (RepoDimensionOverrideView, error) {
+	if !knownDimensionKeys[in.DimensionKey] {
+		return RepoDimensionOverrideView{}, fmt.Errorf("coding: unknown dimension %q: %w", in.DimensionKey, errs.ErrValidation)
+	}
+	if in.MinSeverity != "" && !knownSeverities[in.MinSeverity] {
+		return RepoDimensionOverrideView{}, fmt.Errorf("coding: min_severity must be info|warning|error or empty: %w", errs.ErrValidation)
+	}
+	var minSev *string
+	if in.MinSeverity != "" {
+		v := in.MinSeverity
+		minSev = &v
+	}
+	var view RepoDimensionOverrideView
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		row, qerr := dbgen.New(tx).UpsertRepoDimensionOverride(ctx, dbgen.UpsertRepoDimensionOverrideParams{
+			ID:              uuid.New(),
+			RepoConnectorID: repoConnectorID,
+			DimensionKey:    in.DimensionKey,
+			Enabled:         in.Enabled,
+			MinSeverity:     minSev,
+		})
+		if qerr != nil {
+			return qerr
+		}
+		view = RepoDimensionOverrideView{DimensionKey: row.DimensionKey, Enabled: row.Enabled}
+		if row.MinSeverity != nil {
+			view.MinSeverity = *row.MinSeverity
+		}
+		return nil
+	})
+	if err != nil {
+		return RepoDimensionOverrideView{}, mapReviewCfgErr(err)
+	}
+	return view, nil
+}
+
+// DeleteRepoOverride removes one per-repo override, reverting that dimension to the business config.
+func (s *ReviewDimensionService) DeleteRepoOverride(ctx context.Context, principalID, repoConnectorID uuid.UUID, dimensionKey string) error {
+	return mapReviewCfgErr(s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		_, qerr := dbgen.New(tx).DeleteRepoDimensionOverride(ctx, dbgen.DeleteRepoDimensionOverrideParams{
+			RepoConnectorID: repoConnectorID,
+			DimensionKey:    dimensionKey,
+		})
+		return qerr
+	}))
+}
+
 // ReviewConfigView is the public view of a business's panel-level config.
 type ReviewConfigView struct {
 	Dedupe         bool   `json:"dedupe"`
