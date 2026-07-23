@@ -136,6 +136,14 @@ export interface ReviewConfig {
   review_agent_chain: string[];
 }
 
+// One repo's override of a business review dimension (spec 008 Slice 4). min_severity absent/empty
+// ⇒ inherit the business dimension's floor.
+export interface RepoDimensionOverride {
+  dimension_key: string;
+  enabled: boolean;
+  min_severity?: string;
+}
+
 // Pre-PR per-review cost estimate for the current config (spec 008 Slice 3). All costs are
 // estimates; based_on_reviews === 0 means the fallback constant was used (mark it approximate).
 export interface ReviewConfigEstimate {
@@ -181,6 +189,23 @@ export class CodeReviewService {
 
   deleteConnector(businessId: string, id: string): Observable<void> {
     return this.http.delete<void>(`${this.connectorsBase(businessId)}/${id}`);
+  }
+
+  // Per-repo dimension overrides (spec 008 Slice 4).
+  private overridesBase(businessId: string, rcId: string): string {
+    return `${this.connectorsBase(businessId)}/${rcId}/dimension-overrides`;
+  }
+
+  listRepoOverrides(businessId: string, rcId: string): Observable<{ items: RepoDimensionOverride[] }> {
+    return this.http.get<{ items: RepoDimensionOverride[] }>(this.overridesBase(businessId, rcId));
+  }
+
+  upsertRepoOverride(businessId: string, rcId: string, body: RepoDimensionOverride): Observable<RepoDimensionOverride> {
+    return this.http.put<RepoDimensionOverride>(this.overridesBase(businessId, rcId), body);
+  }
+
+  deleteRepoOverride(businessId: string, rcId: string, key: string): Observable<void> {
+    return this.http.delete<void>(`${this.overridesBase(businessId, rcId)}/${key}`);
   }
 
   listReviews(businessId: string): Observable<{ items: CodeReview[] }> {

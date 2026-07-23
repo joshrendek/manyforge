@@ -102,6 +102,109 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /businesses/{id}/repo-connectors/{rcID}/dimension-overrides:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: rcID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listRepoDimensionOverrides
+      summary: List a repo's per-dimension review overrides
+      description: >
+        Per-repo enable/disable + severity-floor overrides of the business review dimensions
+        (manyforge-e54.2). Gated by agents.configure.
+      responses:
+        "200":
+          description: The repo's dimension overrides
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RepoDimensionOverride'
+        "404":
+          description: Repo connector not found or caller lacks access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: upsertRepoDimensionOverride
+      summary: Create or update one per-repo dimension override
+      description: >
+        Enable/disable a business dimension for this repo and optionally set a per-repo severity
+        floor (min_severity empty ⇒ inherit). Gated by agents.configure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepoDimensionOverride'
+      responses:
+        "200":
+          description: The persisted override
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepoDimensionOverride'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "404":
+          description: Repo connector not found or caller lacks access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /businesses/{id}/repo-connectors/{rcID}/dimension-overrides/{key}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: rcID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: deleteRepoDimensionOverride
+      summary: Remove one per-repo dimension override
+      description: Reverts that dimension to the business config for this repo. Gated by agents.configure.
+      responses:
+        "204":
+          description: Override removed
+        "404":
+          description: Not found or caller lacks access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /businesses/{id}/code-reviews:
     parameters:
       - name: id
@@ -239,6 +342,20 @@ paths:
 
 components:
   schemas:
+    RepoDimensionOverride:
+      type: object
+      description: 'One repo''s override of a business review dimension (manyforge-e54.2).'
+      properties:
+        dimension_key:
+          type: string
+          enum: [security, correctness, performance, ui, docs, tests, general]
+        enabled:
+          type: boolean
+        min_severity:
+          type: string
+          description: 'Per-repo floor; empty/absent ⇒ inherit the business dimension''s floor.'
+          enum: [info, warning, error]
+      required: [dimension_key, enabled]
     CreateRepoConnectorInput:
       type: object
       required:

@@ -10,6 +10,8 @@ import {
   CodeReviewService,
   CreateRepoConnectorBody,
   RepoConnector,
+  RepoDimensionOverride,
+  ReviewDimension,
 } from '../../core/code-review.service';
 import { CurrentBusinessService } from '../../core/current-business.service';
 import { Business } from '../../core/tree';
@@ -128,11 +130,34 @@ import { runStatusTone } from '../../ui/status';
                 <button class="mf-btn mf-btn-danger mf-btn-sm" data-testid="connector-delete-yes"
                         (click)="deleteConnector(c)">Delete</button>
               } @else {
+                <button class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="connector-dimensions"
+                        (click)="toggleDimensions(c.id)">Dimensions</button>
                 <button class="mf-btn mf-btn-danger mf-btn-sm" data-testid="connector-delete"
                         (click)="confirmDeleteConnectorId.set(c.id)">Delete</button>
               }
             </span>
           </div>
+          @if (expandedConn() === c.id) {
+            <div class="mf-tr" data-testid="connector-overrides"
+                 style="flex-direction:column;align-items:stretch;gap:6px;background:var(--mf-surface-2)">
+              <span style="font-size:var(--mf-fs-xs);color:var(--mf-text-muted)">
+                Per-repo dimensions — override which of the business panel's dimensions run for this repo:
+              </span>
+              @for (d of bizDimensions(); track d.dimension) {
+                <label style="display:flex;gap:8px;align-items:center;font-size:var(--mf-fs-sm)">
+                  <input type="checkbox" [attr.data-testid]="'override-' + d.dimension"
+                         [ngModel]="dimensionEnabled(c.id, d)" [ngModelOptions]="{ standalone: true }"
+                         (ngModelChange)="setDimensionEnabled(c.id, d, $event)" />
+                  {{ d.dimension }}
+                </label>
+              }
+              @if (!bizDimensions().length) {
+                <span style="font-size:var(--mf-fs-xs);color:var(--mf-text-muted)">
+                  No business dimensions configured — set them up in Review Setup first.
+                </span>
+              }
+            </div>
+          }
         }
         @if (!connectors().length && businessId() && !loading()) {
           <mf-empty-state title="No connectors yet" data-testid="connectors-empty">
@@ -275,6 +300,12 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   adding = signal(false);
   addError = signal('');
   confirmDeleteConnectorId = signal<string>('');
+
+  // Per-repo dimension overrides (spec 008 Slice 4): which connector's editor is open, the
+  // business dimensions (loaded once), and each connector's override rows.
+  expandedConn = signal<string>('');
+  bizDimensions = signal<ReviewDimension[]>([]);
+  connOverrides = signal<Record<string, RepoDimensionOverride[]>>({});
 
   triggering = signal(false);
   triggerError = signal('');
@@ -514,6 +545,43 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
         this.confirmDeleteConnectorId.set('');
         this.toast.error(e.status === 404 ? 'Not found' : 'Delete failed');
       },
+    });
+  }
+
+  // Per-repo dimension overrides (spec 008 Slice 4).
+  toggleDimensions(connId: string): void {
+    if (this.expandedConn() === connId) {
+      this.expandedConn.set('');
+      return;
+    }
+    this.expandedConn.set(connId);
+    const bid = this.businessId();
+    if (!bid) return;
+    if (!this.bizDimensions().length) {
+      this.api.listDimensions(bid).subscribe({ next: (r) => this.bizDimensions.set(r.items ?? []), error: () => {} });
+    }
+    this.api.listRepoOverrides(bid, connId).subscribe({
+      next: (r) => this.connOverrides.set({ ...this.connOverrides(), [connId]: r.items ?? [] }),
+      error: () => {},
+    });
+  }
+
+  // A dimension runs for a repo per its override if one exists, otherwise per the business default.
+  dimensionEnabled(connId: string, d: ReviewDimension): boolean {
+    const ov = (this.connOverrides()[connId] ?? []).find((o) => o.dimension_key === d.dimension);
+    return ov ? ov.enabled : d.enabled;
+  }
+
+  setDimensionEnabled(connId: string, d: ReviewDimension, enabled: boolean): void {
+    const bid = this.businessId();
+    if (!bid) return;
+    this.api.upsertRepoOverride(bid, connId, { dimension_key: d.dimension, enabled }).subscribe({
+      next: (saved) => {
+        const rest = (this.connOverrides()[connId] ?? []).filter((o) => o.dimension_key !== d.dimension);
+        this.connOverrides.set({ ...this.connOverrides(), [connId]: [...rest, saved] });
+        this.toast.success(`Updated ${d.dimension} for this repo`);
+      },
+      error: () => this.toast.error('Could not update the override'),
     });
   }
 
