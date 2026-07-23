@@ -136,6 +136,17 @@ export interface ReviewConfig {
   review_agent_chain: string[];
 }
 
+// Pre-PR per-review cost estimate for the current config (spec 008 Slice 3). All costs are
+// estimates; based_on_reviews === 0 means the fallback constant was used (mark it approximate).
+export interface ReviewConfigEstimate {
+  lane_count: number;
+  verify_enabled: boolean;
+  based_on_reviews: number;
+  per_lane_cost_microcents: number;
+  est_cost_microcents: number;
+  est_cost_cents: number;
+}
+
 export interface TriggerBody {
   agent_id: string;
   repo_connector_id: string;
@@ -217,5 +228,9 @@ export class CodeReviewService {
 
   putConfig(businessId: string, body: ReviewConfig): Observable<ReviewConfig> {
     return this.http.put<ReviewConfig>(this.configBase(businessId), body);
+  }
+
+  estimate(businessId: string): Observable<ReviewConfigEstimate> {
+    return this.http.get<ReviewConfigEstimate>(`${this.configBase(businessId)}/estimate`);
   }
 }

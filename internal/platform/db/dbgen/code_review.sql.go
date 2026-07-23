@@ -235,6 +235,50 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 	return items, nil
 }
 
+const listRecentDimensionRuns = `-- name: ListRecentDimensionRuns :many
+
+SELECT dimension_runs
+FROM code_review
+WHERE business_id = $1 AND status = 'succeeded' AND dimension_runs IS NOT NULL
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListRecentDimensionRunsParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	Limit      int32     `json:"limit"`
+}
+
+// NOTE: claim/requeue/fail are NOT sqlc queries. The CodeReviewWorker is a system
+// process that runs principal-less (no manyforge.principal_id GUC), but code_review
+// has RLS ENABLEd (0071) and the app connects as manyforge_app (NOBYPASSRLS), so a
+// principal-less UPDATE here would be RLS-blocked. Those three operations therefore
+// go through the SECURITY DEFINER functions claim_code_reviews / requeue_code_review
+// / fail_code_review (migrations/0073), called via raw pgx in worker.go's
+// AppDBAdapter — exactly the outbox drain pattern (claim_outbox_batch, 0016).
+// Recent SUCCEEDED reviews' per-lane accounting blobs (dimension_runs JSONB), for the pre-PR
+// cost-estimate heuristic (manyforge-8qs.3): the estimate averages observed per-lane cost from a
+// business's OWN recent reviews. Business-scoped, newest first, bounded.
+func (q *Queries) ListRecentDimensionRuns(ctx context.Context, arg ListRecentDimensionRunsParams) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, listRecentDimensionRuns, arg.BusinessID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var dimension_runs []byte
+		if err := rows.Scan(&dimension_runs); err != nil {
+			return nil, err
+		}
+		items = append(items, dimension_runs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setCodeReviewUsage = `-- name: SetCodeReviewUsage :exec
 UPDATE code_review SET tokens_in = $2, tokens_out = $3, cost_cents = $4, updated_at = now()
 WHERE id = $1

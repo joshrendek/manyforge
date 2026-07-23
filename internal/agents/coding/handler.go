@@ -56,6 +56,7 @@ func (h *Handler) ReviewConfigRoutes(r chi.Router) {
 	r.Route("/businesses/{id}/review-config", func(r chi.Router) {
 		r.Get("/", h.getReviewConfig)
 		r.Put("/", h.putReviewConfig)
+		r.Get("/estimate", h.estimateReviewConfig)
 	})
 }
 
@@ -324,6 +325,27 @@ func (h *Handler) getReviewConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, cfg)
+}
+
+// estimateReviewConfig returns a pre-PR per-review cost estimate for the business's current review
+// config (manyforge-8qs.3). Ownership is enforced by the RLS-scoped reads inside EstimateConfig.
+func (h *Handler) estimateReviewConfig(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := codingBusinessID(r)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	est, err := h.ReviewDimSvc.EstimateConfig(r.Context(), pid, bid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, est)
 }
 
 func (h *Handler) putReviewConfig(w http.ResponseWriter, r *http.Request) {
