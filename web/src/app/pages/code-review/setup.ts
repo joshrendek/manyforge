@@ -8,6 +8,7 @@ import {
   CodeReviewService,
   FindingSeverity,
   ReviewConfig,
+  ReviewConfigEstimate,
   ReviewDimension,
   ReviewDimensionFallbackEntry,
   ReviewDimensionInput,
@@ -257,6 +258,9 @@ function catalogLabel(key: string): string {
       <h3 style="margin:24px 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
         Aggregation
       </h3>
+      @if (estimate()) {
+        <p data-testid="cost-estimate" style="margin:0 0 8px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ estimateText() }}</p>
+      }
       <div class="mf-card" data-testid="config-form" style="display:flex;flex-direction:column;gap:10px">
         <label style="display:flex;gap:8px;align-items:center">
           <input type="checkbox" data-testid="config-dedupe" [ngModel]="config().dedupe" (ngModelChange)="patchConfig({ dedupe: $event })" />
@@ -332,6 +336,8 @@ export class CodeReviewSetupComponent implements OnInit {
     dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single',
     review_agent_chain: [],
   });
+  // Pre-PR cost estimate for the current SAVED config (spec 008 Slice 3); refreshed after each save.
+  estimate = signal<ReviewConfigEstimate | null>(null);
   agents = signal<Agent[]>([]);
   allModels = signal<ModelDescriptor[]>([]);
   // provider → its live model catalog, each rendered as its own <datalist>.
@@ -398,6 +404,7 @@ export class CodeReviewSetupComponent implements OnInit {
       },
     });
     this.api.getConfig(bid).subscribe({ next: (c) => this.config.set(this.withChain(c)), error: () => {} });
+    this.refreshEstimate(bid);
     this.agentsApi.models(bid).subscribe({ next: (r) => this.allModels.set(r.items ?? []), error: () => {} });
     this.agentsApi.list(bid).subscribe({ next: (r) => this.agents.set(r.items ?? []), error: () => {} });
   }
@@ -432,12 +439,37 @@ export class CodeReviewSetupComponent implements OnInit {
         row.saving = false;
         this.saved.set(`Saved ${row.label}.`);
         this.bumpRows();
+        this.refreshEstimate(bid);
       },
       error: (e: HttpErrorResponse) => {
         row.saving = false;
         this.bumpRows();
         this.error.set(e.status === 400 ? 'Invalid dimension config.' : 'Could not save the dimension.');
       },
+    });
+  }
+
+  // estimateText formats the cost estimate for display: a per-review cost, the lane count, and
+  // whether it's grounded in real history or a rough fallback (spec 008 Slice 3).
+  estimateText(): string {
+    const e = this.estimate();
+    if (!e) return '';
+    const cost = e.est_cost_cents === 0 && e.est_cost_microcents > 0 ? '<1¢' : `~${e.est_cost_cents}¢`;
+    const lanes = `${e.lane_count} lane${e.lane_count === 1 ? '' : 's'}${e.verify_enabled ? ' incl. verify' : ''}`;
+    const basis =
+      e.based_on_reviews > 0
+        ? `based on your last ${e.based_on_reviews} review${e.based_on_reviews === 1 ? '' : 's'}`
+        : 'rough estimate — no review history yet';
+    return `Estimated cost per review: ${cost} — ${lanes}, ${basis}.`;
+  }
+
+  // refreshEstimate reloads the per-review cost estimate from the SAVED config (spec 008 Slice 3).
+  // Called on load and after each save so the number tracks the persisted panel. A failure just
+  // clears the estimate — it's advisory and must never block editing.
+  private refreshEstimate(bid: string): void {
+    this.api.estimate(bid).subscribe({
+      next: (e) => this.estimate.set(e),
+      error: () => this.estimate.set(null),
     });
   }
 
@@ -453,6 +485,7 @@ export class CodeReviewSetupComponent implements OnInit {
       next: () => {
         drop();
         this.saved.set(`Removed ${row.label}.`);
+        this.refreshEstimate(bid);
       },
       error: () => this.error.set('Could not remove the dimension.'),
     });
@@ -467,6 +500,7 @@ export class CodeReviewSetupComponent implements OnInit {
         this.config.set(c);
         this.savingConfig.set(false);
         this.saved.set('Saved aggregation config.');
+        this.refreshEstimate(bid);
       },
       error: () => {
         this.savingConfig.set(false);

@@ -158,8 +158,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /businesses/{id}/review-config/estimate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getReviewConfigEstimate
+      summary: Estimate a review's cost for the current config
+      description: >
+        Returns a pre-PR per-review cost estimate for the business's current review config: the
+        enabled-lane count (plus the verify lane, if enabled) priced by the business's own recent
+        observed per-lane cost, or a rough fallback constant when there is no history yet. Gated by
+        agents.configure.
+      responses:
+        "200":
+          description: The cost estimate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewConfigEstimate'
+        "404":
+          description: Business not found or caller lacks agents.configure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   schemas:
+    ReviewConfigEstimate:
+      type: object
+      description: 'Pre-PR per-review cost estimate (manyforge-8qs.3). All costs are estimates.'
+      properties:
+        lane_count:
+          type: integer
+          description: 'Enabled dimensions (a default single lane when none are configured), plus the verify lane when enabled.'
+        verify_enabled:
+          type: boolean
+        based_on_reviews:
+          type: integer
+          description: 'How many recent reviews seeded the per-lane cost; 0 ⇒ the fallback constant was used.'
+        per_lane_cost_microcents:
+          type: integer
+          format: int64
+        est_cost_microcents:
+          type: integer
+          format: int64
+        est_cost_cents:
+          type: integer
+          format: int64
+      required: [lane_count, verify_enabled, based_on_reviews, est_cost_cents]
     ReviewDimensionInput:
       type: object
       properties:

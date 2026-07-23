@@ -3,7 +3,12 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ReviewConfig, ReviewDimension, ReviewDimensionFallbackEntry } from '../../core/code-review.service';
+import {
+  ReviewConfig,
+  ReviewConfigEstimate,
+  ReviewDimension,
+  ReviewDimensionFallbackEntry,
+} from '../../core/code-review.service';
 import { CdkDragDrop } from '@angular/cdk/drag-drop';
 import { CodeReviewSetupComponent } from './setup';
 
@@ -50,6 +55,15 @@ const defaultConfig: ReviewConfig = {
   review_agent_chain: [],
 };
 
+const defaultEstimate: ReviewConfigEstimate = {
+  lane_count: 1,
+  verify_enabled: false,
+  based_on_reviews: 0,
+  per_lane_cost_microcents: 2_000_000,
+  est_cost_microcents: 2_000_000,
+  est_cost_cents: 2,
+};
+
 describe('CodeReviewSetupComponent', () => {
   let fixture: ComponentFixture<CodeReviewSetupComponent>;
   let cmp: CodeReviewSetupComponent;
@@ -72,6 +86,9 @@ describe('CodeReviewSetupComponent', () => {
   });
 
   afterEach(() => {
+    // The per-review cost estimate (spec 008 Slice 3) is fired on load and after every save, and
+    // is advisory. Drain any pending estimate request so it doesn't trip mock.verify().
+    mock.match((r) => r.url.includes('/review-config/estimate')).forEach((req) => req.flush(defaultEstimate));
     mock.verify();
     localStorage.clear();
   });
@@ -113,6 +130,30 @@ describe('CodeReviewSetupComponent', () => {
     expect(qAll('[data-testid="dimension-row"]').length).toBe(2);
     expect(fixture.nativeElement.textContent).toContain('Security');
     expect(fixture.nativeElement.textContent).toContain('Correctness');
+  });
+
+  it('shows the per-review cost estimate from the server (spec 008 Slice 3)', () => {
+    mount();
+    // mount() issued the estimate GET; flush a known value and assert the rendered line.
+    mock
+      .match((r) => r.url.includes('/review-config/estimate'))
+      .forEach((req) =>
+        req.flush({
+          lane_count: 3,
+          verify_enabled: true,
+          based_on_reviews: 5,
+          per_lane_cost_microcents: 2_000_000,
+          est_cost_microcents: 6_000_000,
+          est_cost_cents: 6,
+        } satisfies ReviewConfigEstimate),
+      );
+    fixture.detectChanges();
+    const el = q('[data-testid="cost-estimate"]');
+    expect(el).toBeTruthy();
+    const text = el?.textContent ?? '';
+    expect(text).toContain('~6¢');
+    expect(text).toContain('3 lanes incl. verify');
+    expect(text).toContain('last 5 reviews');
   });
 
   it('shows an empty state when no dimensions are configured', () => {
