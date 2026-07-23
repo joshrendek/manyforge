@@ -17,6 +17,7 @@ var inScope008Ops = []string{
 	"DELETE /businesses/{}/review-dimensions/{}",
 	"GET /businesses/{}/review-config",
 	"PUT /businesses/{}/review-config",
+	"GET /businesses/{}/review-config/estimate",
 }
 
 // is008Op reports whether a normalized "METHOD /path" belongs to the 008 surface (the

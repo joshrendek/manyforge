@@ -565,6 +565,17 @@ type Querier interface {
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
+	// NOTE: claim/requeue/fail are NOT sqlc queries. The CodeReviewWorker is a system
+	// process that runs principal-less (no manyforge.principal_id GUC), but code_review
+	// has RLS ENABLEd (0071) and the app connects as manyforge_app (NOBYPASSRLS), so a
+	// principal-less UPDATE here would be RLS-blocked. Those three operations therefore
+	// go through the SECURITY DEFINER functions claim_code_reviews / requeue_code_review
+	// / fail_code_review (migrations/0073), called via raw pgx in worker.go's
+	// AppDBAdapter — exactly the outbox drain pattern (claim_outbox_batch, 0016).
+	// Recent SUCCEEDED reviews' per-lane accounting blobs (dimension_runs JSONB), for the pre-PR
+	// cost-estimate heuristic (manyforge-8qs.3): the estimate averages observed per-lane cost from a
+	// business's OWN recent reviews. Business-scoped, newest first, bounded.
+	ListRecentDimensionRuns(ctx context.Context, arg ListRecentDimensionRunsParams) ([][]byte, error)
 	// ListRepoConnectors returns the caller's connectors (RLS-scoped). NEVER selects
 	// secret_ref — the UI must not receive any credential handle.
 	ListRepoConnectors(ctx context.Context, businessID uuid.UUID) ([]ListRepoConnectorsRow, error)

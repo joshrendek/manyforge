@@ -78,3 +78,13 @@ LIMIT 200;
 -- go through the SECURITY DEFINER functions claim_code_reviews / requeue_code_review
 -- / fail_code_review (migrations/0073), called via raw pgx in worker.go's
 -- AppDBAdapter — exactly the outbox drain pattern (claim_outbox_batch, 0016).
+
+-- name: ListRecentDimensionRuns :many
+-- Recent SUCCEEDED reviews' per-lane accounting blobs (dimension_runs JSONB), for the pre-PR
+-- cost-estimate heuristic (manyforge-8qs.3): the estimate averages observed per-lane cost from a
+-- business's OWN recent reviews. Business-scoped, newest first, bounded.
+SELECT dimension_runs
+FROM code_review
+WHERE business_id = $1 AND status = 'succeeded' AND dimension_runs IS NOT NULL
+ORDER BY created_at DESC
+LIMIT $2;
