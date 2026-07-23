@@ -39,7 +39,8 @@ export const routes: Routes = [
   {
     path: 'credentials/ai',
     canActivate: [authGuard],
-    loadComponent: () => import('./pages/credentials/ai/list').then((m) => m.AICredentialsListComponent),
+    loadComponent: () =>
+      import('./pages/credentials/ai/list').then((m) => m.AICredentialsListComponent),
   },
   {
     path: 'agents',
@@ -56,12 +57,14 @@ export const routes: Routes = [
     // /code-review/setup/... URL would bind :businessId='setup'. (Setup is paramless.)
     path: 'code-review/setup',
     canActivate: [authGuard],
-    loadComponent: () => import('./pages/code-review/setup').then((m) => m.CodeReviewSetupComponent),
+    loadComponent: () =>
+      import('./pages/code-review/setup').then((m) => m.CodeReviewSetupComponent),
   },
   {
     path: 'code-review/:businessId/:id',
     canActivate: [authGuard],
-    loadComponent: () => import('./pages/code-review/detail').then((m) => m.CodeReviewDetailComponent),
+    loadComponent: () =>
+      import('./pages/code-review/detail').then((m) => m.CodeReviewDetailComponent),
   },
   {
     path: 'crm/contacts',
@@ -77,6 +80,18 @@ export const routes: Routes = [
     path: 'crm/:businessId/contacts/:id',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/crm/contact-detail').then((m) => m.ContactDetailComponent),
+  },
+  {
+    path: 'feedback',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/feedback/boards-list').then((m) => m.FeedbackBoardsListComponent),
+  },
+  {
+    path: 'feedback/:businessId/:boardId',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/feedback/board-detail').then((m) => m.FeedbackBoardDetailComponent),
   },
   {
     path: 'credentials/connector',
@@ -96,7 +111,8 @@ export const routes: Routes = [
   {
     path: 'accounting',
     canActivate: [authGuard],
-    loadComponent: () => import('./pages/accounting/summary').then((m) => m.AccountingSummaryComponent),
+    loadComponent: () =>
+      import('./pages/accounting/summary').then((m) => m.AccountingSummaryComponent),
   },
   {
     path: 'accounting/:businessId/:agentId',

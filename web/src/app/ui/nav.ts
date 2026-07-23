@@ -1,4 +1,9 @@
-export interface NavItem { label: string; route: string; testid: string; badge?: number; }
+export interface NavItem {
+  label: string;
+  route: string;
+  testid: string;
+  badge?: number;
+}
 
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', route: '/dashboard', testid: 'nav-dashboard' },
@@ -12,6 +17,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'GitHub', route: '/settings/github', testid: 'nav-github' },
   { label: 'Contacts', route: '/crm/contacts', testid: 'nav-crm-contacts' },
   { label: 'Companies', route: '/crm/companies', testid: 'nav-crm-companies' },
+  { label: 'Feedback', route: '/feedback', testid: 'nav-feedback' },
   { label: 'MCP', route: '/mcp', testid: 'nav-mcp' },
   { label: 'Accounting', route: '/accounting', testid: 'nav-accounting' },
 ];
