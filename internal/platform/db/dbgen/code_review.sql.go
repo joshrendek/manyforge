@@ -235,6 +235,52 @@ func (q *Queries) ListCodeReviews(ctx context.Context, businessID uuid.UUID) ([]
 	return items, nil
 }
 
+const listFindingSeen = `-- name: ListFindingSeen :many
+SELECT fingerprint, status, first_seen_sha, last_seen_sha
+FROM code_review_finding_seen
+WHERE business_id = $1 AND repo = $2 AND pr_number = $3
+`
+
+type ListFindingSeenParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	Repo       string    `json:"repo"`
+	PrNumber   int32     `json:"pr_number"`
+}
+
+type ListFindingSeenRow struct {
+	Fingerprint  string `json:"fingerprint"`
+	Status       string `json:"status"`
+	FirstSeenSha string `json:"first_seen_sha"`
+	LastSeenSha  string `json:"last_seen_sha"`
+}
+
+// The fingerprints already seen for a PR across prior review iterations (Spec 008 Slice 4,
+// manyforge-e54.1), for NEW/CARRYOVER/RESOLVED classification. Business-scoped (RLS + predicate).
+func (q *Queries) ListFindingSeen(ctx context.Context, arg ListFindingSeenParams) ([]ListFindingSeenRow, error) {
+	rows, err := q.db.Query(ctx, listFindingSeen, arg.BusinessID, arg.Repo, arg.PrNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFindingSeenRow
+	for rows.Next() {
+		var i ListFindingSeenRow
+		if err := rows.Scan(
+			&i.Fingerprint,
+			&i.Status,
+			&i.FirstSeenSha,
+			&i.LastSeenSha,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentDimensionRuns = `-- name: ListRecentDimensionRuns :many
 
 SELECT dimension_runs
@@ -277,6 +323,37 @@ func (q *Queries) ListRecentDimensionRuns(ctx context.Context, arg ListRecentDim
 		return nil, err
 	}
 	return items, nil
+}
+
+const markFindingsResolved = `-- name: MarkFindingsResolved :execrows
+UPDATE code_review_finding_seen
+SET status = 'resolved', updated_at = now()
+WHERE business_id = $1 AND repo = $2 AND pr_number = $3
+  AND status = 'open'
+  AND fingerprint <> ALL($4::text[])
+`
+
+type MarkFindingsResolvedParams struct {
+	BusinessID          uuid.UUID `json:"business_id"`
+	Repo                string    `json:"repo"`
+	PrNumber            int32     `json:"pr_number"`
+	CurrentFingerprints []string  `json:"current_fingerprints"`
+}
+
+// Mark every still-open fingerprint on a PR that is NOT in the current review's set as resolved
+// (Spec 008 Slice 4): it was flagged before and is gone now. Idempotent — already-resolved rows
+// are excluded by the status filter.
+func (q *Queries) MarkFindingsResolved(ctx context.Context, arg MarkFindingsResolvedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markFindingsResolved,
+		arg.BusinessID,
+		arg.Repo,
+		arg.PrNumber,
+		arg.CurrentFingerprints,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setCodeReviewUsage = `-- name: SetCodeReviewUsage :exec
@@ -392,4 +469,50 @@ func (q *Queries) UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeRevi
 		&i.Force,
 	)
 	return i, err
+}
+
+const upsertFindingSeen = `-- name: UpsertFindingSeen :exec
+INSERT INTO code_review_finding_seen (
+    id, business_id, tenant_root_id, repo, pr_number, fingerprint,
+    first_seen_sha, last_seen_sha, status, created_at, updated_at)
+SELECT
+    $1::uuid, b.id, b.tenant_root_id,
+    $2::text,
+    $3::int,
+    $4::text,
+    $5::text,
+    $5::text,
+    'open',
+    now(), now()
+FROM business b
+WHERE b.id = $6::uuid
+ON CONFLICT (business_id, repo, pr_number, fingerprint) DO UPDATE
+    SET last_seen_sha = EXCLUDED.last_seen_sha,
+        status        = 'open',
+        updated_at    = now()
+`
+
+type UpsertFindingSeenParams struct {
+	ID          uuid.UUID `json:"id"`
+	Repo        string    `json:"repo"`
+	PrNumber    int32     `json:"pr_number"`
+	Fingerprint string    `json:"fingerprint"`
+	HeadSha     string    `json:"head_sha"`
+	BusinessID  uuid.UUID `json:"business_id"`
+}
+
+// Record (or refresh) one finding fingerprint seen on a PR. tenant_root_id is derived from the
+// RLS-visible business (foreign business ⇒ no row inserted). On conflict the finding is still
+// present in the latest review, so it is re-opened and its last_seen_sha advanced; first_seen_sha
+// and created_at are preserved.
+func (q *Queries) UpsertFindingSeen(ctx context.Context, arg UpsertFindingSeenParams) error {
+	_, err := q.db.Exec(ctx, upsertFindingSeen,
+		arg.ID,
+		arg.Repo,
+		arg.PrNumber,
+		arg.Fingerprint,
+		arg.HeadSha,
+		arg.BusinessID,
+	)
+	return err
 }

@@ -681,6 +681,20 @@ type CodeReview struct {
 	Force             bool               `json:"force"`
 }
 
+type CodeReviewFindingSeen struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Repo         string    `json:"repo"`
+	PrNumber     int32     `json:"pr_number"`
+	Fingerprint  string    `json:"fingerprint"`
+	FirstSeenSha string    `json:"first_seen_sha"`
+	LastSeenSha  string    `json:"last_seen_sha"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type CodexOauthPending struct {
 	Jti                uuid.UUID `json:"jti"`
 	BusinessID         uuid.UUID `json:"business_id"`

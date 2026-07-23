@@ -360,3 +360,24 @@ func TestCiteRulesSandboxWiringPinned(t *testing.T) {
 		}
 	}
 }
+
+// MF007-PIN-17 (manyforge-e54.1): the cross-iteration tracking table code_review_finding_seen holds
+// per-business finding history — it MUST be RLS-protected with the business-scoped policy, or one
+// tenant's review history leaks to another. Pins the migration (0100) that creates it.
+func TestFindingSeenTableRLSPinned(t *testing.T) {
+	matches, err := filepath.Glob("../../migrations/0100_*.up.sql")
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("migration 0100 (code_review_finding_seen) not found: %v", err)
+	}
+	src := mustRead(t, matches[0])
+	for _, frag := range []string{
+		"CREATE TABLE code_review_finding_seen",
+		"ENABLE ROW LEVEL SECURITY",
+		"authorized_businesses(current_principal())", // the business-scoped policy predicate
+		"tenant_root_id",                             // tenant column present (composite FK + immutability)
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("migration 0100 missing %q — the finding-history table must be tenant-isolated (MF007-PIN-17)", frag)
+		}
+	}
+}

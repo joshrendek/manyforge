@@ -536,6 +536,9 @@ type Querier interface {
 	// filtered to a specific set of IDs. Used at run-start to discover servers
 	// the agent is allowed to use.
 	ListEnabledMCPServersByIDs(ctx context.Context, arg ListEnabledMCPServersByIDsParams) ([]McpServer, error)
+	// The fingerprints already seen for a PR across prior review iterations (Spec 008 Slice 4,
+	// manyforge-e54.1), for NEW/CARRYOVER/RESOLVED classification. Business-scoped (RLS + predicate).
+	ListFindingSeen(ctx context.Context, arg ListFindingSeenParams) ([]ListFindingSeenRow, error)
 	// ListInboundAddresses is the first (unkeyed) page of a business's inbound addresses
 	// (both system and custom), oldest first for a stable keyset. lim is the clamped
 	// limit + 1.
@@ -641,6 +644,10 @@ type Querier interface {
 	// by the service from the pre-update verified_at, not from rows-affected.
 	MarkEmailDomainVerified(ctx context.Context, arg MarkEmailDomainVerifiedParams) error
 	MarkEmailVerified(ctx context.Context, id uuid.UUID) error
+	// Mark every still-open fingerprint on a PR that is NOT in the current review's set as resolved
+	// (Spec 008 Slice 4): it was flagged before and is gone now. Idempotent — already-resolved rows
+	// are excluded by the status filter.
+	MarkFindingsResolved(ctx context.Context, arg MarkFindingsResolvedParams) (int64, error)
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
@@ -788,6 +795,11 @@ type Querier interface {
 	// InsertAIProviderCredential's tenant_root_id derivation; ON CONFLICT (business_id, provider)
 	// replaces the token set + account id/plan/expiry (a re-connect after a manual-token credential).
 	UpsertCodexCredential(ctx context.Context, arg UpsertCodexCredentialParams) (AiProviderCredential, error)
+	// Record (or refresh) one finding fingerprint seen on a PR. tenant_root_id is derived from the
+	// RLS-visible business (foreign business ⇒ no row inserted). On conflict the finding is still
+	// present in the latest review, so it is re-opened and its last_seen_sha advanced; first_seen_sha
+	// and created_at are preserved.
+	UpsertFindingSeen(ctx context.Context, arg UpsertFindingSeenParams) error
 	// MCP per-tool effect policy (manyforge-k0d). Every query runs in the caller's RLS principal
 	// context AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement).
 	// Derives (business_id, tenant_root_id) from the RLS-visible mcp_server row, so an invisible or
