@@ -27,4 +27,7 @@ const (
 
 	PermCRMRead  = "crm.read"
 	PermCRMWrite = "crm.write"
+
+	PermFeedbackRead  = "feedback.read"
+	PermFeedbackWrite = "feedback.write"
 )
