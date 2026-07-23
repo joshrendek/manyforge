@@ -283,3 +283,47 @@ func TestSandboxRunDirPermsPinned(t *testing.T) {
 // (fallbackchain.go) by TestGithubPRRunJobEgressPreflightPinned in
 // github_pr_trigger_pin_test.go, and the sandbox's network posture by the
 // MF-KUBE-SANDBOX-* pins in mf_kube_sandbox_test.go.
+
+// MF007-PIN-15 (manyforge-7ml.1): every code-review lifecycle step must write an audit
+// entry — Spec-007's "every coding action audited" regression contract. The behavior
+// lives in service.go: DB-colocated steps write in-tx via audit.Write(ctx, tx, codingAudit(...)),
+// and steps not co-located with a DB mutation go through s.auditStep(...) (which opens its
+// own tx and calls the same codingAudit helper). Every review run reaches exactly one
+// terminal outcome — "posted" (success) or "failed" — so if a refactor drops the audit
+// at a terminal step the coding-action trail silently goes dark with no other test noticing.
+// This pins the audit plumbing AND each lifecycle action verb; behavioral coverage needs a
+// DB, so this is a source-level pin (per the security-regression source-pin discipline).
+func TestCodingReviewLifecycleAudited(t *testing.T) {
+	src := mustRead(t, "../agents/coding/service.go")
+
+	// Audit sink plumbing: the helper that stamps every code_review entry, the in-tx sink,
+	// and the standalone-step wrapper. If any of these is gutted the verbs below become dead
+	// strings that write nothing.
+	for _, frag := range []string{
+		`audit.Write(ctx, tx, codingAudit(`,           // in-tx audit sink
+		`func (s *CodeReviewService) auditStep(`,        // standalone-step wrapper (opens its own tx)
+		`func codingAudit(`,                             // entry builder
+		`tt := "code_review"`,                           // stamps TargetType = code_review
+	} {
+		if !strings.Contains(src, frag) {
+			t.Fatalf("coding audit plumbing %q missing from service.go — is the coding-action audit trail still wired? (MF007-PIN-15)", frag)
+		}
+	}
+
+	// Each lifecycle step must still emit its audit action verb. Terminal outcomes
+	// (posted/failed) are load-bearing: every review run ends in exactly one of them.
+	for _, action := range []string{
+		"agent.coding.review.requested",          // request accepted (in-tx with the pending insert)
+		"agent.coding.review.fallback_model",     // retry model downgrade
+		"agent.coding.review.files_dropped",      // over-budget files shed
+		"agent.coding.review.dimensions_skipped", // dimension glob-scoped out
+		"agent.coding.opencode.invoked",          // the coding action itself (sandbox run)
+		"agent.coding.review.posted",             // terminal success
+		"agent.coding.review.failed",             // terminal failure
+		"agent.coding.review.skipped_superseded", // terminal: newer review superseded this run
+	} {
+		if !strings.Contains(src, `"`+action+`"`) {
+			t.Fatalf("coding audit action %q missing from service.go — a review lifecycle step lost its audit entry (MF007-PIN-15)", action)
+		}
+	}
+}
