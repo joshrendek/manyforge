@@ -139,6 +139,8 @@ type Querier interface {
 	// DeleteRepoConnector removes one connector scoped to the business (RLS + explicit
 	// predicate). Cascades to its code_review rows via the existing FK.
 	DeleteRepoConnector(ctx context.Context, arg DeleteRepoConnectorParams) (int64, error)
+	// Remove one per-repo override (revert to inheriting the business dimension).
+	DeleteRepoDimensionOverride(ctx context.Context, arg DeleteRepoDimensionOverrideParams) (int64, error)
 	// Rows-affected = 0 ⇒ not found / not this tenant (RLS), mapped to 404 by the caller.
 	DeleteReviewDimension(ctx context.Context, arg DeleteReviewDimensionParams) (int64, error)
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
@@ -582,6 +584,11 @@ type Querier interface {
 	// ListRepoConnectors returns the caller's connectors (RLS-scoped). NEVER selects
 	// secret_ref — the UI must not receive any credential handle.
 	ListRepoConnectors(ctx context.Context, businessID uuid.UUID) ([]ListRepoConnectorsRow, error)
+	// Per-repo dimension overrides for one repo connector (Spec 008 Slice 4, manyforge-e54.2).
+	// Business-scoped via RLS on the underlying table.
+	ListRepoDimensionOverrides(ctx context.Context, repoConnectorID uuid.UUID) ([]ListRepoDimensionOverridesRow, error)
+	// All per-repo overrides for a business (Review UI aggregate).
+	ListRepoDimensionOverridesForBusiness(ctx context.Context, businessID uuid.UUID) ([]ListRepoDimensionOverridesForBusinessRow, error)
 	// ---- requesters ----
 	// ListRequesters is the first page of a business's requesters, ordered by
 	// first_seen_at for a stable keyset. The optional email facet is an exact
@@ -805,6 +812,10 @@ type Querier interface {
 	// Derives (business_id, tenant_root_id) from the RLS-visible mcp_server row, so an invisible or
 	// foreign server yields no row → pgx.ErrNoRows → 404 (no oracle). Upsert on (mcp_server_id, tool_name).
 	UpsertMCPToolPolicy(ctx context.Context, arg UpsertMCPToolPolicyParams) (McpToolPolicy, error)
+	// Insert-or-update one per-repo override, keyed on UNIQUE(repo_connector_id, dimension_key).
+	// business_id + tenant_root_id are derived from the RLS-visible repo_connector (foreign connector
+	// ⇒ no row ⇒ ErrNotFound), which also enforces connector ownership. min_severity NULL ⇒ inherit.
+	UpsertRepoDimensionOverride(ctx context.Context, arg UpsertRepoDimensionOverrideParams) (ReviewDimensionRepoOverride, error)
 	// Insert-or-update the business's review config (PK business_id). tenant_root_id is derived
 	// from the RLS-visible business, so a foreign business yields no row (⇒ ErrNotFound).
 	UpsertReviewConfig(ctx context.Context, arg UpsertReviewConfigParams) (ReviewConfig, error)

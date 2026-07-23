@@ -1034,6 +1034,18 @@ type ReviewDimension struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
+type ReviewDimensionRepoOverride struct {
+	ID              uuid.UUID `json:"id"`
+	BusinessID      uuid.UUID `json:"business_id"`
+	TenantRootID    uuid.UUID `json:"tenant_root_id"`
+	RepoConnectorID uuid.UUID `json:"repo_connector_id"`
+	DimensionKey    string    `json:"dimension_key"`
+	Enabled         bool      `json:"enabled"`
+	MinSeverity     *string   `json:"min_severity"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type Role struct {
 	ID           uuid.UUID   `json:"id"`
 	TenantRootID pgtype.UUID `json:"tenant_root_id"`

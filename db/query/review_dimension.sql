@@ -68,3 +68,44 @@ RETURNING *;
 -- Rows-affected = 0 ⇒ not found / not this tenant (RLS), mapped to 404 by the caller.
 DELETE FROM review_dimension
 WHERE id = sqlc.arg('id')::uuid AND business_id = sqlc.arg('business_id')::uuid;
+
+-- name: ListRepoDimensionOverrides :many
+-- Per-repo dimension overrides for one repo connector (Spec 008 Slice 4, manyforge-e54.2).
+-- Business-scoped via RLS on the underlying table.
+SELECT dimension_key, enabled, min_severity
+FROM review_dimension_repo_override
+WHERE repo_connector_id = $1
+ORDER BY dimension_key;
+
+-- name: ListRepoDimensionOverridesForBusiness :many
+-- All per-repo overrides for a business (Review UI aggregate).
+SELECT repo_connector_id, dimension_key, enabled, min_severity
+FROM review_dimension_repo_override
+WHERE business_id = $1;
+
+-- name: UpsertRepoDimensionOverride :one
+-- Insert-or-update one per-repo override, keyed on UNIQUE(repo_connector_id, dimension_key).
+-- business_id + tenant_root_id are derived from the RLS-visible repo_connector (foreign connector
+-- ⇒ no row ⇒ ErrNotFound), which also enforces connector ownership. min_severity NULL ⇒ inherit.
+INSERT INTO review_dimension_repo_override (
+    id, business_id, tenant_root_id, repo_connector_id, dimension_key,
+    enabled, min_severity, created_at, updated_at)
+SELECT
+    sqlc.arg('id')::uuid, rc.business_id, rc.tenant_root_id,
+    rc.id,
+    sqlc.arg('dimension_key')::text,
+    sqlc.arg('enabled')::boolean,
+    sqlc.narg('min_severity')::text,
+    now(), now()
+FROM repo_connector rc
+WHERE rc.id = sqlc.arg('repo_connector_id')::uuid
+ON CONFLICT (repo_connector_id, dimension_key) DO UPDATE
+    SET enabled      = EXCLUDED.enabled,
+        min_severity = EXCLUDED.min_severity,
+        updated_at   = now()
+RETURNING *;
+
+-- name: DeleteRepoDimensionOverride :execrows
+-- Remove one per-repo override (revert to inheriting the business dimension).
+DELETE FROM review_dimension_repo_override
+WHERE repo_connector_id = $1 AND dimension_key = $2;
