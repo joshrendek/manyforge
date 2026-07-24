@@ -277,6 +277,51 @@ func (ns NullEmailDomainSpfState) Value() (driver.Value, error) {
 	return string(ns.EmailDomainSpfState), nil
 }
 
+type FeedbackStatus string
+
+const (
+	FeedbackStatusOpen       FeedbackStatus = "open"
+	FeedbackStatusPlanned    FeedbackStatus = "planned"
+	FeedbackStatusInProgress FeedbackStatus = "in_progress"
+	FeedbackStatusDone       FeedbackStatus = "done"
+	FeedbackStatusDeclined   FeedbackStatus = "declined"
+)
+
+func (e *FeedbackStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = FeedbackStatus(s)
+	case string:
+		*e = FeedbackStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for FeedbackStatus: %T", src)
+	}
+	return nil
+}
+
+type NullFeedbackStatus struct {
+	FeedbackStatus FeedbackStatus `json:"feedback_status"`
+	Valid          bool           `json:"valid"` // Valid is true if FeedbackStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullFeedbackStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.FeedbackStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.FeedbackStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullFeedbackStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.FeedbackStatus), nil
+}
+
 type InboundAddressKind string
 
 const (
@@ -804,6 +849,57 @@ type EmailSuppression struct {
 	Email     string    `json:"email"`
 	Reason    string    `json:"reason"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type FeedbackBoard struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Slug         string    `json:"slug"`
+	Name         string    `json:"name"`
+	Description  *string   `json:"description"`
+	IsPublic     bool      `json:"is_public"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type FeedbackIngestKey struct {
+	ID             uuid.UUID          `json:"id"`
+	BusinessID     uuid.UUID          `json:"business_id"`
+	TenantRootID   uuid.UUID          `json:"tenant_root_id"`
+	BoardID        uuid.UUID          `json:"board_id"`
+	PublishableKey string             `json:"publishable_key"`
+	Label          *string            `json:"label"`
+	Status         string             `json:"status"`
+	CreatedAt      time.Time          `json:"created_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type FeedbackPost struct {
+	ID                uuid.UUID          `json:"id"`
+	BusinessID        uuid.UUID          `json:"business_id"`
+	TenantRootID      uuid.UUID          `json:"tenant_root_id"`
+	BoardID           uuid.UUID          `json:"board_id"`
+	Title             string             `json:"title"`
+	Body              *string            `json:"body"`
+	Status            FeedbackStatus     `json:"status"`
+	VoteCount         int32              `json:"vote_count"`
+	AuthorKind        string             `json:"author_kind"`
+	AuthorPrincipalID pgtype.UUID        `json:"author_principal_id"`
+	AuthorIdentity    *string            `json:"author_identity"`
+	TicketID          pgtype.UUID        `json:"ticket_id"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type FeedbackVote struct {
+	ID            uuid.UUID `json:"id"`
+	BusinessID    uuid.UUID `json:"business_id"`
+	TenantRootID  uuid.UUID `json:"tenant_root_id"`
+	PostID        uuid.UUID `json:"post_id"`
+	VoterIdentity string    `json:"voter_identity"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type GithubAppConfig struct {

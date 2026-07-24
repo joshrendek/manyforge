@@ -790,3 +790,81 @@ CREATE TABLE codex_oauth_pending (
     UNIQUE (jti, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
+
+-- ===== Feedback / Feature-Request Boards (Spec 006, migrations 0102). =====
+-- Business-scoped. sqlc input only: RLS policies, triggers, grants, and the public-ingress
+-- SECURITY DEFINER functions live in the migration, not here (schema.sql carries structure
+-- for codegen). The DEFINER fns are called via raw tx.QueryRow, so they need no sqlc model.
+CREATE TYPE feedback_status AS ENUM ('open', 'planned', 'in_progress', 'done', 'declined');
+
+CREATE TABLE feedback_board (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    slug           text NOT NULL,
+    name           text NOT NULL,
+    description    text,
+    is_public      boolean NOT NULL DEFAULT false,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (business_id, slug),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
+);
+
+CREATE TABLE feedback_post (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id         uuid NOT NULL,
+    tenant_root_id      uuid NOT NULL,
+    board_id            uuid NOT NULL,
+    title               text NOT NULL,
+    body                text,
+    status              feedback_status NOT NULL DEFAULT 'open',
+    vote_count          int  NOT NULL DEFAULT 0,
+    author_kind         text NOT NULL DEFAULT 'principal',
+    author_principal_id uuid,
+    author_identity     text,
+    ticket_id           uuid,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    updated_at          timestamptz NOT NULL DEFAULT now(),
+    deleted_at          timestamptz,
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (board_id, tenant_root_id)  REFERENCES feedback_board (id, tenant_root_id),
+    FOREIGN KEY (ticket_id, tenant_root_id) REFERENCES ticket (id, tenant_root_id),
+    FOREIGN KEY (author_principal_id) REFERENCES principal (id),
+    CONSTRAINT feedback_post_author_chk CHECK (
+        (author_kind = 'principal' AND author_principal_id IS NOT NULL AND author_identity IS NULL) OR
+        (author_kind = 'public'    AND author_principal_id IS NULL)
+    )
+);
+CREATE INDEX feedback_post_board_idx
+    ON feedback_post (board_id, tenant_root_id) WHERE deleted_at IS NULL;
+CREATE INDEX feedback_post_board_rank_idx
+    ON feedback_post (board_id, vote_count DESC, created_at DESC) WHERE deleted_at IS NULL;
+
+CREATE TABLE feedback_vote (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    post_id        uuid NOT NULL,
+    voter_identity text NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (post_id, voter_identity),
+    FOREIGN KEY (post_id, tenant_root_id) REFERENCES feedback_post (id, tenant_root_id)
+);
+
+CREATE TABLE feedback_ingest_key (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    board_id        uuid NOT NULL,
+    publishable_key text NOT NULL,
+    label           text,
+    status          text NOT NULL DEFAULT 'enabled',
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    revoked_at      timestamptz,
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (publishable_key),
+    FOREIGN KEY (board_id, tenant_root_id) REFERENCES feedback_board (id, tenant_root_id)
+);

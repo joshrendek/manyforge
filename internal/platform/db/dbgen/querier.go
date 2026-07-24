@@ -271,6 +271,8 @@ type Querier interface {
 	// defense in depth. pgx.ErrNoRows => ErrNotFound (cross-tenant names are invisible).
 	GetEnabledMCPServerByName(ctx context.Context, arg GetEnabledMCPServerByNameParams) (McpServer, error)
 	GetErasureSchedule(ctx context.Context, accountID uuid.UUID) (GetErasureScheduleRow, error)
+	GetFeedbackBoard(ctx context.Context, arg GetFeedbackBoardParams) (FeedbackBoard, error)
+	GetFeedbackPost(ctx context.Context, arg GetFeedbackPostParams) (FeedbackPost, error)
 	GetGithubAppConfig(ctx context.Context) (GetGithubAppConfigRow, error)
 	// GetMCPServerByID loads an MCP server by (id, business_id) — the ownership
 	// predicate. RLS scopes rows to the caller's authorized businesses; the explicit
@@ -327,6 +329,7 @@ type Querier interface {
 	// through this before calling the connector.
 	GetTicketConnectorRef(ctx context.Context, arg GetTicketConnectorRefParams) (GetTicketConnectorRefRow, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
+	IncrementFeedbackPostVoteCount(ctx context.Context, arg IncrementFeedbackPostVoteCountParams) (int32, error)
 	// Agent runtime (spec 003 US1a) — per-business BYO provider credential queries.
 	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
 	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement,
@@ -409,6 +412,31 @@ type Querier interface {
 	// (the challenge shows both TXT records at once); verified_at stays NULL until the
 	// TXT challenge passes. Duplicate (tenant_root_id, domain) → unique violation → 409.
 	InsertEmailDomain(ctx context.Context, arg InsertEmailDomainParams) (EmailDomain, error)
+	// Feedback boards read/write queries (spec 006, saz.1). feedback_board/post/vote/ingest_key
+	// are BUSINESS-scoped tables (keyed on business_id + tenant_root_id), unlike tenant-wide CRM.
+	// Every query runs inside the caller's RLS principal context (db.WithPrincipal); in addition,
+	// every id-taking query also filters on tenant_root_id, pushing the ownership predicate into
+	// SQL (dual enforcement) so a foreign-tenant id matches zero rows ⇒ ErrNotFound (no oracle).
+	// The public SDK/portal ingress path does NOT use these queries — it calls the SECURITY
+	// DEFINER functions from migration 0102 via raw tx.QueryRow (principal-less).
+	//
+	// INSERTs pass id + created_at/updated_at explicitly (id = $1, timestamps = now()), matching
+	// db/query/crm.sql: db/schema.sql (sqlc's input) carries no DEFAULTs, so explicit values keep
+	// the generated params from diverging. Keyset pagination follows crm activity: a first-page
+	// query plus an *After continuation comparing the full (created_at, id) row-value tuple, DESC.
+	// ---- boards ----
+	InsertFeedbackBoard(ctx context.Context, arg InsertFeedbackBoardParams) (FeedbackBoard, error)
+	// ---- ingest keys ----
+	InsertFeedbackIngestKey(ctx context.Context, arg InsertFeedbackIngestKeyParams) (FeedbackIngestKey, error)
+	// ---- posts ----
+	// InsertFeedbackPost is an INTERNAL submission (author_kind = 'principal'); public
+	// submissions go through feedback_public_submit (DEFINER). business_id must match the board's.
+	InsertFeedbackPost(ctx context.Context, arg InsertFeedbackPostParams) (FeedbackPost, error)
+	// ---- votes (internal path; public votes go through feedback_public_vote DEFINER) ----
+	// InsertFeedbackVote records one vote per identity per post (voting integrity). ON CONFLICT
+	// DO NOTHING → 0 rows affected on a replay. :execrows returns the affected-row count so the
+	// service bumps vote_count only on a genuinely new vote.
+	InsertFeedbackVote(ctx context.Context, arg InsertFeedbackVoteParams) (int64, error)
 	InsertGithubAppConfig(ctx context.Context, arg InsertGithubAppConfigParams) (int64, error)
 	// Agent runtime (spec 003 US6) — per-business MCP server registry queries.
 	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
@@ -538,6 +566,11 @@ type Querier interface {
 	// filtered to a specific set of IDs. Used at run-start to discover servers
 	// the agent is allowed to use.
 	ListEnabledMCPServersByIDs(ctx context.Context, arg ListEnabledMCPServersByIDsParams) ([]McpServer, error)
+	ListFeedbackBoards(ctx context.Context, arg ListFeedbackBoardsParams) ([]FeedbackBoard, error)
+	ListFeedbackBoardsAfter(ctx context.Context, arg ListFeedbackBoardsAfterParams) ([]FeedbackBoard, error)
+	ListFeedbackIngestKeys(ctx context.Context, arg ListFeedbackIngestKeysParams) ([]FeedbackIngestKey, error)
+	ListFeedbackPosts(ctx context.Context, arg ListFeedbackPostsParams) ([]FeedbackPost, error)
+	ListFeedbackPostsAfter(ctx context.Context, arg ListFeedbackPostsAfterParams) ([]FeedbackPost, error)
 	// The fingerprints already seen for a PR across prior review iterations (Spec 008 Slice 4,
 	// manyforge-e54.1), for NEW/CARRYOVER/RESOLVED classification. Business-scoped (RLS + predicate).
 	ListFindingSeen(ctx context.Context, arg ListFindingSeenParams) ([]ListFindingSeenRow, error)
@@ -704,6 +737,9 @@ type Querier interface {
 	RetryFailedOps(ctx context.Context, arg RetryFailedOpsParams) (int64, error)
 	// Cuts off every live session for a principal (account delete, T077).
 	RevokeAllRefreshForPrincipal(ctx context.Context, principalID uuid.UUID) error
+	// RevokeFeedbackIngestKey flips an enabled key to revoked. An already-revoked / foreign-tenant
+	// id matches zero rows ⇒ pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
+	RevokeFeedbackIngestKey(ctx context.Context, arg RevokeFeedbackIngestKeyParams) (FeedbackIngestKey, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
 	// Invitation lifecycle queries. Create/list/revoke/resend run under the inviter's
@@ -725,6 +761,7 @@ type Querier interface {
 	// its cost; the worker's requeue_code_review/fail_code_review own status/last_error/
 	// attempts and leave these columns alone.
 	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
+	SetFeedbackPostStatus(ctx context.Context, arg SetFeedbackPostStatusParams) (FeedbackPost, error)
 	SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error
 	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error
@@ -733,6 +770,7 @@ type Querier interface {
 	// (id, tenant_root_id). Idempotent: an already-deleted / foreign-tenant row matches zero
 	// rows, so the service maps pgx.ErrNoRows ⇒ ErrNotFound.
 	SoftDeleteContact(ctx context.Context, arg SoftDeleteContactParams) error
+	SoftDeleteFeedbackPost(ctx context.Context, arg SoftDeleteFeedbackPostParams) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
 	// UpdateAICredentialConfig partially updates the two SAFE config columns of a credential
 	// (PATCH): COALESCE(narg, col) preserves any field the caller omitted. Scoped to (id,
@@ -774,6 +812,9 @@ type Querier interface {
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) (Account, error)
 	// Email is citext UNIQUE; a collision raises 23505, surfaced as a validation error.
 	UpdateEmail(ctx context.Context, arg UpdateEmailParams) error
+	// UpdateFeedbackBoard is a partial update: a NULL narg preserves the current column value via
+	// COALESCE. is_public/name/description are each tri-state (NULL = unchanged).
+	UpdateFeedbackBoard(ctx context.Context, arg UpdateFeedbackBoardParams) (FeedbackBoard, error)
 	// UpdateMCPServer partially updates an MCP server (PATCH): COALESCE(narg, col)
 	// preserves any field the caller omitted (narg NULL = absent).
 	// No match → ErrNoRows → 404.

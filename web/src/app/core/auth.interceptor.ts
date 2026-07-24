@@ -17,13 +17,18 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const token = localStorage.getItem('mf_access');
   const authReq = token ? req.clone({ setHeaders: { Authorization: `Bearer ${token}` } }) : req;
 
-  // Never try to refresh the auth endpoints themselves (login/signup/refresh/…) —
-  // a 401 there is a real failure and refreshing would loop.
-  const isAuthCall = req.url.includes('/api/v1/auth/');
+  // Never try to refresh for:
+  //  - the auth endpoints themselves (login/signup/refresh/…) — a 401 there is a real
+  //    failure and refreshing would loop; and
+  //  - the public feedback ingress (/feedback/public/…) — it is principal-less (keyed by a
+  //    publishable board key), so a 401 means an unknown/revoked key or a private board and
+  //    an anonymous portal visitor must NOT be bounced to /login.
+  const skipRefresh =
+    req.url.includes('/api/v1/auth/') || req.url.includes('/api/v1/feedback/public/');
 
   return next(authReq).pipe(
     catchError((err: HttpErrorResponse) => {
-      if (err.status !== 401 || isAuthCall) {
+      if (err.status !== 401 || skipRefresh) {
         return throwError(() => err);
       }
       return auth.refreshAccessToken().pipe(
