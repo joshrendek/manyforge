@@ -124,7 +124,7 @@ func (h *PublicHandler) resolveVerified(r *http.Request, raw []byte, sealedSecre
 		h.Logger.ErrorContext(r.Context(), "feedback/public: unseal failed")
 		return false, true
 	}
-	if verr := verifyFeedbackSignature(header, string(secret), r.Method, r.URL.Path, raw, time.Now()); verr != nil {
+	if verr := verifyFeedbackSignature(header, string(secret), r.Method, r.URL.RequestURI(), raw, time.Now()); verr != nil {
 		return false, true // present-but-bad → 401
 	}
 	return true, false

@@ -62,17 +62,24 @@ secret).
 
 ## 3. Signature scheme
 
-Stripe-webhook style, **extended to bind the request method + path** (a request authenticator, not
-a fixed-URL webhook — binding method+path is nearly free now and impossible to retrofit later):
+Stripe-webhook style, **extended to bind the request method + full request-target** (a request
+authenticator, not a fixed-URL webhook — binding method+target is nearly free now and impossible
+to retrofit later):
 
 - **Header:** `X-Feedback-Signature: t=<unix-seconds>,v1=<hex>`
-- **Signed payload:** the string `"<t>.<METHOD>.<path>.<raw-request-body>"` where `<path>` is the
-  **full routed request path** the server sees (`r.URL.Path`) — this includes the **`/api/v1`
-  prefix** and the `{key}` segment, and **excludes** the query string — and `<raw-request-body>` is
-  the exact bytes read off the wire (before JSON decode; empty for GET). **Concrete example:** a
-  submit signs over `<t>.POST./api/v1/feedback/public/fbk_ABC.../posts.{"title":"…","idempotency_key":"…"}`
+- **Signed payload:** the string `"<t>.<METHOD>.<target>.<raw-request-body>"` where `<target>` is
+  the **full request-target** the server sees (`r.URL.RequestURI()`) — this includes the
+  **`/api/v1` prefix**, the `{key}` segment, **and the raw query string** — and
+  `<raw-request-body>` is the exact bytes read off the wire (before JSON decode; empty for GET).
+  **Concrete example (submit, no query):**
+  `<t>.POST./api/v1/feedback/public/fbk_ABC.../posts.{"title":"…","idempotency_key":"…"}`
   — NOT `/feedback/public/…` (a customer who omits `/api/v1` computes a wrong MAC and gets 401).
-- **MAC:** `v1 = hex(HMAC_SHA256(secret, "<t>.<METHOD>.<path>.<body>"))`.
+  **Concrete example (signed GET list, with query):**
+  `<t>.GET./api/v1/feedback/public/fbk_ABC.../posts?voter_identity=alice.` (empty body, trailing
+  `.` before it) — a caller that signs the path without `?voter_identity=alice`, or signs it for a
+  *different* `voter_identity`/`author` value than the one it actually sends, computes a wrong MAC
+  and is rejected 401.
+- **MAC:** `v1 = hex(HMAC_SHA256(secret, "<t>.<METHOD>.<target>.<body>"))`.
 - **Compare:** `subtle.ConstantTimeCompare` against the recomputed MAC.
 - **Replay window:** reject when `abs(now − t) > 300s`.
 - **Outcomes (submit/vote):**
@@ -190,15 +197,20 @@ device-supplied string; internal votes are unaffected.
 
 Namespacing applies on read: an **unsigned** list request maps the passed identity into `a:`; a
 **signed & verified** request maps it into `v:`. A signed GET signs per §3 with an **empty body**
-(`v1 = HMAC(secret, "<t>.GET.<path>.")`); the MAC proves secret possession + binds the path, and the
-`voter_identity`/`author` query values are then trusted as the verified caller's asserted identity
-(same trust as the request-body identity on verified submit/vote).
+(`v1 = HMAC(secret, "<t>.GET.<target>.")` where `<target>` is the path **and** the raw query
+string); the MAC proves secret possession + binds the full request-target — path **and** query —
+so the `voter_identity`/`author` query values are cryptographically bound to the signature, not
+just trusted as an unauthenticated assertion once the MAC checks out.
 
-**Documented residual (accepted, not fixed this round):** the signed GET does *not* cover the query
-string, so a captured GET MAC permits reading `viewer_voted`/my-submissions for *arbitrary* `v:`
-identities for ≤300s. Severity is low — all posts are already world-readable; the only leaked bit is
-"did verified identity X vote for/submit post Y" — and the attacker model is a TLS-MITM on a
-server-to-server hop. Signing the canonical query would close it and is a clean future add.
+**Residual closed:** an earlier revision of this scheme signed only method+path, leaving the query
+string uncovered — a captured GET MAC (e.g. sniffed on a TLS-MITM'd server-to-server hop, or
+simply replayed by whoever it was issued to) could be replayed with an **arbitrary** different
+`voter_identity`/`author` value for the ≤300s validity window, reading `viewer_voted`/my-
+submissions for identities the caller never actually held. Binding the query into the signed
+target (`saz.5`) closes this: a MAC computed for `?voter_identity=alice` no longer verifies when
+replayed against `?voter_identity=bob` — see `TestVerifyFeedbackSignature/wrong query → error
+(query binding)` and the integration-level `.../query binding)` subtest in
+`feedback_integration_test.go`.
 
 `viewer_voted` defaults to `false` when no `voter_identity` is supplied. The list stays public and
 unauthenticated (portal renders it without a secret, always in `a:`).
