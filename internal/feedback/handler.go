@@ -107,12 +107,19 @@ type ingestKeyResp struct {
 	TenantRootID   string  `json:"tenant_root_id"`
 	BoardID        string  `json:"board_id"`
 	PublishableKey string  `json:"publishable_key"`
-	Secret         string  `json:"secret,omitempty"`
 	HasSecret      bool    `json:"has_secret"`
 	Label          *string `json:"label"`
 	Status         string  `json:"status"`
 	CreatedAt      string  `json:"created_at"`
 	RevokedAt      *string `json:"revoked_at"`
+}
+
+// createIngestKeyResp is the create-only response: the normal key DTO plus the plaintext
+// secret, returned exactly once at creation. Read paths use ingestKeyResp (no Secret field),
+// so the plaintext is structurally unable to appear on list/get/revoke.
+type createIngestKeyResp struct {
+	ingestKeyResp
+	Secret string `json:"secret,omitempty"`
 }
 
 func toBoardResp(b Board) boardResp {
@@ -160,7 +167,6 @@ func toIngestKeyResp(k IngestKey) ingestKeyResp {
 		TenantRootID:   k.TenantRootID.String(),
 		BoardID:        k.BoardID.String(),
 		PublishableKey: k.PublishableKey,
-		Secret:         k.Secret,
 		HasSecret:      k.HasSecret,
 		Label:          k.Label,
 		Status:         k.Status,
@@ -520,7 +526,10 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, toIngestKeyResp(k))
+	httpx.WriteJSON(w, http.StatusCreated, createIngestKeyResp{
+		ingestKeyResp: toIngestKeyResp(k),
+		Secret:        k.Secret,
+	})
 }
 
 func (h *Handler) revokeKey(w http.ResponseWriter, r *http.Request) {
