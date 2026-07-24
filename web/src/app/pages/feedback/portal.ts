@@ -384,12 +384,15 @@ export class FeedbackPortalComponent implements OnInit {
   }
 
   // Reconciles the "voted" set with server truth (post.viewer_voted, scoped to this device's
-  // voter_identity) on every load — a fresh browser/localStorage-cleared session still renders
-  // the correct voted state instead of relying solely on the local optimistic cache.
+  // voter_identity) on every load. listPosts returns the full post set (no pagination), so
+  // viewer_voted is authoritative per post: it both adds and removes from the local optimistic
+  // cache. A stale/leftover localStorage flag can never keep a post rendering as voted once the
+  // server reports viewer_voted:false for it.
   private reconcileVoted(items: PublicPost[]): void {
     const v = new Set(this.voted());
     for (const p of items) {
       if (p.viewer_voted) v.add(p.id);
+      else v.delete(p.id);
     }
     this.voted.set(v);
     localStorage.setItem(this.votedStorageKey, JSON.stringify([...v]));
