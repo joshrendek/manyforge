@@ -294,12 +294,33 @@ func (h *PublicHandler) vote(w http.ResponseWriter, r *http.Request) {
 }
 
 type publicPost struct {
-	ID        string  `json:"id"`
-	Title     string  `json:"title"`
-	Body      *string `json:"body,omitempty"`
-	Status    string  `json:"status"`
-	VoteCount int     `json:"vote_count"`
-	CreatedAt string  `json:"created_at"`
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	Body             *string `json:"body,omitempty"`
+	Status           string  `json:"status"`
+	VoteCount        int     `json:"vote_count"`
+	CreatedAt        string  `json:"created_at"`
+	ViewerVoted      bool    `json:"viewer_voted"`
+	IdentityVerified bool    `json:"identity_verified"`
+}
+
+// namespacedParam prefixes a read identity with the caller's authoritative tier (a:/v:) and
+// caps to 200 — matching the write-side transform so it can match a stored identity. Returns
+// nil for an empty value (→ SQL NULL → no filter / viewer_voted=false).
+func namespacedParam(v string, verified bool) *string {
+	v = trimTo(v)
+	if v == "" {
+		return nil
+	}
+	if len(v) > 200 {
+		v = v[:200]
+	}
+	prefix := "a:"
+	if verified {
+		prefix = "v:"
+	}
+	s := prefix + v
+	return &s
 }
 
 func (h *PublicHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +332,7 @@ func (h *PublicHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var known bool
+	var known, sigBad bool
 	var items []publicPost
 	txErr := h.DB.WithTx(r.Context(), func(tx pgx.Tx) error {
 		b, ok, err := h.resolveBoard(r, tx, key)
@@ -322,32 +343,40 @@ func (h *PublicHandler) list(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		known = true
+		verified, bad := h.resolveVerified(r, nil, b.sealedSecret) // GET: empty body
+		if bad {
+			sigBad = true
+			return nil
+		}
+		pViewer := namespacedParam(r.URL.Query().Get("voter_identity"), verified)
+		pAuthor := namespacedParam(r.URL.Query().Get("author"), verified)
+
 		rows, qerr := tx.Query(r.Context(),
-			`SELECT id, title, body, status, vote_count, created_at FROM feedback_public_list_posts($1, $2)`,
-			b.boardID, limit)
+			`SELECT id, title, body, status, vote_count, created_at, viewer_voted, identity_verified
+			   FROM feedback_public_list_posts($1, $2, $3, $4)`,
+			b.boardID, limit, pViewer, pAuthor)
 		if qerr != nil {
 			return qerr
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				id        uuid.UUID
-				title     string
-				bodyText  *string
-				status    string
-				voteCount int32
-				createdAt time.Time
+				id         uuid.UUID
+				title      string
+				bodyText   *string
+				status     string
+				voteCount  int32
+				createdAt  time.Time
+				viewerVote bool
+				idVerified bool
 			)
-			if err := rows.Scan(&id, &title, &bodyText, &status, &voteCount, &createdAt); err != nil {
+			if err := rows.Scan(&id, &title, &bodyText, &status, &voteCount, &createdAt, &viewerVote, &idVerified); err != nil {
 				return err
 			}
 			items = append(items, publicPost{
-				ID:        id.String(),
-				Title:     title,
-				Body:      bodyText,
-				Status:    status,
-				VoteCount: int(voteCount),
-				CreatedAt: createdAt.UTC().Format(rfc3339),
+				ID: id.String(), Title: title, Body: bodyText, Status: status,
+				VoteCount: int(voteCount), CreatedAt: createdAt.UTC().Format(rfc3339),
+				ViewerVoted: viewerVote, IdentityVerified: idVerified,
 			})
 		}
 		return rows.Err()
@@ -358,6 +387,10 @@ func (h *PublicHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !known {
+		writeUnauthorized(w)
+		return
+	}
+	if sigBad {
 		writeUnauthorized(w)
 		return
 	}
