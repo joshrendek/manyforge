@@ -259,6 +259,8 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/PublishableKey' }
         - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/VoterIdentityQuery' }
+        - { $ref: '#/components/parameters/AuthorQuery' }
       responses:
         '200':
           description: Top public posts
@@ -273,12 +275,20 @@ paths:
       security: []
       parameters:
         - { $ref: '#/components/parameters/PublishableKey' }
+        - { $ref: '#/components/parameters/FeedbackSignature' }
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/PublicSubmit' }
       responses:
+        '200':
+          description: >-
+            Deduped replay (same idempotency_key + same body): echoes the ORIGINAL
+            submission (status "open", vote_count 0) — not current post state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicSubmitResult' }
         '201':
           description: The created post
           content:
@@ -286,6 +296,7 @@ paths:
               schema: { $ref: '#/components/schemas/PublicSubmitResult' }
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
   /feedback/public/{key}/posts/{postID}/votes:
     post:
@@ -295,6 +306,7 @@ paths:
       security: []
       parameters:
         - { $ref: '#/components/parameters/PublishableKey' }
+        - { $ref: '#/components/parameters/FeedbackSignature' }
         - name: postID
           in: path
           required: true
@@ -353,6 +365,24 @@ components:
       in: query
       required: false
       schema: { type: integer, minimum: 1, maximum: 200 }
+    VoterIdentityQuery:
+      name: voter_identity
+      in: query
+      required: false
+      description: Opaque identity to resolve "viewer_voted" against (server-namespaced a:/v:)
+      schema: { type: string }
+    AuthorQuery:
+      name: author
+      in: query
+      required: false
+      description: Opaque identity to filter results to that author's posts
+      schema: { type: string }
+    FeedbackSignature:
+      name: X-Feedback-Signature
+      in: header
+      required: false
+      description: HMAC request signature; when present and valid, upgrades the caller to identity_verified.
+      schema: { type: string }
   responses:
     NotFound:
       description: Not found (also returned for a lacking permission / invisible resource — no oracle)
@@ -459,7 +489,7 @@ components:
         next_cursor: { type: [string, "null"] }
     IngestKey:
       type: object
-      required: [id, business_id, tenant_root_id, board_id, publishable_key, status, created_at]
+      required: [id, business_id, tenant_root_id, board_id, publishable_key, status, created_at, has_secret]
       properties:
         id: { type: string, format: uuid }
         business_id: { type: string, format: uuid }
@@ -470,6 +500,8 @@ components:
         status: { type: string, enum: [enabled, revoked] }
         created_at: { type: string, format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
+        secret: { type: string, description: Write-once signing secret (fbs_...); present only in the create response, never on list/get. }
+        has_secret: { type: boolean, description: Whether a signing secret is configured for this key. }
     IngestKeyCreate:
       type: object
       properties:
@@ -485,6 +517,7 @@ components:
       properties:
         voted: { type: boolean }
         vote_count: { type: integer }
+        identity_verified: { type: boolean, description: Public-vote only; set when X-Feedback-Signature verified. }
     ConvertResult:
       type: object
       required: [ticket_id]
@@ -497,14 +530,17 @@ components:
         title: { type: string, maxLength: 300 }
         body: { type: string }
         author_identity: { type: string, description: opaque, SDK-provided stable identity }
+        idempotency_key: { type: string, maxLength: 255 }
     PublicSubmitResult:
       type: object
-      required: [id, title, status, vote_count]
+      required: [id, title, status, vote_count, identity_verified, deduped]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
         status: { $ref: '#/components/schemas/Status' }
         vote_count: { type: integer }
+        identity_verified: { type: boolean }
+        deduped: { type: boolean, description: True on an idempotency-key replay; the rest of this object echoes the original submission, not current post state. }
     PublicVote:
       type: object
       required: [voter_identity]
@@ -512,7 +548,7 @@ components:
         voter_identity: { type: string, description: opaque, SDK-provided stable identity }
     PublicPost:
       type: object
-      required: [id, title, status, vote_count, created_at]
+      required: [id, title, status, vote_count, created_at, viewer_voted, identity_verified]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
@@ -520,6 +556,8 @@ components:
         status: { $ref: '#/components/schemas/Status' }
         vote_count: { type: integer }
         created_at: { type: string, format: date-time }
+        viewer_voted: { type: boolean, description: Whether the caller's voter_identity has already voted on this post. }
+        identity_verified: { type: boolean, description: Whether this post's author submitted with a verified (signed) identity. }
     PublicPostList:
       type: object
       required: [items]
