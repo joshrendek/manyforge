@@ -107,6 +107,8 @@ type ingestKeyResp struct {
 	TenantRootID   string  `json:"tenant_root_id"`
 	BoardID        string  `json:"board_id"`
 	PublishableKey string  `json:"publishable_key"`
+	Secret         string  `json:"secret,omitempty"`
+	HasSecret      bool    `json:"has_secret"`
 	Label          *string `json:"label"`
 	Status         string  `json:"status"`
 	CreatedAt      string  `json:"created_at"`
@@ -158,6 +160,8 @@ func toIngestKeyResp(k IngestKey) ingestKeyResp {
 		TenantRootID:   k.TenantRootID.String(),
 		BoardID:        k.BoardID.String(),
 		PublishableKey: k.PublishableKey,
+		Secret:         k.Secret,
+		HasSecret:      k.HasSecret,
 		Label:          k.Label,
 		Status:         k.Status,
 		CreatedAt:      k.CreatedAt.UTC().Format(rfc3339),
