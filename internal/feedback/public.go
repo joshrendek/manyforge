@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/manyforge/manyforge/internal/platform/crypto"
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
@@ -40,12 +41,13 @@ const maxPublicBytes int64 = 64 << 10
 type PublicHandler struct {
 	DB       *appdb.DB
 	Logger   *slog.Logger
+	Sealer   *crypto.Sealer // nil ⇒ signed requests against secret'd keys → 401 (fail closed)
 	maxBytes int64
 }
 
 // NewPublicHandler builds a ready-to-use public ingress handler.
-func NewPublicHandler(database *appdb.DB, logger *slog.Logger) *PublicHandler {
-	return &PublicHandler{DB: database, Logger: logger, maxBytes: maxPublicBytes}
+func NewPublicHandler(database *appdb.DB, logger *slog.Logger, sealer *crypto.Sealer) *PublicHandler {
+	return &PublicHandler{DB: database, Logger: logger, Sealer: sealer, maxBytes: maxPublicBytes}
 }
 
 // PublicRoutes mounts the SDK/portal endpoints. The caller applies the global ingest

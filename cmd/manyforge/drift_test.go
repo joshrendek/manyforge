@@ -95,7 +95,7 @@ func apiRoutes(t *testing.T) map[string]bool {
 		crmRead:          noop,
 		crmWrite:         noop,
 		feedback:         feedback.NewHandler(&feedback.Service{}),
-		feedbackPublic:   feedback.NewPublicHandler(nil, nil),
+		feedbackPublic:   feedback.NewPublicHandler(nil, nil, nil),
 		feedbackRead:     noop,
 		feedbackWrite:    noop,
 		codingReviews:    &coding.Handler{},

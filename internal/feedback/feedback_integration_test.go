@@ -259,7 +259,7 @@ func TestPublicIngressAndOracle(t *testing.T) {
 	}
 	privKey, _ := svc.CreateIngestKey(ctx, pid, biz, privBoard.ID, nil)
 
-	h := feedback.NewPublicHandler(tdb.App, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := feedback.NewPublicHandler(tdb.App, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	r := chi.NewRouter()
 	h.PublicRoutes(r)
 	srv := httptest.NewServer(r)

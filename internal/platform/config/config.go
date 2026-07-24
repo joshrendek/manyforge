@@ -98,6 +98,13 @@ type Config struct {
 	// GitHub App integration disabled, server still boots. Set-but-wrong-length is fatal.
 	GitHubAppMasterKey []byte
 
+	// FeedbackMasterKey seals the per-ingest-key feedback secret used for HMAC-signed
+	// verified ingress. Supplied via MANYFORGE_FEEDBACK_MASTER_KEY as base64 or hex; the
+	// decoded value MUST be 32 bytes (AES-256). Nil/empty when unset — the verified tier is
+	// disabled (anonymous ingress unaffected) and the server still boots. Set-but-wrong-length
+	// is a hard config error caught here.
+	FeedbackMasterKey []byte
+
 	// InstanceOperatorPrincipal gates instance setup routes (GitHub App manifest
 	// creation, etc.). MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL (UUID). uuid.Nil when
 	// unset — setup routes reject everyone (404, no oracle). The operator finds
@@ -316,6 +323,14 @@ func Load() (Config, error) {
 	// silently disables sealing of the instance GitHub App credentials.
 	if cfg.GitHubAppMasterKey, err = envKey32("MANYFORGE_GITHUB_APP_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_GITHUB_APP_MASTER_KEY: %w", err)
+	}
+
+	// Feedback master key (Spec 006 verified-identity tier): unset ⇒ nil (no error,
+	// verified tier disabled, anonymous ingress unaffected); set-but-not-32-bytes-
+	// after-decode ⇒ hard error so a misconfigured key never silently disables
+	// HMAC-signed verified ingress sealing.
+	if cfg.FeedbackMasterKey, err = envKey32("MANYFORGE_FEEDBACK_MASTER_KEY"); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_FEEDBACK_MASTER_KEY: %w", err)
 	}
 
 	// Instance operator principal (GitHub App setup gate): unset ⇒ uuid.Nil, so the
