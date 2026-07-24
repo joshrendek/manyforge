@@ -20,6 +20,10 @@ const sigMaxSkew = 300 * time.Second
 // "<t>.<METHOD>.<path>.<body>". Binding method+path stops a captured MAC from being replayed
 // against a different endpoint/post; the (signed) body carries any idempotency_key.
 //
+// <path> is the FULL routed request path the server verifies against (r.URL.Path), which
+// INCLUDES the /api/v1 prefix, e.g. "/api/v1/feedback/public/fbk_ABC.../posts" — a caller that
+// signs the bare "/feedback/public/..." path computes a wrong MAC and is rejected 401.
+//
 // feedbackSigningString frames the signed bytes as "<t>.<METHOD>.<path>.<body>". The unescaped
 // "." delimiter is unambiguous ONLY because callers pass a path with no "." in its segments
 // (HTTP method verbs + fbk_/UUID identifiers) and a JSON body (never starts with a bare "."):

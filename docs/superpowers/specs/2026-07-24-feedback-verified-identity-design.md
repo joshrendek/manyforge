@@ -67,8 +67,11 @@ a fixed-URL webhook — binding method+path is nearly free now and impossible to
 
 - **Header:** `X-Feedback-Signature: t=<unix-seconds>,v1=<hex>`
 - **Signed payload:** the string `"<t>.<METHOD>.<path>.<raw-request-body>"` where `<path>` is the
-  routed request path **including the `{key}` segment**, **excluding** the query string, and
-  `<raw-request-body>` is the exact bytes read off the wire (before JSON decode; empty for GET).
+  **full routed request path** the server sees (`r.URL.Path`) — this includes the **`/api/v1`
+  prefix** and the `{key}` segment, and **excludes** the query string — and `<raw-request-body>` is
+  the exact bytes read off the wire (before JSON decode; empty for GET). **Concrete example:** a
+  submit signs over `<t>.POST./api/v1/feedback/public/fbk_ABC.../posts.{"title":"…","idempotency_key":"…"}`
+  — NOT `/feedback/public/…` (a customer who omits `/api/v1` computes a wrong MAC and gets 401).
 - **MAC:** `v1 = hex(HMAC_SHA256(secret, "<t>.<METHOD>.<path>.<body>"))`.
 - **Compare:** `subtle.ConstantTimeCompare` against the recomputed MAC.
 - **Replay window:** reject when `abs(now − t) > 300s`.
