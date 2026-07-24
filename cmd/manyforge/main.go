@@ -180,9 +180,21 @@ func main() {
 	// predicate), gated by feedback.read / feedback.write. The public handler is the
 	// principal-less SDK/portal ingress — authenticated by a publishable board key, mounted in
 	// the ingress group behind the per-IP ingest limiter (all DB access via SECURITY DEFINER).
-	feedbackSvc := &feedback.Service{DB: database}
+	// FeedbackMasterKey seals the verified-identity tier's HMAC secret (Task 1, saz.5):
+	// unset ⇒ nil sealer, verified tier disabled, anonymous ingress unaffected, server
+	// still boots. An explicitly-set-but-wrong-length key is a hard config error already
+	// caught in config.Load(), so NewSealer here cannot fail.
+	var feedbackSealer *mfcrypto.Sealer
+	if len(cfg.FeedbackMasterKey) > 0 {
+		feedbackSealer, err = mfcrypto.NewSealer(cfg.FeedbackMasterKey)
+		if err != nil {
+			logger.Error("init feedback sealer", "err", err)
+			os.Exit(1)
+		}
+	}
+	feedbackSvc := &feedback.Service{DB: database, Sealer: feedbackSealer}
 	feedbackH := feedback.NewHandler(feedbackSvc)
-	feedbackPublicH := feedback.NewPublicHandler(database, logger)
+	feedbackPublicH := feedback.NewPublicHandler(database, logger, feedbackSealer)
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
