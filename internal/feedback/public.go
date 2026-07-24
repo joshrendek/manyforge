@@ -312,8 +312,8 @@ func namespacedParam(v string, verified bool) *string {
 	if v == "" {
 		return nil
 	}
-	if len(v) > 200 {
-		v = v[:200]
+	if r := []rune(v); len(r) > 200 {
+		v = string(r[:200])
 	}
 	prefix := "a:"
 	if verified {
