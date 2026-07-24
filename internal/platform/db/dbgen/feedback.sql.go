@@ -40,7 +40,7 @@ func (q *Queries) GetFeedbackBoard(ctx context.Context, arg GetFeedbackBoardPara
 }
 
 const getFeedbackPost = `-- name: GetFeedbackPost :one
-SELECT id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at FROM feedback_post WHERE id = $1 AND tenant_root_id = $2 AND deleted_at IS NULL
+SELECT id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at, identity_verified FROM feedback_post WHERE id = $1 AND tenant_root_id = $2 AND deleted_at IS NULL
 `
 
 type GetFeedbackPostParams struct {
@@ -67,6 +67,7 @@ func (q *Queries) GetFeedbackPost(ctx context.Context, arg GetFeedbackPostParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.IdentityVerified,
 	)
 	return i, err
 }
@@ -147,9 +148,9 @@ func (q *Queries) InsertFeedbackBoard(ctx context.Context, arg InsertFeedbackBoa
 
 const insertFeedbackIngestKey = `-- name: InsertFeedbackIngestKey :one
 
-INSERT INTO feedback_ingest_key (id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, 'enabled', now())
-RETURNING id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at, revoked_at
+INSERT INTO feedback_ingest_key (id, business_id, tenant_root_id, board_id, publishable_key, label, sealed_secret, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'enabled', now())
+RETURNING id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at, revoked_at, sealed_secret
 `
 
 type InsertFeedbackIngestKeyParams struct {
@@ -159,6 +160,7 @@ type InsertFeedbackIngestKeyParams struct {
 	BoardID        uuid.UUID `json:"board_id"`
 	PublishableKey string    `json:"publishable_key"`
 	Label          *string   `json:"label"`
+	SealedSecret   *string   `json:"sealed_secret"`
 }
 
 // ---- ingest keys ----
@@ -170,6 +172,7 @@ func (q *Queries) InsertFeedbackIngestKey(ctx context.Context, arg InsertFeedbac
 		arg.BoardID,
 		arg.PublishableKey,
 		arg.Label,
+		arg.SealedSecret,
 	)
 	var i FeedbackIngestKey
 	err := row.Scan(
@@ -182,6 +185,7 @@ func (q *Queries) InsertFeedbackIngestKey(ctx context.Context, arg InsertFeedbac
 		&i.Status,
 		&i.CreatedAt,
 		&i.RevokedAt,
+		&i.SealedSecret,
 	)
 	return i, err
 }
@@ -190,7 +194,7 @@ const insertFeedbackPost = `-- name: InsertFeedbackPost :one
 
 INSERT INTO feedback_post (id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, 'open', 0, 'principal', $7, now(), now())
-RETURNING id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at
+RETURNING id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at, identity_verified
 `
 
 type InsertFeedbackPostParams struct {
@@ -233,6 +237,7 @@ func (q *Queries) InsertFeedbackPost(ctx context.Context, arg InsertFeedbackPost
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.IdentityVerified,
 	)
 	return i, err
 }
@@ -366,7 +371,7 @@ func (q *Queries) ListFeedbackBoardsAfter(ctx context.Context, arg ListFeedbackB
 }
 
 const listFeedbackIngestKeys = `-- name: ListFeedbackIngestKeys :many
-SELECT id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at, revoked_at FROM feedback_ingest_key
+SELECT id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at, revoked_at, sealed_secret FROM feedback_ingest_key
 WHERE board_id = $1 AND tenant_root_id = $2
 ORDER BY created_at DESC, id DESC
 LIMIT $3
@@ -397,6 +402,7 @@ func (q *Queries) ListFeedbackIngestKeys(ctx context.Context, arg ListFeedbackIn
 			&i.Status,
 			&i.CreatedAt,
 			&i.RevokedAt,
+			&i.SealedSecret,
 		); err != nil {
 			return nil, err
 		}
@@ -409,7 +415,7 @@ func (q *Queries) ListFeedbackIngestKeys(ctx context.Context, arg ListFeedbackIn
 }
 
 const listFeedbackPosts = `-- name: ListFeedbackPosts :many
-SELECT id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at FROM feedback_post
+SELECT id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at, identity_verified FROM feedback_post
 WHERE board_id = $1 AND tenant_root_id = $2 AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT $3
@@ -446,6 +452,7 @@ func (q *Queries) ListFeedbackPosts(ctx context.Context, arg ListFeedbackPostsPa
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.IdentityVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -458,7 +465,7 @@ func (q *Queries) ListFeedbackPosts(ctx context.Context, arg ListFeedbackPostsPa
 }
 
 const listFeedbackPostsAfter = `-- name: ListFeedbackPostsAfter :many
-SELECT id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at FROM feedback_post
+SELECT id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at, identity_verified FROM feedback_post
 WHERE board_id = $1 AND tenant_root_id = $2
   AND deleted_at IS NULL
   AND (created_at, id) < ($3::timestamptz, $4::uuid)
@@ -505,6 +512,7 @@ func (q *Queries) ListFeedbackPostsAfter(ctx context.Context, arg ListFeedbackPo
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.IdentityVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -519,7 +527,7 @@ func (q *Queries) ListFeedbackPostsAfter(ctx context.Context, arg ListFeedbackPo
 const revokeFeedbackIngestKey = `-- name: RevokeFeedbackIngestKey :one
 UPDATE feedback_ingest_key SET status = 'revoked', revoked_at = now()
 WHERE id = $1 AND tenant_root_id = $2 AND status = 'enabled'
-RETURNING id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at, revoked_at
+RETURNING id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at, revoked_at, sealed_secret
 `
 
 type RevokeFeedbackIngestKeyParams struct {
@@ -542,6 +550,7 @@ func (q *Queries) RevokeFeedbackIngestKey(ctx context.Context, arg RevokeFeedbac
 		&i.Status,
 		&i.CreatedAt,
 		&i.RevokedAt,
+		&i.SealedSecret,
 	)
 	return i, err
 }
@@ -549,7 +558,7 @@ func (q *Queries) RevokeFeedbackIngestKey(ctx context.Context, arg RevokeFeedbac
 const setFeedbackPostStatus = `-- name: SetFeedbackPostStatus :one
 UPDATE feedback_post SET status = $3, updated_at = now()
 WHERE id = $1 AND tenant_root_id = $2 AND deleted_at IS NULL
-RETURNING id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at
+RETURNING id, business_id, tenant_root_id, board_id, title, body, status, vote_count, author_kind, author_principal_id, author_identity, ticket_id, created_at, updated_at, deleted_at, identity_verified
 `
 
 type SetFeedbackPostStatusParams struct {
@@ -577,6 +586,7 @@ func (q *Queries) SetFeedbackPostStatus(ctx context.Context, arg SetFeedbackPost
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.IdentityVerified,
 	)
 	return i, err
 }

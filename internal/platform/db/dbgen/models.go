@@ -863,6 +863,16 @@ type FeedbackBoard struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+type FeedbackIngestIdempotency struct {
+	KeyID        uuid.UUID   `json:"key_id"`
+	IdemKey      string      `json:"idem_key"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	BodySha256   []byte      `json:"body_sha256"`
+	PostID       pgtype.UUID `json:"post_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+}
+
 type FeedbackIngestKey struct {
 	ID             uuid.UUID          `json:"id"`
 	BusinessID     uuid.UUID          `json:"business_id"`
@@ -873,6 +883,7 @@ type FeedbackIngestKey struct {
 	Status         string             `json:"status"`
 	CreatedAt      time.Time          `json:"created_at"`
 	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+	SealedSecret   *string            `json:"sealed_secret"`
 }
 
 type FeedbackPost struct {
@@ -891,15 +902,17 @@ type FeedbackPost struct {
 	CreatedAt         time.Time          `json:"created_at"`
 	UpdatedAt         time.Time          `json:"updated_at"`
 	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	IdentityVerified  bool               `json:"identity_verified"`
 }
 
 type FeedbackVote struct {
-	ID            uuid.UUID `json:"id"`
-	BusinessID    uuid.UUID `json:"business_id"`
-	TenantRootID  uuid.UUID `json:"tenant_root_id"`
-	PostID        uuid.UUID `json:"post_id"`
-	VoterIdentity string    `json:"voter_identity"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID               uuid.UUID `json:"id"`
+	BusinessID       uuid.UUID `json:"business_id"`
+	TenantRootID     uuid.UUID `json:"tenant_root_id"`
+	PostID           uuid.UUID `json:"post_id"`
+	VoterIdentity    string    `json:"voter_identity"`
+	CreatedAt        time.Time `json:"created_at"`
+	IdentityVerified bool      `json:"identity_verified"`
 }
 
 type GithubAppConfig struct {

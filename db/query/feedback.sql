@@ -98,8 +98,8 @@ RETURNING vote_count;
 -- ---- ingest keys ----
 
 -- name: InsertFeedbackIngestKey :one
-INSERT INTO feedback_ingest_key (id, business_id, tenant_root_id, board_id, publishable_key, label, status, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, 'enabled', now())
+INSERT INTO feedback_ingest_key (id, business_id, tenant_root_id, board_id, publishable_key, label, sealed_secret, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'enabled', now())
 RETURNING *;
 
 -- name: ListFeedbackIngestKeys :many
