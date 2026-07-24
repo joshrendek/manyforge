@@ -68,6 +68,7 @@ type Post struct {
 	AuthorPrincipalID *uuid.UUID `json:"author_principal_id,omitempty"`
 	AuthorIdentity    *string    `json:"author_identity,omitempty"`
 	TicketID          *uuid.UUID `json:"ticket_id,omitempty"`
+	IdentityVerified  bool       `json:"identity_verified"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
