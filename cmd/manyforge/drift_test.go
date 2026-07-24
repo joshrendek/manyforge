@@ -18,6 +18,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/crm"
+	"github.com/manyforge/manyforge/internal/feedback"
 	"github.com/manyforge/manyforge/internal/githubapp"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
@@ -93,6 +94,10 @@ func apiRoutes(t *testing.T) map[string]bool {
 		crm:              crm.NewHandler(&crm.ContactService{}, &crm.CompanyService{}, &crm.ActivityService{}, nil, nil),
 		crmRead:          noop,
 		crmWrite:         noop,
+		feedback:         feedback.NewHandler(&feedback.Service{}),
+		feedbackPublic:   feedback.NewPublicHandler(nil, nil),
+		feedbackRead:     noop,
+		feedbackWrite:    noop,
 		codingReviews:    &coding.Handler{},
 		githubApp:        &githubapp.Handler{},
 		connectorsManage: noop,
@@ -223,6 +228,19 @@ func spec009Routes(t *testing.T) map[string]bool {
 	return specRoutesFrom(t, p)
 }
 
+// spec006Routes returns the operations declared in the spec-006 contract, or an
+// empty set if the contract file does not yet exist (so the untagged drift test does
+// not fail before the file is committed; the contract-tagged drift_006_test enforces
+// the full two-way check once the file is present).
+func spec006Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	p := specPath("specs", "006-feedback-boards", "contracts", "openapi.yaml")
+	if _, err := os.Stat(p); err != nil {
+		return map[string]bool{}
+	}
+	return specRoutesFrom(t, p)
+}
+
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
 // operation served but documented in NEITHER spec. Param-name and trailing-slash
@@ -272,6 +290,11 @@ func TestOpenAPIDrift(t *testing.T) {
 	for op := range spec009 {
 		documented[op] = true
 	}
+	spec006 := spec006Routes(t)
+	spec006Available := len(spec006) > 0
+	for op := range spec006 {
+		documented[op] = true
+	}
 
 	var missing, undocumented []string
 	for op := range spec001 {
@@ -317,6 +340,13 @@ func TestOpenAPIDrift(t *testing.T) {
 			// committed. Once that file exists spec009Available is true and these routes
 			// must be documented (the strict two-way check is TestOpenAPIDrift009).
 			if !spec009Available && strings.Contains(op, "/github/") {
+				continue
+			}
+			// Likewise skip the spec-006 feedback surface (every 006 route contains
+			// /feedback) until specs/006-feedback-boards/contracts/openapi.yaml is
+			// committed. Once that file exists spec006Available is true and these routes
+			// must be documented (the strict two-way check is TestOpenAPIDrift006).
+			if !spec006Available && strings.Contains(op, "/feedback") {
 				continue
 			}
 			undocumented = append(undocumented, op)

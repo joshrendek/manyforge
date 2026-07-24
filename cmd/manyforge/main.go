@@ -32,6 +32,7 @@ import (
 	"github.com/manyforge/manyforge/internal/connectors/jira"
 	"github.com/manyforge/manyforge/internal/connectors/zendesk"
 	"github.com/manyforge/manyforge/internal/crm"
+	"github.com/manyforge/manyforge/internal/feedback"
 	"github.com/manyforge/manyforge/internal/githubapp"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
@@ -173,6 +174,15 @@ func main() {
 	crmContacts := &crm.ContactService{DB: database}
 	crmCompanies := &crm.CompanyService{DB: database}
 	crmH := crm.NewHandler(crmContacts, crmCompanies, crmActivity, database, permResolve)
+
+	// Spec 006 Feedback / Feature-Request Boards. The authenticated handler (boards, posts,
+	// voting, convert→ticket, ingest keys) runs inside db.WithPrincipal (RLS + tenant_root
+	// predicate), gated by feedback.read / feedback.write. The public handler is the
+	// principal-less SDK/portal ingress — authenticated by a publishable board key, mounted in
+	// the ingress group behind the per-IP ingest limiter (all DB access via SECURITY DEFINER).
+	feedbackSvc := &feedback.Service{DB: database}
+	feedbackH := feedback.NewHandler(feedbackSvc)
+	feedbackPublicH := feedback.NewPublicHandler(database, logger)
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
@@ -692,6 +702,10 @@ func main() {
 		crm:              crmH,
 		crmRead:          httpx.RequirePermission(database, permResolve, authz.PermCRMRead, businessIDFromPath),
 		crmWrite:         httpx.RequirePermission(database, permResolve, authz.PermCRMWrite, businessIDFromPath),
+		feedback:         feedbackH,
+		feedbackPublic:   feedbackPublicH,
+		feedbackRead:     httpx.RequirePermission(database, permResolve, authz.PermFeedbackRead, businessIDFromPath),
+		feedbackWrite:    httpx.RequirePermission(database, permResolve, authz.PermFeedbackWrite, businessIDFromPath),
 		codingReviews:    codingH,
 		githubApp:        githubAppH,
 	})
@@ -950,6 +964,18 @@ type apiHandlers struct {
 	crmRead  func(http.Handler) http.Handler
 	crmWrite func(http.Handler) http.Handler
 
+	// feedback is the Spec 006 authenticated feedback handler: boards, posts, voting,
+	// convert→ticket, and ingest-key management under a business.
+	feedback *feedback.Handler
+	// feedbackPublic is the Spec 006 principal-less SDK/portal ingress handler, mounted in the
+	// public ingress group behind the per-IP ingest limiter (authenticated by a publishable
+	// board key, all DB access via SECURITY DEFINER). Never nil (no external key material).
+	feedbackPublic *feedback.PublicHandler
+	// feedbackRead / feedbackWrite gate the read slice (feedback.read) and write slice
+	// (feedback.write), same RLS-bound 404-on-lacking-perm semantics as the other groups.
+	feedbackRead  func(http.Handler) http.Handler
+	feedbackWrite func(http.Handler) http.Handler
+
 	// codingReviews is the Spec 007 code-review handler: repo-connector creation gated
 	// by connectorsManage (connectors.manage), code-review trigger/get gated by
 	// agentsRun (agents.run). Same RLS-bound 404-on-lacking-perm semantics.
@@ -998,6 +1024,10 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			if h.githubApp != nil {
 				h.githubApp.WebhookRoutes(ingress)
 			}
+			// Spec 006 feedback SDK/portal ingress: public, authenticated by a publishable
+			// board key (not JWT), per-IP ingest-rate-limited. Unknown/revoked key or a
+			// non-public board → uniform 401 (no business/board existence oracle).
+			h.feedbackPublic.PublicRoutes(ingress)
 		})
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
@@ -1108,6 +1138,17 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(cw chi.Router) {
 				cw.Use(h.crmWrite)
 				h.crm.WriteRoutes(cw)
+			})
+			// Spec 006 feedback read slice: boards/posts/keys list+get, gated on feedback.read.
+			pr.Group(func(fr chi.Router) {
+				fr.Use(h.feedbackRead)
+				h.feedback.ReadRoutes(fr)
+			})
+			// Spec 006 feedback write slice: board+post+key mutations, internal vote, and
+			// convert→ticket, gated on feedback.write. Same RLS-bound 404-on-lacking-perm semantics.
+			pr.Group(func(fw chi.Router) {
+				fw.Use(h.feedbackWrite)
+				h.feedback.WriteRoutes(fw)
 			})
 			// Spec 007 code-review slice: repo-connector create gated on connectors.manage,
 			// code-review trigger/get gated on agents.run — same RLS-bound 404-on-lacking-perm

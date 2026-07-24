@@ -1,0 +1,527 @@
+openapi: 3.1.0
+info:
+  title: manyforge Feedback API
+  version: 0.1.0
+  description: >
+    Spec 006 — Feedback / Feature-Request Boards. A business runs one or more boards;
+    users submit posts, move them through a status workflow, vote (one vote per identity),
+    and convert a post to a support ticket (spec 002). Split into an authenticated read
+    slice (gated by feedback.read) and write slice (gated by feedback.write); authorization
+    and existence are indistinguishable (a lacking permission or invisible business returns
+    the same 404 as an unknown id — no existence oracle). A separate PUBLIC ingress surface
+    (/feedback/public/{key}/...) is used by Apple/Android SDKs and a future web portal: it is
+    principal-less, authenticated by a per-board publishable key, and its oracle boundary
+    returns a uniform 401 for an unknown/revoked key or a non-public board.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /businesses/{id}/feedback/boards:
+    get:
+      summary: List feedback boards for a business (keyset, newest-first)
+      operationId: listFeedbackBoards
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: A page of boards
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BoardPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Create a feedback board
+      operationId: createFeedbackBoard
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BoardCreate' }
+      responses:
+        '201':
+          description: The created board
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Board' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /businesses/{id}/feedback/boards/{bid}:
+    get:
+      summary: Get a feedback board
+      operationId: getFeedbackBoard
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/BoardId' }
+      responses:
+        '200':
+          description: The board
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Board' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update a feedback board (partial; name/description/is_public)
+      operationId: updateFeedbackBoard
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/BoardId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BoardUpdate' }
+      responses:
+        '200':
+          description: The updated board
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Board' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/feedback/boards/{bid}/posts:
+    get:
+      summary: List a board's posts (keyset, newest-first)
+      operationId: listFeedbackPosts
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/BoardId' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: A page of posts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Create an internal (principal-authored) post on a board
+      operationId: createFeedbackPost
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/BoardId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PostCreate' }
+      responses:
+        '201':
+          description: The created post
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Post' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/feedback/boards/{bid}/keys:
+    get:
+      summary: List a board's publishable ingest keys
+      operationId: listFeedbackIngestKeys
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/BoardId' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: The board's ingest keys
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestKeyList' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Mint a publishable ingest key for a board (SDK/portal client key)
+      operationId: createFeedbackIngestKey
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/BoardId' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IngestKeyCreate' }
+      responses:
+        '201':
+          description: The created key (the publishable key value is returned)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestKey' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/feedback/posts/{pid}:
+    get:
+      summary: Get a feedback post
+      operationId: getFeedbackPost
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/PostId' }
+      responses:
+        '200':
+          description: The post
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Post' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Set a post's status (moderation workflow)
+      operationId: setFeedbackPostStatus
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/PostId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PostStatusUpdate' }
+      responses:
+        '200':
+          description: The updated post
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Post' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Soft-delete a post
+      operationId: deleteFeedbackPost
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/PostId' }
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/feedback/posts/{pid}/vote:
+    post:
+      summary: Cast an internal (principal) vote on a post (one per principal)
+      operationId: voteFeedbackPost
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/PostId' }
+      responses:
+        '200':
+          description: Vote result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoteResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/feedback/posts/{pid}/convert:
+    post:
+      summary: Convert a post to a support ticket (idempotent; links spec 002)
+      operationId: convertFeedbackPost
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/PostId' }
+      responses:
+        '200':
+          description: The linked ticket id
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConvertResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /businesses/{id}/feedback/keys/{kid}/revoke:
+    post:
+      summary: Revoke a publishable ingest key
+      operationId: revokeFeedbackIngestKey
+      tags: [feedback]
+      parameters:
+        - { $ref: '#/components/parameters/BusinessId' }
+        - { $ref: '#/components/parameters/KeyId' }
+      responses:
+        '200':
+          description: The revoked key
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestKey' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /feedback/public/{key}/posts:
+    get:
+      summary: (Public SDK/portal) List public posts for a board by publishable key
+      operationId: publicListFeedbackPosts
+      tags: [feedback-public]
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/PublishableKey' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Top public posts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicPostList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: (Public SDK/portal) Submit feedback by publishable key
+      operationId: publicSubmitFeedbackPost
+      tags: [feedback-public]
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/PublishableKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicSubmit' }
+      responses:
+        '201':
+          description: The created post
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicSubmitResult' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+  /feedback/public/{key}/posts/{postID}/votes:
+    post:
+      summary: (Public SDK/portal) Vote on a post by publishable key (one per identity)
+      operationId: publicVoteFeedbackPost
+      tags: [feedback-public]
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/PublishableKey' }
+        - name: postID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicVote' }
+      responses:
+        '200':
+          description: Vote result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoteResult' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    BusinessId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    BoardId:
+      name: bid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PostId:
+      name: pid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    KeyId:
+      name: kid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PublishableKey:
+      name: key
+      in: path
+      required: true
+      description: The per-board publishable ingest key (Sentry-DSN style; not a secret).
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200 }
+  responses:
+    NotFound:
+      description: Not found (also returned for a lacking permission / invisible resource — no oracle)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Validation:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Conflict (e.g. duplicate board slug)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Unknown/revoked publishable key or non-public board (uniform, no oracle)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooLarge:
+      description: Request body over cap
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    Board:
+      type: object
+      required: [id, business_id, tenant_root_id, slug, name, is_public, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, "null"] }
+        is_public: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BoardCreate:
+      type: object
+      required: [name]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, "null"] }
+        is_public: { type: boolean }
+    BoardUpdate:
+      type: object
+      properties:
+        name: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        is_public: { type: [boolean, "null"] }
+    BoardPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Board' } }
+        next_cursor: { type: [string, "null"] }
+    Post:
+      type: object
+      required: [id, business_id, tenant_root_id, board_id, title, status, vote_count, author_kind, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        board_id: { type: string, format: uuid }
+        title: { type: string }
+        body: { type: [string, "null"] }
+        status: { $ref: '#/components/schemas/Status' }
+        vote_count: { type: integer }
+        author_kind: { type: string, enum: [principal, public] }
+        author_principal_id: { type: [string, "null"], format: uuid }
+        author_identity: { type: [string, "null"] }
+        ticket_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Status:
+      type: string
+      enum: [open, planned, in_progress, done, declined]
+    PostCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 300 }
+        body: { type: [string, "null"] }
+    PostStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/Status' }
+    PostPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Post' } }
+        next_cursor: { type: [string, "null"] }
+    IngestKey:
+      type: object
+      required: [id, business_id, tenant_root_id, board_id, publishable_key, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        board_id: { type: string, format: uuid }
+        publishable_key: { type: string }
+        label: { type: [string, "null"] }
+        status: { type: string, enum: [enabled, revoked] }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+    IngestKeyCreate:
+      type: object
+      properties:
+        label: { type: [string, "null"] }
+    IngestKeyList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/IngestKey' } }
+    VoteResult:
+      type: object
+      required: [voted, vote_count]
+      properties:
+        voted: { type: boolean }
+        vote_count: { type: integer }
+    ConvertResult:
+      type: object
+      required: [ticket_id]
+      properties:
+        ticket_id: { type: string, format: uuid }
+    PublicSubmit:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 300 }
+        body: { type: string }
+        author_identity: { type: string, description: opaque, SDK-provided stable identity }
+    PublicSubmitResult:
+      type: object
+      required: [id, title, status, vote_count]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        status: { $ref: '#/components/schemas/Status' }
+        vote_count: { type: integer }
+    PublicVote:
+      type: object
+      required: [voter_identity]
+      properties:
+        voter_identity: { type: string, description: opaque, SDK-provided stable identity }
+    PublicPost:
+      type: object
+      required: [id, title, status, vote_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        body: { type: [string, "null"] }
+        status: { $ref: '#/components/schemas/Status' }
+        vote_count: { type: integer }
+        created_at: { type: string, format: date-time }
+    PublicPostList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/PublicPost' } }
