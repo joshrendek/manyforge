@@ -109,6 +109,14 @@ import { ToastService } from '../../ui/toast/toast.service';
                     <div class="post-head">
                       <span class="post-title" data-testid="portal-post-title">{{ p.title }}</span>
                       <mf-status-pill [tone]="tone(p.status)" [label]="label(p.status)" />
+                      @if (p.identity_verified) {
+                        <mf-status-pill
+                          tone="success"
+                          label="Verified"
+                          ariaLabel="Verified identity"
+                          data-testid="portal-verified-badge"
+                        />
+                      }
                     </div>
                     @if (p.body) {
                       <p class="post-body">{{ p.body }}</p>
@@ -288,9 +296,11 @@ export class FeedbackPortalComponent implements OnInit {
       return;
     }
     this.loading.set(true);
-    this.pub.listPosts(this.key).subscribe({
+    this.pub.listPosts(this.key, this.deviceId).subscribe({
       next: (r) => {
-        this.posts.set(r.items ?? []);
+        const items = r.items ?? [];
+        this.posts.set(items);
+        this.reconcileVoted(items);
         this.unavailable.set(false);
         this.loading.set(false);
       },
@@ -369,6 +379,18 @@ export class FeedbackPortalComponent implements OnInit {
   private markVoted(id: string): void {
     const v = new Set(this.voted());
     v.add(id);
+    this.voted.set(v);
+    localStorage.setItem(this.votedStorageKey, JSON.stringify([...v]));
+  }
+
+  // Reconciles the "voted" set with server truth (post.viewer_voted, scoped to this device's
+  // voter_identity) on every load — a fresh browser/localStorage-cleared session still renders
+  // the correct voted state instead of relying solely on the local optimistic cache.
+  private reconcileVoted(items: PublicPost[]): void {
+    const v = new Set(this.voted());
+    for (const p of items) {
+      if (p.viewer_voted) v.add(p.id);
+    }
     this.voted.set(v);
     localStorage.setItem(this.votedStorageKey, JSON.stringify([...v]));
   }
