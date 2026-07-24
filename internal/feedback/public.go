@@ -225,19 +225,30 @@ func (h *PublicHandler) vote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "NOT_FOUND", "not found")
 		return
 	}
+	raw, ok := h.readBody(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		VoterIdentity string `json:"voter_identity"`
 	}
-	if !h.decode(w, r, &body) {
-		return
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, "VALIDATION", "invalid JSON body")
+			return
+		}
 	}
 	vid := trimTo(body.VoterIdentity)
 	if vid == "" {
 		writeErr(w, http.StatusBadRequest, "VALIDATION", "voter_identity required")
 		return
 	}
+	if len(vid) > 200 {
+		writeErr(w, http.StatusBadRequest, "VALIDATION", "voter_identity too long")
+		return
+	}
 
-	var known, accepted bool
+	var known, verified, sigBad, accepted bool
 	var count *int32
 	txErr := h.DB.WithTx(r.Context(), func(tx pgx.Tx) error {
 		b, ok, err := h.resolveBoard(r, tx, key)
@@ -248,9 +259,15 @@ func (h *PublicHandler) vote(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		known = true
+		v, bad := h.resolveVerified(r, raw, b.sealedSecret)
+		if bad {
+			sigBad = true
+			return nil
+		}
+		verified = v
 		return tx.QueryRow(r.Context(),
-			`SELECT accepted, out_votes FROM feedback_public_vote($1, $2, $3, $4, $5)`,
-			b.boardID, b.businessID, b.tenantRoot, postID, vid,
+			`SELECT accepted, out_votes FROM feedback_public_vote($1,$2,$3,$4,$5,$6)`,
+			b.boardID, b.businessID, b.tenantRoot, postID, vid, verified,
 		).Scan(&accepted, &count)
 	})
 	if txErr != nil {
@@ -262,12 +279,18 @@ func (h *PublicHandler) vote(w http.ResponseWriter, r *http.Request) {
 		writeUnauthorized(w)
 		return
 	}
+	if sigBad {
+		writeUnauthorized(w)
+		return
+	}
 	if count == nil {
 		// Valid key, but the post is not on this board (or is deleted). Not a business oracle.
 		writeErr(w, http.StatusNotFound, "NOT_FOUND", "not found")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"voted": accepted, "vote_count": *count})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"voted": accepted, "vote_count": *count, "identity_verified": verified,
+	})
 }
 
 type publicPost struct {
@@ -342,28 +365,4 @@ func (h *PublicHandler) list(w http.ResponseWriter, r *http.Request) {
 		items = []publicPost{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-// decode reads and JSON-decodes a capped request body. Returns false (and writes 413/400)
-// when the body is over cap or malformed.
-func (h *PublicHandler) decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxBytes)
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeErr(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "payload too large")
-			return false
-		}
-		writeErr(w, http.StatusBadRequest, "VALIDATION", "invalid request")
-		return false
-	}
-	if len(raw) == 0 {
-		return true // empty body → zero-value struct (fields then validated by caller)
-	}
-	if err := json.Unmarshal(raw, v); err != nil {
-		writeErr(w, http.StatusBadRequest, "VALIDATION", "invalid JSON body")
-		return false
-	}
-	return true
 }
