@@ -828,6 +828,7 @@ CREATE TABLE feedback_post (
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
     deleted_at          timestamptz,
+    identity_verified   boolean NOT NULL DEFAULT false,
     UNIQUE (id, tenant_root_id),
     FOREIGN KEY (board_id, tenant_root_id)  REFERENCES feedback_board (id, tenant_root_id),
     FOREIGN KEY (ticket_id, tenant_root_id) REFERENCES ticket (id, tenant_root_id),
@@ -849,6 +850,7 @@ CREATE TABLE feedback_vote (
     post_id        uuid NOT NULL,
     voter_identity text NOT NULL,
     created_at     timestamptz NOT NULL DEFAULT now(),
+    identity_verified boolean NOT NULL DEFAULT false,
     UNIQUE (id, tenant_root_id),
     UNIQUE (post_id, voter_identity),
     FOREIGN KEY (post_id, tenant_root_id) REFERENCES feedback_post (id, tenant_root_id)
@@ -864,7 +866,22 @@ CREATE TABLE feedback_ingest_key (
     status          text NOT NULL DEFAULT 'enabled',
     created_at      timestamptz NOT NULL DEFAULT now(),
     revoked_at      timestamptz,
+    sealed_secret   text,
     UNIQUE (id, tenant_root_id),
     UNIQUE (publishable_key),
     FOREIGN KEY (board_id, tenant_root_id) REFERENCES feedback_board (id, tenant_root_id)
+);
+
+-- Exactly-once submit consumed-set (migrations/0104). RLS-locked with no policies/grants in
+-- the real DB; declared here only so sqlc can type the InsertFeedbackIngestKey-adjacent
+-- surface consistently (no queries target this table directly — it's DEFINER-only).
+CREATE TABLE feedback_ingest_idempotency (
+    key_id         uuid NOT NULL,
+    idem_key       text NOT NULL,
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    body_sha256    bytea NOT NULL,
+    post_id        uuid,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (key_id, idem_key)
 );
