@@ -158,7 +158,7 @@ paths:
           description: The created key (the publishable key value is returned)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/IngestKey' }
+              schema: { $ref: '#/components/schemas/IngestKeyCreated' }
         '404': { $ref: '#/components/responses/NotFound' }
   /businesses/{id}/feedback/posts/{pid}:
     get:
@@ -500,8 +500,21 @@ components:
         status: { type: string, enum: [enabled, revoked] }
         created_at: { type: string, format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
-        secret: { type: string, description: Write-once signing secret (fbs_...); present only in the create response, never on list/get. }
         has_secret: { type: boolean, description: Whether a signing secret is configured for this key. }
+    IngestKeyCreated:
+      description: >-
+        Create-only response shape: the IngestKey fields plus the plaintext secret,
+        returned exactly once at creation. Never returned by list/get/revoke.
+      allOf:
+        - $ref: '#/components/schemas/IngestKey'
+        - type: object
+          properties:
+            secret:
+              type: string
+              description: >-
+                Plaintext ingest secret (fbs_...), returned ONCE at creation only.
+                Never returned by list/get/revoke. Absent when no feedback master
+                key is configured.
     IngestKeyCreate:
       type: object
       properties:

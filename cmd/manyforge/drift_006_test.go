@@ -258,36 +258,100 @@ func TestFeedbackVerifiedIdentityListContract(t *testing.T) {
 	}
 }
 
-// TestFeedbackIngestKeySecretContract pins the saz.5 write-once secret shape on the IngestKey
-// schema (shared by the create/list/get/revoke responses): secret is present only in the create
-// response (must not be required), has_secret is always present (must be required).
+// TestFeedbackIngestKeySecretContract pins the saz.5 write-once secret shape: secret is
+// documented ONLY on the create-only IngestKeyCreated schema (mirroring the Go handler's
+// createIngestKeyResp DTO split), never on the shared IngestKey schema that list/get/revoke
+// responses reference. has_secret is on the shared schema and always required.
 func TestFeedbackIngestKeySecretContract(t *testing.T) {
 	doc := load006Spec(t)
-	schemaNode, ok := doc.Components.Schemas["IngestKey"]
-	if !ok {
-		t.Fatalf("006 openapi: components/schemas/IngestKey not found")
-	}
-	var schema struct {
-		Required   []string             `yaml:"required"`
-		Properties map[string]yaml.Node `yaml:"properties"`
-	}
-	if err := schemaNode.Decode(&schema); err != nil {
-		t.Fatalf("decode IngestKey schema: %v", err)
-	}
-	if _, ok := schema.Properties["secret"]; !ok {
-		t.Errorf("006 openapi: IngestKey must document secret property")
-	}
-	if _, ok := schema.Properties["has_secret"]; !ok {
-		t.Errorf("006 openapi: IngestKey must document has_secret property")
-	}
-	required := map[string]bool{}
-	for _, r := range schema.Required {
-		required[r] = true
-	}
-	if !required["has_secret"] {
-		t.Errorf("006 openapi: IngestKey.has_secret must be required (always present in the response)")
-	}
-	if required["secret"] {
-		t.Errorf("006 openapi: IngestKey.secret must NOT be required (write-once: create response only)")
-	}
+
+	t.Run("shared IngestKey has no secret property", func(t *testing.T) {
+		schemaNode, ok := doc.Components.Schemas["IngestKey"]
+		if !ok {
+			t.Fatalf("006 openapi: components/schemas/IngestKey not found")
+		}
+		var schema struct {
+			Required   []string             `yaml:"required"`
+			Properties map[string]yaml.Node `yaml:"properties"`
+		}
+		if err := schemaNode.Decode(&schema); err != nil {
+			t.Fatalf("decode IngestKey schema: %v", err)
+		}
+		if _, ok := schema.Properties["secret"]; ok {
+			t.Errorf("006 openapi: shared IngestKey must NOT document secret (list/get/revoke responses reference this schema; secret must live only on IngestKeyCreated)")
+		}
+		if _, ok := schema.Properties["has_secret"]; !ok {
+			t.Errorf("006 openapi: IngestKey must document has_secret property")
+		}
+		required := map[string]bool{}
+		for _, r := range schema.Required {
+			required[r] = true
+		}
+		if !required["has_secret"] {
+			t.Errorf("006 openapi: IngestKey.has_secret must be required (always present in the response)")
+		}
+	})
+
+	t.Run("create-only IngestKeyCreated documents secret", func(t *testing.T) {
+		schemaNode, ok := doc.Components.Schemas["IngestKeyCreated"]
+		if !ok {
+			t.Fatalf("006 openapi: components/schemas/IngestKeyCreated not found")
+		}
+		var schema struct {
+			AllOf []struct {
+				Ref        string               `yaml:"$ref"`
+				Required   []string             `yaml:"required"`
+				Properties map[string]yaml.Node `yaml:"properties"`
+			} `yaml:"allOf"`
+		}
+		if err := schemaNode.Decode(&schema); err != nil {
+			t.Fatalf("decode IngestKeyCreated schema: %v", err)
+		}
+		found := false
+		requiredSecret := false
+		for _, member := range schema.AllOf {
+			if _, ok := member.Properties["secret"]; ok {
+				found = true
+			}
+			for _, r := range member.Required {
+				if r == "secret" {
+					requiredSecret = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("006 openapi: IngestKeyCreated must document secret property")
+		}
+		if requiredSecret {
+			t.Errorf("006 openapi: IngestKeyCreated.secret must NOT be required (absent when no feedback master key is configured)")
+		}
+	})
+
+	t.Run("create response uses IngestKeyCreated, not bare IngestKey", func(t *testing.T) {
+		opNode, ok := doc.Paths["/businesses/{id}/feedback/boards/{bid}/keys"]["post"]
+		if !ok {
+			t.Fatalf("006 openapi: missing POST /businesses/{id}/feedback/boards/{bid}/keys")
+		}
+		var op struct {
+			Responses map[string]struct {
+				Content struct {
+					JSON struct {
+						Schema struct {
+							Ref string `yaml:"$ref"`
+						} `yaml:"schema"`
+					} `yaml:"application/json"`
+				} `yaml:"content"`
+			} `yaml:"responses"`
+		}
+		if err := opNode.Decode(&op); err != nil {
+			t.Fatalf("decode create ingest key operation: %v", err)
+		}
+		resp, ok := op.Responses["201"]
+		if !ok {
+			t.Fatalf("006 openapi: POST .../keys must document response 201")
+		}
+		if got := resp.Content.JSON.Schema.Ref; got != "#/components/schemas/IngestKeyCreated" {
+			t.Errorf("006 openapi: POST .../keys 201 response must reference IngestKeyCreated, got %q", got)
+		}
+	})
 }
