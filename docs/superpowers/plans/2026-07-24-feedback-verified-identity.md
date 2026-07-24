@@ -14,8 +14,8 @@
 
 - **Branch:** cut `006-feedback-verified-identity` fresh off `master` (at most one branch off master; the prior 006 branch is merged+deleted). Do NOT stack.
 - **sqlc pin:** global sqlc MUST be v1.27.0 (repo pin) or `make generate` re-churns generated code. Never hand-edit `internal/platform/db/dbgen/*`.
-- **Migration ⇒ migrate the dev DB** or the app version-guard refuses to serve. Dev DB is at **103**; apply 0104 with:
-  `migrate -path migrations -database "postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" up`
+- **Do NOT migrate the shared dev DB (`:55432/manyforge`) during task execution** — it trips the running backend's version guard and takes `:8081` down until the code catches up (memory `manyforge-migration-dev-db-version-guard`). Validate 0104 against a **throwaway** container (Task 2) and via **testcontainers** (Task 10). The shared dev DB is migrated **only at the Final browser step**, when the code is already 0104-aware: `migrate -path migrations -database "postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" up` (dev DB is at **103**), then force an air rebuild (edit a `.go`).
+- **sqlc:** verified global `sqlc version` == **v1.27.0** (repo pin) this session ⇒ `make generate` is safe. If it ever prints a different version, use `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate` instead.
 - **Backend gates before any commit that touches Go/SQL:** `make test`, `make lint` (go vet + staticcheck), and for route/contract changes `go test -tags contract ./cmd/...`. Security tests: `make sec-test` (needs Docker/testcontainers).
 - **Keep `db/schema.sql` (sqlc input) in sync with `migrations/` by hand** — they are separate sources.
 - **Never log** the plaintext secret, the sealed blob, or the master key.
@@ -461,15 +461,20 @@ ALTER TABLE feedback_post DROP COLUMN identity_verified;
 COMMIT;
 ```
 
-- [ ] **Step 3: Apply up + down + up against the dev DB (round-trip)**
+- [ ] **Step 3: Round-trip the migration against a THROWAWAY container (NOT the shared dev DB)**
 
-Run:
+The shared dev DB backs the running `:8081` backend; migrating it now trips the version guard. Validate against a disposable Postgres instead (the full 0001→0104 chain is self-contained — the testcontainer integration harness relies on the same):
+
 ```bash
-migrate -path migrations -database "postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" up
-migrate -path migrations -database "postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" down 1
-migrate -path migrations -database "postgres://manyforge:devpassword@localhost:55432/manyforge?sslmode=disable" up
+docker run -d --rm --name mf-mig-check -e POSTGRES_PASSWORD=x -p 55499:5432 postgres:16
+until docker exec mf-mig-check pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+DBURL="postgres://postgres:x@localhost:55499/postgres?sslmode=disable"
+migrate -path migrations -database "$DBURL" up && \
+migrate -path migrations -database "$DBURL" down 1 && \
+migrate -path migrations -database "$DBURL" up
+docker stop mf-mig-check
 ```
-Expected: all three succeed with no error (proves up, down, and re-up are all valid). Leave the DB **at 0104** (final `up`).
+Expected: all three `migrate` commands exit 0 (proves up, down, re-up valid). Match `postgres:16` to prod's PG major if it differs. If the throwaway can't run, this migration is still definitively validated by Task 10's testcontainer suite — note that and proceed.
 
 - [ ] **Step 4: Commit**
 
