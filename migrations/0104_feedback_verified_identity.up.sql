@@ -2,8 +2,6 @@
 -- Extends the 0102 public-ingress DEFINER surface. See
 -- docs/superpowers/specs/2026-07-24-feedback-verified-identity-design.md.
 
-BEGIN;
-
 -- 1. Columns ---------------------------------------------------------------------------
 ALTER TABLE feedback_post ADD COLUMN identity_verified boolean NOT NULL DEFAULT false;
 ALTER TABLE feedback_vote ADD COLUMN identity_verified boolean NOT NULL DEFAULT false;
@@ -96,7 +94,7 @@ BEGIN
         post_id := v_id; deduped := false; RETURN NEXT; RETURN;
     END IF;
 
-    v_ik := v_prefix || left(p_idem_key, 255);
+    v_ik := v_prefix || left(btrim(p_idem_key), 255);
 
     INSERT INTO feedback_ingest_idempotency (key_id, idem_key, business_id, tenant_root_id, body_sha256)
     VALUES (p_key_id, v_ik, p_business_id, p_tenant_root, p_body_sha256)
@@ -141,9 +139,14 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
     v_rows  int;
     v_count int;
-    v_vid   text := (CASE WHEN p_verified THEN 'v:' ELSE 'a:' END)
-                    || left(btrim(coalesce(p_voter_identity, '')), 200);
+    v_raw   text := NULLIF(btrim(coalesce(p_voter_identity, '')), '');
+    v_vid   text;
 BEGIN
+    IF v_raw IS NULL THEN
+        RAISE EXCEPTION 'voter_identity required' USING ERRCODE = '23514';
+    END IF;
+    v_vid := (CASE WHEN p_verified THEN 'v:' ELSE 'a:' END) || left(v_raw, 200);
+
     PERFORM 1 FROM feedback_post
         WHERE id = p_post_id AND board_id = p_board_id AND deleted_at IS NULL;
     IF NOT FOUND THEN
@@ -190,5 +193,3 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
 $$;
 REVOKE ALL ON FUNCTION feedback_public_list_posts(uuid,int,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION feedback_public_list_posts(uuid,int,text,text) TO manyforge_app;
-
-COMMIT;
