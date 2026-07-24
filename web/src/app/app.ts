@@ -1,11 +1,5 @@
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
-import {
-  NavigationEnd,
-  Router,
-  RouterLink,
-  RouterLinkActive,
-  RouterOutlet,
-} from '@angular/router';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
 import { ApprovalsService } from './core/approvals.service';
 import { AuthService, Profile } from './core/auth.service';
@@ -40,8 +34,10 @@ export class App implements OnInit, OnDestroy {
     const degraded = this.connectors.degradedCount();
     const hasBiz = !!this.currentBusiness.businessId();
     return NAV_ITEMS.map((item) => {
-      if (item.route === '/approvals' && hasBiz && approvals > 0) return { ...item, badge: approvals };
-      if (item.route === '/credentials/connector' && hasBiz && degraded > 0) return { ...item, badge: degraded };
+      if (item.route === '/approvals' && hasBiz && approvals > 0)
+        return { ...item, badge: approvals };
+      if (item.route === '/credentials/connector' && hasBiz && degraded > 0)
+        return { ...item, badge: degraded };
       return item;
     });
   });
@@ -49,12 +45,20 @@ export class App implements OnInit, OnDestroy {
   // The current URL, tracked so the shell can hide itself on the auth screens.
   private currentUrl = signal(this.router.url);
 
-  // Show the persistent sidebar only when authenticated AND not on an auth screen.
-  // A logged-in user who navigates to /login or /signup (no guard stops them) must
-  // see the bare auth page, not the app shell wrapped around the login form.
+  // Show the persistent sidebar only when authenticated AND not on an auth screen AND not
+  // on the public feedback portal. A logged-in user who navigates to /login or /signup (no
+  // guard stops them) must see the bare auth page, not the app shell wrapped around the
+  // login form; likewise a logged-in admin opening /p/:key sees the standalone portal.
   readonly showShell = computed(
-    () => this.auth.isAuthenticated() && !this.isAuthRoute(this.currentUrl()),
+    () =>
+      this.auth.isAuthenticated() &&
+      !this.isAuthRoute(this.currentUrl()) &&
+      !this.isPortalRoute(this.currentUrl()),
   );
+
+  // The public feedback portal renders with its own full-page chrome (no admin sidebar and
+  // no founder-platform topbar), so the shell gives it a bare router-outlet.
+  readonly portalRoute = computed(() => this.isPortalRoute(this.currentUrl()));
 
   constructor() {
     this.router.events
@@ -100,6 +104,10 @@ export class App implements OnInit, OnDestroy {
 
   private isAuthRoute(url: string): boolean {
     return url.startsWith('/login') || url.startsWith('/signup');
+  }
+
+  private isPortalRoute(url: string): boolean {
+    return url.startsWith('/p/');
   }
 
   private toLogin(): void {

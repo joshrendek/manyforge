@@ -94,6 +94,13 @@ export const routes: Routes = [
       import('./pages/feedback/board-detail').then((m) => m.FeedbackBoardDetailComponent),
   },
   {
+    // Public, UNAUTHENTICATED feedback portal keyed by a publishable board key. No authGuard:
+    // a business links its customers here to submit + upvote feature requests in the browser
+    // (the web equivalent of the mobile SDK). Renders with its own bare layout (see app.ts).
+    path: 'p/:key',
+    loadComponent: () => import('./pages/feedback/portal').then((m) => m.FeedbackPortalComponent),
+  },
+  {
     path: 'credentials/connector',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/connectors/list').then((m) => m.ConnectorsListComponent),

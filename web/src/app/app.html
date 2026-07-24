@@ -1,39 +1,51 @@
 <div class="mf-app">
-@if (showShell()) {
-  <div class="shell">
-    <aside class="sidebar" data-testid="app-sidebar">
-      <div class="sidebar-brand">Many<span class="brand-accent">Forge</span></div>
-      <nav class="sidebar-nav">
-        @for (item of navItemsWithBadge(); track item.route) {
-          <a [routerLink]="item.route" routerLinkActive="active" [attr.data-testid]="item.testid"
-             [attr.aria-current]="rla.isActive ? 'page' : null" #rla="routerLinkActive">
-            {{ item.label }}
-            @if (item.badge) { <span class="nav-badge">{{ item.badge }}</span> }
-          </a>
-        }
-      </nav>
-      <div class="sidebar-foot">
-        @if (profile(); as p) {
-          <p class="profile" data-testid="sidebar-identity">
-            Signed in as <b>{{ p.display_name }}</b><br /><span class="faint">{{ p.email }}</span>
-          </p>
-        }
-        <div class="sidebar-foot-row">
-          <mf-theme-toggle />
-          <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="logout()" data-testid="sign-out">Sign out</button>
+  @if (showShell()) {
+    <div class="shell">
+      <aside class="sidebar" data-testid="app-sidebar">
+        <div class="sidebar-brand">Many<span class="brand-accent">Forge</span></div>
+        <nav class="sidebar-nav">
+          @for (item of navItemsWithBadge(); track item.route) {
+            <a
+              [routerLink]="item.route"
+              routerLinkActive="active"
+              [attr.data-testid]="item.testid"
+              [attr.aria-current]="rla.isActive ? 'page' : null"
+              #rla="routerLinkActive"
+            >
+              {{ item.label }}
+              @if (item.badge) {
+                <span class="nav-badge">{{ item.badge }}</span>
+              }
+            </a>
+          }
+        </nav>
+        <div class="sidebar-foot">
+          @if (profile(); as p) {
+            <p class="profile" data-testid="sidebar-identity">
+              Signed in as <b>{{ p.display_name }}</b
+              ><br /><span class="faint">{{ p.email }}</span>
+            </p>
+          }
+          <div class="sidebar-foot-row">
+            <mf-theme-toggle />
+            <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="logout()" data-testid="sign-out">
+              Sign out
+            </button>
+          </div>
         </div>
-      </div>
-    </aside>
-    <main class="shell-main"><router-outlet /></main>
-  </div>
-} @else {
-  <header class="topbar">
-    <span class="brand">Many<span class="brand-accent">Forge</span></span>
-    <span class="tagline">all-in-one founder platform</span>
-    <span style="flex:1"></span>
-    <mf-theme-toggle />
-  </header>
-  <main class="container"><router-outlet /></main>
-}
-<mf-toast-host />
+      </aside>
+      <main class="shell-main"><router-outlet /></main>
+    </div>
+  } @else if (portalRoute()) {
+    <main class="portal-main" data-testid="portal-main"><router-outlet /></main>
+  } @else {
+    <header class="topbar">
+      <span class="brand">Many<span class="brand-accent">Forge</span></span>
+      <span class="tagline">all-in-one founder platform</span>
+      <span style="flex: 1"></span>
+      <mf-theme-toggle />
+    </header>
+    <main class="container"><router-outlet /></main>
+  }
+  <mf-toast-host />
 </div>
