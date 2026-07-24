@@ -196,15 +196,19 @@ func TestPin_FeedbackIdempotencyTableLockedDown(t *testing.T) {
 	if !strings.Contains(mig, "ALTER TABLE feedback_ingest_idempotency ENABLE ROW LEVEL SECURITY") {
 		t.Errorf("0104: feedback_ingest_idempotency must ENABLE ROW LEVEL SECURITY")
 	}
-	for _, ln := range strings.Split(mig, "\n") {
-		if !strings.Contains(ln, "feedback_ingest_idempotency") {
+	// Collapse to whitespace-normalized, semicolon-delimited statements before scanning: this
+	// codebase writes multi-line GRANTs (see migrations/0007_rls.up.sql: "GRANT ... ON\n
+	// <tables>\n TO manyforge_app;"), so a same-line-only check would miss a multi-line
+	// GRANT/POLICY naming this table — exactly the table this pin exists to protect.
+	for _, stmt := range strings.Split(strings.Join(strings.Fields(mig), " "), ";") {
+		if !strings.Contains(stmt, "feedback_ingest_idempotency") {
 			continue
 		}
-		if strings.Contains(ln, "CREATE POLICY") {
-			t.Errorf("0104: found a CREATE POLICY naming feedback_ingest_idempotency (%q) — it must stay policy-less so only the DEFINERs (which bypass RLS) can touch it", strings.TrimSpace(ln))
+		if strings.Contains(stmt, "CREATE POLICY") {
+			t.Errorf("0104: found a CREATE POLICY naming feedback_ingest_idempotency (%q) — it must stay policy-less so only the DEFINERs (which bypass RLS) can touch it", stmt)
 		}
-		if strings.Contains(ln, "GRANT") && strings.Contains(ln, "manyforge_app") {
-			t.Errorf("0104: found a GRANT ... manyforge_app naming feedback_ingest_idempotency (%q) — the app role must have NO privileges on this table", strings.TrimSpace(ln))
+		if strings.Contains(stmt, "GRANT") && strings.Contains(stmt, "manyforge_app") && !strings.Contains(stmt, "FUNCTION") {
+			t.Errorf("0104: found a GRANT ... manyforge_app naming feedback_ingest_idempotency (%q) — the app role must have NO table privileges on it (function EXECUTE grants for the DEFINERs are fine)", stmt)
 		}
 	}
 }
@@ -214,9 +218,12 @@ func TestPin_FeedbackIdempotencyTableLockedDown(t *testing.T) {
 // public.go matches on this exact code to answer 409 instead of a generic 500; losing the
 // errcode silently downgrades a client-detectable conflict into an opaque internal error.
 func TestPin_FeedbackSubmitConflictErrcode(t *testing.T) {
-	mig := mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql")
-	if !strings.Contains(mig, "FB409") {
-		t.Errorf("0104: expected the FB409 errcode on same-idempotency-key-different-body conflict — internal/feedback/public.go matches on this exact code")
+	mig := stripSQLComments(mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql"))
+	// Pin the actual RAISE control, not a bare "FB409" token — a doc comment (e.g. "RAISEs
+	// FB409 on same-key-different-body") would satisfy a bare-token check even if the real
+	// USING ERRCODE = 'FB409' control were deleted.
+	if !strings.Contains(mig, "ERRCODE = 'FB409'") {
+		t.Error("0104 must RAISE ERRCODE 'FB409' on idempotency-key body mismatch (exactly-once contract)")
 	}
 }
 
@@ -226,7 +233,7 @@ func TestPin_FeedbackSubmitConflictErrcode(t *testing.T) {
 // the identity match the internal Service.Vote path relies on (voter_identity = principalID
 // verbatim).
 func TestPin_FeedbackBackfillExcludesPrincipals(t *testing.T) {
-	mig := mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql")
+	mig := stripSQLComments(mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql"))
 	if !strings.Contains(mig, "NOT IN (SELECT id::text FROM principal)") {
 		t.Errorf("0104: backfill no longer excludes principal UUIDs from the a: namespace rewrite — an internal vote row could be silently reprefixed")
 	}
