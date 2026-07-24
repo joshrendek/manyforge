@@ -19,6 +19,12 @@ const sigMaxSkew = 300 * time.Second
 // feedbackSigningString is the exact byte string a verified caller signs:
 // "<t>.<METHOD>.<path>.<body>". Binding method+path stops a captured MAC from being replayed
 // against a different endpoint/post; the (signed) body carries any idempotency_key.
+//
+// feedbackSigningString frames the signed bytes as "<t>.<METHOD>.<path>.<body>". The unescaped
+// "." delimiter is unambiguous ONLY because callers pass a path with no "." in its segments
+// (HTTP method verbs + fbk_/UUID identifiers) and a JSON body (never starts with a bare "."):
+// a path/body boundary can't shift. Do NOT reuse this framing for dot-bearing paths or non-JSON
+// bodies without switching to length-prefixed framing.
 func feedbackSigningString(t int64, method, path string, body []byte) []byte {
 	head := strconv.FormatInt(t, 10) + "." + method + "." + path + "."
 	out := make([]byte, 0, len(head)+len(body))
@@ -54,11 +60,9 @@ func verifyFeedbackSignature(header, secret, method, path string, body []byte, n
 	if err != nil {
 		return errors.New("feedback: bad signature timestamp")
 	}
-	skew := now.Unix() - ts
-	if skew < 0 {
-		skew = -skew
-	}
-	if time.Duration(skew)*time.Second > sigMaxSkew {
+	maxSkewSec := int64(sigMaxSkew / time.Second) // 300
+	nowUnix := now.Unix()
+	if ts < nowUnix-maxSkewSec || ts > nowUnix+maxSkewSec {
 		return errors.New("feedback: signature expired")
 	}
 	want, err := hex.DecodeString(v1)

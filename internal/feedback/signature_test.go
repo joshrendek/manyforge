@@ -40,14 +40,20 @@ func TestVerifyFeedbackSignature(t *testing.T) {
 	})
 	t.Run("wrong path → error (method+path binding)", func(t *testing.T) {
 		h := sign(now.Unix(), secret, method, path, body)
-		if err := verifyFeedbackSignature(h, secret, method, "/feedback/public/fbk_x/posts/OTHER/votes", body, now); err == nil {
-			t.Fatal("want error for path mismatch")
+		if err := verifyFeedbackSignature(h, secret, method, "/feedback/public/fbk_x/posts/OTHER/votes", body, now); err == nil || errors.Is(err, errNoSignature) {
+			t.Fatalf("want error for path mismatch, got %v", err)
 		}
 	})
 	t.Run("expired → error", func(t *testing.T) {
 		h := sign(now.Unix()-301, secret, method, path, body)
 		if err := verifyFeedbackSignature(h, secret, method, path, body, now); err == nil || errors.Is(err, errNoSignature) {
 			t.Fatalf("want expired error, got %v", err)
+		}
+	})
+	t.Run("future skew → error", func(t *testing.T) {
+		h := sign(now.Unix()+301, secret, method, path, body)
+		if err := verifyFeedbackSignature(h, secret, method, path, body, now); err == nil || errors.Is(err, errNoSignature) {
+			t.Fatalf("want future-skew error, got %v", err)
 		}
 	})
 	t.Run("malformed header → error", func(t *testing.T) {
