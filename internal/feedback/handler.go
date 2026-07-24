@@ -97,6 +97,7 @@ type postResp struct {
 	AuthorPrincipalID *string `json:"author_principal_id"`
 	AuthorIdentity    *string `json:"author_identity"`
 	TicketID          *string `json:"ticket_id"`
+	IdentityVerified  bool    `json:"identity_verified"`
 	CreatedAt         string  `json:"created_at"`
 	UpdatedAt         string  `json:"updated_at"`
 }
@@ -150,6 +151,7 @@ func toPostResp(p Post) postResp {
 		AuthorPrincipalID: uuidStrPtr(p.AuthorPrincipalID),
 		AuthorIdentity:    p.AuthorIdentity,
 		TicketID:          uuidStrPtr(p.TicketID),
+		IdentityVerified:  p.IdentityVerified,
 		CreatedAt:         p.CreatedAt.UTC().Format(rfc3339),
 		UpdatedAt:         p.UpdatedAt.UTC().Format(rfc3339),
 	}

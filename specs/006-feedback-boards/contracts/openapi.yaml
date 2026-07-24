@@ -451,7 +451,7 @@ components:
         next_cursor: { type: [string, "null"] }
     Post:
       type: object
-      required: [id, business_id, tenant_root_id, board_id, title, status, vote_count, author_kind, created_at, updated_at]
+      required: [id, business_id, tenant_root_id, board_id, title, status, vote_count, author_kind, identity_verified, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         business_id: { type: string, format: uuid }
@@ -465,6 +465,7 @@ components:
         author_principal_id: { type: [string, "null"], format: uuid }
         author_identity: { type: [string, "null"] }
         ticket_id: { type: [string, "null"], format: uuid }
+        identity_verified: { type: boolean, description: Whether this post's author submitted with a verified (signed) identity. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     Status:

@@ -258,6 +258,38 @@ func TestFeedbackVerifiedIdentityListContract(t *testing.T) {
 	}
 }
 
+// TestFeedbackAuthenticatedPostIdentityVerifiedContract pins the saz.5 fix threading
+// identity_verified onto the AUTHENTICATED post response (Post schema, used by the
+// moderation list/get/create/status-update endpoints under /businesses/{id}/feedback/...).
+// Distinct from PublicPost.identity_verified (pinned by
+// TestFeedbackVerifiedIdentityListContract) which already documented this field on the
+// public/SDK schema; this test guards the authenticated moderation surface the admin
+// "Verified" badge reads from.
+func TestFeedbackAuthenticatedPostIdentityVerifiedContract(t *testing.T) {
+	doc := load006Spec(t)
+	schemaNode, ok := doc.Components.Schemas["Post"]
+	if !ok {
+		t.Fatalf("006 openapi: components/schemas/Post not found")
+	}
+	var schema struct {
+		Required   []string             `yaml:"required"`
+		Properties map[string]yaml.Node `yaml:"properties"`
+	}
+	if err := schemaNode.Decode(&schema); err != nil {
+		t.Fatalf("decode Post schema: %v", err)
+	}
+	if _, ok := schema.Properties["identity_verified"]; !ok {
+		t.Errorf("006 openapi: Post must document identity_verified property (the authenticated moderation response omitted it; the admin Verified badge reads post.identity_verified)")
+	}
+	required := map[string]bool{}
+	for _, r := range schema.Required {
+		required[r] = true
+	}
+	if !required["identity_verified"] {
+		t.Errorf("006 openapi: Post.identity_verified must be required (always present in the response, never omitted)")
+	}
+}
+
 // TestFeedbackIngestKeySecretContract pins the saz.5 write-once secret shape: secret is
 // documented ONLY on the create-only IngestKeyCreated schema (mirroring the Go handler's
 // createIngestKeyResp DTO split), never on the shared IngestKey schema that list/get/revoke
