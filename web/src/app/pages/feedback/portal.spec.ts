@@ -154,6 +154,16 @@ describe('FeedbackPortalComponent', () => {
     expect(q('[data-testid="portal-upvote"]')?.classList.contains('voted')).toBe(true);
   });
 
+  it('does not render voted when the local cache is stale and the server says viewer_voted:false', () => {
+    // Seed the local optimistic cache as if a prior vote succeeded (or a stale entry lingered),
+    // then have the server report viewer_voted:false for that post on load — server truth must
+    // win and the button must not render as voted.
+    localStorage.setItem(`mf_fb_voted_${key}`, JSON.stringify(['p1']));
+    load([makePost({ viewer_voted: false })]);
+    expect(cmp.voted().has('p1')).toBe(false);
+    expect(q('[data-testid="portal-upvote"]')?.classList.contains('voted')).toBe(false);
+  });
+
   it('shows a verified badge when the server reports identity_verified', () => {
     load([makePost({ identity_verified: true })]);
     expect(q('[data-testid="portal-verified-badge"]')).toBeTruthy();
