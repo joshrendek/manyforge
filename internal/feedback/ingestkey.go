@@ -29,12 +29,43 @@ func newPublishableKey() (string, error) {
 	return keyPrefix + base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
+// secretPrefix marks a feedback ingest SECRET (fbs_) — a server-to-server signing secret,
+// distinct from the publishable fbk_ key so the two are never confused in config. Never ships
+// to a client; returned in plaintext exactly once at creation, then only its sealed form is stored.
+const secretPrefix = "fbs_"
+
+// newSecret mints a fresh ingest secret. crypto/rand failure is surfaced (never a
+// weak/predictable fallback).
+func newSecret() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("feedback: secret generation: %w", err)
+	}
+	return secretPrefix + base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
 // CreateIngestKey mints a publishable key for a board in the URL business. The plaintext key is
 // returned once in the response; it is stored verbatim (publishable, not sealed).
 func (s *Service) CreateIngestKey(ctx context.Context, principalID, businessID, boardID uuid.UUID, label *string) (IngestKey, error) {
 	pk, kerr := newPublishableKey()
 	if kerr != nil {
 		return IngestKey{}, kerr
+	}
+	// Mint + seal the fbs_ secret only when the verified tier is enabled (master key configured).
+	// Unset ⇒ sealed stays nil, sealed_secret persists NULL, and the response's HasSecret is false.
+	var secretPlain string
+	var sealed *string
+	if s.Sealer != nil {
+		sec, serr := newSecret()
+		if serr != nil {
+			return IngestKey{}, serr
+		}
+		blob, berr := s.Sealer.Seal([]byte(sec))
+		if berr != nil {
+			return IngestKey{}, fmt.Errorf("feedback: seal secret: %w", berr)
+		}
+		secretPlain = sec
+		sealed = &blob
 	}
 	var out IngestKey
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -53,6 +84,7 @@ func (s *Service) CreateIngestKey(ctx context.Context, principalID, businessID, 
 			BoardID:        boardID,
 			PublishableKey: pk,
 			Label:          label,
+			SealedSecret:   sealed,
 		})
 		if ierr != nil {
 			return ierr
@@ -63,6 +95,9 @@ func (s *Service) CreateIngestKey(ctx context.Context, principalID, businessID, 
 	if err != nil {
 		return IngestKey{}, mapErr(err)
 	}
+	// Write-once: the plaintext secret is only ever surfaced here, on create. toIngestKey never
+	// sets it (list/revoke paths only ever expose HasSecret).
+	out.Secret = secretPlain
 	return out, nil
 }
 
@@ -139,5 +174,6 @@ func toIngestKey(k dbgen.FeedbackIngestKey) IngestKey {
 		Status:         k.Status,
 		CreatedAt:      k.CreatedAt,
 		RevokedAt:      pgTimePtr(k.RevokedAt),
+		HasSecret:      k.SealedSecret != nil,
 	}
 }
