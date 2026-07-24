@@ -1,5 +1,3 @@
-BEGIN;
-
 -- Recreate original 0102 function signatures verbatim.
 DROP FUNCTION feedback_public_list_posts(uuid,int,text,text);
 CREATE FUNCTION feedback_public_list_posts(p_board_id uuid, p_limit int)
@@ -72,6 +70,14 @@ GRANT EXECUTE ON FUNCTION feedback_public_board(text) TO manyforge_app;
 
 -- Strip the a:/v: identity prefixes (best-effort; a legacy raw identity that genuinely began
 -- 'a:'/'v:' would be over-stripped — vanishingly unlikely, acceptable for a down path).
+--
+-- Rollback is lossy where one raw identity voted in BOTH tiers on a post: drop the anon
+-- duplicate first so stripping the prefix can't violate UNIQUE (post_id, voter_identity).
+DELETE FROM feedback_vote a
+ WHERE a.voter_identity LIKE 'a:%'
+   AND EXISTS (SELECT 1 FROM feedback_vote v
+               WHERE v.post_id = a.post_id
+                 AND v.voter_identity = 'v:' || substring(a.voter_identity from 3));
 UPDATE feedback_vote SET voter_identity = substring(voter_identity from 3)
  WHERE voter_identity LIKE 'a:%' OR voter_identity LIKE 'v:%';
 UPDATE feedback_post SET author_identity = substring(author_identity from 3)
@@ -81,5 +87,3 @@ DROP TABLE feedback_ingest_idempotency;
 ALTER TABLE feedback_ingest_key DROP COLUMN sealed_secret;
 ALTER TABLE feedback_vote DROP COLUMN identity_verified;
 ALTER TABLE feedback_post DROP COLUMN identity_verified;
-
-COMMIT;
