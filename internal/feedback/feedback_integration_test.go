@@ -383,11 +383,15 @@ func marshalBody(t *testing.T, v any) []byte {
 }
 
 // feedbackSignHeader computes an X-Feedback-Signature header value exactly as a real SDK would:
-// v1 = hex(HMAC_SHA256(secret, "<t>.<METHOD>.<path>.<body>")). Deliberately independent of
-// internal/feedback/signature.go's (unexported) feedbackSigningString — this is an
-// external black-box check of the wire contract, not a call into the implementation under test.
-func feedbackSignHeader(secret string, ts int64, method, path string, body []byte) string {
-	head := fmt.Sprintf("%d.%s.%s.", ts, method, path)
+// v1 = hex(HMAC_SHA256(secret, "<t>.<METHOD>.<target>.<body>")), where <target> is the full
+// request-target (path + "?" + raw query string) for the request being signed — exactly what the
+// server will see via r.URL.RequestURI(). Callers signing a request that carries a query string
+// (e.g. the signed GET list with ?voter_identity=...) MUST pass that query as part of target, or
+// the server's signature check (which covers the query) will reject it. Deliberately independent
+// of internal/feedback/signature.go's (unexported) feedbackSigningString — this is an external
+// black-box check of the wire contract, not a call into the implementation under test.
+func feedbackSignHeader(secret string, ts int64, method, target string, body []byte) string {
+	head := fmt.Sprintf("%d.%s.%s.", ts, method, target)
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(head))
 	mac.Write(body)
@@ -765,8 +769,9 @@ func TestFeedbackPublicTierIsolationAndViewerVoted(t *testing.T) {
 	listPath := "/feedback/public/" + key.PublishableKey + "/posts"
 
 	t.Run("signed list, same identity -> viewer_voted=true", func(t *testing.T) {
-		hdr := feedbackSignHeader(key.Secret, time.Now().Unix(), http.MethodGet, listPath, nil)
-		code, out := doPublicRequest(t, http.MethodGet, srv.URL+listPath+"?voter_identity=alice", nil, map[string]string{"X-Feedback-Signature": hdr})
+		target := listPath + "?voter_identity=alice"
+		hdr := feedbackSignHeader(key.Secret, time.Now().Unix(), http.MethodGet, target, nil)
+		code, out := doPublicRequest(t, http.MethodGet, srv.URL+target, nil, map[string]string{"X-Feedback-Signature": hdr})
 		items, _ := out["items"].([]any)
 		if code != http.StatusOK || !viewerVotedFor(items, postID) {
 			t.Fatalf("signed list (alice) code=%d out=%v, want viewer_voted=true", code, out)
@@ -774,11 +779,22 @@ func TestFeedbackPublicTierIsolationAndViewerVoted(t *testing.T) {
 	})
 
 	t.Run("signed list, different identity -> viewer_voted=false", func(t *testing.T) {
-		hdr := feedbackSignHeader(key.Secret, time.Now().Unix(), http.MethodGet, listPath, nil)
-		code, out := doPublicRequest(t, http.MethodGet, srv.URL+listPath+"?voter_identity=bob", nil, map[string]string{"X-Feedback-Signature": hdr})
+		target := listPath + "?voter_identity=bob"
+		hdr := feedbackSignHeader(key.Secret, time.Now().Unix(), http.MethodGet, target, nil)
+		code, out := doPublicRequest(t, http.MethodGet, srv.URL+target, nil, map[string]string{"X-Feedback-Signature": hdr})
 		items, _ := out["items"].([]any)
 		if code != http.StatusOK || viewerVotedFor(items, postID) {
 			t.Fatalf("signed list (bob) code=%d out=%v, want viewer_voted=false", code, out)
+		}
+	})
+
+	t.Run("signed list, MAC for one query replayed against a different query -> 401 (query binding)", func(t *testing.T) {
+		signedTarget := listPath + "?voter_identity=alice"
+		hdr := feedbackSignHeader(key.Secret, time.Now().Unix(), http.MethodGet, signedTarget, nil)
+		replayedTarget := listPath + "?voter_identity=bob"
+		code, _ := doPublicRequest(t, http.MethodGet, srv.URL+replayedTarget, nil, map[string]string{"X-Feedback-Signature": hdr})
+		if code != http.StatusUnauthorized {
+			t.Fatalf("query-mismatch replay code = %d, want 401 (captured MAC for ?voter_identity=alice must not verify against ?voter_identity=bob)", code)
 		}
 	})
 
