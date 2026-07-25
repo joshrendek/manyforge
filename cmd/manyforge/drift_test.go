@@ -147,7 +147,12 @@ func specRoutesFrom(t *testing.T, path string) map[string]bool {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("parse openapi %s: %v", path, err)
 	}
-	verbs := map[string]bool{"get": true, "post": true, "put": true, "patch": true, "delete": true}
+	// "options" is included because the analytics collect endpoint serves a real CORS preflight
+	// route. Without it here, a declared OPTIONS operation is invisible to the walker and its
+	// served route is reported as undocumented forever.
+	verbs := map[string]bool{
+		"get": true, "post": true, "put": true, "patch": true, "delete": true, "options": true,
+	}
 	out := map[string]bool{}
 	for p, ops := range doc.Paths {
 		for verb := range ops {

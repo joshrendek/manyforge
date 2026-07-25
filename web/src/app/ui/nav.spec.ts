@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NAV_ITEMS } from './nav';
 
 describe('NAV_ITEMS', () => {
-  it('includes dashboard, support, approvals, connectors, ai credentials, agents, code review, review setup, github, contacts, companies, mcp and accounting with testids', () => {
+  it('includes dashboard, support, approvals, connectors, ai credentials, agents, code review, review setup, github, contacts, companies, feedback, analytics, mcp and accounting with testids', () => {
     const routes = NAV_ITEMS.map((n) => n.route);
     expect(routes).toEqual([
       '/dashboard',
@@ -17,10 +17,12 @@ describe('NAV_ITEMS', () => {
       '/crm/contacts',
       '/crm/companies',
       '/feedback',
+      '/analytics',
       '/mcp',
       '/accounting',
     ]);
     expect(NAV_ITEMS.find((n) => n.route === '/feedback')?.testid).toBe('nav-feedback');
+    expect(NAV_ITEMS.find((n) => n.route === '/analytics')?.testid).toBe('nav-analytics');
     expect(NAV_ITEMS.find((n) => n.route === '/approvals')?.testid).toBe('nav-approvals');
     expect(NAV_ITEMS.find((n) => n.route === '/credentials/connector')?.testid).toBe(
       'nav-connectors',

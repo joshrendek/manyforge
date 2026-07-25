@@ -20,6 +20,11 @@ import (
 //
 //   - No dependencies, no build step, small enough to inline-read before trusting.
 //   - sendBeacon so a pageview survives the tab closing; XHR only as a fallback.
+//   - The beacon is sent as text/plain, NOT application/json. application/json is not a CORS
+//     "simple" content type, so it forces a preflight OPTIONS on every pageview from every
+//     embedding site — doubling requests and failing outright if preflight is ever blocked.
+//     text/plain sends the identical bytes with no preflight; the server parses the body by
+//     shape, not by Content-Type.
 //   - Only pushState and popstate are tracked. replaceState is deliberately NOT wrapped: SPAs
 //     routinely use it to rewrite query strings, and treating those as pageviews inflates counts.
 //   - A repeated path is skipped, so a framework that fires several navigations for one screen
@@ -46,7 +51,7 @@ var r='';
 try{if(document.referrer){var u=new URL(document.referrer);if(u.hostname&&u.hostname!==location.hostname)r=u.hostname;}}catch(e){}
 var b=JSON.stringify({k:k,p:p,r:r});
 try{
-if(navigator.sendBeacon){navigator.sendBeacon(ep,new Blob([b],{type:'application/json'}));return;}
+if(navigator.sendBeacon){navigator.sendBeacon(ep,new Blob([b],{type:'text/plain;charset=UTF-8'}));return;}
 }catch(e){}
 try{var x=new XMLHttpRequest();x.open('POST',ep,true);x.setRequestHeader('Content-Type','application/json');x.send(b);}catch(e){}
 }
@@ -74,6 +79,9 @@ func (h *PublicHandler) serveSnippet(w http.ResponseWriter, r *http.Request) {
 	// snippet reaches embedding sites the same day.
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// A <script src> tag needs no CORS, but allow it anyway so a site can also fetch() the file
+	// to self-host or hash it.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeContent(w, r, "a.js", snippetBuildTime, strings.NewReader(snippetJS))
 }
 

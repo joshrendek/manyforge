@@ -14,6 +14,8 @@ import (
 var inScope011Ops = []string{
 	"GET /a.js",
 	"POST /a/e",
+	// Preflight for the XHR fallback; see the contract for why the beacon itself avoids it.
+	"OPTIONS /a/e",
 	"GET /businesses/{}/analytics/summary",
 }
 
@@ -21,7 +23,8 @@ var inScope011Ops = []string{
 // routes are matched exactly because "/a" is too short to substring-match safely; the read route
 // is matched on /analytics.
 func is011Op(op string) bool {
-	return op == "GET /a.js" || op == "POST /a/e" || strings.Contains(op, "/analytics")
+	return op == "GET /a.js" || op == "POST /a/e" || op == "OPTIONS /a/e" ||
+		strings.Contains(op, "/analytics")
 }
 
 // TestOpenAPIDrift011 pins the as0 analytics contract against the FULL production router.

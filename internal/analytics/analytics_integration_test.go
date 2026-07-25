@@ -484,3 +484,88 @@ func TestSalt_NotReadableByAppRole(t *testing.T) {
 			"injection anywhere in the app would be enough to start re-deriving visitor hashes")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Cross-origin embedding
+//
+// These pin the single most important property of the embed: it is loaded on OTHER PEOPLE'S
+// origins. Every other test here is same-origin and cannot see a CORS failure — the original
+// version of this endpoint shipped with no CORS headers and a JSON beacon, which meant a real
+// embedding site collected exactly nothing while every Go test passed.
+// ---------------------------------------------------------------------------
+
+func TestCollect_AnswersCORSPreflight(t *testing.T) {
+	_, e := newEnv(t)
+	req, _ := http.NewRequest(http.MethodOptions, e.srv.URL+"/a/e", nil)
+	req.Header.Set("Origin", "https://a-tenant-site.example")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "content-type")
+	resp, err := e.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status %d, want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q; without it, no embedding site can collect", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") {
+		t.Errorf("Access-Control-Allow-Methods = %q, must allow POST", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "content-type") {
+		t.Errorf("Access-Control-Allow-Headers = %q, must allow Content-Type for the XHR fallback", got)
+	}
+}
+
+func TestCollect_SetsCORSOnThePostItself(t *testing.T) {
+	ctx, e := newEnv(t)
+	b, _ := json.Marshal(map[string]string{"k": e.key, "p": "/", "r": ""})
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/a/e", bytes.NewReader(b))
+	req.Header.Set("Origin", "https://a-tenant-site.example")
+	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	req.Header.Set("User-Agent", humanUA)
+	resp, err := e.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("POST response missing Access-Control-Allow-Origin (got %q)", got)
+	}
+
+	// text/plain is what the beacon actually sends, precisely BECAUSE it avoids a preflight. The
+	// server must therefore parse the body by shape, never by Content-Type.
+	var n int
+	if err := e.tdb.Super.QueryRow(ctx,
+		"SELECT count(*) FROM analytics_event WHERE client_id=$1", e.site).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("a text/plain beacon stored %d rows, want 1 — the handler must not require "+
+			"Content-Type: application/json", n)
+	}
+}
+
+// The snippet must use a CORS-"simple" content type. application/json forces a preflight on every
+// pageview from every embedding site.
+func TestSnippet_BeaconUsesSimpleContentType(t *testing.T) {
+	_, e := newEnv(t)
+	resp, err := e.srv.Client().Get(e.srv.URL + "/a.js")
+	if err != nil {
+		t.Fatalf("get snippet: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	js := string(body)
+
+	if !strings.Contains(js, "text/plain") {
+		t.Error("the beacon must post text/plain; application/json triggers a CORS preflight on " +
+			"every pageview from every embedding site")
+	}
+	if strings.Contains(js, "sendBeacon(ep,new Blob([b],{type:'application/json'})") {
+		t.Error("the beacon still sends application/json")
+	}
+}

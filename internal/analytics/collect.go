@@ -38,8 +38,33 @@ type PublicHandler struct {
 }
 
 // CollectRoutes mounts the public collect endpoint.
+//
+// OPTIONS is handled alongside POST because the XHR fallback (used when sendBeacon is missing)
+// sets Content-Type: application/json, which is not a CORS "simple" content type and therefore
+// triggers a preflight. Without an OPTIONS route those browsers collect nothing.
 func (h *PublicHandler) CollectRoutes(r chi.Router) {
 	r.Post("/a/e", h.collect)
+	r.Options("/a/e", h.preflight)
+}
+
+// corsHeaders opens the collect endpoint to every origin.
+//
+// This is correct rather than lax: the endpoint exists to be called from arbitrary tenant sites,
+// it takes no cookies and no Authorization header, and it returns no data. Credentials are NOT
+// allowed (and `*` could not be combined with them anyway), so a wildcard here grants an attacker
+// nothing they could not already do with curl.
+func corsHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	// Cache the preflight so a browser that does send one is not doing it per pageview.
+	w.Header().Set("Access-Control-Max-Age", "86400")
+	w.Header().Set("Vary", "Origin")
+}
+
+func (h *PublicHandler) preflight(w http.ResponseWriter, _ *http.Request) {
+	corsHeaders(w)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type collectRequest struct {
@@ -55,6 +80,7 @@ type collectRequest struct {
 // handling to receive a status anyway — so a varying status would leak information to an attacker
 // while telling a legitimate site nothing.
 func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
+	corsHeaders(w)
 	defer w.WriteHeader(http.StatusNoContent)
 
 	ip := ratelimit.ClientIP(r, h.TrustedProxies)
