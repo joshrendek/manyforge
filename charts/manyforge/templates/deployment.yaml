@@ -96,6 +96,15 @@ spec:
                   name: {{ .Values.secrets.masterKeys.secretName }}
                   key: {{ .Values.secrets.masterKeys.githubAppKey }}
                   optional: true
+            # AES-256 feedback verified-identity master key (spec 006). Optional:
+            # absent → the verified-identity tier is disabled and the anonymous
+            # feedback ingress is unaffected; the app still boots.
+            - name: MANYFORGE_FEEDBACK_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.feedbackKey }}
+                  optional: true
             # --- optional secrets — opt-in via secrets.smtp/secrets.inbound -
             {{- if .Values.secrets.smtp.secretName }}
             - name: MANYFORGE_SMTP_USER
