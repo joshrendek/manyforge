@@ -139,6 +139,8 @@ describe('FeedbackPortalComponent', () => {
     const votedButtons = fixture.nativeElement.querySelectorAll('[data-testid="portal-upvote"]');
     expect((votedButtons[0] as HTMLElement).classList.contains('voted')).toBe(true);
     expect((votedButtons[1] as HTMLElement).classList.contains('voted')).toBe(false);
+    expect((votedButtons[0] as HTMLElement).getAttribute('aria-pressed')).toBe('true');
+    expect((votedButtons[1] as HTMLElement).getAttribute('aria-pressed')).toBe('false');
   });
 
   it('keeps viewer_voted=true across a reload even after localStorage is cleared', () => {

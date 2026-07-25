@@ -44,7 +44,11 @@ const maxPublicBytes int64 = 64 << 10
 type PublicHandler struct {
 	DB       *appdb.DB
 	Logger   *slog.Logger
-	Sealer   *crypto.Sealer // nil ⇒ signed requests against secret'd keys → 401 (fail closed)
+	// Sealer nil-behavior is bifurcated by the key's own state: a signed request against a key
+	// that HAS a sealed_secret gets 401 (fail closed — verification is required but impossible
+	// without a sealer). A key with no sealed_secret (verified tier never enabled for it)
+	// degrades to anonymous ingress and is unaffected by a nil Sealer.
+	Sealer   *crypto.Sealer
 	maxBytes int64
 }
 
@@ -311,6 +315,13 @@ func namespacedParam(v string, verified bool) *string {
 	v = trimTo(v)
 	if v == "" {
 		return nil
+	}
+	// Bound the byte length before the []rune conversion below: an attacker-controlled query
+	// value could otherwise force allocation of an unbounded rune slice. 800 bytes is always
+	// >= any 200-rune prefix (a rune is at most 4 bytes), and a mid-rune byte cut here is
+	// harmless since the []rune(...)[:200] re-yields a valid UTF-8 prefix regardless.
+	if len(v) > 800 {
+		v = v[:800]
 	}
 	if r := []rune(v); len(r) > 200 {
 		v = string(r[:200])

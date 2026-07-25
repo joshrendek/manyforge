@@ -31,7 +31,8 @@ func newPublishableKey() (string, error) {
 
 // secretPrefix marks a feedback ingest SECRET (fbs_) — a server-to-server signing secret,
 // distinct from the publishable fbk_ key so the two are never confused in config. Never ships
-// to a client; returned in plaintext exactly once at creation, then only its sealed form is stored.
+// to the app CLIENT / is never embedded in a client binary; it is returned once to the operator
+// at creation and is server-to-server only, then only its sealed form is stored.
 const secretPrefix = "fbs_"
 
 // newSecret mints a fresh ingest secret. crypto/rand failure is surfaced (never a

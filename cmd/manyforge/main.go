@@ -183,7 +183,8 @@ func main() {
 	// FeedbackMasterKey seals the verified-identity tier's HMAC secret (Task 1, saz.5):
 	// unset ⇒ nil sealer, verified tier disabled, anonymous ingress unaffected, server
 	// still boots. An explicitly-set-but-wrong-length key is a hard config error already
-	// caught in config.Load(), so NewSealer here cannot fail.
+	// caught in config.Load(); the error below is a defensive check for that same
+	// wrong-length condition, which should never actually reach this point.
 	var feedbackSealer *mfcrypto.Sealer
 	if len(cfg.FeedbackMasterKey) > 0 {
 		feedbackSealer, err = mfcrypto.NewSealer(cfg.FeedbackMasterKey)
