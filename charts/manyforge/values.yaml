@@ -198,6 +198,10 @@ secrets:
     # rest (spec 009). Optional: if this key is absent from the Secret the app
     # boots with the GitHub App integration disabled.
     githubAppKey: github-app
+    # AES-256 key sealing the per-ingest-key feedback signing secret (fbs_) for
+    # the verified-identity tier (spec 006). Optional: if absent the app boots
+    # with the verified tier disabled (anonymous feedback ingress unaffected).
+    feedbackKey: feedback
   # Owner-role DSN for the migrate Job — distinct from the app DSN above,
   # since migrations need DDL privileges the app role should not have.
   migrateDatabase:
