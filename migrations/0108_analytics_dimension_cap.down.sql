@@ -1,4 +1,19 @@
 -- Reverse of 0108: drop the capped implementation and restore 0107's uncapped upsert form.
+--
+-- The capped rollup writes synthetic '(other)' rows that correspond to no single raw value. The
+-- uncapped form has no concept of them and, being an upsert, would never remove them — so after a
+-- naive rollback every folded value would be counted BOTH individually and inside a leftover
+-- '(other)', silently inflating every breakdown. Data must therefore be reconciled here, not just
+-- the function swapped.
+
+-- 1. Drop the synthetic rows.
+DELETE FROM analytics_dimension_daily WHERE value = '(other)';
+
+-- 2. Rewind the watermark so the restored uncapped rollup rebuilds the affected buckets from raw
+--    events rather than leaving whatever partial state the capped sweeps left behind. Recomputation
+--    is bounded by raw-event retention and is idempotent, so this is safe to repeat.
+UPDATE rollup_state SET watermark_ingested_at = '-infinity', updated_at = now()
+    WHERE rollup_name = 'analytics_dimensions';
 
 DROP FUNCTION IF EXISTS rollup_analytics_dimensions(interval,interval,int);
 DROP FUNCTION IF EXISTS rollup_analytics_dimensions(interval,interval);
