@@ -18,6 +18,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Contacts', route: '/crm/contacts', testid: 'nav-crm-contacts' },
   { label: 'Companies', route: '/crm/companies', testid: 'nav-crm-companies' },
   { label: 'Feedback', route: '/feedback', testid: 'nav-feedback' },
+  { label: 'Analytics', route: '/analytics', testid: 'nav-analytics' },
   { label: 'MCP', route: '/mcp', testid: 'nav-mcp' },
   { label: 'Accounting', route: '/accounting', testid: 'nav-accounting' },
 ];

@@ -51,6 +51,13 @@ func (w *MaintenanceWorker) SweepOnce(ctx context.Context) (created, dropped int
 		if qerr := tx.QueryRow(ctx, "SELECT drop_expired_partitions()").Scan(&dropped); qerr != nil {
 			return fmt.Errorf("drop expired partitions: %w", qerr)
 		}
+		// Drop analytics salts past the raw-event retention window. This is what makes an aged-out
+		// visitor_hash permanently un-derivable rather than merely inconvenient to reverse, so it
+		// belongs with retention rather than on its own schedule.
+		var purged int
+		if qerr := tx.QueryRow(ctx, "SELECT purge_expired_analytics_salts()").Scan(&purged); qerr != nil {
+			return fmt.Errorf("purge expired analytics salts: %w", qerr)
+		}
 		return nil
 	})
 	if err != nil {

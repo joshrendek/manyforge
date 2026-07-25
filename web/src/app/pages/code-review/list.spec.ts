@@ -7,16 +7,30 @@ import { ToastService } from '../../ui/toast/toast.service';
 import { CodeReviewListComponent } from './list';
 
 const biz = {
-  items: [{ id: 'b1', parent_id: null, tenant_root_id: 'b1', name: 'Acme', status: 'active', is_tenant_root: true }],
+  items: [
+    {
+      id: 'b1',
+      parent_id: null,
+      tenant_root_id: 'b1',
+      name: 'Acme',
+      status: 'active',
+      is_tenant_root: true,
+    },
+  ],
   next_cursor: null,
 };
 
 const connectors = {
   items: [
     {
-      id: 'c1', type: 'github', display_name: 'acme/api', repo: 'acme/api',
-      base_url: 'https://api.github.com', allow_private_base_url: false,
-      status: 'active', created_at: '2026-06-01T00:00:00Z',
+      id: 'c1',
+      type: 'github',
+      display_name: 'acme/api',
+      repo: 'acme/api',
+      base_url: 'https://api.github.com',
+      allow_private_base_url: false,
+      status: 'active',
+      created_at: '2026-06-01T00:00:00Z',
     },
   ],
 };
@@ -24,11 +38,21 @@ const connectors = {
 const agentsResp = {
   items: [
     {
-      id: 'ag1', business_id: 'b1', principal_id: 'p1', name: 'Reviewer Agent',
-      provider: 'anthropic', model: 'claude-opus-4-8',
-      system_prompt: '', allowed_tools: [], autonomy_mode: 1, enabled: true,
-      monthly_budget_cents: 2500, allowed_mcp_servers: [], retriage_on_reply: false,
-      created_at: '', updated_at: '',
+      id: 'ag1',
+      business_id: 'b1',
+      principal_id: 'p1',
+      name: 'Reviewer Agent',
+      provider: 'anthropic',
+      model: 'claude-opus-4-8',
+      system_prompt: '',
+      allowed_tools: [],
+      autonomy_mode: 1,
+      enabled: true,
+      monthly_budget_cents: 2500,
+      allowed_mcp_servers: [],
+      retriage_on_reply: false,
+      created_at: '',
+      updated_at: '',
     },
   ],
 };
@@ -79,7 +103,9 @@ describe('CodeReviewListComponent', () => {
     expect(row?.textContent).toContain('acme/api');
   });
 
-  it('opens the per-repo dimension editor and toggles an override (spec 008 Slice 4)', () => {
+  // async + whenStable: [ngModel] writes the checkbox's DOM value in a microtask, so a purely
+  // synchronous detectChanges() reads `checked` before Angular has applied the bound value.
+  it('opens the per-repo dimension editor and toggles an override (spec 008 Slice 4)', async () => {
     const f = mount();
     const el = f.nativeElement as HTMLElement;
     (el.querySelector('[data-testid="connector-dimensions"]') as HTMLButtonElement).click();
@@ -87,12 +113,24 @@ describe('CodeReviewListComponent', () => {
     mock.expectOne('/api/v1/businesses/b1/review-dimensions').flush({
       items: [
         {
-          id: 'd1', dimension: 'security', provider: '', model: '', fallback_chain: [],
-          prompt: '', scope_globs: [], min_severity: 'info', enabled: true, sort_order: 1,
+          id: 'd1',
+          dimension: 'security',
+          provider: '',
+          model: '',
+          fallback_chain: [],
+          prompt: '',
+          scope_globs: [],
+          min_severity: 'info',
+          enabled: true,
+          sort_order: 1,
         },
       ],
     });
-    mock.expectOne('/api/v1/businesses/b1/repo-connectors/c1/dimension-overrides').flush({ items: [] });
+    mock
+      .expectOne('/api/v1/businesses/b1/repo-connectors/c1/dimension-overrides')
+      .flush({ items: [] });
+    f.detectChanges();
+    await f.whenStable();
     f.detectChanges();
 
     const cb = el.querySelector('[data-testid="override-security"]') as HTMLInputElement;
@@ -101,6 +139,7 @@ describe('CodeReviewListComponent', () => {
 
     cb.click(); // disable security for this repo
     f.detectChanges();
+    await f.whenStable();
     const put = mock.expectOne('/api/v1/businesses/b1/repo-connectors/c1/dimension-overrides');
     expect(put.request.method).toBe('PUT');
     expect(put.request.body).toEqual({ dimension_key: 'security', enabled: false });
@@ -143,11 +182,19 @@ describe('CodeReviewListComponent', () => {
 
     // After save the service reloads connectors.
     mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush({
-      items: [...connectors.items, {
-        id: 'c2', type: 'github', display_name: 'My Connector', repo: 'acme/new',
-        base_url: 'https://api.github.com', allow_private_base_url: false,
-        status: 'active', created_at: '2026-06-25T00:00:00Z',
-      }],
+      items: [
+        ...connectors.items,
+        {
+          id: 'c2',
+          type: 'github',
+          display_name: 'My Connector',
+          repo: 'acme/new',
+          base_url: 'https://api.github.com',
+          allow_private_base_url: false,
+          status: 'active',
+          created_at: '2026-06-25T00:00:00Z',
+        },
+      ],
     });
     f.detectChanges();
 
@@ -165,7 +212,9 @@ describe('CodeReviewListComponent', () => {
     expect(el.querySelector('[data-testid="connector-delete-confirm"]')).toBeTruthy();
 
     (el.querySelector('[data-testid="connector-delete-yes"]') as HTMLButtonElement).click();
-    mock.expectOne({ method: 'DELETE', url: '/api/v1/businesses/b1/repo-connectors/c1' }).flush(null);
+    mock
+      .expectOne({ method: 'DELETE', url: '/api/v1/businesses/b1/repo-connectors/c1' })
+      .flush(null);
     f.detectChanges();
 
     expect(el.querySelector('[data-testid="connector-row"]')).toBeNull();
@@ -262,7 +311,9 @@ describe('CodeReviewListComponent', () => {
     setTriggerForm(f, 'ag1', 'c1', 7);
 
     f.componentInstance.triggerReview();
-    mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({ id: 'r2', status: 'pending', review_url: '' });
+    mock
+      .expectOne('/api/v1/businesses/b1/code-reviews')
+      .flush({ id: 'r2', status: 'pending', review_url: '' });
     f.detectChanges();
 
     expect(f.componentInstance.reviews().length).toBe(1);
@@ -275,9 +326,9 @@ describe('CodeReviewListComponent', () => {
     setTriggerForm(f, 'ag1', 'c1', 99);
 
     f.componentInstance.triggerReview();
-    mock.expectOne('/api/v1/businesses/b1/code-reviews').flush(
-      { error: 'egress not allowlisted' }, { status: 400, statusText: 'Bad Request' },
-    );
+    mock
+      .expectOne('/api/v1/businesses/b1/code-reviews')
+      .flush({ error: 'egress not allowlisted' }, { status: 400, statusText: 'Bad Request' });
     f.detectChanges();
 
     const errEl = f.nativeElement.querySelector('[data-testid="trigger-error"]');
@@ -290,9 +341,9 @@ describe('CodeReviewListComponent', () => {
     setTriggerForm(f, 'ag1', 'c1', 5);
 
     f.componentInstance.triggerReview();
-    mock.expectOne('/api/v1/businesses/b1/code-reviews').flush(
-      {}, { status: 404, statusText: 'Not Found' },
-    );
+    mock
+      .expectOne('/api/v1/businesses/b1/code-reviews')
+      .flush({}, { status: 404, statusText: 'Not Found' });
     f.detectChanges();
 
     const errEl = f.nativeElement.querySelector('[data-testid="trigger-error"]');
@@ -313,7 +364,9 @@ describe('CodeReviewListComponent', () => {
 
   it('renders connector options in the cr-connector select', () => {
     const f = mount();
-    const select = f.nativeElement.querySelector('[data-testid="cr-connector"]') as HTMLSelectElement;
+    const select = f.nativeElement.querySelector(
+      '[data-testid="cr-connector"]',
+    ) as HTMLSelectElement;
     expect(select).toBeTruthy();
     expect(select.options.length).toBeGreaterThanOrEqual(2);
     expect(select.options[1].textContent).toContain('acme/api');
@@ -323,10 +376,16 @@ describe('CodeReviewListComponent', () => {
     const f = mount();
     const toastSvc = TestBed.inject(ToastService);
 
-    (f.nativeElement.querySelector('[data-testid="connector-delete"]') as HTMLButtonElement).click();
+    (
+      f.nativeElement.querySelector('[data-testid="connector-delete"]') as HTMLButtonElement
+    ).click();
     f.detectChanges();
-    (f.nativeElement.querySelector('[data-testid="connector-delete-yes"]') as HTMLButtonElement).click();
-    mock.expectOne({ method: 'DELETE', url: '/api/v1/businesses/b1/repo-connectors/c1' }).flush(null);
+    (
+      f.nativeElement.querySelector('[data-testid="connector-delete-yes"]') as HTMLButtonElement
+    ).click();
+    mock
+      .expectOne({ method: 'DELETE', url: '/api/v1/businesses/b1/repo-connectors/c1' })
+      .flush(null);
     f.detectChanges();
 
     expect(toastSvc.toasts().some((t) => t.message.includes('deleted'))).toBe(true);
@@ -342,20 +401,30 @@ describe('CodeReviewListComponent', () => {
     f.detectChanges();
     mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
     mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-      items: [{
-        id: 'r1', status: 'succeeded', summary: '', review_url: '', pr_number: 7,
-        model: 'google/gemini-2.5-pro', repo: 'acme/api',
-        findings: [], findings_count: 3, cost_cents: 825,
-        created_at: '2026-06-20T12:00:00Z', posted_at: null,
-      }],
+      items: [
+        {
+          id: 'r1',
+          status: 'succeeded',
+          summary: '',
+          review_url: '',
+          pr_number: 7,
+          model: 'google/gemini-2.5-pro',
+          repo: 'acme/api',
+          findings: [],
+          findings_count: 3,
+          cost_cents: 825,
+          created_at: '2026-06-20T12:00:00Z',
+          posted_at: null,
+        },
+      ],
     });
     mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
     f.detectChanges();
 
     const rows = f.nativeElement.querySelectorAll('[data-testid="review-row"]');
     expect(rows.length).toBe(1);
-    expect(rows[0].textContent).toContain('7');  // PR number
-    expect(rows[0].textContent).toContain('3');  // findings_count
+    expect(rows[0].textContent).toContain('7'); // PR number
+    expect(rows[0].textContent).toContain('3'); // findings_count
     // The repo is shown in its own column.
     const repoCell = rows[0].querySelector('[data-testid="review-repo"]');
     expect(repoCell?.textContent).toContain('acme/api');
@@ -377,12 +446,21 @@ describe('CodeReviewListComponent', () => {
     f.detectChanges();
     mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
     mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-      items: [{
-        id: 'rp', status: 'succeeded', summary: '', review_url: '', pr_number: 9,
-        model: 'panel',
-        findings: [], findings_count: 0, cost_cents: 0,
-        created_at: '2026-06-20T12:00:00Z', posted_at: null,
-      }],
+      items: [
+        {
+          id: 'rp',
+          status: 'succeeded',
+          summary: '',
+          review_url: '',
+          pr_number: 9,
+          model: 'panel',
+          findings: [],
+          findings_count: 0,
+          cost_cents: 0,
+          created_at: '2026-06-20T12:00:00Z',
+          posted_at: null,
+        },
+      ],
     });
     mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
     f.detectChanges();
@@ -401,11 +479,21 @@ describe('CodeReviewListComponent', () => {
     f.detectChanges();
     mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
     mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-      items: [{
-        id: 'rn', status: 'succeeded', summary: '', review_url: '', pr_number: 3,
-        model: 'x', findings: [], findings_count: 0, cost_cents: 0,
-        created_at: '2026-06-20T12:00:00Z', posted_at: null,
-      }],
+      items: [
+        {
+          id: 'rn',
+          status: 'succeeded',
+          summary: '',
+          review_url: '',
+          pr_number: 3,
+          model: 'x',
+          findings: [],
+          findings_count: 0,
+          cost_cents: 0,
+          created_at: '2026-06-20T12:00:00Z',
+          posted_at: null,
+        },
+      ],
     });
     mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
     f.detectChanges();
@@ -418,8 +506,12 @@ describe('CodeReviewListComponent', () => {
   // ── History + polling (fake timers scoped to this nested describe) ────────────
 
   describe('polling', () => {
-    beforeEach(() => { vi.useFakeTimers(); });
-    afterEach(() => { vi.useRealTimers(); });
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
     /** Mount with a single pending review already returned from the server. */
     function mountWithPendingReview() {
@@ -429,10 +521,19 @@ describe('CodeReviewListComponent', () => {
       f.detectChanges();
       mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-        items: [{
-          id: 'r1', status: 'pending', summary: '', review_url: '', pr_number: 7,
-          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
-        }],
+        items: [
+          {
+            id: 'r1',
+            status: 'pending',
+            summary: '',
+            review_url: '',
+            pr_number: 7,
+            findings: [],
+            findings_count: 0,
+            created_at: '2026-06-20T12:00:00Z',
+            posted_at: null,
+          },
+        ],
       });
       mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
       f.detectChanges();
@@ -445,20 +546,38 @@ describe('CodeReviewListComponent', () => {
       // Advance by 3 s — the poll timer should fire and issue another GET.
       vi.advanceTimersByTime(3000);
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-        items: [{
-          id: 'r1', status: 'pending', summary: '', review_url: '', pr_number: 7,
-          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
-        }],
+        items: [
+          {
+            id: 'r1',
+            status: 'pending',
+            summary: '',
+            review_url: '',
+            pr_number: 7,
+            findings: [],
+            findings_count: 0,
+            created_at: '2026-06-20T12:00:00Z',
+            posted_at: null,
+          },
+        ],
       });
       f.detectChanges();
 
       // Still pending — one more tick.
       vi.advanceTimersByTime(3000);
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-        items: [{
-          id: 'r1', status: 'running', summary: '', review_url: '', pr_number: 7,
-          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
-        }],
+        items: [
+          {
+            id: 'r1',
+            status: 'running',
+            summary: '',
+            review_url: '',
+            pr_number: 7,
+            findings: [],
+            findings_count: 0,
+            created_at: '2026-06-20T12:00:00Z',
+            posted_at: null,
+          },
+        ],
       });
       f.detectChanges();
       expect(f.componentInstance.reviews()[0].status).toBe('running');
@@ -470,21 +589,38 @@ describe('CodeReviewListComponent', () => {
       // First poll tick — still pending.
       vi.advanceTimersByTime(3000);
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-        items: [{
-          id: 'r1', status: 'pending', summary: '', review_url: '', pr_number: 7,
-          findings: [], findings_count: 0, created_at: '2026-06-20T12:00:00Z', posted_at: null,
-        }],
+        items: [
+          {
+            id: 'r1',
+            status: 'pending',
+            summary: '',
+            review_url: '',
+            pr_number: 7,
+            findings: [],
+            findings_count: 0,
+            created_at: '2026-06-20T12:00:00Z',
+            posted_at: null,
+          },
+        ],
       });
       f.detectChanges();
 
       // Second poll tick — now succeeded (terminal).
       vi.advanceTimersByTime(3000);
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-        items: [{
-          id: 'r1', status: 'succeeded', summary: 'All good', review_url: '',
-          pr_number: 7, findings: [], findings_count: 0,
-          created_at: '2026-06-20T12:00:00Z', posted_at: '2026-06-20T12:01:00Z',
-        }],
+        items: [
+          {
+            id: 'r1',
+            status: 'succeeded',
+            summary: 'All good',
+            review_url: '',
+            pr_number: 7,
+            findings: [],
+            findings_count: 0,
+            created_at: '2026-06-20T12:00:00Z',
+            posted_at: '2026-06-20T12:01:00Z',
+          },
+        ],
       });
       f.detectChanges();
       expect(f.componentInstance.reviews()[0].status).toBe('succeeded');
@@ -528,17 +664,27 @@ describe('CodeReviewListComponent', () => {
 
       setTriggerForm('ag1', 'c1', 7);
       f.componentInstance.triggerReview();
-      mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({ id: 'r3', status: 'pending', review_url: '' });
+      mock
+        .expectOne('/api/v1/businesses/b1/code-reviews')
+        .flush({ id: 'r3', status: 'pending', review_url: '' });
       f.detectChanges();
 
       // The optimistic row is pending → polling should now be active.
       vi.advanceTimersByTime(3000);
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-        items: [{
-          id: 'r3', status: 'succeeded', summary: '', review_url: 'https://github.com/pr/1',
-          pr_number: 7, findings: [], findings_count: 0,
-          created_at: '2026-06-20T12:00:00Z', posted_at: null,
-        }],
+        items: [
+          {
+            id: 'r3',
+            status: 'succeeded',
+            summary: '',
+            review_url: 'https://github.com/pr/1',
+            pr_number: 7,
+            findings: [],
+            findings_count: 0,
+            created_at: '2026-06-20T12:00:00Z',
+            posted_at: null,
+          },
+        ],
       });
       f.detectChanges();
 
@@ -562,13 +708,22 @@ describe('CodeReviewListComponent', () => {
       f.detectChanges();
       mock.expectOne('/api/v1/businesses/b1/repo-connectors').flush(connectors);
       mock.expectOne('/api/v1/businesses/b1/code-reviews').flush({
-        items: [{
-          id: 'r1', status: 'running', summary: '', review_url: '', pr_number: 7,
-          model: 'google/gemini-2.5-pro',
-          findings: [], findings_count: 0, cost_cents: 0,
-          created_at: '2026-06-20T12:00:00Z', posted_at: null,
-          progress: { phase: 'reviewing', tokens: 12, preview: 'partial output' },
-        }],
+        items: [
+          {
+            id: 'r1',
+            status: 'running',
+            summary: '',
+            review_url: '',
+            pr_number: 7,
+            model: 'google/gemini-2.5-pro',
+            findings: [],
+            findings_count: 0,
+            cost_cents: 0,
+            created_at: '2026-06-20T12:00:00Z',
+            posted_at: null,
+            progress: { phase: 'reviewing', tokens: 12, preview: 'partial output' },
+          },
+        ],
       });
       mock.expectOne('/api/v1/businesses/b1/agents').flush(agentsResp);
       f.detectChanges();
@@ -583,10 +738,22 @@ describe('CodeReviewListComponent', () => {
     const f = mount();
     const cmp = f.componentInstance;
     cmp.reviews.set([
-      { id: 'r1', status: 'failed', pr_number: 5, model: 'm', repo: 'o/r', findings_count: 0, cost_cents: 0, created_at: '', findings: [] } as any,
+      {
+        id: 'r1',
+        status: 'failed',
+        pr_number: 5,
+        model: 'm',
+        repo: 'o/r',
+        findings_count: 0,
+        cost_cents: 0,
+        created_at: '',
+        findings: [],
+      } as any,
     ]);
     f.detectChanges();
-    const btn = f.nativeElement.querySelector('[data-testid="review-retry-r1"]') as HTMLButtonElement;
+    const btn = f.nativeElement.querySelector(
+      '[data-testid="review-retry-r1"]',
+    ) as HTMLButtonElement;
     expect(btn).toBeTruthy();
     btn.click();
     const req = mock.expectOne('/api/v1/businesses/b1/code-reviews/r1/retry');

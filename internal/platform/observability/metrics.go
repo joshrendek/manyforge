@@ -30,6 +30,13 @@ const (
 
 	MetricTelemetryIngestAccepted = "telemetry.ingest_accepted"
 	MetricTelemetryIngestRejected = "telemetry.ingest_rejected"
+
+	// manyforge-as0 analytics collect. The endpoint always answers 204, so these counters are the
+	// ONLY way to see that a site's key stopped resolving — a spike in collect_rejected means
+	// someone's embed is silently sending into the void.
+	MetricAnalyticsCollected       = "analytics.collected"
+	MetricAnalyticsCollectRejected = "analytics.collect_rejected"
+	MetricAnalyticsCollectFailed   = "analytics.collect_failed"
 )
 
 // Metrics is a thin, nil-safe wrapper over a published expvar.Map. A nil *Metrics

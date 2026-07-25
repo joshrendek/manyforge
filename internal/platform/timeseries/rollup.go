@@ -63,20 +63,39 @@ func (w *RollupWorker) withDefaults() {
 	}
 }
 
-// SweepOnce advances the analytics daily rollup by one window and returns the number of bucket
-// rows written. A negative Lag is clamped to zero, which lets a test sweep right up to now().
+// rollupFns are the SECURITY DEFINER rollup functions this worker drives. Each takes
+// (lag interval, overlap interval) and returns the number of bucket rows written.
+//
+// This list is a COMPILE-TIME constant and is interpolated into SQL. It must never be fed from
+// configuration or a request — a rollup name is an identifier, not a bindable parameter, so a
+// caller-supplied value here would be injection.
+var rollupFns = []string{
+	"rollup_analytics_daily",     // p20 generic event counter
+	"rollup_analytics_pageviews", // as0 pageviews / visitors / pages / referrers
+}
+
+// SweepOnce advances every rollup by one window and returns the total bucket rows written. A
+// negative Lag is clamped to zero, which lets a test sweep right up to now().
+//
+// Each rollup runs in its own transaction: they take different advisory locks, and one failing
+// (say, a rollup whose table a migration is mid-way through altering) must not roll back the
+// others or stall the whole pipeline.
 func (w *RollupWorker) SweepOnce(ctx context.Context) (int, error) {
 	lag := max(w.Lag, 0)
-	var n int
-	err := w.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			"SELECT rollup_analytics_daily(make_interval(secs => $1::int), make_interval(secs => $2::int))",
-			int(lag.Seconds()), int(w.overlap().Seconds())).Scan(&n)
-	})
-	if err != nil {
-		return 0, fmt.Errorf("rollup analytics daily: %w", err)
+	total := 0
+	for _, fn := range rollupFns {
+		var n int
+		err := w.DB.WithTx(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx,
+				"SELECT "+fn+"(make_interval(secs => $1::int), make_interval(secs => $2::int))",
+				int(lag.Seconds()), int(w.overlap().Seconds())).Scan(&n)
+		})
+		if err != nil {
+			return total, fmt.Errorf("%s: %w", fn, err)
+		}
+		total += n
 	}
-	return n, nil
+	return total, nil
 }
 
 // Run sweeps on every tick until ctx is cancelled.
