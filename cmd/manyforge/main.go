@@ -26,6 +26,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding"
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox"
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox/kube"
+	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/codexoauth"
 	"github.com/manyforge/manyforge/internal/connectors"
@@ -205,17 +206,11 @@ func main() {
 	// sealer, so clients are minted without an mfs_ signing secret and ingest stays anonymous.
 	telemetrySvc := telemetry.NewService(database, feedbackSealer)
 	telemetryH := telemetry.NewHandler(telemetrySvc)
-	telemetryPublicH := &telemetry.PublicHandler{
-		DB:     database,
-		Logger: logger,
-		Sealer: feedbackSealer,
-		// PerIP is deliberately nil: the public ingress group already applies the shared per-IP
-		// ingest limiter, and a second per-IP bucket here would just halve that budget
-		// confusingly. PerKey is the dimension the group does NOT cover — it stops one leaked
-		// publishable key from being abused across a whole botnet.
-		PerKey:  ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
-		Metrics: metrics,
-	}
+	// manyforge-as0 analytics: the embeddable snippet + principal-less collect endpoint, plus the
+	// authenticated read API the dashboard renders. Reads go against the p20 rollup tables, never
+	// raw events, so the dashboard does not slow down as volume grows.
+	analyticsSvc := analytics.NewService(database)
+	analyticsH := analytics.NewHandler(analyticsSvc)
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
@@ -680,6 +675,31 @@ func main() {
 	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
 
+	// Public ingest handlers are built HERE, after the trusted-proxy CIDRs are parsed, because
+	// both key their rate limiters on the client IP. Constructing them earlier left TrustedProxies
+	// nil, which behind the production ingress makes ClientIP fall back to the proxy's own address
+	// — collapsing every visitor of every tenant site into a single shared bucket and silently
+	// dropping legitimate pageviews as 204s.
+	telemetryPublicH := &telemetry.PublicHandler{
+		DB:     database,
+		Logger: logger,
+		Sealer: feedbackSealer,
+		// PerIP is deliberately nil: the public ingress group already applies the shared per-IP
+		// ingest limiter, and a second per-IP bucket here would just halve that budget
+		// confusingly. PerKey is the dimension the group does NOT cover — it stops one leaked
+		// publishable key from being abused across a whole botnet.
+		PerKey:         ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		TrustedProxies: trusted,
+		Metrics:        metrics,
+	}
+	analyticsPublicH := &analytics.PublicHandler{
+		DB:             database,
+		Logger:         logger,
+		Metrics:        metrics,
+		PerIP:          ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		TrustedProxies: trusted,
+	}
+
 	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public
 	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,
 	// shared across the webhook AND SMTP paths so a given source/recipient cannot
@@ -743,6 +763,8 @@ func main() {
 		telemetryPublic:  telemetryPublicH,
 		telemetryRead:    httpx.RequirePermission(database, permResolve, authz.PermTelemetryRead, businessIDFromPath),
 		telemetryWrite:   httpx.RequirePermission(database, permResolve, authz.PermTelemetryWrite, businessIDFromPath),
+		analytics:        analyticsH,
+		analyticsPublic:  analyticsPublicH,
 		codingReviews:    codingH,
 		githubApp:        githubAppH,
 	})
@@ -1048,6 +1070,14 @@ type apiHandlers struct {
 	telemetryRead  func(http.Handler) http.Handler
 	telemetryWrite func(http.Handler) http.Handler
 
+	// analytics is the as0 authenticated read handler (dashboard summary), gated on
+	// telemetry.read alongside the client-registration surface it reports on.
+	analytics *analytics.Handler
+	// analyticsPublic serves the embeddable snippet (GET /a.js) and the principal-less collect
+	// endpoint (POST /a/e). Both are mounted OUTSIDE the /api/v1 group: an embed tag should be a
+	// short, stable URL, and the collect beacon is not a versioned API surface.
+	analyticsPublic *analytics.PublicHandler
+
 	// codingReviews is the Spec 007 code-review handler: repo-connector creation gated
 	// by connectorsManage (connectors.manage), code-review trigger/get gated by
 	// agentsRun (agents.run). Same RLS-bound 404-on-lacking-perm semantics.
@@ -1067,6 +1097,18 @@ type apiHandlers struct {
 // truth for the route table, shared by main (runtime) and the OpenAPI-drift test
 // (which passes zero-value handlers + no-op middleware to enumerate the routes).
 func mountAPIRoutes(mux chi.Router, h apiHandlers) {
+	// as0 analytics embed surface, mounted at the ROOT rather than under /api/v1.
+	//
+	// A tenant pastes the snippet URL into their site's HTML and forgets it, so the URL must be
+	// short and stable across API versioning — /api/v1 in an embed tag would either freeze v1
+	// forever or break every embedding site on a version bump. The collect beacon shares that
+	// origin for the same reason. Both carry the per-IP ingest limiter internally; neither takes a
+	// principal. Guard on nil so a zero-value apiHandlers (the OpenAPI-drift test) does not panic.
+	if h.analyticsPublic != nil {
+		h.analyticsPublic.SnippetRoutes(mux)
+		h.analyticsPublic.CollectRoutes(mux)
+	}
+
 	mux.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(pub chi.Router) {
 			pub.Use(h.authLimit)
@@ -1233,6 +1275,10 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(tr chi.Router) {
 				tr.Use(h.telemetryRead)
 				h.telemetry.ReadRoutes(tr)
+				// as0 dashboard reads: same telemetry.read gate as the sites they describe.
+				if h.analytics != nil {
+					h.analytics.ReadRoutes(tr)
+				}
 			})
 			// manyforge-p20 telemetry write slice: register + revoke clients, gated on
 			// telemetry.write. Same RLS-bound 404-on-lacking-perm semantics.

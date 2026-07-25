@@ -1,0 +1,93 @@
+package analytics
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/httpx"
+)
+
+// defaultRangeDays is the window a dashboard opens on when none is requested.
+const defaultRangeDays = 30
+
+// Handler serves the authenticated analytics read surface, gated on telemetry.read by the caller.
+type Handler struct{ Svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{Svc: svc} }
+
+// ReadRoutes mounts the dashboard's read endpoints.
+func (h *Handler) ReadRoutes(r chi.Router) {
+	r.Get("/businesses/{id}/analytics/summary", h.summary)
+}
+
+func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
+	principalID, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	businessID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_business_id"})
+		return
+	}
+	clientID, err := uuid.Parse(r.URL.Query().Get("client_id"))
+	if err != nil {
+		// A malformed site id gets the same 404 as an unknown one — the distinction would be an
+		// existence oracle.
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+
+	days := defaultRangeDays
+	if d := r.URL.Query().Get("days"); d != "" {
+		n, cerr := strconv.Atoi(d)
+		if cerr != nil || n < 1 {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_days"})
+			return
+		}
+		if n > maxRangeDays {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_days"})
+			return
+		}
+		days = n
+	}
+	// Inclusive UTC day window ending today.
+	to := time.Now().UTC().Truncate(24 * time.Hour)
+	from := to.AddDate(0, 0, -(days - 1))
+
+	sum, err := h.Svc.Summary(r.Context(), principalID, businessID, clientID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, sum)
+}
+
+// mapErr converts driver errors into the typed sentinels handlers branch on. Raw pg errors never
+// reach a client: their messages carry constraint names, which are column names.
+func mapErr(err error) error {
+	var pgErr *pgconn.PgError
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, pgx.ErrNoRows):
+		return fmt.Errorf("analytics: not found: %w", errs.ErrNotFound)
+	case errors.Is(err, errs.ErrNotFound), errors.Is(err, errs.ErrValidation),
+		errors.Is(err, errs.ErrForbidden):
+		return err
+	case errors.As(err, &pgErr):
+		return fmt.Errorf("analytics: query failed: %w", err)
+	default:
+		return fmt.Errorf("analytics: %w", err)
+	}
+}

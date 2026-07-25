@@ -17,13 +17,22 @@ type Limiter interface {
 }
 
 // TokenBucket is an in-process per-key token-bucket limiter.
+//
+// Idle buckets are evicted (see sweepLocked). Without that, a limiter on a public endpoint grows
+// its map for every distinct key it has ever seen — and on an internet-facing endpoint the key is
+// a client IP, so an attacker with a cheap IPv6 allocation can grow it without bound.
 type TokenBucket struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	rate    float64 // tokens per second
-	burst   float64 // max tokens
-	now     func() time.Time
+	mu        sync.Mutex
+	buckets   map[string]*bucket
+	rate      float64 // tokens per second
+	burst     float64 // max tokens
+	now       func() time.Time
+	lastSweep time.Time
 }
+
+// sweepEvery bounds how often eviction walks the map, so a hot endpoint does not pay for a full
+// scan on every request.
+const sweepEvery = time.Minute
 
 type bucket struct {
 	tokens float64
@@ -41,11 +50,37 @@ func NewTokenBucket(rate, burst float64) *TokenBucket {
 	}
 }
 
+// idleTTL is how long a bucket must sit untouched before dropping it is UNOBSERVABLE: once enough
+// time has passed for it to refill to burst, a retained bucket and a fresh one behave identically.
+// Eviction therefore cannot weaken the limit — it only reclaims entries that no longer carry
+// information.
+func (t *TokenBucket) idleTTL() time.Duration {
+	if t.rate <= 0 {
+		return time.Hour
+	}
+	return time.Duration((t.burst/t.rate)*float64(time.Second)) + time.Second
+}
+
+// sweepLocked drops fully-refilled buckets. Caller must hold mu.
+func (t *TokenBucket) sweepLocked(now time.Time) {
+	if now.Sub(t.lastSweep) < sweepEvery {
+		return
+	}
+	t.lastSweep = now
+	ttl := t.idleTTL()
+	for k, b := range t.buckets {
+		if now.Sub(b.last) >= ttl {
+			delete(t.buckets, k)
+		}
+	}
+}
+
 // Allow consumes a token for key, returning false if the bucket is empty.
 func (t *TokenBucket) Allow(key string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
+	t.sweepLocked(now)
 	b, ok := t.buckets[key]
 	if !ok {
 		t.buckets[key] = &bucket{tokens: t.burst - 1, last: now}
