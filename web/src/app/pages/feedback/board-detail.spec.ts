@@ -186,6 +186,43 @@ describe('FeedbackBoardDetailComponent', () => {
     mock.verify(); // no re-fetch of the key/secret happened on dismiss
   });
 
+  it('announces the one-time secret panel via a live region when it appears', () => {
+    load(makeBoard(), [], []);
+    cmp.createKey();
+    mock
+      .expectOne(`/api/v1/businesses/${biz}/feedback/boards/${boardId}/keys`)
+      .flush(makeKey({ id: 'k2', has_secret: true, secret: 'fbs_x' }));
+    fixture.detectChanges();
+
+    const panel = q('[data-testid="key-secret-once"]');
+    expect(panel?.getAttribute('role')).toBe('status');
+    expect(panel?.getAttribute('aria-live')).toBe('polite');
+    // The announced text must convey "shown once / copy now", not just contain the secret.
+    expect(panel?.textContent).toContain('shown once');
+    expect(panel?.textContent).toContain("you won't be able to see it again");
+  });
+
+  it('restores focus to the Create key button (not body) when the secret panel is dismissed', () => {
+    load(makeBoard(), [], []);
+    document.body.appendChild(fixture.nativeElement);
+    cmp.createKey();
+    mock
+      .expectOne(`/api/v1/businesses/${biz}/feedback/boards/${boardId}/keys`)
+      .flush(makeKey({ id: 'k2', has_secret: true, secret: 'fbs_x' }));
+    fixture.detectChanges();
+
+    // dismissSecret() is what both the mouse-click and keyboard (Enter/Space) activation of the
+    // native <button data-testid="key-secret-dismiss"> invoke, so exercising it directly covers
+    // both triggers.
+    cmp.dismissSecret();
+    fixture.detectChanges();
+
+    const createBtn = q('[data-testid="key-create"]');
+    expect(document.activeElement).toBe(createBtn);
+    expect(document.activeElement).not.toBe(document.body);
+    fixture.nativeElement.remove();
+  });
+
   it('shows a "secret set" indicator only for keys with has_secret true', () => {
     load(
       makeBoard(),
