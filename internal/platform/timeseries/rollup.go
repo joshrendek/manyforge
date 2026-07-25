@@ -70,8 +70,9 @@ func (w *RollupWorker) withDefaults() {
 // configuration or a request — a rollup name is an identifier, not a bindable parameter, so a
 // caller-supplied value here would be injection.
 var rollupFns = []string{
-	"rollup_analytics_daily",     // p20 generic event counter
-	"rollup_analytics_pageviews", // as0 pageviews / visitors / pages / referrers
+	"rollup_analytics_daily",      // p20 generic event counter
+	"rollup_analytics_pageviews",  // as0 pageviews / visitors / pages / referrers
+	"rollup_analytics_dimensions", // as0 utm / device / browser / country breakdowns
 }
 
 // SweepOnce advances every rollup by one window and returns the total bucket rows written. A

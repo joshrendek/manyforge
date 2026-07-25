@@ -21,7 +21,7 @@ func TestBuildVerifyPrompt_IncludesInstructionsAndCandidates(t *testing.T) {
 	}
 	p := buildVerifyPrompt(fs)
 	for _, want := range []string{
-		"VERIFICATION pass",           // instructions present
+		"VERIFICATION pass", // instructions present
 		"CANDIDATE FINDINGS TO VERIFY (2)",
 		"file=a.go line=10 severity=error",
 		`title="nil deref"`,

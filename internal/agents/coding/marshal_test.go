@@ -19,10 +19,10 @@ func TestCodeReviewMarshalSnakeCase(t *testing.T) {
 	ln := 42
 	postedAt := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	cr := CodeReview{
-		ID:     uuid.MustParse("00000000-0000-0000-0000-000000000001"),
-		Status: "succeeded",
-		Summary: "Looks good",
-		ReviewURL: "https://github.com/owner/repo/pull/1#pullrequestreview-99",
+		ID:            uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		Status:        "succeeded",
+		Summary:       "Looks good",
+		ReviewURL:     "https://github.com/owner/repo/pull/1#pullrequestreview-99",
 		PRNumber:      7,
 		Findings:      []connectors.Finding{{File: "main.go", Line: &ln, Severity: "warning", Title: "unused var", Detail: "x declared but not used"}},
 		FindingsCount: 1,

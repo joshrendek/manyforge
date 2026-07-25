@@ -65,14 +65,14 @@ func (d *DockerRunner) Run(ctx context.Context, spec SandboxSpec) (SandboxResult
 		"run", "--rm",
 		"--name", name, // named so a timed-out run's orphaned container can be reaped (below)
 		"--network", d.Network,
-		"--read-only",                        // read-only root fs
-		"--cap-drop", "ALL",                  // drop all Linux capabilities
+		"--read-only",       // read-only root fs
+		"--cap-drop", "ALL", // drop all Linux capabilities
 		"--security-opt", "no-new-privileges", // prevent privilege escalation
-		"--pids-limit", "256",                // cap process count
-		"--memory", "2g",                     // memory cap
+		"--pids-limit", "256", // cap process count
+		"--memory", "2g", // memory cap
 		"-v", spec.ReadOnlyDir + ":/work:ro", // checkout read-only
-		"-v", spec.OutputDir + ":/out:rw",    // findings output writable
-		"--tmpfs", "/tmp:rw,size=1g",         // writable /tmp: opencode copies the checkout here + its .opencode data dir
+		"-v", spec.OutputDir + ":/out:rw", // findings output writable
+		"--tmpfs", "/tmp:rw,size=1g", // writable /tmp: opencode copies the checkout here + its .opencode data dir
 		"-w", "/work",
 		// force ALL egress through the allowlisting proxy:
 		"-e", "HTTPS_PROXY=" + d.ProxyAddr,

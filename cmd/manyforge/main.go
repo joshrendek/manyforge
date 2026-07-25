@@ -692,12 +692,21 @@ func main() {
 		TrustedProxies: trusted,
 		Metrics:        metrics,
 	}
+	// Country lookup is optional: with MANYFORGE_GEOIP_DB unset the resolver is nil and the
+	// country breakdown is simply absent. A bad path IS fatal, though — silently serving no
+	// countries when an operator explicitly configured a database would be a lie.
+	geo, gerr := analytics.OpenMMDB(cfg.GeoIPDBPath, logger)
+	if gerr != nil {
+		logger.Error("init analytics geoip", "err", gerr)
+		os.Exit(1)
+	}
 	analyticsPublicH := &analytics.PublicHandler{
 		DB:             database,
 		Logger:         logger,
 		Metrics:        metrics,
 		PerIP:          ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
 		TrustedProxies: trusted,
+		Geo:            geo,
 	}
 
 	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public

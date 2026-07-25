@@ -10,7 +10,7 @@ func TestApplyOverridesToPanel_DisableAndFloor(t *testing.T) {
 	}
 	warn := "warning"
 	overrides := map[string]repoOverride{
-		"security": {Enabled: false, MinSeverity: nil}, // disabled for this repo
+		"security": {Enabled: false, MinSeverity: nil},  // disabled for this repo
 		"docs":     {Enabled: true, MinSeverity: &warn}, // floor raised to warning
 		// tests: no override → inherited unchanged
 	}
@@ -33,8 +33,8 @@ func TestApplyOverridesToPanel_NilOrBlankSeverityInherits(t *testing.T) {
 		{Key: "docs", Enabled: true, MinSeverity: "error"},
 	}
 	overrides := map[string]repoOverride{
-		"security": {Enabled: true, MinSeverity: nil},     // no floor override
-		"docs":     {Enabled: true, MinSeverity: &blank},  // explicit blank ⇒ also inherit
+		"security": {Enabled: true, MinSeverity: nil},    // no floor override
+		"docs":     {Enabled: true, MinSeverity: &blank}, // explicit blank ⇒ also inherit
 	}
 	out := applyOverridesToPanel(panel, overrides)
 	for i, d := range out {

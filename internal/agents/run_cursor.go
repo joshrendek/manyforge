@@ -66,5 +66,5 @@ func decodeCursor(kind, token string) (runKeyset, error) {
 	return runKeyset{ts: ts, id: id}, nil
 }
 
-func encodeRunCursor(k runKeyset) string             { return encodeCursor(cursorRuns, k) }
+func encodeRunCursor(k runKeyset) string              { return encodeCursor(cursorRuns, k) }
 func decodeRunCursor(token string) (runKeyset, error) { return decodeCursor(cursorRuns, token) }
