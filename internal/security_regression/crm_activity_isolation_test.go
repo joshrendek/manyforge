@@ -7,16 +7,16 @@
 // authorized_tenants(current_principal()) PLUS the in-SQL tenant_root_id ownership predicate
 // (dual enforcement, like contact/company). These tests prove two things:
 //
-//   1. TestActivityTenantIsolation — principal A, acting on tenant A's business, can NEVER list
-//      tenant B's contact activity. The same-business attempt collapses to errs.ErrNotFound via
-//      the in-SQL tenant_root_id predicate; the foreign-business-URL attempt forces the request
-//      through resolveTenantRoot→GetBusiness (business RLS) and, behind it, the activity_entry_rls
-//      policy itself. A control pass (B CAN list its own row) proves the denial is isolation, not
-//      blanket failure — no foreign-vs-unknown existence oracle either way.
-//   2. TestActivityCrossSourceOrdering — within one tenant, a contact's timeline mixes rows from
-//      multiple sources (ticket vs ticket_message) with different actors (system vs a principal).
-//      ListForContact must return them strictly newest-first (occurred_at DESC, id DESC) with each
-//      row's actor / source_type / kind attribution intact.
+//  1. TestActivityTenantIsolation — principal A, acting on tenant A's business, can NEVER list
+//     tenant B's contact activity. The same-business attempt collapses to errs.ErrNotFound via
+//     the in-SQL tenant_root_id predicate; the foreign-business-URL attempt forces the request
+//     through resolveTenantRoot→GetBusiness (business RLS) and, behind it, the activity_entry_rls
+//     policy itself. A control pass (B CAN list its own row) proves the denial is isolation, not
+//     blanket failure — no foreign-vs-unknown existence oracle either way.
+//  2. TestActivityCrossSourceOrdering — within one tenant, a contact's timeline mixes rows from
+//     multiple sources (ticket vs ticket_message) with different actors (system vs a principal).
+//     ListForContact must return them strictly newest-first (occurred_at DESC, id DESC) with each
+//     row's actor / source_type / kind attribution intact.
 //
 // Services run against tdb.App (the RLS-subject, non-BYPASSRLS manyforge_app role) under
 // db.WithPrincipal; seeding of activity rows uses the RLS-exempt superuser (tdb.Super) with an

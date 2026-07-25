@@ -17,6 +17,19 @@ const (
 	MetricOutboxDrained = "outbox.drained"
 	MetricOutboxRetried = "outbox.retried"
 	MetricOutboxDropped = "outbox.dropped"
+
+	// manyforge-p20 time-series foundation. A sustained partition.sweep_failed is the alertable
+	// one: pre-created partitions give several periods of slack, so ingest keeps working for a
+	// while after maintenance breaks — the failure is silent until that slack runs out.
+	MetricPartitionCreated     = "partition.created"
+	MetricPartitionDropped     = "partition.dropped"
+	MetricPartitionSweepFailed = "partition.sweep_failed"
+
+	MetricRollupBucketsWritten = "rollup.buckets_written"
+	MetricRollupSweepFailed    = "rollup.sweep_failed"
+
+	MetricTelemetryIngestAccepted = "telemetry.ingest_accepted"
+	MetricTelemetryIngestRejected = "telemetry.ingest_rejected"
 )
 
 // Metrics is a thin, nil-safe wrapper over a published expvar.Map. A nil *Metrics

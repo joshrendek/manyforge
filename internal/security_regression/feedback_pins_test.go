@@ -3,17 +3,17 @@
 // No build tag: these fast, DB-free pins run in both `make test` and `make sec-test`, so a
 // refactor that silently drops a feedback protection fails CI loudly even when the behavioral
 // integration matrix is skipped. They pin the five Spec-006 regression contracts:
-//   1. tenant isolation      — business-scoped RLS (authorized_businesses) on every table +
-//                              the tenant_root_id ownership predicate on every id-taking query;
-//   2. voting integrity      — one vote per identity per post (unique index);
-//   3. ticket-link integrity — the tenant-consistent composite FK to ticket;
-//   4. public-portal oracle  — the publishable-key lookup filters enabled key AND public board,
-//                              and the principal-less DEFINERs are search_path-pinned.
-//   5. verified-identity tier (0104, saz.5) — constant-time signature compare + bounded replay
-//      skew, the re-created DEFINERs stay search_path-pinned, the exactly-once idempotency table
-//      is policy-less/grant-less (DEFINER-only), the FB409 conflict path, the backfill's
-//      principal exclusion, resolveVerified's fail-closed matrix, and the plaintext secret never
-//      reaching a logger.
+//  1. tenant isolation      — business-scoped RLS (authorized_businesses) on every table +
+//     the tenant_root_id ownership predicate on every id-taking query;
+//  2. voting integrity      — one vote per identity per post (unique index);
+//  3. ticket-link integrity — the tenant-consistent composite FK to ticket;
+//  4. public-portal oracle  — the publishable-key lookup filters enabled key AND public board,
+//     and the principal-less DEFINERs are search_path-pinned.
+//  5. verified-identity tier (0104, saz.5) — constant-time signature compare + bounded replay
+//     skew, the re-created DEFINERs stay search_path-pinned, the exactly-once idempotency table
+//     is policy-less/grant-less (DEFINER-only), the FB409 conflict path, the backfill's
+//     principal exclusion, resolveVerified's fail-closed matrix, and the plaintext secret never
+//     reaching a logger.
 package security_regression
 
 import (

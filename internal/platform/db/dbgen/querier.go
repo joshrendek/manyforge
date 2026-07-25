@@ -472,6 +472,11 @@ type Querier interface {
 	// tenant_root_id is derived from the (RLS-visible) business, so an invisible business inserts zero rows.
 	InsertSecret(ctx context.Context, arg InsertSecretParams) (Secret, error)
 	InsertSuppression(ctx context.Context, arg InsertSuppressionParams) error
+	// manyforge-p20 telemetry client registration.
+	//
+	// Every query carries the tenant_root_id predicate in SQL rather than relying on a handler-side
+	// ownership check — the two would drift. RLS is a second layer beneath this, not a substitute.
+	InsertTelemetryClient(ctx context.Context, arg InsertTelemetryClientParams) (TelemetryClient, error)
 	// InsertTicketTag inserts one tag for a ticket (the second half of tag
 	// replacement). PK (ticket_id, tag); the service dedups before calling.
 	InsertTicketTag(ctx context.Context, arg InsertTicketTagParams) error
@@ -636,6 +641,7 @@ type Querier interface {
 	// resolver turns these into the review's dimension lanes; activeDimensions() then applies the
 	// enabled + scope filtering. An empty result ⇒ the caller falls back to the default panel.
 	ListReviewDimensions(ctx context.Context, businessID uuid.UUID) ([]ReviewDimension, error)
+	ListTelemetryClients(ctx context.Context, arg ListTelemetryClientsParams) ([]TelemetryClient, error)
 	// Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
 	// this to roles the caller may see; the predicate narrows to one tenant.
 	ListTenantRoles(ctx context.Context, tenantRootID pgtype.UUID) ([]ListTenantRolesRow, error)
@@ -742,6 +748,7 @@ type Querier interface {
 	RevokeFeedbackIngestKey(ctx context.Context, arg RevokeFeedbackIngestKeyParams) (FeedbackIngestKey, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
+	RevokeTelemetryClient(ctx context.Context, arg RevokeTelemetryClientParams) (TelemetryClient, error)
 	// Invitation lifecycle queries. Create/list/revoke/resend run under the inviter's
 	// principal (a member with members.manage), so RLS scopes them to the business.
 	// Acceptance is handled by the accept_invitation() SECURITY DEFINER function

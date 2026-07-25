@@ -13,16 +13,17 @@
 // The services run against tdb.App (the RLS-subject, non-BYPASSRLS manyforge_app role)
 // under db.WithPrincipal; seeding only runs as the RLS-exempt superuser (tdb.Super). The
 // two halves of the matrix exercise the two walls separately:
-//   * same-business subtests — A passes its OWN businessID with B's resource ids, so
+//   - same-business subtests — A passes its OWN businessID with B's resource ids, so
 //     resolveTenantRoot returns A's tenant_root and the IN-SQL tenant_root_id ownership
 //     predicate (dual enforcement, not RLS) is what denies. An RLS-only regression would
 //     NOT be caught here — that gap is closed by the source pin + the foreign-business-URL
 //     subtest below.
-//   * foreign-business-URL subtest — A passes tenant B's businessID, forcing the request
+//   - foreign-business-URL subtest — A passes tenant B's businessID, forcing the request
 //     through resolveTenantRoot→GetBusiness (business RLS) and, behind it, contact_rls /
 //     company_rls (the tenant-wide CRM RLS policies). This is the subtest that exercises
 //     the RLS policy itself: if RLS were dropped/weakened, A would resolve B's tenant_root
 //     and the contact/company RLS would be the only remaining wall.
+//
 // If any cross-tenant call returned tenant B's row instead of ErrNotFound, that would be a
 // real RLS hole, not a test bug.
 package security_regression

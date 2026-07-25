@@ -6,13 +6,13 @@
 // activity_entry table is TENANT-WIDE (like contact/company in 0057): a row is visible to any
 // member of any business under the same tenant_root_id, so isolation rests on the same shape
 // the Phase A pins guard, transplanted onto activity:
-//   1. the tenant-wide RLS policy keyed on authorized_tenants(current_principal()) — NOT
-//      authorized_businesses (a per-business predicate would be a cross-business read hole);
-//   2. the id-scoped timeline queries carrying the tenant_root_id ownership predicate (dual
-//      enforcement with RLS ⇒ foreign-tenant id yields empty/ErrNotFound, no oracle); and
-//   3. the principal-less inbound-recording DEFINER being search_path-pinned AND tenant-scoped
-//      on its ticket lookup (an unpinned search_path is a privesc; a tenant-unscoped join is a
-//      cross-tenant write path the composite FK would otherwise have to catch).
+//  1. the tenant-wide RLS policy keyed on authorized_tenants(current_principal()) — NOT
+//     authorized_businesses (a per-business predicate would be a cross-business read hole);
+//  2. the id-scoped timeline queries carrying the tenant_root_id ownership predicate (dual
+//     enforcement with RLS ⇒ foreign-tenant id yields empty/ErrNotFound, no oracle); and
+//  3. the principal-less inbound-recording DEFINER being search_path-pinned AND tenant-scoped
+//     on its ticket lookup (an unpinned search_path is a privesc; a tenant-unscoped join is a
+//     cross-tenant write path the composite FK would otherwise have to catch).
 //
 // This file REUSES the package-level helpers mustRead / queryBlock / stripSQLComments defined
 // in crm_tenant_isolation_pin_test.go (same package) — do not redeclare them here.
