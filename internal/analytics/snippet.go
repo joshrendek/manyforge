@@ -30,6 +30,10 @@ import (
 //   - A repeated path is skipped, so a framework that fires several navigations for one screen
 //     does not multiply the count.
 //   - Sends the referrer HOST only, and never for same-host navigation.
+//   - Sends ONLY the three utm_* parameters, extracted by name. It never sends location.search:
+//     a page's query string routinely carries session tokens, reset codes, and email addresses,
+//     and shipping it to an analytics endpoint would quietly exfiltrate them from the tenant's own
+//     site. The server re-filters with the same allowlist, since the endpoint is public.
 const snippetJS = `(function(){
 try{
 var s=document.currentScript;
@@ -49,7 +53,11 @@ if(p===last)return;
 last=p;
 var r='';
 try{if(document.referrer){var u=new URL(document.referrer);if(u.hostname&&u.hostname!==location.hostname)r=u.hostname;}}catch(e){}
-var b=JSON.stringify({k:k,p:p,r:r});
+var q='';
+try{var sp=new URLSearchParams(location.search),qp=[],i,n=['utm_source','utm_medium','utm_campaign'];
+for(i=0;i<n.length;i++){var val=sp.get(n[i]);if(val)qp.push(n[i]+'='+encodeURIComponent(val));}
+q=qp.join('&');}catch(e){}
+var b=JSON.stringify({k:k,p:p,r:r,q:q});
 try{
 if(navigator.sendBeacon){navigator.sendBeacon(ep,new Blob([b],{type:'text/plain;charset=UTF-8'}));return;}
 }catch(e){}

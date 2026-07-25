@@ -26,8 +26,8 @@ func (h *Handler) manifestJSON() (string, error) {
 		// it runs, resolved to success/failure on completion (manyforge-nh6). Only
 		// affects NEWLY created Apps — an already-installed App must have the
 		// permission added in its GitHub settings and re-approved per installation.
-		"default_permissions":      map[string]any{"contents": "read", "pull_requests": "write", "checks": "write", "metadata": "read"},
-		"default_events":           []string{"pull_request"}, // installation events are auto-delivered
+		"default_permissions": map[string]any{"contents": "read", "pull_requests": "write", "checks": "write", "metadata": "read"},
+		"default_events":      []string{"pull_request"}, // installation events are auto-delivered
 	}
 	b, err := json.Marshal(m)
 	return string(b), err

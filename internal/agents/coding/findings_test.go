@@ -110,4 +110,3 @@ func TestParseFindings_StripsSandboxPrefix(t *testing.T) {
 		t.Fatalf("relative path mangled: %q", doc.Findings[1].File)
 	}
 }
-

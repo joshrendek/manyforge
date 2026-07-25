@@ -203,8 +203,8 @@ func TestExchangePKCE_approvedSealsAndUpserts(t *testing.T) {
 	}}
 	svc := &CodexTokenService{
 		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth:  &fakeCodexOAuth{exchangeTS: approvedTokenSet()},
-		Store:  store,
+		OAuth: &fakeCodexOAuth{exchangeTS: approvedTokenSet()},
+		Store: store,
 	}
 	got, err := svc.ExchangePKCE(context.Background(), uuid.New(), uuid.New(), jti,
 		"https://localhost/callback?state="+jti.String()+"&code=abc123")
@@ -252,8 +252,8 @@ func TestExchangePKCE_stateMismatch(t *testing.T) {
 	}}
 	svc := &CodexTokenService{
 		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth:  &fakeCodexOAuth{exchangeTS: approvedTokenSet()},
-		Store:  store,
+		OAuth: &fakeCodexOAuth{exchangeTS: approvedTokenSet()},
+		Store: store,
 	}
 	_, err = svc.ExchangePKCE(context.Background(), uuid.New(), uuid.New(), jti,
 		"https://localhost/callback?state=not-the-jti&code=abc123")
@@ -321,8 +321,8 @@ func TestExchangePKCE_rejectsMalformedAccountID(t *testing.T) {
 	ts.Claims.AccountID = "acc id"
 	svc := &CodexTokenService{
 		Sealer: sealer, Now: time.Now, PendingTTL: 15 * time.Minute,
-		OAuth:  &fakeCodexOAuth{exchangeTS: ts},
-		Store:  store,
+		OAuth: &fakeCodexOAuth{exchangeTS: ts},
+		Store: store,
 	}
 	_, err = svc.ExchangePKCE(context.Background(), uuid.New(), uuid.New(), jti,
 		"https://localhost/callback?state="+jti.String()+"&code=abc123")

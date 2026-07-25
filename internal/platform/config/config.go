@@ -30,20 +30,26 @@ type Config struct {
 	RateLimitBurst   float64       // per-IP burst allowance for abuse-sensitive routes
 
 	// Support desk (spec 002).
-	SMTPAddr                string  // built-in inbound SMTP receiver listen address; empty disables it
-	InboundWebhookSecret    string  // HMAC-SHA256 secret for the provider webhook signature (constant-time verified)
-	InboundBounceSecret     string  // HMAC-SHA256 secret for the hard-bounce webhook signature; PURPOSE-SEPARATED from InboundWebhookSecret (a leak of one cannot forge the other)
-	InboundReplyTokenSecret []byte  // HMAC key minting/verifying the threading reply token; purpose-separated from the webhook + JWT secrets
-	InboundSystemAddrSecret []byte  // HMAC key deriving the unguessable system inbound-address localpart (FR-001); purpose-separated from the reply-token/webhook/JWT secrets
-	BlobURL                 string  // attachment object-storage backend (file:///… or s3://…); empty disables attachments
-	InboundSystemDomain     string  // platform-hosted domain that auto-provisioned system inbound addresses live on
-	DKIMKeyPath             string  // path to the default DKIM private key for verified custom sending identities
-	InboundMaxBytes         int64   // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
-	AttachmentMaxBytes      int64   // per-attachment size cap, FR-007
-	IngestRateRPS           float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
-	IngestRateBurst         float64 // per-recipient inbound ingestion burst allowance
-	OutboundRateRPS         float64 // per-business outbound send refill rate (FR-020)
-	OutboundRateBurst       float64 // per-business outbound send burst allowance
+	SMTPAddr                string // built-in inbound SMTP receiver listen address; empty disables it
+	InboundWebhookSecret    string // HMAC-SHA256 secret for the provider webhook signature (constant-time verified)
+	InboundBounceSecret     string // HMAC-SHA256 secret for the hard-bounce webhook signature; PURPOSE-SEPARATED from InboundWebhookSecret (a leak of one cannot forge the other)
+	InboundReplyTokenSecret []byte // HMAC key minting/verifying the threading reply token; purpose-separated from the webhook + JWT secrets
+	InboundSystemAddrSecret []byte // HMAC key deriving the unguessable system inbound-address localpart (FR-001); purpose-separated from the reply-token/webhook/JWT secrets
+	BlobURL                 string // attachment object-storage backend (file:///… or s3://…); empty disables attachments
+	InboundSystemDomain     string // platform-hosted domain that auto-provisioned system inbound addresses live on
+	DKIMKeyPath             string // path to the default DKIM private key for verified custom sending identities
+	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
+	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
+	// GeoIPDBPath optionally points at a MaxMind-format .mmdb for analytics country lookup.
+	// Empty (the default) disables the country breakdown entirely. The database is deliberately
+	// not vendored: it carries licensing terms and goes stale monthly, so a checked-in copy would
+	// impose those terms on every deployment and be wrong within a quarter.
+	GeoIPDBPath string
+
+	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
+	IngestRateBurst   float64 // per-recipient inbound ingestion burst allowance
+	OutboundRateRPS   float64 // per-business outbound send refill rate (FR-020)
+	OutboundRateBurst float64 // per-business outbound send burst allowance
 
 	// Outbound SMTP relay (US2/T039). SMTPHost empty ⇒ the notify worker uses the
 	// dev LogSender (logs the threaded reply, honors suppression) instead of a real
@@ -188,6 +194,7 @@ func Load() (Config, error) {
 		Addr:             env("MANYFORGE_ADDR", ":8080"),
 		DatabaseURL:      os.Getenv("MANYFORGE_DATABASE_URL"),
 		TrustedProxyCIDR: os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
+		GeoIPDBPath:      os.Getenv("MANYFORGE_GEOIP_DB"),
 		JWTIssuer:        env("MANYFORGE_JWT_ISSUER", "manyforge"),
 		JWTAudience:      env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
 		JWTActiveKID:     env("MANYFORGE_JWT_ACTIVE_KID", ""),
