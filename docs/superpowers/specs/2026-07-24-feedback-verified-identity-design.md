@@ -41,7 +41,6 @@ backend*, plus a **read path** so a client can render server-truth "did I vote" 
   `DELETE … WHERE created_at < now() - interval '7 days'` can be added later. Not required for
   correctness (the `PRIMARY KEY` guarantees exactly-once regardless of retention). When added,
   retention MUST exceed any client retry horizon; signed replays are independently bounded by 300s.
-- Signing the GET **query string** on verified reads — see §6 for the documented residual.
 - Author-filter for the *anonymous* namespace carries no confidentiality (public posts are already
   world-readable) — documented trade-off, not a security control.
 
