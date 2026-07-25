@@ -260,8 +260,10 @@ func spec010Routes(t *testing.T) map[string]bool {
 
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
-// operation served but documented in NEITHER spec. Param-name and trailing-slash
-// differences are normalized away.
+// operation served but documented in NO contract at all. Direction 2 unions every spec
+// contract (001, 002, 003, 005, 006, 007, 008, 009, 010), so a route documented in any
+// one of them is accounted for. Param-name and trailing-slash differences are normalized
+// away.
 //
 // Direction 1 (spec→router) is checked against spec 001 only here, because some
 // spec-002 operations (US2 reply/note/inbox-management) are documented ahead of

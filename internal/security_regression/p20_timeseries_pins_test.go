@@ -3,7 +3,7 @@
 //
 // No build tag: these fast, DB-free pins run in both `make test` and `make sec-test`, so a
 // refactor that silently drops a p20 protection fails CI loudly even when the behavioral
-// integration matrix is skipped. They pin six regression contracts:
+// integration matrix is skipped. They pin eight regression contracts:
 //
 //  1. partition placement  — partitioning is keyed on ingested_at (a server clock), never on a
 //     client-supplied column, so a hostile occurred_at cannot conjure
@@ -15,8 +15,12 @@
 //  4. rollup idempotency   — the rollup RECOMPUTES buckets rather than incrementing them, because
 //     worker execution is at-least-once;
 //  5. definer hygiene      — every principal-less SECURITY DEFINER function pins search_path;
-//  6. ingest oracle        — signature comparison is constant-time and every auth failure funnels
-//     through one uniform 401 writer.
+//  6. revoked-key refusal  — the resolver excludes inactive/revoked clients, so a revoked key is
+//     indistinguishable from one that never existed;
+//  7. ingest oracle        — signature comparison is constant-time and every auth failure funnels
+//     through one uniform 401 writer;
+//  8. opt-in signing       — require_signature defaults FALSE and drives verification, so
+//     configuring a master key cannot silently lock out embeddable SDK keys.
 package security_regression
 
 import (
