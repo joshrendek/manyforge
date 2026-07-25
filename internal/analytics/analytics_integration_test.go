@@ -776,3 +776,90 @@ func TestEnrichment_BotsExcludedFromBreakdowns(t *testing.T) {
 		}
 	}
 }
+
+// utm_* values come from a public endpoint and are attacker-chosen. Without a cap, a unique
+// campaign per pageview yields roughly one rollup row per event — the table then grows with
+// TRAFFIC rather than with distinct values, which defeats the point of a rollup entirely.
+func TestEnrichment_DimensionCardinalityIsBounded(t *testing.T) {
+	ctx, e := newEnv(t)
+	const unique = 40 // deliberately above the test cap set below
+	for i := 0; i < unique; i++ {
+		e.collectFull(t, "/", "", fmt.Sprintf("utm_campaign=c%03d", i), humanUA, "203.0.113.1")
+	}
+	// Run the rollup with a small explicit cap so the test does not need 200+ events.
+	if _, err := e.tdb.Super.Exec(ctx,
+		"SELECT rollup_analytics_dimensions(interval '0', interval '5 minutes', 5)"); err != nil {
+		t.Fatalf("rollup: %v", err)
+	}
+
+	var rows int
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM analytics_dimension_daily
+		  WHERE client_id=$1 AND dimension='utm_campaign'`, e.site).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	// 5 kept values + one '(other)' bucket, never 40.
+	if rows != 6 {
+		t.Fatalf("dimension rows = %d, want 6 (5 kept + '(other)'). Unbounded cardinality means "+
+			"one rollup row per event", rows)
+	}
+
+	// Nothing may be lost in the fold: kept + (other) must still account for every pageview.
+	var total int64
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT coalesce(sum(pageviews),0) FROM analytics_dimension_daily
+		  WHERE client_id=$1 AND dimension='utm_campaign'`, e.site).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != unique {
+		t.Fatalf("folded rollup lost pageviews: sum=%d, want %d", total, unique)
+	}
+
+	var other int64
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT pageviews FROM analytics_dimension_daily
+		  WHERE client_id=$1 AND dimension='utm_campaign' AND value='(other)'`, e.site).Scan(&other); err != nil {
+		t.Fatalf("no '(other)' bucket: %v", err)
+	}
+	if other != unique-5 {
+		t.Fatalf("'(other)' = %d, want %d", other, unique-5)
+	}
+}
+
+// A value that drops out of the kept set between sweeps must not leave a stale row behind while
+// also being counted inside '(other)' — that would double-count it.
+func TestEnrichment_CappedRollupHasNoStaleRows(t *testing.T) {
+	ctx, e := newEnv(t)
+	// First: "alpha" is the only campaign, so it is kept.
+	for i := 0; i < 3; i++ {
+		e.collectFull(t, "/", "", "utm_campaign=alpha", humanUA, "203.0.113.1")
+	}
+	if _, err := e.tdb.Super.Exec(ctx,
+		"SELECT rollup_analytics_dimensions(interval '0', interval '5 minutes', 1)"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then "beta" overtakes it, so with a cap of 1 "alpha" must fold into '(other)'.
+	for i := 0; i < 10; i++ {
+		e.collectFull(t, "/", "", "utm_campaign=beta", humanUA, "203.0.113.1")
+	}
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE rollup_state SET watermark_ingested_at='-infinity' WHERE rollup_name='analytics_dimensions'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.tdb.Super.Exec(ctx,
+		"SELECT rollup_analytics_dimensions(interval '0', interval '5 minutes', 1)"); err != nil {
+		t.Fatal(err)
+	}
+
+	var total int64
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT coalesce(sum(pageviews),0) FROM analytics_dimension_daily
+		  WHERE client_id=$1 AND dimension='utm_campaign'`, e.site).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 13 {
+		t.Fatalf("sum = %d, want 13. A stale 'alpha' row left behind while alpha is ALSO inside "+
+			"'(other)' would report 16", total)
+	}
+}

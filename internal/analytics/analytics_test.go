@@ -2,8 +2,10 @@ package analytics
 
 import (
 	"net"
+	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestNormalizePath(t *testing.T) {
@@ -248,5 +250,40 @@ func TestSnippetJS_SendsOnlyUTMKeys(t *testing.T) {
 	// location.search must only ever be READ through the allowlist, never forwarded wholesale.
 	if strings.Contains(snippetJS, "q:location.search") || strings.Contains(snippetJS, "q=location.search") {
 		t.Error("PRIVACY: the snippet forwards the raw query string, which carries session tokens")
+	}
+}
+
+// Public input may not be valid UTF-8, and byte-slicing a multibyte value can create invalid UTF-8
+// even from valid input. Postgres rejects invalid UTF-8 outright — and because collect answers 204
+// unconditionally, that rejection would silently DISCARD the pageview with no visible symptom.
+func TestClampDimension_AlwaysProducesValidUTF8(t *testing.T) {
+	cases := []string{
+		strings.Repeat("é", maxDimensionLen),   // multibyte, cut lands mid-rune
+		strings.Repeat("日本語", maxDimensionLen), // 3-byte runes
+		strings.Repeat("🎉", maxDimensionLen),   // 4-byte runes
+		"campaign-" + strings.Repeat("ü", maxDimensionLen),
+		"\xff\xfe invalid bytes",                   // invalid to begin with
+		strings.Repeat("a", maxDimensionLen) + "é", // boundary lands exactly on the rune
+	}
+	for _, in := range cases {
+		got := clampDimension(in)
+		if !utf8.ValidString(got) {
+			t.Errorf("clampDimension produced invalid UTF-8 for %.20q: %q", in, got)
+		}
+		if len(got) > maxDimensionLen {
+			t.Errorf("clampDimension exceeded the cap for %.20q: %d bytes", in, len(got))
+		}
+	}
+}
+
+func TestParseUTM_InvalidUTF8IsSanitizedNotDropped(t *testing.T) {
+	// A campaign tag with one bad byte should still yield a usable value rather than losing the
+	// pageview.
+	u := ParseUTM("utm_source=" + url.QueryEscape("hn\xffnews"))
+	if !utf8.ValidString(u.Source) {
+		t.Fatalf("invalid UTF-8 survived: %q", u.Source)
+	}
+	if u.Source == "" {
+		t.Fatal("a single bad byte should be stripped, not discard the whole value")
 	}
 }

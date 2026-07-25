@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // Enrichment turns the two pieces of untrusted, identifying request data we hold transiently — the
@@ -52,16 +53,27 @@ func clampDimension(s string) string {
 	if s == "" {
 		return ""
 	}
-	// Control characters would corrupt logs and dashboards; strip rather than reject so a single
-	// odd campaign tag does not discard an otherwise good pageview.
+	// This is public input, so it may not be valid UTF-8 at all. Postgres rejects invalid UTF-8
+	// outright, and because the collect endpoint answers 204 unconditionally, that rejection would
+	// silently DISCARD the whole pageview — a data-loss bug with no visible symptom.
+	s = strings.ToValidUTF8(s, "")
+
+	// Control characters would corrupt logs and dashboards; strip rather than reject so one odd
+	// campaign tag does not discard an otherwise good pageview.
 	s = strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {
 			return -1
 		}
 		return r
 	}, s)
+
+	// Truncate on a RUNE boundary. Slicing bytes can cut a multibyte character in half and
+	// re-introduce exactly the invalid-UTF-8 rejection guarded against above.
 	if len(s) > maxDimensionLen {
 		s = s[:maxDimensionLen]
+		for len(s) > 0 && !utf8.ValidString(s) {
+			s = s[:len(s)-1]
+		}
 	}
 	return s
 }
