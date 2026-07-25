@@ -1,0 +1,189 @@
+openapi: 3.0.3
+info:
+  title: manyforge — web analytics (manyforge-as0)
+  version: "1.0.0"
+  description: |
+    Privacy-first web analytics for tenant sites, built on the manyforge-p20 storage foundation.
+
+    Three surfaces:
+
+    * **The embed** — `GET /a.js`, a dependency-free snippet a tenant pastes into their site.
+    * **Collect** — `POST /a/e`, the principal-less beacon endpoint the snippet calls.
+    * **Read** — `GET /api/v1/businesses/{id}/analytics/summary`, the authenticated dashboard API,
+      gated by `telemetry.read`.
+
+    The embed and collect endpoints are mounted at the ROOT, not under `/api/v1`: an embed tag is
+    pasted into a site and forgotten, so its URL must stay stable across API versioning.
+
+    ## Privacy model
+
+    No cookies, no persistent identifier, no cross-site profile. A visitor is counted as
+    `sha256(daily_salt ‖ client_id ‖ ip ‖ user_agent)`, truncated. Raw IP and User-Agent are
+    hashed in the same statement that inserts the row and are never stored or logged. The salt
+    rotates daily and is deleted once past retention, so an aged-out hash cannot be re-derived
+    even with full database access.
+
+    Consequence worth stating plainly: because the salt rotates daily, **unique visitors is a
+    per-day measure**. There is deliberately no cross-day identifier, so a multi-day "unique
+    visitors" total cannot be computed and is not reported as one.
+
+servers:
+  # The embed and collect endpoints live at the root; the read API lives under /api/v1.
+  - url: https://hub.bluescripts.net
+    description: Root origin — serves /a.js and /a/e
+  - url: https://hub.bluescripts.net/api/v1
+    description: Versioned API — serves the analytics summary
+
+paths:
+  /a.js:
+    get:
+      summary: The embeddable analytics snippet
+      description: |
+        Dependency-free tracker. Embedded as:
+
+        ```html
+        <script defer src="https://hub.bluescripts.net/a.js" data-key="mfk_..."></script>
+        ```
+
+        Reads `data-key` from its own script tag, and optionally `data-host` to override the
+        collect origin. Sends a pageview on load, on `history.pushState`, and on `popstate`;
+        `replaceState` is deliberately not tracked because SPAs use it for query-string rewrites
+        that are not pageviews. Repeated identical paths are suppressed.
+
+        Skips entirely when `doNotTrack` is set, on `file:` origins, and on localhost.
+
+        No Subresource Integrity is advertised: pinning a hash would break every embedding site
+        on each snippet update. A tenant wanting SRI can self-host the file, which is static and
+        dependency-free.
+      operationId: getAnalyticsSnippet
+      security: []
+      responses:
+        '200':
+          description: The snippet
+          content:
+            application/javascript:
+              schema: { type: string }
+        '304':
+          description: Not modified
+
+  /a/e:
+    post:
+      summary: Collect one pageview (public, principal-less)
+      description: |
+        Called by the snippet, normally via `navigator.sendBeacon`.
+
+        **Always returns 204**, whatever happens — unknown key, revoked key, malformed body, or a
+        bot. A public collect endpoint must not confirm which keys exist, and a beacon has no
+        error handling to receive a status, so a varying status would leak information to an
+        attacker while telling a legitimate site nothing. Operators observe health through the
+        `analytics.collected` / `analytics.collect_rejected` metrics instead.
+
+        The server derives `occurred_at` from its own clock and the visitor hash from the request
+        IP and User-Agent. Neither the IP nor the UA is stored. The path is stripped of its query
+        string and fragment before storage, because query strings routinely carry session tokens
+        and email addresses.
+      operationId: collectAnalyticsEvent
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [k, p]
+              properties:
+                k: { type: string, description: 'The publishable `mfk_` site key.' }
+                p: { type: string, description: 'Path only. Query string and fragment are stripped server-side.' }
+                r: { type: string, description: 'Referrer HOST only. A full URL is reduced to its host server-side.' }
+      responses:
+        '204':
+          description: Always. Success and every failure mode are indistinguishable by design.
+
+  # Served under the /api/v1 prefix (see servers). Declared unprefixed to match the
+  # repo convention that the OpenAPI-drift walker compares against.
+  /businesses/{id}/analytics/summary:
+    get:
+      summary: Dashboard aggregates for one site
+      description: |
+        Requires `telemetry.read`. Reads exclusively from rollup tables, never raw events, so
+        response time does not grow with traffic volume.
+
+        `visitors` is the **peak daily** unique-visitor count across the window, not a sum and not
+        a deduplicated total — see the privacy model. `direct_pageviews` is derived as total
+        pageviews minus attributed referrer pageviews.
+      operationId: getAnalyticsSummary
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: client_id
+          in: query
+          required: true
+          description: The analytics site (telemetry client) to report on.
+          schema: { type: string, format: uuid }
+        - name: days
+          in: query
+          required: false
+          description: Window length in days, ending today (UTC). Capped at 366.
+          schema: { type: integer, minimum: 1, maximum: 366, default: 30 }
+      responses:
+        '200':
+          description: Aggregates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyticsSummary' }
+        '400':
+          description: Invalid day range
+        '401':
+          description: Missing or invalid credentials
+        '404':
+          description: |
+            Unknown site, a site belonging to another business, a malformed site id, or a caller
+            lacking `telemetry.read`. All four are the same response — the distinctions would be
+            existence oracles.
+
+components:
+  schemas:
+    AnalyticsSummary:
+      type: object
+      required: [from, to, pageviews, visitors, series, top_pages, top_referrers, direct_pageviews]
+      properties:
+        from: { type: string, format: date }
+        to:   { type: string, format: date }
+        pageviews: { type: integer, format: int64 }
+        visitors:
+          type: integer
+          format: int64
+          description: Peak DAILY unique visitors in the window. Not a sum; not a cross-day total.
+        direct_pageviews:
+          type: integer
+          format: int64
+          description: Pageviews with no referrer, derived as total minus attributed referrers.
+        series:
+          type: array
+          items:
+            type: object
+            required: [date, pageviews, visitors]
+            properties:
+              date:      { type: string, format: date }
+              pageviews: { type: integer, format: int64 }
+              visitors:  { type: integer, format: int64 }
+        top_pages:
+          type: array
+          items:
+            type: object
+            required: [path, pageviews, visitors]
+            properties:
+              path:      { type: string }
+              pageviews: { type: integer, format: int64 }
+              visitors:  { type: integer, format: int64 }
+        top_referrers:
+          type: array
+          items:
+            type: object
+            required: [host, pageviews, visitors]
+            properties:
+              host:      { type: string }
+              pageviews: { type: integer, format: int64 }
+              visitors:  { type: integer, format: int64 }

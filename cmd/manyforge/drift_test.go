@@ -16,6 +16,7 @@ import (
 	"github.com/manyforge/manyforge/internal/account"
 	"github.com/manyforge/manyforge/internal/agents"
 	"github.com/manyforge/manyforge/internal/agents/coding"
+	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/feedback"
@@ -103,6 +104,8 @@ func apiRoutes(t *testing.T) map[string]bool {
 		telemetryPublic:  &telemetry.PublicHandler{},
 		telemetryRead:    noop,
 		telemetryWrite:   noop,
+		analytics:        analytics.NewHandler(&analytics.Service{}),
+		analyticsPublic:  &analytics.PublicHandler{},
 		codingReviews:    &coding.Handler{},
 		githubApp:        &githubapp.Handler{},
 		connectorsManage: noop,
@@ -258,6 +261,18 @@ func spec010Routes(t *testing.T) map[string]bool {
 	return specRoutesFrom(t, p)
 }
 
+// spec011Routes returns the operations declared in the spec-011 analytics contract (manyforge-as0),
+// or an empty set if the contract file does not yet exist. The strict two-way check is
+// TestOpenAPIDrift011.
+func spec011Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	p := specPath("specs", "011-analytics-pageviews", "contracts", "openapi.yaml")
+	if _, err := os.Stat(p); err != nil {
+		return map[string]bool{}
+	}
+	return specRoutesFrom(t, p)
+}
+
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
 // operation served but documented in NO contract at all. Direction 2 unions every spec
@@ -310,6 +325,9 @@ func TestOpenAPIDrift(t *testing.T) {
 		documented[op] = true
 	}
 	for op := range spec010Routes(t) {
+		documented[op] = true
+	}
+	for op := range spec011Routes(t) {
 		documented[op] = true
 	}
 	spec006 := spec006Routes(t)
