@@ -32,6 +32,10 @@ type Summary struct {
 	TopPages        []PathCount `json:"top_pages"`
 	TopReferrers    []HostCount `json:"top_referrers"`
 	DirectPageviews int64       `json:"direct_pageviews"`
+	// Breakdowns is keyed by dimension ("device", "country", …). A dimension with no data is
+	// present but empty, so a dashboard can distinguish "nothing collected yet" from "not a
+	// dimension we track".
+	Breakdowns map[string][]ValueCount `json:"breakdowns"`
 }
 
 type DayPoint struct {
@@ -50,6 +54,20 @@ type HostCount struct {
 	Host      string `json:"host"`
 	Pageviews int64  `json:"pageviews"`
 	Visitors  int64  `json:"visitors"`
+}
+
+// ValueCount is one row of a generic dimension breakdown (utm_source, device, browser, country…).
+type ValueCount struct {
+	Value     string `json:"value"`
+	Pageviews int64  `json:"pageviews"`
+	Visitors  int64  `json:"visitors"`
+}
+
+// Dimension keys served by the breakdowns map. These are matched against an allowlist before
+// reaching SQL — the value is a WHERE parameter, but constraining it also keeps a caller from
+// probing for dimensions that do not exist.
+var knownDimensions = []string{
+	"utm_source", "utm_medium", "utm_campaign", "device", "browser", "country",
 }
 
 // Service reads analytics aggregates under the caller's principal, so RLS scopes every query to
@@ -74,7 +92,11 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 	}
 	fromD, toD := from.UTC().Format("2006-01-02"), to.UTC().Format("2006-01-02")
 
-	out := Summary{From: fromD, To: toD, Series: []DayPoint{}, TopPages: []PathCount{}, TopReferrers: []HostCount{}}
+	out := Summary{
+		From: fromD, To: toD,
+		Series: []DayPoint{}, TopPages: []PathCount{}, TopReferrers: []HostCount{},
+		Breakdowns: map[string][]ValueCount{},
+	}
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		// Ownership: the client must belong to the URL business. RLS already scopes
 		// telemetry_client, but asserting business_id here stops a sibling business's site id from
@@ -151,7 +173,7 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 		if d := out.Pageviews - attributed; d > 0 {
 			out.DirectPageviews = d
 		}
-		return nil
+		return s.breakdowns(ctx, tx, &out, clientID, businessID, fromD, toD)
 	})
 	if err != nil {
 		return Summary{}, mapErr(err)
@@ -203,6 +225,43 @@ func (s *Service) topReferrers(ctx context.Context, tx pgx.Tx, out *Summary, cli
 			return err
 		}
 		out.TopReferrers = append(out.TopReferrers, h)
+	}
+	return rows.Err()
+}
+
+// breakdowns loads every known dimension in ONE query rather than one round trip per dimension.
+// Six sequential queries would triple the dashboard's latency for no benefit — they hit the same
+// index on the same rows.
+func (s *Service) breakdowns(ctx context.Context, tx pgx.Tx, out *Summary, clientID, businessID uuid.UUID, fromD, toD string) error {
+	for _, d := range knownDimensions {
+		out.Breakdowns[d] = []ValueCount{}
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT dimension, value, pageviews, visitors FROM (
+		     SELECT dimension, value,
+		            sum(pageviews)::bigint AS pageviews,
+		            max(visitors)::bigint  AS visitors,
+		            row_number() OVER (PARTITION BY dimension ORDER BY sum(pageviews) DESC, value) AS rn
+		       FROM analytics_dimension_daily
+		      WHERE client_id = $1 AND business_id = $2
+		        AND bucket_date >= $3::date AND bucket_date <= $4::date
+		        AND dimension = ANY($5)
+		      GROUP BY dimension, value
+		 ) ranked
+		 WHERE rn <= $6
+		 ORDER BY dimension, pageviews DESC, value`,
+		clientID, businessID, fromD, toD, knownDimensions, topN)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var dim string
+		var v ValueCount
+		if err := rows.Scan(&dim, &v.Value, &v.Pageviews, &v.Visitors); err != nil {
+			return err
+		}
+		out.Breakdowns[dim] = append(out.Breakdowns[dim], v)
 	}
 	return rows.Err()
 }

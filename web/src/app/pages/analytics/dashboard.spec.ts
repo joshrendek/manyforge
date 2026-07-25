@@ -20,6 +20,17 @@ const summary = {
     { path: '/pricing', pageviews: 17, visitors: 5 },
   ],
   top_referrers: [{ host: 'news.ycombinator.com', pageviews: 12, visitors: 6 }],
+  breakdowns: {
+    utm_source: [{ value: 'hn', pageviews: 12, visitors: 6 }],
+    utm_medium: [],
+    utm_campaign: [],
+    device: [
+      { value: 'desktop', pageviews: 30, visitors: 6 },
+      { value: 'mobile', pageviews: 12, visitors: 3 },
+    ],
+    browser: [{ value: 'Chrome', pageviews: 42, visitors: 9 }],
+    country: [],
+  },
 };
 
 function mount(): {
@@ -115,6 +126,25 @@ describe('AnalyticsDashboardComponent', () => {
     const empty = fixture.nativeElement.querySelector('[data-testid="analytics-empty"]');
     expect(empty).toBeTruthy();
     expect(empty.textContent).toContain('embed tag');
+  });
+
+  // Empty dimensions come back from the API but must not become empty tables on screen.
+  it('renders a panel only for dimensions that have data', () => {
+    const el = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="breakdown-device"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="breakdown-browser"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="breakdown-utm_source"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="breakdown-utm_medium"]')).toBeNull();
+    expect(el.querySelector('[data-testid="breakdown-country"]')).toBeNull();
+    expect(el.querySelector('[data-testid="breakdown-device"]').textContent).toContain('desktop');
+  });
+
+  // Traffic but no countries means no GeoIP database — say so, rather than letting the user
+  // conclude their audience is from nowhere.
+  it('explains a missing country breakdown when there is traffic', () => {
+    const hint = fixture.nativeElement.querySelector('[data-testid="country-unavailable"]');
+    expect(hint).toBeTruthy();
+    expect(hint.textContent).toContain('MANYFORGE_GEOIP_DB');
   });
 
   it('surfaces an error without crashing', () => {

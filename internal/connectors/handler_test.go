@@ -22,14 +22,14 @@ import (
 
 // fakeManageSvc implements manageCRUD for handler unit tests (no DB).
 type fakeManageSvc struct {
-	created   uuid.UUID
-	createErr error
-	gotCreate CreateConnectorInput
-	listOut   []ConnectorView
-	getOut    ConnectorView
-	getErr    error
-	updateOut ConnectorView
-	rotateErr error
+	created    uuid.UUID
+	createErr  error
+	gotCreate  CreateConnectorInput
+	listOut    []ConnectorView
+	getOut     ConnectorView
+	getErr     error
+	updateOut  ConnectorView
+	rotateErr  error
 	testOut    TestResult
 	deleteErr  error
 	retryOut   int64
@@ -400,4 +400,3 @@ func TestSyncNow_UnownedIs404AndDoesNotTrigger(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
-

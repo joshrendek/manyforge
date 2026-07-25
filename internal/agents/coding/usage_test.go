@@ -96,11 +96,11 @@ func TestRoundMicroCentsToCents(t *testing.T) {
 	}{
 		{0, 0},
 		{1, 0},
-		{499_999, 0},                   // just below half a cent → 0
-		{500_000, 1},                   // exactly half a cent → rounds UP to 1
+		{499_999, 0}, // just below half a cent → 0
+		{500_000, 1}, // exactly half a cent → rounds UP to 1
 		{500_001, 1},
 		{999_999, 1},
-		{1_000_000, 1},                 // exactly 1¢
+		{1_000_000, 1}, // exactly 1¢
 		{1_499_999, 1},
 		{1_500_000, 2},                 // 1.5¢ → 2 (round half up)
 		{1_721_600, 2},                 // the threat.gg #36 total

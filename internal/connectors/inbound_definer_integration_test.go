@@ -147,11 +147,11 @@ func TestInboundDefiner(t *testing.T) {
 	var msgID1 pgtype.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, syncCommentSQL,
-			ticketID,              // $1 p_ticket_id
-			connID,                // $2 p_connector_id
-			commentExternalID,     // $3 p_external_id
-			"First comment body",  // $4 p_body
-			pgtype.Timestamptz{},  // $5 p_created_at NULL → now()
+			ticketID,             // $1 p_ticket_id
+			connID,               // $2 p_connector_id
+			commentExternalID,    // $3 p_external_id
+			"First comment body", // $4 p_body
+			pgtype.Timestamptz{}, // $5 p_created_at NULL → now()
 		).Scan(&msgID1)
 	}); err != nil {
 		t.Fatalf("first SyncInboundExternalComment: %v", err)

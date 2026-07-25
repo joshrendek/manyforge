@@ -179,7 +179,7 @@ func TestRun_BudgetRefusesStart(t *testing.T) {
 // provider-scoped Cost change feeds (manyforge-6fx.2 review follow-up).
 func TestRun_BudgetReachedMidRun(t *testing.T) {
 	prov := ai.NewMockProvider(finalText("done")) // usage 4/2 → 6 cents under the token-total test Cost fn
-	store := &fakeRunStore{}                       // mtd = 0: the run starts strictly under budget
+	store := &fakeRunStore{}                      // mtd = 0: the run starts strictly under budget
 	eng, _, _ := newTestEngine(prov, store, map[string]bool{}, NewToolRegistry(&fakeTicketSvc{}, nil))
 	ag := loadedAgent()
 	ag.MonthlyBudgetCents = 5 // < the 6-cent response cost → tripped only after the priced call

@@ -625,3 +625,154 @@ func TestSummary_RejectsWindowBeyondTheCap(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Enrichment (as0 task 4)
+// ---------------------------------------------------------------------------
+
+// collectFull posts a pageview including the campaign parameters the snippet extracts.
+func (e *env) collectFull(t *testing.T, path, ref, query, ua, ip string) int {
+	t.Helper()
+	b, _ := json.Marshal(map[string]string{"k": e.key, "p": path, "r": ref, "q": query})
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/a/e", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("X-Forwarded-For", ip)
+	resp, err := e.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+const iphoneUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
+	"Version/17.0 Mobile/15E148 Safari/604.1"
+
+func TestEnrichment_StoresDerivedDimensionsOnly(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectFull(t, "/pricing", "", "utm_source=hn&utm_medium=social&utm_campaign=launch&token=SECRET",
+		humanUA, "203.0.113.10")
+
+	var src, med, camp, device, browser string
+	var country *string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT coalesce(utm_source,''), coalesce(utm_medium,''), coalesce(utm_campaign,''),
+		        coalesce(device_type,''), coalesce(browser,''), country
+		   FROM analytics_event WHERE client_id=$1`, e.site,
+	).Scan(&src, &med, &camp, &device, &browser, &country); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if src != "hn" || med != "social" || camp != "launch" {
+		t.Errorf("utm = %q/%q/%q", src, med, camp)
+	}
+	if device != "desktop" || browser != "Chrome" {
+		t.Errorf("device/browser = %q/%q", device, browser)
+	}
+	// No geo database is configured in tests, so country must be NULL rather than a guess.
+	if country != nil {
+		t.Errorf("country = %v, want NULL with no geo db configured", *country)
+	}
+
+	// The whole row must still contain no raw UA and no token from the query string.
+	var js string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT row_to_json(t)::text FROM (SELECT * FROM analytics_event WHERE client_id=$1) t`,
+		e.site).Scan(&js); err != nil {
+		t.Fatal(err)
+	}
+	for _, leaked := range []string{"SECRET", "Chrome/120.0.0.0", "203.0.113.10"} {
+		if strings.Contains(js, leaked) {
+			t.Errorf("PRIVACY VIOLATION: %q is stored in the event row: %s", leaked, js)
+		}
+	}
+}
+
+func TestEnrichment_RollupProducesBreakdowns(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectFull(t, "/", "", "utm_source=hn&utm_medium=social", humanUA, "203.0.113.1")
+	e.collectFull(t, "/", "", "utm_source=hn", humanUA, "203.0.113.1")
+	e.collectFull(t, "/", "", "utm_source=twitter", iphoneUA, "203.0.113.2")
+	e.rollup(t, ctx)
+
+	code, s := e.summary(t, e.site)
+	if code != http.StatusOK {
+		t.Fatalf("summary status %d", code)
+	}
+
+	src := s.Breakdowns["utm_source"]
+	if len(src) != 2 {
+		t.Fatalf("utm_source rows = %d, want 2: %+v", len(src), src)
+	}
+	if src[0].Value != "hn" || src[0].Pageviews != 2 {
+		t.Errorf("top source = %+v, want hn with 2", src[0])
+	}
+
+	dev := s.Breakdowns["device"]
+	if len(dev) != 2 {
+		t.Fatalf("device rows = %d, want desktop+mobile: %+v", len(dev), dev)
+	}
+
+	br := s.Breakdowns["browser"]
+	byName := map[string]int64{}
+	for _, v := range br {
+		byName[v.Value] = v.Pageviews
+	}
+	if byName["Chrome"] != 2 || byName["Safari"] != 1 {
+		t.Errorf("browser breakdown = %+v, want Chrome:2 Safari:1", byName)
+	}
+
+	// A tracked dimension with no data is present but empty, so the UI can tell "nothing
+	// collected" apart from "not tracked".
+	if _, ok := s.Breakdowns["country"]; !ok {
+		t.Error("country key should be present (empty) even with no geo database")
+	}
+	if len(s.Breakdowns["country"]) != 0 {
+		t.Errorf("country should be empty with no geo db, got %+v", s.Breakdowns["country"])
+	}
+}
+
+// Same recompute-not-increment contract as every other rollup in the system.
+func TestEnrichment_DimensionRollupIsIdempotent(t *testing.T) {
+	ctx, e := newEnv(t)
+	for i := 0; i < 4; i++ {
+		e.collectFull(t, "/", "", "utm_source=hn", humanUA, "203.0.113.1")
+	}
+	e.rollup(t, ctx)
+	_, first := e.summary(t, e.site)
+
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE rollup_state SET watermark_ingested_at='-infinity' WHERE rollup_name='analytics_dimensions'`); err != nil {
+		t.Fatal(err)
+	}
+	e.rollup(t, ctx)
+	_, second := e.summary(t, e.site)
+
+	if len(first.Breakdowns["utm_source"]) == 0 {
+		t.Fatal("no utm_source rows after the first sweep")
+	}
+	if first.Breakdowns["utm_source"][0].Pageviews != second.Breakdowns["utm_source"][0].Pageviews {
+		t.Fatalf("dimension rollup is not idempotent: %d then %d",
+			first.Breakdowns["utm_source"][0].Pageviews,
+			second.Breakdowns["utm_source"][0].Pageviews)
+	}
+	if got := first.Breakdowns["utm_source"][0].Pageviews; got != 4 {
+		t.Fatalf("expected 4 pageviews, got %d", got)
+	}
+}
+
+// Bots must be excluded from the breakdowns exactly as they are from the headline numbers.
+func TestEnrichment_BotsExcludedFromBreakdowns(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectFull(t, "/", "", "utm_source=hn", humanUA, "203.0.113.1")
+	e.collectFull(t, "/", "", "utm_source=spam", "Googlebot/2.1", "203.0.113.9")
+	e.rollup(t, ctx)
+
+	_, s := e.summary(t, e.site)
+	for _, v := range s.Breakdowns["utm_source"] {
+		if v.Value == "spam" {
+			t.Fatalf("bot traffic appears in the utm_source breakdown: %+v", s.Breakdowns["utm_source"])
+		}
+	}
+}

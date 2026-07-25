@@ -243,8 +243,8 @@ func TestAggregateReview(t *testing.T) {
 		// fraction of a cent but summing to ~1.72 cents. Rounding to whole cents PER LANE recorded
 		// $0.00 for the whole review; summing in micro-cents and rounding once must not.
 		res := []laneResult{
-			{Dim: sec, CostMicroCents: 202_600},                        // 0.2026¢
-			{Dim: corr, CostMicroCents: 225_800},                       // 0.2258¢
+			{Dim: sec, CostMicroCents: 202_600},  // 0.2026¢
+			{Dim: corr, CostMicroCents: 225_800}, // 0.2258¢
 			{Dim: Dimension{Key: "performance"}, CostMicroCents: 200_300},
 			{Dim: Dimension{Key: "ui"}, CostMicroCents: 260_500},
 			{Dim: Dimension{Key: "tests"}, CostMicroCents: 661_900},

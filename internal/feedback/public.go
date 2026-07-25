@@ -42,8 +42,8 @@ const maxPublicBytes int64 = 64 << 10
 
 // PublicHandler serves the principal-less SDK/portal ingress.
 type PublicHandler struct {
-	DB       *appdb.DB
-	Logger   *slog.Logger
+	DB     *appdb.DB
+	Logger *slog.Logger
 	// Sealer nil-behavior is bifurcated by the key's own state: a signed request against a key
 	// that HAS a sealed_secret gets 401 (fail closed — verification is required but impossible
 	// without a sealer). A key with no sealed_secret (verified tier never enabled for it)

@@ -68,9 +68,9 @@ func (s *Service) Create(ctx context.Context, principalID, businessID uuid.UUID,
 			return perr
 		}
 		if _, perr := dbgen.New(tx).InsertConnector(ctx, dbgen.InsertConnectorParams{
-			ID:                  id,
-			BusinessID:          businessID,
-			Type:                dbgen.ConnectorType(in.Type),
+			ID:                          id,
+			BusinessID:                  businessID,
+			Type:                        dbgen.ConnectorType(in.Type),
 			DisplayName:                 in.DisplayName,
 			BaseUrl:                     in.BaseURL,
 			AllowPrivateBaseUrl:         in.AllowPrivateBaseURL,

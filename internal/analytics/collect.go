@@ -35,6 +35,9 @@ type PublicHandler struct {
 	// caller-supplied key, because the key is attacker-choosable and TokenBucket never evicts.
 	PerIP          ratelimit.Limiter
 	TrustedProxies []*net.IPNet
+	// Geo resolves an IP to a country in-flight. Nil (the default) simply leaves country unset —
+	// an absent breakdown is correct, whereas a guessed one would be worse than none.
+	Geo CountryResolver
 }
 
 // CollectRoutes mounts the public collect endpoint.
@@ -71,6 +74,10 @@ type collectRequest struct {
 	Key      string `json:"k"`
 	Path     string `json:"p"`
 	Referrer string `json:"r"`
+	// Query carries ONLY the utm_* parameters the snippet extracted. It is not the page's real
+	// query string: sending that would ship session tokens and email addresses to the server, and
+	// the server re-filters anyway (ParseUTM is an allowlist).
+	Query string `json:"q"`
 }
 
 // collect stores one pageview.
@@ -102,10 +109,23 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ua := r.Header.Get("User-Agent")
-	// The IP and UA are passed straight through to the SECURITY DEFINER function, which hashes
-	// them into the visitor hash inside the same statement that inserts. They are never persisted
-	// and must never be logged.
-	n, err := h.store(r.Context(), req.Key, normalizePath(req.Path), referrerHost(req.Referrer), ip, ua, IsBot(ua))
+
+	// Everything derived from the IP and UA is computed HERE and reduced to low-cardinality
+	// buckets before it touches SQL. The raw values continue past this point only as hash inputs.
+	utm := ParseUTM(req.Query)
+	ev := collectEvent{
+		key:      req.Key,
+		path:     normalizePath(req.Path),
+		referrer: referrerHost(req.Referrer),
+		ip:       ip,
+		ua:       ua,
+		isBot:    IsBot(ua),
+		utm:      utm,
+		device:   DeviceType(ua),
+		browser:  Browser(ua),
+		country:  ResolveCountry(h.Geo, ip),
+	}
+	n, err := h.store(r.Context(), ev)
 	if err != nil {
 		// No key, path, IP, or UA in this log line — only that a write failed.
 		h.Logger.ErrorContext(r.Context(), "analytics collect", "err", err)
@@ -119,12 +139,29 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *PublicHandler) store(ctx context.Context, key, path, ref, ip, ua string, isBot bool) (int, error) {
+// collectEvent is one fully-derived pageview. Grouping the arguments keeps the twelve-parameter
+// SQL call from becoming a positional puzzle at the call site.
+type collectEvent struct {
+	key      string
+	path     string
+	referrer string
+	ip       string // hash input only; never stored
+	ua       string // hash input only; never stored
+	isBot    bool
+	utm      UTM
+	device   string
+	browser  string
+	country  string
+}
+
+func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) {
 	var n int
 	err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			"SELECT analytics_collect($1,$2,$3,$4,$5,$6)",
-			key, path, ref, ip, ua, isBot).Scan(&n)
+			"SELECT analytics_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+			e.key, e.path, e.referrer, e.ip, e.ua, e.isBot,
+			e.utm.Source, e.utm.Medium, e.utm.Campaign,
+			e.device, e.browser, e.country).Scan(&n)
 	})
 	return n, err
 }

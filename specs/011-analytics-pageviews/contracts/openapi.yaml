@@ -95,6 +95,14 @@ paths:
                 k: { type: string, description: 'The publishable `mfk_` site key.' }
                 p: { type: string, description: 'Path only. Query string and fragment are stripped server-side.' }
                 r: { type: string, description: 'Referrer HOST only. A full URL is reduced to its host server-side.' }
+                q:
+                  type: string
+                  description: |
+                    ONLY the `utm_source`, `utm_medium`, and `utm_campaign` parameters, as a query
+                    fragment. This is NOT the page's query string: forwarding that would ship
+                    session tokens and email addresses from the tenant's own site to this
+                    endpoint. The snippet extracts the three keys by name and the server re-filters
+                    with the same allowlist, since the endpoint is public.
       responses:
         '204':
           description: Always. Success and every failure mode are indistinguishable by design.
@@ -174,7 +182,7 @@ components:
   schemas:
     AnalyticsSummary:
       type: object
-      required: [from, to, pageviews, visitors, series, top_pages, top_referrers, direct_pageviews]
+      required: [from, to, pageviews, visitors, series, top_pages, top_referrers, direct_pageviews, breakdowns]
       properties:
         from: { type: string, format: date }
         to:   { type: string, format: date }
@@ -214,3 +222,26 @@ components:
               host:      { type: string }
               pageviews: { type: integer, format: int64 }
               visitors:  { type: integer, format: int64 }
+        breakdowns:
+          type: object
+          description: |
+            Per-dimension breakdowns keyed by `utm_source`, `utm_medium`, `utm_campaign`,
+            `device`, `browser`, `country`. Every tracked dimension is present even when empty,
+            so a client can distinguish "nothing collected yet" from "not a dimension we track".
+
+            All values are deliberately LOW CARDINALITY — `device` is three buckets, `browser` is
+            a family name, `country` is ISO alpha-2. The identifying inputs they derive from (the
+            User-Agent and the IP) are never stored. Finer granularity would reintroduce the
+            fingerprint the whole design exists to avoid.
+
+            `country` is empty unless the deployment configures a GeoIP database
+            (`MANYFORGE_GEOIP_DB`); an absent breakdown is reported rather than a guessed one.
+          additionalProperties:
+            type: array
+            items:
+              type: object
+              required: [value, pageviews, visitors]
+              properties:
+                value:     { type: string }
+                pageviews: { type: integer, format: int64 }
+                visitors:  { type: integer, format: int64 }

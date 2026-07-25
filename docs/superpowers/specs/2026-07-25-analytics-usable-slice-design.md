@@ -134,3 +134,53 @@ salts are deleted; rollups exclude bots; read API is permission-gated.
 
 **Browser** — Playwright: load a page with the snippet, assert the beacon fires, assert the
 dashboard shows the pageview. Plus a real-browser pass over both new screens before calling done.
+
+
+---
+
+## Addendum — enrichment (2026-07-25, migration 0107)
+
+Closes the epic's task 4. Adds campaign attribution, device/browser, and country.
+
+### What is stored, and why these shapes
+
+| Column | Derived from | Why this granularity |
+|---|---|---|
+| `utm_source/medium/campaign` | query string, allowlisted by name | The three keys marketing actually uses. An allowlist, never a denylist — query strings carry session tokens and email addresses, so "store it and filter later" is a leak waiting for the next parameter name. |
+| `device_type` | User-Agent | Exactly three buckets. Finer classification ("iPhone 15 Pro") is what turns a device string into a fingerprint, and the question a dashboard answers is "should I care about mobile layout?". |
+| `browser` | User-Agent | Coarse family. Ordered matching, because User-Agents lie by design: Edge claims Chrome, Chrome claims Safari. |
+| `country` | request IP, in flight | ISO alpha-2. A raw IP identifies a household; a country does not. |
+
+The rule for anything added later: **if a value could meaningfully narrow a population to a
+person, it does not belong in a column.** The raw User-Agent and IP remain hash inputs only.
+
+### One generic dimension table
+
+`analytics_dimension_daily(client, date, dimension, value)` rather than a table per breakdown.
+Adding "operating system" or "language" later becomes a new `dimension` value plus one line in the
+rollup — no migration, no new table, no new read query. `analytics_page_daily` and
+`analytics_referrer_daily` predate it and keep their own tables: they already carry live data and
+their own indexes, and rewriting them would be a data migration for no functional gain.
+
+### Country is optional, deliberately
+
+Every usable IP-to-country database carries licensing terms and goes stale monthly. Vendoring one
+would impose those terms on every deployment and be wrong within a quarter. So the deployment
+points `MANYFORGE_GEOIP_DB` at a MaxMind-format `.mmdb` if it wants countries, and gets none if it
+does not. The dashboard says which state it is in rather than showing an empty panel — an absent
+breakdown is honest, a guessed one is worse than none.
+
+### HLL was considered and rejected
+
+The epic proposes a cardinality sketch (HLL) for unique visitors. Not implemented, on purpose:
+
+- `count(DISTINCT visitor_hash)` runs against **one day's partition** — the hash rotates daily, so
+  the distinct set is bounded by a single day's traffic, not by history. At the ~1M events/day
+  design target that is a routine aggregate.
+- The rollup runs once a minute over a five-minute window, not per request, so this is not on any
+  hot path.
+- HLL trades exactness for memory on a problem we do not have, and an approximate visitor count is
+  much harder to explain to a tenant than an exact one.
+
+Revisit if a single site's daily distinct visitors approach the tens of millions — at which point
+the sketch belongs in `analytics_dimension_daily`'s rollup, not in the read path.

@@ -138,6 +138,40 @@ import { Spinner } from '../../ui/spinner/spinner';
           </div>
         </div>
 
+        <div class="mf-two-col">
+          @for (b of breakdownPanels(); track b.key) {
+            <div>
+              <h3 class="mf-subhead">{{ b.label }}</h3>
+              <div
+                class="mf-table"
+                [attr.data-testid]="'breakdown-' + b.key"
+                role="table"
+                [attr.aria-label]="b.label"
+              >
+                <div class="mf-tr mf-th" role="row">
+                  <span style="flex:3" role="columnheader">{{ b.label }}</span>
+                  <span style="flex:1" role="columnheader">Pageviews</span>
+                </div>
+                @for (v of b.rows; track v.value) {
+                  <div class="mf-tr" role="row" data-testid="breakdown-row">
+                    <span style="flex:3" class="mf-ellipsis" role="cell" [title]="v.value">{{
+                      v.value
+                    }}</span>
+                    <span style="flex:1" role="cell">{{ v.pageviews }}</span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+
+        @if (countryUnavailable()) {
+          <p class="mf-hint" data-testid="country-unavailable">
+            Country data needs a GeoIP database. Set <code>MANYFORGE_GEOIP_DB</code> to a MaxMind
+            <code>.mmdb</code> file to enable it — everything else works without it.
+          </p>
+        }
+
         @if (s.pageviews === 0 && !loading()) {
           <mf-empty-state title="No traffic yet" data-testid="analytics-empty">
             Paste this site's embed tag into your HTML and reload the page. Data appears within a
@@ -201,6 +235,11 @@ import { Spinner } from '../../ui/spinner/spinner';
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .mf-hint {
+        font-size: var(--mf-fs-sm);
+        color: var(--mf-text-muted);
+        margin-top: 16px;
+      }
     `,
   ],
 })
@@ -226,6 +265,32 @@ export class AnalyticsDashboardComponent implements OnInit {
 
   chartWidth = computed(() => Math.max((this.summary()?.series.length ?? 0) * 12, 1));
   barStep = computed(() => 12);
+
+  // Only dimensions that actually have data get a panel. Rendering six empty tables on a site
+  // that has never used a UTM tag is noise, not information.
+  breakdownPanels = computed(() => {
+    const b = this.summary()?.breakdowns ?? {};
+    const labels: Record<string, string> = {
+      country: 'Countries',
+      device: 'Devices',
+      browser: 'Browsers',
+      utm_source: 'Campaign source',
+      utm_medium: 'Campaign medium',
+      utm_campaign: 'Campaign',
+    };
+    return Object.keys(labels)
+      .filter((k) => (b[k]?.length ?? 0) > 0)
+      .map((k) => ({ key: k, label: labels[k], rows: b[k] }));
+  });
+
+  // Distinguishes "no geo database configured" from "no traffic yet": if there are pageviews but
+  // not a single country was resolved, the deployment has no GeoIP database rather than an
+  // audience from nowhere.
+  countryUnavailable = computed(() => {
+    const s = this.summary();
+    if (!s || s.pageviews === 0) return false;
+    return (s.breakdowns?.['country']?.length ?? 0) === 0;
+  });
 
   chartLabel = computed(() => {
     const s = this.summary();

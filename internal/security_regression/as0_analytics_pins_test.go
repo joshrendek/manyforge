@@ -176,3 +176,95 @@ func TestPin_AS0CollectIsUniformAndQuiet(t *testing.T) {
 		}
 	}
 }
+
+const as0Enrichment = "../../migrations/0107_analytics_enrichment.up.sql"
+
+// TestPin_AS0EnrichmentStoresOnlyLowCardinalityDerivations asserts the enrichment columns hold
+// BUCKETS, not the identifying strings they were derived from.
+//
+// This is the line the whole privacy model rests on. A full User-Agent is a fingerprint — enough
+// entropy to re-identify a visitor across days with no cookie at all — while "Safari" is not. A
+// raw IP identifies a household; "US" does not. Adding a column for the raw value, or for a
+// finer-grained derivation like an exact OS build, silently converts a compliant analytics table
+// into a tracking database.
+func TestPin_AS0EnrichmentStoresOnlyLowCardinalityDerivations(t *testing.T) {
+	mig := stripSQLComments(mustRead(t, as0Enrichment))
+
+	for _, forbidden := range []string{
+		"ADD COLUMN ip", "ADD COLUMN client_ip", "ADD COLUMN remote_addr",
+		"ADD COLUMN user_agent", "ADD COLUMN ua ", "ADD COLUMN fingerprint",
+		"ADD COLUMN query", "ADD COLUMN query_string", "ADD COLUMN referrer_url",
+		"ADD COLUMN city", "ADD COLUMN postal", "ADD COLUMN latitude", "ADD COLUMN longitude",
+	} {
+		if strings.Contains(strings.ToLower(mig), strings.ToLower(forbidden)) {
+			t.Errorf("0107 adds %q. Enrichment must store low-cardinality buckets only — that "+
+				"column would make the table re-identifying", forbidden)
+		}
+	}
+
+	// The collect function still takes ip/ua transiently and must still only hash them.
+	body := functionBody(t, mig, "analytics_collect")
+	if !strings.Contains(body, "sha256(") {
+		t.Error("analytics_collect must still hash ip/ua rather than storing them")
+	}
+	ins := body[strings.Index(body, "INSERT INTO analytics_event"):]
+	hashAt := strings.Index(ins, "sha256(")
+	for _, arg := range []string{"p_ip", "p_ua"} {
+		for i := 0; i < len(ins); {
+			idx := strings.Index(ins[i:], arg)
+			if idx < 0 {
+				break
+			}
+			at := i + idx
+			// Every occurrence must be inside the hash expression, never a bare inserted value.
+			if hashAt < 0 || at < hashAt {
+				t.Errorf("analytics_collect appears to insert %q outside the hash expression", arg)
+			}
+			i = at + len(arg)
+		}
+	}
+}
+
+// TestPin_AS0UTMIsAnAllowlist asserts campaign parsing names the three keys it wants rather than
+// storing whatever the caller sent. A query string is where session tokens, password-reset codes,
+// and email addresses live; a denylist there is a leak waiting for the next parameter name.
+func TestPin_AS0UTMIsAnAllowlist(t *testing.T) {
+	src := mustRead(t, "../../internal/analytics/enrich.go")
+	for _, key := range []string{`v.Get("utm_source")`, `v.Get("utm_medium")`, `v.Get("utm_campaign")`} {
+		if !strings.Contains(src, key) {
+			t.Errorf("ParseUTM must read %s explicitly (allowlist), not iterate the query", key)
+		}
+	}
+	// Iterating every parameter would be a denylist by construction.
+	if regexp.MustCompile(`for\s+\w+,\s*\w+\s*:=\s*range\s+v\b`).MatchString(src) {
+		t.Error("ParseUTM iterates the whole query string; it must name the keys it keeps")
+	}
+
+	snip := mustRead(t, "../../internal/analytics/snippet.go")
+	if !strings.Contains(snip, "utm_source") || !strings.Contains(snip, "URLSearchParams") {
+		t.Error("the snippet must extract utm keys by name")
+	}
+	if strings.Contains(snip, "q:location.search") {
+		t.Error("PRIVACY: the snippet forwards the raw query string")
+	}
+}
+
+// TestPin_AS0GeoIsOptionalAndTransient asserts country lookup never persists an IP and that the
+// server still boots without a geo database — an optional feature must not become a hard
+// dependency by accident.
+func TestPin_AS0GeoIsOptionalAndTransient(t *testing.T) {
+	src := mustRead(t, "../../internal/analytics/geo.go")
+	if !strings.Contains(src, "if path == \"\" {") {
+		t.Error("OpenMMDB must treat an empty path as 'no geo configured', not an error")
+	}
+	// A lookup miss must not log: this runs per pageview and would write client IPs into the logs.
+	if strings.Contains(src, "logger.Warn") || strings.Contains(src, "logger.Error") {
+		t.Error("geo lookup must not log per-request; that would put client IPs in the logs")
+	}
+	enrich := mustRead(t, "../../internal/analytics/enrich.go")
+	for _, guard := range []string{"IsLoopback()", "IsPrivate()", "IsLinkLocalUnicast()"} {
+		if !strings.Contains(enrich, guard) {
+			t.Errorf("ResolveCountry must reject %s addresses rather than report a guess", guard)
+		}
+	}
+}

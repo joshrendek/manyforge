@@ -13,10 +13,10 @@ func TestBuildReview_SplitsInlineVsBody(t *testing.T) {
 	doc := FindingsDoc{
 		Summary: "overall ok",
 		Findings: []connectors.Finding{
-			{File: "a.go", Line: iptr(11), Severity: "warning", Title: "on diff", Detail: "fix it"},     // inline
-			{File: "a.go", Line: iptr(999), Severity: "info", Title: "off diff line", Detail: "x"},       // body (line not in diff)
-			{File: "b.go", Line: iptr(3), Severity: "error", Title: "file not in diff", Detail: "y"},      // body (file not changed)
-			{File: "c.go", Line: nil, Severity: "info", Title: "no line", Detail: "z"},                    // body (no line)
+			{File: "a.go", Line: iptr(11), Severity: "warning", Title: "on diff", Detail: "fix it"},  // inline
+			{File: "a.go", Line: iptr(999), Severity: "info", Title: "off diff line", Detail: "x"},   // body (line not in diff)
+			{File: "b.go", Line: iptr(3), Severity: "error", Title: "file not in diff", Detail: "y"}, // body (file not changed)
+			{File: "c.go", Line: nil, Severity: "info", Title: "no line", Detail: "z"},               // body (no line)
 		},
 	}
 	changed := map[string]map[int]bool{"a.go": {11: true}}

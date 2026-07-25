@@ -109,11 +109,11 @@ type mcpInvoker interface {
 //
 // Returns (out, toolErr, err):
 //   - err != nil       — a TRANSPORT/infra failure (no response received): malformed name,
-//                        server resolve, initialize, or the CallTool RPC. The caller reschedules.
+//     server resolve, initialize, or the CallTool RPC. The caller reschedules.
 //   - toolErr == true  — the server returned an error RESULT (isError). The request was PROCESSED
-//                        (any side effect already happened); out holds the error content. The
-//                        caller marks it executed and feeds out to the model — it must NOT
-//                        reschedule, or it would re-invoke and double-fire the side effect.
+//     (any side effect already happened); out holds the error content. The
+//     caller marks it executed and feeds out to the model — it must NOT
+//     reschedule, or it would re-invoke and double-fire the side effect.
 //   - both zero        — success; out holds the tool's text result.
 //
 // At-least-once caveat (design §3.6): if the process crashes after CallTool returns but before

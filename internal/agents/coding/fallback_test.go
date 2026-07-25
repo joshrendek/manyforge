@@ -26,10 +26,10 @@ func TestEffectiveReviewModel(t *testing.T) {
 		want                 string
 	}
 	for _, c := range []tc{
-		{"openrouter", "google/gemini-2.5-pro", 1, "google/gemini-2.5-pro"}, // first attempt → configured
-		{"openrouter", "google/gemini-2.5-pro", 2, "google/gemini-2.5-flash"}, // retry → fallback
-		{"openrouter", "google/gemini-2.5-pro", 3, "google/gemini-2.5-flash"}, // later retry → fallback
-		{"ollama", "qwen2.5-coder:14b", 2, "qwen2.5-coder:14b"},               // no fallback → configured
+		{"openrouter", "google/gemini-2.5-pro", 1, "google/gemini-2.5-pro"},     // first attempt → configured
+		{"openrouter", "google/gemini-2.5-pro", 2, "google/gemini-2.5-flash"},   // retry → fallback
+		{"openrouter", "google/gemini-2.5-pro", 3, "google/gemini-2.5-flash"},   // later retry → fallback
+		{"ollama", "qwen2.5-coder:14b", 2, "qwen2.5-coder:14b"},                 // no fallback → configured
 		{"openrouter", "google/gemini-2.5-flash", 2, "google/gemini-2.5-flash"}, // already fallback → unchanged
 	} {
 		if got := effectiveReviewModel(c.provider, c.configured, c.attempts); got != c.want {
