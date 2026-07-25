@@ -97,6 +97,7 @@ type postResp struct {
 	AuthorPrincipalID *string `json:"author_principal_id"`
 	AuthorIdentity    *string `json:"author_identity"`
 	TicketID          *string `json:"ticket_id"`
+	IdentityVerified  bool    `json:"identity_verified"`
 	CreatedAt         string  `json:"created_at"`
 	UpdatedAt         string  `json:"updated_at"`
 }
@@ -107,10 +108,19 @@ type ingestKeyResp struct {
 	TenantRootID   string  `json:"tenant_root_id"`
 	BoardID        string  `json:"board_id"`
 	PublishableKey string  `json:"publishable_key"`
+	HasSecret      bool    `json:"has_secret"`
 	Label          *string `json:"label"`
 	Status         string  `json:"status"`
 	CreatedAt      string  `json:"created_at"`
 	RevokedAt      *string `json:"revoked_at"`
+}
+
+// createIngestKeyResp is the create-only response: the normal key DTO plus the plaintext
+// secret, returned exactly once at creation. Read paths use ingestKeyResp (no Secret field),
+// so the plaintext is structurally unable to appear on list/get/revoke.
+type createIngestKeyResp struct {
+	ingestKeyResp
+	Secret string `json:"secret,omitempty"`
 }
 
 func toBoardResp(b Board) boardResp {
@@ -141,6 +151,7 @@ func toPostResp(p Post) postResp {
 		AuthorPrincipalID: uuidStrPtr(p.AuthorPrincipalID),
 		AuthorIdentity:    p.AuthorIdentity,
 		TicketID:          uuidStrPtr(p.TicketID),
+		IdentityVerified:  p.IdentityVerified,
 		CreatedAt:         p.CreatedAt.UTC().Format(rfc3339),
 		UpdatedAt:         p.UpdatedAt.UTC().Format(rfc3339),
 	}
@@ -158,6 +169,7 @@ func toIngestKeyResp(k IngestKey) ingestKeyResp {
 		TenantRootID:   k.TenantRootID.String(),
 		BoardID:        k.BoardID.String(),
 		PublishableKey: k.PublishableKey,
+		HasSecret:      k.HasSecret,
 		Label:          k.Label,
 		Status:         k.Status,
 		CreatedAt:      k.CreatedAt.UTC().Format(rfc3339),
@@ -516,7 +528,10 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, toIngestKeyResp(k))
+	httpx.WriteJSON(w, http.StatusCreated, createIngestKeyResp{
+		ingestKeyResp: toIngestKeyResp(k),
+		Secret:        k.Secret,
+	})
 }
 
 func (h *Handler) revokeKey(w http.ResponseWriter, r *http.Request) {

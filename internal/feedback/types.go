@@ -68,6 +68,7 @@ type Post struct {
 	AuthorPrincipalID *uuid.UUID `json:"author_principal_id,omitempty"`
 	AuthorIdentity    *string    `json:"author_identity,omitempty"`
 	TicketID          *uuid.UUID `json:"ticket_id,omitempty"`
+	IdentityVerified  bool       `json:"identity_verified"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
@@ -79,7 +80,9 @@ type PostInput struct {
 }
 
 // IngestKey is the API view of a publishable ingest key. PublishableKey is the public client
-// token embedded in an SDK (safe to expose); it is not a secret.
+// token embedded in an SDK (safe to expose); it is not a secret. Secret is the plaintext fbs_
+// signing secret — write-once, only ever populated by CreateIngestKey's response, never
+// persisted in plaintext and never set by toIngestKey (list/revoke expose only HasSecret).
 type IngestKey struct {
 	ID             uuid.UUID  `json:"id"`
 	BusinessID     uuid.UUID  `json:"business_id"`
@@ -90,6 +93,8 @@ type IngestKey struct {
 	Status         string     `json:"status"`
 	CreatedAt      time.Time  `json:"created_at"`
 	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	Secret         string     `json:"secret,omitempty"` // write-once, only on create; never persisted plaintext
+	HasSecret      bool       `json:"has_secret"`
 }
 
 // Page is a keyset-paginated result. NextCursor is an opaque token (nil = last page).

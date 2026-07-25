@@ -2,13 +2,18 @@
 //
 // No build tag: these fast, DB-free pins run in both `make test` and `make sec-test`, so a
 // refactor that silently drops a feedback protection fails CI loudly even when the behavioral
-// integration matrix is skipped. They pin the four Spec-006 regression contracts:
+// integration matrix is skipped. They pin the five Spec-006 regression contracts:
 //   1. tenant isolation      — business-scoped RLS (authorized_businesses) on every table +
 //                              the tenant_root_id ownership predicate on every id-taking query;
 //   2. voting integrity      — one vote per identity per post (unique index);
 //   3. ticket-link integrity — the tenant-consistent composite FK to ticket;
 //   4. public-portal oracle  — the publishable-key lookup filters enabled key AND public board,
 //                              and the principal-less DEFINERs are search_path-pinned.
+//   5. verified-identity tier (0104, saz.5) — constant-time signature compare + bounded replay
+//      skew, the re-created DEFINERs stay search_path-pinned, the exactly-once idempotency table
+//      is policy-less/grant-less (DEFINER-only), the FB409 conflict path, the backfill's
+//      principal exclusion, resolveVerified's fail-closed matrix, and the plaintext secret never
+//      reaching a logger.
 package security_regression
 
 import (
@@ -138,6 +143,175 @@ func TestPin_FeedbackDefinersHardened(t *testing.T) {
 	if definers != pinned {
 		t.Errorf("0102: %d SECURITY DEFINER functions but only %d have SET search_path = public — an unpinned DEFINER is a privesc vuln (contract #4)", definers, pinned)
 	}
+}
+
+// --- 0104 verified-identity tier (saz.5) -----------------------------------------------------
+
+// TestPin_FeedbackSignatureConstantTimeAndSkew asserts internal/feedback/signature.go compares
+// the request MAC with hmac.Equal (constant-time) — a plain `==`/bytes.Equal comparison would
+// reopen a byte-at-a-time timing side-channel on the shared secret — and that the replay window
+// stays a bounded 300s (5 min). A widened/removed skew bound weakens replay protection for a
+// captured signature.
+func TestPin_FeedbackSignatureConstantTimeAndSkew(t *testing.T) {
+	src := mustRead(t, "../../internal/feedback/signature.go")
+	if !strings.Contains(src, "hmac.Equal(") {
+		t.Errorf("signature.go: expected a constant-time hmac.Equal( compare — a non-constant-time compare reopens a timing side-channel on the signing secret")
+	}
+	if !strings.Contains(src, "sigMaxSkew = 300 * time.Second") {
+		t.Errorf("signature.go: expected sigMaxSkew = 300 * time.Second (5-minute replay window) — a widened/removed skew bound weakens replay protection")
+	}
+}
+
+// TestPin_FeedbackVerifiedIdentityDefinersHardened asserts migration 0104's four re-created
+// DEFINER functions (feedback_public_board/_submit/_vote/_list_posts) each stay
+// SECURITY DEFINER SET search_path = public. 0104 DROP+CREATEs every 0102 DEFINER to change its
+// signature; an unpinned search_path on any of them lets a caller shadow a referenced object and
+// execute as the table-owning role (privilege escalation).
+func TestPin_FeedbackVerifiedIdentityDefinersHardened(t *testing.T) {
+	mig := stripSQLComments(mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql"))
+	definers := strings.Count(mig, "SECURITY DEFINER")
+	pinned := strings.Count(mig, "SET search_path = public")
+	if definers == 0 {
+		t.Fatalf("0104: expected re-created SECURITY DEFINER functions, found none")
+	}
+	if definers != pinned {
+		t.Errorf("0104: %d SECURITY DEFINER functions but only %d SET search_path = public — an unpinned DEFINER is a privesc vuln", definers, pinned)
+	}
+	if definers != 4 {
+		t.Errorf("0104: expected exactly 4 re-created DEFINER functions (board/submit/vote/list_posts), got %d — was one dropped, or another added without this pin being updated?", definers)
+	}
+}
+
+// TestPin_FeedbackIdempotencyTableLockedDown asserts feedback_ingest_idempotency has RLS enabled
+// with NO policy and NO grant to manyforge_app — only the SECURITY DEFINER functions (which run
+// as the table owner, bypassing RLS) may read/write it. Its idem_key values are attacker/customer
+// supplied and often embed a device or order identifier; unlike the 0102 feedback tables (which
+// DO carry per-tenant app policies + grants), a principal-scoped read path here would cross a
+// boundary this table was deliberately designed not to have.
+func TestPin_FeedbackIdempotencyTableLockedDown(t *testing.T) {
+	mig := stripSQLComments(mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql"))
+	if !strings.Contains(mig, "CREATE TABLE feedback_ingest_idempotency") {
+		t.Fatalf("0104: feedback_ingest_idempotency table not found — was the exactly-once consumed-set dropped?")
+	}
+	if !strings.Contains(mig, "ALTER TABLE feedback_ingest_idempotency ENABLE ROW LEVEL SECURITY") {
+		t.Errorf("0104: feedback_ingest_idempotency must ENABLE ROW LEVEL SECURITY")
+	}
+	// Collapse to whitespace-normalized, semicolon-delimited statements before scanning: this
+	// codebase writes multi-line GRANTs (see migrations/0007_rls.up.sql: "GRANT ... ON\n
+	// <tables>\n TO manyforge_app;"), so a same-line-only check would miss a multi-line
+	// GRANT/POLICY naming this table — exactly the table this pin exists to protect.
+	for _, stmt := range strings.Split(strings.Join(strings.Fields(mig), " "), ";") {
+		if !strings.Contains(stmt, "feedback_ingest_idempotency") {
+			continue
+		}
+		if strings.Contains(stmt, "CREATE POLICY") {
+			t.Errorf("0104: found a CREATE POLICY naming feedback_ingest_idempotency (%q) — it must stay policy-less so only the DEFINERs (which bypass RLS) can touch it", stmt)
+		}
+		if strings.Contains(stmt, "GRANT") && strings.Contains(stmt, "manyforge_app") && !strings.Contains(stmt, "FUNCTION") {
+			t.Errorf("0104: found a GRANT ... manyforge_app naming feedback_ingest_idempotency (%q) — the app role must have NO table privileges on it (function EXECUTE grants for the DEFINERs are fine)", stmt)
+		}
+	}
+}
+
+// TestPin_FeedbackSubmitConflictErrcode asserts feedback_public_submit still RAISEs the FB409
+// errcode on a same-idempotency-key-different-body reuse. The handler's txErr branch in
+// public.go matches on this exact code to answer 409 instead of a generic 500; losing the
+// errcode silently downgrades a client-detectable conflict into an opaque internal error.
+func TestPin_FeedbackSubmitConflictErrcode(t *testing.T) {
+	mig := stripSQLComments(mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql"))
+	// Pin the actual RAISE control, not a bare "FB409" token — a doc comment (e.g. "RAISEs
+	// FB409 on same-key-different-body") would satisfy a bare-token check even if the real
+	// USING ERRCODE = 'FB409' control were deleted.
+	if !strings.Contains(mig, "ERRCODE = 'FB409'") {
+		t.Error("0104 must RAISE ERRCODE 'FB409' on idempotency-key body mismatch (exactly-once contract)")
+	}
+}
+
+// TestPin_FeedbackBackfillExcludesPrincipals asserts the 0104 vote backfill excludes rows whose
+// voter_identity is a principal UUID (internal/authenticated votes) from the a: namespace
+// rewrite. Losing this predicate would prefix an authenticated principal's vote row, breaking
+// the identity match the internal Service.Vote path relies on (voter_identity = principalID
+// verbatim).
+func TestPin_FeedbackBackfillExcludesPrincipals(t *testing.T) {
+	mig := stripSQLComments(mustRead(t, "../../migrations/0104_feedback_verified_identity.up.sql"))
+	if !strings.Contains(mig, "NOT IN (SELECT id::text FROM principal)") {
+		t.Errorf("0104: backfill no longer excludes principal UUIDs from the a: namespace rewrite — an internal vote row could be silently reprefixed")
+	}
+}
+
+// TestPin_FeedbackResolveVerifiedFailClosed asserts public.go's resolveVerified answers the §3
+// fail-closed matrix on BOTH paths where a signature is present but cannot be checked: the
+// handler has no Sealer configured, and the Sealer fails to unseal the stored secret. Either
+// collapsing to (verified=false, sigBad=false) — i.e. silently treating an unverifiable signed
+// request as anonymous — would let a caller with a stale/guessed signature slip past the
+// verified-identity gate instead of being rejected.
+func TestPin_FeedbackResolveVerifiedFailClosed(t *testing.T) {
+	src := mustRead(t, "../../internal/feedback/public.go")
+	body := goFuncBody(t, src, "func (h *PublicHandler) resolveVerified(")
+	// At least the two named branches, plus the present-but-invalid-signature branch, all
+	// fail closed — a regression that collapses any of them to (false, false) (silently
+	// anon) is the vulnerability this pin exists to catch.
+	if n := strings.Count(body, "return false, true"); n < 2 {
+		t.Errorf("public.go resolveVerified: expected >= 2 fail-closed `return false, true` branches, got %d — the fail-closed matrix may have regressed", n)
+	}
+	failClosedBranch(t, body, "h.Sealer == nil")
+	failClosedBranch(t, body, "Sealer.Open(")
+}
+
+// failClosedBranch asserts the branch opened by marker returns false, true (fail-closed) within
+// a short window after the marker — long enough to span the branch's log line + return, short
+// enough that it can't accidentally match a sibling branch's return.
+func failClosedBranch(t *testing.T, body, marker string) {
+	t.Helper()
+	idx := strings.Index(body, marker)
+	if idx < 0 {
+		t.Fatalf("public.go resolveVerified: branch marker %q not found — was it renamed or removed?", marker)
+	}
+	window := body[idx:]
+	if len(window) > 160 {
+		window = window[:160]
+	}
+	if !strings.Contains(window, "return false, true") {
+		t.Errorf("public.go resolveVerified: branch at %q does not fail closed (return false, true)", marker)
+	}
+}
+
+// TestPin_FeedbackIngestSecretNeverLogged is a negative pin: no logger call in ingestkey.go or
+// handler.go references the plaintext fbs_ secret (secretPlain / .Secret). The secret is
+// write-once — surfaced only in CreateIngestKey's HTTP response — and must never additionally
+// land in application logs.
+func TestPin_FeedbackIngestSecretNeverLogged(t *testing.T) {
+	for _, path := range []string{"../../internal/feedback/ingestkey.go", "../../internal/feedback/handler.go"} {
+		src := mustRead(t, path)
+		for _, ln := range strings.Split(src, "\n") {
+			isLogCall := strings.Contains(ln, "Logger.") || strings.Contains(ln, "slog.") ||
+				strings.Contains(ln, "Printf(") || strings.Contains(ln, "log.Print")
+			if !isLogCall {
+				continue
+			}
+			for _, bad := range []string{"secretPlain", "k.Secret", "out.Secret", ".Secret,", ".Secret)"} {
+				if strings.Contains(ln, bad) {
+					t.Errorf("%s: logger call appears to reference the plaintext secret (%q) on line %q — secrets must never be logged", path, bad, strings.TrimSpace(ln))
+				}
+			}
+		}
+	}
+}
+
+// goFuncBody returns the Go source of the named function/method: the text from its signature
+// marker up to (but not including) the next top-level "\nfunc " (or EOF). Fails the test if the
+// marker is absent.
+func goFuncBody(t *testing.T, src, marker string) string {
+	t.Helper()
+	start := strings.Index(src, marker)
+	if start < 0 {
+		t.Fatalf("function marker %q not found — was it renamed or removed?", marker)
+	}
+	rest := src[start:]
+	if idx := strings.Index(rest[len(marker):], "\nfunc "); idx >= 0 {
+		return rest[:len(marker)+idx]
+	}
+	return rest
 }
 
 // funcBody returns the text of a CREATE FUNCTION block from its opening marker up to the closing

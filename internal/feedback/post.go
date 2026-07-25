@@ -290,6 +290,7 @@ func toPost(p dbgen.FeedbackPost) Post {
 		AuthorPrincipalID: pgUUIDPtr(p.AuthorPrincipalID),
 		AuthorIdentity:    p.AuthorIdentity,
 		TicketID:          pgUUIDPtr(p.TicketID),
+		IdentityVerified:  p.IdentityVerified,
 		CreatedAt:         p.CreatedAt,
 		UpdatedAt:         p.UpdatedAt,
 	}

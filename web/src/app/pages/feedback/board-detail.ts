@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnInit, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Board, FeedbackService, IngestKey, Post } from '../../core/feedback.service';
@@ -123,6 +123,7 @@ import { ToastService } from '../../ui/toast/toast.service';
             </div>
             <div style="display:flex;align-items:flex-end">
               <button
+                #createKeyBtn
                 type="submit"
                 class="mf-btn mf-btn-primary mf-btn-sm"
                 data-testid="key-create"
@@ -132,6 +133,47 @@ import { ToastService } from '../../ui/toast/toast.service';
               </button>
             </div>
           </form>
+
+          <!-- One-time verification secret: shown ONLY right after create-key returns one, and
+               only from in-memory state (never re-fetched — the API never returns it again).
+               role="status"/aria-live="polite" so screen-reader users are told it appeared —
+               "polite" (not "alert") because it's informational, not an interruption. -->
+          @if (createdSecret(); as secret) {
+            <div
+              class="secret-once"
+              data-testid="key-secret-once"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <div class="secret-once-head">
+                <mf-status-pill tone="warn" label="Shown once" />
+                <button
+                  type="button"
+                  class="mf-btn mf-btn-ghost mf-btn-sm"
+                  data-testid="key-secret-dismiss"
+                  (click)="dismissSecret()"
+                >
+                  Dismiss
+                </button>
+              </div>
+              <p class="mf-hint">
+                This verification secret is shown once. Copy it now — you won't be able to see it
+                again.
+              </p>
+              <div class="secret-once-value">
+                <code data-testid="key-secret-value">{{ secret }}</code>
+                <button
+                  type="button"
+                  class="mf-btn mf-btn-primary mf-btn-sm"
+                  data-testid="key-secret-copy"
+                  (click)="copySecret(secret)"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          }
 
           <div class="mf-table" data-testid="keys-list">
             @for (k of keys(); track k.id) {
@@ -147,6 +189,11 @@ import { ToastService } from '../../ui/toast/toast.service';
                     <mf-status-pill tone="success" label="Enabled" />
                   } @else {
                     <mf-status-pill tone="neutral" label="Revoked" />
+                  }
+                </span>
+                <span style="flex:0 0 auto" data-testid="key-has-secret-cell">
+                  @if (k.has_secret) {
+                    <mf-status-pill tone="warn" label="Secret set" />
                   }
                 </span>
                 <span style="flex:0 0 auto;display:flex;gap:6px">
@@ -235,6 +282,14 @@ import { ToastService } from '../../ui/toast/toast.service';
                 <span style="flex:2" data-testid="post-title">
                   {{ p.title }}
                   <mf-status-pill [tone]="tone(p.status)" [label]="label(p.status)" />
+                  @if (p.identity_verified) {
+                    <mf-status-pill
+                      tone="success"
+                      label="Verified"
+                      ariaLabel="Verified identity"
+                      data-testid="post-verified-badge"
+                    />
+                  }
                 </span>
                 <span style="flex:0 0 150px">
                   <select
@@ -349,6 +404,45 @@ import { ToastService } from '../../ui/toast/toast.service';
         font-weight: 640;
         color: var(--mf-accent);
       }
+      /* Distinct from the always-visible publishable-key row: warn-toned callout, monospace
+         value block, explicit dismiss — signals "this is different, act on it now". */
+      .secret-once {
+        border: 1px solid var(--mf-warn);
+        background: var(--mf-warn-soft);
+        border-radius: var(--mf-radius-sm);
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .secret-once-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .secret-once .mf-hint {
+        color: var(--mf-warn-text);
+      }
+      .secret-once-value {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .secret-once-value code {
+        flex: 1;
+        min-width: 0;
+        /* The secret must stay fully readable on narrow screens (this is the only place it's
+           ever shown) — wrap/break instead of the ellipsis truncation used for the always-visible
+           publishable key, which the admin can re-copy any time. */
+        word-break: break-all;
+        overflow-wrap: anywhere;
+        font-family: var(--mf-mono, ui-monospace, monospace);
+        background: var(--mf-surface-inset);
+        border: 1px solid var(--mf-border);
+        border-radius: var(--mf-radius-sm);
+        padding: 8px 10px;
+      }
     `,
   ],
 })
@@ -374,6 +468,15 @@ export class FeedbackBoardDetailComponent implements OnInit {
   // The id of the post/key currently mid-mutation, so only its buttons disable.
   busyPost = signal('');
   busyKey = signal('');
+  // The verification secret from the most recent create-key response. The API returns this
+  // exactly once (on create); it is never re-fetchable. Cleared by dismissSecret() once the
+  // admin has copied it — never repopulated from a reload/list response.
+  createdSecret = signal<string | null>(null);
+
+  // Persistent focus target for when the secret panel is dismissed (mouse or keyboard) — the
+  // panel itself is removed from the DOM at that point, so focus must be moved somewhere that
+  // stays on screen rather than being dropped to <body>.
+  private createKeyBtn = viewChild<ElementRef<HTMLButtonElement>>('createKeyBtn');
 
   // Board-settings + create-form fields.
   name = '';
@@ -540,6 +643,7 @@ export class FeedbackBoardDetailComponent implements OnInit {
         this.newKeyLabel = '';
         this.creatingKey.set(false);
         this.keys.set([k, ...this.keys()]);
+        if (k.secret) this.createdSecret.set(k.secret);
         this.toast.success('Key created');
       },
       error: (e: HttpErrorResponse) => {
@@ -547,6 +651,22 @@ export class FeedbackBoardDetailComponent implements OnInit {
         this.toast.error(this.describeMutation(e, 'Could not create the key'));
       },
     });
+  }
+
+  // Dismisses the one-time secret panel. The secret is not persisted anywhere else in
+  // component state, so once dismissed it cannot be shown again without creating a new key.
+  // The panel is removed from the DOM as a result, so restore focus to the "Create key" button
+  // it sat below — otherwise focus silently drops to <body> for keyboard/screen-reader users.
+  dismissSecret(): void {
+    this.createdSecret.set(null);
+    this.createKeyBtn()?.nativeElement.focus();
+  }
+
+  copySecret(secret: string): void {
+    void navigator.clipboard?.writeText(secret).then(
+      () => this.toast.success('Secret copied'),
+      () => this.toast.error('Could not copy'),
+    );
   }
 
   revokeKey(key: IngestKey): void {

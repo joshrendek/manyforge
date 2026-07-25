@@ -14,6 +14,12 @@ export interface PublicPost {
   status: string;
   vote_count: number;
   created_at: string;
+  // Server truth for the caller's own vote, scoped to the voter_identity passed on the list
+  // call (device id, namespaced server-side into the a: tier) — not just optimistic local state.
+  viewer_voted: boolean;
+  // Set when the post's author identity was cryptographically verified via the ingest key's
+  // write-once secret, rather than just claimed by the client.
+  identity_verified: boolean;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -24,8 +30,11 @@ export class PublicFeedbackService {
     return `/api/v1/feedback/public/${encodeURIComponent(key)}`;
   }
 
-  listPosts(key: string): Observable<{ items: PublicPost[] }> {
-    return this.http.get<{ items: PublicPost[] }>(`${this.base(key)}/posts`);
+  // voterIdentity (the portal's per-browser device id) is echoed back as viewer_voted on each
+  // post so the vote button can reflect server truth on load, not just a local vote cache.
+  listPosts(key: string, voterIdentity?: string): Observable<{ items: PublicPost[] }> {
+    const params = voterIdentity ? { voter_identity: voterIdentity } : undefined;
+    return this.http.get<{ items: PublicPost[] }>(`${this.base(key)}/posts`, { params });
   }
 
   submit(
