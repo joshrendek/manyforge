@@ -30,6 +30,9 @@ export interface Post {
   author_principal_id?: string | null;
   author_identity?: string | null;
   ticket_id?: string | null;
+  // Set when the post's author identity was cryptographically verified via the ingest key's
+  // write-once secret (see IngestKey.secret below), rather than just claimed by the client.
+  identity_verified: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -44,6 +47,13 @@ export interface IngestKey {
   publishable_key: string;
   label?: string | null;
   status: string;
+  // Whether a verification secret has been set for this key. The secret value itself is
+  // never returned by the list endpoint — only the create response carries it, once.
+  has_secret: boolean;
+  // Write-once verification secret (`fbs_…`). Present ONLY in the create-key response body;
+  // the API never returns it again (list/get responses omit it entirely). The UI must show
+  // it exactly once and must not attempt to re-fetch it.
+  secret?: string;
   created_at: string;
   revoked_at?: string | null;
 }

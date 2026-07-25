@@ -354,6 +354,39 @@ func TestCodexAccessRefreshMargin(t *testing.T) {
 	})
 }
 
+// TestFeedbackMasterKey pins the MANYFORGE_FEEDBACK_MASTER_KEY load (saz.5): unset ⇒ nil,
+// no error (the verified-identity tier degrades, anonymous ingress unaffected, server still
+// boots); a valid 32-byte key decodes; a set-but-wrong-length key is a hard config error.
+// Mirrors TestLoadDKIMMasterKey / envKey32's contract.
+func TestFeedbackMasterKey(t *testing.T) {
+	t.Run("unset → nil, no error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_FEEDBACK_MASTER_KEY", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.FeedbackMasterKey != nil {
+			t.Fatalf("want nil, got %d bytes", len(cfg.FeedbackMasterKey))
+		}
+	})
+	t.Run("valid 32-byte hex → decoded", func(t *testing.T) {
+		t.Setenv("MANYFORGE_FEEDBACK_MASTER_KEY", "hex:"+strings.Repeat("ab", 32))
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(cfg.FeedbackMasterKey) != 32 {
+			t.Fatalf("want 32 bytes, got %d", len(cfg.FeedbackMasterKey))
+		}
+	})
+	t.Run("wrong length → hard error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_FEEDBACK_MASTER_KEY", "hex:abcd")
+		if _, err := Load(); err == nil {
+			t.Fatal("want error for short key, got nil")
+		}
+	})
+}
+
 func TestSandboxEgressAllowsChatGPTBackend(t *testing.T) {
 	// Force the default: env() returns the default when the var is empty, so this makes the
 	// test assert the built-in default regardless of any ambient MANYFORGE_SANDBOX_EGRESS_ALLOW.

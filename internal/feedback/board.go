@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -21,7 +22,8 @@ import (
 // businessID inside the same tx via the RLS-bound GetBusiness — a business the principal
 // cannot see yields ErrNotFound (no oracle).
 type Service struct {
-	DB *db.DB
+	DB     *db.DB
+	Sealer *crypto.Sealer // nil ⇒ verified tier disabled (no secret minting)
 }
 
 // CreateBoard inserts a board under the URL business. Slug is derived from Name when omitted;
