@@ -17,3 +17,6 @@ DROP TABLE IF EXISTS telemetry_client;
 DROP FUNCTION IF EXISTS drop_expired_partitions();
 DROP FUNCTION IF EXISTS create_due_partitions();
 DROP TABLE IF EXISTS partitioned_table;
+
+DELETE FROM role_permission WHERE permission_key IN ('telemetry.read', 'telemetry.write');
+DELETE FROM permission WHERE key IN ('telemetry.read', 'telemetry.write');

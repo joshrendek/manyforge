@@ -19,11 +19,15 @@ type Handler struct{ Svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{Svc: svc} }
 
-// Routes mounts the admin surface. The caller supplies the permission middleware.
-func (h *Handler) Routes(r chi.Router) {
-	r.Post("/", h.create)
-	r.Get("/", h.list)
-	r.Post("/{clientID}/revoke", h.revoke)
+// ReadRoutes mounts the authenticated read endpoints (gated on telemetry.read by the caller).
+func (h *Handler) ReadRoutes(r chi.Router) {
+	r.Get("/businesses/{id}/telemetry/clients", h.list)
+}
+
+// WriteRoutes mounts the authenticated write endpoints (gated on telemetry.write by the caller).
+func (h *Handler) WriteRoutes(r chi.Router) {
+	r.Post("/businesses/{id}/telemetry/clients", h.create)
+	r.Post("/businesses/{id}/telemetry/clients/{clientID}/revoke", h.revoke)
 }
 
 type createClientRequest struct {
@@ -37,7 +41,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	businessID, err := uuid.Parse(chi.URLParam(r, "businessID"))
+	businessID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_business_id"})
 		return
@@ -60,7 +64,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	businessID, err := uuid.Parse(chi.URLParam(r, "businessID"))
+	businessID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_business_id"})
 		return
@@ -80,7 +84,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	businessID, err := uuid.Parse(chi.URLParam(r, "businessID"))
+	businessID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_business_id"})
 		return

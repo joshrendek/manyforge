@@ -30,4 +30,7 @@ const (
 
 	PermFeedbackRead  = "feedback.read"
 	PermFeedbackWrite = "feedback.write"
+
+	PermTelemetryRead  = "telemetry.read"
+	PermTelemetryWrite = "telemetry.write"
 )

@@ -163,6 +163,7 @@ CREATE INDEX crash_event_sig_idx        ON crash_event (tenant_root_id, signatur
 -- referrers / geo; zw2 adds its own rollup over crash_event using the same worker.
 CREATE TABLE analytics_event_daily (
     tenant_root_id uuid        NOT NULL,
+    business_id    uuid        NOT NULL,
     client_id      uuid        NOT NULL,
     bucket_date    date        NOT NULL,
     event_count    bigint      NOT NULL,
@@ -190,18 +191,23 @@ ALTER TABLE analytics_event       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crash_event           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analytics_event_daily ENABLE ROW LEVEL SECURITY;
 
+-- Telemetry is BUSINESS-scoped, like feedback (0102) and the support desk — not tenant-scoped.
+-- An authorized_tenants predicate would make every client and every event readable across the
+-- whole tenant tree rather than just the businesses the principal actually belongs to, which is a
+-- cross-business hole. WITH CHECK mirrors USING so a write cannot place a row outside the
+-- caller's businesses either.
 CREATE POLICY telemetry_client_rls ON telemetry_client FOR ALL
-    USING (tenant_root_id IN (SELECT tenant_root_id FROM authorized_tenants(current_principal())))
-    WITH CHECK (true);
+    USING (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())))
+    WITH CHECK (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())));
 CREATE POLICY analytics_event_rls ON analytics_event FOR ALL
-    USING (tenant_root_id IN (SELECT tenant_root_id FROM authorized_tenants(current_principal())))
-    WITH CHECK (true);
+    USING (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())))
+    WITH CHECK (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())));
 CREATE POLICY crash_event_rls ON crash_event FOR ALL
-    USING (tenant_root_id IN (SELECT tenant_root_id FROM authorized_tenants(current_principal())))
-    WITH CHECK (true);
+    USING (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())))
+    WITH CHECK (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())));
 CREATE POLICY analytics_event_daily_rls ON analytics_event_daily FOR ALL
-    USING (tenant_root_id IN (SELECT tenant_root_id FROM authorized_tenants(current_principal())))
-    WITH CHECK (true);
+    USING (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())))
+    WITH CHECK (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())));
 
 -- Parent-only. Adding a GRANT on a child partition would defeat header note 2 and fails a pin.
 GRANT SELECT                 ON partitioned_table    TO manyforge_app;
@@ -280,22 +286,23 @@ BEGIN
     IF hi <= wm THEN RETURN 0; END IF;
 
     WITH touched AS (
-        SELECT DISTINCT tenant_root_id, client_id,
+        SELECT DISTINCT tenant_root_id, business_id, client_id,
                (occurred_at AT TIME ZONE 'UTC')::date AS bucket_date
         FROM analytics_event
         WHERE ingested_at > wm AND ingested_at <= hi
     ), recomputed AS (
-        SELECT t.tenant_root_id, t.client_id, t.bucket_date, count(*) AS event_count
+        SELECT t.tenant_root_id, t.business_id, t.client_id, t.bucket_date, count(*) AS event_count
         FROM touched t
         JOIN analytics_event e
           ON e.tenant_root_id = t.tenant_root_id
          AND e.client_id      = t.client_id
          AND e.occurred_at >= (t.bucket_date::timestamp AT TIME ZONE 'UTC')
          AND e.occurred_at <  ((t.bucket_date + 1)::timestamp AT TIME ZONE 'UTC')
-        GROUP BY t.tenant_root_id, t.client_id, t.bucket_date
+        GROUP BY t.tenant_root_id, t.business_id, t.client_id, t.bucket_date
     )
-    INSERT INTO analytics_event_daily (tenant_root_id, client_id, bucket_date, event_count, updated_at)
-    SELECT tenant_root_id, client_id, bucket_date, event_count, now() FROM recomputed
+    INSERT INTO analytics_event_daily
+        (tenant_root_id, business_id, client_id, bucket_date, event_count, updated_at)
+    SELECT tenant_root_id, business_id, client_id, bucket_date, event_count, now() FROM recomputed
     ON CONFLICT (tenant_root_id, client_id, bucket_date)
     DO UPDATE SET event_count = excluded.event_count, updated_at = now();
     GET DIAGNOSTICS n = ROW_COUNT;
@@ -322,3 +329,27 @@ GRANT EXECUTE ON FUNCTION telemetry_resolve_client(text)                   TO ma
 GRANT EXECUTE ON FUNCTION telemetry_ingest_analytics(uuid,uuid,uuid,jsonb) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION telemetry_ingest_crash(uuid,uuid,uuid,jsonb)     TO manyforge_app;
 GRANT EXECUTE ON FUNCTION rollup_analytics_daily(interval)                 TO manyforge_app;
+
+-- ============================================================================
+-- 9. Permission catalog
+-- ============================================================================
+-- telemetry.write gates registering and revoking clients; telemetry.read gates viewing them.
+-- Mirrors the feedback catalog (0103): the mutator is owner + admin, the reader is member +
+-- viewer (plus the mutators). Key/module are authoritative and shared verbatim with the OpenAPI
+-- contract — do not rename.
+--
+-- The PUBLIC ingest path carries no principal and no permission (it authenticates by a
+-- publishable client key), so it is deliberately absent from this catalog.
+
+-- security: system catalog, no tenant scoping
+INSERT INTO permission (key, module, description) VALUES
+    ('telemetry.read',  'telemetry', 'View registered telemetry clients and their publishable keys'),
+    ('telemetry.write', 'telemetry', 'Register and revoke telemetry clients');
+
+INSERT INTO role_permission (role_id, permission_key)
+    SELECT r.id, p.key FROM role r JOIN permission p ON p.key IN ('telemetry.read', 'telemetry.write')
+    WHERE r.tenant_root_id IS NULL AND r.key IN ('owner', 'admin');
+
+INSERT INTO role_permission (role_id, permission_key)
+    SELECT r.id, p.key FROM role r JOIN permission p ON p.key = 'telemetry.read'
+    WHERE r.tenant_root_id IS NULL AND r.key IN ('member', 'viewer');

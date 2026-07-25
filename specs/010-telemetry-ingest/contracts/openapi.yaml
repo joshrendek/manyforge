@@ -1,0 +1,241 @@
+openapi: 3.0.3
+info:
+  title: manyforge — telemetry ingest + time-series foundation (manyforge-p20)
+  version: "1.0.0"
+  description: |
+    Shared event-ingest surface for the analytics (manyforge-as0) and crash-reporting
+    (manyforge-zw2) epics.
+
+    Two distinct surfaces live here:
+
+    * **Authenticated client registration** under `/businesses/{id}/telemetry/clients`,
+      gated by `telemetry.read` / `telemetry.write`. A caller lacking the permission
+      receives 404, never 403 — the difference would be a business-existence oracle.
+    * **Principal-less batch ingest** at `/telemetry/ingest/{key}`, authenticated by a
+      publishable `mfk_` client key rather than a JWT.
+
+    Key model: `publishable_key` (`mfk_`) is a PUBLIC client token, Sentry-DSN style, and is
+    safe to embed in an app binary or a web page. The optional signing secret (`mfs_`) is
+    server-to-server ONLY, is returned exactly once at creation, and must never ship inside a
+    client. A client that has a signing secret must present a valid `X-Telemetry-Signature`
+    or ingest fails closed.
+
+    Oracle policy: unknown, revoked, and malformed keys all produce a byte-identical 401.
+
+servers:
+  - url: https://hub.bluescripts.net/api/v1
+
+paths:
+  /businesses/{id}/telemetry/clients:
+    get:
+      summary: List registered telemetry clients
+      description: |
+        Requires `telemetry.read`. Publishable keys are returned deliberately — an operator
+        needs them to configure an SDK. Signing secrets are never returned here; only
+        `has_secret` is reported.
+      operationId: listTelemetryClients
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Registered clients, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clients]
+                properties:
+                  clients:
+                    type: array
+                    items: { $ref: '#/components/schemas/TelemetryClient' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Register a telemetry client
+      description: |
+        Requires `telemetry.write`. Mints a publishable `mfk_` key and, when a master key is
+        configured for the deployment, an `mfs_` signing secret returned exactly once in this
+        response and never again.
+      operationId: createTelemetryClient
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, name]
+              properties:
+                kind:
+                  type: string
+                  enum: [analytics, crash]
+                  description: Selects which event table ingest writes to. Immutable after creation.
+                name: { type: string, minLength: 1 }
+      responses:
+        '201':
+          description: Client registered
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/TelemetryClient'
+                  - type: object
+                    properties:
+                      secret:
+                        type: string
+                        description: |
+                          The plaintext `mfs_` signing secret. Present ONLY in this response.
+                          Server-to-server use only — never embed it in a client binary.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /businesses/{id}/telemetry/clients/{clientId}/revoke:
+    post:
+      summary: Revoke a telemetry client
+      description: |
+        Requires `telemetry.write`. Ingest with the revoked key then returns the same 401 as an
+        unknown key. Unknown, already-revoked, and foreign-tenant ids are all 404 — the three
+        are deliberately indistinguishable.
+      operationId: revokeTelemetryClient
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Client revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TelemetryClient' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /telemetry/ingest/{key}:
+    post:
+      summary: Ingest a batch of telemetry events (public, principal-less)
+      description: |
+        Authenticated by the publishable `mfk_` key in the path — no JWT. Rate-limited per IP
+        and per key. Bodies are capped at 256 KiB and batches at 1000 events.
+
+        The target table is chosen from the client's REGISTERED kind, not from the request body:
+        posting `crash` events with an `analytics` key stores nothing. Tenant scope likewise
+        comes from the resolved key, so `tenant_root_id` / `business_id` in a body are ignored.
+
+        `occurred_at` is client-supplied and untrusted. Timestamps more than 5 minutes in the
+        future are clamped to now; events older than 7 days (or with no timestamp) are dropped
+        individually and counted in `dropped`, so one stale event never discards a good batch.
+        It never influences storage placement — partitioning is keyed on server ingest time.
+      operationId: ingestTelemetry
+      security: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: The publishable `mfk_` client key.
+          schema: { type: string }
+        - name: X-Telemetry-Signature
+          in: header
+          required: false
+          description: |
+            `t=<unix>,v1=<hex hmac-sha256>` over `<t>.<METHOD>.<target>.<body>`, where `<target>`
+            is the FULL request-target including the `/api/v1` prefix. Required for clients that
+            carry a signing secret; rejected outside a 300 s skew window.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                analytics:
+                  type: array
+                  maxItems: 1000
+                  items: { $ref: '#/components/schemas/AnalyticsEvent' }
+                crash:
+                  type: array
+                  maxItems: 1000
+                  items: { $ref: '#/components/schemas/CrashEvent' }
+      responses:
+        '202':
+          description: Batch accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted, dropped]
+                properties:
+                  accepted: { type: integer, description: Events persisted. }
+                  dropped:  { type: integer, description: Events rejected by validation or the time window. }
+        '400':
+          description: Malformed JSON body
+        '401':
+          description: |
+            Unknown, revoked, or malformed key, or a missing/invalid signature on a client that
+            requires one. The response is byte-identical across all of these cases.
+        '413':
+          description: Body exceeded the 256 KiB cap
+        '429':
+          description: Per-IP or per-key rate limit exceeded
+
+components:
+  parameters:
+    BusinessId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Invalid request
+    Unauthorized:
+      description: Missing or invalid credentials
+    NotFound:
+      description: |
+        Not found. Also returned when the caller lacks the required permission — the
+        distinction from 403 would be a business-existence oracle.
+
+  schemas:
+    TelemetryClient:
+      type: object
+      required: [id, business_id, tenant_root_id, kind, name, publishable_key, status, created_at, has_secret]
+      properties:
+        id:              { type: string, format: uuid }
+        business_id:     { type: string, format: uuid }
+        tenant_root_id:  { type: string, format: uuid }
+        kind:            { type: string, enum: [analytics, crash] }
+        name:            { type: string }
+        publishable_key: { type: string, description: 'Public `mfk_` token; safe to embed in a client.' }
+        status:          { type: string, enum: [active, revoked] }
+        created_at:      { type: string, format: date-time }
+        revoked_at:      { type: string, format: date-time, nullable: true }
+        has_secret:
+          type: boolean
+          description: Whether a signing secret exists. The secret itself is never returned after creation.
+
+    AnalyticsEvent:
+      type: object
+      required: [occurred_at, name]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        name:        { type: string, minLength: 1 }
+        props:       { type: object, additionalProperties: true }
+
+    CrashEvent:
+      type: object
+      required: [occurred_at, platform, signature]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        platform:    { type: string, minLength: 1 }
+        app_version: { type: string, nullable: true }
+        signature:   { type: string, minLength: 1, description: Stack fingerprint used for grouping. }
+        payload:     { type: object, additionalProperties: true }

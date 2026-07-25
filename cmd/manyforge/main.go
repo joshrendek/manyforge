@@ -50,6 +50,8 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
+	"github.com/manyforge/manyforge/internal/platform/timeseries"
+	"github.com/manyforge/manyforge/internal/telemetry"
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
 	"github.com/manyforge/manyforge/internal/webui"
@@ -196,6 +198,24 @@ func main() {
 	feedbackSvc := &feedback.Service{DB: database, Sealer: feedbackSealer}
 	feedbackH := feedback.NewHandler(feedbackSvc)
 	feedbackPublicH := feedback.NewPublicHandler(database, logger, feedbackSealer)
+
+	// manyforge-p20 telemetry: client registration (authenticated, gated by telemetry.read /
+	// telemetry.write) plus the principal-less batch ingest endpoint shared by the analytics and
+	// crash-reporting epics. Reuses the feedback sealer's master key semantics: unset ⇒ nil
+	// sealer, so clients are minted without an mfs_ signing secret and ingest stays anonymous.
+	telemetrySvc := telemetry.NewService(database, feedbackSealer)
+	telemetryH := telemetry.NewHandler(telemetrySvc)
+	telemetryPublicH := &telemetry.PublicHandler{
+		DB:     database,
+		Logger: logger,
+		Sealer: feedbackSealer,
+		// PerIP is deliberately nil: the public ingress group already applies the shared per-IP
+		// ingest limiter, and a second per-IP bucket here would just halve that budget
+		// confusingly. PerKey is the dimension the group does NOT cover — it stops one leaked
+		// publishable key from being abused across a whole botnet.
+		PerKey:  ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		Metrics: metrics,
+	}
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
@@ -719,6 +739,10 @@ func main() {
 		feedbackPublic:   feedbackPublicH,
 		feedbackRead:     httpx.RequirePermission(database, permResolve, authz.PermFeedbackRead, businessIDFromPath),
 		feedbackWrite:    httpx.RequirePermission(database, permResolve, authz.PermFeedbackWrite, businessIDFromPath),
+		telemetry:        telemetryH,
+		telemetryPublic:  telemetryPublicH,
+		telemetryRead:    httpx.RequirePermission(database, permResolve, authz.PermTelemetryRead, businessIDFromPath),
+		telemetryWrite:   httpx.RequirePermission(database, permResolve, authz.PermTelemetryWrite, businessIDFromPath),
 		codingReviews:    codingH,
 		githubApp:        githubAppH,
 	})
@@ -770,6 +794,14 @@ func main() {
 	if outboundDispatcher != nil {
 		go outboundDispatcher.Run(workerCtx)
 	}
+
+	// manyforge-p20 time-series workers. Maintenance sweeps immediately on start (a fresh deploy
+	// must not wait an hour for today's partition to exist) and hourly thereafter; the rollup
+	// sweeps every minute. Both are safe on every replica — the underlying SECURITY DEFINER
+	// functions take transaction-scoped advisory locks, so a concurrent sweep is a no-op rather
+	// than a race.
+	go (&timeseries.MaintenanceWorker{DB: database, Logger: logger, Metrics: metrics}).Run(workerCtx)
+	go (&timeseries.RollupWorker{DB: database, Logger: logger, Metrics: metrics}).Run(workerCtx)
 
 	// US4 approvals expire sweep: every 60s, expire stale pending approval_items across
 	// ALL tenants via the SECURITY DEFINER expire_stale_approvals() function (migration
@@ -989,6 +1021,19 @@ type apiHandlers struct {
 	feedbackRead  func(http.Handler) http.Handler
 	feedbackWrite func(http.Handler) http.Handler
 
+	// telemetry is the manyforge-p20 authenticated client-registration handler (register, list,
+	// revoke telemetry clients under a business).
+	telemetry *telemetry.Handler
+	// telemetryPublic is the p20 principal-less batch ingest handler, mounted in the public
+	// ingress group behind the per-IP ingest limiter and authenticated by a publishable mfk_
+	// client key. Never nil (no external key material required — a nil sealer only disables the
+	// signed tier). All DB access goes through SECURITY DEFINER functions.
+	telemetryPublic *telemetry.PublicHandler
+	// telemetryRead / telemetryWrite gate the read and write slices, same RLS-bound
+	// 404-on-lacking-perm semantics as the other groups.
+	telemetryRead  func(http.Handler) http.Handler
+	telemetryWrite func(http.Handler) http.Handler
+
 	// codingReviews is the Spec 007 code-review handler: repo-connector creation gated
 	// by connectorsManage (connectors.manage), code-review trigger/get gated by
 	// agentsRun (agents.run). Same RLS-bound 404-on-lacking-perm semantics.
@@ -1041,6 +1086,11 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			// board key (not JWT), per-IP ingest-rate-limited. Unknown/revoked key or a
 			// non-public board → uniform 401 (no business/board existence oracle).
 			h.feedbackPublic.PublicRoutes(ingress)
+			// manyforge-p20 telemetry ingest: public, authenticated by a publishable mfk_
+			// client key, per-IP ingest-rate-limited here and additionally per-key inside
+			// the handler. Unknown, revoked, and malformed keys all return a byte-identical
+			// 401 (no client-existence oracle).
+			h.telemetryPublic.PublicRoutes(ingress)
 		})
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
@@ -1162,6 +1212,19 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(fw chi.Router) {
 				fw.Use(h.feedbackWrite)
 				h.feedback.WriteRoutes(fw)
+			})
+			// manyforge-p20 telemetry read slice: list registered clients, gated on
+			// telemetry.read. Publishable keys are returned deliberately — an operator needs
+			// them to configure an SDK.
+			pr.Group(func(tr chi.Router) {
+				tr.Use(h.telemetryRead)
+				h.telemetry.ReadRoutes(tr)
+			})
+			// manyforge-p20 telemetry write slice: register + revoke clients, gated on
+			// telemetry.write. Same RLS-bound 404-on-lacking-perm semantics.
+			pr.Group(func(tw chi.Router) {
+				tw.Use(h.telemetryWrite)
+				h.telemetry.WriteRoutes(tw)
 			})
 			// Spec 007 code-review slice: repo-connector create gated on connectors.manage,
 			// code-review trigger/get gated on agents.run — same RLS-bound 404-on-lacking-perm
