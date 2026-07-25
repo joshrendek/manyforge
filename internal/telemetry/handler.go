@@ -33,6 +33,9 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 type createClientRequest struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
+	// RequireSignature defaults to false — the embeddable-SDK mode. Set it only for a
+	// server-to-server sender that can hold an mfs_ secret safely.
+	RequireSignature bool `json:"require_signature"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +53,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	client, err := h.Svc.CreateClient(r.Context(), principalID, businessID, req.Kind, req.Name)
+	client, err := h.Svc.CreateClient(r.Context(), principalID, businessID, req.Kind, req.Name, req.RequireSignature)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

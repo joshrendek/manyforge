@@ -4,8 +4,8 @@
 -- ownership check — the two would drift. RLS is a second layer beneath this, not a substitute.
 
 -- name: InsertTelemetryClient :one
-INSERT INTO telemetry_client (id, business_id, tenant_root_id, kind, name, publishable_key, sealed_secret)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO telemetry_client (id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: ListTelemetryClients :many

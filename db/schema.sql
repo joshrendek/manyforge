@@ -898,6 +898,7 @@ CREATE TABLE telemetry_client (
     kind            text NOT NULL,
     name            text NOT NULL,
     publishable_key text NOT NULL,
+    require_signature boolean NOT NULL DEFAULT false,
     sealed_secret   text,
     status          text NOT NULL DEFAULT 'active',
     created_at      timestamptz NOT NULL DEFAULT now(),

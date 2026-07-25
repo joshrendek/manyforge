@@ -104,15 +104,19 @@ func TestSanitizeAnalytics_DropsBadEventsNotTheBatch(t *testing.T) {
 	}
 }
 
-func TestSanitizeAnalytics_CapsBatchSize(t *testing.T) {
+// sanitize must NOT silently truncate — an oversize batch is rejected by the handler instead, so
+// the caller is never told 1000 of its 1001 events landed. This pins that sanitize passes
+// everything through and the cap lives at exactly one place.
+func TestSanitizeAnalytics_DoesNotSilentlyTruncate(t *testing.T) {
 	now := time.Now().UTC()
 	in := make([]AnalyticsEvent, maxBatchEvents+500)
 	for i := range in {
 		in[i] = AnalyticsEvent{OccurredAt: now, Name: "e"}
 	}
-	out, _ := sanitizeAnalytics(in, now)
-	if len(out) != maxBatchEvents {
-		t.Fatalf("batch not capped: got %d, want %d", len(out), maxBatchEvents)
+	out, dropped := sanitizeAnalytics(in, now)
+	if len(out) != len(in) || dropped != 0 {
+		t.Fatalf("sanitize truncated silently: kept %d of %d (dropped %d); the oversize batch must "+
+			"be rejected by the handler instead", len(out), len(in), dropped)
 	}
 }
 

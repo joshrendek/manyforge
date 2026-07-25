@@ -15,10 +15,12 @@ info:
       publishable `mfk_` client key rather than a JWT.
 
     Key model: `publishable_key` (`mfk_`) is a PUBLIC client token, Sentry-DSN style, and is
-    safe to embed in an app binary or a web page. The optional signing secret (`mfs_`) is
-    server-to-server ONLY, is returned exactly once at creation, and must never ship inside a
-    client. A client that has a signing secret must present a valid `X-Telemetry-Signature`
-    or ingest fails closed.
+    safe to embed in an app binary or a web page. That is the default mode.
+
+    Signing is OPT-IN per client via `require_signature`. Only such a client is issued an
+    `mfs_` secret, which is server-to-server ONLY, returned exactly once at creation, and must
+    never ship inside a client binary. A signing client fails closed without a valid
+    `X-Telemetry-Signature`; a non-signing client authenticates with its `mfk_` key alone.
 
     Oracle policy: unknown, revoked, and malformed keys all produce a byte-identical 401.
 
@@ -76,6 +78,15 @@ paths:
                   enum: [analytics, crash]
                   description: Selects which event table ingest writes to. Immutable after creation.
                 name: { type: string, minLength: 1 }
+                require_signature:
+                  type: boolean
+                  default: false
+                  description: |
+                    Opt in to mandatory HMAC ingest. Leave false (the default) for anything running
+                    on a device or in a browser — those authenticate with the embeddable `mfk_` key
+                    alone. Set true ONLY for a server-to-server sender that can hold an `mfs_`
+                    secret safely; a signing secret is minted only when this is true, and is
+                    returned exactly once in this response.
       responses:
         '201':
           description: Client registered
@@ -146,8 +157,9 @@ paths:
           required: false
           description: |
             `t=<unix>,v1=<hex hmac-sha256>` over `<t>.<METHOD>.<target>.<body>`, where `<target>`
-            is the FULL request-target including the `/api/v1` prefix. Required for clients that
-            carry a signing secret; rejected outside a 300 s skew window.
+            is the FULL request-target including the `/api/v1` prefix. Required only for clients
+            registered with `require_signature: true`; rejected outside a 300 s skew window. A
+            non-signing client that sends one anyway still has it verified.
           schema: { type: string }
       requestBody:
         required: true
@@ -176,7 +188,7 @@ paths:
                   accepted: { type: integer, description: Events persisted. }
                   dropped:  { type: integer, description: Events rejected by validation or the time window. }
         '400':
-          description: Malformed JSON body
+          description: Malformed JSON body, or a batch over the 1000-event limit (rejected, never truncated)
         '401':
           description: |
             Unknown, revoked, or malformed key, or a missing/invalid signature on a client that
@@ -207,7 +219,7 @@ components:
   schemas:
     TelemetryClient:
       type: object
-      required: [id, business_id, tenant_root_id, kind, name, publishable_key, status, created_at, has_secret]
+      required: [id, business_id, tenant_root_id, kind, name, publishable_key, status, created_at, require_signature, has_secret]
       properties:
         id:              { type: string, format: uuid }
         business_id:     { type: string, format: uuid }
@@ -216,6 +228,9 @@ components:
         name:            { type: string }
         publishable_key: { type: string, description: 'Public `mfk_` token; safe to embed in a client.' }
         status:          { type: string, enum: [active, revoked] }
+        require_signature:
+          type: boolean
+          description: Whether ingest demands a valid `X-Telemetry-Signature` for this client.
         created_at:      { type: string, format: date-time }
         revoked_at:      { type: string, format: date-time, nullable: true }
         has_secret:

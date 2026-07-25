@@ -1,9 +1,9 @@
 -- Reverse of 0105. Functions first (they reference the tables), then the tables in dependency
 -- order. Dropping a partitioned parent drops its child partitions with it.
 
-DROP FUNCTION IF EXISTS rollup_analytics_daily(interval);
-DROP FUNCTION IF EXISTS telemetry_ingest_crash(uuid,uuid,uuid,jsonb);
-DROP FUNCTION IF EXISTS telemetry_ingest_analytics(uuid,uuid,uuid,jsonb);
+DROP FUNCTION IF EXISTS rollup_analytics_daily(interval,interval);
+DROP FUNCTION IF EXISTS telemetry_ingest_crash(text,jsonb);
+DROP FUNCTION IF EXISTS telemetry_ingest_analytics(text,jsonb);
 DROP FUNCTION IF EXISTS telemetry_resolve_client(text);
 
 DROP TABLE IF EXISTS analytics_event_daily;

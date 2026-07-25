@@ -74,7 +74,10 @@ func validKind(kind string) bool { return kind == KindAnalytics || kind == KindC
 
 // CreateClient registers a telemetry source under the URL business and mints its keys. The
 // plaintext secret is returned once here and never again.
-func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid.UUID, kind, name string) (Client, error) {
+// requireSignature opts the client into mandatory HMAC ingest. Leave it false for anything that
+// runs on a device or in a browser: those authenticate with the embeddable mfk_ key alone, and the
+// mfs_ secret must never ship inside a client binary. Set it only for a server-to-server sender.
+func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid.UUID, kind, name string, requireSignature bool) (Client, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Client{}, fmt.Errorf("telemetry: name is required: %w", errs.ErrValidation)
@@ -88,9 +91,16 @@ func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid
 	if err != nil {
 		return Client{}, err
 	}
+	// A secret is minted ONLY for a signing client. Issuing one to every client would be dead
+	// credential surface, and (worse) an ingest path that keys "must sign" off "has a secret"
+	// would then silently lock out every embeddable SDK key.
 	var secretPlain string
 	var sealed *string
-	if s.Sealer != nil {
+	if requireSignature {
+		if s.Sealer == nil {
+			return Client{}, fmt.Errorf(
+				"telemetry: signed clients require a configured master key: %w", errs.ErrValidation)
+		}
 		sec, serr := newSecret()
 		if serr != nil {
 			return Client{}, serr
@@ -111,13 +121,14 @@ func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid
 			return terr
 		}
 		row, ierr := q.InsertTelemetryClient(ctx, dbgen.InsertTelemetryClientParams{
-			ID:             uuid.New(),
-			BusinessID:     businessID,
-			TenantRootID:   tenantRoot,
-			Kind:           kind,
-			Name:           name,
-			PublishableKey: pk,
-			SealedSecret:   sealed,
+			ID:               uuid.New(),
+			BusinessID:       businessID,
+			TenantRootID:     tenantRoot,
+			Kind:             kind,
+			Name:             name,
+			PublishableKey:   pk,
+			RequireSignature: requireSignature,
+			SealedSecret:     sealed,
 		})
 		if ierr != nil {
 			return ierr

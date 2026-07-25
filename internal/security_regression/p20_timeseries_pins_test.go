@@ -124,8 +124,15 @@ func TestPin_P20RollupRecomputesNeverIncrements(t *testing.T) {
 		t.Error("rollup_analytics_daily must advance the watermark in the same transaction as the upsert")
 	}
 	// Sweeping must key off ingested_at; occurred_at is client-controlled and non-monotonic.
-	if !strings.Contains(body, "ingested_at > wm") {
+	if !strings.Contains(body, "ingested_at > lo") || !strings.Contains(body, "ingested_at <= hi") {
 		t.Error("rollup_analytics_daily must sweep by ingested_at (monotonic, client-independent)")
+	}
+	// The read window must start BEFORE the stored watermark. A strictly forward-only window
+	// permanently drops a write that committed after the previous sweep's snapshot but carries an
+	// ingested_at below that sweep's cutoff.
+	if !strings.Contains(body, "lo := wm - p_overlap") {
+		t.Error("rollup_analytics_daily must re-scan a trailing overlap (lo := wm - p_overlap), or a " +
+			"straggler commit is skipped silently and forever")
 	}
 }
 
@@ -216,4 +223,43 @@ func functionBody(t *testing.T, migration, name string) string {
 		t.Fatalf("could not find the end of %s", name)
 	}
 	return body
+}
+
+// TestPin_P20SignatureIsOptInNotSecretDerived asserts that whether ingest demands an HMAC is driven
+// by the client's explicit require_signature flag, defaulting to FALSE — never inferred from the
+// presence of a sealed secret.
+//
+// This is not a style preference. mfk_ publishable keys exist to be embedded in app binaries and
+// web pages; the mfs_ secret is server-to-server only and must never ship inside a client. If
+// signature enforcement were derived from "this client has a secret", then configuring a master key
+// for the deployment would mint a secret for every client and silently lock out every embeddable
+// SDK — a total outage of the primary consumer, with no code change to blame it on.
+func TestPin_P20SignatureIsOptInNotSecretDerived(t *testing.T) {
+	mig := stripSQLComments(mustRead(t, p20Migration))
+
+	if !regexp.MustCompile(`require_signature\s+boolean\s+NOT NULL\s+DEFAULT\s+false`).MatchString(mig) {
+		t.Error("telemetry_client.require_signature must exist and default to FALSE; a true default " +
+			"would demand a signature from embeddable SDK clients that cannot hold a secret")
+	}
+	// A client that demands a signature must have something to verify against.
+	if !strings.Contains(mig, "CHECK (NOT require_signature OR sealed_secret IS NOT NULL)") {
+		t.Error("missing the constraint that a signing client has a sealed_secret")
+	}
+	// The resolver must surface the flag, or the handler cannot honor it.
+	body := functionBody(t, mig, "telemetry_resolve_client")
+	if !strings.Contains(body, "c.require_signature") {
+		t.Error("telemetry_resolve_client must return require_signature")
+	}
+
+	pub := mustRead(t, "../../internal/telemetry/public.go")
+	if !strings.Contains(pub, "client.requireSignature ||") {
+		t.Error("ingest must gate signature verification on client.requireSignature; gating on " +
+			"sealedSecret != nil alone would force every embeddable key into signed mode")
+	}
+
+	// Minting must be opt-in too: a secret issued to every client is dead credential surface.
+	cl := mustRead(t, "../../internal/telemetry/client.go")
+	if !strings.Contains(cl, "if requireSignature {") {
+		t.Error("CreateClient must mint an mfs_ secret only for a signing client")
+	}
 }

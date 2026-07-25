@@ -109,13 +109,28 @@ CREATE TABLE telemetry_client (
     kind            text NOT NULL CHECK (kind IN ('analytics','crash')),
     name            text NOT NULL,
     publishable_key text NOT NULL,
+    -- require_signature is OPT-IN per client, and it is what decides whether ingest demands an
+    -- HMAC. It must default false: an app SDK or web snippet authenticates with the embeddable
+    -- mfk_ key alone, and the mfs_ secret must never ship inside a client binary. Requiring a
+    -- signature by default would make the publishable-key model unusable for its primary consumer.
+    -- Only a server-to-server sender should set this, and only such a client is issued a secret.
+    require_signature boolean NOT NULL DEFAULT false,
     sealed_secret   text,
     status          text NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+    -- A client that demands a signature must have something to verify against.
+    CONSTRAINT telemetry_client_signature_needs_secret
+        CHECK (NOT require_signature OR sealed_secret IS NOT NULL),
     created_at      timestamptz NOT NULL DEFAULT now(),
     revoked_at      timestamptz,
     UNIQUE (id, tenant_root_id),
     UNIQUE (publishable_key)
 );
+
+-- Supports the admin list query: filter on (business_id, tenant_root_id), order by
+-- created_at DESC, id DESC, LIMIT n. Without it the query scans and sorts every
+-- matching client despite the LIMIT.
+CREATE INDEX telemetry_client_list_idx
+    ON telemetry_client (business_id, tenant_root_id, created_at DESC, id DESC);
 
 CREATE TRIGGER telemetry_client_troot_immutable BEFORE UPDATE ON telemetry_client
     FOR EACH ROW EXECUTE FUNCTION support_tenant_root_immutable();
@@ -224,36 +239,55 @@ GRANT SELECT                 ON rollup_state          TO manyforge_app;
 -- Resolve a publishable key to its tenant scope. Returns zero rows for unknown OR revoked keys so
 -- the caller cannot distinguish them (no key-existence oracle).
 CREATE FUNCTION telemetry_resolve_client(p_key text)
-RETURNS TABLE (id uuid, business_id uuid, tenant_root_id uuid, kind text, sealed_secret text)
+RETURNS TABLE (id uuid, business_id uuid, tenant_root_id uuid, kind text,
+               require_signature boolean, sealed_secret text)
 LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-    SELECT c.id, c.business_id, c.tenant_root_id, c.kind, c.sealed_secret
+    SELECT c.id, c.business_id, c.tenant_root_id, c.kind, c.require_signature, c.sealed_secret
     FROM telemetry_client c
     WHERE c.publishable_key = p_key AND c.status = 'active' AND c.revoked_at IS NULL;
 $$;
 
--- Scope-reasserting batch insert: tenant_root_id / business_id come from the RESOLVED KEY, never
--- from the request body. ingested_at defaults to now() and is not settable by the caller.
-CREATE FUNCTION telemetry_ingest_analytics(
-    p_client_id uuid, p_business_id uuid, p_tenant_root_id uuid, p_events jsonb
-) RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE n int;
+-- Scope-reasserting batch insert. The key is RE-RESOLVED inside this function so the liveness
+-- check and the insert share one transaction: an admin revoking a client between the handler's
+-- auth lookup and the write must not leave a window where the revoked key still ingests.
+-- tenant_root_id / business_id therefore come from the row resolved HERE, never from the request
+-- body, and ingested_at falls to its now() default so a caller cannot steer partition placement.
+--
+-- Returns -1 when the key no longer resolves, which the caller maps to the same uniform 401 as an
+-- unknown key. A NULL/negative return is never a row count.
+CREATE FUNCTION telemetry_ingest_analytics(p_key text, p_events jsonb)
+RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE c record; n int;
 BEGIN
+    SELECT id, business_id, tenant_root_id INTO c
+    FROM telemetry_client
+    WHERE publishable_key = p_key AND status = 'active' AND revoked_at IS NULL
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN -1;
+    END IF;
     INSERT INTO analytics_event (tenant_root_id, business_id, client_id, occurred_at, name, props)
-    SELECT p_tenant_root_id, p_business_id, p_client_id,
+    SELECT c.tenant_root_id, c.business_id, c.id,
            e.occurred_at, e.name, coalesce(e.props, '{}'::jsonb)
     FROM jsonb_to_recordset(p_events) AS e(occurred_at timestamptz, name text, props jsonb);
     GET DIAGNOSTICS n = ROW_COUNT;
     RETURN n;
 END; $$;
 
-CREATE FUNCTION telemetry_ingest_crash(
-    p_client_id uuid, p_business_id uuid, p_tenant_root_id uuid, p_events jsonb
-) RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE n int;
+CREATE FUNCTION telemetry_ingest_crash(p_key text, p_events jsonb)
+RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE c record; n int;
 BEGIN
+    SELECT id, business_id, tenant_root_id INTO c
+    FROM telemetry_client
+    WHERE publishable_key = p_key AND status = 'active' AND revoked_at IS NULL
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN -1;
+    END IF;
     INSERT INTO crash_event (tenant_root_id, business_id, client_id, occurred_at,
                              platform, app_version, signature, payload)
-    SELECT p_tenant_root_id, p_business_id, p_client_id, e.occurred_at,
+    SELECT c.tenant_root_id, c.business_id, c.id, e.occurred_at,
            e.platform, e.app_version, e.signature, coalesce(e.payload, '{}'::jsonb)
     FROM jsonb_to_recordset(p_events)
         AS e(occurred_at timestamptz, platform text, app_version text, signature text, payload jsonb);
@@ -269,9 +303,18 @@ END; $$;
 -- occurred_at (what a report actually needs). Every touched bucket is RECOMPUTED in full and
 -- upserted with `= excluded.event_count` — never `= existing + excluded`. That makes a replayed or
 -- retried sweep a no-op and, for free, folds in late-arriving events landing in a closed bucket.
-CREATE FUNCTION rollup_analytics_daily(p_lag interval) RETURNS int
+-- p_overlap re-scans a trailing slice of already-swept time on every pass. This closes the
+-- straggler race: a write transaction that STARTED before the previous cutoff but COMMITTED after
+-- that sweep's snapshot carries an ingested_at at or below the old watermark, so a strictly
+-- forward-only window would skip it permanently and silently. Re-scanning is free precisely
+-- because the rollup recomputes buckets rather than incrementing them — reprocessing the same
+-- rows twice yields the same counts. A write transaction held open longer than
+-- (p_lag + p_overlap) could still be missed; ingest writes are single-statement inserts measured
+-- in milliseconds, so the default 30s + 5m is a very wide margin.
+CREATE FUNCTION rollup_analytics_daily(p_lag interval, p_overlap interval DEFAULT interval '5 minutes')
+RETURNS int
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE wm timestamptz; hi timestamptz; n int := 0;
+DECLARE wm timestamptz; lo timestamptz; hi timestamptz; n int := 0;
 BEGIN
     -- Transaction-scoped advisory lock ⇒ multi-replica safe with no leader election.
     PERFORM pg_advisory_xact_lock(hashtext('rollup_analytics_daily'));
@@ -284,12 +327,14 @@ BEGIN
     END IF;
     hi := now() - p_lag;
     IF hi <= wm THEN RETURN 0; END IF;
+    -- Read from BEFORE the watermark (see p_overlap note above); advance it to hi regardless.
+    lo := wm - p_overlap;
 
     WITH touched AS (
         SELECT DISTINCT tenant_root_id, business_id, client_id,
                (occurred_at AT TIME ZONE 'UTC')::date AS bucket_date
         FROM analytics_event
-        WHERE ingested_at > wm AND ingested_at <= hi
+        WHERE ingested_at > lo AND ingested_at <= hi
     ), recomputed AS (
         SELECT t.tenant_root_id, t.business_id, t.client_id, t.bucket_date, count(*) AS event_count
         FROM touched t
@@ -319,16 +364,16 @@ END; $$;
 REVOKE ALL ON FUNCTION create_due_partitions()                          FROM PUBLIC;
 REVOKE ALL ON FUNCTION drop_expired_partitions()                        FROM PUBLIC;
 REVOKE ALL ON FUNCTION telemetry_resolve_client(text)                   FROM PUBLIC;
-REVOKE ALL ON FUNCTION telemetry_ingest_analytics(uuid,uuid,uuid,jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION telemetry_ingest_crash(uuid,uuid,uuid,jsonb)     FROM PUBLIC;
-REVOKE ALL ON FUNCTION rollup_analytics_daily(interval)                 FROM PUBLIC;
+REVOKE ALL ON FUNCTION telemetry_ingest_analytics(text,jsonb)          FROM PUBLIC;
+REVOKE ALL ON FUNCTION telemetry_ingest_crash(text,jsonb)              FROM PUBLIC;
+REVOKE ALL ON FUNCTION rollup_analytics_daily(interval,interval)       FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION create_due_partitions()                          TO manyforge_app;
 GRANT EXECUTE ON FUNCTION drop_expired_partitions()                        TO manyforge_app;
 GRANT EXECUTE ON FUNCTION telemetry_resolve_client(text)                   TO manyforge_app;
-GRANT EXECUTE ON FUNCTION telemetry_ingest_analytics(uuid,uuid,uuid,jsonb) TO manyforge_app;
-GRANT EXECUTE ON FUNCTION telemetry_ingest_crash(uuid,uuid,uuid,jsonb)     TO manyforge_app;
-GRANT EXECUTE ON FUNCTION rollup_analytics_daily(interval)                 TO manyforge_app;
+GRANT EXECUTE ON FUNCTION telemetry_ingest_analytics(text,jsonb)          TO manyforge_app;
+GRANT EXECUTE ON FUNCTION telemetry_ingest_crash(text,jsonb)              TO manyforge_app;
+GRANT EXECUTE ON FUNCTION rollup_analytics_daily(interval,interval)       TO manyforge_app;
 
 -- ============================================================================
 -- 9. Permission catalog

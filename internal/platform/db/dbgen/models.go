@@ -1180,16 +1180,17 @@ type Secret struct {
 }
 
 type TelemetryClient struct {
-	ID             uuid.UUID          `json:"id"`
-	BusinessID     uuid.UUID          `json:"business_id"`
-	TenantRootID   uuid.UUID          `json:"tenant_root_id"`
-	Kind           string             `json:"kind"`
-	Name           string             `json:"name"`
-	PublishableKey string             `json:"publishable_key"`
-	SealedSecret   *string            `json:"sealed_secret"`
-	Status         string             `json:"status"`
-	CreatedAt      time.Time          `json:"created_at"`
-	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	TenantRootID     uuid.UUID          `json:"tenant_root_id"`
+	Kind             string             `json:"kind"`
+	Name             string             `json:"name"`
+	PublishableKey   string             `json:"publishable_key"`
+	RequireSignature bool               `json:"require_signature"`
+	SealedSecret     *string            `json:"sealed_secret"`
+	Status           string             `json:"status"`
+	CreatedAt        time.Time          `json:"created_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type Ticket struct {

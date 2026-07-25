@@ -28,15 +28,18 @@ const (
 
 // Client is a registered telemetry source (an app for crash, a site for analytics).
 type Client struct {
-	ID             uuid.UUID  `json:"id"`
-	BusinessID     uuid.UUID  `json:"business_id"`
-	TenantRootID   uuid.UUID  `json:"tenant_root_id"`
-	Kind           string     `json:"kind"`
-	Name           string     `json:"name"`
-	PublishableKey string     `json:"publishable_key"`
-	Status         string     `json:"status"`
-	CreatedAt      time.Time  `json:"created_at"`
-	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	ID             uuid.UUID `json:"id"`
+	BusinessID     uuid.UUID `json:"business_id"`
+	TenantRootID   uuid.UUID `json:"tenant_root_id"`
+	Kind           string    `json:"kind"`
+	Name           string    `json:"name"`
+	PublishableKey string    `json:"publishable_key"`
+	Status         string    `json:"status"`
+	// RequireSignature reports whether ingest demands an HMAC for this client. False (the default)
+	// is the embeddable-SDK mode: the mfk_ key alone authenticates.
+	RequireSignature bool       `json:"require_signature"`
+	CreatedAt        time.Time  `json:"created_at"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
 	// HasSecret reports whether a signing secret exists, without exposing it.
 	HasSecret bool `json:"has_secret"`
 	// Secret is the plaintext 'mfs_' signing secret. Populated ONLY by CreateClient, on the
@@ -72,7 +75,9 @@ func toClient(c dbgen.TelemetryClient) Client {
 		PublishableKey: c.PublishableKey,
 		Status:         c.Status,
 		CreatedAt:      c.CreatedAt,
-		HasSecret:      c.SealedSecret != nil,
+
+		RequireSignature: c.RequireSignature,
+		HasSecret:        c.SealedSecret != nil,
 	}
 	if c.RevokedAt.Valid {
 		t := c.RevokedAt.Time

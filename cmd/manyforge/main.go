@@ -795,12 +795,26 @@ func main() {
 		go outboundDispatcher.Run(workerCtx)
 	}
 
-	// manyforge-p20 time-series workers. Maintenance sweeps immediately on start (a fresh deploy
-	// must not wait an hour for today's partition to exist) and hourly thereafter; the rollup
-	// sweeps every minute. Both are safe on every replica — the underlying SECURITY DEFINER
-	// functions take transaction-scoped advisory locks, so a concurrent sweep is a no-op rather
-	// than a race.
-	go (&timeseries.MaintenanceWorker{DB: database, Logger: logger, Metrics: metrics}).Run(workerCtx)
+	// manyforge-p20 time-series workers. The FIRST maintenance sweep runs SYNCHRONOUSLY, before
+	// the server starts accepting traffic: on a fresh database, immediately after a migration, or
+	// right at a partition boundary, an ingest request that arrives before today's partition
+	// exists would fail with a 500. Starting the worker asynchronously and serving immediately
+	// leaves exactly that window open.
+	//
+	// A failure here is logged loudly but does NOT abort boot — partitions are pre-created several
+	// periods ahead, so an existing deployment has days of slack, and taking the whole API down
+	// over a transient DB hiccup would be a worse outcome than a degraded ingest path.
+	partitionMaint := &timeseries.MaintenanceWorker{DB: database, Logger: logger, Metrics: metrics}
+	if created, dropped, perr := partitionMaint.SweepOnce(workerCtx); perr != nil {
+		logger.Error("initial partition sweep failed; ingest may 500 until the next sweep succeeds",
+			"err", perr)
+	} else {
+		logger.Info("initial partition sweep", "created", created, "dropped", dropped)
+	}
+
+	// Both workers are safe on every replica — the underlying SECURITY DEFINER functions take
+	// transaction-scoped advisory locks, so a concurrent sweep is a no-op rather than a race.
+	go partitionMaint.Run(workerCtx)
 	go (&timeseries.RollupWorker{DB: database, Logger: logger, Metrics: metrics}).Run(workerCtx)
 
 	// US4 approvals expire sweep: every 60s, expire stale pending approval_items across

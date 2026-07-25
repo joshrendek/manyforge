@@ -33,6 +33,22 @@ type RollupWorker struct {
 	// transactions that committed slightly out of clock order are not skipped past by the
 	// watermark. Raising it trades rollup freshness for a wider safety margin.
 	Lag time.Duration
+	// Overlap defaults to 5m and re-scans a trailing slice of already-swept time on every pass.
+	// It closes the straggler race: a write that STARTED before the previous cutoff but COMMITTED
+	// after that sweep's snapshot carries an ingested_at at or below the old watermark, so a
+	// strictly forward-only window would skip it permanently and silently. Re-scanning costs
+	// nothing because the rollup recomputes buckets rather than incrementing them.
+	Overlap time.Duration
+}
+
+// overlap returns the configured trailing re-scan window, defaulting to 5m. Zero is not treated
+// as "no overlap" — a caller that wants none must set a negative value, so forgetting to set the
+// field cannot silently reintroduce the straggler race.
+func (w *RollupWorker) overlap() time.Duration {
+	if w.Overlap == 0 {
+		return 5 * time.Minute
+	}
+	return max(w.Overlap, 0)
 }
 
 func (w *RollupWorker) withDefaults() {
@@ -48,15 +64,14 @@ func (w *RollupWorker) withDefaults() {
 }
 
 // SweepOnce advances the analytics daily rollup by one window and returns the number of bucket
-// rows written. Lag is passed explicitly rather than read from the struct so callers (and tests)
-// can sweep with zero lag.
+// rows written. A negative Lag is clamped to zero, which lets a test sweep right up to now().
 func (w *RollupWorker) SweepOnce(ctx context.Context) (int, error) {
 	lag := max(w.Lag, 0)
 	var n int
 	err := w.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			"SELECT rollup_analytics_daily(make_interval(secs => $1::int))",
-			int(lag.Seconds())).Scan(&n)
+			"SELECT rollup_analytics_daily(make_interval(secs => $1::int), make_interval(secs => $2::int))",
+			int(lag.Seconds()), int(w.overlap().Seconds())).Scan(&n)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("rollup analytics daily: %w", err)

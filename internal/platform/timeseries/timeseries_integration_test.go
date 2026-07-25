@@ -251,17 +251,44 @@ func TestRollup_ConcurrentSweepsAreSafe(t *testing.T) {
 	}
 }
 
-// Concurrent partition maintenance from two replicas must not race on DDL.
+// Concurrent partition maintenance from two replicas must not race on DDL — and must still do the
+// work. Asserting only "no error" would pass if both sweeps silently created nothing.
 func TestPartitionMaintenance_ConcurrentSweepsAreSafe(t *testing.T) {
 	ctx, tdb := start(t)
 	w := &timeseries.MaintenanceWorker{DB: tdb.App}
-	errCh := make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		go func() { _, _, err := w.SweepOnce(ctx); errCh <- err }()
+
+	type res struct {
+		created int
+		err     error
 	}
+	resCh := make(chan res, 2)
 	for i := 0; i < 2; i++ {
-		if err := <-errCh; err != nil {
-			t.Fatalf("concurrent maintenance sweep %d: %v", i, err)
+		go func() { c, _, err := w.SweepOnce(ctx); resCh <- res{c, err} }()
+	}
+	total := 0
+	for i := 0; i < 2; i++ {
+		r := <-resCh
+		if r.err != nil {
+			t.Fatalf("concurrent maintenance sweep %d: %v", i, r.err)
+		}
+		total += r.created
+	}
+	// Exactly one sweep does the work; the other finds everything present. Between them the full
+	// set is created exactly once — never twice, never zero times.
+	if total != 8 {
+		t.Fatalf("concurrent sweeps created %d partitions in total, want exactly 8", total)
+	}
+	// And the partitions genuinely exist.
+	for _, name := range []string{
+		todayPartition("analytics_event"),
+		fmt.Sprintf("crash_event_%s", time.Now().UTC().Format("200601")),
+	} {
+		var exists bool
+		if err := tdb.Super.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", name).Scan(&exists); err != nil {
+			t.Fatalf("check %s: %v", name, err)
+		}
+		if !exists {
+			t.Fatalf("%s was not created by the concurrent sweeps", name)
 		}
 	}
 }

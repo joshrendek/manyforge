@@ -33,8 +33,9 @@ import (
 // global request-size middleware — defense in depth means each ingress helper bounds its own body.
 const maxIngestBytes int64 = 256 << 10
 
-// maxBatchEvents bounds how many events one request may carry, so a small compressed body cannot
-// expand into an unbounded insert.
+// maxBatchEvents bounds how many events one request may carry. Enforced by REJECTING an oversize
+// batch in the handler, not by truncating it: a truncating cap would report accepted=1000,
+// dropped=0 for a 1001-event request, so the caller would believe everything landed.
 const maxBatchEvents = 1000
 
 // Clock skew bounds on the client-supplied occurred_at. Future events are clamped to now; events
@@ -65,11 +66,12 @@ type PublicHandler struct {
 
 // resolvedClient is the tenant scope a publishable key maps to.
 type resolvedClient struct {
-	id           uuid.UUID
-	businessID   uuid.UUID
-	tenantRootID uuid.UUID
-	kind         string
-	sealedSecret *string
+	id               uuid.UUID
+	businessID       uuid.UUID
+	tenantRootID     uuid.UUID
+	kind             string
+	requireSignature bool
+	sealedSecret     *string
 }
 
 // PublicRoutes mounts the ingest endpoint on the principal-less ingress group.
@@ -97,14 +99,10 @@ func (h *PublicHandler) unauthorized(w http.ResponseWriter) {
 func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 
-	// Rate limit BEFORE touching the database, so an invalid-key flood cannot be used to drive
-	// query load. Per-IP first: it applies even when the key is garbage.
+	// Per-IP first: it is the only limiter that applies when the key is garbage, and it is keyed
+	// by a value an attacker cannot mint freely.
 	ip := ratelimit.ClientIP(r, h.TrustedProxies)
 	if h.PerIP != nil && !h.PerIP.Allow(ip) {
-		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
-		return
-	}
-	if h.PerKey != nil && !h.PerKey.Allow(key) {
 		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
 		return
 	}
@@ -129,11 +127,27 @@ func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A client that carries a signing secret must present a valid signature. Fail closed: if the
-	// secret exists but cannot be opened, reject rather than silently downgrading to anonymous.
-	if client.sealedSecret != nil {
-		if h.Sealer == nil {
-			h.Logger.ErrorContext(r.Context(), "signed telemetry client but no sealer configured",
+	// Per-key limiting happens only AFTER the key resolves to a registered client, and is keyed by
+	// the client's id rather than the caller-supplied string. TokenBucket never evicts, so keying
+	// it on unvalidated input would let an attacker mint unlimited distinct bucket entries with
+	// unlimited random keys and grow the heap without bound. Keyed on resolved ids, the bucket map
+	// is bounded by the number of registered clients.
+	if h.PerKey != nil && !h.PerKey.Allow(client.id.String()) {
+		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
+		return
+	}
+
+	// Signature handling is driven by the client's OPT-IN require_signature flag, never by the mere
+	// presence of a secret. Gating on "has a secret" would force every embeddable mfk_ SDK key into
+	// signed mode the moment a master key is configured for the deployment — and the mfs_ secret
+	// must never ship inside a client binary, so those clients would simply stop working.
+	//
+	// A signing client fails CLOSED: if the secret is missing or cannot be opened, reject rather
+	// than silently downgrading to anonymous. A non-signing client that nevertheless sends a
+	// signature still has it verified, so a stray or forged header can never be a free pass.
+	if client.requireSignature || (client.sealedSecret != nil && r.Header.Get("X-Telemetry-Signature") != "") {
+		if client.sealedSecret == nil || h.Sealer == nil {
+			h.Logger.ErrorContext(r.Context(), "signature required but no secret/sealer available",
 				"client_id", client.id)
 			h.unauthorized(w)
 			return
@@ -158,6 +172,14 @@ func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject an oversize batch rather than silently truncating it. Truncation would report
+	// accepted=1000, dropped=0 for 1001 events — the caller would believe everything landed. This
+	// also keeps the behavior identical to the contract's maxItems.
+	if len(req.Analytics) > maxBatchEvents || len(req.Crash) > maxBatchEvents {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "batch_too_large"})
+		return
+	}
+
 	now := time.Now().UTC()
 	var accepted, dropped int
 	switch client.kind {
@@ -165,13 +187,13 @@ func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		events, d := sanitizeAnalytics(req.Analytics, now)
 		dropped = d
 		if len(events) > 0 {
-			accepted, err = h.insertAnalytics(r.Context(), client, events)
+			accepted, err = h.insertAnalytics(r.Context(), key, events)
 		}
 	case KindCrash:
 		events, d := sanitizeCrash(req.Crash, now)
 		dropped = d
 		if len(events) > 0 {
-			accepted, err = h.insertCrash(r.Context(), client, events)
+			accepted, err = h.insertCrash(r.Context(), key, events)
 		}
 	default:
 		h.unauthorized(w)
@@ -183,6 +205,12 @@ func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "ingest_failed"})
 		return
 	}
+	// -1 ⇒ the key stopped resolving between the auth lookup and the write (revoked mid-request).
+	// Same uniform 401 as an unknown key.
+	if accepted < 0 {
+		h.unauthorized(w)
+		return
+	}
 
 	h.Metrics.Add(observability.MetricTelemetryIngestAccepted, int64(accepted))
 	httpx.WriteJSON(w, http.StatusAccepted, ingestResponse{Accepted: accepted, Dropped: dropped})
@@ -192,9 +220,9 @@ func (h *PublicHandler) resolve(ctx context.Context, key string) (resolvedClient
 	var c resolvedClient
 	err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			`SELECT id, business_id, tenant_root_id, kind, sealed_secret
+			`SELECT id, business_id, tenant_root_id, kind, require_signature, sealed_secret
 			   FROM telemetry_resolve_client($1)`, key,
-		).Scan(&c.id, &c.businessID, &c.tenantRootID, &c.kind, &c.sealedSecret)
+		).Scan(&c.id, &c.businessID, &c.tenantRootID, &c.kind, &c.requireSignature, &c.sealedSecret)
 	})
 	if err != nil {
 		return resolvedClient{}, err
@@ -202,30 +230,29 @@ func (h *PublicHandler) resolve(ctx context.Context, key string) (resolvedClient
 	return c, nil
 }
 
-func (h *PublicHandler) insertAnalytics(ctx context.Context, c resolvedClient, events []AnalyticsEvent) (int, error) {
+// insertAnalytics passes the KEY, not the already-resolved ids: the SQL function re-resolves it in
+// the same transaction as the insert, so a client revoked between the auth lookup and the write
+// cannot slip a final batch through. Returns -1 when the key no longer resolves.
+func (h *PublicHandler) insertAnalytics(ctx context.Context, key string, events []AnalyticsEvent) (int, error) {
 	payload, err := json.Marshal(events)
 	if err != nil {
 		return 0, err
 	}
 	var n int
 	err = h.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			"SELECT telemetry_ingest_analytics($1,$2,$3,$4)",
-			c.id, c.businessID, c.tenantRootID, payload).Scan(&n)
+		return tx.QueryRow(ctx, "SELECT telemetry_ingest_analytics($1,$2)", key, payload).Scan(&n)
 	})
 	return n, err
 }
 
-func (h *PublicHandler) insertCrash(ctx context.Context, c resolvedClient, events []CrashEvent) (int, error) {
+func (h *PublicHandler) insertCrash(ctx context.Context, key string, events []CrashEvent) (int, error) {
 	payload, err := json.Marshal(events)
 	if err != nil {
 		return 0, err
 	}
 	var n int
 	err = h.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			"SELECT telemetry_ingest_crash($1,$2,$3,$4)",
-			c.id, c.businessID, c.tenantRootID, payload).Scan(&n)
+		return tx.QueryRow(ctx, "SELECT telemetry_ingest_crash($1,$2)", key, payload).Scan(&n)
 	})
 	return n, err
 }
@@ -247,9 +274,6 @@ func tooOld(occurred, now time.Time) bool {
 }
 
 func sanitizeAnalytics(in []AnalyticsEvent, now time.Time) ([]AnalyticsEvent, int) {
-	if len(in) > maxBatchEvents {
-		in = in[:maxBatchEvents]
-	}
 	out := make([]AnalyticsEvent, 0, len(in))
 	dropped := 0
 	for _, e := range in {
@@ -264,9 +288,6 @@ func sanitizeAnalytics(in []AnalyticsEvent, now time.Time) ([]AnalyticsEvent, in
 }
 
 func sanitizeCrash(in []CrashEvent, now time.Time) ([]CrashEvent, int) {
-	if len(in) > maxBatchEvents {
-		in = in[:maxBatchEvents]
-	}
 	out := make([]CrashEvent, 0, len(in))
 	dropped := 0
 	for _, e := range in {
