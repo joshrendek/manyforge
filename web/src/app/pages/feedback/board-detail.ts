@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnInit, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Board, FeedbackService, IngestKey, Post } from '../../core/feedback.service';
@@ -123,6 +123,7 @@ import { ToastService } from '../../ui/toast/toast.service';
             </div>
             <div style="display:flex;align-items:flex-end">
               <button
+                #createKeyBtn
                 type="submit"
                 class="mf-btn mf-btn-primary mf-btn-sm"
                 data-testid="key-create"
@@ -134,9 +135,17 @@ import { ToastService } from '../../ui/toast/toast.service';
           </form>
 
           <!-- One-time verification secret: shown ONLY right after create-key returns one, and
-               only from in-memory state (never re-fetched — the API never returns it again). -->
+               only from in-memory state (never re-fetched — the API never returns it again).
+               role="status"/aria-live="polite" so screen-reader users are told it appeared —
+               "polite" (not "alert") because it's informational, not an interruption. -->
           @if (createdSecret(); as secret) {
-            <div class="secret-once" data-testid="key-secret-once">
+            <div
+              class="secret-once"
+              data-testid="key-secret-once"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <div class="secret-once-head">
                 <mf-status-pill tone="warn" label="Shown once" />
                 <button
@@ -422,8 +431,12 @@ import { ToastService } from '../../ui/toast/toast.service';
       }
       .secret-once-value code {
         flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        min-width: 0;
+        /* The secret must stay fully readable on narrow screens (this is the only place it's
+           ever shown) — wrap/break instead of the ellipsis truncation used for the always-visible
+           publishable key, which the admin can re-copy any time. */
+        word-break: break-all;
+        overflow-wrap: anywhere;
         font-family: var(--mf-mono, ui-monospace, monospace);
         background: var(--mf-surface-inset);
         border: 1px solid var(--mf-border);
@@ -459,6 +472,11 @@ export class FeedbackBoardDetailComponent implements OnInit {
   // exactly once (on create); it is never re-fetchable. Cleared by dismissSecret() once the
   // admin has copied it — never repopulated from a reload/list response.
   createdSecret = signal<string | null>(null);
+
+  // Persistent focus target for when the secret panel is dismissed (mouse or keyboard) — the
+  // panel itself is removed from the DOM at that point, so focus must be moved somewhere that
+  // stays on screen rather than being dropped to <body>.
+  private createKeyBtn = viewChild<ElementRef<HTMLButtonElement>>('createKeyBtn');
 
   // Board-settings + create-form fields.
   name = '';
@@ -637,8 +655,11 @@ export class FeedbackBoardDetailComponent implements OnInit {
 
   // Dismisses the one-time secret panel. The secret is not persisted anywhere else in
   // component state, so once dismissed it cannot be shown again without creating a new key.
+  // The panel is removed from the DOM as a result, so restore focus to the "Create key" button
+  // it sat below — otherwise focus silently drops to <body> for keyboard/screen-reader users.
   dismissSecret(): void {
     this.createdSecret.set(null);
+    this.createKeyBtn()?.nativeElement.focus();
   }
 
   copySecret(secret: string): void {
