@@ -15,18 +15,30 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/manyforge/manyforge/internal/feedback"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
+	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
 
 // fbSeed is a seeded tenant + owner principal authorizing RLS for the feedback tests.
@@ -41,8 +53,17 @@ type fbSeed struct {
 // db.WithPrincipal authorizes it. Seeding runs as the RLS-exempt superuser.
 func seedFeedbackTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) fbSeed {
 	t.Helper()
+	return seedFeedbackTenantPool(ctx, t, tdb.Super)
+}
+
+// seedFeedbackTenantPool is seedFeedbackTenant's implementation against a raw superuser pool
+// rather than a *testdb.TestDB, so it can also seed
+// TestFeedbackVerifiedIdentityBackfillMigration0104's version-capped test-local Postgres, which
+// cannot use testdb.Start (testdb.Start always migrates straight to HEAD; see that test).
+func seedFeedbackTenantPool(ctx context.Context, t *testing.T, super *pgxpool.Pool) fbSeed {
+	t.Helper()
 	var ownerRole uuid.UUID
-	if err := tdb.Super.QueryRow(ctx,
+	if err := super.QueryRow(ctx,
 		"SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'").Scan(&ownerRole); err != nil {
 		t.Fatalf("preset owner role: %v", err)
 	}
@@ -50,7 +71,7 @@ func seedFeedbackTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) f
 	acctID := uuid.New()
 	email := "fb-owner-" + s.businessID.String() + "@x.test"
 
-	tx, err := tdb.Super.Begin(ctx)
+	tx, err := super.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin seed: %v", err)
 	}
@@ -531,11 +552,12 @@ func TestFeedbackPublicSignatureVerification(t *testing.T) {
 	})
 }
 
-// TestFeedbackPublicFailClosedMatrix asserts the three ways a signature can be unverifiable all
-// fail closed (401), never silently falling back to anonymous: no Sealer configured on the
-// handler, the configured Sealer can't decrypt the stored secret (wrong master key), and — the
-// one case that must NOT fail closed — a signature over a key whose sealed_secret is NULL
-// (verified tier was never enabled for that key) is treated as anonymous and still succeeds.
+// TestFeedbackPublicFailClosedMatrix asserts the signature-verification matrix: two of the three
+// ways a signature can be unverifiable fail closed (401), never silently falling back to
+// anonymous — no Sealer configured on the handler, and the configured Sealer can't decrypt the
+// stored secret (wrong master key). The third case must NOT fail closed: a signature over a key
+// whose sealed_secret is NULL (verified tier was never enabled for that key) has nothing to
+// verify against, so it degrades to anonymous and the submit still succeeds (201).
 func TestFeedbackPublicFailClosedMatrix(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
@@ -871,10 +893,12 @@ func TestFeedbackIdempotencyTableUnreachableByPrincipal(t *testing.T) {
 // the row shape the backfill's `NOT IN (SELECT id::text FROM principal)` clause excludes) is
 // untouched and still cannot be double-voted through the authenticated Service.Vote path.
 //
-// LIMITATION: testdb.Start always runs every migration (including 0104) against a fresh,
-// empty database before any test code executes, so there is no way in this harness to seed
-// genuinely pre-0104 rows and observe the backfill's UPDATE statements execute against them.
-// This test asserts the invariant instead of the migration step itself; see task-10-report.md.
+// NOTE: testdb.Start (used by every other test in this file) always runs every migration
+// (including 0104) against a fresh, empty database before any test code executes, so it cannot
+// seed genuinely pre-0104 rows — this test instead asserts the resulting a:/v: namespace
+// invariant end-to-end through the public HTTP surface. TestFeedbackVerifiedIdentityBackfillMigration0104
+// below exercises migration 0104's actual backfill UPDATE statements against real pre-0104 rows,
+// via a version-capped test-local Postgres + migrator independent of testdb.Start.
 func TestFeedbackVerifiedIdentityNamespaceInvariant(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
@@ -965,5 +989,390 @@ func TestFeedbackVerifiedIdentityNamespaceInvariant(t *testing.T) {
 	}
 	if internalIdentity != seed.principalID.String() {
 		t.Fatalf("internal vote voter_identity = %q, want raw principal UUID %q (untouched by a:/v: namespacing)", internalIdentity, seed.principalID.String())
+	}
+}
+
+// --- authenticated-surface coverage (saz.5 gap-fill) --------------------------------------
+
+// TestFeedbackCreateKeySecretWriteOnceOverHTTP exercises the create-only DTO split (handler.go's
+// createIngestKeyResp vs ingestKeyResp) as a security boundary over real HTTP, not just the Go
+// struct shape: CreateIngestKey's response is the ONLY place the plaintext fbs_ secret can ever
+// appear on the wire. List and revoke are wired through ingestKeyResp, which has no Secret field,
+// so this proves list/get/revoke are structurally unable to leak the plaintext — or the sealed
+// blob persisted alongside it.
+func TestFeedbackCreateKeySecretWriteOnceOverHTTP(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedFeedbackTenant(ctx, t, tdb)
+	sealer := newTestSealer(t, 0x88)
+	svc := &feedback.Service{DB: tdb.App, Sealer: sealer}
+	board, err := svc.CreateBoard(ctx, seed.principalID, seed.businessID, feedback.BoardInput{Name: "Secrets"})
+	if err != nil {
+		t.Fatalf("CreateBoard: %v", err)
+	}
+
+	h := feedback.NewHandler(svc)
+	r := chi.NewRouter()
+	// Stand in for the real auth middleware (mirrors httpx.WithPrincipal's doc comment: "for
+	// handler tests that bypass the auth middleware").
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), seed.principalID)))
+		})
+	})
+	h.ReadRoutes(r)
+	h.WriteRoutes(r)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	createPath := fmt.Sprintf("/businesses/%s/feedback/boards/%s/keys", seed.businessID, board.ID)
+	createResp, err := http.Post(srv.URL+createPath, "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("POST create key: %v", err)
+	}
+	createRaw, _ := io.ReadAll(createResp.Body)
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create key code = %d, body=%s", createResp.StatusCode, createRaw)
+	}
+	if n := strings.Count(string(createRaw), "fbs_"); n != 1 {
+		t.Fatalf("create response contains %d occurrences of the fbs_ secret prefix, want exactly 1: %s", n, createRaw)
+	}
+	var createOut map[string]any
+	if err := json.Unmarshal(createRaw, &createOut); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	secret, _ := createOut["secret"].(string)
+	if !strings.HasPrefix(secret, "fbs_") || createOut["has_secret"] != true {
+		t.Fatalf("create response = %v, want a fbs_ secret and has_secret=true", createOut)
+	}
+	keyID, _ := createOut["id"].(string)
+	if keyID == "" {
+		t.Fatalf("create response missing id: %v", createOut)
+	}
+
+	// The sealed blob persisted in the DB must also never appear on the wire — assert against it
+	// directly (not just the plaintext) so a future "helpfully echo the encrypted value" bug is
+	// caught too.
+	var sealedSecret string
+	if err := tdb.Super.QueryRow(ctx, "SELECT sealed_secret FROM feedback_ingest_key WHERE id = $1", keyID).Scan(&sealedSecret); err != nil {
+		t.Fatalf("read sealed_secret: %v", err)
+	}
+	if sealedSecret == "" {
+		t.Fatalf("expected a non-empty sealed_secret with a sealer configured")
+	}
+
+	assertNoSecretLeak := func(t *testing.T, label string, raw []byte) {
+		t.Helper()
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("%s response leaks the plaintext secret: %s", label, raw)
+		}
+		if strings.Contains(string(raw), "fbs_") {
+			t.Fatalf("%s response contains the fbs_ secret prefix: %s", label, raw)
+		}
+		if strings.Contains(string(raw), sealedSecret) {
+			t.Fatalf("%s response leaks the sealed secret blob: %s", label, raw)
+		}
+	}
+
+	t.Run("list -> no secret, has_secret=true", func(t *testing.T) {
+		listPath := fmt.Sprintf("/businesses/%s/feedback/boards/%s/keys", seed.businessID, board.ID)
+		resp, err := http.Get(srv.URL + listPath)
+		if err != nil {
+			t.Fatalf("GET list keys: %v", err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list keys code = %d, body=%s", resp.StatusCode, raw)
+		}
+		assertNoSecretLeak(t, "list", raw)
+		var out struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode list response: %v", err)
+		}
+		if len(out.Items) != 1 || out.Items[0]["has_secret"] != true {
+			t.Fatalf("list items = %v, want 1 item with has_secret=true", out.Items)
+		}
+	})
+
+	t.Run("revoke -> no secret, has_secret=true", func(t *testing.T) {
+		revokePath := fmt.Sprintf("/businesses/%s/feedback/keys/%s/revoke", seed.businessID, keyID)
+		resp, err := http.Post(srv.URL+revokePath, "application/json", nil)
+		if err != nil {
+			t.Fatalf("POST revoke key: %v", err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("revoke key code = %d, body=%s", resp.StatusCode, raw)
+		}
+		assertNoSecretLeak(t, "revoke", raw)
+		var out map[string]any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode revoke response: %v", err)
+		}
+		if out["has_secret"] != true || out["status"] != "revoked" {
+			t.Fatalf("revoke response = %v, want has_secret=true status=revoked", out)
+		}
+	})
+}
+
+// TestFeedbackPublicAuthorFilterNamespaceIsolation asserts the read-path author filter is
+// tier-namespaced exactly like the write path: a signed GET for a verified author's raw identity
+// returns only that author's post (with identity_verified=true), while an UNSIGNED GET for the
+// SAME raw identity string resolves into the disjoint a: namespace and returns nothing — the
+// filter cannot be used to discover a verified author's posts by guessing their raw identity.
+func TestFeedbackPublicAuthorFilterNamespaceIsolation(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedFeedbackTenant(ctx, t, tdb)
+	sealer := newTestSealer(t, 0x77)
+	svc := &feedback.Service{DB: tdb.App, Sealer: sealer}
+	board, err := svc.CreateBoard(ctx, seed.principalID, seed.businessID, feedback.BoardInput{Name: "Authors", IsPublic: true})
+	if err != nil {
+		t.Fatalf("CreateBoard: %v", err)
+	}
+	key, err := svc.CreateIngestKey(ctx, seed.principalID, seed.businessID, board.ID, nil)
+	if err != nil {
+		t.Fatalf("CreateIngestKey: %v", err)
+	}
+	h := feedback.NewPublicHandler(tdb.App, discardLogger(), sealer)
+	srv := startPublicServer(t, h)
+	submitPath := "/feedback/public/" + key.PublishableKey + "/posts"
+
+	// An anon post from an unrelated author — proves the author filter isn't just "everything on
+	// the board".
+	anonBody := marshalBody(t, map[string]any{"title": "unrelated anon", "author_identity": "someone-else"})
+	anonCode, _ := doPublicRequest(t, http.MethodPost, srv.URL+submitPath, anonBody, nil)
+	if anonCode != http.StatusCreated {
+		t.Fatalf("anon submit code = %d, want 201", anonCode)
+	}
+
+	// A verified (signed) post from the target author.
+	verBody := marshalBody(t, map[string]any{"title": "verified author post", "author_identity": "verified-author-1"})
+	verHdr := feedbackSignHeader(key.Secret, time.Now().Unix(), http.MethodPost, submitPath, verBody)
+	verCode, verOut := doPublicRequest(t, http.MethodPost, srv.URL+submitPath, verBody, map[string]string{"X-Feedback-Signature": verHdr})
+	if verCode != http.StatusCreated || verOut["identity_verified"] != true {
+		t.Fatalf("verified submit code=%d out=%v", verCode, verOut)
+	}
+	verPostID, _ := verOut["id"].(string)
+
+	listPath := "/feedback/public/" + key.PublishableKey + "/posts"
+
+	t.Run("signed list, author=verified raw id -> only the verified post, identity_verified=true", func(t *testing.T) {
+		target := listPath + "?author=verified-author-1"
+		hdr := feedbackSignHeader(key.Secret, time.Now().Unix(), http.MethodGet, target, nil)
+		code, out := doPublicRequest(t, http.MethodGet, srv.URL+target, nil, map[string]string{"X-Feedback-Signature": hdr})
+		items, _ := out["items"].([]any)
+		if code != http.StatusOK || len(items) != 1 {
+			t.Fatalf("signed author-filtered list code=%d items=%v, want exactly 1", code, items)
+		}
+		got, _ := items[0].(map[string]any)
+		if got["id"] != verPostID || got["identity_verified"] != true {
+			t.Fatalf("signed author-filtered list item = %v, want id=%s identity_verified=true", got, verPostID)
+		}
+	})
+
+	t.Run("unsigned list, author=SAME raw id -> namespace isolation, returns nothing", func(t *testing.T) {
+		target := listPath + "?author=verified-author-1"
+		code, out := doPublicRequest(t, http.MethodGet, srv.URL+target, nil, nil)
+		items, _ := out["items"].([]any)
+		if code != http.StatusOK || len(items) != 0 {
+			t.Fatalf("unsigned author-filtered list (same raw id) code=%d items=%v, want 0 (a:/v: namespace isolation)", code, items)
+		}
+	})
+}
+
+// --- migration 0104 backfill coverage (version-capped test-local migrator) -----------------
+
+// startCappedPostgresContainer launches a throwaway Postgres container independent of
+// testdb.Start (which always migrates straight to HEAD via m.Up(), leaving no legacy rows) and
+// returns its host/port plus a *migrate.Migrate the caller can step to explicit versions with
+// m.Migrate(n). This is the hook TestFeedbackVerifiedIdentityBackfillMigration0104 needs to seed
+// genuinely pre-0104 rows and then observe migration 0104's backfill UPDATE statements run
+// against them — something testdb.Start cannot do since it exposes no version-capping hook.
+func startCappedPostgresContainer(ctx context.Context, t *testing.T) (host, port string, m *migrate.Migrate) {
+	t.Helper()
+	if os.Getenv("DOCKER_HOST") == "" {
+		if out, err := exec.Command("docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}").Output(); err == nil {
+			if h := strings.TrimSpace(string(out)); h != "" {
+				_ = os.Setenv("DOCKER_HOST", h)
+			}
+		}
+	}
+	if os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
+		_ = os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+	}
+
+	ctr, err := postgres.Run(ctx, "postgres:16",
+		postgres.WithDatabase("manyforge"),
+		postgres.WithUsername("manyforge"),
+		postgres.WithPassword("devpassword"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(90*time.Second)),
+	)
+	if err != nil {
+		t.Fatalf("start capped-migration container: %v", err)
+	}
+	t.Cleanup(func() { _ = ctr.Terminate(context.Background()) })
+
+	host, err = ctr.Host(ctx)
+	if err != nil {
+		t.Fatalf("container host: %v", err)
+	}
+	mapped, err := ctr.MappedPort(ctx, "5432/tcp")
+	if err != nil {
+		t.Fatalf("container port: %v", err)
+	}
+	port = mapped.Port()
+
+	// Colima forwards the mapped port to the host with a short lag after the container reports
+	// ready; retry until the forward is live (mirrors testdb.connectWithRetry).
+	adminDSN := fmt.Sprintf("postgres://manyforge:devpassword@%s:%s/manyforge?sslmode=disable", host, port)
+	var pingErr error
+	for range 30 {
+		pool, perr := pgxpool.New(ctx, adminDSN)
+		if perr == nil {
+			if pingErr = pool.Ping(ctx); pingErr == nil {
+				pool.Close()
+				break
+			}
+			pool.Close()
+		} else {
+			pingErr = perr
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if pingErr != nil {
+		t.Fatalf("connect to capped-migration container: %v", pingErr)
+	}
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("cannot locate migrations dir")
+	}
+	migDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	dbURL := fmt.Sprintf("pgx5://manyforge:devpassword@%s:%s/manyforge?sslmode=disable", host, port)
+	m, err = migrate.New("file://"+migDir, dbURL)
+	if err != nil {
+		t.Fatalf("migrate init: %v", err)
+	}
+	t.Cleanup(func() { _, _ = m.Close() })
+	return host, port, m
+}
+
+// TestFeedbackVerifiedIdentityBackfillMigration0104 runs migration 0104's actual backfill UPDATE
+// statements end-to-end against real pre-0104 rows: migrate a fresh Postgres to version 103,
+// hand-insert a raw PUBLIC feedback_vote (voter_identity="alice") and a raw INTERNAL
+// (principal-authored) feedback_vote keyed on a real principal's UUID, migrate up to 104, then
+// assert the public row was rewritten to "a:alice" while the principal-UUID row is byte-for-byte
+// unchanged — and that the principal still cannot double-vote on that pre-existing row through
+// the authenticated Service.Vote path after the backfill has run.
+func TestFeedbackVerifiedIdentityBackfillMigration0104(t *testing.T) {
+	ctx := context.Background()
+	host, port, m := startCappedPostgresContainer(ctx, t)
+
+	if err := m.Migrate(103); err != nil {
+		t.Fatalf("migrate to 103: %v", err)
+	}
+
+	adminDSN := fmt.Sprintf("postgres://manyforge:devpassword@%s:%s/manyforge?sslmode=disable", host, port)
+	super, err := pgxpool.New(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect admin pool: %v", err)
+	}
+	defer super.Close()
+
+	seed := seedFeedbackTenantPool(ctx, t, super)
+
+	boardID := uuid.New()
+	if _, err := super.Exec(ctx,
+		`INSERT INTO feedback_board (id,business_id,tenant_root_id,slug,name,is_public,created_at,updated_at)
+		 VALUES ($1,$2,$2,'legacy','Legacy',true,now(),now())`,
+		boardID, seed.businessID); err != nil {
+		t.Fatalf("seed pre-0104 board: %v", err)
+	}
+
+	// A raw PUBLIC post + vote, pre-0104 shape (no identity_verified column exists yet).
+	publicPostID := uuid.New()
+	if _, err := super.Exec(ctx,
+		`INSERT INTO feedback_post (id,business_id,tenant_root_id,board_id,title,status,vote_count,author_kind,author_identity,created_at,updated_at)
+		 VALUES ($1,$2,$2,$3,'Public post','open',1,'public','alice',now(),now())`,
+		publicPostID, seed.businessID, boardID); err != nil {
+		t.Fatalf("seed pre-0104 public post: %v", err)
+	}
+	if _, err := super.Exec(ctx,
+		`INSERT INTO feedback_vote (id,business_id,tenant_root_id,post_id,voter_identity,created_at)
+		 VALUES (gen_random_uuid(),$1,$1,$2,'alice',now())`,
+		seed.businessID, publicPostID); err != nil {
+		t.Fatalf("seed pre-0104 public vote: %v", err)
+	}
+
+	// A raw INTERNAL (principal-authored) post + a vote keyed on the principal's own raw UUID —
+	// exactly the row shape migration 0104's `NOT IN (SELECT id::text FROM principal)` clause
+	// excludes from the backfill.
+	internalPostID := uuid.New()
+	if _, err := super.Exec(ctx,
+		`INSERT INTO feedback_post (id,business_id,tenant_root_id,board_id,title,status,vote_count,author_kind,author_principal_id,created_at,updated_at)
+		 VALUES ($1,$2,$2,$3,'Internal post','open',1,'principal',$4,now(),now())`,
+		internalPostID, seed.businessID, boardID, seed.principalID); err != nil {
+		t.Fatalf("seed pre-0104 internal post: %v", err)
+	}
+	if _, err := super.Exec(ctx,
+		`INSERT INTO feedback_vote (id,business_id,tenant_root_id,post_id,voter_identity,created_at)
+		 VALUES (gen_random_uuid(),$1,$1,$2,$3,now())`,
+		seed.businessID, internalPostID, seed.principalID.String()); err != nil {
+		t.Fatalf("seed pre-0104 internal vote: %v", err)
+	}
+
+	if err := m.Migrate(104); err != nil {
+		t.Fatalf("migrate to 104: %v", err)
+	}
+
+	var publicVoterIdentity string
+	if err := super.QueryRow(ctx, "SELECT voter_identity FROM feedback_vote WHERE post_id = $1", publicPostID).Scan(&publicVoterIdentity); err != nil {
+		t.Fatalf("read backfilled public vote: %v", err)
+	}
+	if publicVoterIdentity != "a:alice" {
+		t.Fatalf("public vote voter_identity after backfill = %q, want %q", publicVoterIdentity, "a:alice")
+	}
+
+	var internalVoterIdentity string
+	if err := super.QueryRow(ctx, "SELECT voter_identity FROM feedback_vote WHERE post_id = $1", internalPostID).Scan(&internalVoterIdentity); err != nil {
+		t.Fatalf("read internal vote: %v", err)
+	}
+	if internalVoterIdentity != seed.principalID.String() {
+		t.Fatalf("internal vote voter_identity after backfill = %q, want unchanged raw UUID %q", internalVoterIdentity, seed.principalID.String())
+	}
+
+	// Enable login for the app role (migrations create it NOLOGIN, mirrors testdb.Start) and
+	// exercise the authenticated Service.Vote path: the principal must not be able to double-vote
+	// on their pre-existing (backfill-untouched) row now that 0104 has run.
+	if _, err := super.Exec(ctx, "ALTER ROLE manyforge_app LOGIN PASSWORD 'apppw'"); err != nil {
+		t.Fatalf("enable app login: %v", err)
+	}
+	appDSN := fmt.Sprintf("postgres://manyforge_app:apppw@%s:%s/manyforge?sslmode=disable", host, port)
+	app, err := appdb.Open(ctx, appDSN)
+	if err != nil {
+		t.Fatalf("open app pool: %v", err)
+	}
+	defer app.Close()
+	svc := &feedback.Service{DB: app}
+
+	voted, count, err := svc.Vote(ctx, seed.principalID, seed.businessID, internalPostID)
+	if err != nil || voted || count != 1 {
+		t.Fatalf("post-backfill double-vote attempt: voted=%v count=%d err=%v, want voted=false count=1 (no double vote)", voted, count, err)
 	}
 }
