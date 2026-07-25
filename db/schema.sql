@@ -872,9 +872,10 @@ CREATE TABLE feedback_ingest_key (
     FOREIGN KEY (board_id, tenant_root_id) REFERENCES feedback_board (id, tenant_root_id)
 );
 
--- Exactly-once submit consumed-set (migrations/0104). RLS-locked with no policies/grants in
--- the real DB; declared here only so sqlc can type the InsertFeedbackIngestKey-adjacent
--- surface consistently (no queries target this table directly — it's DEFINER-only).
+-- Exactly-once submit consumed-set (migrations/0104). Written and read ONLY by the
+-- SECURITY DEFINER functions of migration 0104 — no sqlc query targets this table directly.
+-- RLS-locked with no policies/grants in the real DB (no app-role access at all); declared
+-- here only so sqlc can type the schema consistently.
 CREATE TABLE feedback_ingest_idempotency (
     key_id         uuid NOT NULL,
     idem_key       text NOT NULL,

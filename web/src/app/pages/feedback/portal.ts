@@ -100,6 +100,7 @@ import { ToastService } from '../../ui/toast/toast.service';
                     [class.voted]="voted().has(p.id)"
                     [disabled]="voting().has(p.id)"
                     [attr.aria-label]="'Upvote ' + p.title"
+                    [attr.aria-pressed]="voted().has(p.id)"
                     (click)="upvote(p)"
                   >
                     <span class="caret">▲</span>
