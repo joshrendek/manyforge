@@ -57,8 +57,9 @@ Two `SECURITY DEFINER` functions, owned by the migration role, `REVOKE ALL FROM 
 - `create_due_partitions() RETURNS int` — for every enabled row, ensure partitions exist
   covering `[now, now + precreate_ahead × granularity)`, via
   `CREATE TABLE IF NOT EXISTS <t>_<suffix> PARTITION OF <t> FOR VALUES FROM (…) TO (…)`.
-- `drop_expired_partitions() RETURNS int` — `DETACH` then `DROP` any partition whose upper
-  bound is `< now() - retain_for`.
+- `drop_expired_partitions() RETURNS int` — `DROP` any partition whose upper bound is
+  `< now() - retain_for`. `DROP TABLE` on a partition detaches and drops atomically; a separate
+  `DETACH` step would leave a window where the partition is orphaned but still present.
 
 `manyforge_app` holds only `SELECT/INSERT/UPDATE` and cannot `CREATE TABLE`; routing DDL
 through `SECURITY DEFINER` is the repo-native answer.
