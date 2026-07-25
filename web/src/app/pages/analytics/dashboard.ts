@@ -89,11 +89,17 @@ import { Spinner } from '../../ui/spinner/spinner';
         <div class="mf-two-col">
           <div>
             <h3 class="mf-subhead">Top pages</h3>
-            <div class="mf-table" data-testid="top-pages">
+            <div class="mf-table" data-testid="top-pages" role="table" aria-label="Top pages">
+              <div class="mf-tr mf-th" role="row">
+                <span style="flex:3" role="columnheader">Page</span>
+                <span style="flex:1" role="columnheader">Pageviews</span>
+              </div>
               @for (p of s.top_pages; track p.path) {
-                <div class="mf-tr" data-testid="top-page-row">
-                  <span style="flex:3" class="mf-ellipsis">{{ p.path }}</span>
-                  <span style="flex:1">{{ p.pageviews }}</span>
+                <div class="mf-tr" role="row" data-testid="top-page-row">
+                  <span style="flex:3" class="mf-ellipsis" role="cell" [title]="p.path">{{
+                    p.path
+                  }}</span>
+                  <span style="flex:1" role="cell">{{ p.pageviews }}</span>
                 </div>
               }
               @if (!s.top_pages.length) {
@@ -105,11 +111,22 @@ import { Spinner } from '../../ui/spinner/spinner';
           </div>
           <div>
             <h3 class="mf-subhead">Top referrers</h3>
-            <div class="mf-table" data-testid="top-referrers">
+            <div
+              class="mf-table"
+              data-testid="top-referrers"
+              role="table"
+              aria-label="Top referrers"
+            >
+              <div class="mf-tr mf-th" role="row">
+                <span style="flex:3" role="columnheader">Referrer</span>
+                <span style="flex:1" role="columnheader">Pageviews</span>
+              </div>
               @for (r of s.top_referrers; track r.host) {
-                <div class="mf-tr" data-testid="top-referrer-row">
-                  <span style="flex:3" class="mf-ellipsis">{{ r.host }}</span>
-                  <span style="flex:1">{{ r.pageviews }}</span>
+                <div class="mf-tr" role="row" data-testid="top-referrer-row">
+                  <span style="flex:3" class="mf-ellipsis" role="cell" [title]="r.host">{{
+                    r.host
+                  }}</span>
+                  <span style="flex:1" role="cell">{{ r.pageviews }}</span>
                 </div>
               }
               @if (!s.top_referrers.length) {

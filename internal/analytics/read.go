@@ -66,8 +66,11 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 	if to.Before(from) {
 		return Summary{}, fmt.Errorf("analytics: end before start: %w", errs.ErrValidation)
 	}
-	if to.Sub(from) > maxRangeDays*24*time.Hour {
-		return Summary{}, fmt.Errorf("analytics: range exceeds %d days: %w", maxRangeDays, errs.ErrValidation)
+	// The window is INCLUSIVE, so a span of N intervals covers N+1 days. Comparing the span
+	// against maxRangeDays with a strict > therefore admitted maxRangeDays+1 actual days.
+	if inclusiveDays := int(to.Sub(from)/(24*time.Hour)) + 1; inclusiveDays > maxRangeDays {
+		return Summary{}, fmt.Errorf("analytics: range of %d days exceeds the %d day cap: %w",
+			inclusiveDays, maxRangeDays, errs.ErrValidation)
 	}
 	fromD, toD := from.UTC().Format("2006-01-02"), to.UTC().Format("2006-01-02")
 
@@ -127,17 +130,31 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 		if err := s.topPages(ctx, tx, &out, clientID, businessID, fromD, toD); err != nil {
 			return err
 		}
-		return s.topReferrers(ctx, tx, &out, clientID, businessID, fromD, toD)
+		if err := s.topReferrers(ctx, tx, &out, clientID, businessID, fromD, toD); err != nil {
+			return err
+		}
+
+		// Direct traffic is total minus ALL attributed referrer pageviews — deliberately a
+		// separate SUM rather than adding up TopReferrers, which is capped at topN. Deriving it
+		// from the capped list would silently reclassify every referrer beyond the top 20 as
+		// "direct", and the error would grow precisely for the sites with the most diverse
+		// traffic.
+		var attributed int64
+		if err := tx.QueryRow(ctx,
+			`SELECT coalesce(sum(pageviews), 0)::bigint
+			   FROM analytics_referrer_daily
+			  WHERE client_id = $1 AND business_id = $2
+			    AND bucket_date >= $3::date AND bucket_date <= $4::date`,
+			clientID, businessID, fromD, toD).Scan(&attributed); err != nil {
+			return err
+		}
+		if d := out.Pageviews - attributed; d > 0 {
+			out.DirectPageviews = d
+		}
+		return nil
 	})
 	if err != nil {
 		return Summary{}, mapErr(err)
-	}
-	var refTotal int64
-	for _, r := range out.TopReferrers {
-		refTotal += r.Pageviews
-	}
-	if d := out.Pageviews - refTotal; d > 0 {
-		out.DirectPageviews = d
 	}
 	return out, nil
 }

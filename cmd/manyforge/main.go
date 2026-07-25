@@ -211,24 +211,6 @@ func main() {
 	// raw events, so the dashboard does not slow down as volume grows.
 	analyticsSvc := analytics.NewService(database)
 	analyticsH := analytics.NewHandler(analyticsSvc)
-	analyticsPublicH := &analytics.PublicHandler{
-		DB:      database,
-		Logger:  logger,
-		Metrics: metrics,
-		PerIP:   ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
-	}
-
-	telemetryPublicH := &telemetry.PublicHandler{
-		DB:     database,
-		Logger: logger,
-		Sealer: feedbackSealer,
-		// PerIP is deliberately nil: the public ingress group already applies the shared per-IP
-		// ingest limiter, and a second per-IP bucket here would just halve that budget
-		// confusingly. PerKey is the dimension the group does NOT cover — it stops one leaked
-		// publishable key from being abused across a whole botnet.
-		PerKey:  ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
-		Metrics: metrics,
-	}
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
@@ -692,6 +674,31 @@ func main() {
 	trusted := parseTrustedCIDRs(cfg.TrustedProxyCIDR, logger)
 	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
+
+	// Public ingest handlers are built HERE, after the trusted-proxy CIDRs are parsed, because
+	// both key their rate limiters on the client IP. Constructing them earlier left TrustedProxies
+	// nil, which behind the production ingress makes ClientIP fall back to the proxy's own address
+	// — collapsing every visitor of every tenant site into a single shared bucket and silently
+	// dropping legitimate pageviews as 204s.
+	telemetryPublicH := &telemetry.PublicHandler{
+		DB:     database,
+		Logger: logger,
+		Sealer: feedbackSealer,
+		// PerIP is deliberately nil: the public ingress group already applies the shared per-IP
+		// ingest limiter, and a second per-IP bucket here would just halve that budget
+		// confusingly. PerKey is the dimension the group does NOT cover — it stops one leaked
+		// publishable key from being abused across a whole botnet.
+		PerKey:         ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		TrustedProxies: trusted,
+		Metrics:        metrics,
+	}
+	analyticsPublicH := &analytics.PublicHandler{
+		DB:             database,
+		Logger:         logger,
+		Metrics:        metrics,
+		PerIP:          ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		TrustedProxies: trusted,
+	}
 
 	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public
 	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,

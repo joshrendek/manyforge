@@ -53,21 +53,11 @@ func normalizePath(p string) string {
 // behavior is irrelevant here (it is covered by the per-handler tests).
 func noop(next http.Handler) http.Handler { return next }
 
-// apiRoutes walks the FULL production /api/v1 router — every module, including the
-// 002 inbound webhook and ticketing read slice — and returns the set of
-// "METHOD /normalized/path" it serves. It mounts routes through the SAME
-// mountAPIRoutes seam main uses, so the test's view of the route table cannot
-// drift from production. Handlers are built with zero-value services and middleware
-// is replaced with no-ops; route registration never invokes either.
-func apiRoutes(t *testing.T) map[string]bool {
-	t.Helper()
-	pub, priv, _ := ed25519.GenerateKey(nil)
-	ring, err := auth.NewKeyRing("manyforge", "manyforge-api", "k1", priv, map[string]ed25519.PublicKey{"k1": pub})
-	if err != nil {
-		t.Fatalf("keyring: %v", err)
-	}
-	mux := httpx.NewRouter(ring)
-	mountAPIRoutes(mux, apiHandlers{
+// testHandlers builds the FULL production handler set with zero-value services and no-op
+// middleware. Shared by the drift walker and the authorization-wiring test so the two cannot
+// disagree about what the router actually mounts.
+func testHandlers() apiHandlers {
+	return apiHandlers{
 		account:          account.NewHandler(&account.Service{}),
 		tenancy:          tenancy.NewHandler(&tenancy.Service{}),
 		authz:            authz.NewHandler(&authz.Service{}),
@@ -109,7 +99,24 @@ func apiRoutes(t *testing.T) map[string]bool {
 		codingReviews:    &coding.Handler{},
 		githubApp:        &githubapp.Handler{},
 		connectorsManage: noop,
-	})
+	}
+}
+
+// apiRoutes walks the FULL production /api/v1 router — every module, including the
+// 002 inbound webhook and ticketing read slice — and returns the set of
+// "METHOD /normalized/path" it serves. It mounts routes through the SAME
+// mountAPIRoutes seam main uses, so the test's view of the route table cannot
+// drift from production. Handlers are built with zero-value services and middleware
+// is replaced with no-ops; route registration never invokes either.
+func apiRoutes(t *testing.T) map[string]bool {
+	t.Helper()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	ring, err := auth.NewKeyRing("manyforge", "manyforge-api", "k1", priv, map[string]ed25519.PublicKey{"k1": pub})
+	if err != nil {
+		t.Fatalf("keyring: %v", err)
+	}
+	mux := httpx.NewRouter(ring)
+	mountAPIRoutes(mux, testHandlers())
 
 	routes := map[string]bool{}
 	walk := func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {

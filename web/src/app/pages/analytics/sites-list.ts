@@ -74,29 +74,30 @@ import { ToastService } from '../../ui/toast/toast.service';
         </form>
       }
 
-      <div class="mf-table" data-testid="sites-list">
-        <div class="mf-tr mf-th">
-          <span style="flex:2">Site</span>
-          <span style="flex:3">Embed tag</span>
-          <span style="flex:1">Status</span>
-          <span style="flex:1"></span>
+      <div class="mf-table" data-testid="sites-list" role="table" aria-label="Analytics sites">
+        <div class="mf-tr mf-th" role="row">
+          <span style="flex:2" role="columnheader">Site</span>
+          <span style="flex:3" role="columnheader">Embed tag</span>
+          <span style="flex:1" role="columnheader">Status</span>
+          <span style="flex:1" role="columnheader">Actions</span>
         </div>
         @for (c of sites(); track c.id) {
-          <div class="mf-tr" data-testid="site-row" [attr.data-site-id]="c.id">
-            <span style="flex:2" data-testid="site-name-cell">
+          <div class="mf-tr" role="row" data-testid="site-row" [attr.data-site-id]="c.id">
+            <span style="flex:2" role="cell" data-testid="site-name-cell">
               @if (c.status === 'active') {
                 <a [routerLink]="['/analytics', businessId(), c.id]">{{ c.name }}</a>
               } @else {
                 {{ c.name }}
               }
             </span>
-            <span style="flex:3">
+            <span style="flex:3" role="cell">
               @if (c.status === 'active') {
                 <code class="mf-embed" data-testid="site-embed">{{ embed(c) }}</code>
                 <button
                   type="button"
                   class="mf-btn mf-btn-sm"
                   data-testid="site-embed-copy"
+                  [attr.aria-label]="'Copy embed tag for ' + c.name"
                   (click)="copyEmbed(c)"
                 >
                   Copy
@@ -105,19 +106,20 @@ import { ToastService } from '../../ui/toast/toast.service';
                 <span class="mf-muted">—</span>
               }
             </span>
-            <span style="flex:1" data-testid="site-status-cell">
+            <span style="flex:1" role="cell" data-testid="site-status-cell">
               @if (c.status === 'active') {
                 <mf-status-pill tone="success" label="Active" />
               } @else {
                 <mf-status-pill tone="neutral" label="Revoked" />
               }
             </span>
-            <span style="flex:1">
+            <span style="flex:1" role="cell">
               @if (c.status === 'active') {
                 <button
                   type="button"
                   class="mf-btn mf-btn-sm mf-btn-danger"
                   data-testid="site-revoke"
+                  [attr.aria-label]="'Revoke ' + c.name"
                   (click)="revoke(c)"
                 >
                   Revoke

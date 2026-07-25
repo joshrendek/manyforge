@@ -55,6 +55,10 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_days"})
 			return
 		}
+		if n > maxRangeDays {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_days"})
+			return
+		}
 		days = n
 	}
 	// Inclusive UTC day window ending today.

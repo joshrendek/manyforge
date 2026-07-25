@@ -102,17 +102,15 @@ describe('AnalyticsDashboardComponent', () => {
 
   it('guides the user when there is no traffic yet', () => {
     fixture.componentInstance.setDays(90);
-    mock
-      .expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=90')
-      .flush({
-        ...summary,
-        pageviews: 0,
-        visitors: 0,
-        direct_pageviews: 0,
-        series: [],
-        top_pages: [],
-        top_referrers: [],
-      });
+    mock.expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=90').flush({
+      ...summary,
+      pageviews: 0,
+      visitors: 0,
+      direct_pageviews: 0,
+      series: [],
+      top_pages: [],
+      top_referrers: [],
+    });
     fixture.detectChanges();
     const empty = fixture.nativeElement.querySelector('[data-testid="analytics-empty"]');
     expect(empty).toBeTruthy();

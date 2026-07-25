@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -567,5 +568,60 @@ func TestSnippet_BeaconUsesSimpleContentType(t *testing.T) {
 	}
 	if strings.Contains(js, "sendBeacon(ep,new Blob([b],{type:'application/json'})") {
 		t.Error("the beacon still sends application/json")
+	}
+}
+
+// Direct traffic must be derived from ALL attributed referrers, not from the capped top-N list.
+// With more referrers than topN, summing the returned rows misclassifies the entire tail as
+// direct — and the error grows precisely for sites with the most diverse traffic.
+func TestSummary_DirectExcludesReferrersBeyondTopN(t *testing.T) {
+	ctx, e := newEnv(t)
+	// 25 distinct referrer hosts (> the topN of 20), one pageview each, plus 2 genuinely direct.
+	for i := 0; i < 25; i++ {
+		e.collect(t, e.key, "/", fmt.Sprintf("ref%02d.example", i), humanUA, "203.0.113.1")
+		// Vary the path so the repeated-path suppression in the snippet is irrelevant here; the
+		// endpoint itself has no suppression, but keep hits distinct for clarity.
+	}
+	e.collect(t, e.key, "/", "", humanUA, "203.0.113.2")
+	e.collect(t, e.key, "/", "", humanUA, "203.0.113.3")
+	e.rollup(t, ctx)
+
+	_, s := e.summary(t, e.site)
+	if s.Pageviews != 27 {
+		t.Fatalf("pageviews = %d, want 27", s.Pageviews)
+	}
+	if len(s.TopReferrers) != 20 {
+		t.Fatalf("top referrers = %d, want the topN cap of 20", len(s.TopReferrers))
+	}
+	if s.DirectPageviews != 2 {
+		t.Fatalf("direct = %d, want 2. Summing the capped TopReferrers list would report 7 here, "+
+			"silently reclassifying the 5 referrers beyond topN as direct", s.DirectPageviews)
+	}
+}
+
+// The window is inclusive, so days=N covers N days. The cap must be applied to that inclusive
+// count, not to the interval between the endpoints.
+func TestSummary_RejectsWindowBeyondTheCap(t *testing.T) {
+	_, e := newEnv(t)
+	for _, tc := range []struct {
+		days int
+		want int
+	}{
+		{7, http.StatusOK},
+		{366, http.StatusOK},
+		{367, http.StatusBadRequest},
+		{100000, http.StatusBadRequest},
+		{0, http.StatusBadRequest},
+		{-1, http.StatusBadRequest},
+	} {
+		resp, err := e.srv.Client().Get(fmt.Sprintf("%s/businesses/%s/analytics/summary?client_id=%s&days=%d",
+			e.srv.URL, e.biz, e.site, tc.days))
+		if err != nil {
+			t.Fatalf("days=%d: %v", tc.days, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Errorf("days=%d: got %d, want %d", tc.days, resp.StatusCode, tc.want)
+		}
 	}
 }

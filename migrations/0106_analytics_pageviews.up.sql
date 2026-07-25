@@ -33,10 +33,13 @@ COMMENT ON COLUMN analytics_event.visitor_hash IS
     'sha256(daily_salt || client_id || ip || user_agent), truncated to 16 bytes. Raw ip/ua are '
     'never stored. Rotates daily with the salt.';
 
--- Supports the pageview rollups: bucket by day, group by path/referrer, count distinct visitors.
+-- Supports the pageview rollups. The leading column is client_id, NOT business_id: every rollup
+-- join filters on (client_id, occurred_at range) and never on business_id, so a business-leading
+-- index cannot be used to seek and the recomputation degrades into scanning raw partitions as the
+-- number of touched clients grows.
 CREATE INDEX analytics_event_pageview_idx
-    ON analytics_event (business_id, client_id, occurred_at)
-    WHERE is_bot = false;
+    ON analytics_event (client_id, occurred_at)
+    WHERE is_bot = false AND name = 'pageview';
 
 -- ============================================================================
 -- 2. Per-day rotating salt
