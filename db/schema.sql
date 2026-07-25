@@ -886,3 +886,23 @@ CREATE TABLE feedback_ingest_idempotency (
     created_at     timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (key_id, idem_key)
 );
+
+-- manyforge-p20 telemetry client registration (migrations/0105). The partitioned event tables
+-- (analytics_event, crash_event) and the rollup tables are deliberately NOT declared here: they
+-- are written only by the SECURITY DEFINER ingest/rollup functions of 0105 and read by consumer
+-- epics, so no sqlc query targets them.
+CREATE TABLE telemetry_client (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    kind            text NOT NULL,
+    name            text NOT NULL,
+    publishable_key text NOT NULL,
+    require_signature boolean NOT NULL DEFAULT false,
+    sealed_secret   text,
+    status          text NOT NULL DEFAULT 'active',
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    revoked_at      timestamptz,
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (publishable_key)
+);

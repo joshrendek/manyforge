@@ -6,11 +6,11 @@
 // skipped or weakened. The CRM contact/company tables are the first TENANT-WIDE objects
 // (visible to any member of any business under the same tenant_root_id), so isolation
 // rests on three things this file pins:
-//   1. the tenant-wide RLS policies keyed on authorized_tenants(current_principal());
-//   2. the id-scoped queries carrying the tenant_root_id ownership predicate (dual
-//      enforcement with RLS); and
-//   3. the principal-less inbound-link DEFINER being search_path-pinned (an unpinned
-//      search_path on a SECURITY DEFINER is a privesc vuln).
+//  1. the tenant-wide RLS policies keyed on authorized_tenants(current_principal());
+//  2. the id-scoped queries carrying the tenant_root_id ownership predicate (dual
+//     enforcement with RLS); and
+//  3. the principal-less inbound-link DEFINER being search_path-pinned (an unpinned
+//     search_path on a SECURITY DEFINER is a privesc vuln).
 package security_regression
 
 import (

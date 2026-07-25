@@ -300,10 +300,10 @@ func TestCodingReviewLifecycleAudited(t *testing.T) {
 	// and the standalone-step wrapper. If any of these is gutted the verbs below become dead
 	// strings that write nothing.
 	for _, frag := range []string{
-		`audit.Write(ctx, tx, codingAudit(`,           // in-tx audit sink
-		`func (s *CodeReviewService) auditStep(`,        // standalone-step wrapper (opens its own tx)
-		`func codingAudit(`,                             // entry builder
-		`tt := "code_review"`,                           // stamps TargetType = code_review
+		`audit.Write(ctx, tx, codingAudit(`,      // in-tx audit sink
+		`func (s *CodeReviewService) auditStep(`, // standalone-step wrapper (opens its own tx)
+		`func codingAudit(`,                      // entry builder
+		`tt := "code_review"`,                    // stamps TargetType = code_review
 	} {
 		if !strings.Contains(src, frag) {
 			t.Fatalf("coding audit plumbing %q missing from service.go — is the coding-action audit trail still wired? (MF007-PIN-15)", frag)
