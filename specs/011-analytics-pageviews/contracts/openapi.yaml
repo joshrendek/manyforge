@@ -95,6 +95,23 @@ paths:
                 k: { type: string, description: 'The publishable `mfk_` site key.' }
                 p: { type: string, description: 'Path only. Query string and fragment are stripped server-side.' }
                 r: { type: string, description: 'Referrer HOST only. A full URL is reduced to its host server-side.' }
+                n:
+                  type: string
+                  maxLength: 64
+                  description: |
+                    Custom event name. Omitted (the usual case) means an automatic pageview.
+                    Restricted to `[A-Za-z0-9_.:-]` and **`pageview` is reserved** — accepting it
+                    here would let a site inflate its own pageview count through the event API and
+                    disagree with the pageview rollup every other panel reconciles against.
+                    A malformed name drops the event rather than being coerced.
+                d:
+                  type: object
+                  additionalProperties: true
+                  description: |
+                    Custom event properties. Bounded server-side: at most 12 keys, key and value
+                    lengths capped, values flattened to strings. Nested objects and arrays are
+                    dropped — a JSON blob is not a groupable dashboard value, and a free-form bag
+                    is where PII ends up.
                 q:
                   type: string
                   description: |
@@ -225,8 +242,11 @@ components:
         breakdowns:
           type: object
           description: |
-            Per-dimension breakdowns keyed by `utm_source`, `utm_medium`, `utm_campaign`,
-            `device`, `browser`, `country`. Every tracked dimension is present even when empty,
+            Per-dimension breakdowns keyed by `event`, `utm_source`, `utm_medium`,
+            `utm_campaign`, `device`, `browser`, `country`.
+
+            `event` counts CUSTOM events only; the others are derived from pageviews only, so they
+            stay reconcilable against the pageview total rather than mixing two denominators. Every tracked dimension is present even when empty,
             so a client can distinguish "nothing collected yet" from "not a dimension we track".
 
             All values are deliberately LOW CARDINALITY — `device` is three buckets, `browser` is

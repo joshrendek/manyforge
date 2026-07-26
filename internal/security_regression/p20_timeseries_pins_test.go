@@ -218,9 +218,14 @@ func TestPin_P20IngestUsesConstantTimeCompareAndUniform401(t *testing.T) {
 // rather than the whole migration (which would let a fragment elsewhere satisfy the check).
 func functionBody(t *testing.T, migration, name string) string {
 	t.Helper()
+	// Later migrations redefine functions with CREATE OR REPLACE, so both spellings must match or
+	// a pin silently stops inspecting the function it is supposed to guard.
 	start := strings.Index(migration, "CREATE FUNCTION "+name)
 	if start < 0 {
-		t.Fatalf("migration does not define %s", name)
+		start = strings.Index(migration, "CREATE OR REPLACE FUNCTION "+name)
+	}
+	if start < 0 {
+		t.Fatalf("migration does not define %s (checked CREATE and CREATE OR REPLACE)", name)
 	}
 	body, _, found := strings.Cut(migration[start:], "$$;")
 	if !found {

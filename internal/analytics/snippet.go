@@ -30,6 +30,12 @@ import (
 //   - A repeated path is skipped, so a framework that fires several navigations for one screen
 //     does not multiply the count.
 //   - Sends the referrer HOST only, and never for same-host navigation.
+//   - Exposes window.mf(name, props) for custom events, defined LAST so a throw anywhere above
+//     cannot leave a half-initialised global on the page. It also drains a window.mf.q array, so
+//     a site can queue calls from inline script that runs before this file finishes loading —
+//     without that, every early call is silently lost and the site owner has no way to tell.
+//   - mf() NEVER throws into the host page. An unserialisable payload (a circular object, say)
+//     costs that one event, not the site's own code.
 //   - Sends ONLY the three utm_* parameters, extracted by name. It never sends location.search:
 //     a page's query string routinely carries session tokens, reset codes, and email addresses,
 //     and shipping it to an analytics endpoint would quietly exfiltrate them from the tenant's own
@@ -57,7 +63,11 @@ var q='';
 try{var sp=new URLSearchParams(location.search),qp=[],i,n=['utm_source','utm_medium','utm_campaign'];
 for(i=0;i<n.length;i++){var val=sp.get(n[i]);if(val)qp.push(n[i]+'='+encodeURIComponent(val));}
 q=qp.join('&');}catch(e){}
-var b=JSON.stringify({k:k,p:p,r:r,q:q});
+post({k:k,p:p,r:r,q:q});
+}
+function post(o){
+var b;
+try{b=JSON.stringify(o);}catch(e){return;}
 try{
 if(navigator.sendBeacon){navigator.sendBeacon(ep,new Blob([b],{type:'text/plain;charset=UTF-8'}));return;}
 }catch(e){}
@@ -67,6 +77,20 @@ send();
 var ps=history.pushState;
 if(ps){history.pushState=function(){var r=ps.apply(this,arguments);send();return r;};}
 addEventListener('popstate',send);
+// Custom events: window.mf('name', {props}). Defined LAST so a throw anywhere above cannot
+// leave the page with a half-initialised global; and queued calls made before this file loads
+// are drained here, so a site can call mf() from inline script without ordering it after the tag.
+var q0=window.mf&&window.mf.q;
+window.mf=function(n,d){
+// Never throw into the host page. This runs inside someone else's site, where an exception
+// escaping an analytics call can break their code — an unserialisable payload must cost the
+// event, not the page.
+try{
+if(!n)return;
+post({k:k,p:location.pathname||'/',n:String(n),d:d&&typeof d==='object'?d:undefined});
+}catch(e){}
+};
+if(q0&&q0.length){for(var i=0;i<q0.length;i++){try{window.mf.apply(null,q0[i]);}catch(e){}}}
 }catch(e){}
 })();`
 

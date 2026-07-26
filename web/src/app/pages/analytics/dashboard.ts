@@ -271,6 +271,7 @@ export class AnalyticsDashboardComponent implements OnInit {
   breakdownPanels = computed(() => {
     const b = this.summary()?.breakdowns ?? {};
     const labels: Record<string, string> = {
+      event: 'Events',
       country: 'Countries',
       device: 'Devices',
       browser: 'Browsers',

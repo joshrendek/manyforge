@@ -863,3 +863,138 @@ func TestEnrichment_CappedRollupHasNoStaleRows(t *testing.T) {
 			"'(other)' would report 16", total)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Custom events
+// ---------------------------------------------------------------------------
+
+func (e *env) collectEvent(t *testing.T, name string, props map[string]any, ua, ip string) int {
+	t.Helper()
+	body := map[string]any{"k": e.key, "p": "/game", "n": name}
+	if props != nil {
+		body["d"] = props
+	}
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/a/e", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("X-Forwarded-For", ip)
+	resp, err := e.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("collect event: %v", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+func TestCustomEvent_StoredWithNameAndProps(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectEvent(t, "grow_start", map[string]any{"level": 3, "mode": "classic"}, humanUA, "203.0.113.1")
+
+	var name, props string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT name, props::text FROM analytics_event WHERE client_id=$1`, e.site).Scan(&name, &props); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if name != "grow_start" {
+		t.Errorf("name = %q, want grow_start", name)
+	}
+	if !strings.Contains(props, `"level": "3"`) && !strings.Contains(props, `"level":"3"`) {
+		t.Errorf("props missing level: %s", props)
+	}
+	if !strings.Contains(props, "classic") {
+		t.Errorf("props missing mode: %s", props)
+	}
+}
+
+// THE invariant: a custom event must never inflate pageview or visitor counts.
+func TestCustomEvent_DoesNotCountAsPageview(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectFull(t, "/", "", "", humanUA, "203.0.113.1")        // 1 real pageview
+	e.collectEvent(t, "grow_start", nil, humanUA, "203.0.113.1") // events, not pageviews
+	e.collectEvent(t, "grow_exit", nil, humanUA, "203.0.113.1")
+	e.rollup(t, ctx)
+
+	code, s := e.summary(t, e.site)
+	if code != http.StatusOK {
+		t.Fatalf("summary status %d", code)
+	}
+	if s.Pageviews != 1 {
+		t.Fatalf("pageviews = %d, want 1 — custom events must not inflate the headline number", s.Pageviews)
+	}
+	// Top pages likewise counts only pageviews.
+	total := int64(0)
+	for _, p := range s.TopPages {
+		total += p.Pageviews
+	}
+	if total != 1 {
+		t.Fatalf("top_pages total = %d, want 1", total)
+	}
+}
+
+func TestCustomEvent_AppearsAsAnEventBreakdown(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectEvent(t, "grow_start", nil, humanUA, "203.0.113.1")
+	e.collectEvent(t, "grow_start", nil, humanUA, "203.0.113.2")
+	e.collectEvent(t, "grow_exit", nil, humanUA, "203.0.113.1")
+	e.rollup(t, ctx)
+
+	_, s := e.summary(t, e.site)
+	ev := s.Breakdowns["event"]
+	if len(ev) != 2 {
+		t.Fatalf("event rows = %d, want 2: %+v", len(ev), ev)
+	}
+	if ev[0].Value != "grow_start" || ev[0].Pageviews != 2 {
+		t.Errorf("top event = %+v, want grow_start with 2", ev[0])
+	}
+	if ev[0].Visitors != 2 {
+		t.Errorf("grow_start visitors = %d, want 2 (two distinct IPs)", ev[0].Visitors)
+	}
+}
+
+// A bucket containing ONLY custom events must still get its breakdown rolled up — if the touched
+// set were pageview-only, an events-only day would be invisible.
+func TestCustomEvent_EventsOnlyBucketIsRolledUp(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectEvent(t, "grow_start", nil, humanUA, "203.0.113.1")
+	e.rollup(t, ctx)
+
+	_, s := e.summary(t, e.site)
+	if len(s.Breakdowns["event"]) != 1 {
+		t.Fatalf("an events-only bucket was not rolled up: %+v", s.Breakdowns["event"])
+	}
+	if s.Pageviews != 0 {
+		t.Fatalf("pageviews = %d, want 0", s.Pageviews)
+	}
+}
+
+func TestCustomEvent_RejectsReservedAndMalformedNames(t *testing.T) {
+	ctx, e := newEnv(t)
+	for _, bad := range []string{"pageview", "has space", "emoji🎉", strings.Repeat("x", 100)} {
+		if code := e.collectEvent(t, bad, nil, humanUA, "203.0.113.1"); code != http.StatusNoContent {
+			t.Errorf("name %.20q: got %d, want 204 (uniform)", bad, code)
+		}
+	}
+	var n int
+	if err := e.tdb.Super.QueryRow(ctx, "SELECT count(*) FROM analytics_event").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d rows stored for rejected event names — 'pageview' via the event API would "+
+			"let a site forge its own pageview count", n)
+	}
+}
+
+func TestCustomEvent_BotsExcluded(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectEvent(t, "grow_start", nil, humanUA, "203.0.113.1")
+	e.collectEvent(t, "grow_start", nil, "Googlebot/2.1", "203.0.113.9")
+	e.rollup(t, ctx)
+
+	_, s := e.summary(t, e.site)
+	ev := s.Breakdowns["event"]
+	if len(ev) != 1 || ev[0].Pageviews != 1 {
+		t.Fatalf("bot event counted: %+v", ev)
+	}
+}
