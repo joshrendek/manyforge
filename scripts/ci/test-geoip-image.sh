@@ -76,8 +76,8 @@ postgres_container=$(docker run --detach \
   postgres:16)
 postgres_ready=false
 for _ in {1..100}; do
-  if docker exec "$postgres_container" pg_isready --username manyforge --dbname manyforge \
-    >/dev/null 2>&1; then
+  if docker exec "$postgres_container" pg_isready --host 127.0.0.1 \
+    --username manyforge --dbname manyforge >/dev/null 2>&1; then
     postgres_ready=true
     break
   fi
