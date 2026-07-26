@@ -55,12 +55,14 @@ type PublicHandler struct {
 	// analytics key, because that key is attacker-choosable.
 	PerIP          ratelimit.Limiter
 	TrustedProxies []*net.IPNet
-	// CloudflareSourceRanges contains Cloudflare's origin-facing networks. In trusted mode, the
-	// forwarded connection source must belong to this set before CF-IPCountry is accepted.
+	// CloudflareSourceRanges contains Cloudflare's origin-facing networks. The forwarded connection
+	// source must belong to this set before CF-Connecting-IP supplies visitor identity; the same
+	// check also gates CF-IPCountry when country trust is enabled.
 	CloudflareSourceRanges []*net.IPNet
 	// TrustCloudflareCountryHeader declares that every request reaches this handler through a
-	// trusted edge which overwrites CF-IPCountry. It is also gated per request on the direct peer
-	// belonging to TrustedProxies; it must remain false when the origin can be reached through an
+	// trusted edge which overwrites CF-IPCountry. ResolveClient also gates it per request on both
+	// the direct peer belonging to TrustedProxies and the forwarded source belonging to
+	// CloudflareSourceRanges. It must remain false when the origin can be reached through an
 	// untrusted path, otherwise a caller could forge its own country.
 	TrustCloudflareCountryHeader bool
 }
