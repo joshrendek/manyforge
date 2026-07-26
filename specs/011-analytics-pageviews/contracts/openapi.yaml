@@ -333,8 +333,9 @@ components:
 
             `country` is empty unless the deployment explicitly trusts Cloudflare's
             `CF-IPCountry` signal (`MANYFORGE_TRUST_CF_IPCOUNTRY=true`). Header trust must be
-            enabled only when the origin cannot be bypassed; an absent breakdown is reported
-            rather than a guessed one.
+            enabled only when the origin cannot be bypassed; the Helm chart enforces a Cloudflare
+            source-CIDR allowlist when enabled. An absent breakdown is reported rather than a
+            guessed one.
           additionalProperties:
             type: array
             items:

@@ -666,8 +666,10 @@ const iphoneUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWe
 
 func TestEnrichment_StoresDerivedDimensionsOnly(t *testing.T) {
 	ctx, e := newEnv(t)
-	e.collectFull(t, "/pricing", "", "utm_source=hn&utm_medium=social&utm_campaign=launch&token=SECRET",
-		humanUA, "203.0.113.10")
+	// A direct caller may forge the edge header. The default deployment must ignore it end to end.
+	e.collectFullWithCountry(t, "/pricing", "",
+		"utm_source=hn&utm_medium=social&utm_campaign=launch&token=SECRET",
+		humanUA, "203.0.113.10", "US")
 
 	var src, med, camp, device, browser string
 	var country *string

@@ -161,7 +161,7 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// collectEvent is one fully-derived pageview. Grouping the arguments keeps the twelve-parameter
+// collectEvent is one fully-derived pageview. Grouping the arguments keeps the fourteen-parameter
 // SQL call from becoming a positional puzzle at the call site.
 type collectEvent struct {
 	key      string

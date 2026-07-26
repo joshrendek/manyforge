@@ -9,6 +9,10 @@ metadata:
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+    {{- if .Values.analytics.trustCloudflareCountryHeader }}
+    # Bind CF-IPCountry trust to requests that actually arrive from Cloudflare's network.
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ required "manyforge: analytics.cloudflareSourceRanges is required when trusting CF-IPCountry" .Values.analytics.cloudflareSourceRanges | quote }}
+    {{- end }}
     {{- if .Values.ingress.denyMetrics }}
     # /metrics (Go expvar) is otherwise reachable via the `/` catch-all route
     # below; deny it at the ingress. Requires the cluster's ingress-nginx to
