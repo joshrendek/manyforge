@@ -94,7 +94,15 @@ export const routes: Routes = [
       import('./pages/feedback/board-detail').then((m) => m.FeedbackBoardDetailComponent),
   },
   {
+    // The landing page is the multi-site grid; site registration moved to /analytics/sites.
     path: 'analytics',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/analytics/overview').then((m) => m.AnalyticsOverviewComponent),
+  },
+  {
+    // Two segments, so this cannot collide with the three-segment dashboard route below.
+    path: 'analytics/sites',
     canActivate: [authGuard],
     loadComponent: () =>
       import('./pages/analytics/sites-list').then((m) => m.AnalyticsSitesListComponent),

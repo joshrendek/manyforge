@@ -195,8 +195,85 @@ paths:
             lacking `telemetry.read`. All four are the same response — the distinctions would be
             existence oracles.
 
+  /analytics/overview:
+    get:
+      summary: Every analytics site the caller can see, across all their businesses
+      description: |
+        The multi-site landing page (Plausible-style grid). Takes **no business id**: it spans every
+        business the caller belongs to, which is the point — sub-businesses are visible together
+        rather than one dropdown selection at a time.
+
+        Authorization differs in FORM but not in strength from the per-site route. The business
+        -scoped endpoints are gated by middleware that resolves `telemetry.read` for the one business
+        in the path; that cannot express "every business where the caller holds this permission", so
+        here the same rule is applied in SQL via `businesses_with_permission()`. A business the
+        caller can *see* but lacks `telemetry.read` on is omitted — matching what the per-site
+        dashboard would do if they opened it directly.
+
+        Sites with no traffic yet are returned with zeroed totals and an empty series rather than
+        omitted: a newly tagged site that vanished from this list would read as a broken tag.
+
+        Reads exclusively from rollup tables, never raw events. The site list is capped at 200,
+        ordered by visitors descending (ties broken by pageviews, then name, so the order is stable
+        across requests), so the cap sheds the quietest sites.
+
+        Note the ordering metric and the headline metric are deliberately the same. Ordering by
+        pageviews while presenting visitors would make the cap drop sites that rank highly by the
+        number actually shown on the card.
+      operationId: getAnalyticsOverview
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: Window length in days, ending today (UTC). Capped at 366.
+          schema: { type: integer, minimum: 1, maximum: 366, default: 30 }
+      responses:
+        '200':
+          description: |
+            Sites the caller may read. An empty list means no sites, no permission, or no
+            memberships — deliberately indistinguishable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sites]
+                properties:
+                  sites:
+                    type: array
+                    items: { $ref: '#/components/schemas/AnalyticsOverviewSite' }
+        '400':
+          description: Invalid day range
+        '401':
+          description: Missing or invalid credentials
+
 components:
   schemas:
+    AnalyticsOverviewSite:
+      type: object
+      required: [client_id, name, business_id, business_name, pageviews, visitors, series]
+      properties:
+        client_id:     { type: string, format: uuid }
+        name:          { type: string }
+        business_id:   { type: string, format: uuid }
+        business_name: { type: string }
+        pageviews:     { type: integer, format: int64 }
+        visitors:
+          type: integer
+          format: int64
+          description: |
+            Peak DAILY unique visitors in the window — the SAME definition the per-site summary
+            uses, so a card and the dashboard it opens agree. Not a sum and not a cross-day total:
+            the daily salt rotation makes cross-day deduplication impossible by design.
+        series:
+          type: array
+          description: One point per day that has data; days with no traffic are absent, not zero-filled.
+          items:
+            type: object
+            required: [date, pageviews, visitors]
+            properties:
+              date:      { type: string, format: date }
+              pageviews: { type: integer, format: int64 }
+              visitors:  { type: integer, format: int64 }
     AnalyticsSummary:
       type: object
       required: [from, to, pageviews, visitors, series, top_pages, top_referrers, direct_pageviews, breakdowns]

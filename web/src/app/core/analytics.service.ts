@@ -52,6 +52,21 @@ export interface ValueCount {
   visitors: number;
 }
 
+// One card on the multi-site overview grid.
+//
+// `visitors` here is the SAME measure the per-site dashboard headlines — peak daily uniques, not a
+// sum — so a card and the dashboard it opens agree. See the API docs for why cross-day dedupe is
+// impossible under the rotating-salt privacy model.
+export interface OverviewSite {
+  client_id: string;
+  name: string;
+  business_id: string;
+  business_name: string;
+  pageviews: number;
+  visitors: number;
+  series: DayPoint[];
+}
+
 export interface AnalyticsSummary {
   from: string;
   to: string;
@@ -94,6 +109,12 @@ export class AnalyticsService {
       `/api/v1/businesses/${businessId}/telemetry/clients/${clientId}/revoke`,
       {},
     );
+  }
+
+  // Every site the caller can read, across every business. No business id: the server decides
+  // which businesses qualify, from the caller's permissions.
+  overview(days: number): Observable<{ sites: OverviewSite[] }> {
+    return this.http.get<{ sites: OverviewSite[] }>(`/api/v1/analytics/overview?days=${days}`);
   }
 
   summary(businessId: string, clientId: string, days: number): Observable<AnalyticsSummary> {

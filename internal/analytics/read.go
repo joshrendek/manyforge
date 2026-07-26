@@ -265,3 +265,138 @@ func (s *Service) breakdowns(ctx context.Context, tx pgx.Tx, out *Summary, clien
 	}
 	return rows.Err()
 }
+
+// ---------------------------------------------------------------------------
+// Multi-site overview
+// ---------------------------------------------------------------------------
+
+// maxOverviewSites bounds the overview response. A tenant with a large business tree could
+// otherwise pull every site it owns into one payload, and the sparkline series multiplies that by
+// the window length. Sites are ordered by traffic, so the cap drops the quietest ones — the ones a
+// scanning eye reaches last anyway.
+const maxOverviewSites = 200
+
+// OverviewSite is one card on the overview grid.
+type OverviewSite struct {
+	ClientID     string     `json:"client_id"`
+	Name         string     `json:"name"`
+	BusinessID   string     `json:"business_id"`
+	BusinessName string     `json:"business_name"`
+	Pageviews    int64      `json:"pageviews"`
+	Visitors     int64      `json:"visitors"`
+	Series       []DayPoint `json:"series"`
+}
+
+// Overview lists every analytics site the caller can see, across every business they belong to,
+// with totals and a per-day series for the sparkline.
+//
+// There is deliberately NO business id parameter. authorized_businesses() expands a principal's
+// memberships down business_closure, so running unfiltered under the caller's principal returns
+// exactly the businesses they may see and no others. Adding a handler-side business filter on top
+// would not make this safer — it would just be a second predicate to drift out of step with the
+// first. The RLS policy is the single source of truth.
+func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to time.Time) ([]OverviewSite, error) {
+	if to.Before(from) {
+		return nil, fmt.Errorf("analytics: end before start: %w", errs.ErrValidation)
+	}
+	if inclusiveDays := int(to.Sub(from)/(24*time.Hour)) + 1; inclusiveDays > maxRangeDays {
+		return nil, fmt.Errorf("analytics: range of %d days exceeds the %d day cap: %w",
+			inclusiveDays, maxRangeDays, errs.ErrValidation)
+	}
+	fromD, toD := from.UTC().Format("2006-01-02"), to.UTC().Format("2006-01-02")
+
+	out := []OverviewSite{}
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		// LEFT JOIN, not INNER: a site registered a minute ago has no rollup rows yet, and omitting
+		// it would read as "your tag is broken" at exactly the moment someone is checking whether
+		// their tag works. It appears with zeroes instead.
+		rows, err := tx.Query(ctx,
+			`SELECT c.id::text, c.name, b.id::text, b.name,
+			        coalesce(sum(d.pageviews), 0)::bigint,
+			        -- MAX, not SUM. The per-site dashboard reports peak daily unique visitors,
+			        -- because the daily salt rotation makes a cross-day dedupe impossible by design.
+			        -- Summing here would give a card a number several times larger than the
+			        -- dashboard it opens, which reads as a bug rather than as two definitions.
+			        coalesce(max(d.visitors),  0)::bigint
+			   FROM telemetry_client c
+			   JOIN business b ON b.id = c.business_id
+			   LEFT JOIN analytics_daily d
+			     ON d.client_id = c.id
+			    AND d.bucket_date >= $1::date AND d.bucket_date <= $2::date
+			  WHERE c.kind = 'analytics'
+			    AND c.status = 'active' AND c.revoked_at IS NULL
+			    -- PERMISSION, not just visibility. RLS already limits this to businesses the caller
+			    -- is a member of, but membership is not telemetry.read: a member whose role lacks it
+			    -- would otherwise see sites here that the per-site dashboard refuses to open. The
+			    -- business-scoped routes get this from RequirePermission; this route has no business
+			    -- in its path, so the same rule has to be expressed as a set.
+			    AND c.business_id IN (
+			        SELECT business_id FROM businesses_with_permission(current_principal(), 'telemetry.read')
+			    )
+			  GROUP BY c.id, c.name, b.id, b.name
+			  -- Ordered by the SAME measure the card headlines and the API contract documents:
+			  -- visitors. This was ORDER BY 5, a positional reference to the pageviews column —
+			  -- which silently ordered by a different metric than everything describing it said,
+			  -- and at the 200-site cap would have dropped higher-visitor sites in favour of ones
+			  -- with more pageviews. Spelled out rather than positional so it cannot drift again
+			  -- if a column is inserted above it.
+			  ORDER BY coalesce(max(d.visitors), 0) DESC,
+			           coalesce(sum(d.pageviews), 0) DESC,
+			           c.name
+			  LIMIT $3`,
+			fromD, toD, maxOverviewSites)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		idx := map[string]int{}
+		for rows.Next() {
+			var o OverviewSite
+			if err := rows.Scan(&o.ClientID, &o.Name, &o.BusinessID, &o.BusinessName,
+				&o.Pageviews, &o.Visitors); err != nil {
+				return err
+			}
+			o.Series = []DayPoint{}
+			idx[o.ClientID] = len(out)
+			out = append(out, o)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(out) == 0 {
+			return nil
+		}
+
+		// Series for the sites we kept, in one query rather than one per site.
+		ids := make([]string, 0, len(out))
+		for _, o := range out {
+			ids = append(ids, o.ClientID)
+		}
+		srows, err := tx.Query(ctx,
+			`SELECT client_id::text, bucket_date::text, pageviews, visitors
+			   FROM analytics_daily
+			  WHERE client_id = ANY($1::uuid[])
+			    AND bucket_date >= $2::date AND bucket_date <= $3::date
+			  ORDER BY client_id, bucket_date`,
+			ids, fromD, toD)
+		if err != nil {
+			return err
+		}
+		defer srows.Close()
+		for srows.Next() {
+			var cid string
+			var d DayPoint
+			if err := srows.Scan(&cid, &d.Date, &d.Pageviews, &d.Visitors); err != nil {
+				return err
+			}
+			if i, ok := idx[cid]; ok {
+				out[i].Series = append(out[i].Series, d)
+			}
+		}
+		return srows.Err()
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}
