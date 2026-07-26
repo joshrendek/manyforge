@@ -102,24 +102,66 @@ func (t *TokenBucket) Allow(key string) bool {
 // X-Forwarded-For is used only when the direct peer is a trusted proxy;
 // otherwise the direct peer address is authoritative (prevents header spoofing).
 func ClientIP(r *http.Request, trusted []*net.IPNet) string {
-	peer, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		peer = r.RemoteAddr
-	}
-	if !isTrusted(net.ParseIP(peer), trusted) {
-		return peer
+	ip, _ := ClientIPAndTrustedPeer(r, trusted)
+	return ip
+}
+
+// ClientIPAndTrustedPeer resolves the real client IP and also reports whether the direct TCP peer
+// belongs to a trusted proxy network. Returning both lets callers gate trusted-edge headers
+// without parsing and scanning the direct peer twice.
+func ClientIPAndTrustedPeer(r *http.Request, trusted []*net.IPNet) (string, bool) {
+	peer := peerIP(r.RemoteAddr)
+	trustedPeer := isTrusted(net.ParseIP(peer), trusted)
+	if !trustedPeer {
+		return peer, false
 	}
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff == "" {
-		return peer
+		return peer, true
 	}
-	parts := strings.Split(xff, ",")
-	// walk right-to-left, skipping trusted proxies, to the first real client
-	for i := len(parts) - 1; i >= 0; i-- {
-		ip := strings.TrimSpace(parts[i])
-		if !isTrusted(net.ParseIP(ip), trusted) {
-			return ip
+	if len(xff) > maxForwardedForBytes {
+		return peer, true
+	}
+	// Walk right-to-left without splitting the whole attacker-controlled header. Malformed or
+	// excessively deep chains fall back to the direct peer, which safely collapses their rate key.
+	end := len(xff)
+	for hop := 0; end > 0; hop++ {
+		if hop >= maxForwardedForHops {
+			return peer, true
 		}
+		start := strings.LastIndexByte(xff[:end], ',')
+		ipText := strings.TrimSpace(xff[start+1 : end])
+		ip := net.ParseIP(ipText)
+		if ip == nil {
+			return peer, true
+		}
+		if !isTrusted(ip, trusted) {
+			return ipText, true
+		}
+		if start < 0 {
+			break
+		}
+		end = start
+	}
+	return peer, true
+}
+
+const (
+	maxForwardedForBytes = 4096
+	maxForwardedForHops  = 32
+)
+
+// IsTrustedPeer reports whether the address recorded in r.RemoteAddr belongs to an explicitly
+// trusted proxy network. Request headers play no role: callers use this to gate data that only a
+// trusted ingress is allowed to assert.
+func IsTrustedPeer(r *http.Request, trusted []*net.IPNet) bool {
+	return isTrusted(net.ParseIP(peerIP(r.RemoteAddr)), trusted)
+}
+
+func peerIP(remoteAddr string) string {
+	peer, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
 	}
 	return peer
 }

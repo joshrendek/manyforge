@@ -58,15 +58,22 @@ function mount(): {
 describe('AnalyticsDashboardComponent', () => {
   let mock: HttpTestingController;
   let fixture: ComponentFixture<AnalyticsDashboardComponent>;
+  let initialCountryStatus: Element | null;
 
   beforeEach(() => {
     localStorage.clear();
     ({ fixture, mock } = mount());
+    initialCountryStatus = fixture.nativeElement.querySelector('[data-testid="country-status"]');
     mock.expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=30').flush(summary);
     fixture.detectChanges();
   });
 
   afterEach(() => mock.verify());
+
+  it('mounts the country live region before the async summary arrives', () => {
+    expect(initialCountryStatus).toBeTruthy();
+    expect(initialCountryStatus?.getAttribute('role')).toBe('status');
+  });
 
   it('renders headline totals', () => {
     const el = fixture.nativeElement;
@@ -140,12 +147,34 @@ describe('AnalyticsDashboardComponent', () => {
     expect(el.querySelector('[data-testid="breakdown-device"]').textContent).toContain('desktop');
   });
 
-  // Traffic but no countries means no GeoIP database — say so, rather than letting the user
+  // Traffic but no countries means no trusted edge signal — say so, rather than letting the user
   // conclude their audience is from nowhere.
   it('explains a missing country breakdown when there is traffic', () => {
+    const status = fixture.nativeElement.querySelector('[data-testid="country-status"]');
     const hint = fixture.nativeElement.querySelector('[data-testid="country-unavailable"]');
+    expect(status).toBeTruthy();
+    expect(status.getAttribute('role')).toBe('status');
     expect(hint).toBeTruthy();
-    expect(hint.textContent).toContain('MANYFORGE_GEOIP_DB');
+    expect(hint.textContent).toContain('trusted edge supplies a supported country');
+  });
+
+  it('renders country data without the unavailable hint', () => {
+    fixture.componentInstance.setDays(7);
+    mock.expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=7').flush({
+      ...summary,
+      breakdowns: {
+        ...summary.breakdowns,
+        country: [{ value: 'US', pageviews: 15, visitors: 6 }],
+      },
+    });
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement;
+    const status = el.querySelector('[data-testid="country-status"]');
+    expect(status).toBeTruthy();
+    expect(status.getAttribute('role')).toBe('status');
+    expect(el.querySelector('[data-testid="country-unavailable"]')).toBeNull();
+    expect(el.querySelector('[data-testid="breakdown-country"]').textContent).toContain('US');
   });
 
   // The API reuses the `pageviews` field for every dimension, but for 'event' that number is a

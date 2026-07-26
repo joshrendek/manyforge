@@ -165,13 +165,6 @@ import { Spinner } from '../../ui/spinner/spinner';
           }
         </div>
 
-        @if (countryUnavailable()) {
-          <p class="mf-hint" data-testid="country-unavailable">
-            Country data needs a GeoIP database. Set <code>MANYFORGE_GEOIP_DB</code> to a MaxMind
-            <code>.mmdb</code> file to enable it — everything else works without it.
-          </p>
-        }
-
         @if (s.pageviews === 0 && !loading()) {
           <mf-empty-state title="No traffic yet" data-testid="analytics-empty">
             Paste this site's embed tag into your HTML and reload the page. Data appears within a
@@ -179,6 +172,15 @@ import { Spinner } from '../../ui/spinner/spinner';
           </mf-empty-state>
         }
       }
+
+      <div data-testid="country-status" role="status">
+        @if (countryUnavailable()) {
+          <p class="mf-hint" data-testid="country-unavailable">
+            Country data is unavailable for this date range. It appears only when the deployment's
+            trusted edge supplies a supported country for a request.
+          </p>
+        }
+      </div>
 
       @if (error()) {
         <p class="mf-err" data-testid="analytics-error">{{ error() }}</p>
@@ -237,7 +239,7 @@ import { Spinner } from '../../ui/spinner/spinner';
       }
       .mf-hint {
         font-size: var(--mf-fs-sm);
-        color: var(--mf-text-muted);
+        color: var(--mf-text);
         margin-top: 16px;
       }
     `,
@@ -293,9 +295,9 @@ export class AnalyticsDashboardComponent implements OnInit {
       }));
   });
 
-  // Distinguishes "no geo database configured" from "no traffic yet": if there are pageviews but
-  // not a single country was resolved, the deployment has no GeoIP database rather than an
-  // audience from nowhere.
+  // Traffic with no resolved countries can mean a historical range, absent/unsupported edge
+  // values, or no trusted edge signal. Surface that neutral state rather than inferring which
+  // deployment condition caused it.
   countryUnavailable = computed(() => {
     const s = this.summary();
     if (!s || s.pageviews === 0) return false;

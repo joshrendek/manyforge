@@ -13,6 +13,116 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
+      - uses: azure/setup-helm@v4
+      - name: Helm chart
+        run: |
+          set -euo pipefail
+          common=(--set jwt.activeKid=k1 --set trustedProxyCidr=10.244.0.0/16)
+          helm lint charts/manyforge "${common[@]}"
+          default_render="$(helm template manyforge charts/manyforge "${common[@]}")"
+          grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "false"' <<<"$default_render"
+          grep -Fq 'MANYFORGE_CF_SOURCE_CIDR: ""' <<<"$default_render"
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+            echo "trusted country mode rendered without Cloudflare source ranges" >&2
+            exit 1
+          fi
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 >/dev/null 2>&1; then
+            echo "trusted country mode rendered without a trusted ingress namespace" >&2
+            exit 1
+          fi
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=false \
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 >/dev/null 2>&1; then
+            echo "retained Cloudflare source ranges rendered without origin isolation" >&2
+            exit 1
+          fi
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set ingress.enabled=false \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 \
+            --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+            echo "trusted country mode rendered without chart-managed ingress" >&2
+            exit 1
+          fi
+          for unsafe_range in \
+            '0.0.0.0/0' \
+            '::/0' \
+            '::ffff:0:0/96' \
+            '0.0.0.0/1\,128.0.0.0/1' \
+            '::/1\,8000::/1'; do
+            if helm template manyforge charts/manyforge "${common[@]}" \
+              --set analytics.trustCloudflareCountryHeader=true \
+              --set-string analytics.cloudflareSourceRanges="$unsafe_range" \
+              --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+              echo "trusted country mode rendered with universal source range $unsafe_range" >&2
+              exit 1
+            fi
+          done
+          for invalid_range in \
+            'not-an-ip/8' \
+            '203.0.113.0/33' \
+            '203.0.113.0/not-a-prefix' \
+            '10.0.0.0/7' \
+            '2001:db8::/129' \
+            '2001:db8::/15' \
+            '2001:::1/32' \
+            ':1:2:3:4:5:6:7:8/64' \
+            '1:2:3:4:5:6:7:8:/64'; do
+            if helm template manyforge charts/manyforge "${common[@]}" \
+              --set analytics.trustCloudflareCountryHeader=true \
+              --set-string analytics.cloudflareSourceRanges="$invalid_range" \
+              --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+              echo "trusted country mode rendered with invalid source range $invalid_range" >&2
+              exit 1
+            fi
+          done
+          too_many_ranges="203.0.113.0/24"
+          for ((i=1; i<65; i++)); do
+            too_many_ranges+='\,'"203.0.113.0/24"
+          done
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.cloudflareSourceRanges="$too_many_ranges" \
+            --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+            echo "trusted country mode rendered with more than 64 source ranges" >&2
+            exit 1
+          fi
+          enabled_render="$(helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 \
+            --set-string analytics.trustedIngressNamespace=ingress \
+            --set service.port=80)"
+          grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "true"' <<<"$enabled_render"
+          grep -Fq 'MANYFORGE_CF_SOURCE_CIDR: "203.0.113.0/24"' <<<"$enabled_render"
+          grep -Fq 'nginx.ingress.kubernetes.io/whitelist-source-range: "203.0.113.0/24"' \
+            <<<"$enabled_render"
+          grep -Fq 'name: manyforge-trusted-ingress' <<<"$enabled_render"
+          grep -Fq 'kubernetes.io/metadata.name: "ingress"' <<<"$enabled_render"
+          grep -Fq '          port: http' <<<"$enabled_render"
+          ipv6_render="$(helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.cloudflareSourceRanges=2400:cb00::/32 \
+            --set-string analytics.trustedIngressNamespace=ingress)"
+          grep -Fq 'MANYFORGE_CF_SOURCE_CIDR: "2400:cb00::/32"' <<<"$ipv6_render"
+          grep -Fq 'nginx.ingress.kubernetes.io/whitelist-source-range: "2400:cb00::/32"' \
+            <<<"$ipv6_render"
+          isolated_disabled_render="$(helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=false \
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 \
+            --set-string analytics.trustedIngressNamespace=ingress)"
+          grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "false"' <<<"$isolated_disabled_render"
+          grep -Fq 'nginx.ingress.kubernetes.io/whitelist-source-range: "203.0.113.0/24"' \
+            <<<"$isolated_disabled_render"
+          grep -Fq 'name: manyforge-trusted-ingress' <<<"$isolated_disabled_render"
+          default_checksum="$(awk 'index($0, "checksum/config:") { print $2; exit }' <<<"$default_render")"
+          enabled_checksum="$(awk 'index($0, "checksum/config:") { print $2; exit }' <<<"$enabled_render")"
+          test -n "$default_checksum"
+          test -n "$enabled_checksum"
+          test "$default_checksum" != "$enabled_checksum"
       - name: Build
         run: make build
       - name: Vet / lint
