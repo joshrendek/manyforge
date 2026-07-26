@@ -12,7 +12,7 @@
 // literally, which makes the same check considerably more awkward to express.
 
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,10 +23,58 @@ const EXT = /\.(ts|css|html)$/;
 // Detection — pure, so it can be self-tested
 // ---------------------------------------------------------------------------
 
+/**
+ * Remove comments before scanning so dead code cannot define a token or create a false reference.
+ * Quoted strings and template literals are preserved because they can contain live inline styles.
+ */
+export function stripComments(file, text) {
+  // Angular templates can be standalone HTML or embedded in a TypeScript template literal.
+  const clean = text.replace(/<!--[\s\S]*?-->/g, '');
+  const allowLineComments = extname(file) === '.ts';
+  let out = '';
+  let quote = '';
+
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
+    const next = clean[i + 1];
+
+    if (quote) {
+      out += ch;
+      if (ch === '\\' && i + 1 < clean.length) out += clean[++i];
+      else if (ch === quote) quote = '';
+      continue;
+    }
+
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < clean.length && !(clean[i] === '*' && clean[i + 1] === '/')) {
+        if (clean[i] === '\n') out += '\n';
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (allowLineComments && ch === '/' && next === '/') {
+      i += 2;
+      while (i < clean.length && clean[i] !== '\n') i++;
+      if (i < clean.length) out += '\n';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 /** Every `--mf-foo:` definition across the given sources. */
 export function collectDefined(sources) {
   const defined = new Set();
-  for (const { text } of sources) {
+  for (const { file, text: raw } of sources) {
+    const text = stripComments(file, raw);
     for (const m of text.matchAll(/(--mf-[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
   }
   return defined;
@@ -38,7 +86,8 @@ export function collectDefined(sources) {
  */
 export function findUndefined(sources, defined) {
   const bad = [];
-  for (const { file, text } of sources) {
+  for (const { file, text: raw } of sources) {
+    const text = stripComments(file, raw);
     for (const m of text.matchAll(/var\(\s*(--mf-[a-z0-9-]+)\s*\)/g)) {
       if (!defined.has(m[1])) bad.push(`${file}: var(${m[1]})`);
     }
@@ -78,10 +127,36 @@ function selfTest() {
       defs: [],
       expect: 2,
     },
+    {
+      name: 'a commented definition cannot satisfy a live reference',
+      src: '/* --mf-nope: red */ color: var(--mf-nope)',
+      defs: null,
+      expect: 1,
+    },
+    {
+      name: 'a CSS-commented reference is ignored',
+      src: '/* color: var(--mf-nope) */',
+      defs: [],
+      expect: 0,
+    },
+    {
+      name: 'an HTML-commented reference is ignored',
+      file: 'fixture.html',
+      src: '<!-- style="color: var(--mf-nope)" -->',
+      defs: [],
+      expect: 0,
+    },
+    {
+      name: 'a TypeScript line-commented reference is ignored',
+      file: 'fixture.ts',
+      src: '// const style = "var(--mf-nope)";',
+      defs: [],
+      expect: 0,
+    },
   ];
   let failed = 0;
   for (const c of cases) {
-    const sources = [{ file: 'fixture', text: c.src }];
+    const sources = [{ file: c.file ?? 'fixture.css', text: c.src }];
     const defined = c.defs === null ? collectDefined(sources) : new Set(c.defs);
     const got = findUndefined(sources, defined).length;
     if (got !== c.expect) {
