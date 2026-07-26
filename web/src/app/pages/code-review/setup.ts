@@ -181,8 +181,8 @@ function catalogLabel(key: string): string {
               <div data-testid="row-priority-list" cdkDropList (cdkDropListDropped)="onPriorityDrop(row, $event)" style="display:flex;flex-direction:column;gap:6px">
                 @for (entry of row.chain; track entry; let i = $index) {
                   <div style="display:flex;gap:6px;align-items:center" cdkDrag [attr.data-testid]="'row-priority-entry-' + i">
-                    <span class="mf-drag-handle" cdkDragHandle role="button" tabindex="-1" [attr.data-testid]="'row-priority-drag-' + i"
-                          [attr.aria-label]="'Drag to reorder provider ' + (i + 1) + ' for ' + row.label" style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
+                    <span class="mf-drag-handle" cdkDragHandle aria-hidden="true" [attr.data-testid]="'row-priority-drag-' + i"
+                          style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
                     <span style="min-width:66px;color:var(--mf-text-muted);font-size:0.85em">{{ i === 0 ? '1. primary' : (i + 1) + '.' }}</span>
                     <select class="mf-select" [attr.data-testid]="'row-priority-provider-' + i" [ngModel]="entry.provider"
                             (ngModelChange)="onPriorityProviderChange(row, i, $event)"
@@ -285,8 +285,8 @@ function catalogLabel(key: string): string {
           <div data-testid="chain-list" cdkDropList (cdkDropListDropped)="onChainDrop($event)" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
             @for (id of config().review_agent_chain; track id; let i = $index) {
               <div style="display:flex;gap:8px;align-items:center" cdkDrag [attr.data-testid]="'chain-row-' + i">
-                <span class="mf-drag-handle" cdkDragHandle role="button" tabindex="-1" [attr.data-testid]="'chain-drag-' + i"
-                      [attr.aria-label]="'Drag to reorder ' + agentName(id)" style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
+                <span class="mf-drag-handle" cdkDragHandle aria-hidden="true" [attr.data-testid]="'chain-drag-' + i"
+                      style="cursor:grab;user-select:none;color:var(--mf-text-muted)">⠿</span>
                 <span style="min-width:20px;color:var(--mf-text-muted)">{{ i + 1 }}.</span>
                 <span style="flex:1" [attr.data-testid]="'chain-name-' + i">{{ agentName(id) }}</span>
                 <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'chain-up-' + i"

@@ -7,7 +7,8 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "check:tokens": "node scripts/check-tokens.mjs"
   },
   "private": true,
   "packageManager": "npm@10.9.2",
