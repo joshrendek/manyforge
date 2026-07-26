@@ -105,7 +105,7 @@ assert_app_ready() {
     docker logs "$app_container" >"$app_log" 2>&1 || true
     published_addr=$(docker port "$app_container" 8080/tcp 2>/dev/null | head -n 1 || true)
     if [[ -n "$published_addr" ]] &&
-      grep -F "$expected_message" "$app_log" | grep -Fq "level=$expected_level" &&
+      grep -F "$expected_message" "$app_log" | grep -Fq "\"level\":\"$expected_level\"" &&
       curl --fail --silent --show-error "http://$published_addr/readyz" >/dev/null; then
       ready=true
       break
