@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/text/language"
 
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/observability"
@@ -26,18 +27,77 @@ const maxCollectBytes int64 = 4 << 10
 // rollup's GROUP BY key.
 const maxPathLen = 512
 
-// PublicHandler serves the principal-less analytics surface: the snippet and the collect endpoint.
+const cloudflareCountryHeader = "CF-IPCountry"
+const cloudflareConnectingIPHeader = "CF-Connecting-IP"
+
+// validAlpha2Country is a precomputed lookup table of CLDR regions that are real, non-private
+// countries.
+// The hot collect path can therefore validate an alpha-2 value without reparsing it per request.
+var validAlpha2Country = func() [26][26]bool {
+	var valid [26][26]bool
+	for a := byte('A'); a <= 'Z'; a++ {
+		for b := byte('A'); b <= 'Z'; b++ {
+			region, err := language.ParseRegion(string([]byte{a, b}))
+			valid[a-'A'][b-'A'] = err == nil && region.IsCountry() && !region.IsPrivateUse()
+		}
+	}
+	return valid
+}()
+
+// PublicHandler serves the unauthenticated analytics snippet and collect endpoint.
+// TrustedProxies and CloudflareSourceRanges bind visitor identity and optional country headers to
+// an origin-isolated trusted edge.
 type PublicHandler struct {
 	DB      *appdb.DB
 	Logger  *slog.Logger
 	Metrics *observability.Metrics
-	// PerIP bounds collect volume from a single source. Keyed by IP rather than by the
-	// caller-supplied key, because the key is attacker-choosable and TokenBucket never evicts.
+	// collect passes the resolved visitor IP to PerIP.Allow rather than the caller-supplied
+	// analytics key, because that key is attacker-choosable.
 	PerIP          ratelimit.Limiter
 	TrustedProxies []*net.IPNet
-	// Geo resolves an IP to a country in-flight. Nil (the default) simply leaves country unset —
-	// an absent breakdown is correct, whereas a guessed one would be worse than none.
-	Geo CountryResolver
+	// CloudflareSourceRanges contains Cloudflare's origin-facing networks. The forwarded connection
+	// source must belong to this set before CF-Connecting-IP supplies visitor identity; the same
+	// check also gates CF-IPCountry when country trust is enabled.
+	CloudflareSourceRanges []*net.IPNet
+	// TrustCloudflareCountryHeader declares that every request reaches this handler through a
+	// trusted edge which overwrites CF-IPCountry. ResolveClient also gates it per request on both
+	// the direct peer belonging to TrustedProxies and the forwarded source belonging to
+	// CloudflareSourceRanges. It must remain false when the origin can be reached through an
+	// untrusted path, otherwise a caller could forge its own country.
+	TrustCloudflareCountryHeader bool
+}
+
+// ResolveClient returns the visitor IP used transiently for hashing/rate limiting and whether this
+// request may assert a Cloudflare country header. It first resolves the ingress-forwarded
+// connection source and requires both a trusted direct peer and a Cloudflare source range. Only
+// then may CF-Connecting-IP replace that edge address with the visitor address; country-header
+// trust additionally requires the deployment opt-in.
+func (h *PublicHandler) ResolveClient(r *http.Request) (string, bool) {
+	sourceIP, trustedPeer := ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)
+	cloudflareSource := trustedPeer &&
+		ipInNetworks(net.ParseIP(sourceIP), h.CloudflareSourceRanges)
+	clientIP := sourceIP
+	if cloudflareSource {
+		values := r.Header.Values(cloudflareConnectingIPHeader)
+		if len(values) == 1 {
+			if visitorIP := net.ParseIP(strings.TrimSpace(values[0])); visitorIP != nil {
+				clientIP = visitorIP.String()
+			}
+		}
+	}
+	return clientIP, h.TrustCloudflareCountryHeader && cloudflareSource
+}
+
+func ipInNetworks(ip net.IP, networks []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, network := range networks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectRoutes mounts the public collect endpoint.
@@ -94,7 +154,7 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	corsHeaders(w)
 	defer w.WriteHeader(http.StatusNoContent)
 
-	ip := ratelimit.ClientIP(r, h.TrustedProxies)
+	ip, trustCountryHeader := h.ResolveClient(r)
 	if h.PerIP != nil && !h.PerIP.Allow(ip) {
 		return
 	}
@@ -114,8 +174,8 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 
 	ua := r.Header.Get("User-Agent")
 
-	// Everything derived from the IP and UA is computed HERE and reduced to low-cardinality
-	// buckets before it touches SQL. The raw values continue past this point only as hash inputs.
+	// Every request-derived dimension is normalized or bounded HERE before it touches SQL. The SQL
+	// function consumes the raw IP and UA only to derive a visitor hash and never persists them.
 	utm := ParseUTM(req.Query)
 
 	// An unusable custom-event name is DROPPED, not coerced to a pageview: counting someone's
@@ -137,9 +197,12 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 		utm:      utm,
 		device:   DeviceType(ua),
 		browser:  Browser(ua),
-		country:  ResolveCountry(h.Geo, ip),
-		name:     name,
-		props:    SanitizeProps(req.Data),
+		country: cloudflareCountry(
+			trustCountryHeader,
+			r.Header.Values(cloudflareCountryHeader),
+		),
+		name:  name,
+		props: SanitizeProps(req.Data),
 	}
 	n, err := h.store(r.Context(), ev)
 	if err != nil {
@@ -155,8 +218,8 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// collectEvent is one fully-derived pageview. Grouping the arguments keeps the twelve-parameter
-// SQL call from becoming a positional puzzle at the call site.
+// collectEvent is one fully-derived analytics event. Grouping the arguments keeps the SQL call
+// from becoming a positional puzzle at the call site.
 type collectEvent struct {
 	key      string
 	path     string
@@ -167,7 +230,7 @@ type collectEvent struct {
 	utm      UTM
 	device   string
 	browser  string
-	country  string
+	country  string            // uppercase ISO 3166-1 alpha-2; "" ⇒ no accepted country value
 	name     string            // "" ⇒ automatic pageview
 	props    map[string]string // nil ⇒ no custom properties
 }
@@ -191,6 +254,42 @@ func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) 
 			e.name, props).Scan(&n)
 	})
 	return n, err
+}
+
+// cloudflareCountry reduces Cloudflare's CF-IPCountry request header to the only location detail
+// analytics stores: an ISO 3166-1 alpha-2 country code. PublicHandler.ResolveClient verifies the
+// deployment opt-in and request source before setting trusted. Cloudflare uses XX for unknown
+// locations and T1 for Tor; neither is a country and both are discarded.
+func cloudflareCountry(trusted bool, values []string) string {
+	if !trusted || len(values) != 1 {
+		return ""
+	}
+	raw := values[0]
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 2 {
+		return ""
+	}
+	a, b := raw[0], raw[1]
+	if a >= 'a' && a <= 'z' {
+		a -= 'a' - 'A'
+	}
+	if b >= 'a' && b <= 'z' {
+		b -= 'a' - 'A'
+	}
+	// Spell out both Cloudflare sentinels even though the ASCII-letter validation below also
+	// rejects T1. Keeping the edge contract visible prevents a future validator relaxation from
+	// silently turning Tor into a country bucket. Contract:
+	// https://developers.cloudflare.com/network/ip-geolocation/
+	if (a == 'X' && b == 'X') || (a == 'T' && b == '1') {
+		return ""
+	}
+	if a < 'A' || a > 'Z' || b < 'A' || b > 'Z' {
+		return ""
+	}
+	if !validAlpha2Country[a-'A'][b-'A'] {
+		return ""
+	}
+	return string([]byte{a, b})
 }
 
 // normalizePath strips the query string and fragment, enforces a leading slash, drops a trailing

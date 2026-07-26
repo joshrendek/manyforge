@@ -331,8 +331,11 @@ components:
             User-Agent and the IP) are never stored. Finer granularity would reintroduce the
             fingerprint the whole design exists to avoid.
 
-            `country` is empty unless the deployment configures a GeoIP database
-            (`MANYFORGE_GEOIP_DB`); an absent breakdown is reported rather than a guessed one.
+            `country` is empty unless the deployment explicitly trusts Cloudflare's
+            `CF-IPCountry` signal (`MANYFORGE_TRUST_CF_IPCOUNTRY=true`). Header trust must be
+            enabled only when the origin cannot be bypassed; the Helm chart enforces a Cloudflare
+            source-CIDR allowlist and ingress-controller-only NetworkPolicy when enabled. An
+            absent breakdown is reported rather than a guessed one.
           additionalProperties:
             type: array
             items:

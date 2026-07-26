@@ -249,22 +249,86 @@ func TestPin_AS0UTMIsAnAllowlist(t *testing.T) {
 	}
 }
 
-// TestPin_AS0GeoIsOptionalAndTransient asserts country lookup never persists an IP and that the
-// server still boots without a geo database — an optional feature must not become a hard
-// dependency by accident.
-func TestPin_AS0GeoIsOptionalAndTransient(t *testing.T) {
-	src := mustRead(t, "../../internal/analytics/geo.go")
-	if !strings.Contains(src, "if path == \"\" {") {
-		t.Error("OpenMMDB must treat an empty path as 'no geo configured', not an error")
+// TestPin_AS0CountryHeaderIsOptInAndTransient asserts that an untrusted caller cannot forge a
+// country by default and that the raw edge header never reaches SQL.
+func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
+	src := mustRead(t, "../../internal/analytics/collect.go")
+	for _, required := range []string{
+		"TrustCloudflareCountryHeader",
+		"CloudflareSourceRanges",
+		`h.ResolveClient(r)`,
+		`ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)`,
+		`ipInNetworks(net.ParseIP(sourceIP), h.CloudflareSourceRanges)`,
+		`r.Header.Values(cloudflareConnectingIPHeader)`,
+		`r.Header.Values(cloudflareCountryHeader)`,
+		"cloudflareCountry(",
+		"if !trusted || len(values) != 1 {",
+	} {
+		if !strings.Contains(src, required) {
+			t.Errorf("country header trust boundary missing %q", required)
+		}
 	}
-	// A lookup miss must not log: this runs per pageview and would write client IPs into the logs.
-	if strings.Contains(src, "logger.Warn") || strings.Contains(src, "logger.Error") {
-		t.Error("geo lookup must not log per-request; that would put client IPs in the logs")
+	if strings.Contains(src, `e.country, r.Header`) || strings.Contains(src, `e.country, raw`) {
+		t.Error("raw country header must be normalized before it reaches analytics_collect")
 	}
-	enrich := mustRead(t, "../../internal/analytics/enrich.go")
-	for _, guard := range []string{"IsLoopback()", "IsPrivate()", "IsLinkLocalUnicast()"} {
-		if !strings.Contains(enrich, guard) {
-			t.Errorf("ResolveCountry must reject %s addresses rather than report a guess", guard)
+	if strings.Contains(src, "MANYFORGE_GEOIP_DB") || strings.Contains(src, "OpenMMDB") {
+		t.Error("analytics collection must not depend on a runtime IP database")
+	}
+
+	values := mustRead(t, "../../charts/manyforge/values.yaml")
+	if !strings.Contains(values, "trustCloudflareCountryHeader: false") {
+		t.Error("the chart must default CF-IPCountry trust off")
+	}
+	if !strings.Contains(values, `cloudflareSourceRanges: ""`) {
+		t.Error("the chart must not invent a default Cloudflare source allowlist")
+	}
+	if !strings.Contains(values, `trustedIngressNamespace: ""`) {
+		t.Error("the chart must not invent a default trusted ingress namespace")
+	}
+	configMap := mustRead(t, "../../charts/manyforge/templates/configmap.yaml")
+	for _, env := range []string{"MANYFORGE_TRUST_CF_IPCOUNTRY", "MANYFORGE_CF_SOURCE_CIDR"} {
+		if !strings.Contains(configMap, env) {
+			t.Errorf("the chart must thread country trust setting %s to the app", env)
+		}
+	}
+	deployment := mustRead(t, "../../charts/manyforge/templates/deployment.yaml")
+	if !strings.Contains(deployment, "checksum/config:") ||
+		!strings.Contains(deployment, `"/configmap.yaml"`) {
+		t.Error("ConfigMap changes must restart pods before ingress trust controls can be removed")
+	}
+	main := mustRead(t, "../../cmd/manyforge/main.go")
+	if !strings.Contains(main, `cloudflareSources := parseSourceCIDRs(cfg.CloudflareSourceCIDR`) ||
+		!strings.Contains(main, "database, logger, metrics, trusted, cloudflareSources, cfg") {
+		t.Error("production startup must construct analytics through the tested config-wiring path")
+	}
+	ingress := mustRead(t, "../../charts/manyforge/templates/ingress.yaml")
+	for _, required := range []string{
+		"or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.cloudflareSourceRanges",
+		"nginx.ingress.kubernetes.io/whitelist-source-range",
+		`required "manyforge: analytics.cloudflareSourceRanges is required when trusting CF-IPCountry"`,
+	} {
+		if !strings.Contains(ingress, required) {
+			t.Errorf("Cloudflare ingress trust boundary missing %q", required)
+		}
+	}
+	networkPolicy := mustRead(t, "../../charts/manyforge/templates/analytics-networkpolicy.yaml")
+	for _, required := range []string{
+		"kind: NetworkPolicy",
+		`fail "manyforge: ingress.enabled must be true when trusting CF-IPCountry"`,
+		"analytics.cloudflareSourceRanges must contain at most 64 source ranges",
+		"analytics.cloudflareSourceRanges contains a malformed IPv4 address",
+		"analytics.cloudflareSourceRanges contains a malformed IPv6 address",
+		"analytics.cloudflareSourceRanges contains an invalid or excessively broad IPv4 prefix",
+		"analytics.cloudflareSourceRanges contains an invalid or excessively broad IPv6 prefix",
+		"analytics.cloudflareSourceRanges must use native IPv4 CIDRs",
+		"or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace",
+		`required "manyforge: analytics.trustedIngressNamespace is required when trusting CF-IPCountry"`,
+		"app.kubernetes.io/name: ingress-nginx",
+		"app.kubernetes.io/component: controller",
+		"port: http",
+	} {
+		if !strings.Contains(networkPolicy, required) {
+			t.Errorf("Cloudflare service trust boundary missing %q", required)
 		}
 	}
 }

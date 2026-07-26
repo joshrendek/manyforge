@@ -62,6 +62,26 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// newAnalyticsPublicHandler wires the public collector's rate limit and edge-trust boundaries.
+func newAnalyticsPublicHandler(
+	database *db.DB,
+	logger *slog.Logger,
+	metrics *observability.Metrics,
+	trusted []*net.IPNet,
+	cloudflareSources []*net.IPNet,
+	cfg config.Config,
+) *analytics.PublicHandler {
+	return &analytics.PublicHandler{
+		DB:                           database,
+		Logger:                       logger,
+		Metrics:                      metrics,
+		PerIP:                        ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		TrustedProxies:               trusted,
+		CloudflareSourceRanges:       cloudflareSources,
+		TrustCloudflareCountryHeader: cfg.TrustCFIPCountry,
+	}
+}
+
 func main() {
 	logger := observability.NewLogger(os.Getenv("LOG_LEVEL"))
 	slog.SetDefault(logger)
@@ -672,6 +692,7 @@ func main() {
 	// email verification (FR-029). The key is the trusted-proxy-aware client IP so
 	// a spoofed X-Forwarded-For cannot evade it.
 	trusted := parseTrustedCIDRs(cfg.TrustedProxyCIDR, logger)
+	cloudflareSources := parseSourceCIDRs(cfg.CloudflareSourceCIDR, "Cloudflare source", logger)
 	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
 
@@ -692,27 +713,15 @@ func main() {
 		TrustedProxies: trusted,
 		Metrics:        metrics,
 	}
-	// Country lookup is optional: with MANYFORGE_GEOIP_DB unset the resolver is nil and the
-	// country breakdown is simply absent. A bad path IS fatal, though — silently serving no
-	// countries when an operator explicitly configured a database would be a lie.
-	geo, gerr := analytics.OpenMMDB(cfg.GeoIPDBPath, logger)
-	if gerr != nil {
-		logger.Error("init analytics geoip", "err", gerr)
-		os.Exit(1)
-	}
-	analyticsPublicH := &analytics.PublicHandler{
-		DB:             database,
-		Logger:         logger,
-		Metrics:        metrics,
-		PerIP:          ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
-		TrustedProxies: trusted,
-		Geo:            geo,
-	}
+	analyticsPublicH := newAnalyticsPublicHandler(
+		database, logger, metrics, trusted, cloudflareSources, cfg,
+	)
 
-	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public
-	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,
-	// shared across the webhook AND SMTP paths so a given source/recipient cannot
-	// evade one transport by hopping to the other:
+	// Inbound webhook/SMTP rate limiting (FR-020), separate from the analytics limiter above.
+	// Two rate limiters shared across both transport layers are built from the same ingest knobs,
+	// so a given source/recipient cannot evade one transport by hopping to the other:
+	ingestIPLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
+	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	//   - ingestIPLimiter: per-IP. Wraps the webhook group via httpx.RateLimit and
 	//     gates inbound SMTP DATA from the connection remote IP. BOTH transports key
 	//     on inbox.IPRateLimitKey(<bare client IP>) — the webhook IP comes from the
@@ -724,8 +733,6 @@ func main() {
 	//   - ingestRecipientLimiter: per-DECODED-recipient on the webhook path. Enforced
 	//     inside the handler BEFORE recipient resolution so a known and an unknown
 	//     recipient throttle identically (no existence oracle).
-	ingestIPLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
-	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	inboxWebhookH.SetRecipientLimiter(ingestRecipientLimiter)
 	// ingestIPKey unifies the webhook per-IP key with the SMTP per-IP key: both run
 	// the bare client IP through inbox.IPRateLimitKey so the two share one bucket.
@@ -1380,6 +1387,12 @@ func dkimConfigFromCfg(cfg config.Config) (*notify.DKIMConfig, error) {
 // Malformed entries are logged and skipped; an empty list means no proxy is trusted
 // (the direct peer is authoritative).
 func parseTrustedCIDRs(s string, logger *slog.Logger) []*net.IPNet {
+	return parseSourceCIDRs(s, "trusted proxy", logger)
+}
+
+// parseSourceCIDRs parses a comma-separated network list. Malformed entries are logged with kind
+// and skipped; an empty list returns nil.
+func parseSourceCIDRs(s, kind string, logger *slog.Logger) []*net.IPNet {
 	var out []*net.IPNet
 	for _, c := range strings.Split(s, ",") {
 		c = strings.TrimSpace(c)
@@ -1388,7 +1401,7 @@ func parseTrustedCIDRs(s string, logger *slog.Logger) []*net.IPNet {
 		}
 		_, n, err := net.ParseCIDR(c)
 		if err != nil {
-			logger.Warn("ignoring malformed trusted proxy CIDR", "cidr", c, "err", err)
+			logger.Warn("ignoring malformed CIDR", "kind", kind, "cidr", c, "err", err)
 			continue
 		}
 		out = append(out, n)

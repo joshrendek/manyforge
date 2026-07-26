@@ -11,12 +11,12 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jhillyerd/enmime/v2 v2.4.0
-	github.com/oschwald/maxminddb-golang/v2 v2.4.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	gocloud.dev v0.45.0
 	golang.org/x/crypto v0.51.0
 	golang.org/x/sync v0.20.0
+	golang.org/x/text v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.33.2
 	k8s.io/apimachinery v0.33.2
@@ -134,7 +134,6 @@ require (
 	golang.org/x/oauth2 v0.33.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.256.0 // indirect

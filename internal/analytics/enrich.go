@@ -2,7 +2,6 @@ package analytics
 
 import (
 	"math"
-	"net"
 	"net/url"
 	"sort"
 	"strconv"
@@ -139,36 +138,10 @@ func Browser(ua string) string {
 	return "Other"
 }
 
-// CountryResolver maps an IP to an ISO 3166-1 alpha-2 code. A nil resolver, or one that cannot
-// place an address, yields "" — the country column is then simply absent rather than wrong.
-type CountryResolver interface {
-	Country(ip net.IP) string
-}
-
-// ResolveCountry is nil-safe and rejects addresses that cannot carry meaningful geography, so a
-// local or private address is reported as unknown rather than as whatever the database guesses.
-func ResolveCountry(r CountryResolver, ipStr string) string {
-	if r == nil || ipStr == "" {
-		return ""
-	}
-	ip := net.ParseIP(ipStr)
-	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-		return ""
-	}
-	c := r.Country(ip)
-	if len(c) != 2 {
-		return ""
-	}
-	return strings.ToUpper(c)
-}
-
-// ---------------------------------------------------------------------------
-// Custom events
-// ---------------------------------------------------------------------------
-
-// reservedEventName is the implicit name for an automatic pageview. A caller may not send it
-// explicitly, or a site could inflate its own pageview count through the event API and make the
-// headline number disagree with the pageview rollup.
+// reservedEventName is the wire value reserved for automatic pageviews. NormalizeEventName rejects
+// it when sent as a custom event; collectEvent represents automatic pageviews with an empty name.
+// Otherwise a site could inflate its pageview count through the event API and make the headline
+// number disagree with the pageview rollup.
 const reservedEventName = "pageview"
 
 const (

@@ -6,8 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +31,15 @@ type Config struct {
 	JWTVerifyKeys    string        // additional verify-only keys for rotation: "kid=<pkix pubkey pem>,..."
 	RateLimitRPS     float64       // per-IP token refill rate for abuse-sensitive routes (FR-029)
 	RateLimitBurst   float64       // per-IP burst allowance for abuse-sensitive routes
+	// CloudflareSourceCIDR is the edge-address allowlist used to bind CF-IPCountry trust to the
+	// forwarded connection source. It is required when TrustCFIPCountry is enabled.
+	CloudflareSourceCIDR string
+	// TrustCFIPCountry allows analytics collection to trust Cloudflare's CF-IPCountry header.
+	// It is false by default and requires TrustedProxyCIDR plus CloudflareSourceCIDR; each request
+	// is accepted only from a trusted peer whose forwarded connection source is a Cloudflare edge.
+	// Enabling it also declares that the origin cannot be bypassed and the ingress overwrites the
+	// forwarded source before the application receives it.
+	TrustCFIPCountry bool
 
 	// Support desk (spec 002).
 	SMTPAddr                string // built-in inbound SMTP receiver listen address; empty disables it
@@ -40,11 +52,6 @@ type Config struct {
 	DKIMKeyPath             string // path to the default DKIM private key for verified custom sending identities
 	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
 	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
-	// GeoIPDBPath optionally points at a MaxMind-format .mmdb for analytics country lookup.
-	// Empty (the default) disables the country breakdown entirely. The database is deliberately
-	// not vendored: it carries licensing terms and goes stale monthly, so a checked-in copy would
-	// impose those terms on every deployment and be wrong within a quarter.
-	GeoIPDBPath string
 
 	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
 	IngestRateBurst   float64 // per-recipient inbound ingestion burst allowance
@@ -191,14 +198,14 @@ type Config struct {
 // defaults. It errors only on malformed values.
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:             env("MANYFORGE_ADDR", ":8080"),
-		DatabaseURL:      os.Getenv("MANYFORGE_DATABASE_URL"),
-		TrustedProxyCIDR: os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
-		GeoIPDBPath:      os.Getenv("MANYFORGE_GEOIP_DB"),
-		JWTIssuer:        env("MANYFORGE_JWT_ISSUER", "manyforge"),
-		JWTAudience:      env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
-		JWTActiveKID:     env("MANYFORGE_JWT_ACTIVE_KID", ""),
-		JWTVerifyKeys:    env("MANYFORGE_JWT_VERIFY_KEYS", ""),
+		Addr:                 env("MANYFORGE_ADDR", ":8080"),
+		DatabaseURL:          os.Getenv("MANYFORGE_DATABASE_URL"),
+		TrustedProxyCIDR:     os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
+		CloudflareSourceCIDR: os.Getenv("MANYFORGE_CF_SOURCE_CIDR"),
+		JWTIssuer:            env("MANYFORGE_JWT_ISSUER", "manyforge"),
+		JWTAudience:          env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
+		JWTActiveKID:         env("MANYFORGE_JWT_ACTIVE_KID", ""),
+		JWTVerifyKeys:        env("MANYFORGE_JWT_VERIFY_KEYS", ""),
 	}
 
 	ttl, err := envDuration("MANYFORGE_ACCESS_TOKEN_TTL", 15*time.Minute)
@@ -212,6 +219,30 @@ func Load() (Config, error) {
 	}
 	if cfg.RateLimitBurst, err = envFloat("MANYFORGE_RATELIMIT_BURST", 20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_RATELIMIT_BURST: %w", err)
+	}
+	if cfg.TrustCFIPCountry, err = envBool("MANYFORGE_TRUST_CF_IPCOUNTRY", false); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
+	}
+	if cfg.TrustCFIPCountry || strings.TrimSpace(cfg.CloudflareSourceCIDR) != "" {
+		trustedProxies, validateErr := validateCIDRList(
+			"MANYFORGE_TRUSTED_PROXY_CIDR", cfg.TrustedProxyCIDR,
+			minTrustedProxyIPv4Prefix, minTrustedProxyIPv6Prefix,
+		)
+		if validateErr != nil {
+			return Config{}, validateErr
+		}
+		cloudflareSources, validateErr := validateCIDRList(
+			"MANYFORGE_CF_SOURCE_CIDR", cfg.CloudflareSourceCIDR,
+			minCloudflareSourceIPv4Prefix, minCloudflareSourceIPv6Prefix,
+		)
+		if validateErr != nil {
+			return Config{}, validateErr
+		}
+		if cidrListsOverlap(trustedProxies, cloudflareSources) {
+			return Config{}, fmt.Errorf(
+				"MANYFORGE_TRUSTED_PROXY_CIDR must not overlap MANYFORGE_CF_SOURCE_CIDR",
+			)
+		}
 	}
 
 	// Persistent JWT signing key (Task 1.1): supplied inline (…_PEM) or via a
@@ -460,6 +491,131 @@ func envBool(key string, def bool) (bool, error) {
 		return def, nil
 	}
 	return strconv.ParseBool(v)
+}
+
+const (
+	maxTrustCIDRs                 = 64
+	minTrustedProxyIPv4Prefix     = 16
+	minTrustedProxyIPv6Prefix     = 32
+	minCloudflareSourceIPv4Prefix = 8
+	minCloudflareSourceIPv6Prefix = 16
+)
+
+func validateCIDRList(key, value string, minIPv4Prefix, minIPv6Prefix int) ([]*net.IPNet, error) {
+	count := 0
+	var ipv4Ranges, ipv6Ranges []ipRange
+	var networks []*net.IPNet
+	for _, raw := range strings.Split(value, ",") {
+		cidr := strings.TrimSpace(raw)
+		if cidr == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("%s contains invalid CIDR %q: %w", key, cidr, err)
+		}
+		prefixBits, addressBits := network.Mask.Size()
+		minPrefix := minIPv6Prefix
+		family := 6
+		if addressBits == net.IPv4len*8 {
+			minPrefix = minIPv4Prefix
+			family = 4
+		}
+		if prefixBits < minPrefix {
+			return nil, fmt.Errorf(
+				"%s must use IPv%d prefixes /%d or narrower; got %q",
+				key, family, minPrefix, cidr,
+			)
+		}
+		r, bits := networkRange(network)
+		if bits == net.IPv6len*8 && overlapsIPv4MappedRange(r) {
+			return nil, fmt.Errorf("%s must use native IPv4 CIDRs instead of IPv4-mapped range %q", key, cidr)
+		}
+		if bits == net.IPv4len*8 {
+			ipv4Ranges = append(ipv4Ranges, r)
+		} else {
+			ipv6Ranges = append(ipv6Ranges, r)
+		}
+		networks = append(networks, network)
+		count++
+		if count > maxTrustCIDRs {
+			return nil, fmt.Errorf("%s must contain at most %d CIDRs", key, maxTrustCIDRs)
+		}
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("%s must contain at least one CIDR", key)
+	}
+	if rangesCoverAddressSpace(ipv4Ranges, net.IPv4len*8) {
+		return nil, fmt.Errorf("%s must not collectively trust every IPv4 peer", key)
+	}
+	if rangesCoverAddressSpace(ipv6Ranges, net.IPv6len*8) {
+		return nil, fmt.Errorf("%s must not collectively trust every IPv6 peer", key)
+	}
+	return networks, nil
+}
+
+func cidrListsOverlap(a, b []*net.IPNet) bool {
+	for _, left := range a {
+		for _, right := range b {
+			if left.Contains(right.IP) || right.Contains(left.IP) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type ipRange struct {
+	start big.Int
+	end   big.Int
+}
+
+func networkRange(network *net.IPNet) (ipRange, int) {
+	prefixBits, addressBits := network.Mask.Size()
+	ip := network.IP
+	if addressBits == net.IPv4len*8 {
+		ip = ip.To4()
+	} else {
+		ip = ip.To16()
+	}
+
+	var r ipRange
+	r.start.SetBytes(ip)
+	hostCount := new(big.Int).Lsh(big.NewInt(1), uint(addressBits-prefixBits))
+	r.end.Sub(hostCount, big.NewInt(1))
+	r.end.Add(&r.end, &r.start)
+	return r, addressBits
+}
+
+func overlapsIPv4MappedRange(r ipRange) bool {
+	mappedStart := new(big.Int).SetBytes(net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0})
+	mappedEnd := new(big.Int).Add(new(big.Int).Set(mappedStart), new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 32), big.NewInt(1)))
+	return r.start.Cmp(mappedEnd) <= 0 && r.end.Cmp(mappedStart) >= 0
+}
+
+func rangesCoverAddressSpace(ranges []ipRange, addressBits int) bool {
+	if len(ranges) == 0 {
+		return false
+	}
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].start.Cmp(&ranges[j].start) < 0
+	})
+	if ranges[0].start.Sign() != 0 {
+		return false
+	}
+
+	coveredThrough := new(big.Int).Set(&ranges[0].end)
+	for i := 1; i < len(ranges); i++ {
+		nextAfterCovered := new(big.Int).Add(new(big.Int).Set(coveredThrough), big.NewInt(1))
+		if ranges[i].start.Cmp(nextAfterCovered) > 0 {
+			return false
+		}
+		if ranges[i].end.Cmp(coveredThrough) > 0 {
+			coveredThrough.Set(&ranges[i].end)
+		}
+	}
+	lastAddress := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(addressBits)), big.NewInt(1))
+	return coveredThrough.Cmp(lastAddress) >= 0
 }
 
 func envInt64(key string, def int64) (int64, error) {

@@ -222,30 +222,133 @@ func TestBrowser_HandlesImpersonation(t *testing.T) {
 	}
 }
 
-// stubGeo answers every lookup with a fixed code, so ResolveCountry's filtering is what is tested.
-type stubGeo struct{ code string }
-
-func (s stubGeo) Country(net.IP) string { return s.code }
-
-func TestResolveCountry(t *testing.T) {
-	g := stubGeo{"us"}
-	if got := ResolveCountry(g, "203.0.113.9"); got != "US" {
-		t.Errorf("public IP: got %q, want US (uppercased)", got)
+func TestCloudflareCountry(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		trusted bool
+		values  []string
+		want    string
+	}{
+		{name: "trusted uppercase", trusted: true, values: []string{"US"}, want: "US"},
+		{name: "trusted lowercase", trusted: true, values: []string{"ca"}, want: "CA"},
+		{name: "surrounding whitespace", trusted: true, values: []string{" gb "}, want: "GB"},
+		{name: "disabled ignores plausible value", trusted: false, values: []string{"US"}},
+		{name: "missing", trusted: true},
+		{name: "unknown", trusted: true, values: []string{"XX"}},
+		{name: "tor", trusted: true, values: []string{"T1"}},
+		{name: "comma separated", trusted: true, values: []string{"US, CA"}},
+		{name: "duplicate headers", trusted: true, values: []string{"US", "CA"}},
+		{name: "too long", trusted: true, values: []string{"USA"}},
+		{name: "non ascii", trusted: true, values: []string{"ÉU"}},
+		{name: "digit suffix", trusted: true, values: []string{"U1"}},
+		{name: "digit prefix", trusted: true, values: []string{"1S"}},
+		{name: "punctuation", trusted: true, values: []string{"!!"}},
+		{name: "unknown alphabetic", trusted: true, values: []string{"ZZ"}},
+		{name: "region group", trusted: true, values: []string{"EU"}},
+		{name: "private use", trusted: true, values: []string{"XK"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cloudflareCountry(tc.trusted, tc.values); got != tc.want {
+				t.Errorf("cloudflareCountry(%t, %q) = %q, want %q",
+					tc.trusted, tc.values, got, tc.want)
+			}
+		})
 	}
-	// A nil resolver is the default deployment state and must be safe.
-	if got := ResolveCountry(nil, "203.0.113.9"); got != "" {
-		t.Errorf("nil resolver: got %q, want empty", got)
-	}
-	// Addresses that cannot carry meaningful geography are reported as unknown rather than as
-	// whatever the database happens to say.
-	for _, ip := range []string{"127.0.0.1", "10.0.0.5", "192.168.1.1", "169.254.1.1", "0.0.0.0", "::1", "not-an-ip", ""} {
-		if got := ResolveCountry(g, ip); got != "" {
-			t.Errorf("ResolveCountry(%q) = %q, want empty", ip, got)
+}
+
+func TestResolveClientSeparatesCloudflareEdgeFromVisitor(t *testing.T) {
+	_, trustedProxy, _ := net.ParseCIDR("10.244.0.0/16")
+	_, cloudflareSource, _ := net.ParseCIDR("173.245.48.0/20")
+	newRequest := func(remoteAddr, sourceIP string, connectingIPs ...string) *http.Request {
+		header := http.Header{"X-Forwarded-For": {sourceIP}}
+		for _, ip := range connectingIPs {
+			header.Add("CF-Connecting-IP", ip)
 		}
+		return &http.Request{RemoteAddr: remoteAddr, Header: header}
 	}
-	// A malformed code from the database is discarded rather than stored.
-	if got := ResolveCountry(stubGeo{"UNITED STATES"}, "203.0.113.9"); got != "" {
-		t.Errorf("non-alpha-2 code should be dropped, got %q", got)
+
+	for _, tc := range []struct {
+		name        string
+		handler     PublicHandler
+		request     *http.Request
+		wantIP      string
+		wantCountry bool
+	}{
+		{
+			name: "trusted Cloudflare edge supplies visitor",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("10.244.7.9:5000", "173.245.48.7", "198.51.100.7"),
+			wantIP:      "198.51.100.7",
+			wantCountry: true,
+		},
+		{
+			name: "missing visitor header falls back to edge",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("10.244.7.9:5000", "173.245.48.7"),
+			wantIP:      "173.245.48.7",
+			wantCountry: true,
+		},
+		{
+			name: "duplicate visitor header falls back to edge",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request: newRequest(
+				"10.244.7.9:5000", "173.245.48.7", "198.51.100.7", "192.0.2.7",
+			),
+			wantIP:      "173.245.48.7",
+			wantCountry: true,
+		},
+		{
+			name: "non-Cloudflare forwarded source cannot assert visitor",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("10.244.7.9:5000", "203.0.113.7", "192.0.2.7"),
+			wantIP:      "203.0.113.7",
+			wantCountry: false,
+		},
+		{
+			name: "country opt-out retains verified visitor identity",
+			handler: PublicHandler{
+				TrustedProxies:         []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges: []*net.IPNet{cloudflareSource},
+			},
+			request:     newRequest("10.244.7.9:5000", "173.245.48.7", "198.51.100.7"),
+			wantIP:      "198.51.100.7",
+			wantCountry: false,
+		},
+		{
+			name: "untrusted direct peer cannot assert source or visitor",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("203.0.113.9:5000", "173.245.48.7", "192.0.2.7"),
+			wantIP:      "203.0.113.9",
+			wantCountry: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotIP, gotCountry := tc.handler.ResolveClient(tc.request)
+			if gotIP != tc.wantIP || gotCountry != tc.wantCountry {
+				t.Fatalf("ResolveClient = (%q, %t), want (%q, %t)",
+					gotIP, gotCountry, tc.wantIP, tc.wantCountry)
+			}
+		})
 	}
 }
 
