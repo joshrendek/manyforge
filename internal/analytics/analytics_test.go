@@ -5,11 +5,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestNormalizePath(t *testing.T) {
@@ -437,4 +441,52 @@ func mustReadFile(t *testing.T, name string) string {
 		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(b)
+}
+
+// TestServeSnippet_ConditionalRequests exercises the real HTTP contract. The derivation test
+// proves the ETag tracks content; this proves the ETag is actually USED — a validator that never
+// produces a 304 would turn every page load on every embedding site into a full re-download.
+func TestServeSnippet_ConditionalRequests(t *testing.T) {
+	h := &PublicHandler{}
+	mux := chi.NewRouter()
+	h.SnippetRoutes(mux)
+
+	// First fetch: full body, with the validator and the short TTL.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/a.js", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first GET = %d, want 200", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag on the response")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=300") ||
+		!strings.Contains(cc, "must-revalidate") {
+		t.Errorf("Cache-Control = %q, want max-age=300 and must-revalidate", cc)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("empty snippet body")
+	}
+
+	// Revalidation with the same validator must be answered 304, not a fresh body.
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/a.js", nil)
+	req2.Header.Set("If-None-Match", etag)
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusNotModified {
+		t.Errorf("revalidation = %d, want 304 (ETag not honoured; every page load would "+
+			"re-download the snippet)", rec2.Code)
+	}
+
+	// A STALE validator must get the new body — this is the case that was broken in production:
+	// the old snippet's validator kept matching after the content changed.
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodGet, "/a.js", nil)
+	req3.Header.Set("If-None-Match", `"0000000000000000000000000000000000000000"`)
+	mux.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK || rec3.Body.Len() == 0 {
+		t.Errorf("stale validator = %d (len %d), want 200 with the current snippet",
+			rec3.Code, rec3.Body.Len())
+	}
 }
