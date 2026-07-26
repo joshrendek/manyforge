@@ -77,6 +77,21 @@ END; $$;
 
 -- Custom events are not covered by the pageview partial index (which is scoped to
 -- name = 'pageview'), so the event rollup would have no usable index without this one.
+--
+-- LOCK NOTE. This is a plain CREATE INDEX, which takes a lock that blocks writes while it builds.
+-- That is acceptable HERE and only here:
+--   * analytics_event holds 0 rows in production at the time of this migration (verified), and
+--     only the pre-created empty partitions exist, so the build is effectively instantaneous.
+--   * CREATE INDEX CONCURRENTLY is NOT an option: Postgres rejects it outright on a partitioned
+--     table ("cannot create index on partitioned table ... concurrently"). Verified empirically,
+--     not assumed.
+--   * The online path for a POPULATED partitioned table is CREATE INDEX ON ONLY <parent>, then
+--     CREATE INDEX CONCURRENTLY per partition, then ALTER INDEX ... ATTACH PARTITION. None of
+--     that can live in a migration, because CONCURRENTLY cannot run inside the implicit
+--     transaction the runner wraps each file in.
+--
+-- So: adding an index to analytics_event once it carries real traffic must NOT be done this way.
+-- The procedure is tracked separately; see the bd issue referenced in the PR.
 CREATE INDEX analytics_event_custom_idx
     ON analytics_event (client_id, occurred_at)
     WHERE is_bot = false AND name <> 'pageview';
