@@ -165,12 +165,14 @@ import { Spinner } from '../../ui/spinner/spinner';
           }
         </div>
 
-        @if (countryUnavailable()) {
-          <p class="mf-hint" data-testid="country-unavailable" role="status">
-            Country data is unavailable for this date range. It appears only when the deployment's
-            trusted edge supplies a supported country for a request.
-          </p>
-        }
+        <div data-testid="country-status" role="status">
+          @if (countryUnavailable()) {
+            <p class="mf-hint" data-testid="country-unavailable">
+              Country data is unavailable for this date range. It appears only when the deployment's
+              trusted edge supplies a supported country for a request.
+            </p>
+          }
+        </div>
 
         @if (s.pageviews === 0 && !loading()) {
           <mf-empty-state title="No traffic yet" data-testid="analytics-empty">

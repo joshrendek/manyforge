@@ -143,9 +143,11 @@ describe('AnalyticsDashboardComponent', () => {
   // Traffic but no countries means no trusted edge signal — say so, rather than letting the user
   // conclude their audience is from nowhere.
   it('explains a missing country breakdown when there is traffic', () => {
+    const status = fixture.nativeElement.querySelector('[data-testid="country-status"]');
     const hint = fixture.nativeElement.querySelector('[data-testid="country-unavailable"]');
+    expect(status).toBeTruthy();
+    expect(status.getAttribute('role')).toBe('status');
     expect(hint).toBeTruthy();
-    expect(hint.getAttribute('role')).toBe('status');
     expect(hint.textContent).toContain('trusted edge supplies a supported country');
   });
 
@@ -161,6 +163,9 @@ describe('AnalyticsDashboardComponent', () => {
     fixture.detectChanges();
 
     const el = fixture.nativeElement;
+    const status = el.querySelector('[data-testid="country-status"]');
+    expect(status).toBeTruthy();
+    expect(status.getAttribute('role')).toBe('status');
     expect(el.querySelector('[data-testid="country-unavailable"]')).toBeNull();
     expect(el.querySelector('[data-testid="breakdown-country"]').textContent).toContain('US');
   });

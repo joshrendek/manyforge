@@ -306,6 +306,7 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	networkPolicy := mustRead(t, "../../charts/manyforge/templates/analytics-networkpolicy.yaml")
 	for _, required := range []string{
 		"kind: NetworkPolicy",
+		`fail "manyforge: ingress.enabled must be true when trusting CF-IPCountry"`,
 		`required "manyforge: analytics.trustedIngressNamespace is required when trusting CF-IPCountry"`,
 		"app.kubernetes.io/name: ingress-nginx",
 		"app.kubernetes.io/component: controller",
