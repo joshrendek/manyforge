@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -416,12 +417,16 @@ func TestSnippetCacheValidator_DerivesFromContent(t *testing.T) {
 		t.Errorf("ETag is not the content hash: got %s want %s", snippetETag, want)
 	}
 
-	// The modtime must move with the content too — ServeContent falls back to it for clients that
-	// send If-Modified-Since rather than If-None-Match.
-	t1 := snippetModTime()
-	if t1.IsZero() {
-		t.Fatal("modtime is zero")
+	// The property that actually matters: DIFFERENT BODIES GET DIFFERENT VALIDATORS. Asserting the
+	// validator is merely non-empty would pass for a constant, which is the bug.
+	if etagFor("a") == etagFor("b") {
+		t.Error("two different bodies produced the same ETag")
 	}
+	// A one-character change must move it — this is the granularity a real snippet edit has.
+	if etagFor(snippetJS) == etagFor(snippetJS+" ") {
+		t.Error("a modified snippet produced an unchanged ETag; caches would keep the old body")
+	}
+
 	// A hardcoded literal date in the source is exactly what caused the incident.
 	src := mustReadFile(t, "snippet.go")
 	if strings.Contains(src, "time.Date(2026") {
@@ -488,5 +493,26 @@ func TestServeSnippet_ConditionalRequests(t *testing.T) {
 	if rec3.Code != http.StatusOK || rec3.Body.Len() == 0 {
 		t.Errorf("stale validator = %d (len %d), want 200 with the current snippet",
 			rec3.Code, rec3.Body.Len())
+	}
+
+	// No Last-Modified. A date implies an ordering that content does not have, and a validator
+	// derived from a hash can move BACKWARDS when the snippet changes — after which ServeContent
+	// answers 304 to any If-Modified-Since at or after it, pinning the stale body. The ETag is the
+	// only validator, precisely so there is no ordering to get wrong.
+	if lm := rec.Header().Get("Last-Modified"); lm != "" {
+		t.Errorf("Last-Modified = %q, want absent: a date-shaped validator can regress across "+
+			"snippet changes and re-create the staleness bug", lm)
+	}
+
+	// The case that matters for the object currently stuck in Cloudflare: it was cached before this
+	// handler set an ETag, so it can only revalidate with If-Modified-Since. That must yield the
+	// CURRENT body, never a 304.
+	rec4 := httptest.NewRecorder()
+	req4 := httptest.NewRequest(http.MethodGet, "/a.js", nil)
+	req4.Header.Set("If-Modified-Since", time.Now().Add(24*time.Hour).UTC().Format(http.TimeFormat))
+	mux.ServeHTTP(rec4, req4)
+	if rec4.Code != http.StatusOK || rec4.Body.Len() == 0 {
+		t.Errorf("If-Modified-Since (far future) = %d (len %d), want 200 — a client holding an old "+
+			"copy with only a date must still receive the new snippet", rec4.Code, rec4.Body.Len())
 	}
 }
