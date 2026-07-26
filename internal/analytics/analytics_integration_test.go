@@ -647,7 +647,7 @@ func TestSummary_RejectsWindowBeyondTheCap(t *testing.T) {
 // Enrichment (as0 task 4)
 // ---------------------------------------------------------------------------
 
-// collectFull posts a pageview including the campaign parameters the snippet extracts.
+// collectFull posts a pageview through the simulated trusted ingress.
 func (e *env) collectFull(t *testing.T, path, ref, query, ua, ip string) int {
 	return e.collectFullWithCountry(t, path, ref, query, ua, ip, "")
 }

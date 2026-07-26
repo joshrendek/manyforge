@@ -1389,6 +1389,8 @@ func parseTrustedCIDRs(s string, logger *slog.Logger) []*net.IPNet {
 	return parseSourceCIDRs(s, "trusted proxy", logger)
 }
 
+// parseSourceCIDRs parses a comma-separated network list. Malformed entries are logged with kind
+// and skipped; an empty list returns nil.
 func parseSourceCIDRs(s, kind string, logger *slog.Logger) []*net.IPNet {
 	var out []*net.IPNet
 	for _, c := range strings.Split(s, ",") {

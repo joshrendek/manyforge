@@ -227,7 +227,7 @@ type collectEvent struct {
 	utm      UTM
 	device   string
 	browser  string
-	country  string
+	country  string            // uppercase ISO 3166-1 alpha-2; "" ⇒ no trusted edge signal
 	name     string            // "" ⇒ automatic pageview
 	props    map[string]string // nil ⇒ no custom properties
 }
