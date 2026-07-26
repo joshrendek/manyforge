@@ -53,6 +53,9 @@ type PublicHandler struct {
 	// caller-supplied key, because the key is attacker-choosable.
 	PerIP          ratelimit.Limiter
 	TrustedProxies []*net.IPNet
+	// CloudflareSourceRanges contains Cloudflare's origin-facing networks. In trusted mode, the
+	// forwarded connection source must belong to this set before CF-IPCountry is accepted.
+	CloudflareSourceRanges []*net.IPNet
 	// TrustCloudflareCountryHeader declares that every request reaches this handler through a
 	// trusted edge which overwrites CF-IPCountry. It is also gated per request on the direct peer
 	// belonging to TrustedProxies; it must remain false when the origin can be reached through an
@@ -64,7 +67,21 @@ type PublicHandler struct {
 // country header. Both answers come from one direct-peer parse and trusted-proxy scan.
 func (h *PublicHandler) ResolveClient(r *http.Request) (string, bool) {
 	ip, trustedPeer := ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)
-	return ip, h.TrustCloudflareCountryHeader && trustedPeer
+	return ip, h.TrustCloudflareCountryHeader &&
+		trustedPeer &&
+		ipInNetworks(net.ParseIP(ip), h.CloudflareSourceRanges)
+}
+
+func ipInNetworks(ip net.IP, networks []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, network := range networks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectRoutes mounts the public collect endpoint.

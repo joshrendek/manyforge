@@ -21,6 +21,7 @@ jobs:
           helm lint charts/manyforge "${common[@]}"
           default_render="$(helm template manyforge charts/manyforge "${common[@]}")"
           grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "false"' <<<"$default_render"
+          grep -Fq 'MANYFORGE_CF_SOURCE_CIDR: ""' <<<"$default_render"
           if helm template manyforge charts/manyforge "${common[@]}" \
             --set analytics.trustCloudflareCountryHeader=true \
             --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
@@ -55,12 +56,40 @@ jobs:
               exit 1
             fi
           done
+          for invalid_range in \
+            'not-an-ip/8' \
+            '203.0.113.0/33' \
+            '203.0.113.0/not-a-prefix' \
+            '10.0.0.0/7' \
+            '2001:db8::/129' \
+            '2001:db8::/15' \
+            '2001:::1/32'; do
+            if helm template manyforge charts/manyforge "${common[@]}" \
+              --set analytics.trustCloudflareCountryHeader=true \
+              --set-string analytics.cloudflareSourceRanges="$invalid_range" \
+              --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+              echo "trusted country mode rendered with invalid source range $invalid_range" >&2
+              exit 1
+            fi
+          done
+          too_many_ranges="203.0.113.0/24"
+          for ((i=1; i<65; i++)); do
+            too_many_ranges+='\,'"203.0.113.0/24"
+          done
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.cloudflareSourceRanges="$too_many_ranges" \
+            --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+            echo "trusted country mode rendered with more than 64 source ranges" >&2
+            exit 1
+          fi
           enabled_render="$(helm template manyforge charts/manyforge "${common[@]}" \
             --set analytics.trustCloudflareCountryHeader=true \
             --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 \
             --set-string analytics.trustedIngressNamespace=ingress \
             --set service.port=80)"
           grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "true"' <<<"$enabled_render"
+          grep -Fq 'MANYFORGE_CF_SOURCE_CIDR: "203.0.113.0/24"' <<<"$enabled_render"
           grep -Fq 'nginx.ingress.kubernetes.io/whitelist-source-range: "203.0.113.0/24"' \
             <<<"$enabled_render"
           grep -Fq 'name: manyforge-trusted-ingress' <<<"$enabled_render"

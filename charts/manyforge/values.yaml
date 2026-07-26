@@ -132,7 +132,8 @@ publicBaseURL: ""
 
 # Country lookup remains off unless a deployment explicitly declares CF-IPCountry trustworthy.
 # Enabling it also requires Cloudflare's current origin-facing CIDRs: the chart allowlists them at
-# ingress so a direct caller cannot forge the header. Keep the list current from
+# ingress and the application verifies the ingress-overwritten forwarded source against the same
+# list, so a direct caller cannot forge the header even during an ingress reload. Keep it current from
 # https://www.cloudflare.com/ips/ (or use equivalent origin isolation outside this chart).
 # To prevent accidental public-origin exposure, the chart accepts at most 64 entries and requires
 # IPv4 prefixes of /8 or narrower and IPv6 prefixes of /16 or narrower.

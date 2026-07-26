@@ -67,6 +67,7 @@ func newAnalyticsPublicHandler(
 	logger *slog.Logger,
 	metrics *observability.Metrics,
 	trusted []*net.IPNet,
+	cloudflareSources []*net.IPNet,
 	cfg config.Config,
 ) *analytics.PublicHandler {
 	return &analytics.PublicHandler{
@@ -75,6 +76,7 @@ func newAnalyticsPublicHandler(
 		Metrics:                      metrics,
 		PerIP:                        ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
 		TrustedProxies:               trusted,
+		CloudflareSourceRanges:       cloudflareSources,
 		TrustCloudflareCountryHeader: cfg.TrustCFIPCountry,
 	}
 }
@@ -689,6 +691,7 @@ func main() {
 	// email verification (FR-029). The key is the trusted-proxy-aware client IP so
 	// a spoofed X-Forwarded-For cannot evade it.
 	trusted := parseTrustedCIDRs(cfg.TrustedProxyCIDR, logger)
+	cloudflareSources := parseSourceCIDRs(cfg.CloudflareSourceCIDR, "Cloudflare source", logger)
 	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
 
@@ -709,7 +712,9 @@ func main() {
 		TrustedProxies: trusted,
 		Metrics:        metrics,
 	}
-	analyticsPublicH := newAnalyticsPublicHandler(database, logger, metrics, trusted, cfg)
+	analyticsPublicH := newAnalyticsPublicHandler(
+		database, logger, metrics, trusted, cloudflareSources, cfg,
+	)
 
 	// Inbound webhook/SMTP rate limiting (FR-020), separate from the analytics limiter above.
 	// Two rate limiters shared across both transport layers are built from the same ingest knobs,
@@ -1381,6 +1386,10 @@ func dkimConfigFromCfg(cfg config.Config) (*notify.DKIMConfig, error) {
 // Malformed entries are logged and skipped; an empty list means no proxy is trusted
 // (the direct peer is authoritative).
 func parseTrustedCIDRs(s string, logger *slog.Logger) []*net.IPNet {
+	return parseSourceCIDRs(s, "trusted proxy", logger)
+}
+
+func parseSourceCIDRs(s, kind string, logger *slog.Logger) []*net.IPNet {
 	var out []*net.IPNet
 	for _, c := range strings.Split(s, ",") {
 		c = strings.TrimSpace(c)
@@ -1389,7 +1398,7 @@ func parseTrustedCIDRs(s string, logger *slog.Logger) []*net.IPNet {
 		}
 		_, n, err := net.ParseCIDR(c)
 		if err != nil {
-			logger.Warn("ignoring malformed trusted proxy CIDR", "cidr", c, "err", err)
+			logger.Warn("ignoring malformed source CIDR", "kind", kind, "cidr", c, "err", err)
 			continue
 		}
 		out = append(out, n)

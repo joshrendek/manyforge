@@ -67,6 +67,7 @@ func newEnvWithCloudflareCountryTrustAndProxy(t *testing.T, trust, trustLoopback
 	// like the same visitor.
 	_, loopback4, _ := net.ParseCIDR("127.0.0.0/8")
 	_, loopback6, _ := net.ParseCIDR("::1/128")
+	_, cloudflareTestRange, _ := net.ParseCIDR("203.0.113.0/24")
 	var trustedProxies []*net.IPNet
 	if trustLoopbackProxy {
 		trustedProxies = []*net.IPNet{loopback4, loopback6}
@@ -75,6 +76,7 @@ func newEnvWithCloudflareCountryTrustAndProxy(t *testing.T, trust, trustLoopback
 		DB:                           tdb.App,
 		Logger:                       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		TrustedProxies:               trustedProxies,
+		CloudflareSourceRanges:       []*net.IPNet{cloudflareTestRange},
 		TrustCloudflareCountryHeader: trust,
 	}
 	rd := analytics.NewHandler(analytics.NewService(tdb.App))
@@ -750,6 +752,21 @@ func TestEnrichment_RejectsCountryFromUntrustedPeer(t *testing.T) {
 	}
 	if country != nil {
 		t.Fatalf("country = %q, want NULL from an untrusted direct peer", *country)
+	}
+}
+
+func TestEnrichment_RejectsCountryFromNonCloudflareForwardedSource(t *testing.T) {
+	ctx, e := newEnvWithCloudflareCountryTrust(t, true)
+	e.collectFullWithCountry(t, "/", "", "", humanUA, "198.51.100.10", "US")
+
+	var country *string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT country FROM analytics_event WHERE client_id=$1`, e.site,
+	).Scan(&country); err != nil {
+		t.Fatalf("read country: %v", err)
+	}
+	if country != nil {
+		t.Fatalf("country = %q, want NULL from a non-Cloudflare forwarded source", *country)
 	}
 }
 

@@ -10,16 +10,51 @@
 {{- fail "manyforge: analytics.cloudflareSourceRanges must contain at most 64 source ranges" }}
 {{- end }}
 {{- $parts := splitList "/" $cidr }}
-{{- $mappedIPv4 := regexMatch "^(::ffff:|0+:0+:0+:0+:0+:ffff:).*" $cidr }}
-{{- if $mappedIPv4 }}
-{{- fail (printf "manyforge: analytics.cloudflareSourceRanges must use native IPv4 CIDRs instead of IPv4-mapped range (%s)" $raw) }}
-{{- end }}
 {{- if ne (len $parts) 2 }}
 {{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed source range (%s)" $raw) }}
 {{- end }}
-{{- $prefix := atoi (index $parts 1) }}
-{{- if or (and (contains ":" $cidr) (lt $prefix 16)) (and (not (contains ":" $cidr)) (lt $prefix 8)) }}
-{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains an excessively broad source range (%s)" $raw) }}
+{{- $address := index $parts 0 }}
+{{- $prefixText := index $parts 1 }}
+{{- if not (regexMatch "^[0-9]+$" $prefixText) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed prefix (%s)" $raw) }}
+{{- end }}
+{{- $prefix := atoi $prefixText }}
+{{- if contains ":" $address }}
+{{- if regexMatch "^(::ffff:|0+:0+:0+:0+:0+:ffff:).*" $address }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges must use native IPv4 CIDRs instead of IPv4-mapped range (%s)" $raw) }}
+{{- end }}
+{{- $compressionParts := splitList "::" $address }}
+{{- if or (not (regexMatch "^[0-9a-f:]+$" $address)) (contains ":::" $address) (gt (len $compressionParts) 2) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed IPv6 address (%s)" $raw) }}
+{{- end }}
+{{- $groupCount := 0 }}
+{{- range $group := splitList ":" $address }}
+{{- if $group }}
+{{- if not (regexMatch "^[0-9a-f]{1,4}$" $group) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed IPv6 address (%s)" $raw) }}
+{{- end }}
+{{- $groupCount = add1 $groupCount }}
+{{- end }}
+{{- end }}
+{{- if or (and (contains "::" $address) (ge $groupCount 8)) (and (not (contains "::" $address)) (ne $groupCount 8)) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed IPv6 address (%s)" $raw) }}
+{{- end }}
+{{- if or (lt $prefix 16) (gt $prefix 128) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains an invalid or excessively broad IPv6 prefix (%s)" $raw) }}
+{{- end }}
+{{- else }}
+{{- $octets := splitList "." $address }}
+{{- if ne (len $octets) 4 }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed IPv4 address (%s)" $raw) }}
+{{- end }}
+{{- range $octet := $octets }}
+{{- if or (not (regexMatch "^(0|[1-9][0-9]{0,2})$" $octet)) (gt (atoi $octet) 255) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed IPv4 address (%s)" $raw) }}
+{{- end }}
+{{- end }}
+{{- if or (lt $prefix 8) (gt $prefix 32) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains an invalid or excessively broad IPv4 prefix (%s)" $raw) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

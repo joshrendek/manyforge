@@ -255,8 +255,10 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	src := mustRead(t, "../../internal/analytics/collect.go")
 	for _, required := range []string{
 		"TrustCloudflareCountryHeader",
+		"CloudflareSourceRanges",
 		`h.ResolveClient(r)`,
 		`ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)`,
+		`ipInNetworks(net.ParseIP(ip), h.CloudflareSourceRanges)`,
 		`r.Header.Values(cloudflareCountryHeader)`,
 		"cloudflareCountry(",
 		"if !trusted || len(values) != 1 {",
@@ -283,8 +285,10 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 		t.Error("the chart must not invent a default trusted ingress namespace")
 	}
 	configMap := mustRead(t, "../../charts/manyforge/templates/configmap.yaml")
-	if !strings.Contains(configMap, "MANYFORGE_TRUST_CF_IPCOUNTRY") {
-		t.Error("the chart must thread its explicit country-header trust setting to the app")
+	for _, env := range []string{"MANYFORGE_TRUST_CF_IPCOUNTRY", "MANYFORGE_CF_SOURCE_CIDR"} {
+		if !strings.Contains(configMap, env) {
+			t.Errorf("the chart must thread country trust setting %s to the app", env)
+		}
 	}
 	deployment := mustRead(t, "../../charts/manyforge/templates/deployment.yaml")
 	if !strings.Contains(deployment, "checksum/config:") ||
@@ -292,7 +296,8 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 		t.Error("ConfigMap changes must restart pods before ingress trust controls can be removed")
 	}
 	main := mustRead(t, "../../cmd/manyforge/main.go")
-	if !strings.Contains(main, "newAnalyticsPublicHandler(database, logger, metrics, trusted, cfg)") {
+	if !strings.Contains(main, `cloudflareSources := parseSourceCIDRs(cfg.CloudflareSourceCIDR`) ||
+		!strings.Contains(main, "database, logger, metrics, trusted, cloudflareSources, cfg") {
 		t.Error("production startup must construct analytics through the tested config-wiring path")
 	}
 	ingress := mustRead(t, "../../charts/manyforge/templates/ingress.yaml")
@@ -310,7 +315,10 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 		"kind: NetworkPolicy",
 		`fail "manyforge: ingress.enabled must be true when trusting CF-IPCountry"`,
 		"analytics.cloudflareSourceRanges must contain at most 64 source ranges",
-		"analytics.cloudflareSourceRanges contains an excessively broad source range",
+		"analytics.cloudflareSourceRanges contains a malformed IPv4 address",
+		"analytics.cloudflareSourceRanges contains a malformed IPv6 address",
+		"analytics.cloudflareSourceRanges contains an invalid or excessively broad IPv4 prefix",
+		"analytics.cloudflareSourceRanges contains an invalid or excessively broad IPv6 prefix",
 		"analytics.cloudflareSourceRanges must use native IPv4 CIDRs",
 		"or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace",
 		`required "manyforge: analytics.trustedIngressNamespace is required when trusting CF-IPCountry"`,
