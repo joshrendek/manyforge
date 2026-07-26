@@ -47,3 +47,24 @@ func TestClientIP(t *testing.T) {
 		t.Errorf("untrusted peer: want 8.8.8.8, got %s", got)
 	}
 }
+
+func TestIsTrustedPeer(t *testing.T) {
+	trusted := []*net.IPNet{mustCIDR("10.0.0.0/8"), mustCIDR("2001:db8::/32")}
+	for _, tc := range []struct {
+		name       string
+		remoteAddr string
+		want       bool
+	}{
+		{name: "trusted IPv4 peer", remoteAddr: "10.1.2.3:5000", want: true},
+		{name: "untrusted IPv4 peer", remoteAddr: "203.0.113.7:5000", want: false},
+		{name: "trusted IPv6 peer", remoteAddr: "[2001:db8::7]:5000", want: true},
+		{name: "malformed peer", remoteAddr: "not-an-ip", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &http.Request{RemoteAddr: tc.remoteAddr}
+			if got := IsTrustedPeer(r, trusted); got != tc.want {
+				t.Fatalf("IsTrustedPeer(%q) = %t, want %t", tc.remoteAddr, got, tc.want)
+			}
+		})
+	}
+}

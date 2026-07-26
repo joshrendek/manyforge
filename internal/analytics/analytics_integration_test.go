@@ -43,6 +43,10 @@ func newEnv(t *testing.T) (context.Context, *env) {
 }
 
 func newEnvWithCloudflareCountryTrust(t *testing.T, trust bool) (context.Context, *env) {
+	return newEnvWithCloudflareCountryTrustAndProxy(t, trust, true)
+}
+
+func newEnvWithCloudflareCountryTrustAndProxy(t *testing.T, trust, trustLoopbackProxy bool) (context.Context, *env) {
 	t.Helper()
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
@@ -63,10 +67,14 @@ func newEnvWithCloudflareCountryTrust(t *testing.T, trust bool) (context.Context
 	// like the same visitor.
 	_, loopback4, _ := net.ParseCIDR("127.0.0.0/8")
 	_, loopback6, _ := net.ParseCIDR("::1/128")
+	var trustedProxies []*net.IPNet
+	if trustLoopbackProxy {
+		trustedProxies = []*net.IPNet{loopback4, loopback6}
+	}
 	pub := &analytics.PublicHandler{
 		DB:                           tdb.App,
 		Logger:                       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		TrustedProxies:               []*net.IPNet{loopback4, loopback6},
+		TrustedProxies:               trustedProxies,
 		TrustCloudflareCountryHeader: trust,
 	}
 	rd := analytics.NewHandler(analytics.NewService(tdb.App))
@@ -727,6 +735,21 @@ func TestEnrichment_StoresAndRollsUpTrustedCloudflareCountry(t *testing.T) {
 	rows := summary.Breakdowns["country"]
 	if len(rows) != 1 || rows[0].Value != "CA" || rows[0].Pageviews != 1 {
 		t.Fatalf("country breakdown = %+v, want CA with one pageview", rows)
+	}
+}
+
+func TestEnrichment_RejectsCountryFromUntrustedPeer(t *testing.T) {
+	ctx, e := newEnvWithCloudflareCountryTrustAndProxy(t, true, false)
+	e.collectFullWithCountry(t, "/", "", "", humanUA, "203.0.113.10", "US")
+
+	var country *string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT country FROM analytics_event WHERE client_id=$1`, e.site,
+	).Scan(&country); err != nil {
+		t.Fatalf("read country: %v", err)
+	}
+	if country != nil {
+		t.Fatalf("country = %q, want NULL from an untrusted direct peer", *country)
 	}
 }
 

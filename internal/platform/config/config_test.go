@@ -98,6 +98,7 @@ func TestLoadMCPAllowLoopback(t *testing.T) {
 func TestLoadTrustCFIPCountry(t *testing.T) {
 	t.Run("true-when-set", func(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load: %v", err)
@@ -122,6 +123,14 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "notabool")
 		if _, err := Load(); err == nil {
 			t.Fatal("expected error for invalid bool, got nil")
+		}
+	})
+
+	t.Run("enabled-without-trusted-proxy-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected error when country trust has no trusted proxy CIDR, got nil")
 		}
 	})
 }

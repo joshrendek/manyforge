@@ -255,6 +255,7 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	src := mustRead(t, "../../internal/analytics/collect.go")
 	for _, required := range []string{
 		"TrustCloudflareCountryHeader",
+		`ratelimit.IsTrustedPeer(r, h.TrustedProxies)`,
 		`r.Header.Values(cloudflareCountryHeader)`,
 		"cloudflareCountry(",
 		"if !trusted || len(values) != 1 {",

@@ -166,10 +166,12 @@ their own indexes, and rewriting them would be a data migration for no functiona
 
 Cloudflare deployments may explicitly enable `MANYFORGE_TRUST_CF_IPCOUNTRY`, which reduces the
 edge-supplied `CF-IPCountry` header to ISO alpha-2 during collection. It is disabled by default:
-trusting that header is safe only when Cloudflare is the sole public path to the origin. The Helm
-chart therefore requires Cloudflare's current source CIDRs and allowlists them at ingress whenever
-trust is enabled. It also applies a NetworkPolicy that permits the application Service only from
-the named ingress-nginx controller namespace, closing the internal direct-Service bypass.
+trusting that header is safe only when Cloudflare is the sole public path to the origin. The
+application additionally accepts the header only when the request's direct peer belongs to
+`MANYFORGE_TRUSTED_PROXY_CIDR`. The Helm chart requires Cloudflare's current source CIDRs and
+allowlists them at ingress whenever trust is enabled. It also applies a NetworkPolicy that permits
+the application Service only from the named ingress-nginx controller namespace, closing the
+internal direct-Service bypass.
 Deployments using another ingress must enforce equivalent edge and service-level isolation.
 Unknown and special values are dropped. No IP-to-country database, raw IP, or finer location is
 stored. The dashboard says when the signal is absent rather than showing an empty panel — an
