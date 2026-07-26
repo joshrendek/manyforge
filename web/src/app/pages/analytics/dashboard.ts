@@ -167,9 +167,8 @@ import { Spinner } from '../../ui/spinner/spinner';
 
         @if (countryUnavailable()) {
           <p class="mf-hint" data-testid="country-unavailable" role="status">
-            Country data is unavailable for this date range. Future collection uses Cloudflare's
-            trusted <code>CF-IPCountry</code> signal when
-            <code>MANYFORGE_TRUST_CF_IPCOUNTRY</code> is enabled.
+            Country data is unavailable for this date range. It appears only when the deployment's
+            trusted edge supplies a supported country for a request.
           </p>
         }
 
@@ -294,9 +293,9 @@ export class AnalyticsDashboardComponent implements OnInit {
       }));
   });
 
-  // Distinguishes "no trusted country signal configured" from "no traffic yet": if there are
-  // pageviews but not a single country was resolved, explain the missing deployment signal rather
-  // than presenting an audience from nowhere.
+  // Traffic with no resolved countries can mean a historical range, absent/unsupported edge
+  // values, or no trusted edge signal. Surface that neutral state rather than inferring which
+  // deployment condition caused it.
   countryUnavailable = computed(() => {
     const s = this.summary();
     if (!s || s.pageviews === 0) return false;

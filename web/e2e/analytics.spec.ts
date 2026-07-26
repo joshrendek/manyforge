@@ -196,8 +196,8 @@ test('breakdown panels render only for dimensions that have data', async ({ page
   await expect(page.getByTestId('breakdown-device')).toContainText('mobile');
 });
 
-// With traffic but no country data, the deployment has no trusted edge signal — say so, rather
-// than leaving the user to conclude their audience is from nowhere.
+// With traffic but no country data, report the neutral state without guessing whether the cause
+// is historical traffic, an absent/unsupported edge value, or deployment configuration.
 test('explains a missing country breakdown instead of showing nothing', async ({ page }) => {
   await installStack(page);
   await page.goto(`/analytics/${BIZ_ID}/${SITE_ID}`);
@@ -205,7 +205,7 @@ test('explains a missing country breakdown instead of showing nothing', async ({
   await expect(page.getByTestId('country-unavailable')).toBeVisible();
   await expect(page.getByTestId('country-unavailable')).toHaveAttribute('role', 'status');
   await expect(page.getByTestId('country-unavailable')).toContainText(
-    'MANYFORGE_TRUST_CF_IPCOUNTRY',
+    'trusted edge supplies a supported country',
   );
 });
 

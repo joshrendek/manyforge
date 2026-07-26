@@ -146,7 +146,7 @@ describe('AnalyticsDashboardComponent', () => {
     const hint = fixture.nativeElement.querySelector('[data-testid="country-unavailable"]');
     expect(hint).toBeTruthy();
     expect(hint.getAttribute('role')).toBe('status');
-    expect(hint.textContent).toContain('MANYFORGE_TRUST_CF_IPCOUNTRY');
+    expect(hint.textContent).toContain('trusted edge supplies a supported country');
   });
 
   it('renders country data without the unavailable hint', () => {
