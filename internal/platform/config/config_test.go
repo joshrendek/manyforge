@@ -95,6 +95,37 @@ func TestLoadMCPAllowLoopback(t *testing.T) {
 	})
 }
 
+func TestLoadTrustCFIPCountry(t *testing.T) {
+	t.Run("true-when-set", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.TrustCFIPCountry {
+			t.Fatal("TrustCFIPCountry = false, want true")
+		}
+	})
+
+	t.Run("false-when-unset", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.TrustCFIPCountry {
+			t.Fatal("TrustCFIPCountry = true, want false")
+		}
+	})
+
+	t.Run("invalid-value-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "notabool")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected error for invalid bool, got nil")
+		}
+	})
+}
+
 // TestEnvKey32Disambiguation (manyforge-no9) pins the explicit-prefix and anchored
 // auto-detect parsing so a 32-byte key is loaded deterministically rather than via
 // "first decoder that yields 32 bytes": "hex:"/"base64:" prefixes are authoritative,

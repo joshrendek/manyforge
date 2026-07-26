@@ -140,12 +140,12 @@ describe('AnalyticsDashboardComponent', () => {
     expect(el.querySelector('[data-testid="breakdown-device"]').textContent).toContain('desktop');
   });
 
-  // Traffic but no countries means no GeoIP database — say so, rather than letting the user
+  // Traffic but no countries means no trusted edge signal — say so, rather than letting the user
   // conclude their audience is from nowhere.
   it('explains a missing country breakdown when there is traffic', () => {
     const hint = fixture.nativeElement.querySelector('[data-testid="country-unavailable"]');
     expect(hint).toBeTruthy();
-    expect(hint.textContent).toContain('MANYFORGE_GEOIP_DB');
+    expect(hint.textContent).toContain('MANYFORGE_TRUST_CF_IPCOUNTRY');
   });
 
   // The API reuses the `pageviews` field for every dimension, but for 'event' that number is a

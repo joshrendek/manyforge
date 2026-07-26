@@ -11,7 +11,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jhillyerd/enmime/v2 v2.4.0
-	github.com/oschwald/maxminddb-golang/v2 v2.4.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	gocloud.dev v0.45.0

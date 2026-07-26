@@ -11,10 +11,6 @@ on:
       - 'docs/**'
       - '**/*.md'
       - '.claude/**'
-  # GeoLite2 Country is baked into the app image. Rebuild weekly so the bundled copy stays within
-  # MaxMind's update requirements even during a quiet period with no application pushes.
-  schedule:
-    - cron: '17 6 * * 6'
 
 permissions:
   contents: read
@@ -32,9 +28,7 @@ jobs:
           TS=$(date +%s)
           SHA=${GITHUB_SHA::7}
           TAG=main-${SHA}-${TS}
-          GEOIP_CACHE_KEY=$(date -u +%Y-%m-%d)
           echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "GEOIP_CACHE_KEY=${GEOIP_CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
@@ -56,15 +50,6 @@ jobs:
             ghcr.io/joshrendek/manyforge:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # BuildKit secrets, not build args: credentials must not enter image history. Both repo
-          # secrets are required for an embedded DB. Empty/missing secrets intentionally produce a
-          # valid image without /geo/GeoLite2-Country.mmdb; the app warns and disables countries.
-          secrets: |
-            maxmind_account_id=${{ secrets.MAXMIND_ACCOUNT_ID }}
-            maxmind_license_key=${{ secrets.MAXMIND_LICENSE_KEY }}
-          build-args: |
-            GEOIP_CACHE_KEY=${{ steps.tag.outputs.GEOIP_CACHE_KEY }}
-            GEOIP_CREDENTIALS_PRESENT=${{ secrets.MAXMIND_ACCOUNT_ID != '' && secrets.MAXMIND_LICENSE_KEY != '' }}
 
       - name: Build and push sandbox image
         uses: docker/build-push-action@v6

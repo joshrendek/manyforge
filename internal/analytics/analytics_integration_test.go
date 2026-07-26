@@ -39,6 +39,10 @@ type env struct {
 }
 
 func newEnv(t *testing.T) (context.Context, *env) {
+	return newEnvWithCloudflareCountryTrust(t, false)
+}
+
+func newEnvWithCloudflareCountryTrust(t *testing.T, trust bool) (context.Context, *env) {
 	t.Helper()
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
@@ -60,9 +64,10 @@ func newEnv(t *testing.T) (context.Context, *env) {
 	_, loopback4, _ := net.ParseCIDR("127.0.0.0/8")
 	_, loopback6, _ := net.ParseCIDR("::1/128")
 	pub := &analytics.PublicHandler{
-		DB:             tdb.App,
-		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		TrustedProxies: []*net.IPNet{loopback4, loopback6},
+		DB:                           tdb.App,
+		Logger:                       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		TrustedProxies:               []*net.IPNet{loopback4, loopback6},
+		TrustCloudflareCountryHeader: trust,
 	}
 	rd := analytics.NewHandler(analytics.NewService(tdb.App))
 
@@ -634,12 +639,19 @@ func TestSummary_RejectsWindowBeyondTheCap(t *testing.T) {
 
 // collectFull posts a pageview including the campaign parameters the snippet extracts.
 func (e *env) collectFull(t *testing.T, path, ref, query, ua, ip string) int {
+	return e.collectFullWithCountry(t, path, ref, query, ua, ip, "")
+}
+
+func (e *env) collectFullWithCountry(t *testing.T, path, ref, query, ua, ip, country string) int {
 	t.Helper()
 	b, _ := json.Marshal(map[string]string{"k": e.key, "p": path, "r": ref, "q": query})
 	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/a/e", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("X-Forwarded-For", ip)
+	if country != "" {
+		req.Header.Set("CF-IPCountry", country)
+	}
 	resp, err := e.srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("collect: %v", err)
@@ -672,9 +684,9 @@ func TestEnrichment_StoresDerivedDimensionsOnly(t *testing.T) {
 	if device != "desktop" || browser != "Chrome" {
 		t.Errorf("device/browser = %q/%q", device, browser)
 	}
-	// No geo database is configured in tests, so country must be NULL rather than a guess.
+	// Header trust is disabled in the default test deployment, so country remains NULL.
 	if country != nil {
-		t.Errorf("country = %v, want NULL with no geo db configured", *country)
+		t.Errorf("country = %v, want NULL with no trusted edge signal", *country)
 	}
 
 	// The whole row must still contain no raw UA and no token from the query string.
@@ -688,6 +700,31 @@ func TestEnrichment_StoresDerivedDimensionsOnly(t *testing.T) {
 		if strings.Contains(js, leaked) {
 			t.Errorf("PRIVACY VIOLATION: %q is stored in the event row: %s", leaked, js)
 		}
+	}
+}
+
+func TestEnrichment_StoresAndRollsUpTrustedCloudflareCountry(t *testing.T) {
+	ctx, e := newEnvWithCloudflareCountryTrust(t, true)
+	e.collectFullWithCountry(t, "/", "", "", humanUA, "203.0.113.10", "ca")
+
+	var country *string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT country FROM analytics_event WHERE client_id=$1`, e.site,
+	).Scan(&country); err != nil {
+		t.Fatalf("read country: %v", err)
+	}
+	if country == nil || *country != "CA" {
+		t.Fatalf("country = %v, want CA", country)
+	}
+
+	e.rollup(t, ctx)
+	code, summary := e.summary(t, e.site)
+	if code != http.StatusOK {
+		t.Fatalf("summary status %d", code)
+	}
+	rows := summary.Breakdowns["country"]
+	if len(rows) != 1 || rows[0].Value != "CA" || rows[0].Pageviews != 1 {
+		t.Fatalf("country breakdown = %+v, want CA with one pageview", rows)
 	}
 }
 
@@ -728,10 +765,10 @@ func TestEnrichment_RollupProducesBreakdowns(t *testing.T) {
 	// A tracked dimension with no data is present but empty, so the UI can tell "nothing
 	// collected" apart from "not tracked".
 	if _, ok := s.Breakdowns["country"]; !ok {
-		t.Error("country key should be present (empty) even with no geo database")
+		t.Error("country key should be present (empty) even with no trusted edge signal")
 	}
 	if len(s.Breakdowns["country"]) != 0 {
-		t.Errorf("country should be empty with no geo db, got %+v", s.Breakdowns["country"])
+		t.Errorf("country should be empty with no trusted edge signal, got %+v", s.Breakdowns["country"])
 	}
 }
 

@@ -167,8 +167,9 @@ import { Spinner } from '../../ui/spinner/spinner';
 
         @if (countryUnavailable()) {
           <p class="mf-hint" data-testid="country-unavailable">
-            Country data needs a GeoIP database. Set <code>MANYFORGE_GEOIP_DB</code> to a MaxMind
-            <code>.mmdb</code> file to enable it — everything else works without it.
+            Country data is unavailable. Cloudflare deployments can enable its trusted
+            <code>CF-IPCountry</code> signal with <code>MANYFORGE_TRUST_CF_IPCOUNTRY</code> —
+            everything else works without it.
           </p>
         }
 
@@ -293,9 +294,9 @@ export class AnalyticsDashboardComponent implements OnInit {
       }));
   });
 
-  // Distinguishes "no geo database configured" from "no traffic yet": if there are pageviews but
-  // not a single country was resolved, the deployment has no GeoIP database rather than an
-  // audience from nowhere.
+  // Distinguishes "no trusted country signal configured" from "no traffic yet": if there are
+  // pageviews but not a single country was resolved, explain the missing deployment signal rather
+  // than presenting an audience from nowhere.
   countryUnavailable = computed(() => {
     const s = this.summary();
     if (!s || s.pageviews === 0) return false;

@@ -692,21 +692,13 @@ func main() {
 		TrustedProxies: trusted,
 		Metrics:        metrics,
 	}
-	// Country lookup is optional: with MANYFORGE_GEOIP_DB unset, or with the chart's default path
-	// absent from an uncredentialed image build, the resolver is nil and country breakdowns are
-	// absent. OpenMMDB warns for that missing-file case. Unreadable/corrupt databases remain fatal.
-	geo, gerr := analytics.OpenMMDB(cfg.GeoIPDBPath, logger)
-	if gerr != nil {
-		logger.Error("init analytics geoip", "err", gerr)
-		os.Exit(1)
-	}
 	analyticsPublicH := &analytics.PublicHandler{
-		DB:             database,
-		Logger:         logger,
-		Metrics:        metrics,
-		PerIP:          ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
-		TrustedProxies: trusted,
-		Geo:            geo,
+		DB:                           database,
+		Logger:                       logger,
+		Metrics:                      metrics,
+		PerIP:                        ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		TrustedProxies:               trusted,
+		TrustCloudflareCountryHeader: cfg.TrustCFIPCountry,
 	}
 
 	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public
