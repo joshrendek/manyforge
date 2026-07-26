@@ -277,6 +277,9 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	if !strings.Contains(values, `cloudflareSourceRanges: ""`) {
 		t.Error("the chart must not invent a default Cloudflare source allowlist")
 	}
+	if !strings.Contains(values, `trustedIngressNamespace: ""`) {
+		t.Error("the chart must not invent a default trusted ingress namespace")
+	}
 	configMap := mustRead(t, "../../charts/manyforge/templates/configmap.yaml")
 	if !strings.Contains(configMap, "MANYFORGE_TRUST_CF_IPCOUNTRY") {
 		t.Error("the chart must thread its explicit country-header trust setting to the app")
@@ -293,6 +296,17 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	} {
 		if !strings.Contains(ingress, required) {
 			t.Errorf("Cloudflare ingress trust boundary missing %q", required)
+		}
+	}
+	networkPolicy := mustRead(t, "../../charts/manyforge/templates/analytics-networkpolicy.yaml")
+	for _, required := range []string{
+		"kind: NetworkPolicy",
+		`required "manyforge: analytics.trustedIngressNamespace is required when trusting CF-IPCountry"`,
+		"app.kubernetes.io/name: ingress-nginx",
+		"app.kubernetes.io/component: controller",
+	} {
+		if !strings.Contains(networkPolicy, required) {
+			t.Errorf("Cloudflare service trust boundary missing %q", required)
 		}
 	}
 }

@@ -167,9 +167,9 @@ import { Spinner } from '../../ui/spinner/spinner';
 
         @if (countryUnavailable()) {
           <p class="mf-hint" data-testid="country-unavailable" role="status">
-            Country data is unavailable. Cloudflare deployments can enable its trusted
-            <code>CF-IPCountry</code> signal with <code>MANYFORGE_TRUST_CF_IPCOUNTRY</code> —
-            everything else works without it.
+            Country data is unavailable for this date range. Future collection uses Cloudflare's
+            trusted <code>CF-IPCountry</code> signal when
+            <code>MANYFORGE_TRUST_CF_IPCOUNTRY</code> is enabled.
           </p>
         }
 
