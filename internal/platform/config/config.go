@@ -31,6 +31,9 @@ type Config struct {
 	JWTVerifyKeys    string        // additional verify-only keys for rotation: "kid=<pkix pubkey pem>,..."
 	RateLimitRPS     float64       // per-IP token refill rate for abuse-sensitive routes (FR-029)
 	RateLimitBurst   float64       // per-IP burst allowance for abuse-sensitive routes
+	// CloudflareSourceCIDR is the edge-address allowlist used to bind CF-IPCountry trust to the
+	// forwarded connection source. It is required when TrustCFIPCountry is enabled.
+	CloudflareSourceCIDR string
 
 	// Support desk (spec 002).
 	SMTPAddr                string // built-in inbound SMTP receiver listen address; empty disables it
@@ -44,9 +47,10 @@ type Config struct {
 	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
 	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
 	// TrustCFIPCountry allows analytics collection to trust Cloudflare's CF-IPCountry header.
-	// It is false by default and requires TrustedProxyCIDR; each request is accepted only from a
-	// peer in that set. Enabling it also declares that the origin cannot be bypassed and the edge
-	// overwrites client-supplied copies of the header.
+	// It is false by default and requires TrustedProxyCIDR plus CloudflareSourceCIDR; each request
+	// is accepted only from a trusted peer whose forwarded connection source is a Cloudflare edge.
+	// Enabling it also declares that the origin cannot be bypassed and the ingress overwrites the
+	// forwarded source before the application receives it.
 	TrustCFIPCountry bool
 
 	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
@@ -194,13 +198,14 @@ type Config struct {
 // defaults. It errors only on malformed values.
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:             env("MANYFORGE_ADDR", ":8080"),
-		DatabaseURL:      os.Getenv("MANYFORGE_DATABASE_URL"),
-		TrustedProxyCIDR: os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
-		JWTIssuer:        env("MANYFORGE_JWT_ISSUER", "manyforge"),
-		JWTAudience:      env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
-		JWTActiveKID:     env("MANYFORGE_JWT_ACTIVE_KID", ""),
-		JWTVerifyKeys:    env("MANYFORGE_JWT_VERIFY_KEYS", ""),
+		Addr:                 env("MANYFORGE_ADDR", ":8080"),
+		DatabaseURL:          os.Getenv("MANYFORGE_DATABASE_URL"),
+		TrustedProxyCIDR:     os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
+		CloudflareSourceCIDR: os.Getenv("MANYFORGE_CF_SOURCE_CIDR"),
+		JWTIssuer:            env("MANYFORGE_JWT_ISSUER", "manyforge"),
+		JWTAudience:          env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
+		JWTActiveKID:         env("MANYFORGE_JWT_ACTIVE_KID", ""),
+		JWTVerifyKeys:        env("MANYFORGE_JWT_VERIFY_KEYS", ""),
 	}
 
 	ttl, err := envDuration("MANYFORGE_ACCESS_TOKEN_TTL", 15*time.Minute)
@@ -219,7 +224,10 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
 	}
 	if cfg.TrustCFIPCountry {
-		if err := validateTrustedProxyCIDRs(cfg.TrustedProxyCIDR); err != nil {
+		if err := validateSourceCIDRs("MANYFORGE_TRUSTED_PROXY_CIDR", cfg.TrustedProxyCIDR); err != nil {
+			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
+		}
+		if err := validateSourceCIDRs("MANYFORGE_CF_SOURCE_CIDR", cfg.CloudflareSourceCIDR); err != nil {
 			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
 		}
 	}
@@ -472,7 +480,7 @@ func envBool(key string, def bool) (bool, error) {
 	return strconv.ParseBool(v)
 }
 
-func validateTrustedProxyCIDRs(value string) error {
+func validateSourceCIDRs(key, value string) error {
 	count := 0
 	var ipv4Ranges, ipv6Ranges []ipRange
 	for _, raw := range strings.Split(value, ",") {
@@ -482,15 +490,15 @@ func validateTrustedProxyCIDRs(value string) error {
 		}
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
-			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR contains invalid CIDR %q: %w", cidr, err)
+			return fmt.Errorf("%s contains invalid CIDR %q: %w", key, cidr, err)
 		}
 		prefixBits, _ := network.Mask.Size()
 		if prefixBits == 0 {
-			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not trust the universal range %q", cidr)
+			return fmt.Errorf("%s must not trust the universal range %q", key, cidr)
 		}
 		r, bits := networkRange(network)
 		if bits == net.IPv6len*8 && overlapsIPv4MappedRange(r) {
-			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must use native IPv4 CIDRs instead of IPv4-mapped range %q", cidr)
+			return fmt.Errorf("%s must use native IPv4 CIDRs instead of IPv4-mapped range %q", key, cidr)
 		}
 		if bits == net.IPv4len*8 {
 			ipv4Ranges = append(ipv4Ranges, r)
@@ -500,13 +508,13 @@ func validateTrustedProxyCIDRs(value string) error {
 		count++
 	}
 	if count == 0 {
-		return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must contain at least one CIDR")
+		return fmt.Errorf("%s must contain at least one CIDR", key)
 	}
 	if rangesCoverAddressSpace(ipv4Ranges, net.IPv4len*8) {
-		return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not collectively trust every IPv4 peer")
+		return fmt.Errorf("%s must not collectively trust every IPv4 peer", key)
 	}
 	if rangesCoverAddressSpace(ipv6Ranges, net.IPv6len*8) {
-		return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not collectively trust every IPv6 peer")
+		return fmt.Errorf("%s must not collectively trust every IPv6 peer", key)
 	}
 	return nil
 }

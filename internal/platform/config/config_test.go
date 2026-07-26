@@ -96,6 +96,8 @@ func TestLoadMCPAllowLoopback(t *testing.T) {
 }
 
 func TestLoadTrustCFIPCountry(t *testing.T) {
+	t.Setenv("MANYFORGE_CF_SOURCE_CIDR", "173.245.48.0/20,2400:cb00::/32")
+
 	t.Run("true-when-set", func(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
 		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
@@ -139,6 +141,24 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16,not-a-cidr")
 		if _, err := Load(); err == nil {
 			t.Fatal("expected error when country trust has a malformed trusted proxy CIDR, got nil")
+		}
+	})
+
+	t.Run("enabled-without-cloudflare-source-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
+		t.Setenv("MANYFORGE_CF_SOURCE_CIDR", "")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected error when country trust has no Cloudflare source CIDR, got nil")
+		}
+	})
+
+	t.Run("enabled-with-malformed-cloudflare-source-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
+		t.Setenv("MANYFORGE_CF_SOURCE_CIDR", "not-a-cidr")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected error when country trust has a malformed Cloudflare source CIDR, got nil")
 		}
 	})
 

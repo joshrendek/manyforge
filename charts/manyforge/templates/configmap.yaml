@@ -38,3 +38,5 @@ data:
   MANYFORGE_PUBLIC_BASE_URL: {{ .Values.publicBaseURL | quote }}
   # Explicit trust-boundary opt-in. Enable only when Cloudflare is the sole public path to origin.
   MANYFORGE_TRUST_CF_IPCOUNTRY: {{ .Values.analytics.trustCloudflareCountryHeader | quote }}
+  # Also enforced in-process so a false→true rollout cannot trust headers before ingress reloads.
+  MANYFORGE_CF_SOURCE_CIDR: {{ .Values.analytics.cloudflareSourceRanges | quote }}
