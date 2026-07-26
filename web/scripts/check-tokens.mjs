@@ -11,7 +11,7 @@
 // browser target, so `node:fs` is unavailable there, and `import.meta.glob` must be referenced
 // literally, which makes the same check considerably more awkward to express.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,27 +19,111 @@ const WEB = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ROOTS = ['src'];
 const EXT = /\.(ts|css|html)$/;
 
+// ---------------------------------------------------------------------------
+// Detection — pure, so it can be self-tested
+// ---------------------------------------------------------------------------
+
+/** Every `--mf-foo:` definition across the given sources. */
+export function collectDefined(sources) {
+  const defined = new Set();
+  for (const { text } of sources) {
+    for (const m of text.matchAll(/(--mf-[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
+  }
+  return defined;
+}
+
+/**
+ * References to `--mf-*` with NO fallback that have no definition.
+ * `var(--x, fallback)` is skipped: a fallback makes an undefined token a deliberate choice.
+ */
+export function findUndefined(sources, defined) {
+  const bad = [];
+  for (const { file, text } of sources) {
+    for (const m of text.matchAll(/var\(\s*(--mf-[a-z0-9-]+)\s*\)/g)) {
+      if (!defined.has(m[1])) bad.push(`${file}: var(${m[1]})`);
+    }
+  }
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// Self-test
+//
+// CI otherwise only ever runs this against a CLEAN tree, which proves the checker reports success
+// and nothing else — a checker whose detection had silently stopped working would look identical.
+// These fixtures exercise the paths that matter, including a broken REFERENCE regex, which the
+// vacuity guard below structurally cannot catch.
+// ---------------------------------------------------------------------------
+
+function selfTest() {
+  const cases = [
+    { name: 'undefined token is reported', src: 'var(--mf-nope)', defs: [], expect: 1 },
+    {
+      name: 'defined token is accepted',
+      src: '--mf-ok: red; color: var(--mf-ok)',
+      defs: null,
+      expect: 0,
+    },
+    { name: 'a fallback makes it deliberate', src: 'var(--mf-nope, red)', defs: [], expect: 0 },
+    {
+      name: 'whitespace inside var() still matches',
+      src: 'var(  --mf-nope  )',
+      defs: [],
+      expect: 1,
+    },
+    { name: 'non-mf tokens are ignored', src: 'var(--other-thing)', defs: [], expect: 0 },
+    {
+      name: 'multiple undefined tokens are all reported',
+      src: 'var(--mf-a) var(--mf-b)',
+      defs: [],
+      expect: 2,
+    },
+  ];
+  let failed = 0;
+  for (const c of cases) {
+    const sources = [{ file: 'fixture', text: c.src }];
+    const defined = c.defs === null ? collectDefined(sources) : new Set(c.defs);
+    const got = findUndefined(sources, defined).length;
+    if (got !== c.expect) {
+      console.error(`check-tokens self-test FAILED: ${c.name} — expected ${c.expect}, got ${got}`);
+      failed++;
+    }
+  }
+  if (failed) {
+    console.error(`\ncheck-tokens: ${failed} self-test(s) failed; the checker itself is broken.`);
+    process.exit(3);
+  }
+  console.log(`check-tokens: self-test ok (${cases.length} cases)`);
+}
+
+// ---------------------------------------------------------------------------
+// Scan
+// ---------------------------------------------------------------------------
+
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === '.angular') continue;
     const p = join(dir, entry);
-    if (statSync(p).isDirectory()) walk(p, out);
+    // lstat, not stat: stat FOLLOWS symlinks, so a symlinked directory pointing at an ancestor
+    // would recurse forever. A source tree has no need for symlinks here, so skipping them is both
+    // safe and simpler than tracking visited inodes.
+    const st = lstatSync(p);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) walk(p, out);
     else if (EXT.test(entry)) out.push(p);
   }
   return out;
 }
 
+selfTest();
+
 const files = ROOTS.flatMap((r) => walk(join(WEB, r)));
-const sources = files.map((f) => ({ file: f, text: readFileSync(f, 'utf8') }));
+const sources = files.map((f) => ({ file: relative(WEB, f), text: readFileSync(f, 'utf8') }));
+const defined = collectDefined(sources);
 
-// Every `--mf-foo:` definition, wherever it lives.
-const defined = new Set();
-for (const { text } of sources) {
-  for (const m of text.matchAll(/(--mf-[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
-}
-
-// Vacuity guard. If the walk or the regex breaks, `defined` empties and every reference below
-// would appear to resolve — the check would go green precisely when it stopped working.
+// Vacuity guard for the DEFINITION side and the walk: if either breaks, the scan could examine
+// nothing and still report success. The reference side is covered by the self-test above — that
+// split is deliberate, because this guard cannot detect a reference regex that matches nothing.
 const BASELINE = ['--mf-text', '--mf-surface', '--mf-border'];
 const missingBaseline = BASELINE.filter((t) => !defined.has(t));
 if (files.length < 20 || defined.size < 20 || missingBaseline.length) {
@@ -50,19 +134,12 @@ if (files.length < 20 || defined.size < 20 || missingBaseline.length) {
   process.exit(2);
 }
 
-// `var(--x, fallback)` is skipped: a fallback makes an undefined token a deliberate choice.
-const bad = [];
-for (const { file, text } of sources) {
-  for (const m of text.matchAll(/var\(\s*(--mf-[a-z0-9-]+)\s*\)/g)) {
-    if (!defined.has(m[1])) bad.push(`${relative(WEB, file)}: var(${m[1]})`);
-  }
-}
-
+const bad = findUndefined(sources, defined);
 if (bad.length) {
   console.error('check-tokens: undefined CSS custom properties\n');
   for (const b of bad) console.error(`  ${b}`);
   console.error(
-    '\nThese resolve to the property\'s initial value and fail SILENTLY — the page still renders,' +
+    "\nThese resolve to the property's initial value and fail SILENTLY — the page still renders," +
       '\njust wrong, and often only in one theme. Either define the token or give var() a fallback.',
   );
   process.exit(1);

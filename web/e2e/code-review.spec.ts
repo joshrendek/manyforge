@@ -526,6 +526,9 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
   expect(putBody!['review_agent_chain']).toEqual(['ag1']);
 });
 
+// Persistence of a reordered chain is covered by 'configure a reviewbot fallback chain (add,
+// reorder, remove) and save it' above, which asserts the saved payload. This one isolates the
+// promote-to-primary outcome and the accessibility contract around it.
 test('review setup: reorder the reviewbot fallback chain, promoting a fallback to primary', async ({
   page,
 }) => {
@@ -585,13 +588,18 @@ test('review setup: reorder the reviewbot fallback chain, promoting a fallback t
   await expect(page.getByTestId('chain-name-0')).toContainText('LM Studio');
   await expect(page.getByTestId('chain-name-1')).toContainText('Cloud');
 
-  // The drag affordances must exist and be labelled, even though the reorder itself is exercised
-  // through the buttons below.
+  // The drag affordance exists and is labelled — but it is tabindex="-1", i.e. deliberately NOT
+  // keyboard reachable. Asserting its label alone would imply an accessibility it does not have,
+  // so assert the exclusion explicitly AND assert the keyboard path that actually carries the
+  // functionality. That pairing is the real accessibility contract here.
   await expect(page.getByTestId('chain-list')).toHaveAttribute('cdkDropList', '');
+  await expect(page.getByTestId('chain-drag-1')).toHaveAttribute('tabindex', '-1');
   await expect(page.getByTestId('chain-drag-1')).toHaveAttribute(
     'aria-label',
     /Drag to reorder Cloud/,
   );
+  // The keyboard-operable equivalent must be reachable and named.
+  await expect(page.getByRole('button', { name: 'Move Cloud up' })).toBeVisible();
 
   // Promote Cloud to primary via the accessible control.
   await page.getByTestId('chain-up-1').click();
@@ -656,8 +664,10 @@ test('review setup: promote a fallback to primary in the provider priority list'
   await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('openrouter');
   await expect(page.getByTestId('row-priority-provider-2')).toHaveValue('vllm');
 
-  // Drag wiring is present and labelled...
+  // Drag wiring is present and labelled, and explicitly outside the tab order — the ↑/↓ buttons
+  // are the keyboard path, so the handle being unreachable is intended, not an oversight.
   await expect(page.getByTestId('row-priority-list')).toHaveAttribute('cdkDropList', '');
+  await expect(page.getByTestId('row-priority-drag-2')).toHaveAttribute('tabindex', '-1');
   await expect(page.getByTestId('row-priority-drag-2')).toHaveAttribute(
     'aria-label',
     /Drag to reorder provider 3/,
