@@ -131,10 +131,12 @@ instanceOperatorPrincipal: ""
 publicBaseURL: ""
 
 # Country lookup remains off unless a deployment explicitly declares CF-IPCountry trustworthy.
-# Enable only when Cloudflare is the sole public path to the origin (or the ingress independently
-# strips/overwrites client-supplied CF-IPCountry); otherwise visitors could forge their country.
+# Enabling it also requires Cloudflare's current origin-facing CIDRs: the chart allowlists them at
+# ingress so a direct caller cannot forge the header. Keep the list current from
+# https://www.cloudflare.com/ips/ (or use equivalent origin isolation outside this chart).
 analytics:
   trustCloudflareCountryHeader: false
+  cloudflareSourceRanges: ""
 
 sandbox:
   # Consumed by the code-review sandbox runner (internal/agents/coding/sandbox)
