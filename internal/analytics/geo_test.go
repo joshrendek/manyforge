@@ -54,3 +54,18 @@ func TestOpenMMDBCorruptConfiguredFileRemainsFatal(t *testing.T) {
 		t.Fatalf("OpenMMDB(corrupt) error = %q, want wrapped geoip context", err)
 	}
 }
+
+func TestOpenMMDBConfiguredDirectoryRemainsFatal(t *testing.T) {
+	path := t.TempDir()
+
+	got, err := OpenMMDB(path, nil)
+	if err == nil {
+		t.Fatal("OpenMMDB(directory) error = nil, want open error")
+	}
+	if got != nil {
+		t.Fatal("OpenMMDB(directory) returned a resolver, want nil")
+	}
+	if !strings.Contains(err.Error(), "open geoip db") {
+		t.Fatalf("OpenMMDB(directory) error = %q, want wrapped geoip context", err)
+	}
+}
