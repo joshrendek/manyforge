@@ -59,6 +59,12 @@ type PublicHandler struct {
 	TrustCloudflareCountryHeader bool
 }
 
+// CanTrustCloudflareCountryHeader reports whether this request reached the collector through a
+// configured trusted proxy. The deployment opt-in alone is deliberately insufficient.
+func (h *PublicHandler) CanTrustCloudflareCountryHeader(r *http.Request) bool {
+	return h.TrustCloudflareCountryHeader && ratelimit.IsTrustedPeer(r, h.TrustedProxies)
+}
+
 // CollectRoutes mounts the public collect endpoint.
 //
 // OPTIONS is handled alongside POST because the XHR fallback (used when sendBeacon is missing)
@@ -157,7 +163,7 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 		device:   DeviceType(ua),
 		browser:  Browser(ua),
 		country: cloudflareCountry(
-			h.TrustCloudflareCountryHeader && ratelimit.IsTrustedPeer(r, h.TrustedProxies),
+			h.CanTrustCloudflareCountryHeader(r),
 			r.Header.Values(cloudflareCountryHeader),
 		),
 		name:  name,
