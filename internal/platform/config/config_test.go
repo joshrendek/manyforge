@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -166,16 +167,19 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		"0.0.0.0/0",
 		"::/0",
 		"::ffff:0:0/96",
+		"::ffff:192.0.2.0/120",
+		"10.0.0.0/8",
+		"2001:db8::/31",
 		"0.0.0.0/1,128.0.0.0/1",
 		"128.0.0.0/1,0.0.0.0/1",
 		"::/1,8000::/1",
 		"8000::/1,::/1",
 	} {
-		t.Run("enabled-with-universal-trusted-proxy-"+cidr, func(t *testing.T) {
+		t.Run("enabled-with-unsafe-trusted-proxy-"+cidr, func(t *testing.T) {
 			t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
 			t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", cidr)
 			if _, err := Load(); err == nil {
-				t.Fatalf("expected error when country trust accepts universal proxy range %q, got nil", cidr)
+				t.Fatalf("expected error when country trust accepts unsafe proxy range %q, got nil", cidr)
 			}
 		})
 	}
@@ -184,9 +188,9 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
 		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
 		t.Setenv("MANYFORGE_CF_SOURCE_CIDR",
-			strings.Repeat("173.245.48.0/20,", maxSourceCIDRs)+"173.245.48.0/20")
+			strings.Repeat("173.245.48.0/20,", maxTrustCIDRs)+"173.245.48.0/20")
 		if _, err := Load(); err == nil {
-			t.Fatalf("expected error with more than %d Cloudflare source CIDRs, got nil", maxSourceCIDRs)
+			t.Fatalf("expected error with more than %d Cloudflare source CIDRs, got nil", maxTrustCIDRs)
 		}
 	})
 
@@ -194,6 +198,9 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		"0.0.0.0/0",
 		"::/0",
 		"::ffff:0:0/96",
+		"::ffff:192.0.2.0/120",
+		"10.0.0.0/7",
+		"2001:db8::/15",
 		"0.0.0.0/1,128.0.0.0/1",
 		"128.0.0.0/1,0.0.0.0/1",
 		"::/1,8000::/1",
@@ -220,11 +227,33 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 
 	t.Run("overlapping-ranges-do-not-create-false-universal", func(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
-		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.0.0.0/8,10.0.0.0/9,2001:db8::/32")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.0.0.0/16,10.0.0.0/17,2001:db8::/32")
 		if _, err := Load(); err != nil {
 			t.Fatalf("expected bounded overlapping proxy ranges to remain valid, got %v", err)
 		}
 	})
+}
+
+func TestRangesCoverAddressSpaceUnsorted(t *testing.T) {
+	for _, cidrs := range [][]string{
+		{"128.0.0.0/1", "0.0.0.0/1"},
+		{"8000::/1", "::/1"},
+	} {
+		var ranges []ipRange
+		addressBits := 0
+		for _, cidr := range cidrs {
+			_, network, err := net.ParseCIDR(cidr)
+			if err != nil {
+				t.Fatalf("ParseCIDR(%q): %v", cidr, err)
+			}
+			r, bits := networkRange(network)
+			ranges = append(ranges, r)
+			addressBits = bits
+		}
+		if !rangesCoverAddressSpace(ranges, addressBits) {
+			t.Fatalf("rangesCoverAddressSpace(%v) = false, want true", cidrs)
+		}
+	}
 }
 
 // TestEnvKey32Disambiguation (manyforge-no9) pins the explicit-prefix and anchored

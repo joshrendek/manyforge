@@ -227,7 +227,7 @@ type collectEvent struct {
 	utm      UTM
 	device   string
 	browser  string
-	country  string            // uppercase ISO 3166-1 alpha-2; "" ⇒ no trusted edge signal
+	country  string            // uppercase ISO 3166-1 alpha-2; "" ⇒ no accepted country value
 	name     string            // "" ⇒ automatic pageview
 	props    map[string]string // nil ⇒ no custom properties
 }
@@ -253,10 +253,10 @@ func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) 
 	return n, err
 }
 
-// cloudflareCountry reduces Cloudflare's request header to the only location detail analytics
-// stores: an ISO 3166-1 alpha-2 country code. PublicHandler.ResolveClient verifies the deployment
-// opt-in and request source before setting trusted. Cloudflare uses XX for unknown locations and
-// T1 for Tor; neither is a country and both are discarded.
+// cloudflareCountry reduces Cloudflare's CF-IPCountry request header to the only location detail
+// analytics stores: an ISO 3166-1 alpha-2 country code. PublicHandler.ResolveClient verifies the
+// deployment opt-in and request source before setting trusted. Cloudflare uses XX for unknown
+// locations and T1 for Tor; neither is a country and both are discarded.
 func cloudflareCountry(trusted bool, values []string) string {
 	if !trusted || len(values) != 1 {
 		return ""

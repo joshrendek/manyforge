@@ -226,12 +226,14 @@ func Load() (Config, error) {
 	if cfg.TrustCFIPCountry {
 		trustedProxies, validateErr := validateCIDRList(
 			"MANYFORGE_TRUSTED_PROXY_CIDR", cfg.TrustedProxyCIDR,
+			minTrustedProxyIPv4Prefix, minTrustedProxyIPv6Prefix,
 		)
 		if validateErr != nil {
 			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", validateErr)
 		}
 		cloudflareSources, validateErr := validateCIDRList(
 			"MANYFORGE_CF_SOURCE_CIDR", cfg.CloudflareSourceCIDR,
+			minCloudflareSourceIPv4Prefix, minCloudflareSourceIPv6Prefix,
 		)
 		if validateErr != nil {
 			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", validateErr)
@@ -491,9 +493,15 @@ func envBool(key string, def bool) (bool, error) {
 	return strconv.ParseBool(v)
 }
 
-const maxSourceCIDRs = 64
+const (
+	maxTrustCIDRs                 = 64
+	minTrustedProxyIPv4Prefix     = 16
+	minTrustedProxyIPv6Prefix     = 32
+	minCloudflareSourceIPv4Prefix = 8
+	minCloudflareSourceIPv6Prefix = 16
+)
 
-func validateCIDRList(key, value string) ([]*net.IPNet, error) {
+func validateCIDRList(key, value string, minIPv4Prefix, minIPv6Prefix int) ([]*net.IPNet, error) {
 	count := 0
 	var ipv4Ranges, ipv6Ranges []ipRange
 	var networks []*net.IPNet
@@ -506,9 +514,18 @@ func validateCIDRList(key, value string) ([]*net.IPNet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s contains invalid CIDR %q: %w", key, cidr, err)
 		}
-		prefixBits, _ := network.Mask.Size()
-		if prefixBits == 0 {
-			return nil, fmt.Errorf("%s must not trust the universal range %q", key, cidr)
+		prefixBits, addressBits := network.Mask.Size()
+		minPrefix := minIPv6Prefix
+		family := 6
+		if addressBits == net.IPv4len*8 {
+			minPrefix = minIPv4Prefix
+			family = 4
+		}
+		if prefixBits < minPrefix {
+			return nil, fmt.Errorf(
+				"%s must use IPv%d prefixes /%d or narrower; got %q",
+				key, family, minPrefix, cidr,
+			)
 		}
 		r, bits := networkRange(network)
 		if bits == net.IPv6len*8 && overlapsIPv4MappedRange(r) {
@@ -521,8 +538,8 @@ func validateCIDRList(key, value string) ([]*net.IPNet, error) {
 		}
 		networks = append(networks, network)
 		count++
-		if count > maxSourceCIDRs {
-			return nil, fmt.Errorf("%s must contain at most %d CIDRs", key, maxSourceCIDRs)
+		if count > maxTrustCIDRs {
+			return nil, fmt.Errorf("%s must contain at most %d CIDRs", key, maxTrustCIDRs)
 		}
 	}
 	if count == 0 {

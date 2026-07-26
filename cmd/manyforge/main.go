@@ -62,6 +62,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// newAnalyticsPublicHandler wires the public collector's rate limit and edge-trust boundaries.
 func newAnalyticsPublicHandler(
 	database *db.DB,
 	logger *slog.Logger,
