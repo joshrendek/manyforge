@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -250,6 +251,102 @@ func TestCloudflareCountry(t *testing.T) {
 			if got := cloudflareCountry(tc.trusted, tc.values); got != tc.want {
 				t.Errorf("cloudflareCountry(%t, %q) = %q, want %q",
 					tc.trusted, tc.values, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveClientSeparatesCloudflareEdgeFromVisitor(t *testing.T) {
+	_, trustedProxy, _ := net.ParseCIDR("10.244.0.0/16")
+	_, cloudflareSource, _ := net.ParseCIDR("173.245.48.0/20")
+	newRequest := func(remoteAddr, sourceIP string, connectingIPs ...string) *http.Request {
+		header := http.Header{"X-Forwarded-For": {sourceIP}}
+		for _, ip := range connectingIPs {
+			header.Add("CF-Connecting-IP", ip)
+		}
+		return &http.Request{RemoteAddr: remoteAddr, Header: header}
+	}
+
+	for _, tc := range []struct {
+		name        string
+		handler     PublicHandler
+		request     *http.Request
+		wantIP      string
+		wantCountry bool
+	}{
+		{
+			name: "trusted Cloudflare edge supplies visitor",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("10.244.7.9:5000", "173.245.48.7", "198.51.100.7"),
+			wantIP:      "198.51.100.7",
+			wantCountry: true,
+		},
+		{
+			name: "missing visitor header falls back to edge",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("10.244.7.9:5000", "173.245.48.7"),
+			wantIP:      "173.245.48.7",
+			wantCountry: true,
+		},
+		{
+			name: "duplicate visitor header falls back to edge",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request: newRequest(
+				"10.244.7.9:5000", "173.245.48.7", "198.51.100.7", "192.0.2.7",
+			),
+			wantIP:      "173.245.48.7",
+			wantCountry: true,
+		},
+		{
+			name: "non-Cloudflare forwarded source cannot assert visitor",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("10.244.7.9:5000", "203.0.113.7", "192.0.2.7"),
+			wantIP:      "203.0.113.7",
+			wantCountry: false,
+		},
+		{
+			name: "country opt-out retains verified visitor identity",
+			handler: PublicHandler{
+				TrustedProxies:         []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges: []*net.IPNet{cloudflareSource},
+			},
+			request:     newRequest("10.244.7.9:5000", "173.245.48.7", "198.51.100.7"),
+			wantIP:      "198.51.100.7",
+			wantCountry: false,
+		},
+		{
+			name: "untrusted direct peer cannot assert source or visitor",
+			handler: PublicHandler{
+				TrustedProxies:               []*net.IPNet{trustedProxy},
+				CloudflareSourceRanges:       []*net.IPNet{cloudflareSource},
+				TrustCloudflareCountryHeader: true,
+			},
+			request:     newRequest("203.0.113.9:5000", "173.245.48.7", "192.0.2.7"),
+			wantIP:      "203.0.113.9",
+			wantCountry: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotIP, gotCountry := tc.handler.ResolveClient(tc.request)
+			if gotIP != tc.wantIP || gotCountry != tc.wantCountry {
+				t.Fatalf("ResolveClient = (%q, %t), want (%q, %t)",
+					gotIP, gotCountry, tc.wantIP, tc.wantCountry)
 			}
 		})
 	}

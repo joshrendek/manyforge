@@ -178,6 +178,23 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		})
 	}
 
+	for _, cidr := range []string{
+		"0.0.0.0/0",
+		"::/0",
+		"::ffff:0:0/96",
+		"0.0.0.0/1,128.0.0.0/1",
+		"::/1,8000::/1",
+	} {
+		t.Run("enabled-with-unsafe-cloudflare-source-"+cidr, func(t *testing.T) {
+			t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+			t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
+			t.Setenv("MANYFORGE_CF_SOURCE_CIDR", cidr)
+			if _, err := Load(); err == nil {
+				t.Fatalf("expected error for unsafe Cloudflare source range %q, got nil", cidr)
+			}
+		})
+	}
+
 	t.Run("overlapping-ranges-do-not-create-false-universal", func(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
 		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.0.0.0/8,10.0.0.0/9,2001:db8::/32")

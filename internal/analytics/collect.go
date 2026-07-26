@@ -28,6 +28,7 @@ const maxCollectBytes int64 = 4 << 10
 const maxPathLen = 512
 
 const cloudflareCountryHeader = "CF-IPCountry"
+const cloudflareConnectingIPHeader = "CF-Connecting-IP"
 
 // validAlpha2Country is a precomputed lookup table of CLDR regions that are real, non-private
 // countries.
@@ -63,13 +64,25 @@ type PublicHandler struct {
 	TrustCloudflareCountryHeader bool
 }
 
-// ResolveClient returns the resolved client IP and whether this request may assert a Cloudflare
-// country header. Both answers come from one direct-peer parse and trusted-proxy scan.
+// ResolveClient returns the visitor IP used transiently for hashing/rate limiting and whether this
+// request may assert a Cloudflare country header. It first resolves the ingress-forwarded
+// connection source and requires both a trusted direct peer and a Cloudflare source range. Only
+// then may CF-Connecting-IP replace that edge address with the visitor address; country-header
+// trust additionally requires the deployment opt-in.
 func (h *PublicHandler) ResolveClient(r *http.Request) (string, bool) {
-	ip, trustedPeer := ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)
-	return ip, h.TrustCloudflareCountryHeader &&
-		trustedPeer &&
-		ipInNetworks(net.ParseIP(ip), h.CloudflareSourceRanges)
+	sourceIP, trustedPeer := ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)
+	cloudflareSource := trustedPeer &&
+		ipInNetworks(net.ParseIP(sourceIP), h.CloudflareSourceRanges)
+	clientIP := sourceIP
+	if cloudflareSource {
+		values := r.Header.Values(cloudflareConnectingIPHeader)
+		if len(values) == 1 {
+			if visitorIP := net.ParseIP(strings.TrimSpace(values[0])); visitorIP != nil {
+				clientIP = visitorIP.String()
+			}
+		}
+	}
+	return clientIP, h.TrustCloudflareCountryHeader && cloudflareSource
 }
 
 func ipInNetworks(ip net.IP, networks []*net.IPNet) bool {

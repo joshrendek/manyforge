@@ -175,6 +175,8 @@ Cloudflare's current source CIDRs and allowlists them at ingress whenever trust 
 applies a NetworkPolicy that permits the application Service only from the named ingress-nginx
 controller namespace, closing the internal direct-Service bypass.
 Deployments using another ingress must enforce equivalent edge and service-level isolation.
+After the edge is verified, `CF-Connecting-IP` supplies the visitor address used only for the
+existing daily visitor hash and per-IP limiter; the address itself is never stored or logged.
 Unknown and special values are dropped. No IP-to-country database, raw IP, or finer location is
 stored. The dashboard says when the signal is absent rather than showing an empty panel — an
 absent breakdown is honest, a guessed one is worse than none.

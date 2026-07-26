@@ -653,12 +653,20 @@ func (e *env) collectFull(t *testing.T, path, ref, query, ua, ip string) int {
 }
 
 func (e *env) collectFullWithCountry(t *testing.T, path, ref, query, ua, ip, country string) int {
+	return e.collectFullWithSourceAndCountry(t, path, ref, query, ua, ip, ip, country)
+}
+
+func (e *env) collectFullWithSourceAndCountry(
+	t *testing.T,
+	path, ref, query, ua, visitorIP, sourceIP, country string,
+) int {
 	t.Helper()
 	b, _ := json.Marshal(map[string]string{"k": e.key, "p": path, "r": ref, "q": query})
 	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/a/e", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
 	req.Header.Set("User-Agent", ua)
-	req.Header.Set("X-Forwarded-For", ip)
+	req.Header.Set("CF-Connecting-IP", visitorIP)
+	req.Header.Set("X-Forwarded-For", sourceIP)
 	if country != "" {
 		req.Header.Set("CF-IPCountry", country)
 	}
@@ -717,7 +725,9 @@ func TestEnrichment_StoresDerivedDimensionsOnly(t *testing.T) {
 
 func TestEnrichment_StoresAndRollsUpTrustedCloudflareCountry(t *testing.T) {
 	ctx, e := newEnvWithCloudflareCountryTrust(t, true)
-	e.collectFullWithCountry(t, "/", "", "", humanUA, "203.0.113.10", "ca")
+	e.collectFullWithSourceAndCountry(
+		t, "/", "", "", humanUA, "198.51.100.10", "203.0.113.10", "ca",
+	)
 
 	var country *string
 	if err := e.tdb.Super.QueryRow(ctx,
@@ -757,7 +767,9 @@ func TestEnrichment_RejectsCountryFromUntrustedPeer(t *testing.T) {
 
 func TestEnrichment_RejectsCountryFromNonCloudflareForwardedSource(t *testing.T) {
 	ctx, e := newEnvWithCloudflareCountryTrust(t, true)
-	e.collectFullWithCountry(t, "/", "", "", humanUA, "198.51.100.10", "US")
+	e.collectFullWithSourceAndCountry(
+		t, "/", "", "", humanUA, "192.0.2.10", "198.51.100.10", "US",
+	)
 
 	var country *string
 	if err := e.tdb.Super.QueryRow(ctx,
