@@ -32,8 +32,8 @@ func TestOpenMMDBMissingConfiguredFileWarnsAndDisablesCountryLookup(t *testing.T
 		t.Fatal("OpenMMDB(missing) returned a resolver, want nil")
 	}
 	if text := logs.String(); !strings.Contains(text, "database not found") ||
-		!strings.Contains(text, path) {
-		t.Fatalf("warning = %q, want missing-database message and configured path", text)
+		!strings.Contains(text, path) || !strings.Contains(text, "level=WARN") {
+		t.Fatalf("warning = %q, want WARN-level missing-database message and configured path", text)
 	}
 }
 
