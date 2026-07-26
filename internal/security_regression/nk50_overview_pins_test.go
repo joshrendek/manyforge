@@ -89,11 +89,16 @@ func TestNK50_OverviewRequiresPrincipal(t *testing.T) {
 	if i < 0 {
 		t.Fatal("overview handler is gone")
 	}
+	// Truncate at the NEXT method so the search cannot succeed on some later handler's code. The
+	// previous form searched from the overview declaration to end-of-file, which would have passed
+	// even if overview itself dropped the check entirely.
 	body := src[i:]
-	if j := strings.Index(body, "func (h *Handler) "); j > 0 {
-		if k := strings.Index(body[10:], "func (h *Handler) "); k > 0 {
-			body = body[:k+10]
-		}
+	const decl = "func (h *Handler) "
+	if k := strings.Index(body[len(decl):], decl); k >= 0 {
+		body = body[:len(decl)+k]
+	}
+	if strings.Contains(body, "func (h *Handler) summary(") || strings.Count(body, decl) != 1 {
+		t.Fatalf("overview body extraction is wrong — it spans %d handler declarations", strings.Count(body, decl))
 	}
 	if !strings.Contains(body, "PrincipalFromContext") {
 		t.Error("the overview handler does not check for a principal. It is mounted outside the " +

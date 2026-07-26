@@ -334,9 +334,15 @@ func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to 
 			        SELECT business_id FROM businesses_with_permission(current_principal(), 'telemetry.read')
 			    )
 			  GROUP BY c.id, c.name, b.id, b.name
-			  -- Busiest first so the cap sheds the quietest sites; name breaks ties so the order is
-			  -- stable across requests rather than shifting under the reader.
-			  ORDER BY 5 DESC, c.name
+			  -- Ordered by the SAME measure the card headlines and the API contract documents:
+			  -- visitors. This was ORDER BY 5, a positional reference to the pageviews column —
+			  -- which silently ordered by a different metric than everything describing it said,
+			  -- and at the 200-site cap would have dropped higher-visitor sites in favour of ones
+			  -- with more pageviews. Spelled out rather than positional so it cannot drift again
+			  -- if a column is inserted above it.
+			  ORDER BY coalesce(max(d.visitors), 0) DESC,
+			           coalesce(sum(d.pageviews), 0) DESC,
+			           c.name
 			  LIMIT $3`,
 			fromD, toD, maxOverviewSites)
 		if err != nil {

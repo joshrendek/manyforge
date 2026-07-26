@@ -1267,3 +1267,189 @@ func TestOverview_ExcludesOtherTenants(t *testing.T) {
 
 // timeNow keeps the window construction in these tests identical to the handler's.
 func timeNow() time.Time { return time.Now().UTC().Truncate(24 * time.Hour) }
+
+// The route is mounted OUTSIDE the telemetryRead middleware group (that middleware resolves the
+// permission from a business id in the path, which this route has none of), so the handler's own
+// principal check is the only authentication gate. Every other overview test injects a principal,
+// which means none of them execute this branch.
+func TestOverview_RequiresAuthentication(t *testing.T) {
+	ctx, e := newEnv(t)
+	_ = ctx
+
+	// A second server WITHOUT the principal-injecting middleware, i.e. an anonymous caller.
+	rd := analytics.NewHandler(analytics.NewService(e.tdb.App))
+	r := chi.NewRouter()
+	rd.OverviewRoutes(r)
+	anon := httptest.NewServer(r)
+	t.Cleanup(anon.Close)
+
+	resp, err := http.Get(anon.URL + "/analytics/overview?days=30")
+	if err != nil {
+		t.Fatalf("anonymous overview: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("anonymous request got %d, want 401 — the overview would be readable without "+
+			"credentials. Body: %s", resp.StatusCode, b)
+	}
+	// And it must not leak a site list in the body.
+	b, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(b), "client_id") {
+		t.Error("the 401 body contains site data")
+	}
+}
+
+func TestOverview_RejectsInvalidDays(t *testing.T) {
+	_, e := newEnv(t)
+	for _, q := range []string{"days=0", "days=-1", "days=abc", "days=367", "days=99999"} {
+		resp, err := http.Get(e.srv.URL + "/analytics/overview?" + q)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		code := resp.StatusCode
+		resp.Body.Close()
+		if code != http.StatusBadRequest {
+			t.Errorf("%s got %d, want 400 — an unbounded window would let one request scan the "+
+				"whole rollup table", q, code)
+		}
+	}
+	// The cap itself must still be accepted, or the documented maximum is a lie.
+	resp, err := http.Get(e.srv.URL + "/analytics/overview?days=366")
+	if err != nil {
+		t.Fatalf("days=366: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("days=366 (the documented cap) got %d, want 200", resp.StatusCode)
+	}
+}
+
+// Aggregation semantics: pageviews SUM, visitors MAX, and the window actually excludes rows
+// outside it. The MAX is the load-bearing one — a SUM here would make every card disagree with
+// the dashboard it opens.
+func TestOverview_AggregatesAndRespectsWindow(t *testing.T) {
+	ctx, e := newEnv(t)
+
+	// Three days inside the window and one well outside it.
+	for _, row := range []struct {
+		daysAgo, pv, vis int
+	}{{1, 10, 4}, {2, 20, 9}, {3, 5, 2}, {200, 999, 999}} {
+		if _, err := e.tdb.Super.Exec(ctx,
+			`INSERT INTO analytics_daily
+			   (tenant_root_id, business_id, client_id, bucket_date, pageviews, visitors, updated_at)
+			 VALUES ($1,$2,$3, (now() AT TIME ZONE 'UTC')::date - $4::int, $5, $6, now())`,
+			e.biz, e.biz, e.site, row.daysAgo, row.pv, row.vis); err != nil {
+			t.Fatalf("seed daily: %v", err)
+		}
+	}
+
+	sites, err := analytics.NewService(e.tdb.App).Overview(ctx, e.prin,
+		timeNow().AddDate(0, 0, -29), timeNow())
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	var got *analytics.OverviewSite
+	for i := range sites {
+		if sites[i].ClientID == e.site.String() {
+			got = &sites[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("seeded site missing from overview")
+	}
+	if got.Pageviews != 35 {
+		t.Errorf("pageviews = %d, want 35 (10+20+5; the 200-days-ago row is outside the window)",
+			got.Pageviews)
+	}
+	if got.Visitors != 9 {
+		t.Errorf("visitors = %d, want 9 — the PEAK day, not the sum (15) and not the out-of-window "+
+			"999. Summing would make this card disagree with the dashboard it opens.", got.Visitors)
+	}
+	if len(got.Series) != 3 {
+		t.Errorf("series has %d points, want 3 — only days inside the window", len(got.Series))
+	}
+}
+
+// Revoked and inactive sites must not appear: a revoked key has stopped collecting, and listing it
+// implies it is still live.
+func TestOverview_ExcludesRevokedSites(t *testing.T) {
+	ctx, e := newEnv(t)
+	_, revoked, _ := e.addSubBusiness(t, ctx, "RevokedCo")
+	_, halfRevoked, _ := e.addSubBusiness(t, ctx, "HalfRevokedCo")
+
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE telemetry_client SET status='revoked', revoked_at=now() WHERE id=$1`, revoked); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	// status still 'active' but revoked_at set. The CHECK constraint permits only 'active' and
+	// 'revoked', so this inconsistent pair is the ONLY thing the second predicate can catch — and
+	// it is what makes `AND c.revoked_at IS NULL` more than a redundant restatement of the status.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE telemetry_client SET revoked_at=now() WHERE id=$1`, halfRevoked); err != nil {
+		t.Fatalf("half-revoke: %v", err)
+	}
+
+	sites, err := analytics.NewService(e.tdb.App).Overview(ctx, e.prin,
+		timeNow().AddDate(0, 0, -29), timeNow())
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	for _, s := range sites {
+		if s.ClientID == revoked.String() {
+			t.Error("a REVOKED site is listed on the overview; its tag has stopped collecting")
+		}
+		if s.ClientID == halfRevoked.String() {
+			t.Error("a site with revoked_at set is listed despite status still reading 'active'; " +
+				"the revoked_at predicate is not doing its job")
+		}
+	}
+}
+
+// Ordering drives which sites survive the 200-site cap, so it must be the metric the contract and
+// the card headline both name: visitors.
+func TestOverview_OrdersByVisitors(t *testing.T) {
+	ctx, e := newEnv(t)
+	_, many, _ := e.addSubBusiness(t, ctx, "ManyPageviews")
+	_, few, _ := e.addSubBusiness(t, ctx, "ManyVisitors")
+
+	// `many` wins on pageviews; `few` wins on visitors. Ordering by the wrong column puts them the
+	// wrong way round — and at the cap would drop the higher-visitor site.
+	for _, row := range []struct {
+		client  uuid.UUID
+		pv, vis int
+	}{{many, 5000, 3}, {few, 10, 90}} {
+		if _, err := e.tdb.Super.Exec(ctx,
+			`INSERT INTO analytics_daily
+			   (tenant_root_id, business_id, client_id, bucket_date, pageviews, visitors, updated_at)
+			 SELECT c.tenant_root_id, c.business_id, c.id,
+			        (now() AT TIME ZONE 'UTC')::date - 1, $2, $3, now()
+			   FROM telemetry_client c WHERE c.id = $1`,
+			row.client, row.pv, row.vis); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	sites, err := analytics.NewService(e.tdb.App).Overview(ctx, e.prin,
+		timeNow().AddDate(0, 0, -29), timeNow())
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	var iMany, iFew = -1, -1
+	for i, s := range sites {
+		switch s.ClientID {
+		case many.String():
+			iMany = i
+		case few.String():
+			iFew = i
+		}
+	}
+	if iFew < 0 || iMany < 0 {
+		t.Fatalf("seeded sites missing (few=%d many=%d)", iFew, iMany)
+	}
+	if iFew > iMany {
+		t.Errorf("site with 90 visitors ranked BELOW one with 3 visitors (but 5000 pageviews) — " +
+			"the overview is ordering by pageviews while its contract and card headline say " +
+			"visitors, so the 200-site cap would shed the wrong sites")
+	}
+}
