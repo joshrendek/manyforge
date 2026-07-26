@@ -268,3 +268,84 @@ func TestPin_AS0GeoIsOptionalAndTransient(t *testing.T) {
 		}
 	}
 }
+
+const as0CustomEvents = "../../migrations/0109_analytics_custom_events.up.sql"
+
+// TestPin_AS0CustomEventsCannotForgePageviews asserts the two properties that keep custom events
+// from corrupting the headline numbers.
+//
+// A site controls its own event names. If 'pageview' were accepted through the event API, any
+// site could inflate its own pageview count at will — and the number would disagree with the
+// pageview rollup that every other panel is reconciled against, with no way to tell which is
+// right. Equally, if a pageview rollup stopped filtering on name, every custom event would
+// silently become a pageview.
+func TestPin_AS0CustomEventsCannotForgePageviews(t *testing.T) {
+	src := mustRead(t, "../../internal/analytics/enrich.go")
+	if !strings.Contains(src, `reservedEventName = "pageview"`) {
+		t.Error("'pageview' must be a reserved event name")
+	}
+	if !strings.Contains(src, "s == reservedEventName") {
+		t.Error("eventNameOK must reject the reserved name")
+	}
+
+	mig := stripSQLComments(mustRead(t, as0CustomEvents))
+
+	// Every pageview aggregate must still be scoped to name = 'pageview'.
+	rollup := functionBody(t, mig, "rollup_analytics_dimensions")
+	if !strings.Contains(rollup, "e.name = 'pageview'") {
+		t.Error("the pageview-derived dimensions must stay filtered to name = 'pageview', or " +
+			"custom events would be counted in the device/browser/country breakdowns and no " +
+			"longer reconcile against the pageview total")
+	}
+	if !strings.Contains(rollup, "e.name <> 'pageview'") {
+		t.Error("the event dimension must select only non-pageview rows")
+	}
+
+	// The pageview rollups in 0106 must be untouched by this migration.
+	if strings.Contains(mig, "CREATE OR REPLACE FUNCTION rollup_analytics_pageviews") ||
+		strings.Contains(mig, "CREATE FUNCTION rollup_analytics_pageviews") {
+		t.Error("0109 redefines rollup_analytics_pageviews; custom events must not change how " +
+			"pageviews are counted")
+	}
+}
+
+// TestPin_AS0CustomEventPayloadIsBounded asserts event names and properties are bounded before
+// they reach a GROUP BY key or a jsonb column. Both are attacker-supplied on a public endpoint.
+func TestPin_AS0CustomEventPayloadIsBounded(t *testing.T) {
+	src := mustRead(t, "../../internal/analytics/enrich.go")
+	for _, need := range []string{
+		"maxEventNameLen", "maxPropKeys", "maxPropKeyLen", "maxPropValueLen",
+	} {
+		if !strings.Contains(src, need) {
+			t.Errorf("missing bound: %s", need)
+		}
+	}
+	// Nested structures must be dropped rather than stringified into the column.
+	if !strings.Contains(src, "// Nested objects and arrays are dropped") {
+		t.Error("SanitizeProps must drop nested objects/arrays rather than serialising them")
+	}
+	// Key selection past the cap must be deterministic, or the same payload stores different
+	// props on different requests.
+	if !strings.Contains(src, "sort.Strings(keys)") {
+		t.Error("prop key truncation must be deterministic (sorted), not map-order dependent")
+	}
+}
+
+// TestPin_AS0SnippetNeverThrowsIntoHostPage asserts the custom-event API cannot raise into the
+// embedding site's own code. This snippet runs on other people's websites; an exception escaping
+// an analytics call is their bug report, not ours.
+func TestPin_AS0SnippetNeverThrowsIntoHostPage(t *testing.T) {
+	src := mustRead(t, as0Snippet)
+	if !strings.Contains(src, "try{b=JSON.stringify(o);}catch(e){return;}") {
+		t.Error("payload serialisation must be guarded — an unserialisable object must cost the " +
+			"event, not throw into the host page")
+	}
+	i := strings.Index(src, "window.mf=function(n,d){")
+	if i < 0 {
+		t.Fatal("window.mf is not defined")
+	}
+	body := src[i : i+400]
+	if !strings.Contains(body, "try{") || !strings.Contains(body, "catch(e){}") {
+		t.Error("the window.mf body must be wrapped so it never throws into the host page")
+	}
+}

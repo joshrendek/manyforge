@@ -34,7 +34,7 @@ const KEY = 'mfk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 // origin. Playwright can serve one entirely from routes without any DNS or server.
 const SITE = 'https://tenant.example';
 
-type Beacon = { k?: string; p?: string; r?: string; q?: string };
+type Beacon = { k?: string; p?: string; r?: string; q?: string; n?: string; d?: unknown };
 
 async function installSite(page: Page, opts: { html?: string } = {}) {
   const beacons: Beacon[] = [];
@@ -190,4 +190,80 @@ test('a missing data-key sends nothing rather than a malformed beacon', async ({
   await page.goto(`${SITE}/`);
   await page.waitForTimeout(400);
   expect(beacons).toHaveLength(0);
+});
+
+// ---------------------------------------------------------------------------
+// Custom events — window.mf(name, props)
+// ---------------------------------------------------------------------------
+
+test('window.mf sends a named event without inflating pageviews', async ({ page }) => {
+  const beacons = await installSite(page);
+  await page.goto(`${SITE}/game`);
+  await expect.poll(() => beacons.length).toBe(1);
+  expect(beacons[0].n).toBeUndefined(); // the automatic pageview carries no name
+
+  await page.evaluate(() =>
+    (window as never as { mf: (n: string, d?: unknown) => void }).mf('grow_start', { level: 3 }),
+  );
+  await expect.poll(() => beacons.length).toBe(2);
+
+  expect(beacons[1].n).toBe('grow_start');
+  expect(beacons[1].d).toEqual({ level: 3 });
+  // The event still reports the path it happened on, but must not be counted as a navigation.
+  expect(beacons[1].p).toBe('/game');
+});
+
+test('window.mf ignores an empty name rather than sending a nameless event', async ({ page }) => {
+  const beacons = await installSite(page);
+  await page.goto(`${SITE}/`);
+  await expect.poll(() => beacons.length).toBe(1);
+
+  await page.evaluate(() => {
+    const w = window as never as { mf: (n?: string) => void };
+    w.mf('');
+    w.mf(undefined);
+  });
+  await page.waitForTimeout(300);
+  expect(beacons).toHaveLength(1);
+});
+
+// Calls made before the async snippet finishes loading must not be lost. Without a queue every
+// early call vanishes silently and the site owner has no way to tell.
+test('queued mf() calls made before the snippet loads are drained', async ({ page }) => {
+  const beacons = await installSite(page, {
+    html: `<!doctype html><html><body>
+      <script>
+        window.mf = window.mf || function () { (window.mf.q = window.mf.q || []).push(arguments); };
+        window.mf('early_event', { queued: true });
+      </script>
+      <script src="${SITE}/a.js" data-key="${KEY}"></script>
+    </body></html>`,
+  });
+  await page.goto(`${SITE}/`);
+
+  await expect.poll(() => beacons.filter((b) => b.n === 'early_event').length).toBe(1);
+  const early = beacons.find((b) => b.n === 'early_event');
+  expect(early?.d).toEqual({ queued: true });
+});
+
+test('a throwing mf() call cannot break the page', async ({ page }) => {
+  const beacons = await installSite(page);
+  await page.goto(`${SITE}/`);
+  await expect.poll(() => beacons.length).toBe(1);
+
+  const stillWorks = await page.evaluate(() => {
+    const w = window as never as { mf: (n: string, d?: unknown) => void };
+    try {
+      const circular: Record<string, unknown> = {};
+      circular.self = circular; // JSON.stringify throws on this
+      w.mf('circular_event', circular);
+    } catch {
+      return 'threw-to-caller';
+    }
+    return 'contained';
+  });
+  expect(stillWorks).toBe('contained');
+  // And the page is still alive and tracking.
+  await page.evaluate(() => (window as never as { mf: (n: string) => void }).mf('after_error'));
+  await expect.poll(() => beacons.some((b) => b.n === 'after_error')).toBe(true);
 });

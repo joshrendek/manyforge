@@ -67,7 +67,7 @@ type ValueCount struct {
 // reaching SQL — the value is a WHERE parameter, but constraining it also keeps a caller from
 // probing for dimensions that do not exist.
 var knownDimensions = []string{
-	"utm_source", "utm_medium", "utm_campaign", "device", "browser", "country",
+	"utm_source", "utm_medium", "utm_campaign", "device", "browser", "country", "event",
 }
 
 // Service reads analytics aggregates under the caller's principal, so RLS scopes every query to

@@ -63,7 +63,7 @@ export interface AnalyticsSummary {
   series: DayPoint[];
   top_pages: PathCount[];
   top_referrers: HostCount[];
-  // Keyed by dimension: utm_source, utm_medium, utm_campaign, device, browser, country.
+  // Keyed by dimension: event, utm_source, utm_medium, utm_campaign, device, browser, country.
   // A tracked dimension with no data is present but empty, so the UI can tell "nothing collected"
   // apart from "not a dimension we track".
   breakdowns: Record<string, ValueCount[]>;

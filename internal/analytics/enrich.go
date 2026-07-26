@@ -1,8 +1,11 @@
 package analytics
 
 import (
+	"math"
 	"net"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -157,4 +160,116 @@ func ResolveCountry(r CountryResolver, ipStr string) string {
 		return ""
 	}
 	return strings.ToUpper(c)
+}
+
+// ---------------------------------------------------------------------------
+// Custom events
+// ---------------------------------------------------------------------------
+
+// reservedEventName is the implicit name for an automatic pageview. A caller may not send it
+// explicitly, or a site could inflate its own pageview count through the event API and make the
+// headline number disagree with the pageview rollup.
+const reservedEventName = "pageview"
+
+const (
+	maxEventNameLen = 64
+	maxPropKeys     = 12
+	maxPropKeyLen   = 32
+	maxPropValueLen = 128
+)
+
+// eventNameOK bounds an event name to a conservative identifier shape.
+//
+// Event names become GROUP BY keys in the rollup and labels on a dashboard, so they are treated
+// like identifiers rather than free text: unbounded or control-laden names would corrupt both.
+func eventNameOK(s string) bool {
+	if s == "" || len(s) > maxEventNameLen || s == reservedEventName {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_', r == '-', r == '.', r == ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// NormalizeEventName returns the event name to store, or "" if the caller sent nothing usable.
+// An invalid name is rejected rather than coerced: silently renaming someone's event would be
+// worse than dropping it, because the dashboard would show a metric they never emitted.
+func NormalizeEventName(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if !eventNameOK(s) {
+		return ""
+	}
+	return s
+}
+
+// SanitizeProps bounds custom event properties.
+//
+// Props are attacker-supplied and land in a jsonb column, so both the key count and the value
+// sizes are capped. Values are flattened to strings: nested objects invite unbounded nesting and
+// give a dashboard nothing it can group by, and this is the same reason the query string is not
+// stored wholesale — a free-form bag is where PII ends up.
+func SanitizeProps(in map[string]any) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	// Sorted so truncation past the key cap is deterministic rather than map-order dependent —
+	// otherwise the same payload could store different props on different requests.
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		if len(out) >= maxPropKeys {
+			break
+		}
+		ck := clampDimension(k)
+		if ck == "" || len(ck) > maxPropKeyLen {
+			continue
+		}
+		var v string
+		switch t := in[k].(type) {
+		case string:
+			v = t
+		case bool:
+			v = strconv.FormatBool(t)
+		case float64:
+			// JSON numbers decode as float64; render integers without a trailing .0
+			if t == math.Trunc(t) && math.Abs(t) < 1e15 {
+				v = strconv.FormatInt(int64(t), 10)
+			} else {
+				v = strconv.FormatFloat(t, 'f', -1, 64)
+			}
+		default:
+			// Nested objects and arrays are dropped rather than stringified: a JSON blob in a
+			// dashboard cell is not a groupable value.
+			continue
+		}
+		v = clampDimension(v)
+		if v == "" {
+			continue
+		}
+		if len(v) > maxPropValueLen {
+			v = v[:maxPropValueLen]
+			for len(v) > 0 && !utf8.ValidString(v) {
+				v = v[:len(v)-1]
+			}
+		}
+		out[ck] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

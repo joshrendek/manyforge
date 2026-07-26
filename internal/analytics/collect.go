@@ -78,6 +78,10 @@ type collectRequest struct {
 	// query string: sending that would ship session tokens and email addresses to the server, and
 	// the server re-filters anyway (ParseUTM is an allowlist).
 	Query string `json:"q"`
+	// Name is a custom event name. Empty (the usual case) means an automatic pageview.
+	Name string `json:"n"`
+	// Data holds custom event properties. Bounded and flattened server-side.
+	Data map[string]any `json:"d"`
 }
 
 // collect stores one pageview.
@@ -113,6 +117,16 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	// Everything derived from the IP and UA is computed HERE and reduced to low-cardinality
 	// buckets before it touches SQL. The raw values continue past this point only as hash inputs.
 	utm := ParseUTM(req.Query)
+
+	// An unusable custom-event name is DROPPED, not coerced to a pageview: counting someone's
+	// malformed event as a pageview would inflate the headline number with traffic that never
+	// happened. An empty name is the normal automatic-pageview case and is not an error.
+	name := NormalizeEventName(req.Name)
+	if req.Name != "" && name == "" {
+		h.Metrics.Inc(observability.MetricAnalyticsCollectRejected)
+		return
+	}
+
 	ev := collectEvent{
 		key:      req.Key,
 		path:     normalizePath(req.Path),
@@ -124,6 +138,8 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 		device:   DeviceType(ua),
 		browser:  Browser(ua),
 		country:  ResolveCountry(h.Geo, ip),
+		name:     name,
+		props:    SanitizeProps(req.Data),
 	}
 	n, err := h.store(r.Context(), ev)
 	if err != nil {
@@ -152,16 +168,27 @@ type collectEvent struct {
 	device   string
 	browser  string
 	country  string
+	name     string            // "" ⇒ automatic pageview
+	props    map[string]string // nil ⇒ no custom properties
 }
 
 func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) {
+	// nil props are sent as an empty object so the column is never NULL and readers do not have to
+	// distinguish "no properties" from "not set".
+	props := []byte("{}")
+	if len(e.props) > 0 {
+		if b, err := json.Marshal(e.props); err == nil {
+			props = b
+		}
+	}
 	var n int
 	err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			"SELECT analytics_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+			"SELECT analytics_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
 			e.key, e.path, e.referrer, e.ip, e.ua, e.isBot,
 			e.utm.Source, e.utm.Medium, e.utm.Campaign,
-			e.device, e.browser, e.country).Scan(&n)
+			e.device, e.browser, e.country,
+			e.name, props).Scan(&n)
 	})
 	return n, err
 }
