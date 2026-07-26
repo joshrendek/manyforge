@@ -588,21 +588,19 @@ test('review setup: reorder the reviewbot fallback chain, promoting a fallback t
   await expect(page.getByTestId('chain-name-0')).toContainText('LM Studio');
   await expect(page.getByTestId('chain-name-1')).toContainText('Cloud');
 
-  // The drag affordance exists and is labelled — but it is tabindex="-1", i.e. deliberately NOT
-  // keyboard reachable. Asserting its label alone would imply an accessibility it does not have,
-  // so assert the exclusion explicitly AND assert the keyboard path that actually carries the
-  // functionality. That pairing is the real accessibility contract here.
+  // The pointer-only drag glyph stays out of the accessibility tree. Reordering remains available
+  // through the named buttons, and the test uses the real Tab/Enter keyboard path below.
   await expect(page.getByTestId('chain-list')).toHaveAttribute('cdkDropList', '');
-  await expect(page.getByTestId('chain-drag-1')).toHaveAttribute('tabindex', '-1');
-  await expect(page.getByTestId('chain-drag-1')).toHaveAttribute(
-    'aria-label',
-    /Drag to reorder Cloud/,
-  );
-  // The keyboard-operable equivalent must be reachable and named.
-  await expect(page.getByRole('button', { name: 'Move Cloud up' })).toBeVisible();
+  await expect(page.getByTestId('chain-drag-1')).toHaveAttribute('aria-hidden', 'true');
+  await expect(page.getByTestId('chain-drag-1')).not.toHaveAttribute('role', 'button');
 
-  // Promote Cloud to primary via the accessible control.
-  await page.getByTestId('chain-up-1').click();
+  const moveCloudUp = page.getByRole('button', { name: 'Move Cloud up' });
+  await page.getByTestId('chain-down-0').focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('chain-remove-0')).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(moveCloudUp).toBeFocused();
+  await page.keyboard.press('Enter');
 
   await expect(page.getByTestId('chain-name-0')).toContainText('Cloud');
   await expect(page.getByTestId('chain-name-1')).toContainText('LM Studio');
@@ -664,24 +662,24 @@ test('review setup: promote a fallback to primary in the provider priority list'
   await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('openrouter');
   await expect(page.getByTestId('row-priority-provider-2')).toHaveValue('vllm');
 
-  // Drag wiring is present and labelled, and explicitly outside the tab order — the ↑/↓ buttons
-  // are the keyboard path, so the handle being unreachable is intended, not an oversight.
+  // The pointer-only drag glyph is hidden from assistive technology. The named move buttons are
+  // the keyboard path, exercised with Tab/Enter below.
   await expect(page.getByTestId('row-priority-list')).toHaveAttribute('cdkDropList', '');
-  await expect(page.getByTestId('row-priority-drag-2')).toHaveAttribute('tabindex', '-1');
-  await expect(page.getByTestId('row-priority-drag-2')).toHaveAttribute(
-    'aria-label',
-    /Drag to reorder provider 3/,
-  );
+  await expect(page.getByTestId('row-priority-drag-2')).toHaveAttribute('aria-hidden', 'true');
+  await expect(page.getByTestId('row-priority-drag-2')).not.toHaveAttribute('role', 'button');
 
-  // ...and the promotion itself is driven through the accessible control, twice, so vLLM crosses
-  // the primary/fallback boundary — the point of this test.
-  // Assert the intermediate state between clicks. Each click re-renders the list, and firing the
-  // second before Angular has re-rendered lands it on a stale row — which is what made this fail on
-  // the first attempt and pass on retry.
-  await page.getByTestId('row-priority-up-2').click();
+  // Promote with the keyboard twice so vLLM crosses the primary/fallback boundary. Refocus after
+  // the first move because Angular re-renders the list and replaces the original button.
+  await page.getByTestId('row-priority-model-text-2').focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('row-priority-up-2')).toBeFocused();
+  await page.keyboard.press('Enter');
   await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('vllm');
 
-  await page.getByTestId('row-priority-up-1').click();
+  await page.getByTestId('row-priority-model-text-1').focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('row-priority-up-1')).toBeFocused();
+  await page.keyboard.press('Enter');
 
   await expect(page.getByTestId('row-priority-provider-0')).toHaveValue('vllm');
   await expect(page.getByTestId('row-priority-provider-1')).toHaveValue('anthropic');

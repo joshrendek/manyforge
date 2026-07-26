@@ -393,7 +393,7 @@ describe('CodeReviewSetupComponent', () => {
       return { previousIndex, currentIndex } as never;
     }
 
-    it('onChainDrop moves a fallback to primary', () => {
+    it('onChainDrop moves an agent to the front of the chain', () => {
       mount(undefined, { ...defaultConfig, review_agent_chain: ['ag1', 'ag2'] });
       expect(cmp.config().review_agent_chain).toEqual(['ag1', 'ag2']);
 

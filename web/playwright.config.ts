@@ -1,14 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// E2E for the ManyForge SPA.
-//
-// The suite is self-contained: every spec intercepts `**/api/**`, so no backend is required — only
-// the SPA has to be served. Playwright therefore starts the dev server itself. Before this, the
-// config merely ASSUMED something was already listening on :4300, which meant the suite could only
-// be run by hand, which meant CI never ran it at all (manyforge-m07j). A test suite nothing starts
-// is a test suite nothing enforces.
-// Port is overridable so a run cannot collide with a long-lived local dev server. CI gets its own
-// port by default; developers keep :4300.
+// The suite starts its own SPA server; override the port when :4300 is already in use locally.
 const PORT = Number(process.env.E2E_PORT ?? 4300);
 
 export default defineConfig({
