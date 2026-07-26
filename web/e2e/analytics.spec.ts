@@ -2,6 +2,9 @@ import { expect, Page, test } from '@playwright/test';
 
 // as0 analytics: sites screen (embed tag) + dashboard (totals, chart, breakdowns).
 //
+// NOTE the sites screen lives at /analytics/sites, not /analytics. nk50 made the bare route the
+// multi-site grid; site registration moved one level down. See e2e/analytics-overview.spec.ts.
+//
 // These codify the flow that was previously only verified by hand: register a site → copy the
 // embed tag → see traffic. The embed tag assertion matters most — it is the one string a tenant
 // physically copies into someone else's website, so a malformed one is a silent total failure.
@@ -109,7 +112,7 @@ async function installStack(page: Page, opts: { summary?: unknown } = {}) {
 
 test('sites screen lists analytics sites and renders a complete embed tag', async ({ page }) => {
   await installStack(page);
-  await page.goto('/analytics');
+  await page.goto('/analytics/sites');
 
   await expect(page.getByRole('heading', { name: 'Analytics sites' })).toBeVisible();
 
@@ -139,7 +142,7 @@ test('revoked sites stop advertising an embed tag', async ({ page }) => {
       },
     }),
   );
-  await page.goto('/analytics');
+  await page.goto('/analytics/sites');
 
   await expect(page.getByTestId('site-row')).toHaveCount(1);
   await expect(page.getByTestId('site-status-cell')).toContainText('Revoked');
