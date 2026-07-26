@@ -1,12 +1,20 @@
 package analytics
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestNormalizePath(t *testing.T) {
@@ -386,5 +394,125 @@ func TestSnippetJS_ExposesCustomEventAPI(t *testing.T) {
 	// half-initialised mf() on the page.
 	if strings.Index(snippetJS, "window.mf=") < strings.Index(snippetJS, "addEventListener('popstate'") {
 		t.Error("window.mf is defined before the pageview wiring completes")
+	}
+}
+
+// TestSnippetCacheValidator_DerivesFromContent pins the fix for a production incident: the snippet
+// was served with a hand-maintained modtime constant, documented as "bump it with the content".
+// It was not bumped across three snippet changes, so caches kept answering 304 and embedding sites
+// silently ran an old tracker missing both UTM capture and the custom-event API. Traffic looked
+// like it was being collected; parts of it simply were not.
+//
+// Anything a human must remember to update in lockstep with code eventually goes stale. These
+// assert the validator is DERIVED, so the choice no longer exists.
+func TestSnippetCacheValidator_DerivesFromContent(t *testing.T) {
+	if snippetETag == "" || !strings.HasPrefix(snippetETag, `"`) {
+		t.Fatalf("ETag must be a quoted strong validator, got %q", snippetETag)
+	}
+
+	// Two different bodies must never share a validator.
+	sum := sha256.Sum256([]byte(snippetJS))
+	want := `"` + hex.EncodeToString(sum[:16]) + `"`
+	if snippetETag != want {
+		t.Errorf("ETag is not the content hash: got %s want %s", snippetETag, want)
+	}
+
+	// The property that actually matters: DIFFERENT BODIES GET DIFFERENT VALIDATORS. Asserting the
+	// validator is merely non-empty would pass for a constant, which is the bug.
+	if etagFor("a") == etagFor("b") {
+		t.Error("two different bodies produced the same ETag")
+	}
+	// A one-character change must move it — this is the granularity a real snippet edit has.
+	if etagFor(snippetJS) == etagFor(snippetJS+" ") {
+		t.Error("a modified snippet produced an unchanged ETag; caches would keep the old body")
+	}
+
+	// A hardcoded literal date in the source is exactly what caused the incident.
+	src := mustReadFile(t, "snippet.go")
+	if strings.Contains(src, "time.Date(2026") {
+		t.Error("snippet.go contains a hardcoded modtime literal — it will go stale the next time " +
+			"the snippet changes, exactly as it did before")
+	}
+	if !strings.Contains(src, "must-revalidate") {
+		t.Error("the snippet response should require revalidation; a long opaque cache makes a " +
+			"bad snippet unfixable for the duration of the TTL")
+	}
+}
+
+func mustReadFile(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(b)
+}
+
+// TestServeSnippet_ConditionalRequests exercises the real HTTP contract. The derivation test
+// proves the ETag tracks content; this proves the ETag is actually USED — a validator that never
+// produces a 304 would turn every page load on every embedding site into a full re-download.
+func TestServeSnippet_ConditionalRequests(t *testing.T) {
+	h := &PublicHandler{}
+	mux := chi.NewRouter()
+	h.SnippetRoutes(mux)
+
+	// First fetch: full body, with the validator and the short TTL.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/a.js", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first GET = %d, want 200", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag on the response")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=300") ||
+		!strings.Contains(cc, "must-revalidate") {
+		t.Errorf("Cache-Control = %q, want max-age=300 and must-revalidate", cc)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("empty snippet body")
+	}
+
+	// Revalidation with the same validator must be answered 304, not a fresh body.
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/a.js", nil)
+	req2.Header.Set("If-None-Match", etag)
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusNotModified {
+		t.Errorf("revalidation = %d, want 304 (ETag not honoured; every page load would "+
+			"re-download the snippet)", rec2.Code)
+	}
+
+	// A STALE validator must get the new body — this is the case that was broken in production:
+	// the old snippet's validator kept matching after the content changed.
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodGet, "/a.js", nil)
+	req3.Header.Set("If-None-Match", `"0000000000000000000000000000000000000000"`)
+	mux.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK || rec3.Body.Len() == 0 {
+		t.Errorf("stale validator = %d (len %d), want 200 with the current snippet",
+			rec3.Code, rec3.Body.Len())
+	}
+
+	// No Last-Modified. A date implies an ordering that content does not have, and a validator
+	// derived from a hash can move BACKWARDS when the snippet changes — after which ServeContent
+	// answers 304 to any If-Modified-Since at or after it, pinning the stale body. The ETag is the
+	// only validator, precisely so there is no ordering to get wrong.
+	if lm := rec.Header().Get("Last-Modified"); lm != "" {
+		t.Errorf("Last-Modified = %q, want absent: a date-shaped validator can regress across "+
+			"snippet changes and re-create the staleness bug", lm)
+	}
+
+	// The case that matters for the object currently stuck in Cloudflare: it was cached before this
+	// handler set an ETag, so it can only revalidate with If-Modified-Since. That must yield the
+	// CURRENT body, never a 304.
+	rec4 := httptest.NewRecorder()
+	req4 := httptest.NewRequest(http.MethodGet, "/a.js", nil)
+	req4.Header.Set("If-Modified-Since", time.Now().Add(24*time.Hour).UTC().Format(http.TimeFormat))
+	mux.ServeHTTP(rec4, req4)
+	if rec4.Code != http.StatusOK || rec4.Body.Len() == 0 {
+		t.Errorf("If-Modified-Since (far future) = %d (len %d), want 200 — a client holding an old "+
+			"copy with only a date must still receive the new snippet", rec4.Code, rec4.Body.Len())
 	}
 }
