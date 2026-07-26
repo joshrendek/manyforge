@@ -218,7 +218,13 @@ func cloudflareCountry(trusted bool, values []string) string {
 	if b >= 'a' && b <= 'z' {
 		b -= 'a' - 'A'
 	}
-	if a < 'A' || a > 'Z' || b < 'A' || b > 'Z' || (a == 'X' && b == 'X') {
+	// Spell out both Cloudflare sentinels even though the ASCII-letter validation below also
+	// rejects T1. Keeping the edge contract visible prevents a future validator relaxation from
+	// silently turning Tor into a country bucket.
+	if (a == 'X' && b == 'X') || (a == 'T' && b == '1') {
+		return ""
+	}
+	if a < 'A' || a > 'Z' || b < 'A' || b > 'Z' {
 		return ""
 	}
 	return string([]byte{a, b})

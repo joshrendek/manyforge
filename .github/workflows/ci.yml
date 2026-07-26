@@ -13,6 +13,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
+      - uses: azure/setup-helm@v4
+      - name: Helm chart
+        run: |
+          set -euo pipefail
+          common=(--set jwt.activeKid=k1 --set trustedProxyCidr=10.244.0.0/16)
+          helm lint charts/manyforge "${common[@]}"
+          default_render="$(helm template manyforge charts/manyforge "${common[@]}")"
+          grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "false"' <<<"$default_render"
+          enabled_render="$(helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true)"
+          grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "true"' <<<"$enabled_render"
       - name: Build
         run: make build
       - name: Vet / lint

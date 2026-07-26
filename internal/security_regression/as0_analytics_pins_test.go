@@ -278,6 +278,10 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	if !strings.Contains(configMap, "MANYFORGE_TRUST_CF_IPCOUNTRY") {
 		t.Error("the chart must thread its explicit country-header trust setting to the app")
 	}
+	main := mustRead(t, "../../cmd/manyforge/main.go")
+	if !strings.Contains(main, "TrustCloudflareCountryHeader: cfg.TrustCFIPCountry") {
+		t.Error("the loaded country-header trust setting must reach the production analytics handler")
+	}
 }
 
 const as0CustomEvents = "../../migrations/0109_analytics_custom_events.up.sql"

@@ -203,6 +203,7 @@ test('explains a missing country breakdown instead of showing nothing', async ({
   await page.goto(`/analytics/${BIZ_ID}/${SITE_ID}`);
 
   await expect(page.getByTestId('country-unavailable')).toBeVisible();
+  await expect(page.getByTestId('country-unavailable')).toHaveAttribute('role', 'status');
   await expect(page.getByTestId('country-unavailable')).toContainText(
     'MANYFORGE_TRUST_CF_IPCOUNTRY',
   );
