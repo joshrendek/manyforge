@@ -34,6 +34,12 @@ type Config struct {
 	// CloudflareSourceCIDR is the edge-address allowlist used to bind CF-IPCountry trust to the
 	// forwarded connection source. It is required when TrustCFIPCountry is enabled.
 	CloudflareSourceCIDR string
+	// TrustCFIPCountry allows analytics collection to trust Cloudflare's CF-IPCountry header.
+	// It is false by default and requires TrustedProxyCIDR plus CloudflareSourceCIDR; each request
+	// is accepted only from a trusted peer whose forwarded connection source is a Cloudflare edge.
+	// Enabling it also declares that the origin cannot be bypassed and the ingress overwrites the
+	// forwarded source before the application receives it.
+	TrustCFIPCountry bool
 
 	// Support desk (spec 002).
 	SMTPAddr                string // built-in inbound SMTP receiver listen address; empty disables it
@@ -46,12 +52,6 @@ type Config struct {
 	DKIMKeyPath             string // path to the default DKIM private key for verified custom sending identities
 	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
 	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
-	// TrustCFIPCountry allows analytics collection to trust Cloudflare's CF-IPCountry header.
-	// It is false by default and requires TrustedProxyCIDR plus CloudflareSourceCIDR; each request
-	// is accepted only from a trusted peer whose forwarded connection source is a Cloudflare edge.
-	// Enabling it also declares that the origin cannot be bypassed and the ingress overwrites the
-	// forwarded source before the application receives it.
-	TrustCFIPCountry bool
 
 	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
 	IngestRateBurst   float64 // per-recipient inbound ingestion burst allowance
@@ -480,6 +480,8 @@ func envBool(key string, def bool) (bool, error) {
 	return strconv.ParseBool(v)
 }
 
+const maxSourceCIDRs = 64
+
 func validateSourceCIDRs(key, value string) error {
 	count := 0
 	var ipv4Ranges, ipv6Ranges []ipRange
@@ -506,6 +508,9 @@ func validateSourceCIDRs(key, value string) error {
 			ipv6Ranges = append(ipv6Ranges, r)
 		}
 		count++
+		if count > maxSourceCIDRs {
+			return fmt.Errorf("%s must contain at most %d CIDRs", key, maxSourceCIDRs)
+		}
 	}
 	if count == 0 {
 		return fmt.Errorf("%s must contain at least one CIDR", key)

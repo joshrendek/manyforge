@@ -684,7 +684,7 @@ const iphoneUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWe
 
 func TestEnrichment_StoresDerivedDimensionsOnly(t *testing.T) {
 	ctx, e := newEnv(t)
-	// A direct caller may forge the edge header. The default deployment must ignore it end to end.
+	// Header trust is disabled in this environment.
 	e.collectFullWithCountry(t, "/pricing", "",
 		"utm_source=hn&utm_medium=social&utm_campaign=launch&token=SECRET",
 		humanUA, "203.0.113.10", "US")
