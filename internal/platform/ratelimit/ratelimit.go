@@ -102,23 +102,32 @@ func (t *TokenBucket) Allow(key string) bool {
 // X-Forwarded-For is used only when the direct peer is a trusted proxy;
 // otherwise the direct peer address is authoritative (prevents header spoofing).
 func ClientIP(r *http.Request, trusted []*net.IPNet) string {
+	ip, _ := ClientIPAndTrustedPeer(r, trusted)
+	return ip
+}
+
+// ClientIPAndTrustedPeer resolves the real client IP and also reports whether the direct TCP peer
+// belongs to a trusted proxy network. Returning both lets callers gate trusted-edge headers
+// without parsing and scanning the direct peer twice.
+func ClientIPAndTrustedPeer(r *http.Request, trusted []*net.IPNet) (string, bool) {
 	peer := peerIP(r.RemoteAddr)
-	if !IsTrustedPeer(r, trusted) {
-		return peer
+	trustedPeer := isTrusted(net.ParseIP(peer), trusted)
+	if !trustedPeer {
+		return peer, false
 	}
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff == "" {
-		return peer
+		return peer, true
 	}
 	parts := strings.Split(xff, ",")
 	// walk right-to-left, skipping trusted proxies, to the first real client
 	for i := len(parts) - 1; i >= 0; i-- {
 		ip := strings.TrimSpace(parts[i])
 		if !isTrusted(net.ParseIP(ip), trusted) {
-			return ip
+			return ip, true
 		}
 	}
-	return peer
+	return peer, true
 }
 
 // IsTrustedPeer reports whether the request's direct TCP peer belongs to an explicitly trusted

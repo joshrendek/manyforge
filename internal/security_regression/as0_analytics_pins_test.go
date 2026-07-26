@@ -255,8 +255,8 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	src := mustRead(t, "../../internal/analytics/collect.go")
 	for _, required := range []string{
 		"TrustCloudflareCountryHeader",
-		`h.CanTrustCloudflareCountryHeader(r)`,
-		`ratelimit.IsTrustedPeer(r, h.TrustedProxies)`,
+		`h.ResolveClient(r)`,
+		`ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)`,
 		`r.Header.Values(cloudflareCountryHeader)`,
 		"cloudflareCountry(",
 		"if !trusted || len(values) != 1 {",
@@ -309,7 +309,9 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	for _, required := range []string{
 		"kind: NetworkPolicy",
 		`fail "manyforge: ingress.enabled must be true when trusting CF-IPCountry"`,
-		`fail (printf "manyforge: analytics.cloudflareSourceRanges must not contain a universal source range`,
+		"analytics.cloudflareSourceRanges must contain at most 64 source ranges",
+		"analytics.cloudflareSourceRanges contains an excessively broad source range",
+		"analytics.cloudflareSourceRanges must use native IPv4 CIDRs",
 		"or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace",
 		`required "manyforge: analytics.trustedIngressNamespace is required when trusting CF-IPCountry"`,
 		"app.kubernetes.io/name: ingress-nginx",

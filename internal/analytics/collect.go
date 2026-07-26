@@ -29,10 +29,10 @@ const maxPathLen = 512
 
 const cloudflareCountryHeader = "CF-IPCountry"
 
-// isoAlpha2Country is a precomputed lookup table of CLDR regions that are real, non-private
+// validAlpha2Country is a precomputed lookup table of CLDR regions that are real, non-private
 // countries.
 // The hot collect path can therefore validate an alpha-2 value without reparsing it per request.
-var isoAlpha2Country = func() [26][26]bool {
+var validAlpha2Country = func() [26][26]bool {
 	var valid [26][26]bool
 	for a := byte('A'); a <= 'Z'; a++ {
 		for b := byte('A'); b <= 'Z'; b++ {
@@ -60,10 +60,11 @@ type PublicHandler struct {
 	TrustCloudflareCountryHeader bool
 }
 
-// CanTrustCloudflareCountryHeader reports whether country-header trust is enabled and this
-// request's direct peer is a configured trusted proxy. Either condition alone is insufficient.
-func (h *PublicHandler) CanTrustCloudflareCountryHeader(r *http.Request) bool {
-	return h.TrustCloudflareCountryHeader && ratelimit.IsTrustedPeer(r, h.TrustedProxies)
+// ResolveClient returns the resolved client IP and whether this request may assert a Cloudflare
+// country header. Both answers come from one direct-peer parse and trusted-proxy scan.
+func (h *PublicHandler) ResolveClient(r *http.Request) (string, bool) {
+	ip, trustedPeer := ratelimit.ClientIPAndTrustedPeer(r, h.TrustedProxies)
+	return ip, h.TrustCloudflareCountryHeader && trustedPeer
 }
 
 // CollectRoutes mounts the public collect endpoint.
@@ -120,7 +121,7 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	corsHeaders(w)
 	defer w.WriteHeader(http.StatusNoContent)
 
-	ip := ratelimit.ClientIP(r, h.TrustedProxies)
+	ip, trustCountryHeader := h.ResolveClient(r)
 	if h.PerIP != nil && !h.PerIP.Allow(ip) {
 		return
 	}
@@ -164,7 +165,7 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 		device:   DeviceType(ua),
 		browser:  Browser(ua),
 		country: cloudflareCountry(
-			h.CanTrustCloudflareCountryHeader(r),
+			trustCountryHeader,
 			r.Header.Values(cloudflareCountryHeader),
 		),
 		name:  name,
@@ -250,7 +251,7 @@ func cloudflareCountry(trusted bool, values []string) string {
 	if a < 'A' || a > 'Z' || b < 'A' || b > 'Z' {
 		return ""
 	}
-	if !isoAlpha2Country[a-'A'][b-'A'] {
+	if !validAlpha2Country[a-'A'][b-'A'] {
 		return ""
 	}
 	return string([]byte{a, b})

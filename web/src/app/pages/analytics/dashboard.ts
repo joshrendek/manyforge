@@ -165,15 +165,6 @@ import { Spinner } from '../../ui/spinner/spinner';
           }
         </div>
 
-        <div data-testid="country-status" role="status">
-          @if (countryUnavailable()) {
-            <p class="mf-hint" data-testid="country-unavailable">
-              Country data is unavailable for this date range. It appears only when the deployment's
-              trusted edge supplies a supported country for a request.
-            </p>
-          }
-        </div>
-
         @if (s.pageviews === 0 && !loading()) {
           <mf-empty-state title="No traffic yet" data-testid="analytics-empty">
             Paste this site's embed tag into your HTML and reload the page. Data appears within a
@@ -181,6 +172,15 @@ import { Spinner } from '../../ui/spinner/spinner';
           </mf-empty-state>
         }
       }
+
+      <div data-testid="country-status" role="status">
+        @if (countryUnavailable()) {
+          <p class="mf-hint" data-testid="country-unavailable">
+            Country data is unavailable for this date range. It appears only when the deployment's
+            trusted edge supplies a supported country for a request.
+          </p>
+        }
+      </div>
 
       @if (error()) {
         <p class="mf-err" data-testid="analytics-error">{{ error() }}</p>

@@ -142,7 +142,13 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		}
 	})
 
-	for _, cidr := range []string{"0.0.0.0/0", "::/0", "::ffff:0:0/96"} {
+	for _, cidr := range []string{
+		"0.0.0.0/0",
+		"::/0",
+		"::ffff:0:0/96",
+		"0.0.0.0/1,128.0.0.0/1",
+		"::/1,8000::/1",
+	} {
 		t.Run("enabled-with-universal-trusted-proxy-"+cidr, func(t *testing.T) {
 			t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
 			t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", cidr)
@@ -151,6 +157,14 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("overlapping-ranges-do-not-create-false-universal", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.0.0.0/8,10.0.0.0/9,2001:db8::/32")
+		if _, err := Load(); err != nil {
+			t.Fatalf("expected bounded overlapping proxy ranges to remain valid, got %v", err)
+		}
+	})
 }
 
 // TestEnvKey32Disambiguation (manyforge-no9) pins the explicit-prefix and anchored

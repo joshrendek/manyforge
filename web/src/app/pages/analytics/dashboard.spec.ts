@@ -58,15 +58,22 @@ function mount(): {
 describe('AnalyticsDashboardComponent', () => {
   let mock: HttpTestingController;
   let fixture: ComponentFixture<AnalyticsDashboardComponent>;
+  let initialCountryStatus: Element | null;
 
   beforeEach(() => {
     localStorage.clear();
     ({ fixture, mock } = mount());
+    initialCountryStatus = fixture.nativeElement.querySelector('[data-testid="country-status"]');
     mock.expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=30').flush(summary);
     fixture.detectChanges();
   });
 
   afterEach(() => mock.verify());
+
+  it('mounts the country live region before the async summary arrives', () => {
+    expect(initialCountryStatus).toBeTruthy();
+    expect(initialCountryStatus?.getAttribute('role')).toBe('status');
+  });
 
   it('renders headline totals', () => {
     const el = fixture.nativeElement;

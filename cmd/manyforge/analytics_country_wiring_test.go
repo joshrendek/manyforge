@@ -39,11 +39,11 @@ func TestAnalyticsCountryTrustProductionWiring(t *testing.T) {
 			}
 
 			matching := &http.Request{RemoteAddr: "10.244.7.9:5000", Header: http.Header{"CF-IPCountry": {"US"}}}
-			if got := handler.CanTrustCloudflareCountryHeader(matching); got != tc.want {
+			if _, got := handler.ResolveClient(matching); got != tc.want {
 				t.Fatalf("matching proxy country trust = %t, want %t", got, tc.want)
 			}
 			untrusted := &http.Request{RemoteAddr: "203.0.113.9:5000", Header: http.Header{"CF-IPCountry": {"US"}}}
-			if handler.CanTrustCloudflareCountryHeader(untrusted) {
+			if _, got := handler.ResolveClient(untrusted); got {
 				t.Fatal("untrusted direct peer was allowed to assert CF-IPCountry")
 			}
 		})

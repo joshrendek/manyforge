@@ -1,13 +1,26 @@
 {{- if and .Values.analytics.trustCloudflareCountryHeader (not .Values.ingress.enabled) }}
 {{- fail "manyforge: ingress.enabled must be true when trusting CF-IPCountry" }}
 {{- end }}
+{{- $sourceRangeCount := 0 }}
 {{- range $raw := splitList "," (toString .Values.analytics.cloudflareSourceRanges) }}
 {{- $cidr := lower (trim $raw) }}
+{{- if $cidr }}
+{{- $sourceRangeCount = add1 $sourceRangeCount }}
+{{- if gt $sourceRangeCount 64 }}
+{{- fail "manyforge: analytics.cloudflareSourceRanges must contain at most 64 source ranges" }}
+{{- end }}
 {{- $parts := splitList "/" $cidr }}
 {{- $mappedIPv4 := regexMatch "^(::ffff:|0+:0+:0+:0+:0+:ffff:).*" $cidr }}
-{{- $mappedUniversal := and $mappedIPv4 (eq (len $parts) 2) (le (atoi (index $parts 1)) 96) }}
-{{- if or (hasSuffix "/0" $cidr) $mappedUniversal }}
-{{- fail (printf "manyforge: analytics.cloudflareSourceRanges must not contain a universal source range (%s)" $raw) }}
+{{- if $mappedIPv4 }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges must use native IPv4 CIDRs instead of IPv4-mapped range (%s)" $raw) }}
+{{- end }}
+{{- if ne (len $parts) 2 }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed source range (%s)" $raw) }}
+{{- end }}
+{{- $prefix := atoi (index $parts 1) }}
+{{- if or (and (contains ":" $cidr) (lt $prefix 16)) (and (not (contains ":" $cidr)) (lt $prefix 8)) }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains an excessively broad source range (%s)" $raw) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- if or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace }}

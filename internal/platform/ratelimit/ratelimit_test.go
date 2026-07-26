@@ -37,14 +37,19 @@ func TestClientIP(t *testing.T) {
 
 	// Direct peer is a trusted proxy → use right-most untrusted XFF entry.
 	r1 := &http.Request{RemoteAddr: "10.1.1.1:5000", Header: http.Header{"X-Forwarded-For": {"1.2.3.4, 10.0.0.2"}}}
-	if got := ClientIP(r1, trusted); got != "1.2.3.4" {
-		t.Errorf("trusted proxy: want 1.2.3.4, got %s", got)
+	if got, trustedPeer := ClientIPAndTrustedPeer(r1, trusted); got != "1.2.3.4" || !trustedPeer {
+		t.Errorf("trusted proxy: want (1.2.3.4, true), got (%s, %t)", got, trustedPeer)
 	}
 
 	// Direct peer is NOT trusted → ignore XFF (anti-spoof), use peer.
 	r2 := &http.Request{RemoteAddr: "8.8.8.8:5000", Header: http.Header{"X-Forwarded-For": {"1.2.3.4"}}}
-	if got := ClientIP(r2, trusted); got != "8.8.8.8" {
-		t.Errorf("untrusted peer: want 8.8.8.8, got %s", got)
+	if got, trustedPeer := ClientIPAndTrustedPeer(r2, trusted); got != "8.8.8.8" || trustedPeer {
+		t.Errorf("untrusted peer: want (8.8.8.8, false), got (%s, %t)", got, trustedPeer)
+	}
+
+	// The compatibility helper returns the same resolved address.
+	if got := ClientIP(r1, trusted); got != "1.2.3.4" {
+		t.Errorf("ClientIP: want 1.2.3.4, got %s", got)
 	}
 }
 
