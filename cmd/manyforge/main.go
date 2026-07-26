@@ -62,6 +62,23 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func newAnalyticsPublicHandler(
+	database *db.DB,
+	logger *slog.Logger,
+	metrics *observability.Metrics,
+	trusted []*net.IPNet,
+	cfg config.Config,
+) *analytics.PublicHandler {
+	return &analytics.PublicHandler{
+		DB:                           database,
+		Logger:                       logger,
+		Metrics:                      metrics,
+		PerIP:                        ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
+		TrustedProxies:               trusted,
+		TrustCloudflareCountryHeader: cfg.TrustCFIPCountry,
+	}
+}
+
 func main() {
 	logger := observability.NewLogger(os.Getenv("LOG_LEVEL"))
 	slog.SetDefault(logger)
@@ -692,14 +709,7 @@ func main() {
 		TrustedProxies: trusted,
 		Metrics:        metrics,
 	}
-	analyticsPublicH := &analytics.PublicHandler{
-		DB:                           database,
-		Logger:                       logger,
-		Metrics:                      metrics,
-		PerIP:                        ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
-		TrustedProxies:               trusted,
-		TrustCloudflareCountryHeader: cfg.TrustCFIPCountry,
-	}
+	analyticsPublicH := newAnalyticsPublicHandler(database, logger, metrics, trusted, cfg)
 
 	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public
 	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,

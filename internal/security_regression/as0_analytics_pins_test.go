@@ -285,8 +285,8 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 		t.Error("the chart must thread its explicit country-header trust setting to the app")
 	}
 	main := mustRead(t, "../../cmd/manyforge/main.go")
-	if !strings.Contains(main, "TrustCloudflareCountryHeader: cfg.TrustCFIPCountry") {
-		t.Error("the loaded country-header trust setting must reach the production analytics handler")
+	if !strings.Contains(main, "newAnalyticsPublicHandler(database, logger, metrics, trusted, cfg)") {
+		t.Error("production startup must construct analytics through the tested config-wiring path")
 	}
 	ingress := mustRead(t, "../../charts/manyforge/templates/ingress.yaml")
 	for _, required := range []string{
