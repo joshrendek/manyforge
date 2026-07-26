@@ -60,7 +60,7 @@
 {{- end }}
 {{- end }}
 {{- end }}
-{{- if or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace }}
+{{- if or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace .Values.analytics.cloudflareSourceRanges }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

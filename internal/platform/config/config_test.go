@@ -98,6 +98,7 @@ func TestLoadMCPAllowLoopback(t *testing.T) {
 
 func TestLoadTrustCFIPCountry(t *testing.T) {
 	t.Setenv("MANYFORGE_CF_SOURCE_CIDR", "173.245.48.0/20,2400:cb00::/32")
+	t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
 
 	t.Run("true-when-set", func(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
@@ -194,6 +195,15 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		}
 	})
 
+	t.Run("enabled-with-too-many-trusted-proxies", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR",
+			strings.Repeat("10.244.0.1/32,", maxTrustCIDRs)+"10.244.0.1/32")
+		if _, err := Load(); err == nil {
+			t.Fatalf("expected error with more than %d trusted proxy CIDRs, got nil", maxTrustCIDRs)
+		}
+	})
+
 	for _, cidr := range []string{
 		"0.0.0.0/0",
 		"::/0",
@@ -222,6 +232,22 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		t.Setenv("MANYFORGE_CF_SOURCE_CIDR", "173.245.48.0/20")
 		if _, err := Load(); err == nil {
 			t.Fatal("expected error when trusted proxy and Cloudflare source ranges overlap, got nil")
+		}
+	})
+
+	t.Run("disabled-with-unsafe-cloudflare-source-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "false")
+		t.Setenv("MANYFORGE_CF_SOURCE_CIDR", "0.0.0.0/0")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected retained Cloudflare client-identity ranges to be validated while country trust is disabled")
+		}
+	})
+
+	t.Run("disabled-with-cloudflare-source-without-trusted-proxy-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "false")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected retained Cloudflare source ranges to require trusted proxies")
 		}
 	})
 

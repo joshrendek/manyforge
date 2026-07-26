@@ -44,8 +44,9 @@ var validAlpha2Country = func() [26][26]bool {
 	return valid
 }()
 
-// PublicHandler serves the principal-less analytics surface: the snippet and the collect endpoint.
-// TrustCloudflareCountryHeader must only be enabled behind an origin-isolated trusted edge.
+// PublicHandler serves the principal-less analytics surface: the snippet and collect endpoint.
+// TrustedProxies and CloudflareSourceRanges bind visitor identity and optional country headers to
+// an origin-isolated trusted edge.
 type PublicHandler struct {
 	DB      *appdb.DB
 	Logger  *slog.Logger

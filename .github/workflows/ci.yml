@@ -35,6 +35,12 @@ jobs:
             exit 1
           fi
           if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=false \
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 >/dev/null 2>&1; then
+            echo "retained Cloudflare source ranges rendered without origin isolation" >&2
+            exit 1
+          fi
+          if helm template manyforge charts/manyforge "${common[@]}" \
             --set ingress.enabled=false \
             --set analytics.trustCloudflareCountryHeader=true \
             --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 \

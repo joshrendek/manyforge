@@ -223,24 +223,24 @@ func Load() (Config, error) {
 	if cfg.TrustCFIPCountry, err = envBool("MANYFORGE_TRUST_CF_IPCOUNTRY", false); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
 	}
-	if cfg.TrustCFIPCountry {
+	if cfg.TrustCFIPCountry || strings.TrimSpace(cfg.CloudflareSourceCIDR) != "" {
 		trustedProxies, validateErr := validateCIDRList(
 			"MANYFORGE_TRUSTED_PROXY_CIDR", cfg.TrustedProxyCIDR,
 			minTrustedProxyIPv4Prefix, minTrustedProxyIPv6Prefix,
 		)
 		if validateErr != nil {
-			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", validateErr)
+			return Config{}, validateErr
 		}
 		cloudflareSources, validateErr := validateCIDRList(
 			"MANYFORGE_CF_SOURCE_CIDR", cfg.CloudflareSourceCIDR,
 			minCloudflareSourceIPv4Prefix, minCloudflareSourceIPv6Prefix,
 		)
 		if validateErr != nil {
-			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", validateErr)
+			return Config{}, validateErr
 		}
 		if cidrListsOverlap(trustedProxies, cloudflareSources) {
 			return Config{}, fmt.Errorf(
-				"MANYFORGE_TRUST_CF_IPCOUNTRY: MANYFORGE_TRUSTED_PROXY_CIDR must not overlap MANYFORGE_CF_SOURCE_CIDR",
+				"MANYFORGE_TRUSTED_PROXY_CIDR must not overlap MANYFORGE_CF_SOURCE_CIDR",
 			)
 		}
 	}
