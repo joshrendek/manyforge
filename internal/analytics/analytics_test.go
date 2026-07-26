@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -222,30 +221,31 @@ func TestBrowser_HandlesImpersonation(t *testing.T) {
 	}
 }
 
-// stubGeo answers every lookup with a fixed code, so ResolveCountry's filtering is what is tested.
-type stubGeo struct{ code string }
-
-func (s stubGeo) Country(net.IP) string { return s.code }
-
-func TestResolveCountry(t *testing.T) {
-	g := stubGeo{"us"}
-	if got := ResolveCountry(g, "203.0.113.9"); got != "US" {
-		t.Errorf("public IP: got %q, want US (uppercased)", got)
-	}
-	// A nil resolver is the default deployment state and must be safe.
-	if got := ResolveCountry(nil, "203.0.113.9"); got != "" {
-		t.Errorf("nil resolver: got %q, want empty", got)
-	}
-	// Addresses that cannot carry meaningful geography are reported as unknown rather than as
-	// whatever the database happens to say.
-	for _, ip := range []string{"127.0.0.1", "10.0.0.5", "192.168.1.1", "169.254.1.1", "0.0.0.0", "::1", "not-an-ip", ""} {
-		if got := ResolveCountry(g, ip); got != "" {
-			t.Errorf("ResolveCountry(%q) = %q, want empty", ip, got)
-		}
-	}
-	// A malformed code from the database is discarded rather than stored.
-	if got := ResolveCountry(stubGeo{"UNITED STATES"}, "203.0.113.9"); got != "" {
-		t.Errorf("non-alpha-2 code should be dropped, got %q", got)
+func TestCloudflareCountry(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		trusted bool
+		values  []string
+		want    string
+	}{
+		{name: "trusted uppercase", trusted: true, values: []string{"US"}, want: "US"},
+		{name: "trusted lowercase", trusted: true, values: []string{"ca"}, want: "CA"},
+		{name: "surrounding whitespace", trusted: true, values: []string{" gb "}, want: "GB"},
+		{name: "disabled ignores plausible value", trusted: false, values: []string{"US"}},
+		{name: "missing", trusted: true},
+		{name: "unknown", trusted: true, values: []string{"XX"}},
+		{name: "tor", trusted: true, values: []string{"T1"}},
+		{name: "comma separated", trusted: true, values: []string{"US, CA"}},
+		{name: "duplicate headers", trusted: true, values: []string{"US", "CA"}},
+		{name: "too long", trusted: true, values: []string{"USA"}},
+		{name: "non ascii", trusted: true, values: []string{"ÉU"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cloudflareCountry(tc.trusted, tc.values); got != tc.want {
+				t.Errorf("cloudflareCountry(%t, %q) = %q, want %q",
+					tc.trusted, tc.values, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -130,11 +130,11 @@ trustedProxyCidr: ""
 instanceOperatorPrincipal: ""
 publicBaseURL: ""
 
-# GeoLite2 Country is baked into credentialed production images at this path. Local and fork builds
-# without the MaxMind BuildKit secrets intentionally omit the file; the app logs a warning and
-# serves analytics without country breakdowns instead of crash-looping.
-geoip:
-  databasePath: "/geo/GeoLite2-Country.mmdb"
+# Country lookup remains off unless a deployment explicitly declares CF-IPCountry trustworthy.
+# Enable only when Cloudflare is the sole public path to the origin (or the ingress independently
+# strips/overwrites client-supplied CF-IPCountry); otherwise visitors could forge their country.
+analytics:
+  trustCloudflareCountryHeader: false
 
 sandbox:
   # Consumed by the code-review sandbox runner (internal/agents/coding/sandbox)

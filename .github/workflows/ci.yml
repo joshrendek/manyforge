@@ -24,16 +24,6 @@ jobs:
       - name: Integration tests (testcontainers)
         run: make int-test
 
-  # Full shipped-image coverage runs independently so the Angular + Go container build does not
-  # delay the backend integration suite. The test exercises both credential paths and inspects the
-  # assembled production image for the valid MMDB and credential leakage.
-  geoip-image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: GeoIP image paths and secret boundary
-        run: scripts/ci/test-geoip-image.sh
-
   # manyforge-m07j. The frontend suite existed long before this job did — 371 unit tests and 130
   # e2e tests that only ever ran when someone ran them by hand. A PR could go green with a broken
   # component, and one did: an undefined CSS token shipped to master because nothing checked.

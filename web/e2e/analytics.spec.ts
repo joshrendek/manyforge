@@ -196,14 +196,16 @@ test('breakdown panels render only for dimensions that have data', async ({ page
   await expect(page.getByTestId('breakdown-device')).toContainText('mobile');
 });
 
-// With traffic but no country data, the deployment has no GeoIP database — say so, rather than
-// leaving the user to conclude their audience is from nowhere.
+// With traffic but no country data, the deployment has no trusted edge signal — say so, rather
+// than leaving the user to conclude their audience is from nowhere.
 test('explains a missing country breakdown instead of showing nothing', async ({ page }) => {
   await installStack(page);
   await page.goto(`/analytics/${BIZ_ID}/${SITE_ID}`);
 
   await expect(page.getByTestId('country-unavailable')).toBeVisible();
-  await expect(page.getByTestId('country-unavailable')).toContainText('MANYFORGE_GEOIP_DB');
+  await expect(page.getByTestId('country-unavailable')).toContainText(
+    'MANYFORGE_TRUST_CF_IPCOUNTRY',
+  );
 });
 
 test('a site with no traffic yet points back at the embed tag', async ({ page }) => {
@@ -230,7 +232,7 @@ test('a site with no traffic yet points back at the embed tag', async ({ page })
 
   await expect(page.getByTestId('analytics-empty')).toBeVisible();
   await expect(page.getByTestId('analytics-empty')).toContainText('embed tag');
-  // No traffic means no basis for the geo hint either — that would be two confusing messages.
+  // No traffic means no basis for the country hint either — that would be two confusing messages.
   await expect(page.getByTestId('country-unavailable')).toHaveCount(0);
 });
 

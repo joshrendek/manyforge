@@ -26,6 +26,8 @@ const maxCollectBytes int64 = 4 << 10
 // rollup's GROUP BY key.
 const maxPathLen = 512
 
+const cloudflareCountryHeader = "CF-IPCountry"
+
 // PublicHandler serves the principal-less analytics surface: the snippet and the collect endpoint.
 type PublicHandler struct {
 	DB      *appdb.DB
@@ -35,9 +37,10 @@ type PublicHandler struct {
 	// caller-supplied key, because the key is attacker-choosable and TokenBucket never evicts.
 	PerIP          ratelimit.Limiter
 	TrustedProxies []*net.IPNet
-	// Geo resolves an IP to a country in-flight. Nil (the default) simply leaves country unset —
-	// an absent breakdown is correct, whereas a guessed one would be worse than none.
-	Geo CountryResolver
+	// TrustCloudflareCountryHeader declares that every request reaches this handler through a
+	// trusted edge which overwrites CF-IPCountry. It must remain false when the origin can be
+	// reached directly, otherwise a caller could forge its own country.
+	TrustCloudflareCountryHeader bool
 }
 
 // CollectRoutes mounts the public collect endpoint.
@@ -137,9 +140,12 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 		utm:      utm,
 		device:   DeviceType(ua),
 		browser:  Browser(ua),
-		country:  ResolveCountry(h.Geo, ip),
-		name:     name,
-		props:    SanitizeProps(req.Data),
+		country: cloudflareCountry(
+			h.TrustCloudflareCountryHeader,
+			r.Header.Values(cloudflareCountryHeader),
+		),
+		name:  name,
+		props: SanitizeProps(req.Data),
 	}
 	n, err := h.store(r.Context(), ev)
 	if err != nil {
@@ -191,6 +197,31 @@ func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) 
 			e.name, props).Scan(&n)
 	})
 	return n, err
+}
+
+// cloudflareCountry reduces Cloudflare's request header to the only location detail analytics
+// stores: an ISO 3166-1 alpha-2 country code. Trust is an explicit deployment decision. Cloudflare
+// uses XX for unknown locations and T1 for Tor; neither is a country and both are discarded.
+func cloudflareCountry(trusted bool, values []string) string {
+	if !trusted || len(values) != 1 {
+		return ""
+	}
+	raw := values[0]
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 2 {
+		return ""
+	}
+	a, b := raw[0], raw[1]
+	if a >= 'a' && a <= 'z' {
+		a -= 'a' - 'A'
+	}
+	if b >= 'a' && b <= 'z' {
+		b -= 'a' - 'A'
+	}
+	if a < 'A' || a > 'Z' || b < 'A' || b > 'Z' || (a == 'X' && b == 'X') {
+		return ""
+	}
+	return string([]byte{a, b})
 }
 
 // normalizePath strips the query string and fragment, enforces a leading slash, drops a trailing

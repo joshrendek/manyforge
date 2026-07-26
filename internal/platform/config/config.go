@@ -40,11 +40,10 @@ type Config struct {
 	DKIMKeyPath             string // path to the default DKIM private key for verified custom sending identities
 	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
 	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
-	// GeoIPDBPath optionally points at a MaxMind-format .mmdb for analytics country lookup.
-	// Empty disables country breakdowns. Production images can bundle an updated GeoLite2 copy at
-	// build time without committing licensed database data to the repository. A configured path
-	// that is absent disables lookup with a startup warning; unreadable or invalid files are fatal.
-	GeoIPDBPath string
+	// TrustCFIPCountry allows analytics collection to trust Cloudflare's CF-IPCountry header.
+	// It is false by default: enabling it declares that the origin cannot be bypassed and the edge
+	// overwrites client-supplied copies of the header.
+	TrustCFIPCountry bool
 
 	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
 	IngestRateBurst   float64 // per-recipient inbound ingestion burst allowance
@@ -194,7 +193,6 @@ func Load() (Config, error) {
 		Addr:             env("MANYFORGE_ADDR", ":8080"),
 		DatabaseURL:      os.Getenv("MANYFORGE_DATABASE_URL"),
 		TrustedProxyCIDR: os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
-		GeoIPDBPath:      os.Getenv("MANYFORGE_GEOIP_DB"),
 		JWTIssuer:        env("MANYFORGE_JWT_ISSUER", "manyforge"),
 		JWTAudience:      env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
 		JWTActiveKID:     env("MANYFORGE_JWT_ACTIVE_KID", ""),
@@ -212,6 +210,9 @@ func Load() (Config, error) {
 	}
 	if cfg.RateLimitBurst, err = envFloat("MANYFORGE_RATELIMIT_BURST", 20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_RATELIMIT_BURST: %w", err)
+	}
+	if cfg.TrustCFIPCountry, err = envBool("MANYFORGE_TRUST_CF_IPCOUNTRY", false); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
 	}
 
 	// Persistent JWT signing key (Task 1.1): supplied inline (…_PEM) or via a

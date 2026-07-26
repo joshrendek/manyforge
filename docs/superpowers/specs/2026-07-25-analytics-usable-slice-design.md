@@ -149,7 +149,7 @@ Closes the epic's task 4. Adds campaign attribution, device/browser, and country
 | `utm_source/medium/campaign` | query string, allowlisted by name | The three keys marketing actually uses. An allowlist, never a denylist — query strings carry session tokens and email addresses, so "store it and filter later" is a leak waiting for the next parameter name. |
 | `device_type` | User-Agent | Exactly three buckets. Finer classification ("iPhone 15 Pro") is what turns a device string into a fingerprint, and the question a dashboard answers is "should I care about mobile layout?". |
 | `browser` | User-Agent | Coarse family. Ordered matching, because User-Agents lie by design: Edge claims Chrome, Chrome claims Safari. |
-| `country` | request IP, in flight | ISO alpha-2. A raw IP identifies a household; a country does not. |
+| `country` | trusted edge header, in flight | ISO alpha-2. A raw IP identifies a household; a country does not. |
 
 The rule for anything added later: **if a value could meaningfully narrow a population to a
 person, it does not belong in a column.** The raw User-Agent and IP remain hash inputs only.
@@ -164,11 +164,13 @@ their own indexes, and rewriting them would be a data migration for no functiona
 
 ### Country is optional, deliberately
 
-Every usable IP-to-country database carries licensing terms and goes stale monthly. Vendoring one
-would impose those terms on every deployment and be wrong within a quarter. So the deployment
-points `MANYFORGE_GEOIP_DB` at a MaxMind-format `.mmdb` if it wants countries, and gets none if it
-does not. The dashboard says which state it is in rather than showing an empty panel — an absent
-breakdown is honest, a guessed one is worse than none.
+Cloudflare deployments may explicitly enable `MANYFORGE_TRUST_CF_IPCOUNTRY`, which reduces the
+edge-supplied `CF-IPCountry` header to ISO alpha-2 during collection. It is disabled by default:
+trusting that header is safe only when Cloudflare is the sole public path to the origin or the
+ingress independently strips or overwrites client-supplied copies. Unknown and special values are
+dropped. No IP-to-country database, raw IP, or finer location is stored. The dashboard says when
+the signal is absent rather than showing an empty panel — an absent breakdown is honest, a guessed
+one is worse than none.
 
 ### HLL was considered and rejected
 

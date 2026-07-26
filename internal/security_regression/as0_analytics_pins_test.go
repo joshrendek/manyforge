@@ -249,32 +249,34 @@ func TestPin_AS0UTMIsAnAllowlist(t *testing.T) {
 	}
 }
 
-// TestPin_AS0GeoIsOptionalAndTransient asserts country lookup never persists an IP and that the
-// server still boots without a geo database — an optional feature must not become a hard
-// dependency by accident.
-func TestPin_AS0GeoIsOptionalAndTransient(t *testing.T) {
-	src := mustRead(t, "../../internal/analytics/geo.go")
-	if !strings.Contains(src, "if path == \"\" {") {
-		t.Error("OpenMMDB must treat an empty path as 'no geo configured', not an error")
-	}
-	// Country must not log at all: it runs per pageview, so any request-path logging could write
-	// client IPs into the logs. OpenMMDB may log startup state (for example, a missing configured
-	// file), so scope this pin to Country rather than banning operational logging globally.
-	countryStart := strings.Index(src, "func (r *MMDBResolver) Country(")
-	countryEnd := strings.Index(src, "\n// Close releases the database handle.")
-	if countryStart < 0 || countryEnd <= countryStart {
-		t.Fatal("could not isolate MMDBResolver.Country for the no-per-request-logging pin")
-	}
-	country := src[countryStart:countryEnd]
-	if strings.Contains(country, "logger.Warn") || strings.Contains(country, "logger.Error") ||
-		strings.Contains(country, "slog.") {
-		t.Error("geo lookup must not log per-request; that would put client IPs in the logs")
-	}
-	enrich := mustRead(t, "../../internal/analytics/enrich.go")
-	for _, guard := range []string{"IsLoopback()", "IsPrivate()", "IsLinkLocalUnicast()"} {
-		if !strings.Contains(enrich, guard) {
-			t.Errorf("ResolveCountry must reject %s addresses rather than report a guess", guard)
+// TestPin_AS0CountryHeaderIsOptInAndTransient asserts that an untrusted caller cannot forge a
+// country by default and that the raw edge header never reaches SQL.
+func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
+	src := mustRead(t, "../../internal/analytics/collect.go")
+	for _, required := range []string{
+		"TrustCloudflareCountryHeader",
+		`r.Header.Values(cloudflareCountryHeader)`,
+		"cloudflareCountry(",
+		"if !trusted || len(values) != 1 {",
+	} {
+		if !strings.Contains(src, required) {
+			t.Errorf("country header trust boundary missing %q", required)
 		}
+	}
+	if strings.Contains(src, `e.country, r.Header`) || strings.Contains(src, `e.country, raw`) {
+		t.Error("raw country header must be normalized before it reaches analytics_collect")
+	}
+	if strings.Contains(src, "MANYFORGE_GEOIP_DB") || strings.Contains(src, "OpenMMDB") {
+		t.Error("analytics collection must not depend on a runtime IP database")
+	}
+
+	values := mustRead(t, "../../charts/manyforge/values.yaml")
+	if !strings.Contains(values, "trustCloudflareCountryHeader: false") {
+		t.Error("the chart must default CF-IPCountry trust off")
+	}
+	configMap := mustRead(t, "../../charts/manyforge/templates/configmap.yaml")
+	if !strings.Contains(configMap, "MANYFORGE_TRUST_CF_IPCOUNTRY") {
+		t.Error("the chart must thread its explicit country-header trust setting to the app")
 	}
 }
 
