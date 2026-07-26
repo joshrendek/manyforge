@@ -58,7 +58,7 @@ interface BusinessGroup {
 
       @for (g of groups(); track g.id) {
         <section class="mf-group" data-testid="overview-group" [attr.data-business-id]="g.id">
-          <h3 class="mf-group-title" data-testid="overview-group-name">{{ g.name }}</h3>
+          <h2 class="mf-group-title" data-testid="overview-group-name">{{ g.name }}</h2>
           <div class="mf-grid">
             @for (s of g.sites; track s.client_id) {
               <a
@@ -102,7 +102,10 @@ interface BusinessGroup {
       }
 
       @if (error()) {
-        <p class="mf-err" data-testid="overview-error">{{ error() }}</p>
+        <!-- role=alert: this appears after an async reload, and a screen-reader user who just
+             changed the range is still focused on the select and would otherwise never learn the
+             reload failed. -->
+        <p class="mf-err" role="alert" data-testid="overview-error">{{ error() }}</p>
       }
     </div>
   `,
@@ -209,6 +212,8 @@ export class AnalyticsOverviewComponent implements OnInit {
   loading = signal(false);
   error = signal('');
   days = signal(30);
+  // Monotonic request counter; only the newest response is allowed to write state.
+  private reqToken = 0;
 
   // Sites arrive ordered by traffic. Grouping preserves that order within a business, and the
   // groups themselves follow first appearance — so the busiest business leads.
@@ -239,18 +244,21 @@ export class AnalyticsOverviewComponent implements OnInit {
   }
 
   reload(): void {
-    const want = this.days();
+    // A per-request token, NOT the requested range. Guarding on `days` alone looks equivalent but
+    // is not: for 30 → 7 → 30, the first slow 30-day response still matches the current range when
+    // it lands and would overwrite the newer 30-day result — the exact case the guard exists to
+    // prevent. A monotonic token is unambiguous because it can only ever match the latest request.
+    const token = ++this.reqToken;
     this.loading.set(true);
-    this.api.overview(want).subscribe({
+    this.api.overview(this.days()).subscribe({
       next: (r) => {
-        // A slower earlier request must not overwrite a newer one's result.
-        if (this.days() !== want) return;
+        if (token !== this.reqToken) return;
         this.sites.set(r.sites ?? []);
         this.error.set('');
         this.loading.set(false);
       },
       error: () => {
-        if (this.days() !== want) return;
+        if (token !== this.reqToken) return;
         this.sites.set([]);
         this.error.set('Could not load analytics');
         this.loading.set(false);

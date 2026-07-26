@@ -122,6 +122,72 @@ describe('AnalyticsOverviewComponent', () => {
     expect(fixture.componentInstance.days()).toBe(7);
   });
 
+  it('a slow earlier response cannot overwrite a newer one with the SAME range', () => {
+    // 30 -> 7 -> 30. Guarding on the requested range alone looks equivalent to a request token but
+    // is not: when the first 30-day response finally lands, the current range is 30 again, so it
+    // passes that check and clobbers the newer result. This is the case the reviewer identified.
+    fixture.detectChanges();
+    const first30 = http.expectOne('/api/v1/analytics/overview?days=30');
+
+    const sel: HTMLSelectElement = fixture.nativeElement.querySelector(
+      '[data-testid="overview-range"]',
+    );
+    sel.value = '7';
+    sel.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    const req7 = http.expectOne('/api/v1/analytics/overview?days=7');
+
+    sel.value = '30';
+    sel.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    const second30 = http.expectOne('/api/v1/analytics/overview?days=30');
+
+    // Newest completes first with the real data...
+    second30.flush({ sites: [site({ client_id: 'NEW' })] });
+    // ...then the two stale ones straggle in.
+    req7.flush({ sites: [site({ client_id: 'STALE7' })] });
+    first30.flush({ sites: [site({ client_id: 'STALE30' })] });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.sites().map((s) => s.client_id)).toEqual(['NEW']);
+  });
+
+  it('a stale error cannot blank out a newer successful load', () => {
+    fixture.detectChanges();
+    const first = http.expectOne('/api/v1/analytics/overview?days=30');
+    const sel: HTMLSelectElement = fixture.nativeElement.querySelector(
+      '[data-testid="overview-range"]',
+    );
+    sel.value = '7';
+    sel.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    const second = http.expectOne('/api/v1/analytics/overview?days=7');
+
+    second.flush({ sites: [site({ client_id: 'GOOD' })] });
+    first.flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.error()).toBe('');
+    expect(fixture.componentInstance.sites().map((s) => s.client_id)).toEqual(['GOOD']);
+  });
+
+  it('announces load failures to assistive technology', () => {
+    fixture.detectChanges();
+    http
+      .expectOne('/api/v1/analytics/overview?days=30')
+      .flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
+    fixture.detectChanges();
+    // Focus stays on the range select after a reload, so a silent error is never discovered.
+    const err = fixture.nativeElement.querySelector('[data-testid="overview-error"]');
+    expect(err.getAttribute('role')).toBe('alert');
+  });
+
+  it('business sections are h2, one level below the page h1', () => {
+    flush([site()]);
+    const heading = fixture.nativeElement.querySelector('[data-testid="overview-group-name"]');
+    expect(heading.tagName).toBe('H2');
+  });
+
   it('shows an empty state when there are no sites', () => {
     flush([]);
     expect(fixture.nativeElement.querySelector('[data-testid="overview-empty"]')).toBeTruthy();
