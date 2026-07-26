@@ -47,12 +47,13 @@ type PublicHandler struct {
 	Logger  *slog.Logger
 	Metrics *observability.Metrics
 	// PerIP bounds collect volume from a single source. Keyed by IP rather than by the
-	// caller-supplied key, because the key is attacker-choosable and TokenBucket never evicts.
+	// caller-supplied key, because the key is attacker-choosable.
 	PerIP          ratelimit.Limiter
 	TrustedProxies []*net.IPNet
 	// TrustCloudflareCountryHeader declares that every request reaches this handler through a
-	// trusted edge which overwrites CF-IPCountry. It must remain false when the origin can be
-	// reached directly, otherwise a caller could forge its own country.
+	// trusted edge which overwrites CF-IPCountry. It is also gated per request on the direct peer
+	// belonging to TrustedProxies; it must remain false when the origin can be reached through an
+	// untrusted path, otherwise a caller could forge its own country.
 	TrustCloudflareCountryHeader bool
 }
 
@@ -154,7 +155,7 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 		device:   DeviceType(ua),
 		browser:  Browser(ua),
 		country: cloudflareCountry(
-			h.TrustCloudflareCountryHeader,
+			h.TrustCloudflareCountryHeader && ratelimit.IsTrustedPeer(r, h.TrustedProxies),
 			r.Header.Values(cloudflareCountryHeader),
 		),
 		name:  name,

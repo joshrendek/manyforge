@@ -41,7 +41,8 @@ type Config struct {
 	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
 	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
 	// TrustCFIPCountry allows analytics collection to trust Cloudflare's CF-IPCountry header.
-	// It is false by default: enabling it declares that the origin cannot be bypassed and the edge
+	// It is false by default and requires TrustedProxyCIDR; each request is accepted only from a
+	// peer in that set. Enabling it also declares that the origin cannot be bypassed and the edge
 	// overwrites client-supplied copies of the header.
 	TrustCFIPCountry bool
 
@@ -213,6 +214,9 @@ func Load() (Config, error) {
 	}
 	if cfg.TrustCFIPCountry, err = envBool("MANYFORGE_TRUST_CF_IPCOUNTRY", false); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
+	}
+	if cfg.TrustCFIPCountry && strings.TrimSpace(cfg.TrustedProxyCIDR) == "" {
+		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY requires MANYFORGE_TRUSTED_PROXY_CIDR")
 	}
 
 	// Persistent JWT signing key (Task 1.1): supplied inline (…_PEM) or via a
