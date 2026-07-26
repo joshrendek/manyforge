@@ -21,7 +21,6 @@ printf '%s' "$license_sentinel" >"$test_tmp/license-key"
 chmod 0600 "$test_tmp/account-id" "$test_tmp/license-key"
 
 DOCKER_BUILDKIT=1 docker build \
-  --target runtime-geoip \
   --secret "id=maxmind_account_id,src=$test_tmp/account-id" \
   --secret "id=maxmind_license_key,src=$test_tmp/license-key" \
   --build-arg GEOIP_CACHE_KEY=credentialed-ci \
