@@ -119,20 +119,41 @@ func ClientIPAndTrustedPeer(r *http.Request, trusted []*net.IPNet) (string, bool
 	if xff == "" {
 		return peer, true
 	}
-	parts := strings.Split(xff, ",")
-	// walk right-to-left, skipping trusted proxies, to the first real client
-	for i := len(parts) - 1; i >= 0; i-- {
-		ip := strings.TrimSpace(parts[i])
-		if !isTrusted(net.ParseIP(ip), trusted) {
-			return ip, true
+	if len(xff) > maxForwardedForBytes {
+		return peer, true
+	}
+	// Walk right-to-left without splitting the whole attacker-controlled header. Malformed or
+	// excessively deep chains fall back to the direct peer, which safely collapses their rate key.
+	end := len(xff)
+	for hop := 0; end > 0; hop++ {
+		if hop >= maxForwardedForHops {
+			return peer, true
 		}
+		start := strings.LastIndexByte(xff[:end], ',')
+		ipText := strings.TrimSpace(xff[start+1 : end])
+		ip := net.ParseIP(ipText)
+		if ip == nil {
+			return peer, true
+		}
+		if !isTrusted(ip, trusted) {
+			return ipText, true
+		}
+		if start < 0 {
+			break
+		}
+		end = start
 	}
 	return peer, true
 }
 
+const (
+	maxForwardedForBytes = 4096
+	maxForwardedForHops  = 32
+)
+
 // IsTrustedPeer reports whether the request's direct TCP peer belongs to an explicitly trusted
-// proxy network. Headers are intentionally irrelevant: callers use this to gate data that only a
-// trusted ingress is allowed to assert.
+// proxy network. Request headers play no role: callers use this to gate data that only a trusted
+// ingress is allowed to assert.
 func IsTrustedPeer(r *http.Request, trusted []*net.IPNet) bool {
 	return isTrusted(net.ParseIP(peerIP(r.RemoteAddr)), trusted)
 }

@@ -171,8 +171,8 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 
 	ua := r.Header.Get("User-Agent")
 
-	// Every request-derived dimension is normalized or bounded HERE before it touches SQL. The raw
-	// IP and UA continue past this point only as hash inputs.
+	// Every request-derived dimension is normalized or bounded HERE before it touches SQL. The SQL
+	// function consumes the raw IP and UA only to derive a visitor hash and never persists them.
 	utm := ParseUTM(req.Query)
 
 	// An unusable custom-event name is DROPPED, not coerced to a pageview: counting someone's
