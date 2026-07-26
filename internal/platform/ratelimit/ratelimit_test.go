@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,6 +51,48 @@ func TestClientIP(t *testing.T) {
 	// The compatibility helper returns the same resolved address.
 	if got := ClientIP(r1, trusted); got != "1.2.3.4" {
 		t.Errorf("ClientIP: want 1.2.3.4, got %s", got)
+	}
+}
+
+func TestClientIPBoundsForwardedFor(t *testing.T) {
+	trusted := []*net.IPNet{mustCIDR("10.0.0.0/8")}
+	tests := []struct {
+		name string
+		xff  string
+		want string
+	}{
+		{
+			name: "oversized header falls back to peer",
+			xff:  strings.Repeat("1", maxForwardedForBytes+1),
+			want: "10.1.1.1",
+		},
+		{
+			name: "malformed hop falls back to peer",
+			xff:  "1.2.3.4, not-an-ip",
+			want: "10.1.1.1",
+		},
+		{
+			name: "maximum depth resolves client",
+			xff:  "1.2.3.4," + strings.Repeat("10.0.0.2,", maxForwardedForHops-2) + "10.0.0.2",
+			want: "1.2.3.4",
+		},
+		{
+			name: "excessive depth falls back to peer",
+			xff:  "1.2.3.4," + strings.Repeat("10.0.0.2,", maxForwardedForHops-1) + "10.0.0.2",
+			want: "10.1.1.1",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &http.Request{
+				RemoteAddr: "10.1.1.1:5000",
+				Header:     http.Header{"X-Forwarded-For": {tc.xff}},
+			}
+			got, trustedPeer := ClientIPAndTrustedPeer(r, trusted)
+			if got != tc.want || !trustedPeer {
+				t.Fatalf("ClientIPAndTrustedPeer() = (%q, %t), want (%q, true)", got, trustedPeer, tc.want)
+			}
+		})
 	}
 }
 
