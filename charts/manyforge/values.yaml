@@ -130,6 +130,12 @@ trustedProxyCidr: ""
 instanceOperatorPrincipal: ""
 publicBaseURL: ""
 
+# GeoLite2 Country is baked into credentialed production images at this path. Local and fork builds
+# without the MaxMind BuildKit secrets intentionally omit the file; the app logs a warning and
+# serves analytics without country breakdowns instead of crash-looping.
+geoip:
+  databasePath: "/geo/GeoLite2-Country.mmdb"
+
 sandbox:
   # Consumed by the code-review sandbox runner (internal/agents/coding/sandbox)
   # and, below, by this chart's own sandbox namespace/egress-proxy/RBAC

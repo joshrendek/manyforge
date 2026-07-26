@@ -692,9 +692,9 @@ func main() {
 		TrustedProxies: trusted,
 		Metrics:        metrics,
 	}
-	// Country lookup is optional: with MANYFORGE_GEOIP_DB unset the resolver is nil and the
-	// country breakdown is simply absent. A bad path IS fatal, though — silently serving no
-	// countries when an operator explicitly configured a database would be a lie.
+	// Country lookup is optional: with MANYFORGE_GEOIP_DB unset, or with the chart's default path
+	// absent from an uncredentialed image build, the resolver is nil and country breakdowns are
+	// absent. OpenMMDB warns for that missing-file case. Unreadable/corrupt databases remain fatal.
 	geo, gerr := analytics.OpenMMDB(cfg.GeoIPDBPath, logger)
 	if gerr != nil {
 		logger.Error("init analytics geoip", "err", gerr)
