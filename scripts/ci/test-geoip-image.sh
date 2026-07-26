@@ -3,11 +3,21 @@ set -euo pipefail
 
 test_tmp=$(mktemp -d)
 container_id=""
+app_container=""
+postgres_container=""
+test_network="manyforge-geoip-ci-${RANDOM}-$$"
 
 cleanup() {
+  if [[ -n "$app_container" ]]; then
+    docker rm -f "$app_container" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$postgres_container" ]]; then
+    docker rm -f "$postgres_container" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$container_id" ]]; then
     docker rm -f "$container_id" >/dev/null 2>&1 || true
   fi
+  docker network rm "$test_network" >/dev/null 2>&1 || true
   docker image rm -f manyforge-geoip-credentialed-test manyforge-geoip-secretless-test \
     >/dev/null 2>&1 || true
   rm -rf "$test_tmp"
@@ -47,6 +57,68 @@ for sentinel in "$account_sentinel" "$license_sentinel"; do
     exit 1
   fi
 done
+
+image_user=$(docker image inspect --format '{{.Config.User}}' manyforge-geoip-credentialed-test)
+case "$image_user" in
+  "" | 0 | 0:0 | root | root:root)
+    echo >&2 "final app image must declare a non-root runtime user"
+    exit 1
+    ;;
+esac
+
+docker network create "$test_network" >/dev/null
+postgres_container=$(docker run --detach \
+  --network "$test_network" \
+  --network-alias postgres \
+  --env POSTGRES_USER=manyforge \
+  --env POSTGRES_PASSWORD=devpassword \
+  --env POSTGRES_DB=manyforge \
+  postgres:16)
+for _ in {1..100}; do
+  if docker exec "$postgres_container" pg_isready --username manyforge --dbname manyforge \
+    >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+docker exec "$postgres_container" pg_isready --username manyforge --dbname manyforge >/dev/null
+
+super_dsn='postgres://manyforge:devpassword@postgres:5432/manyforge?sslmode=disable'
+app_dsn='postgres://manyforge_app:apppw@postgres:5432/manyforge?sslmode=disable'
+docker run --rm \
+  --network "$test_network" \
+  --env "MANYFORGE_DATABASE_URL=$super_dsn" \
+  manyforge-geoip-credentialed-test migrate
+docker exec "$postgres_container" \
+  psql --username manyforge --dbname manyforge --set ON_ERROR_STOP=1 \
+  --command "ALTER ROLE manyforge_app LOGIN PASSWORD 'apppw'" >/dev/null
+
+app_container=$(docker run --detach \
+  --network "$test_network" \
+  --env "MANYFORGE_DATABASE_URL=$app_dsn" \
+  --env MANYFORGE_GEOIP_DB=/geo/GeoLite2-Country.mmdb \
+  --env MANYFORGE_SANDBOX_MODE=off \
+  manyforge-geoip-credentialed-test)
+started=false
+for _ in {1..100}; do
+  docker logs "$app_container" >"$test_tmp/app.log" 2>&1 || true
+  if grep -Fq "analytics geoip database loaded" "$test_tmp/app.log" &&
+    grep -Fq "starting server" "$test_tmp/app.log"; then
+    started=true
+    break
+  fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$app_container")" != "true" ]]; then
+    cat "$test_tmp/app.log" >&2
+    echo >&2 "final app image exited before startup completed"
+    exit 1
+  fi
+  sleep 0.2
+done
+if [[ "$started" != "true" ]]; then
+  cat "$test_tmp/app.log" >&2
+  echo >&2 "final app image did not load GeoIP and start its server"
+  exit 1
+fi
 
 DOCKER_BUILDKIT=1 docker build \
   --target runtime-geoip \
