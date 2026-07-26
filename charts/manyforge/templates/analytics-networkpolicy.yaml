@@ -1,7 +1,16 @@
 {{- if and .Values.analytics.trustCloudflareCountryHeader (not .Values.ingress.enabled) }}
 {{- fail "manyforge: ingress.enabled must be true when trusting CF-IPCountry" }}
 {{- end }}
-{{- if .Values.analytics.trustCloudflareCountryHeader }}
+{{- range $raw := splitList "," (toString .Values.analytics.cloudflareSourceRanges) }}
+{{- $cidr := lower (trim $raw) }}
+{{- $parts := splitList "/" $cidr }}
+{{- $mappedIPv4 := regexMatch "^(::ffff:|0+:0+:0+:0+:0+:ffff:).*" $cidr }}
+{{- $mappedUniversal := and $mappedIPv4 (eq (len $parts) 2) (le (atoi (index $parts 1)) 96) }}
+{{- if or (hasSuffix "/0" $cidr) $mappedUniversal }}
+{{- fail (printf "manyforge: analytics.cloudflareSourceRanges must not contain a universal source range (%s)" $raw) }}
+{{- end }}
+{{- end }}
+{{- if or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

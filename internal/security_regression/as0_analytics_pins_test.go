@@ -297,7 +297,7 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	}
 	ingress := mustRead(t, "../../charts/manyforge/templates/ingress.yaml")
 	for _, required := range []string{
-		"if .Values.analytics.trustCloudflareCountryHeader",
+		"or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.cloudflareSourceRanges",
 		"nginx.ingress.kubernetes.io/whitelist-source-range",
 		`required "manyforge: analytics.cloudflareSourceRanges is required when trusting CF-IPCountry"`,
 	} {
@@ -309,6 +309,8 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	for _, required := range []string{
 		"kind: NetworkPolicy",
 		`fail "manyforge: ingress.enabled must be true when trusting CF-IPCountry"`,
+		`fail (printf "manyforge: analytics.cloudflareSourceRanges must not contain a universal source range`,
+		"or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.trustedIngressNamespace",
 		`required "manyforge: analytics.trustedIngressNamespace is required when trusting CF-IPCountry"`,
 		"app.kubernetes.io/name: ingress-nginx",
 		"app.kubernetes.io/component: controller",

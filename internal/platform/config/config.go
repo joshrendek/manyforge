@@ -485,6 +485,10 @@ func validateTrustedProxyCIDRs(value string) error {
 		if prefixBits == 0 {
 			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not trust the universal range %q", cidr)
 		}
+		mappedIPv4Start := net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0}
+		if len(network.Mask) == net.IPv6len && prefixBits <= 96 && network.Contains(mappedIPv4Start) {
+			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not trust every IPv4 peer through %q", cidr)
+		}
 		count++
 	}
 	if count == 0 {
