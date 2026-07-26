@@ -129,21 +129,29 @@ func (h *PublicHandler) serveSnippet(w http.ResponseWriter, r *http.Request) {
 	// missing both UTM capture and the custom-event API. Anything a human has to remember to
 	// update in lockstep with code will eventually be wrong; deriving it removes the choice.
 	w.Header().Set("ETag", snippetETag)
-	http.ServeContent(w, r, "a.js", snippetModTime(), strings.NewReader(snippetJS))
+	// The zero modtime is deliberate: it makes ServeContent omit Last-Modified AND skip the
+	// If-Modified-Since check, leaving the ETag as the only validator.
+	//
+	// A date-shaped validator is the wrong tool here, because a date implies an ORDER that content
+	// does not have. Deriving one from the hash (the first version of this fix) is actively unsafe:
+	// a new snippet can hash to an EARLIER timestamp than the one a client already holds, and
+	// ServeContent answers 304 to any If-Modified-Since at or after its modtime — silently pinning
+	// the stale body. That is precisely the bug being fixed here, reintroduced by the fix.
+	//
+	// It also matters right now, not just in theory. The object stuck in Cloudflare was stored
+	// before this handler set an ETag, so it can only revalidate with If-Modified-Since. With no
+	// modtime that request gets a 200 and the current body; with a hash-derived one it had roughly
+	// even odds of being told "not modified" and keeping the broken snippet indefinitely.
+	//
+	// An ETag has no ordering to get wrong: it either matches the bytes or it does not.
+	http.ServeContent(w, r, "a.js", time.Time{}, strings.NewReader(snippetJS))
 }
 
-// snippetETag is a strong validator over the snippet body, computed once at startup.
-var snippetETag = func() string {
-	sum := sha256.Sum256([]byte(snippetJS))
-	return `"` + hex.EncodeToString(sum[:16]) + `"`
-}()
+// snippetETag is a strong validator over the snippet body, computed once at startup rather than
+// per request — serveSnippet is on the hot path for every page load of every embedding site.
+var snippetETag = etagFor(snippetJS)
 
-// snippetModTime derives a modtime from the content hash rather than a hand-edited date, so a
-// changed snippet always presents a changed validator. ServeContent needs *a* time; what matters
-// is that it moves when the bytes move.
-func snippetModTime() time.Time {
-	sum := sha256.Sum256([]byte(snippetJS))
-	// Map the first 4 bytes into a stable offset within a bounded window.
-	off := int64(sum[0])<<24 | int64(sum[1])<<16 | int64(sum[2])<<8 | int64(sum[3])
-	return time.Unix(1700000000+off%100000000, 0).UTC()
+func etagFor(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
 }
