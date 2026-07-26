@@ -224,11 +224,22 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
 	}
 	if cfg.TrustCFIPCountry {
-		if err := validateSourceCIDRs("MANYFORGE_TRUSTED_PROXY_CIDR", cfg.TrustedProxyCIDR); err != nil {
-			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
+		trustedProxies, validateErr := validateCIDRList(
+			"MANYFORGE_TRUSTED_PROXY_CIDR", cfg.TrustedProxyCIDR,
+		)
+		if validateErr != nil {
+			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", validateErr)
 		}
-		if err := validateSourceCIDRs("MANYFORGE_CF_SOURCE_CIDR", cfg.CloudflareSourceCIDR); err != nil {
-			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
+		cloudflareSources, validateErr := validateCIDRList(
+			"MANYFORGE_CF_SOURCE_CIDR", cfg.CloudflareSourceCIDR,
+		)
+		if validateErr != nil {
+			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", validateErr)
+		}
+		if cidrListsOverlap(trustedProxies, cloudflareSources) {
+			return Config{}, fmt.Errorf(
+				"MANYFORGE_TRUST_CF_IPCOUNTRY: MANYFORGE_TRUSTED_PROXY_CIDR must not overlap MANYFORGE_CF_SOURCE_CIDR",
+			)
 		}
 	}
 
@@ -482,9 +493,10 @@ func envBool(key string, def bool) (bool, error) {
 
 const maxSourceCIDRs = 64
 
-func validateSourceCIDRs(key, value string) error {
+func validateCIDRList(key, value string) ([]*net.IPNet, error) {
 	count := 0
 	var ipv4Ranges, ipv6Ranges []ipRange
+	var networks []*net.IPNet
 	for _, raw := range strings.Split(value, ",") {
 		cidr := strings.TrimSpace(raw)
 		if cidr == "" {
@@ -492,36 +504,48 @@ func validateSourceCIDRs(key, value string) error {
 		}
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
-			return fmt.Errorf("%s contains invalid CIDR %q: %w", key, cidr, err)
+			return nil, fmt.Errorf("%s contains invalid CIDR %q: %w", key, cidr, err)
 		}
 		prefixBits, _ := network.Mask.Size()
 		if prefixBits == 0 {
-			return fmt.Errorf("%s must not trust the universal range %q", key, cidr)
+			return nil, fmt.Errorf("%s must not trust the universal range %q", key, cidr)
 		}
 		r, bits := networkRange(network)
 		if bits == net.IPv6len*8 && overlapsIPv4MappedRange(r) {
-			return fmt.Errorf("%s must use native IPv4 CIDRs instead of IPv4-mapped range %q", key, cidr)
+			return nil, fmt.Errorf("%s must use native IPv4 CIDRs instead of IPv4-mapped range %q", key, cidr)
 		}
 		if bits == net.IPv4len*8 {
 			ipv4Ranges = append(ipv4Ranges, r)
 		} else {
 			ipv6Ranges = append(ipv6Ranges, r)
 		}
+		networks = append(networks, network)
 		count++
 		if count > maxSourceCIDRs {
-			return fmt.Errorf("%s must contain at most %d CIDRs", key, maxSourceCIDRs)
+			return nil, fmt.Errorf("%s must contain at most %d CIDRs", key, maxSourceCIDRs)
 		}
 	}
 	if count == 0 {
-		return fmt.Errorf("%s must contain at least one CIDR", key)
+		return nil, fmt.Errorf("%s must contain at least one CIDR", key)
 	}
 	if rangesCoverAddressSpace(ipv4Ranges, net.IPv4len*8) {
-		return fmt.Errorf("%s must not collectively trust every IPv4 peer", key)
+		return nil, fmt.Errorf("%s must not collectively trust every IPv4 peer", key)
 	}
 	if rangesCoverAddressSpace(ipv6Ranges, net.IPv6len*8) {
-		return fmt.Errorf("%s must not collectively trust every IPv6 peer", key)
+		return nil, fmt.Errorf("%s must not collectively trust every IPv6 peer", key)
 	}
-	return nil
+	return networks, nil
+}
+
+func cidrListsOverlap(a, b []*net.IPNet) bool {
+	for _, left := range a {
+		for _, right := range b {
+			if left.Contains(right.IP) || right.Contains(left.IP) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type ipRange struct {

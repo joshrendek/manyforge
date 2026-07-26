@@ -167,7 +167,9 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		"::/0",
 		"::ffff:0:0/96",
 		"0.0.0.0/1,128.0.0.0/1",
+		"128.0.0.0/1,0.0.0.0/1",
 		"::/1,8000::/1",
+		"8000::/1,::/1",
 	} {
 		t.Run("enabled-with-universal-trusted-proxy-"+cidr, func(t *testing.T) {
 			t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
@@ -193,7 +195,9 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		"::/0",
 		"::ffff:0:0/96",
 		"0.0.0.0/1,128.0.0.0/1",
+		"128.0.0.0/1,0.0.0.0/1",
 		"::/1,8000::/1",
+		"8000::/1,::/1",
 	} {
 		t.Run("enabled-with-unsafe-cloudflare-source-"+cidr, func(t *testing.T) {
 			t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
@@ -204,6 +208,15 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("enabled-with-overlapping-proxy-and-cloudflare-source-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "173.245.48.0/21")
+		t.Setenv("MANYFORGE_CF_SOURCE_CIDR", "173.245.48.0/20")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected error when trusted proxy and Cloudflare source ranges overlap, got nil")
+		}
+	})
 
 	t.Run("overlapping-ranges-do-not-create-false-universal", func(t *testing.T) {
 		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
