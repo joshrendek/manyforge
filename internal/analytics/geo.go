@@ -7,28 +7,19 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	"sync"
 
 	"github.com/oschwald/maxminddb-golang/v2"
 )
 
-// Country lookup is optional at runtime.
-//
-// Production images can bundle GeoLite2 Country at build time, while local and uncredentialed image
-// builds omit it. A missing configured file therefore degrades to no country breakdown with an
-// explicit warning. An unreadable or invalid file remains an error: silently accepting a corrupt
-// database would make a broken deployment look healthy.
-
 // MMDBResolver resolves countries from a MaxMind-format database.
 type MMDBResolver struct {
 	db *maxminddb.Reader
-	// mu guards nothing today but documents that db is read-only after construction; maxminddb
-	// readers are safe for concurrent use.
-	mu sync.RWMutex
 }
 
-// OpenMMDB opens a MaxMind country database. An empty path returns (nil, nil) — "no geo
-// configured" is a normal state, not an error, and must not prevent the server from booting.
+// OpenMMDB opens a MaxMind country database. An empty path or a missing configured file returns
+// (nil, nil) because local and uncredentialed image builds intentionally omit GeoLite2; the missing
+// file produces a warning when logger is non-nil. Other open errors remain fatal so an unreadable or
+// invalid database cannot make a broken deployment look healthy.
 func OpenMMDB(path string, logger *slog.Logger) (*MMDBResolver, error) {
 	if path == "" {
 		return nil, nil
@@ -78,7 +69,5 @@ func (r *MMDBResolver) Close() error {
 	if r == nil || r.db == nil {
 		return nil
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	return r.db.Close()
 }
