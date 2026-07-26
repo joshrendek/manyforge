@@ -9,8 +9,9 @@ metadata:
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{- if .Values.analytics.trustCloudflareCountryHeader }}
-    # Bind CF-IPCountry trust to requests that actually arrive from Cloudflare's network.
+    {{- if or .Values.analytics.trustCloudflareCountryHeader .Values.analytics.cloudflareSourceRanges }}
+    # Keep Cloudflare origin isolation independent of runtime country trust. During a true→false
+    # rollout, old pods retain the old environment until they terminate.
     nginx.ingress.kubernetes.io/whitelist-source-range: {{ required "manyforge: analytics.cloudflareSourceRanges is required when trusting CF-IPCountry" .Values.analytics.cloudflareSourceRanges | quote }}
     {{- end }}
     {{- if .Values.ingress.denyMetrics }}

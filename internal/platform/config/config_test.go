@@ -142,7 +142,7 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		}
 	})
 
-	for _, cidr := range []string{"0.0.0.0/0", "::/0"} {
+	for _, cidr := range []string{"0.0.0.0/0", "::/0", "::ffff:0:0/96"} {
 		t.Run("enabled-with-universal-trusted-proxy-"+cidr, func(t *testing.T) {
 			t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
 			t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", cidr)

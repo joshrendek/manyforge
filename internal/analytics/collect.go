@@ -29,7 +29,8 @@ const maxPathLen = 512
 
 const cloudflareCountryHeader = "CF-IPCountry"
 
-// isoAlpha2Country is a precomputed bitmap of CLDR regions that are real, non-private countries.
+// isoAlpha2Country is a precomputed lookup table of CLDR regions that are real, non-private
+// countries.
 // The hot collect path can therefore validate an alpha-2 value without reparsing it per request.
 var isoAlpha2Country = func() [26][26]bool {
 	var valid [26][26]bool
@@ -59,8 +60,8 @@ type PublicHandler struct {
 	TrustCloudflareCountryHeader bool
 }
 
-// CanTrustCloudflareCountryHeader reports whether this request reached the collector through a
-// configured trusted proxy. The deployment opt-in alone is deliberately insufficient.
+// CanTrustCloudflareCountryHeader reports whether country-header trust is enabled and this
+// request's direct peer is a configured trusted proxy. Either condition alone is insufficient.
 func (h *PublicHandler) CanTrustCloudflareCountryHeader(r *http.Request) bool {
 	return h.TrustCloudflareCountryHeader && ratelimit.IsTrustedPeer(r, h.TrustedProxies)
 }
