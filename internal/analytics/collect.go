@@ -44,15 +44,15 @@ var validAlpha2Country = func() [26][26]bool {
 	return valid
 }()
 
-// PublicHandler serves the principal-less analytics surface: the snippet and collect endpoint.
+// PublicHandler serves the unauthenticated analytics snippet and collect endpoint.
 // TrustedProxies and CloudflareSourceRanges bind visitor identity and optional country headers to
 // an origin-isolated trusted edge.
 type PublicHandler struct {
 	DB      *appdb.DB
 	Logger  *slog.Logger
 	Metrics *observability.Metrics
-	// PerIP bounds collect volume from a single source. Keyed by IP rather than by the
-	// caller-supplied key, because the key is attacker-choosable.
+	// collect passes the resolved visitor IP to PerIP.Allow rather than the caller-supplied
+	// analytics key, because that key is attacker-choosable.
 	PerIP          ratelimit.Limiter
 	TrustedProxies []*net.IPNet
 	// CloudflareSourceRanges contains Cloudflare's origin-facing networks. In trusted mode, the

@@ -138,9 +138,10 @@ func Browser(ua string) string {
 	return "Other"
 }
 
-// reservedEventName is the implicit name for an automatic pageview. A caller may not send it
-// explicitly, or a site could inflate its own pageview count through the event API and make the
-// headline number disagree with the pageview rollup.
+// reservedEventName is the wire value reserved for automatic pageviews. NormalizeEventName rejects
+// it when sent as a custom event; collectEvent represents automatic pageviews with an empty name.
+// Otherwise a site could inflate its pageview count through the event API and make the headline
+// number disagree with the pageview rollup.
 const reservedEventName = "pageview"
 
 const (
