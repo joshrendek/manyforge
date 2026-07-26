@@ -1,7 +1,9 @@
 package analytics
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -10,15 +12,12 @@ import (
 	"github.com/oschwald/maxminddb-golang/v2"
 )
 
-// Country lookup is OPTIONAL and deliberately unbundled.
+// Country lookup is optional at runtime.
 //
-// A country breakdown needs an IP-to-country database, and every usable one carries licensing
-// terms (MaxMind's GeoLite2 requires accepting an EULA and an account). Vendoring that data into
-// the repo would make every deployment inherit those terms whether or not it wants the feature,
-// and the file goes stale monthly, so a checked-in copy is quietly wrong within a quarter.
-//
-// So: the deployment points MANYFORGE_GEOIP_DB at a .mmdb file if it wants countries, and gets
-// nothing if it does not. An absent breakdown is honest; a guessed one is worse than none.
+// Production images can bundle GeoLite2 Country at build time, while local and uncredentialed image
+// builds omit it. A missing configured file therefore degrades to no country breakdown with an
+// explicit warning. An unreadable or invalid file remains an error: silently accepting a corrupt
+// database would make a broken deployment look healthy.
 
 // MMDBResolver resolves countries from a MaxMind-format database.
 type MMDBResolver struct {
@@ -36,6 +35,12 @@ func OpenMMDB(path string, logger *slog.Logger) (*MMDBResolver, error) {
 	}
 	db, err := maxminddb.Open(path)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if logger != nil {
+				logger.Warn("analytics geoip database not found; country lookup disabled", "path", path)
+			}
+			return nil, nil
+		}
 		return nil, fmt.Errorf("analytics: open geoip db %q: %w", path, err)
 	}
 	if logger != nil {

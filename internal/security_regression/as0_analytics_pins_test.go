@@ -257,8 +257,17 @@ func TestPin_AS0GeoIsOptionalAndTransient(t *testing.T) {
 	if !strings.Contains(src, "if path == \"\" {") {
 		t.Error("OpenMMDB must treat an empty path as 'no geo configured', not an error")
 	}
-	// A lookup miss must not log: this runs per pageview and would write client IPs into the logs.
-	if strings.Contains(src, "logger.Warn") || strings.Contains(src, "logger.Error") {
+	// A lookup miss must not log: Country runs per pageview and logging there could write client IPs
+	// into the logs. OpenMMDB may log startup state (for example, a missing configured file), so
+	// scope this pin to the request-path method rather than banning operational logging globally.
+	countryStart := strings.Index(src, "func (r *MMDBResolver) Country(")
+	countryEnd := strings.Index(src, "\n// Close releases the database handle.")
+	if countryStart < 0 || countryEnd <= countryStart {
+		t.Fatal("could not isolate MMDBResolver.Country for the no-per-request-logging pin")
+	}
+	country := src[countryStart:countryEnd]
+	if strings.Contains(country, "logger.Warn") || strings.Contains(country, "logger.Error") ||
+		strings.Contains(country, "slog.") {
 		t.Error("geo lookup must not log per-request; that would put client IPs in the logs")
 	}
 	enrich := mustRead(t, "../../internal/analytics/enrich.go")
