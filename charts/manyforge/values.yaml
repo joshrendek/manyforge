@@ -134,6 +134,8 @@ publicBaseURL: ""
 # Enabling it also requires Cloudflare's current origin-facing CIDRs: the chart allowlists them at
 # ingress so a direct caller cannot forge the header. Keep the list current from
 # https://www.cloudflare.com/ips/ (or use equivalent origin isolation outside this chart).
+# To prevent accidental public-origin exposure, the chart accepts at most 64 entries and requires
+# IPv4 prefixes of /8 or narrower and IPv6 prefixes of /16 or narrower.
 # Source ranges and the trusted ingress namespace independently keep origin isolation rendered
 # when runtime trust is later disabled. Clear them only in a separate release after that pod
 # rollout completes; changing all three values at once can expose old pods with the old environment.

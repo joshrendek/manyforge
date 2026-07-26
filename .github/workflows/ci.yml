@@ -41,7 +41,12 @@ jobs:
             echo "trusted country mode rendered without chart-managed ingress" >&2
             exit 1
           fi
-          for unsafe_range in '0.0.0.0/0' '::/0' '::ffff:0:0/96'; do
+          for unsafe_range in \
+            '0.0.0.0/0' \
+            '::/0' \
+            '::ffff:0:0/96' \
+            '0.0.0.0/1\,128.0.0.0/1' \
+            '::/1\,8000::/1'; do
             if helm template manyforge charts/manyforge "${common[@]}" \
               --set analytics.trustCloudflareCountryHeader=true \
               --set-string analytics.cloudflareSourceRanges="$unsafe_range" \

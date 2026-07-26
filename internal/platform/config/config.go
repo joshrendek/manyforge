@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -472,6 +474,7 @@ func envBool(key string, def bool) (bool, error) {
 
 func validateTrustedProxyCIDRs(value string) error {
 	count := 0
+	var ipv4Ranges, ipv6Ranges []ipRange
 	for _, raw := range strings.Split(value, ",") {
 		cidr := strings.TrimSpace(raw)
 		if cidr == "" {
@@ -485,16 +488,80 @@ func validateTrustedProxyCIDRs(value string) error {
 		if prefixBits == 0 {
 			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not trust the universal range %q", cidr)
 		}
-		mappedIPv4Start := net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0}
-		if len(network.Mask) == net.IPv6len && prefixBits <= 96 && network.Contains(mappedIPv4Start) {
-			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not trust every IPv4 peer through %q", cidr)
+		r, bits := networkRange(network)
+		if bits == net.IPv6len*8 && overlapsIPv4MappedRange(r) {
+			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must use native IPv4 CIDRs instead of IPv4-mapped range %q", cidr)
+		}
+		if bits == net.IPv4len*8 {
+			ipv4Ranges = append(ipv4Ranges, r)
+		} else {
+			ipv6Ranges = append(ipv6Ranges, r)
 		}
 		count++
 	}
 	if count == 0 {
 		return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must contain at least one CIDR")
 	}
+	if rangesCoverAddressSpace(ipv4Ranges, net.IPv4len*8) {
+		return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not collectively trust every IPv4 peer")
+	}
+	if rangesCoverAddressSpace(ipv6Ranges, net.IPv6len*8) {
+		return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not collectively trust every IPv6 peer")
+	}
 	return nil
+}
+
+type ipRange struct {
+	start big.Int
+	end   big.Int
+}
+
+func networkRange(network *net.IPNet) (ipRange, int) {
+	prefixBits, addressBits := network.Mask.Size()
+	ip := network.IP
+	if addressBits == net.IPv4len*8 {
+		ip = ip.To4()
+	} else {
+		ip = ip.To16()
+	}
+
+	var r ipRange
+	r.start.SetBytes(ip)
+	hostCount := new(big.Int).Lsh(big.NewInt(1), uint(addressBits-prefixBits))
+	r.end.Sub(hostCount, big.NewInt(1))
+	r.end.Add(&r.end, &r.start)
+	return r, addressBits
+}
+
+func overlapsIPv4MappedRange(r ipRange) bool {
+	mappedStart := new(big.Int).SetBytes(net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0})
+	mappedEnd := new(big.Int).Add(new(big.Int).Set(mappedStart), new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 32), big.NewInt(1)))
+	return r.start.Cmp(mappedEnd) <= 0 && r.end.Cmp(mappedStart) >= 0
+}
+
+func rangesCoverAddressSpace(ranges []ipRange, addressBits int) bool {
+	if len(ranges) == 0 {
+		return false
+	}
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].start.Cmp(&ranges[j].start) < 0
+	})
+	if ranges[0].start.Sign() != 0 {
+		return false
+	}
+
+	coveredThrough := new(big.Int).Set(&ranges[0].end)
+	for i := 1; i < len(ranges); i++ {
+		nextAfterCovered := new(big.Int).Add(new(big.Int).Set(coveredThrough), big.NewInt(1))
+		if ranges[i].start.Cmp(nextAfterCovered) > 0 {
+			return false
+		}
+		if ranges[i].end.Cmp(coveredThrough) > 0 {
+			coveredThrough.Set(&ranges[i].end)
+		}
+	}
+	lastAddress := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(addressBits)), big.NewInt(1))
+	return coveredThrough.Cmp(lastAddress) >= 0
 }
 
 func envInt64(key string, def int64) (int64, error) {
