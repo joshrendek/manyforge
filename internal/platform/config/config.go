@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -215,8 +216,10 @@ func Load() (Config, error) {
 	if cfg.TrustCFIPCountry, err = envBool("MANYFORGE_TRUST_CF_IPCOUNTRY", false); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
 	}
-	if cfg.TrustCFIPCountry && strings.TrimSpace(cfg.TrustedProxyCIDR) == "" {
-		return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY requires MANYFORGE_TRUSTED_PROXY_CIDR")
+	if cfg.TrustCFIPCountry {
+		if err := validateTrustedProxyCIDRs(cfg.TrustedProxyCIDR); err != nil {
+			return Config{}, fmt.Errorf("MANYFORGE_TRUST_CF_IPCOUNTRY: %w", err)
+		}
 	}
 
 	// Persistent JWT signing key (Task 1.1): supplied inline (…_PEM) or via a
@@ -465,6 +468,24 @@ func envBool(key string, def bool) (bool, error) {
 		return def, nil
 	}
 	return strconv.ParseBool(v)
+}
+
+func validateTrustedProxyCIDRs(value string) error {
+	count := 0
+	for _, raw := range strings.Split(value, ",") {
+		cidr := strings.TrimSpace(raw)
+		if cidr == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR contains invalid CIDR %q: %w", cidr, err)
+		}
+		count++
+	}
+	if count == 0 {
+		return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must contain at least one CIDR")
+	}
+	return nil
 }
 
 func envInt64(key string, def int64) (int64, error) {

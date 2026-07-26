@@ -29,6 +29,8 @@ const maxPathLen = 512
 
 const cloudflareCountryHeader = "CF-IPCountry"
 
+// isoAlpha2Country is a precomputed bitmap of CLDR regions that are real, non-private countries.
+// The hot collect path can therefore validate an alpha-2 value without reparsing it per request.
 var isoAlpha2Country = func() [26][26]bool {
 	var valid [26][26]bool
 	for a := byte('A'); a <= 'Z'; a++ {
@@ -131,8 +133,8 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 
 	ua := r.Header.Get("User-Agent")
 
-	// Everything derived from the IP and UA is computed HERE and reduced to low-cardinality
-	// buckets before it touches SQL. The raw values continue past this point only as hash inputs.
+	// Every request-derived dimension is normalized or bounded HERE before it touches SQL. The raw
+	// IP and UA continue past this point only as hash inputs.
 	utm := ParseUTM(req.Query)
 
 	// An unusable custom-event name is DROPPED, not coerced to a pageview: counting someone's

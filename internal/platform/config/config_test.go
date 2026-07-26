@@ -133,6 +133,14 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 			t.Fatal("expected error when country trust has no trusted proxy CIDR, got nil")
 		}
 	})
+
+	t.Run("enabled-with-malformed-trusted-proxy-is-config-error", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16,not-a-cidr")
+		if _, err := Load(); err == nil {
+			t.Fatal("expected error when country trust has a malformed trusted proxy CIDR, got nil")
+		}
+	})
 }
 
 // TestEnvKey32Disambiguation (manyforge-no9) pins the explicit-prefix and anchored

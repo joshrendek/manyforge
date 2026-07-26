@@ -1,12 +1,19 @@
 package main
 
 import (
+	"net"
 	"testing"
 
 	"github.com/manyforge/manyforge/internal/platform/config"
 )
 
 func TestAnalyticsCountryTrustProductionWiring(t *testing.T) {
+	_, trustedProxy, err := net.ParseCIDR("10.244.0.0/16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := []*net.IPNet{trustedProxy}
+
 	for _, tc := range []struct {
 		name         string
 		env          string
@@ -24,10 +31,13 @@ func TestAnalyticsCountryTrustProductionWiring(t *testing.T) {
 				t.Fatalf("config.Load: %v", err)
 			}
 
-			handler := newAnalyticsPublicHandler(nil, nil, nil, nil, cfg)
+			handler := newAnalyticsPublicHandler(nil, nil, nil, trusted, cfg)
 			if handler.TrustCloudflareCountryHeader != tc.want {
 				t.Fatalf("TrustCloudflareCountryHeader = %t, want %t",
 					handler.TrustCloudflareCountryHeader, tc.want)
+			}
+			if len(handler.TrustedProxies) != 1 || handler.TrustedProxies[0] != trustedProxy {
+				t.Fatalf("TrustedProxies = %v, want production proxy set preserved", handler.TrustedProxies)
 			}
 		})
 	}
