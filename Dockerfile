@@ -25,7 +25,7 @@ ARG GEOIP_CREDENTIALS_PRESENT=false
 ARG GEOIP_TEST_MODE=false
 RUN --mount=type=secret,id=maxmind_account_id \
     --mount=type=secret,id=maxmind_license_key \
-    --mount=type=bind,source=scripts/ci/mock-maxmind-download.sh,target=/tmp/mock-maxmind-download,readonly \
+    --mount=type=bind,source=scripts/ci,target=/tmp/geoip-ci,readonly \
     set -eu; \
     printf '%s:%s:%s' "$GEOIP_CACHE_KEY" "$GEOIP_CREDENTIALS_PRESENT" "$GEOIP_TEST_MODE" >/dev/null; \
     account_file=/run/secrets/maxmind_account_id; \
@@ -43,7 +43,7 @@ RUN --mount=type=secret,id=maxmind_account_id \
     trap 'rm -f /tmp/maxmind.netrc' EXIT HUP INT TERM; \
     mkdir -p /tmp/geolite; \
     download_client=curl; \
-    if [ "$GEOIP_TEST_MODE" = true ]; then download_client=/tmp/mock-maxmind-download; fi; \
+    if [ "$GEOIP_TEST_MODE" = true ]; then download_client=/tmp/geoip-ci/mock-maxmind-download.sh; fi; \
     "$download_client" --fail --show-error --silent --location --retry 3 \
       --netrc-file /tmp/maxmind.netrc \
       'https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz' \

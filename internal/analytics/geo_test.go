@@ -19,6 +19,21 @@ func TestOpenMMDBEmptyPathDisablesCountryLookup(t *testing.T) {
 	}
 }
 
+func TestOpenMMDBOfficialCountryFixtureOpens(t *testing.T) {
+	path := filepath.Join("..", "..", "scripts", "ci", "testdata", "GeoLite2-Country-Test.mmdb")
+
+	got, err := OpenMMDB(path, nil)
+	if err != nil {
+		t.Fatalf("OpenMMDB(valid fixture): %v", err)
+	}
+	if got == nil {
+		t.Fatal("OpenMMDB(valid fixture) returned a nil resolver")
+	}
+	if err := got.Close(); err != nil {
+		t.Fatalf("close valid fixture: %v", err)
+	}
+}
+
 func TestOpenMMDBMissingConfiguredFileWarnsAndDisablesCountryLookup(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))

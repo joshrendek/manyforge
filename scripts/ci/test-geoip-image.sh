@@ -37,8 +37,7 @@ container_id=""
 
 tar -xOf "$test_tmp/credentialed-runtime.tar" geo/GeoLite2-Country.mmdb \
   >"$test_tmp/extracted.mmdb"
-printf 'CI GeoLite2 fixture\n' >"$test_tmp/expected.mmdb"
-cmp "$test_tmp/expected.mmdb" "$test_tmp/extracted.mmdb"
+cmp scripts/ci/testdata/GeoLite2-Country-Test.mmdb "$test_tmp/extracted.mmdb"
 docker history --no-trunc --format '{{.CreatedBy}}' manyforge-geoip-credentialed-test \
   >"$test_tmp/history"
 for sentinel in "$account_sentinel" "$license_sentinel"; do
