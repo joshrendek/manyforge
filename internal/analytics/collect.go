@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/text/language"
 
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/observability"
@@ -161,8 +162,8 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// collectEvent is one fully-derived pageview. Grouping the arguments keeps the fourteen-parameter
-// SQL call from becoming a positional puzzle at the call site.
+// collectEvent is one fully-derived analytics event. Grouping the arguments keeps the
+// fourteen-parameter SQL call from becoming a positional puzzle at the call site.
 type collectEvent struct {
 	key      string
 	path     string
@@ -227,7 +228,12 @@ func cloudflareCountry(trusted bool, values []string) string {
 	if a < 'A' || a > 'Z' || b < 'A' || b > 'Z' {
 		return ""
 	}
-	return string([]byte{a, b})
+	code := string([]byte{a, b})
+	region, err := language.ParseRegion(code)
+	if err != nil || !region.IsCountry() || region.IsPrivateUse() {
+		return ""
+	}
+	return code
 }
 
 // normalizePath strips the query string and fragment, enforces a leading slash, drops a trailing

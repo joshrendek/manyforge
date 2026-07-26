@@ -149,6 +149,22 @@ describe('AnalyticsDashboardComponent', () => {
     expect(hint.textContent).toContain('MANYFORGE_TRUST_CF_IPCOUNTRY');
   });
 
+  it('renders country data without the unavailable hint', () => {
+    fixture.componentInstance.setDays(7);
+    mock.expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=7').flush({
+      ...summary,
+      breakdowns: {
+        ...summary.breakdowns,
+        country: [{ value: 'US', pageviews: 15, visitors: 6 }],
+      },
+    });
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="country-unavailable"]')).toBeNull();
+    expect(el.querySelector('[data-testid="breakdown-country"]').textContent).toContain('US');
+  });
+
   // The API reuses the `pageviews` field for every dimension, but for 'event' that number is a
   // count of custom events. Labelling it "Pageviews" would report a figure that silently
   // disagrees with the pageview total shown above it.
