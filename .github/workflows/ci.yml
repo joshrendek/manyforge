@@ -21,12 +21,27 @@ jobs:
           helm lint charts/manyforge "${common[@]}"
           default_render="$(helm template manyforge charts/manyforge "${common[@]}")"
           grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "false"' <<<"$default_render"
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.trustedIngressNamespace=ingress >/dev/null 2>&1; then
+            echo "trusted country mode rendered without Cloudflare source ranges" >&2
+            exit 1
+          fi
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set analytics.trustCloudflareCountryHeader=true \
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 >/dev/null 2>&1; then
+            echo "trusted country mode rendered without a trusted ingress namespace" >&2
+            exit 1
+          fi
           enabled_render="$(helm template manyforge charts/manyforge "${common[@]}" \
             --set analytics.trustCloudflareCountryHeader=true \
-            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24)"
+            --set-string analytics.cloudflareSourceRanges=203.0.113.0/24 \
+            --set-string analytics.trustedIngressNamespace=ingress)"
           grep -Fq 'MANYFORGE_TRUST_CF_IPCOUNTRY: "true"' <<<"$enabled_render"
           grep -Fq 'nginx.ingress.kubernetes.io/whitelist-source-range: "203.0.113.0/24"' \
             <<<"$enabled_render"
+          grep -Fq 'name: manyforge-trusted-ingress' <<<"$enabled_render"
+          grep -Fq 'kubernetes.io/metadata.name: "ingress"' <<<"$enabled_render"
       - name: Build
         run: make build
       - name: Vet / lint

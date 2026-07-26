@@ -137,6 +137,7 @@ publicBaseURL: ""
 analytics:
   trustCloudflareCountryHeader: false
   cloudflareSourceRanges: ""
+  trustedIngressNamespace: ""
 
 sandbox:
   # Consumed by the code-review sandbox runner (internal/agents/coding/sandbox)

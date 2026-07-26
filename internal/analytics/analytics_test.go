@@ -239,6 +239,9 @@ func TestCloudflareCountry(t *testing.T) {
 		{name: "duplicate headers", trusted: true, values: []string{"US", "CA"}},
 		{name: "too long", trusted: true, values: []string{"USA"}},
 		{name: "non ascii", trusted: true, values: []string{"ÉU"}},
+		{name: "digit suffix", trusted: true, values: []string{"U1"}},
+		{name: "digit prefix", trusted: true, values: []string{"1S"}},
+		{name: "punctuation", trusted: true, values: []string{"!!"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := cloudflareCountry(tc.trusted, tc.values); got != tc.want {
