@@ -239,7 +239,7 @@ import { Spinner } from '../../ui/spinner/spinner';
       }
       .mf-hint {
         font-size: var(--mf-fs-sm);
-        color: var(--mf-text-muted);
+        color: var(--mf-text);
         margin-top: 16px;
       }
     `,
