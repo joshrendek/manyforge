@@ -284,6 +284,11 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 	if !strings.Contains(configMap, "MANYFORGE_TRUST_CF_IPCOUNTRY") {
 		t.Error("the chart must thread its explicit country-header trust setting to the app")
 	}
+	deployment := mustRead(t, "../../charts/manyforge/templates/deployment.yaml")
+	if !strings.Contains(deployment, "checksum/config:") ||
+		!strings.Contains(deployment, `"/configmap.yaml"`) {
+		t.Error("ConfigMap changes must restart pods before ingress trust controls can be removed")
+	}
 	main := mustRead(t, "../../cmd/manyforge/main.go")
 	if !strings.Contains(main, "newAnalyticsPublicHandler(database, logger, metrics, trusted, cfg)") {
 		t.Error("production startup must construct analytics through the tested config-wiring path")
