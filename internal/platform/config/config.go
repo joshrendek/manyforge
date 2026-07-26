@@ -477,8 +477,13 @@ func validateTrustedProxyCIDRs(value string) error {
 		if cidr == "" {
 			continue
 		}
-		if _, _, err := net.ParseCIDR(cidr); err != nil {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
 			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR contains invalid CIDR %q: %w", cidr, err)
+		}
+		prefixBits, _ := network.Mask.Size()
+		if prefixBits == 0 {
+			return fmt.Errorf("MANYFORGE_TRUSTED_PROXY_CIDR must not trust the universal range %q", cidr)
 		}
 		count++
 	}
