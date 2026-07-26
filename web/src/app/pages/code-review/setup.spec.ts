@@ -14,8 +14,22 @@ import { CodeReviewSetupComponent } from './setup';
 
 const businesses = {
   items: [
-    { id: 'b1', parent_id: null, tenant_root_id: 'b1', name: 'Acme', status: 'active', is_tenant_root: true },
-    { id: 'b2', parent_id: null, tenant_root_id: 'b2', name: 'Beta', status: 'active', is_tenant_root: true },
+    {
+      id: 'b1',
+      parent_id: null,
+      tenant_root_id: 'b1',
+      name: 'Acme',
+      status: 'active',
+      is_tenant_root: true,
+    },
+    {
+      id: 'b2',
+      parent_id: null,
+      tenant_root_id: 'b2',
+      name: 'Beta',
+      status: 'active',
+      is_tenant_root: true,
+    },
   ],
   next_cursor: null,
 };
@@ -88,13 +102,18 @@ describe('CodeReviewSetupComponent', () => {
   afterEach(() => {
     // The per-review cost estimate (spec 008 Slice 3) is fired on load and after every save, and
     // is advisory. Drain any pending estimate request so it doesn't trip mock.verify().
-    mock.match((r) => r.url.includes('/review-config/estimate')).forEach((req) => req.flush(defaultEstimate));
+    mock
+      .match((r) => r.url.includes('/review-config/estimate'))
+      .forEach((req) => req.flush(defaultEstimate));
     mock.verify();
     localStorage.clear();
   });
 
   /** Mount and flush the initial loads (businesses → panel: dimensions, config, models). */
-  function mount(dims: ReviewDimension[] = [makeDim()], config: ReviewConfig = defaultConfig): void {
+  function mount(
+    dims: ReviewDimension[] = [makeDim()],
+    config: ReviewConfig = defaultConfig,
+  ): void {
     fixture = TestBed.createComponent(CodeReviewSetupComponent);
     cmp = fixture.componentInstance;
     fixture.detectChanges();
@@ -112,7 +131,9 @@ describe('CodeReviewSetupComponent', () => {
     const sel = q('[data-testid="setup-business"]') as HTMLSelectElement;
     expect(sel).toBeTruthy();
     expect(cmp.businessId()).toBe('b1');
-    const opts = Array.from(qAll('[data-testid="setup-business"] option')).map((o) => (o as HTMLOptionElement).value);
+    const opts = Array.from(qAll('[data-testid="setup-business"] option')).map(
+      (o) => (o as HTMLOptionElement).value,
+    );
     expect(opts).toEqual(['b1', 'b2']);
   });
 
@@ -126,7 +147,10 @@ describe('CodeReviewSetupComponent', () => {
   });
 
   it('loads and renders configured dimension rows', () => {
-    mount([makeDim({ dimension: 'security' }), makeDim({ id: 'd2', dimension: 'correctness', min_severity: 'info' })]);
+    mount([
+      makeDim({ dimension: 'security' }),
+      makeDim({ id: 'd2', dimension: 'correctness', min_severity: 'info' }),
+    ]);
     expect(qAll('[data-testid="dimension-row"]').length).toBe(2);
     expect(fixture.nativeElement.textContent).toContain('Security');
     expect(fixture.nativeElement.textContent).toContain('Correctness');
@@ -343,7 +367,9 @@ describe('CodeReviewSetupComponent', () => {
       { provider: 'openrouter', model: 'gpt-4o' }, // fallback
     ];
     // Drag the fallback (index 1) to the top → it becomes the primary.
-    cmp.onPriorityDrop(row, { previousIndex: 1, currentIndex: 0 } as CdkDragDrop<ReviewDimensionFallbackEntry[]>);
+    cmp.onPriorityDrop(row, { previousIndex: 1, currentIndex: 0 } as CdkDragDrop<
+      ReviewDimensionFallbackEntry[]
+    >);
     expect(cmp.rows()[0].chain.map((e) => e.provider)).toEqual(['openrouter', 'ollama']);
   });
 
@@ -351,5 +377,70 @@ describe('CodeReviewSetupComponent', () => {
     mount([makeDim()], { ...defaultConfig, review_agent_chain: ['ag1', 'ag2'] });
     cmp.onChainDrop({ previousIndex: 0, currentIndex: 1 } as CdkDragDrop<string[]>);
     expect(cmp.config().review_agent_chain).toEqual(['ag2', 'ag1']);
+  });
+
+  // manyforge-3ymu. The e2e suite drives reordering through the ↑/↓ buttons, which call
+  // moveChain/movePriority — NOT the CDK drop handlers. Simulating a physical drag in a browser
+  // proved environment-dependent (CDK sorts on which side of a row's midpoint the pointer lands,
+  // and that boundary moves with font metrics), so it was removed. That left onChainDrop and
+  // onPriorityDrop — the code CDK actually calls on drop — with no coverage at all.
+  //
+  // These call them directly with the event CDK would deliver. Deterministic, and it tests our
+  // logic rather than Angular's drag implementation.
+  describe('CDK drop handlers', () => {
+    function dropEvent(previousIndex: number, currentIndex: number) {
+      // Only the two indices are read by the handlers; CdkDragDrop carries much more.
+      return { previousIndex, currentIndex } as never;
+    }
+
+    it('onChainDrop moves a fallback to primary', () => {
+      mount(undefined, { ...defaultConfig, review_agent_chain: ['ag1', 'ag2'] });
+      expect(cmp.config().review_agent_chain).toEqual(['ag1', 'ag2']);
+
+      cmp.onChainDrop(dropEvent(1, 0));
+      fixture.detectChanges();
+
+      expect(cmp.config().review_agent_chain).toEqual(['ag2', 'ag1']);
+    });
+
+    it('onChainDrop is a no-op when an item is dropped where it started', () => {
+      mount(undefined, { ...defaultConfig, review_agent_chain: ['ag1', 'ag2'] });
+      cmp.onChainDrop(dropEvent(1, 1));
+      fixture.detectChanges();
+      expect(cmp.config().review_agent_chain).toEqual(['ag1', 'ag2']);
+    });
+
+    it('onChainDrop reorders across the whole list, not just adjacent slots', () => {
+      // The buttons can only ever move one position; a drag can cross several. This is the case
+      // button-driven tests structurally cannot reach.
+      mount(undefined, { ...defaultConfig, review_agent_chain: ['ag1', 'ag2', 'ag3'] });
+      cmp.onChainDrop(dropEvent(2, 0));
+      fixture.detectChanges();
+      expect(cmp.config().review_agent_chain).toEqual(['ag3', 'ag1', 'ag2']);
+    });
+
+    it('onPriorityDrop reorders a dimension chain and leaves other rows untouched', () => {
+      mount([
+        makeDim({ id: 'd1', dimension: 'security' }),
+        makeDim({ id: 'd2', dimension: 'perf' }),
+      ]);
+      const rows = cmp.rows();
+      const target = rows[0];
+      const other = rows[1];
+      const before = [...target.chain];
+      const otherBefore = [...other.chain];
+      if (before.length < 2) {
+        // The fixture must actually have something to reorder or the assertion below is vacuous.
+        target.chain.push({ ...before[0], provider: 'vllm' });
+      }
+
+      cmp.onPriorityDrop(target, dropEvent(target.chain.length - 1, 0));
+      fixture.detectChanges();
+
+      expect(target.chain[0]).toEqual(
+        before.length < 2 ? { ...before[0], provider: 'vllm' } : before[before.length - 1],
+      );
+      expect(other.chain).toEqual(otherBefore);
+    });
   });
 });
