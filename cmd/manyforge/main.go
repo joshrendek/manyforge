@@ -1398,7 +1398,7 @@ func parseSourceCIDRs(s, kind string, logger *slog.Logger) []*net.IPNet {
 		}
 		_, n, err := net.ParseCIDR(c)
 		if err != nil {
-			logger.Warn("ignoring malformed source CIDR", "kind", kind, "cidr", c, "err", err)
+			logger.Warn("ignoring malformed CIDR", "kind", kind, "cidr", c, "err", err)
 			continue
 		}
 		out = append(out, n)

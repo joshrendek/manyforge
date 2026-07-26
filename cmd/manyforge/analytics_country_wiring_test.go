@@ -47,30 +47,37 @@ func TestAnalyticsCountryTrustProductionWiring(t *testing.T) {
 			matching := &http.Request{
 				RemoteAddr: "10.244.7.9:5000",
 				Header: http.Header{
-					"CF-IPCountry":    {"US"},
 					"X-Forwarded-For": {"173.245.48.7"},
 				},
 			}
-			if _, got := handler.ResolveClient(matching); got != tc.want {
+			matching.Header.Set("CF-IPCountry", "US")
+			matching.Header.Set("CF-Connecting-IP", "198.51.100.7")
+			ip, got := handler.ResolveClient(matching)
+			if ip != "198.51.100.7" {
+				t.Fatalf("matching proxy client IP = %q, want Cloudflare visitor IP", ip)
+			}
+			if got != tc.want {
 				t.Fatalf("matching proxy country trust = %t, want %t", got, tc.want)
 			}
 			nonCloudflareSource := &http.Request{
 				RemoteAddr: "10.244.7.9:5000",
 				Header: http.Header{
-					"CF-IPCountry":    {"US"},
 					"X-Forwarded-For": {"203.0.113.9"},
 				},
 			}
-			if _, got := handler.ResolveClient(nonCloudflareSource); got {
+			nonCloudflareSource.Header.Set("CF-IPCountry", "US")
+			nonCloudflareSource.Header.Set("CF-Connecting-IP", "192.0.2.9")
+			if ip, got := handler.ResolveClient(nonCloudflareSource); got || ip != "203.0.113.9" {
 				t.Fatal("non-Cloudflare forwarded source was allowed to assert CF-IPCountry")
 			}
 			untrustedPeer := &http.Request{
 				RemoteAddr: "203.0.113.9:5000",
 				Header: http.Header{
-					"CF-IPCountry":    {"US"},
 					"X-Forwarded-For": {"173.245.48.7"},
 				},
 			}
+			untrustedPeer.Header.Set("CF-IPCountry", "US")
+			untrustedPeer.Header.Set("CF-Connecting-IP", "192.0.2.9")
 			if _, got := handler.ResolveClient(untrustedPeer); got {
 				t.Fatal("untrusted direct peer was allowed to assert CF-IPCountry")
 			}
