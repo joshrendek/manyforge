@@ -145,6 +145,7 @@ describe('AnalyticsDashboardComponent', () => {
   it('explains a missing country breakdown when there is traffic', () => {
     const hint = fixture.nativeElement.querySelector('[data-testid="country-unavailable"]');
     expect(hint).toBeTruthy();
+    expect(hint.getAttribute('role')).toBe('status');
     expect(hint.textContent).toContain('MANYFORGE_TRUST_CF_IPCOUNTRY');
   });
 
