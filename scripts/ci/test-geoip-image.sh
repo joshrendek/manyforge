@@ -74,14 +74,25 @@ postgres_container=$(docker run --detach \
   --env POSTGRES_PASSWORD=devpassword \
   --env POSTGRES_DB=manyforge \
   postgres:16)
+postgres_ready=false
 for _ in {1..100}; do
   if docker exec "$postgres_container" pg_isready --username manyforge --dbname manyforge \
     >/dev/null 2>&1; then
+    postgres_ready=true
     break
+  fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$postgres_container")" != "true" ]]; then
+    docker logs "$postgres_container" >&2
+    echo >&2 "PostgreSQL exited before becoming ready"
+    exit 1
   fi
   sleep 0.2
 done
-docker exec "$postgres_container" pg_isready --username manyforge --dbname manyforge >/dev/null
+if [[ "$postgres_ready" != "true" ]]; then
+  docker logs "$postgres_container" >&2
+  echo >&2 "PostgreSQL did not become ready"
+  exit 1
+fi
 
 super_dsn='postgres://manyforge:devpassword@postgres:5432/manyforge?sslmode=disable'
 app_dsn='postgres://manyforge_app:apppw@postgres:5432/manyforge?sslmode=disable'
