@@ -1289,6 +1289,14 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 					h.analytics.ReadRoutes(tr)
 				}
 			})
+			// nk50 cross-business overview. Mounted on the authenticated router WITHOUT
+			// h.telemetryRead: that middleware resolves the permission from a business id in the
+			// path, and this route has none, so it would 404 unconditionally. The check is not
+			// dropped — Service.Overview filters to businesses holding telemetry.read in SQL, which
+			// is the only form that works when the answer is a set of businesses rather than one.
+			if h.analytics != nil {
+				h.analytics.OverviewRoutes(pr)
+			}
 			// manyforge-p20 telemetry write slice: register + revoke clients, gated on
 			// telemetry.write. Same RLS-bound 404-on-lacking-perm semantics.
 			pr.Group(func(tw chi.Router) {

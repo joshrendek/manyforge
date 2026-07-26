@@ -29,6 +29,51 @@ func (h *Handler) ReadRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/analytics/summary", h.summary)
 }
 
+// OverviewRoutes mounts the cross-business overview. It is deliberately NOT mounted with the other
+// read routes, because those sit behind RequirePermission(..., businessIDFromPath) and this path
+// carries no business id — that middleware would find nothing to resolve and 404 every request.
+//
+// The permission check is not skipped, it MOVES: Service.Overview filters to businesses where the
+// caller holds telemetry.read, in SQL, via businesses_with_permission(). Expressing it there rather
+// than in middleware is what makes a multi-business read possible at all, since the middleware form
+// can only answer for one business at a time.
+func (h *Handler) OverviewRoutes(r chi.Router) {
+	r.Get("/analytics/overview", h.overview)
+}
+
+// rangeDays parses the shared ?days= parameter into an inclusive UTC day window ending today.
+func rangeDays(r *http.Request) (from, to time.Time, err error) {
+	days := defaultRangeDays
+	if d := r.URL.Query().Get("days"); d != "" {
+		n, cerr := strconv.Atoi(d)
+		if cerr != nil || n < 1 || n > maxRangeDays {
+			return time.Time{}, time.Time{}, errs.ErrValidation
+		}
+		days = n
+	}
+	to = time.Now().UTC().Truncate(24 * time.Hour)
+	return to.AddDate(0, 0, -(days - 1)), to, nil
+}
+
+func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
+	principalID, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	from, to, err := rangeDays(r)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_days"})
+		return
+	}
+	sites, err := h.Svc.Overview(r.Context(), principalID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sites": sites})
+}
+
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	principalID, ok := httpx.PrincipalFromContext(r.Context())
 	if !ok {
