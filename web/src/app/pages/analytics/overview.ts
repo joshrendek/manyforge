@@ -146,7 +146,11 @@ interface BusinessGroup {
         padding: 14px;
         border: 1px solid var(--mf-border);
         border-radius: 8px;
-        background: var(--mf-surface-1);
+        /* --mf-surface-inset, not --mf-surface-2. This is a surface nested inside .mf-card, which
+           is what inset is for (board-detail uses it the same way). It also passes contrast:
+           --mf-text-muted on --mf-surface-2 is 4.28:1 in light mode, BELOW the 4.5:1 AA minimum,
+           and the card labels are all muted. On inset it is 4.76:1 light / 7.49:1 dark. */
+        background: var(--mf-surface-inset);
         text-decoration: none;
         color: inherit;
         transition:
