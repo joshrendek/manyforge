@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -285,5 +286,105 @@ func TestParseUTM_InvalidUTF8IsSanitizedNotDropped(t *testing.T) {
 	}
 	if u.Source == "" {
 		t.Fatal("a single bad byte should be stripped, not discard the whole value")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Custom events
+// ---------------------------------------------------------------------------
+
+func TestNormalizeEventName(t *testing.T) {
+	ok := []string{"grow_start", "grow-exit", "checkout.step", "ns:event", "A1", "a"}
+	for _, s := range ok {
+		if NormalizeEventName(s) != s {
+			t.Errorf("NormalizeEventName(%q) rejected a valid name", s)
+		}
+	}
+
+	// 'pageview' is reserved: allowing it through the event API would let a site inflate its own
+	// pageview count and make the headline number disagree with the pageview rollup.
+	if NormalizeEventName("pageview") != "" {
+		t.Error("'pageview' must be reserved — otherwise the event API can forge pageviews")
+	}
+
+	bad := []string{
+		"", "   ",
+		"has space", "has/slash", "has\ttab", "emoji🎉",
+		"'; DROP TABLE analytics_event; --",
+		strings.Repeat("x", maxEventNameLen+1),
+	}
+	for _, s := range bad {
+		if got := NormalizeEventName(s); got != "" {
+			t.Errorf("NormalizeEventName(%.30q) = %q, want rejected", s, got)
+		}
+	}
+}
+
+func TestSanitizeProps(t *testing.T) {
+	got := SanitizeProps(map[string]any{
+		"level":  float64(3),
+		"score":  float64(1.5),
+		"win":    true,
+		"stage":  "final",
+		"nested": map[string]any{"a": 1}, // dropped: not groupable
+		"list":   []any{1, 2},            // dropped
+		"empty":  "",
+	})
+	want := map[string]string{"level": "3", "score": "1.5", "win": "true", "stage": "final"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("props[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+	if _, ok := got["nested"]; ok {
+		t.Error("nested objects must be dropped — a JSON blob is not a groupable dashboard value")
+	}
+	if SanitizeProps(nil) != nil || SanitizeProps(map[string]any{}) != nil {
+		t.Error("empty props should be nil")
+	}
+}
+
+func TestSanitizeProps_BoundedAndDeterministic(t *testing.T) {
+	in := map[string]any{}
+	for i := 0; i < maxPropKeys*3; i++ {
+		in[fmt.Sprintf("k%03d", i)] = "v"
+	}
+	first := SanitizeProps(in)
+	if len(first) != maxPropKeys {
+		t.Fatalf("key count = %d, want capped at %d", len(first), maxPropKeys)
+	}
+	// Truncation must be deterministic: map iteration order would otherwise store different
+	// props for the identical payload on different requests.
+	for i := 0; i < 5; i++ {
+		again := SanitizeProps(in)
+		if len(again) != len(first) {
+			t.Fatalf("unstable key count: %d vs %d", len(again), len(first))
+		}
+		for k := range first {
+			if _, ok := again[k]; !ok {
+				t.Fatalf("unstable key selection: %q missing on rerun", k)
+			}
+		}
+	}
+
+	long := SanitizeProps(map[string]any{"k": strings.Repeat("é", maxPropValueLen)})
+	if v := long["k"]; len(v) > maxPropValueLen || !utf8.ValidString(v) {
+		t.Errorf("value not bounded on a rune boundary: %d bytes, valid=%v", len(v), utf8.ValidString(v))
+	}
+}
+
+func TestSnippetJS_ExposesCustomEventAPI(t *testing.T) {
+	for _, must := range []string{"window.mf", "window.mf.q"} {
+		if !strings.Contains(snippetJS, must) {
+			t.Errorf("snippet is missing %q", must)
+		}
+	}
+	// The global must be assigned AFTER the pageview wiring, so a throw earlier cannot leave a
+	// half-initialised mf() on the page.
+	if strings.Index(snippetJS, "window.mf=") < strings.Index(snippetJS, "addEventListener('popstate'") {
+		t.Error("window.mf is defined before the pageview wiring completes")
 	}
 }

@@ -150,7 +150,7 @@ import { Spinner } from '../../ui/spinner/spinner';
               >
                 <div class="mf-tr mf-th" role="row">
                   <span style="flex:3" role="columnheader">{{ b.label }}</span>
-                  <span style="flex:1" role="columnheader">Pageviews</span>
+                  <span style="flex:1" role="columnheader">{{ b.metric }}</span>
                 </div>
                 @for (v of b.rows; track v.value) {
                   <div class="mf-tr" role="row" data-testid="breakdown-row">
@@ -271,6 +271,7 @@ export class AnalyticsDashboardComponent implements OnInit {
   breakdownPanels = computed(() => {
     const b = this.summary()?.breakdowns ?? {};
     const labels: Record<string, string> = {
+      event: 'Events',
       country: 'Countries',
       device: 'Devices',
       browser: 'Browsers',
@@ -280,7 +281,16 @@ export class AnalyticsDashboardComponent implements OnInit {
     };
     return Object.keys(labels)
       .filter((k) => (b[k]?.length ?? 0) > 0)
-      .map((k) => ({ key: k, label: labels[k], rows: b[k] }));
+      .map((k) => ({
+        key: k,
+        label: labels[k],
+        // The 'event' dimension counts CUSTOM EVENTS, not pageviews. The API reuses the
+        // `pageviews` field across every dimension, so labelling the column generically would
+        // report event counts under the wrong metric — a number that silently disagrees with the
+        // pageview total above it.
+        metric: k === 'event' ? 'Events' : 'Pageviews',
+        rows: b[k],
+      }));
   });
 
   // Distinguishes "no geo database configured" from "no traffic yet": if there are pageviews but
