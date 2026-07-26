@@ -9,6 +9,8 @@
 package analytics
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 	"time"
@@ -110,16 +112,38 @@ func (h *PublicHandler) SnippetRoutes(r chi.Router) {
 
 func (h *PublicHandler) serveSnippet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	// Short cache: long enough to avoid re-fetching on every page, short enough that a fix to the
-	// snippet reaches embedding sites the same day.
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	// Cache TTL is deliberately short. This file is ~2 KB and sits on other people's sites: when a
+	// bug is found in it, the only lever is expiry, and every minute of TTL is a minute of broken
+	// collection nobody can shorten. An intermediary (Cloudflare, in production) may also EXTEND
+	// this — a max-age of 3600 was observed being served back as 14400 — so the value here is a
+	// floor on staleness, not a ceiling.
+	w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// A <script src> tag needs no CORS, but allow it anyway so a site can also fetch() the file
 	// to self-host or hash it.
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	http.ServeContent(w, r, "a.js", snippetBuildTime, strings.NewReader(snippetJS))
+	// The ETag is derived from the CONTENT, so revalidation is correct by construction. The
+	// previous version used a hand-maintained modtime constant documented as "bump it with the
+	// content" — which was then not bumped across three snippet changes, so caches kept answering
+	// 304 for a snippet that had materially changed. Embedding sites silently ran an old tracker
+	// missing both UTM capture and the custom-event API. Anything a human has to remember to
+	// update in lockstep with code will eventually be wrong; deriving it removes the choice.
+	w.Header().Set("ETag", snippetETag)
+	http.ServeContent(w, r, "a.js", snippetModTime(), strings.NewReader(snippetJS))
 }
 
-// snippetBuildTime is a fixed modtime so ServeContent can answer conditional requests. It changes
-// only when the snippet does (bump it with the content).
-var snippetBuildTime = time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+// snippetETag is a strong validator over the snippet body, computed once at startup.
+var snippetETag = func() string {
+	sum := sha256.Sum256([]byte(snippetJS))
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
+}()
+
+// snippetModTime derives a modtime from the content hash rather than a hand-edited date, so a
+// changed snippet always presents a changed validator. ServeContent needs *a* time; what matters
+// is that it moves when the bytes move.
+func snippetModTime() time.Time {
+	sum := sha256.Sum256([]byte(snippetJS))
+	// Map the first 4 bytes into a stable offset within a bounded window.
+	off := int64(sum[0])<<24 | int64(sum[1])<<16 | int64(sum[2])<<8 | int64(sum[3])
+	return time.Unix(1700000000+off%100000000, 0).UTC()
+}

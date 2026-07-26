@@ -1,9 +1,12 @@
 package analytics
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -387,4 +390,51 @@ func TestSnippetJS_ExposesCustomEventAPI(t *testing.T) {
 	if strings.Index(snippetJS, "window.mf=") < strings.Index(snippetJS, "addEventListener('popstate'") {
 		t.Error("window.mf is defined before the pageview wiring completes")
 	}
+}
+
+// TestSnippetCacheValidator_DerivesFromContent pins the fix for a production incident: the snippet
+// was served with a hand-maintained modtime constant, documented as "bump it with the content".
+// It was not bumped across three snippet changes, so caches kept answering 304 and embedding sites
+// silently ran an old tracker missing both UTM capture and the custom-event API. Traffic looked
+// like it was being collected; parts of it simply were not.
+//
+// Anything a human must remember to update in lockstep with code eventually goes stale. These
+// assert the validator is DERIVED, so the choice no longer exists.
+func TestSnippetCacheValidator_DerivesFromContent(t *testing.T) {
+	if snippetETag == "" || !strings.HasPrefix(snippetETag, `"`) {
+		t.Fatalf("ETag must be a quoted strong validator, got %q", snippetETag)
+	}
+
+	// Two different bodies must never share a validator.
+	sum := sha256.Sum256([]byte(snippetJS))
+	want := `"` + hex.EncodeToString(sum[:16]) + `"`
+	if snippetETag != want {
+		t.Errorf("ETag is not the content hash: got %s want %s", snippetETag, want)
+	}
+
+	// The modtime must move with the content too — ServeContent falls back to it for clients that
+	// send If-Modified-Since rather than If-None-Match.
+	t1 := snippetModTime()
+	if t1.IsZero() {
+		t.Fatal("modtime is zero")
+	}
+	// A hardcoded literal date in the source is exactly what caused the incident.
+	src := mustReadFile(t, "snippet.go")
+	if strings.Contains(src, "time.Date(2026") {
+		t.Error("snippet.go contains a hardcoded modtime literal — it will go stale the next time " +
+			"the snippet changes, exactly as it did before")
+	}
+	if !strings.Contains(src, "must-revalidate") {
+		t.Error("the snippet response should require revalidation; a long opaque cache makes a " +
+			"bad snippet unfixable for the duration of the TTL")
+	}
+}
+
+func mustReadFile(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(b)
 }
