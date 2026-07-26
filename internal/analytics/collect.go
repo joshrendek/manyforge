@@ -215,8 +215,8 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// collectEvent is one fully-derived analytics event. Grouping the arguments keeps the
-// fourteen-parameter SQL call from becoming a positional puzzle at the call site.
+// collectEvent is one fully-derived analytics event. Grouping the arguments keeps the SQL call
+// from becoming a positional puzzle at the call site.
 type collectEvent struct {
 	key      string
 	path     string
@@ -254,8 +254,9 @@ func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) 
 }
 
 // cloudflareCountry reduces Cloudflare's request header to the only location detail analytics
-// stores: an ISO 3166-1 alpha-2 country code. Trust is an explicit deployment decision. Cloudflare
-// uses XX for unknown locations and T1 for Tor; neither is a country and both are discarded.
+// stores: an ISO 3166-1 alpha-2 country code. PublicHandler.ResolveClient verifies the deployment
+// opt-in and request source before setting trusted. Cloudflare uses XX for unknown locations and
+// T1 for Tor; neither is a country and both are discarded.
 func cloudflareCountry(trusted bool, values []string) string {
 	if !trusted || len(values) != 1 {
 		return ""
@@ -274,7 +275,8 @@ func cloudflareCountry(trusted bool, values []string) string {
 	}
 	// Spell out both Cloudflare sentinels even though the ASCII-letter validation below also
 	// rejects T1. Keeping the edge contract visible prevents a future validator relaxation from
-	// silently turning Tor into a country bucket.
+	// silently turning Tor into a country bucket. Contract:
+	// https://developers.cloudflare.com/network/ip-geolocation/
 	if (a == 'X' && b == 'X') || (a == 'T' && b == '1') {
 		return ""
 	}

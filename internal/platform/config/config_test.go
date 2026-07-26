@@ -178,6 +178,16 @@ func TestLoadTrustCFIPCountry(t *testing.T) {
 		})
 	}
 
+	t.Run("enabled-with-too-many-cloudflare-sources", func(t *testing.T) {
+		t.Setenv("MANYFORGE_TRUST_CF_IPCOUNTRY", "true")
+		t.Setenv("MANYFORGE_TRUSTED_PROXY_CIDR", "10.244.0.0/16")
+		t.Setenv("MANYFORGE_CF_SOURCE_CIDR",
+			strings.Repeat("173.245.48.0/20,", maxSourceCIDRs)+"173.245.48.0/20")
+		if _, err := Load(); err == nil {
+			t.Fatalf("expected error with more than %d Cloudflare source CIDRs, got nil", maxSourceCIDRs)
+		}
+	})
+
 	for _, cidr := range []string{
 		"0.0.0.0/0",
 		"::/0",

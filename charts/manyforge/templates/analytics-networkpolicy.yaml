@@ -24,7 +24,9 @@
 {{- fail (printf "manyforge: analytics.cloudflareSourceRanges must use native IPv4 CIDRs instead of IPv4-mapped range (%s)" $raw) }}
 {{- end }}
 {{- $compressionParts := splitList "::" $address }}
-{{- if or (not (regexMatch "^[0-9a-f:]+$" $address)) (contains ":::" $address) (gt (len $compressionParts) 2) }}
+{{- $singleLeadingColon := and (hasPrefix ":" $address) (not (hasPrefix "::" $address)) }}
+{{- $singleTrailingColon := and (hasSuffix ":" $address) (not (hasSuffix "::" $address)) }}
+{{- if or (not (regexMatch "^[0-9a-f:]+$" $address)) (contains ":::" $address) (gt (len $compressionParts) 2) $singleLeadingColon $singleTrailingColon }}
 {{- fail (printf "manyforge: analytics.cloudflareSourceRanges contains a malformed IPv6 address (%s)" $raw) }}
 {{- end }}
 {{- $groupCount := 0 }}
