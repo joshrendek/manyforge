@@ -19,7 +19,10 @@ import (
 // snippetJS is the embeddable tracker. Constraints that shaped it:
 //
 //   - No dependencies, no build step, small enough to inline-read before trusting.
-//   - sendBeacon so a pageview survives the tab closing; XHR only as a fallback.
+//   - sendBeacon so a pageview survives the tab closing; XHR as a fallback. sendBeacon RETURNS
+//     FALSE when it cannot queue the payload (the browser's keepalive quota, typically under a
+//     burst of events), so its return value is checked — ignoring it drops those events silently
+//     while appearing to have sent them.
 //   - The beacon is sent as text/plain, NOT application/json. application/json is not a CORS
 //     "simple" content type, so it forces a preflight OPTIONS on every pageview from every
 //     embedding site — doubling requests and failing outright if preflight is ever blocked.
@@ -69,7 +72,7 @@ function post(o){
 var b;
 try{b=JSON.stringify(o);}catch(e){return;}
 try{
-if(navigator.sendBeacon){navigator.sendBeacon(ep,new Blob([b],{type:'text/plain;charset=UTF-8'}));return;}
+if(navigator.sendBeacon&&navigator.sendBeacon(ep,new Blob([b],{type:'text/plain;charset=UTF-8'})))return;
 }catch(e){}
 try{var x=new XMLHttpRequest();x.open('POST',ep,true);x.setRequestHeader('Content-Type','application/json');x.send(b);}catch(e){}
 }

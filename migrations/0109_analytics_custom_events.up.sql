@@ -13,6 +13,14 @@
 -- 1. Collect, with an event name and properties
 -- ============================================================================
 
+-- ROLLING-DEPLOY SAFETY. This migration runs as a pre-upgrade hook, i.e. BEFORE the new pods
+-- roll. During that window the OLD handler is still live and still issues the 12-argument call.
+-- Dropping the 12-argument overload and installing only a 14-argument one would make those calls
+-- fail function resolution — and because collect answers 204 unconditionally, every event in the
+-- rollout window would be lost SILENTLY.
+--
+-- Giving the two new parameters DEFAULTs makes the 12-argument call resolve to this same function,
+-- so old and new pods both work off one definition and there is no ambiguous overload pair.
 DROP FUNCTION IF EXISTS analytics_collect(text,text,text,text,text,boolean,text,text,text,text,text,text);
 
 CREATE FUNCTION analytics_collect(
@@ -28,8 +36,8 @@ CREATE FUNCTION analytics_collect(
     p_device_type   text,
     p_browser       text,
     p_country       text,
-    p_name          text,
-    p_props         jsonb
+    p_name          text  DEFAULT NULL,
+    p_props         jsonb DEFAULT NULL
 ) RETURNS int
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE c record; s bytea; today date;
@@ -120,16 +128,19 @@ BEGIN
     IF hi <= wm THEN RETURN 0; END IF;
     lo := wm - p_overlap;
 
+    -- Two touched sets, deliberately separate. A bucket touched only by CUSTOM EVENTS must have
+    -- its 'event' breakdown recomputed, but recomputing the pageview-derived dimensions for it
+    -- would rescan and re-aggregate a whole day of pageviews that did not change. On a site with
+    -- steady event traffic that turns every sweep into a full-day pageview rollup.
     CREATE TEMPORARY TABLE IF NOT EXISTS touched_dim (
-        tenant_root_id uuid, business_id uuid, client_id uuid, bucket_date date
+        tenant_root_id uuid, business_id uuid, client_id uuid, bucket_date date, kind text
     ) ON COMMIT DROP;
     DELETE FROM touched_dim;
 
-    -- Buckets touched by ANY event, not just pageviews: a bucket containing only custom events
-    -- still needs its 'event' breakdown recomputed.
     INSERT INTO touched_dim
     SELECT DISTINCT tenant_root_id, business_id, client_id,
-           (occurred_at AT TIME ZONE 'UTC')::date
+           (occurred_at AT TIME ZONE 'UTC')::date,
+           CASE WHEN name = 'pageview' THEN 'pv' ELSE 'ev' END
     FROM analytics_event
     WHERE ingested_at > lo AND ingested_at <= hi
       AND is_bot = false;
@@ -140,9 +151,13 @@ BEGIN
         RETURN 0;
     END IF;
 
+    -- Delete only what is about to be recomputed. Wiping every dimension for a bucket that only
+    -- events touched would drop its pageview breakdowns and then not restore them.
     DELETE FROM analytics_dimension_daily d
     USING touched_dim t
-    WHERE d.client_id = t.client_id AND d.bucket_date = t.bucket_date;
+    WHERE d.client_id = t.client_id AND d.bucket_date = t.bucket_date
+      AND ((t.kind = 'pv' AND d.dimension <> 'event')
+        OR (t.kind = 'ev' AND d.dimension =  'event'));
 
     WITH unpivoted AS (
         -- Pageview-derived dimensions: restricted to pageviews so these breakdowns stay
@@ -154,6 +169,8 @@ BEGIN
         JOIN analytics_event e
           ON e.client_id = t.client_id
          AND e.name = 'pageview' AND e.is_bot = false
+        -- pageview dimensions only for buckets a PAGEVIEW touched
+         AND t.kind = 'pv'
          AND e.occurred_at >= (t.bucket_date::timestamp AT TIME ZONE 'UTC')
          AND e.occurred_at <  ((t.bucket_date + 1)::timestamp AT TIME ZONE 'UTC')
         CROSS JOIN LATERAL (VALUES
@@ -175,6 +192,7 @@ BEGIN
         JOIN analytics_event e
           ON e.client_id = t.client_id
          AND e.name <> 'pageview' AND e.is_bot = false
+         AND t.kind = 'ev'
          AND e.occurred_at >= (t.bucket_date::timestamp AT TIME ZONE 'UTC')
          AND e.occurred_at <  ((t.bucket_date + 1)::timestamp AT TIME ZONE 'UTC')
     ), ranked AS (

@@ -30,6 +30,7 @@ const summary = {
     ],
     browser: [{ value: 'Chrome', pageviews: 42, visitors: 9 }],
     country: [],
+    event: [{ value: 'grow_start', pageviews: 7, visitors: 5 }],
   },
 };
 
@@ -145,6 +146,20 @@ describe('AnalyticsDashboardComponent', () => {
     const hint = fixture.nativeElement.querySelector('[data-testid="country-unavailable"]');
     expect(hint).toBeTruthy();
     expect(hint.textContent).toContain('MANYFORGE_GEOIP_DB');
+  });
+
+  // The API reuses the `pageviews` field for every dimension, but for 'event' that number is a
+  // count of custom events. Labelling it "Pageviews" would report a figure that silently
+  // disagrees with the pageview total shown above it.
+  it('labels the event breakdown as Events, not Pageviews', () => {
+    const el = fixture.nativeElement;
+    const events = el.querySelector('[data-testid="breakdown-event"]');
+    expect(events).toBeTruthy();
+    expect(events.querySelector('.mf-th').textContent).toContain('Events');
+    expect(events.querySelector('.mf-th').textContent).not.toContain('Pageviews');
+    // Other dimensions keep the pageview label.
+    const device = el.querySelector('[data-testid="breakdown-device"]');
+    expect(device.querySelector('.mf-th').textContent).toContain('Pageviews');
   });
 
   it('surfaces an error without crashing', () => {

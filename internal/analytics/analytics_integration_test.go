@@ -998,3 +998,62 @@ func TestCustomEvent_BotsExcluded(t *testing.T) {
 		t.Fatalf("bot event counted: %+v", ev)
 	}
 }
+
+// The migration runs as a pre-upgrade hook, BEFORE new pods roll — so during the rollout window
+// the OLD handler is still issuing the 12-argument call. If that stopped resolving, every event in
+// the window would be lost silently (collect answers 204 regardless).
+func TestCustomEvent_OldTwelveArgCallStillResolves(t *testing.T) {
+	ctx, e := newEnv(t)
+	var n int
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT analytics_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		e.key, "/legacy", "", "203.0.113.1", humanUA, false, "", "", "", "desktop", "Chrome", "",
+	).Scan(&n); err != nil {
+		t.Fatalf("the pre-0109 12-argument call no longer resolves — a rolling deploy would lose "+
+			"every event until the old pods drain: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("12-arg call stored %d rows, want 1", n)
+	}
+	var name string
+	if err := e.tdb.Super.QueryRow(ctx,
+		"SELECT name FROM analytics_event WHERE client_id=$1", e.site).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "pageview" {
+		t.Errorf("legacy call stored name=%q, want the pageview default", name)
+	}
+}
+
+// A bucket touched only by custom events must have its 'event' breakdown recomputed WITHOUT
+// destroying the pageview breakdowns already computed for that same day.
+func TestCustomEvent_EventOnlySweepPreservesPageviewBreakdowns(t *testing.T) {
+	ctx, e := newEnv(t)
+	// Day one: a pageview, rolled up. device/browser breakdowns now exist.
+	e.collectFull(t, "/", "", "utm_source=hn", humanUA, "203.0.113.1")
+	e.rollup(t, ctx)
+	_, before := e.summary(t, e.site)
+	if len(before.Breakdowns["device"]) == 0 || len(before.Breakdowns["utm_source"]) == 0 {
+		t.Fatalf("expected pageview breakdowns after the first sweep: %+v", before.Breakdowns)
+	}
+
+	// Now ONLY a custom event arrives and the rollup runs again.
+	e.collectEvent(t, "grow_start", nil, humanUA, "203.0.113.1")
+	e.rollup(t, ctx)
+
+	_, after := e.summary(t, e.site)
+	if len(after.Breakdowns["event"]) != 1 {
+		t.Fatalf("the event breakdown was not produced: %+v", after.Breakdowns["event"])
+	}
+	if len(after.Breakdowns["device"]) == 0 {
+		t.Fatal("an events-only sweep destroyed the device breakdown — the delete must be scoped " +
+			"to the dimensions actually being recomputed")
+	}
+	if len(after.Breakdowns["utm_source"]) == 0 {
+		t.Fatal("an events-only sweep destroyed the utm_source breakdown")
+	}
+	if after.Pageviews != before.Pageviews {
+		t.Fatalf("pageviews changed across an events-only sweep: %d -> %d",
+			before.Pageviews, after.Pageviews)
+	}
+}
