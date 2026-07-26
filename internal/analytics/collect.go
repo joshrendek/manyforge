@@ -29,6 +29,17 @@ const maxPathLen = 512
 
 const cloudflareCountryHeader = "CF-IPCountry"
 
+var isoAlpha2Country = func() [26][26]bool {
+	var valid [26][26]bool
+	for a := byte('A'); a <= 'Z'; a++ {
+		for b := byte('A'); b <= 'Z'; b++ {
+			region, err := language.ParseRegion(string([]byte{a, b}))
+			valid[a-'A'][b-'A'] = err == nil && region.IsCountry() && !region.IsPrivateUse()
+		}
+	}
+	return valid
+}()
+
 // PublicHandler serves the principal-less analytics surface: the snippet and the collect endpoint.
 type PublicHandler struct {
 	DB      *appdb.DB
@@ -228,12 +239,10 @@ func cloudflareCountry(trusted bool, values []string) string {
 	if a < 'A' || a > 'Z' || b < 'A' || b > 'Z' {
 		return ""
 	}
-	code := string([]byte{a, b})
-	region, err := language.ParseRegion(code)
-	if err != nil || !region.IsCountry() || region.IsPrivateUse() {
+	if !isoAlpha2Country[a-'A'][b-'A'] {
 		return ""
 	}
-	return code
+	return string([]byte{a, b})
 }
 
 // normalizePath strips the query string and fragment, enforces a leading slash, drops a trailing

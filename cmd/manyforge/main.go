@@ -711,10 +711,9 @@ func main() {
 	}
 	analyticsPublicH := newAnalyticsPublicHandler(database, logger, metrics, trusted, cfg)
 
-	// Inbound ingestion rate limiting (FR-020), the abuse/loop bound on the public
-	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,
-	// shared across the webhook AND SMTP paths so a given source/recipient cannot
-	// evade one transport by hopping to the other:
+	// Inbound webhook/SMTP rate limiting (FR-020), separate from the analytics limiter above.
+	// TWO shared transport layers are built from the SAME ingest knobs so a given
+	// source/recipient cannot evade one transport by hopping to the other:
 	ingestIPLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	//   - ingestIPLimiter: per-IP. Wraps the webhook group via httpx.RateLimit and

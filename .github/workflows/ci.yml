@@ -44,6 +44,11 @@ jobs:
           grep -Fq 'name: manyforge-trusted-ingress' <<<"$enabled_render"
           grep -Fq 'kubernetes.io/metadata.name: "ingress"' <<<"$enabled_render"
           grep -Fq '          port: http' <<<"$enabled_render"
+          default_checksum="$(awk '/checksum\\/config:/ { print $2; exit }' <<<"$default_render")"
+          enabled_checksum="$(awk '/checksum\\/config:/ { print $2; exit }' <<<"$enabled_render")"
+          test -n "$default_checksum"
+          test -n "$enabled_checksum"
+          test "$default_checksum" != "$enabled_checksum"
       - name: Build
         run: make build
       - name: Vet / lint
