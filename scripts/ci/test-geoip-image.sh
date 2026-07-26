@@ -85,6 +85,48 @@ docker exec "$postgres_container" pg_isready --username manyforge --dbname manyf
 
 super_dsn='postgres://manyforge:devpassword@postgres:5432/manyforge?sslmode=disable'
 app_dsn='postgres://manyforge_app:apppw@postgres:5432/manyforge?sslmode=disable'
+
+assert_app_ready() {
+  local image_name=$1
+  local expected_level=$2
+  local expected_message=$3
+  local app_log="$test_tmp/${image_name}.log"
+  local published_addr=""
+  local ready=false
+
+  app_container=$(docker run --detach \
+    --network "$test_network" \
+    --publish 127.0.0.1::8080 \
+    --env "MANYFORGE_DATABASE_URL=$app_dsn" \
+    --env MANYFORGE_GEOIP_DB=/geo/GeoLite2-Country.mmdb \
+    --env MANYFORGE_SANDBOX_MODE=off \
+    "$image_name")
+  for _ in {1..150}; do
+    docker logs "$app_container" >"$app_log" 2>&1 || true
+    published_addr=$(docker port "$app_container" 8080/tcp 2>/dev/null | head -n 1 || true)
+    if [[ -n "$published_addr" ]] &&
+      grep -F "$expected_message" "$app_log" | grep -Fq "level=$expected_level" &&
+      curl --fail --silent --show-error "http://$published_addr/readyz" >/dev/null; then
+      ready=true
+      break
+    fi
+    if [[ "$(docker inspect --format '{{.State.Running}}' "$app_container")" != "true" ]]; then
+      cat "$app_log" >&2
+      echo >&2 "$image_name exited before readiness"
+      exit 1
+    fi
+    sleep 0.2
+  done
+  if [[ "$ready" != "true" ]] ||
+    [[ "$(docker inspect --format '{{.State.Running}}' "$app_container")" != "true" ]]; then
+    cat "$app_log" >&2
+    echo >&2 "$image_name did not reach readiness with the expected GeoIP startup state"
+    exit 1
+  fi
+  docker rm -f "$app_container" >/dev/null
+  app_container=""
+}
+
 docker run --rm \
   --network "$test_network" \
   --env "MANYFORGE_DATABASE_URL=$super_dsn" \
@@ -93,35 +135,12 @@ docker exec "$postgres_container" \
   psql --username manyforge --dbname manyforge --set ON_ERROR_STOP=1 \
   --command "ALTER ROLE manyforge_app LOGIN PASSWORD 'apppw'" >/dev/null
 
-app_container=$(docker run --detach \
-  --network "$test_network" \
-  --env "MANYFORGE_DATABASE_URL=$app_dsn" \
-  --env MANYFORGE_GEOIP_DB=/geo/GeoLite2-Country.mmdb \
-  --env MANYFORGE_SANDBOX_MODE=off \
-  manyforge-geoip-credentialed-test)
-started=false
-for _ in {1..100}; do
-  docker logs "$app_container" >"$test_tmp/app.log" 2>&1 || true
-  if grep -Fq "analytics geoip database loaded" "$test_tmp/app.log" &&
-    grep -Fq "starting server" "$test_tmp/app.log"; then
-    started=true
-    break
-  fi
-  if [[ "$(docker inspect --format '{{.State.Running}}' "$app_container")" != "true" ]]; then
-    cat "$test_tmp/app.log" >&2
-    echo >&2 "final app image exited before startup completed"
-    exit 1
-  fi
-  sleep 0.2
-done
-if [[ "$started" != "true" ]]; then
-  cat "$test_tmp/app.log" >&2
-  echo >&2 "final app image did not load GeoIP and start its server"
-  exit 1
-fi
+assert_app_ready \
+  manyforge-geoip-credentialed-test \
+  INFO \
+  "analytics geoip database loaded"
 
 DOCKER_BUILDKIT=1 docker build \
-  --target runtime-geoip \
   --build-arg GEOIP_CACHE_KEY=secretless-ci \
   --build-arg GEOIP_CREDENTIALS_PRESENT=false \
   --tag manyforge-geoip-secretless-test \
@@ -135,3 +154,7 @@ if tar -tf "$test_tmp/secretless-runtime.tar" | grep -q 'GeoLite2-Country\.mmdb$
   echo >&2 "secretless GeoIP runtime unexpectedly contains a database"
   exit 1
 fi
+assert_app_ready \
+  manyforge-geoip-secretless-test \
+  WARN \
+  "analytics geoip database not found; country lookup disabled"
