@@ -97,17 +97,64 @@ const reviewMultiDim = {
   pr_number: 5,
   model: 'x-ai/grok',
   findings: [
-    { file: 'src/auth.go', line: 10, severity: 'error', title: 'SQLi', detail: 'Parameterize.', dimension: 'security' },
-    { file: 'src/auth.go', line: 20, severity: 'warning', title: 'Weak hash', detail: 'Use bcrypt.', dimension: 'security' },
-    { file: 'src/calc.go', line: 5, severity: 'warning', title: 'Off-by-one', detail: 'Loop bound.', dimension: 'correctness' },
+    {
+      file: 'src/auth.go',
+      line: 10,
+      severity: 'error',
+      title: 'SQLi',
+      detail: 'Parameterize.',
+      dimension: 'security',
+    },
+    {
+      file: 'src/auth.go',
+      line: 20,
+      severity: 'warning',
+      title: 'Weak hash',
+      detail: 'Use bcrypt.',
+      dimension: 'security',
+    },
+    {
+      file: 'src/calc.go',
+      line: 5,
+      severity: 'warning',
+      title: 'Off-by-one',
+      detail: 'Loop bound.',
+      dimension: 'correctness',
+    },
   ],
   findings_count: 3,
   created_at: '2026-06-15T00:00:00Z',
   posted_at: '2026-06-15T00:01:00Z',
   dimension_runs: [
-    { dimension: 'security', model: 'x-ai/grok', provider: 'openrouter', tokens_in: 100, tokens_out: 50, cost_cents: 2, status: 'succeeded', finding_count: 2 },
-    { dimension: 'correctness', model: 'x-ai/grok', provider: 'openrouter', tokens_in: 80, tokens_out: 40, cost_cents: 1, status: 'succeeded', finding_count: 1 },
-    { dimension: 'ui', tokens_in: 0, tokens_out: 0, cost_cents: 0, status: 'skipped', skipped_reason: 'no matching files', finding_count: 0 },
+    {
+      dimension: 'security',
+      model: 'x-ai/grok',
+      provider: 'openrouter',
+      tokens_in: 100,
+      tokens_out: 50,
+      cost_cents: 2,
+      status: 'succeeded',
+      finding_count: 2,
+    },
+    {
+      dimension: 'correctness',
+      model: 'x-ai/grok',
+      provider: 'openrouter',
+      tokens_in: 80,
+      tokens_out: 40,
+      cost_cents: 1,
+      status: 'succeeded',
+      finding_count: 1,
+    },
+    {
+      dimension: 'ui',
+      tokens_in: 0,
+      tokens_out: 0,
+      cost_cents: 0,
+      status: 'skipped',
+      skipped_reason: 'no matching files',
+      finding_count: 0,
+    },
   ],
 };
 
@@ -218,7 +265,9 @@ test('code-review: trigger a review and watch it complete', async ({ page }) => 
   );
 });
 
-test('code-review detail: groups findings by dimension and surfaces skipped lanes', async ({ page }) => {
+test('code-review detail: groups findings by dimension and surfaces skipped lanes', async ({
+  page,
+}) => {
   await auth(page);
   await page.route('**/api/v1/businesses/b1/code-reviews/r1', (r) =>
     r.fulfill({ json: reviewMultiDim }),
@@ -246,7 +295,9 @@ test('code-review detail: groups findings by dimension and surfaces skipped lane
   await expect(skippedRow).toContainText('no matching files');
 });
 
-test('code-review detail a11y: findings are ARIA tables, group headers are headings, skipped is a list, pills are named', async ({ page }) => {
+test('code-review detail a11y: findings are ARIA tables, group headers are headings, skipped is a list, pills are named', async ({
+  page,
+}) => {
   await auth(page);
   await page.route('**/api/v1/businesses/b1/code-reviews/r1', (r) =>
     r.fulfill({ json: reviewMultiDim }),
@@ -266,7 +317,9 @@ test('code-review detail a11y: findings are ARIA tables, group headers are headi
   await expect(page.locator('[data-testid="skipped-dimensions"] ul > li')).toHaveCount(1);
 });
 
-test('review setup a11y: every per-row control has an accessible name naming its dimension', async ({ page }) => {
+test('review setup a11y: every per-row control has an accessible name naming its dimension', async ({
+  page,
+}) => {
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await auth(page);
   await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
@@ -274,9 +327,20 @@ test('review setup a11y: every per-row control has an accessible name naming its
     r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
   );
   await page.route('**/api/v1/businesses/b1/review-config', (r) =>
-    r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single' } }),
+    r.fulfill({
+      json: {
+        dedupe: true,
+        verify_enabled: false,
+        verify_provider: '',
+        verify_model: '',
+        cite_rules: false,
+        post_mode: 'single',
+      },
+    }),
   );
-  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => r.fulfill({ json: { items: [] } }));
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) =>
+    r.fulfill({ json: { items: [] } }),
+  );
 
   await page.goto('/code-review/setup');
   await page.getByTestId('preset-balanced').click();
@@ -305,7 +369,16 @@ test('review setup: preset seeds rows, save row + config hit the API', async ({ 
     if (r.request().method() === 'PUT') {
       return r.fulfill({ json: { ...r.request().postDataJSON() } });
     }
-    return r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single' } });
+    return r.fulfill({
+      json: {
+        dedupe: true,
+        verify_enabled: false,
+        verify_provider: '',
+        verify_model: '',
+        cite_rules: false,
+        post_mode: 'single',
+      },
+    });
   });
   let postedDim: Record<string, unknown> | null = null;
   await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => {
@@ -341,7 +414,9 @@ test('review setup: preset seeds rows, save row + config hit the API', async ({ 
   await putReq;
 });
 
-test('review setup: configure a reviewbot fallback chain (add, reorder, remove) and save it', async ({ page }) => {
+test('review setup: configure a reviewbot fallback chain (add, reorder, remove) and save it', async ({
+  page,
+}) => {
   // Fallback FIRST so unmocked shell/nav calls return empty instead of 401→logout.
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await auth(page);
@@ -353,8 +428,22 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
     r.fulfill({
       json: {
         items: [
-          { ...agent, id: 'ag1', name: 'LM Studio', provider: 'vllm', model: 'ornith-1.0-9b', max_concurrent_lanes: 1 },
-          { ...agent, id: 'ag2', name: 'Cloud', provider: 'openrouter', model: 'x-ai/grok', max_concurrent_lanes: 4 },
+          {
+            ...agent,
+            id: 'ag1',
+            name: 'LM Studio',
+            provider: 'vllm',
+            model: 'ornith-1.0-9b',
+            max_concurrent_lanes: 1,
+          },
+          {
+            ...agent,
+            id: 'ag2',
+            name: 'Cloud',
+            provider: 'openrouter',
+            model: 'x-ai/grok',
+            max_concurrent_lanes: 4,
+          },
         ],
       },
     }),
@@ -366,16 +455,28 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
       return r.fulfill({ json: { ...putBody } });
     }
     return r.fulfill({
-      json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] },
+      json: {
+        dedupe: true,
+        verify_enabled: false,
+        verify_provider: '',
+        verify_model: '',
+        cite_rules: false,
+        post_mode: 'single',
+        review_agent_chain: [],
+      },
     });
   });
-  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => r.fulfill({ json: { items: [] } }));
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) =>
+    r.fulfill({ json: { items: [] } }),
+  );
 
   await page.goto('/code-review/setup');
 
   // No fallback configured initially. The add-picker has an accessible name (a11y).
   await expect(page.getByTestId('chain-empty')).toBeVisible();
-  await expect(page.getByRole('combobox', { name: 'Add a reviewbot to the fallback chain' })).toBeVisible();
+  await expect(
+    page.getByRole('combobox', { name: 'Add a reviewbot to the fallback chain' }),
+  ).toBeVisible();
 
   // Add LM Studio (primary) then Cloud (fallback) via the picker.
   await page.getByTestId('chain-add').selectOption('ag1');
@@ -384,7 +485,9 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
   await expect(page.getByTestId('chain-name-1')).toContainText('Cloud');
 
   // a11y: per-row controls carry accessible names that identify their agent (manyforge-review).
-  await expect(page.getByRole('button', { name: 'Remove LM Studio from the fallback chain' })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Remove LM Studio from the fallback chain' }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Move Cloud up' })).toBeVisible();
 
   // Reorder: move Cloud up → it becomes primary.
@@ -397,14 +500,18 @@ test('review setup: configure a reviewbot fallback chain (add, reorder, remove) 
   await expect(page.getByTestId('chain-name-1')).toHaveCount(0);
 
   // Save → the PUT body carries the chain in order.
-  const putReq = page.waitForRequest((req) => req.url().includes('/review-config') && req.method() === 'PUT');
+  const putReq = page.waitForRequest(
+    (req) => req.url().includes('/review-config') && req.method() === 'PUT',
+  );
   await page.getByTestId('config-save').click();
   await putReq;
   expect(putBody).not.toBeNull();
   expect(putBody!['review_agent_chain']).toEqual(['ag1']);
 });
 
-test('review setup: drag-reorder the reviewbot fallback chain by its grip handle', async ({ page }) => {
+test('review setup: drag-reorder the reviewbot fallback chain by its grip handle', async ({
+  page,
+}) => {
   // Fallback FIRST so unmocked shell/nav calls return empty instead of 401→logout.
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await auth(page);
@@ -416,18 +523,42 @@ test('review setup: drag-reorder the reviewbot fallback chain by its grip handle
     r.fulfill({
       json: {
         items: [
-          { ...agent, id: 'ag1', name: 'LM Studio', provider: 'vllm', model: 'ornith-1.0-9b', max_concurrent_lanes: 1 },
-          { ...agent, id: 'ag2', name: 'Cloud', provider: 'openrouter', model: 'x-ai/grok', max_concurrent_lanes: 4 },
+          {
+            ...agent,
+            id: 'ag1',
+            name: 'LM Studio',
+            provider: 'vllm',
+            model: 'ornith-1.0-9b',
+            max_concurrent_lanes: 1,
+          },
+          {
+            ...agent,
+            id: 'ag2',
+            name: 'Cloud',
+            provider: 'openrouter',
+            model: 'x-ai/grok',
+            max_concurrent_lanes: 4,
+          },
         ],
       },
     }),
   );
   await page.route('**/api/v1/businesses/b1/review-config', (r) =>
     r.fulfill({
-      json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] },
+      json: {
+        dedupe: true,
+        verify_enabled: false,
+        verify_provider: '',
+        verify_model: '',
+        cite_rules: false,
+        post_mode: 'single',
+        review_agent_chain: [],
+      },
     }),
   );
-  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) => r.fulfill({ json: { items: [] } }));
+  await page.route('**/api/v1/businesses/b1/review-dimensions', (r) =>
+    r.fulfill({ json: { items: [] } }),
+  );
 
   await page.goto('/code-review/setup');
 
@@ -441,13 +572,24 @@ test('review setup: drag-reorder the reviewbot fallback chain by its grip handle
   // events (NOT the HTML5 dragTo protocol), so drive page.mouse manually with incremental moves.
   const source = page.getByTestId('chain-drag-1');
   const target = page.getByTestId('chain-drag-0');
+  // Scroll into view BEFORE measuring. page.mouse.* takes raw viewport coordinates and does not
+  // auto-scroll the way locator actions do, so an element below the fold yields a bounding box
+  // whose centre hit-tests to nothing — the events land on no element, CDK never sees a drag
+  // start, and the failure looks like "drag-and-drop is broken" rather than "the row was
+  // off-screen". document.elementFromPoint() at the handle centre returned null here.
+  await source.scrollIntoViewIfNeeded();
+  await target.scrollIntoViewIfNeeded();
   const sb = (await source.boundingBox())!;
   const tb = (await target.boundingBox())!;
   await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
   await page.mouse.down();
   await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2 - 4, { steps: 3 }); // exceed the CDK drag threshold
   await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 12 });
-  await page.mouse.move(tb.x + tb.width / 2, tb.y - 6, { steps: 4 }); // above row 0 → drop before it
+  // Land just INSIDE the top of row 0, not above it. These rows are ~30px tall and the drop list
+  // starts exactly at row 0's top edge, so the tb.y - 6 used by the taller provider-priority list
+  // lands OUTSIDE the cdkDropList — CDK then correctly refuses the drop and reverts, which looks
+  // exactly like "drag-and-drop is broken". Crossing row 0's midpoint is what triggers the sort.
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + 2, { steps: 4 });
   await page.mouse.up();
 
   // Cloud is now primary; LM Studio moved to fallback.
@@ -455,7 +597,9 @@ test('review setup: drag-reorder the reviewbot fallback chain by its grip handle
   await expect(page.getByTestId('chain-name-1')).toContainText('LM Studio');
 });
 
-test('review setup: drag a fallback to the top of the provider priority list to promote it to primary', async ({ page }) => {
+test('review setup: drag a fallback to the top of the provider priority list to promote it to primary', async ({
+  page,
+}) => {
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await auth(page);
   await page.addInitScript(() => localStorage.setItem('mf-current-business', 'b1'));
@@ -463,7 +607,17 @@ test('review setup: drag a fallback to the top of the provider priority list to 
     r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
   );
   await page.route('**/api/v1/businesses/b1/review-config', (r) =>
-    r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] } }),
+    r.fulfill({
+      json: {
+        dedupe: true,
+        verify_enabled: false,
+        verify_provider: '',
+        verify_model: '',
+        cite_rules: false,
+        post_mode: 'single',
+        review_agent_chain: [],
+      },
+    }),
   );
   // Seed a dimension: primary anthropic, then two fallbacks (openrouter, vLLM). In the unified
   // priority list that renders as #1 anthropic, #2 openrouter, #3 vLLM.
@@ -472,12 +626,19 @@ test('review setup: drag a fallback to the top of the provider priority list to 
       json: {
         items: [
           {
-            id: 'd1', dimension: 'security', provider: 'anthropic', model: 'claude-opus-4-8',
+            id: 'd1',
+            dimension: 'security',
+            provider: 'anthropic',
+            model: 'claude-opus-4-8',
             fallback_chain: [
               { provider: 'openrouter', model: 'gpt-4o' },
               { provider: 'vllm', model: 'qwen' },
             ],
-            prompt: 'Security prompt', scope_globs: [], min_severity: 'warning', enabled: true, sort_order: 1,
+            prompt: 'Security prompt',
+            scope_globs: [],
+            min_severity: 'warning',
+            enabled: true,
+            sort_order: 1,
           },
         ],
       },
@@ -509,7 +670,9 @@ test('review setup: drag a fallback to the top of the provider priority list to 
   await expect(page.getByTestId('row-priority-provider-2')).toHaveValue('openrouter');
 });
 
-test('review setup: configure a per-dimension fallback chain (add, reorder, remove) and save it', async ({ page }) => {
+test('review setup: configure a per-dimension fallback chain (add, reorder, remove) and save it', async ({
+  page,
+}) => {
   // Fallback FIRST so unmocked shell/nav calls return empty instead of 401→logout.
   await page.route('**/api/**', (r) => r.fulfill({ json: { items: [], next_cursor: null } }));
   await auth(page);
@@ -518,7 +681,17 @@ test('review setup: configure a per-dimension fallback chain (add, reorder, remo
     r.fulfill({ json: { items: [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }] } }),
   );
   await page.route('**/api/v1/businesses/b1/review-config', (r) =>
-    r.fulfill({ json: { dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] } }),
+    r.fulfill({
+      json: {
+        dedupe: true,
+        verify_enabled: false,
+        verify_provider: '',
+        verify_model: '',
+        cite_rules: false,
+        post_mode: 'single',
+        review_agent_chain: [],
+      },
+    }),
   );
   // The OpenRouter model field is free-text with a live typeahead <datalist>, populated from
   // this endpoint the first time a row's (primary or fallback) provider is set to openrouter.
@@ -534,7 +707,18 @@ test('review setup: configure a per-dimension fallback chain (add, reorder, remo
     return r.fulfill({
       json: {
         items: [
-          { id: 'd1', dimension: 'security', provider: 'vllm', model: 'ornith', fallback_chain: [], prompt: '', scope_globs: [], min_severity: 'warning', enabled: true, sort_order: 1 },
+          {
+            id: 'd1',
+            dimension: 'security',
+            provider: 'vllm',
+            model: 'ornith',
+            fallback_chain: [],
+            prompt: '',
+            scope_globs: [],
+            min_severity: 'warning',
+            enabled: true,
+            sort_order: 1,
+          },
         ],
       },
     });
