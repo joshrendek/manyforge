@@ -41,9 +41,9 @@ type Config struct {
 	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
 	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
 	// GeoIPDBPath optionally points at a MaxMind-format .mmdb for analytics country lookup.
-	// Empty (the default) disables the country breakdown entirely. The database is deliberately
-	// not vendored: it carries licensing terms and goes stale monthly, so a checked-in copy would
-	// impose those terms on every deployment and be wrong within a quarter.
+	// Empty disables country breakdowns. Production images can bundle an updated GeoLite2 copy at
+	// build time without committing licensed database data to the repository. A configured path
+	// that is absent disables lookup with a startup warning; unreadable or invalid files are fatal.
 	GeoIPDBPath string
 
 	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
