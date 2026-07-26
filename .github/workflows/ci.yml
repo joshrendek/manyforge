@@ -21,11 +21,8 @@ jobs:
         run: make test
       - name: Contract tests (shared-layer interfaces + OpenAPI drift)
         run: make contract-test
-      - name: GeoIP image fallback (no credentials)
-        run: |
-          DOCKER_BUILDKIT=1 docker build --target geoip --tag manyforge-geoip-secretless .
-          docker run --rm --entrypoint sh manyforge-geoip-secretless \
-            -c 'test -d /geo && test ! -e /geo/GeoLite2-Country.mmdb'
+      - name: GeoIP image paths and secret boundary
+        run: scripts/ci/test-geoip-image.sh
       - name: Integration tests (testcontainers)
         run: make int-test
 
