@@ -36,5 +36,5 @@ data:
   # operator-gated setup routes 404 and the webhook/OAuth redirect URLs unset.
   MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL: {{ .Values.instanceOperatorPrincipal | quote }}
   MANYFORGE_PUBLIC_BASE_URL: {{ .Values.publicBaseURL | quote }}
-  # A missing database file in an uncredentialed image is non-fatal; an invalid/corrupt DB is fatal.
+  # A missing database file logs a startup warning but is non-fatal; an invalid/corrupt DB is fatal.
   MANYFORGE_GEOIP_DB: {{ .Values.geoip.databasePath | quote }}

@@ -18,8 +18,8 @@ type MMDBResolver struct {
 
 // OpenMMDB opens a MaxMind country database. An empty path or a missing configured file returns
 // (nil, nil) because local and uncredentialed image builds intentionally omit GeoLite2; the missing
-// file produces a warning when logger is non-nil. Other open errors remain fatal so an unreadable or
-// invalid database cannot make a broken deployment look healthy.
+// file logs at slog.Warn level when logger is non-nil. Other open errors remain fatal so an
+// unreadable or invalid database cannot make a broken deployment look healthy.
 func OpenMMDB(path string, logger *slog.Logger) (*MMDBResolver, error) {
 	if path == "" {
 		return nil, nil
@@ -40,7 +40,8 @@ func OpenMMDB(path string, logger *slog.Logger) (*MMDBResolver, error) {
 	return &MMDBResolver{db: db}, nil
 }
 
-// Country returns the ISO 3166-1 alpha-2 code for ip, or "" when it cannot be placed.
+// Country returns the ISO 3166-1 alpha-2 code for ip, or "" when it cannot be placed or the
+// resolver is nil/uninitialized.
 //
 // A lookup miss is silent by design: this runs on every pageview, so logging unresolvable
 // addresses would produce a log line per request AND write client IPs into the logs — exactly the

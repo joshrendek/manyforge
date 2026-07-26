@@ -39,5 +39,6 @@ expected_netrc='machine download.maxmind.com login maxmind-account-sentinel-4f61
 fixture_tmp=$(mktemp -d)
 trap 'rm -rf "$fixture_tmp"' EXIT HUP INT TERM
 mkdir -p "$fixture_tmp/GeoLite2-Country_test"
-printf 'CI GeoLite2 fixture\n' >"$fixture_tmp/GeoLite2-Country_test/GeoLite2-Country.mmdb"
+cp /tmp/geoip-ci/testdata/GeoLite2-Country-Test.mmdb \
+  "$fixture_tmp/GeoLite2-Country_test/GeoLite2-Country.mmdb"
 tar -czf "$output_file" -C "$fixture_tmp" .
