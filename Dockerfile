@@ -12,7 +12,7 @@
 
 # GeoLite2 Country is downloaded only when both BuildKit secrets are present. The account ID and
 # license key must never be build args: args are recorded in image metadata/history. The public
-# date, credential-presence, and download-URL args invalidate BuildKit's secret-insensitive cache.
+# date and credential-presence args invalidate BuildKit's secret-insensitive cache.
 # GEOIP_CREDENTIALS_PRESENT intentionally reveals only the configured/not-configured state in image
 # history; it never carries either credential value.
 FROM debian:bookworm-slim AS geoip
@@ -22,11 +22,12 @@ RUN apt-get update \
     && mkdir -p /geo
 ARG GEOIP_CACHE_KEY=manual
 ARG GEOIP_CREDENTIALS_PRESENT=false
-ARG GEOIP_DOWNLOAD_URL=https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz
+ARG GEOIP_TEST_MODE=false
 RUN --mount=type=secret,id=maxmind_account_id \
     --mount=type=secret,id=maxmind_license_key \
+    --mount=type=bind,source=scripts/ci/mock-maxmind-download.sh,target=/tmp/mock-maxmind-download,readonly \
     set -eu; \
-    printf '%s:%s:%s' "$GEOIP_CACHE_KEY" "$GEOIP_CREDENTIALS_PRESENT" "$GEOIP_DOWNLOAD_URL" >/dev/null; \
+    printf '%s:%s:%s' "$GEOIP_CACHE_KEY" "$GEOIP_CREDENTIALS_PRESENT" "$GEOIP_TEST_MODE" >/dev/null; \
     account_file=/run/secrets/maxmind_account_id; \
     license_file=/run/secrets/maxmind_license_key; \
     if [ ! -s "$account_file" ] || [ ! -s "$license_file" ]; then \
@@ -36,17 +37,17 @@ RUN --mount=type=secret,id=maxmind_account_id \
     account_id="$(tr -d '\r\n' < "$account_file")"; \
     license_key="$(tr -d '\r\n' < "$license_file")"; \
     test -n "$account_id" && test -n "$license_key"; \
-    download_host="$(printf '%s' "$GEOIP_DOWNLOAD_URL" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')"; \
-    test -n "$download_host"; \
     umask 077; \
-    printf 'machine %s login %s password %s\n' \
-      "$download_host" "$account_id" "$license_key" > /tmp/maxmind.netrc; \
+    printf 'machine download.maxmind.com login %s password %s\n' \
+      "$account_id" "$license_key" > /tmp/maxmind.netrc; \
+    trap 'rm -f /tmp/maxmind.netrc' EXIT HUP INT TERM; \
     mkdir -p /tmp/geolite; \
-    curl --fail --show-error --silent --location --retry 3 \
+    download_client=curl; \
+    if [ "$GEOIP_TEST_MODE" = true ]; then download_client=/tmp/mock-maxmind-download; fi; \
+    "$download_client" --fail --show-error --silent --location --retry 3 \
       --netrc-file /tmp/maxmind.netrc \
-      "$GEOIP_DOWNLOAD_URL" \
+      'https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz' \
       -o /tmp/geolite.tar.gz; \
-    rm -f /tmp/maxmind.netrc; \
     tar -xzf /tmp/geolite.tar.gz -C /tmp/geolite; \
     find /tmp/geolite -type f -name GeoLite2-Country.mmdb \
       -exec cp '{}' /geo/GeoLite2-Country.mmdb ';'; \
