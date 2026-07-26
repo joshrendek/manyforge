@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -76,6 +77,7 @@ func newEnv(t *testing.T) (context.Context, *env) {
 			})
 		})
 		rd.ReadRoutes(pr)
+		rd.OverviewRoutes(pr)
 	})
 	e.srv = httptest.NewServer(r)
 	t.Cleanup(e.srv.Close)
@@ -1057,3 +1059,211 @@ func TestCustomEvent_EventOnlySweepPreservesPageviewBreakdowns(t *testing.T) {
 			before.Pageviews, after.Pageviews)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// manyforge-nk50 — cross-business overview
+// ---------------------------------------------------------------------------
+
+type overviewResp struct {
+	Sites []struct {
+		ClientID     string `json:"client_id"`
+		Name         string `json:"name"`
+		BusinessID   string `json:"business_id"`
+		BusinessName string `json:"business_name"`
+		Pageviews    int64  `json:"pageviews"`
+		Visitors     int64  `json:"visitors"`
+		Series       []struct {
+			Date      string `json:"date"`
+			Pageviews int64  `json:"pageviews"`
+		} `json:"series"`
+	} `json:"sites"`
+}
+
+// addSubBusiness creates a child business under e.biz with its own analytics site, and returns the
+// business id, the site id and the site's publishable key.
+func (e *env) addSubBusiness(t *testing.T, ctx context.Context, name string) (uuid.UUID, uuid.UUID, string) {
+	t.Helper()
+	sub, site := uuid.New(), uuid.New()
+	key := "mfk_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	for _, st := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at)
+		  VALUES ($1,$2,$3,$4,'active',now(),now())`, []any{sub, e.biz, e.biz, name}},
+		// Closure rows: self, plus the parent edge. Without the parent edge the child is invisible
+		// to authorized_businesses and the whole point of the test evaporates.
+		{`INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id)
+		  VALUES ($1,$1,0,$2), ($2,$1,1,$2)`, []any{sub, e.biz}},
+		{`INSERT INTO telemetry_client (id,tenant_root_id,business_id,kind,name,publishable_key,status,created_at)
+		  VALUES ($1,$2,$3,'analytics',$4,$5,'active',now())`,
+			[]any{site, e.biz, sub, name + " site", key}},
+	} {
+		if _, err := e.tdb.Super.Exec(ctx, st.sql, st.args...); err != nil {
+			t.Fatalf("seed sub-business: %v\n%s", err, st.sql)
+		}
+	}
+	return sub, site, key
+}
+
+func (e *env) getOverview(t *testing.T, prin uuid.UUID) overviewResp {
+	t.Helper()
+	// The test server injects e.prin; for other principals, query as them directly through the
+	// service so the principal actually varies.
+	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/analytics/overview?days=30", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("overview status %d: %s", resp.StatusCode, b)
+	}
+	var out overviewResp
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode overview: %v", err)
+	}
+	return out
+}
+
+// The feature itself: an owner of the tenant root sees sites in BOTH the root and its
+// sub-businesses in one response — that is the whole reason this endpoint exists.
+func TestOverview_SpansSubBusinesses(t *testing.T) {
+	ctx, e := newEnv(t)
+	subID, subSite, _ := e.addSubBusiness(t, ctx, "SubCo")
+
+	got := e.getOverview(t, e.prin)
+	byID := map[string]string{}
+	for _, s := range got.Sites {
+		byID[s.ClientID] = s.BusinessName
+	}
+	if _, ok := byID[e.site.String()]; !ok {
+		t.Errorf("root business site missing from overview; got %+v", byID)
+	}
+	if bn, ok := byID[subSite.String()]; !ok {
+		t.Errorf("SUB-BUSINESS site missing — the endpoint is not spanning the business tree; got %+v", byID)
+	} else if bn != "SubCo" {
+		t.Errorf("sub-business name = %q, want SubCo", bn)
+	}
+	for _, s := range got.Sites {
+		if s.ClientID == subSite.String() && s.BusinessID != subID.String() {
+			t.Errorf("sub site reported under business %s, want %s", s.BusinessID, subID)
+		}
+	}
+}
+
+// A site registered a moment ago has no rollup rows. It must still appear, with zeroes — omitting
+// it would read as "your tag is broken" at exactly the moment someone is checking whether it works.
+func TestOverview_IncludesSitesWithNoTrafficYet(t *testing.T) {
+	ctx, e := newEnv(t)
+	_, quietSite, _ := e.addSubBusiness(t, ctx, "QuietCo")
+
+	got := e.getOverview(t, e.prin)
+	for _, s := range got.Sites {
+		if s.ClientID == quietSite.String() {
+			if s.Pageviews != 0 || s.Visitors != 0 {
+				t.Errorf("untrafficked site should report zeroes, got pv=%d v=%d", s.Pageviews, s.Visitors)
+			}
+			if s.Series == nil {
+				t.Error("series must be an empty array, not null — the UI iterates it")
+			}
+			return
+		}
+	}
+	t.Error("a site with no traffic was omitted from the overview; a newly tagged site would look broken")
+}
+
+// THE isolation test. A principal who is a MEMBER of the business but whose role does not grant
+// telemetry.read must see nothing. RLS alone would show them the sites, because membership is a
+// weaker condition than permission — this is what businesses_with_permission() exists to prevent.
+func TestOverview_ExcludesBusinessesWhereCallerLacksTelemetryRead(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.addSubBusiness(t, ctx, "SubCo")
+
+	// A role with SOME permission but not telemetry.read.
+	weakRole, weakPrin, acct := uuid.New(), uuid.New(), uuid.New()
+	for _, st := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO role (id,tenant_root_id,key,name,is_locked,created_at)
+		  VALUES ($1,$2,'viewer','Viewer',false,now())`, []any{weakRole, e.biz}},
+		{`INSERT INTO role_permission (role_id,permission_key) VALUES ($1,'feedback.read')`, []any{weakRole}},
+		{`INSERT INTO account (id,email,display_name,status,created_at,updated_at,email_verified_at)
+		  VALUES ($1,$2,'W','active',now(),now(),now())`, []any{acct, "weak-" + weakPrin.String() + "@x.test"}},
+		{`INSERT INTO principal (id,kind,account_id,created_at) VALUES ($1,'human',$2,now())`, []any{weakPrin, acct}},
+		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		  VALUES ($1,$2,$2,$3,now())`, []any{weakPrin, e.biz, weakRole}},
+	} {
+		if _, err := e.tdb.Super.Exec(ctx, st.sql, st.args...); err != nil {
+			t.Fatalf("seed weak principal: %v\n%s", err, st.sql)
+		}
+	}
+
+	// Sanity: the weak principal IS a member, so RLS alone would let them see these rows.
+	var visible int
+	if err := e.tdb.App.WithPrincipal(ctx, weakPrin, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM telemetry_client WHERE kind='analytics'`).Scan(&visible)
+	}); err != nil {
+		t.Fatalf("rls probe: %v", err)
+	}
+	if visible == 0 {
+		t.Fatal("test is vacuous: RLS already hides these rows, so it cannot demonstrate that the " +
+			"PERMISSION filter is what excludes them")
+	}
+
+	sites, err := analytics.NewService(e.tdb.App).Overview(ctx, weakPrin,
+		timeNow().AddDate(0, 0, -29), timeNow())
+	if err != nil {
+		t.Fatalf("overview as weak principal: %v", err)
+	}
+	if len(sites) != 0 {
+		t.Errorf("PERMISSION BYPASS: a member without telemetry.read saw %d site(s) on the overview, "+
+			"including ones the per-site dashboard would 404. RLS visibility is not permission.",
+			len(sites))
+	}
+}
+
+// Cross-tenant isolation: a principal in an unrelated tenant sees nothing at all.
+func TestOverview_ExcludesOtherTenants(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.addSubBusiness(t, ctx, "SubCo")
+
+	var ownerRole uuid.UUID
+	if err := e.tdb.Super.QueryRow(ctx,
+		"SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'").Scan(&ownerRole); err != nil {
+		t.Fatalf("owner role: %v", err)
+	}
+	otherBiz, otherPrin, acct := uuid.New(), uuid.New(), uuid.New()
+	for _, st := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO account (id,email,display_name,status,created_at,updated_at,email_verified_at)
+		  VALUES ($1,$2,'X','active',now(),now(),now())`, []any{acct, "other-" + otherPrin.String() + "@x.test"}},
+		{`INSERT INTO principal (id,kind,account_id,created_at) VALUES ($1,'human',$2,now())`, []any{otherPrin, acct}},
+		{`INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at)
+		  VALUES ($1,NULL,$1,'OtherCo','active',now(),now())`, []any{otherBiz}},
+		{`INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id)
+		  VALUES ($1,$1,0,$1)`, []any{otherBiz}},
+		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		  VALUES ($1,$2,$2,$3,now())`, []any{otherPrin, otherBiz, ownerRole}},
+	} {
+		if _, err := e.tdb.Super.Exec(ctx, st.sql, st.args...); err != nil {
+			t.Fatalf("seed other tenant: %v\n%s", err, st.sql)
+		}
+	}
+
+	sites, err := analytics.NewService(e.tdb.App).Overview(ctx, otherPrin,
+		timeNow().AddDate(0, 0, -29), timeNow())
+	if err != nil {
+		t.Fatalf("overview as other tenant: %v", err)
+	}
+	if len(sites) != 0 {
+		t.Errorf("CROSS-TENANT LEAK: an unrelated tenant's owner saw %d site(s)", len(sites))
+	}
+}
+
+// timeNow keeps the window construction in these tests identical to the handler's.
+func timeNow() time.Time { return time.Now().UTC().Truncate(24 * time.Hour) }
