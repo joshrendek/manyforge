@@ -705,6 +705,8 @@ func main() {
 	// ingress. TWO independent token-bucket layers built from the SAME ingest knobs,
 	// shared across the webhook AND SMTP paths so a given source/recipient cannot
 	// evade one transport by hopping to the other:
+	ingestIPLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
+	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	//   - ingestIPLimiter: per-IP. Wraps the webhook group via httpx.RateLimit and
 	//     gates inbound SMTP DATA from the connection remote IP. BOTH transports key
 	//     on inbox.IPRateLimitKey(<bare client IP>) — the webhook IP comes from the
@@ -716,8 +718,6 @@ func main() {
 	//   - ingestRecipientLimiter: per-DECODED-recipient on the webhook path. Enforced
 	//     inside the handler BEFORE recipient resolution so a known and an unknown
 	//     recipient throttle identically (no existence oracle).
-	ingestIPLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
-	ingestRecipientLimiter := ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
 	inboxWebhookH.SetRecipientLimiter(ingestRecipientLimiter)
 	// ingestIPKey unifies the webhook per-IP key with the SMTP per-IP key: both run
 	// the bare client IP through inbox.IPRateLimitKey so the two share one bucket.

@@ -242,6 +242,9 @@ func TestCloudflareCountry(t *testing.T) {
 		{name: "digit suffix", trusted: true, values: []string{"U1"}},
 		{name: "digit prefix", trusted: true, values: []string{"1S"}},
 		{name: "punctuation", trusted: true, values: []string{"!!"}},
+		{name: "unknown alphabetic", trusted: true, values: []string{"ZZ"}},
+		{name: "region group", trusted: true, values: []string{"EU"}},
+		{name: "private use", trusted: true, values: []string{"XK"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := cloudflareCountry(tc.trusted, tc.values); got != tc.want {

@@ -304,6 +304,7 @@ func TestPin_AS0CountryHeaderIsOptInAndTransient(t *testing.T) {
 		`required "manyforge: analytics.trustedIngressNamespace is required when trusting CF-IPCountry"`,
 		"app.kubernetes.io/name: ingress-nginx",
 		"app.kubernetes.io/component: controller",
+		"port: http",
 	} {
 		if !strings.Contains(networkPolicy, required) {
 			t.Errorf("Cloudflare service trust boundary missing %q", required)

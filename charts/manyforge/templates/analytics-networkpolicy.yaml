@@ -22,5 +22,5 @@ spec:
               app.kubernetes.io/component: controller
       ports:
         - protocol: TCP
-          port: {{ .Values.service.port }}
+          port: http
 {{- end }}
