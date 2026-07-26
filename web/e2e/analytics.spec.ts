@@ -202,8 +202,8 @@ test('explains a missing country breakdown instead of showing nothing', async ({
   await installStack(page);
   await page.goto(`/analytics/${BIZ_ID}/${SITE_ID}`);
 
+  await expect(page.getByTestId('country-status')).toHaveAttribute('role', 'status');
   await expect(page.getByTestId('country-unavailable')).toBeVisible();
-  await expect(page.getByTestId('country-unavailable')).toHaveAttribute('role', 'status');
   await expect(page.getByTestId('country-unavailable')).toContainText(
     'trusted edge supplies a supported country',
   );
@@ -234,6 +234,7 @@ test('a site with no traffic yet points back at the embed tag', async ({ page })
   await expect(page.getByTestId('analytics-empty')).toBeVisible();
   await expect(page.getByTestId('analytics-empty')).toContainText('embed tag');
   // No traffic means no basis for the country hint either — that would be two confusing messages.
+  await expect(page.getByTestId('country-status')).toHaveAttribute('role', 'status');
   await expect(page.getByTestId('country-unavailable')).toHaveCount(0);
 });
 

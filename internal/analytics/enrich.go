@@ -138,10 +138,6 @@ func Browser(ua string) string {
 	return "Other"
 }
 
-// ---------------------------------------------------------------------------
-// Custom events
-// ---------------------------------------------------------------------------
-
 // reservedEventName is the implicit name for an automatic pageview. A caller may not send it
 // explicitly, or a site could inflate its own pageview count through the event API and make the
 // headline number disagree with the pageview rollup.
