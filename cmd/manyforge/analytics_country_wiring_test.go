@@ -37,11 +37,17 @@ func TestAnalyticsCountryTrustProductionWiring(t *testing.T) {
 					handler.TrustCloudflareCountryHeader, tc.want)
 			}
 			if len(handler.TrustedProxies) != 1 {
-				t.Fatalf("TrustedProxies = %v, want production proxy set preserved", handler.TrustedProxies)
+				t.Fatalf("TrustedProxies = %v, want one production proxy", handler.TrustedProxies)
+			}
+			if got := handler.TrustedProxies[0].String(); got != tc.trustedProxy {
+				t.Fatalf("TrustedProxies[0] = %q, want %q", got, tc.trustedProxy)
 			}
 			if len(handler.CloudflareSourceRanges) != 1 {
-				t.Fatalf("CloudflareSourceRanges = %v, want production source set preserved",
+				t.Fatalf("CloudflareSourceRanges = %v, want one production source",
 					handler.CloudflareSourceRanges)
+			}
+			if got := handler.CloudflareSourceRanges[0].String(); got != "173.245.48.0/20" {
+				t.Fatalf("CloudflareSourceRanges[0] = %q, want %q", got, "173.245.48.0/20")
 			}
 
 			matching := &http.Request{

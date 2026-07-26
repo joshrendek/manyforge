@@ -151,9 +151,9 @@ const (
 	maxForwardedForHops  = 32
 )
 
-// IsTrustedPeer reports whether the request's direct TCP peer belongs to an explicitly trusted
-// proxy network. Request headers play no role: callers use this to gate data that only a trusted
-// ingress is allowed to assert.
+// IsTrustedPeer reports whether the address recorded in r.RemoteAddr belongs to an explicitly
+// trusted proxy network. Request headers play no role: callers use this to gate data that only a
+// trusted ingress is allowed to assert.
 func IsTrustedPeer(r *http.Request, trusted []*net.IPNet) bool {
 	return isTrusted(net.ParseIP(peerIP(r.RemoteAddr)), trusted)
 }
