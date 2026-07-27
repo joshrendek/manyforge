@@ -25,11 +25,11 @@ const business = {
 
 const destinationBusiness = {
   id: DEST_BIZ_ID,
-  parent_id: BIZ_ID,
-  tenant_root_id: BIZ_ID,
+  parent_id: null,
+  tenant_root_id: DEST_BIZ_ID,
   name: 'Acme Labs',
   status: 'active',
-  is_tenant_root: false,
+  is_tenant_root: true,
 };
 
 const clients = {
@@ -170,7 +170,14 @@ test('moves a site by real clicks and rewrites its dashboard link to the destina
     (route) =>
       route.fulfill({
         json: {
-          targets: [{ id: DEST_BIZ_ID, tenant_root_id: BIZ_ID, name: destinationBusiness.name }],
+          targets: [
+            {
+              id: DEST_BIZ_ID,
+              tenant_root_id: DEST_BIZ_ID,
+              name: destinationBusiness.name,
+              is_tenant_root: true,
+            },
+          ],
         },
       }),
   );
@@ -180,20 +187,31 @@ test('moves a site by real clicks and rewrites its dashboard link to the destina
     async (route) => {
       moveBody = route.request().postDataJSON();
       await route.fulfill({
-        json: { ...clients.clients[0], business_id: DEST_BIZ_ID },
+        json: {
+          ...clients.clients[0],
+          business_id: DEST_BIZ_ID,
+          tenant_root_id: DEST_BIZ_ID,
+        },
       });
     },
   );
   await page.route(`**/api/v1/businesses/${DEST_BIZ_ID}/telemetry/clients`, (route) =>
     route.fulfill({
       json: {
-        clients: [{ ...clients.clients[0], business_id: DEST_BIZ_ID }],
+        clients: [
+          {
+            ...clients.clients[0],
+            business_id: DEST_BIZ_ID,
+            tenant_root_id: DEST_BIZ_ID,
+          },
+        ],
       },
     }),
   );
 
   await page.goto('/analytics/sites');
   await page.getByTestId('site-move').click();
+  await expect(page.getByTestId('site-move-target')).toContainText('Acme Labs (master)');
   await page.getByTestId('site-move-target').selectOption(DEST_BIZ_ID);
   await expect(page.getByTestId('site-move-confirmation')).toContainText(
     'embed tag, publishable key, and complete analytics history will stay unchanged',
