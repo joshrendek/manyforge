@@ -28,6 +28,12 @@ export interface TelemetryClient {
   revoked_at?: string | null;
 }
 
+export interface TelemetryMoveTarget {
+  id: string;
+  tenant_root_id: string;
+  name: string;
+}
+
 export interface DayPoint {
   date: string;
   pageviews: number;
@@ -108,6 +114,26 @@ export class AnalyticsService {
     return this.http.post<TelemetryClient>(
       `/api/v1/businesses/${businessId}/telemetry/clients/${clientId}/revoke`,
       {},
+    );
+  }
+
+  moveTargets(
+    businessId: string,
+    clientId: string,
+  ): Observable<{ targets: TelemetryMoveTarget[] }> {
+    return this.http.get<{ targets: TelemetryMoveTarget[] }>(
+      `/api/v1/businesses/${businessId}/telemetry/clients/${clientId}/move-targets`,
+    );
+  }
+
+  moveClient(
+    sourceBusinessId: string,
+    clientId: string,
+    targetBusinessId: string,
+  ): Observable<TelemetryClient> {
+    return this.http.post<TelemetryClient>(
+      `/api/v1/businesses/${sourceBusinessId}/telemetry/clients/${clientId}/move`,
+      { target_business_id: targetBusinessId },
     );
   }
 

@@ -16,6 +16,8 @@ var inScope010Ops = []string{
 	// authenticated client registration
 	"GET /businesses/{}/telemetry/clients",
 	"POST /businesses/{}/telemetry/clients",
+	"GET /businesses/{}/telemetry/clients/{}/move-targets",
+	"POST /businesses/{}/telemetry/clients/{}/move",
 	"POST /businesses/{}/telemetry/clients/{}/revoke",
 	// public principal-less ingest
 	"POST /telemetry/ingest/{}",

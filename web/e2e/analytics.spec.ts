@@ -10,6 +10,7 @@ import { expect, Page, test } from '@playwright/test';
 // physically copies into someone else's website, so a malformed one is a silent total failure.
 
 const BIZ_ID = '11111111-1111-1111-1111-111111111111';
+const DEST_BIZ_ID = '44444444-4444-4444-4444-444444444444';
 const SITE_ID = '22222222-2222-2222-2222-222222222222';
 const KEY = 'mfk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
@@ -20,6 +21,15 @@ const business = {
   name: 'Acme',
   status: 'active',
   is_tenant_root: true,
+};
+
+const destinationBusiness = {
+  id: DEST_BIZ_ID,
+  parent_id: BIZ_ID,
+  tenant_root_id: BIZ_ID,
+  name: 'Acme Labs',
+  status: 'active',
+  is_tenant_root: false,
 };
 
 const clients = {
@@ -100,7 +110,7 @@ async function installStack(page: Page, opts: { summary?: unknown } = {}) {
   // Broad fallback first: unmocked shell calls otherwise 401 and bounce the test to /login.
   await page.route('**/api/v1/**', (route) => route.fulfill({ json: {} }));
   await page.route('**/api/v1/businesses', (route) =>
-    route.fulfill({ json: { items: [business] } }),
+    route.fulfill({ json: { items: [business, destinationBusiness] } }),
   );
   await page.route(`**/api/v1/businesses/${BIZ_ID}/telemetry/clients`, (route) =>
     route.fulfill({ json: clients }),
@@ -149,6 +159,54 @@ test('revoked sites stop advertising an embed tag', async ({ page }) => {
   // Pasting a revoked site's tag would collect nothing, so it must not be offered.
   await expect(page.getByTestId('site-embed')).toHaveCount(0);
   await expect(page.getByTestId('site-revoke')).toHaveCount(0);
+});
+
+test('moves a site by real clicks and rewrites its dashboard link to the destination', async ({
+  page,
+}) => {
+  await installStack(page);
+  await page.route(
+    `**/api/v1/businesses/${BIZ_ID}/telemetry/clients/${SITE_ID}/move-targets`,
+    (route) =>
+      route.fulfill({
+        json: {
+          targets: [{ id: DEST_BIZ_ID, tenant_root_id: BIZ_ID, name: destinationBusiness.name }],
+        },
+      }),
+  );
+  let moveBody: unknown;
+  await page.route(
+    `**/api/v1/businesses/${BIZ_ID}/telemetry/clients/${SITE_ID}/move`,
+    async (route) => {
+      moveBody = route.request().postDataJSON();
+      await route.fulfill({
+        json: { ...clients.clients[0], business_id: DEST_BIZ_ID },
+      });
+    },
+  );
+  await page.route(`**/api/v1/businesses/${DEST_BIZ_ID}/telemetry/clients`, (route) =>
+    route.fulfill({
+      json: {
+        clients: [{ ...clients.clients[0], business_id: DEST_BIZ_ID }],
+      },
+    }),
+  );
+
+  await page.goto('/analytics/sites');
+  await page.getByTestId('site-move').click();
+  await page.getByTestId('site-move-target').selectOption(DEST_BIZ_ID);
+  await expect(page.getByTestId('site-move-confirmation')).toContainText(
+    'embed tag, publishable key, and complete analytics history will stay unchanged',
+  );
+  await page.getByTestId('site-move-confirm').click();
+
+  expect(moveBody).toEqual({ target_business_id: DEST_BIZ_ID });
+  await expect(page.getByTestId('business-select')).toHaveValue(DEST_BIZ_ID);
+  await expect(page.getByTestId('site-name-cell').getByRole('link')).toHaveAttribute(
+    'href',
+    `/analytics/${DEST_BIZ_ID}/${SITE_ID}`,
+  );
+  await expect(page.getByTestId('site-embed')).toContainText(KEY);
 });
 
 test('dashboard renders totals, chart, top pages and referrers', async ({ page }) => {
