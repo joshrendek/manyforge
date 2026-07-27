@@ -32,6 +32,7 @@ export interface TelemetryMoveTarget {
   id: string;
   tenant_root_id: string;
   name: string;
+  is_tenant_root: boolean;
 }
 
 export interface DayPoint {

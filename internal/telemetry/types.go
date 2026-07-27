@@ -48,11 +48,12 @@ type Client struct {
 }
 
 // MoveTarget is a business an operator may move an analytics client into. The service only
-// returns active businesses in the same tenant where the caller holds telemetry.write.
+// returns active businesses across tenant roots where the caller holds telemetry.write.
 type MoveTarget struct {
 	ID           uuid.UUID `json:"id"`
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 	Name         string    `json:"name"`
+	IsTenantRoot bool      `json:"is_tenant_root"`
 }
 
 // AnalyticsEvent is one inbound analytics datum. occurred_at is client-supplied and therefore
