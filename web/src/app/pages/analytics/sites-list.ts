@@ -160,7 +160,9 @@ import { ToastService } from '../../ui/toast/toast.service';
                   >
                     <option value="" disabled>Choose a destination…</option>
                     @for (target of moveTargets(); track target.id) {
-                      <option [value]="target.id">{{ target.name }}</option>
+                      <option [value]="target.id">
+                        {{ target.is_tenant_root ? target.name + ' (master)' : target.name }}
+                      </option>
                     }
                   </select>
                 </div>

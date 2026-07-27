@@ -212,43 +212,49 @@ func (s *Service) RevokeClient(ctx context.Context, principalID, businessID, cli
 func (s *Service) MoveTargets(ctx context.Context, principalID, sourceBusinessID, clientID uuid.UUID) ([]MoveTarget, error) {
 	out := []MoveTarget{}
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
-		var sourceTenantRoot uuid.UUID
+		var sourceOK bool
 		err := tx.QueryRow(ctx,
-			`SELECT c.tenant_root_id
-			   FROM telemetry_client c
-			  WHERE c.id = $1
-			    AND c.business_id = $2
-			    AND c.kind = 'analytics'
-			    AND c.status = 'active'
-			    AND c.revoked_at IS NULL
-			    AND c.business_id IN (
-			        SELECT business_id
-			          FROM businesses_with_permission(current_principal(), 'telemetry.write')
-			    )`,
-			clientID, sourceBusinessID).Scan(&sourceTenantRoot)
+			`SELECT EXISTS (
+			    SELECT 1
+			      FROM telemetry_client c
+			     WHERE c.id = $1
+			       AND c.business_id = $2
+			       AND c.kind = 'analytics'
+			       AND c.status = 'active'
+			       AND c.revoked_at IS NULL
+			       AND c.business_id IN (
+			           SELECT business_id
+			             FROM businesses_with_permission(current_principal(), 'telemetry.write')
+			       )
+			 )`,
+			clientID, sourceBusinessID).Scan(&sourceOK)
 		if err != nil {
 			return err
 		}
+		if !sourceOK {
+			return errs.ErrNotFound
+		}
 
 		rows, err := tx.Query(ctx,
-			`SELECT b.id, b.tenant_root_id, b.name
+			`SELECT b.id, b.tenant_root_id, b.name, b.id = b.tenant_root_id
 			   FROM business b
-			  WHERE b.tenant_root_id = $1
-			    AND b.id <> $2
+			  WHERE b.id <> $1
 			    AND b.status = 'active'
 			    AND b.id IN (
 			        SELECT business_id
 			          FROM businesses_with_permission(current_principal(), 'telemetry.write')
 			    )
 			  ORDER BY lower(b.name), b.id`,
-			sourceTenantRoot, sourceBusinessID)
+			sourceBusinessID)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var target MoveTarget
-			if err := rows.Scan(&target.ID, &target.TenantRootID, &target.Name); err != nil {
+			if err := rows.Scan(
+				&target.ID, &target.TenantRootID, &target.Name, &target.IsTenantRoot,
+			); err != nil {
 				return err
 			}
 			out = append(out, target)
@@ -261,9 +267,9 @@ func (s *Service) MoveTargets(ctx context.Context, principalID, sourceBusinessID
 	return out, nil
 }
 
-// MoveClient atomically changes an active analytics client's owning business while preserving its
-// identity and full history. telemetry_move_analytics_client performs the target permission check
-// and takes the client lock that serializes this transaction with every ingest path.
+// MoveClient atomically changes an active analytics client's owning business and tenant root while
+// preserving its identity and full history. telemetry_move_analytics_client performs the target
+// permission check and takes the locks that serialize the transaction with ingest and rollups.
 func (s *Service) MoveClient(ctx context.Context, principalID, sourceBusinessID, clientID, targetBusinessID uuid.UUID) (Client, error) {
 	var out Client
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
