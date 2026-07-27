@@ -28,6 +28,8 @@ func (h *Handler) ReadRoutes(r chi.Router) {
 func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Post("/businesses/{id}/telemetry/clients", h.create)
 	r.Post("/businesses/{id}/telemetry/clients/{clientID}/revoke", h.revoke)
+	r.Get("/businesses/{id}/telemetry/clients/{clientID}/move-targets", h.moveTargets)
+	r.Post("/businesses/{id}/telemetry/clients/{clientID}/move", h.move)
 }
 
 type createClientRequest struct {
@@ -36,6 +38,10 @@ type createClientRequest struct {
 	// RequireSignature defaults to false — the embeddable-SDK mode. Set it only for a
 	// server-to-server sender that can hold an mfs_ secret safely.
 	RequireSignature bool `json:"require_signature"`
+}
+
+type moveClientRequest struct {
+	TargetBusinessID string `json:"target_business_id"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -105,4 +111,61 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, client)
+}
+
+func (h *Handler) moveTargets(w http.ResponseWriter, r *http.Request) {
+	principalID, sourceBusinessID, clientID, ok := moveRouteIDs(w, r)
+	if !ok {
+		return
+	}
+	targets, err := h.Svc.MoveTargets(r.Context(), principalID, sourceBusinessID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"targets": targets})
+}
+
+func (h *Handler) move(w http.ResponseWriter, r *http.Request) {
+	principalID, sourceBusinessID, clientID, ok := moveRouteIDs(w, r)
+	if !ok {
+		return
+	}
+	var req moveClientRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	targetBusinessID, err := uuid.Parse(req.TargetBusinessID)
+	if err != nil {
+		// Malformed, missing, invisible, and unauthorized targets share one response.
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	client, err := h.Svc.MoveClient(
+		r.Context(), principalID, sourceBusinessID, clientID, targetBusinessID,
+	)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, client)
+}
+
+func moveRouteIDs(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, uuid.UUID, bool) {
+	principalID, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	sourceBusinessID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_business_id"})
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	clientID, err := uuid.Parse(chi.URLParam(r, "clientID"))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	return principalID, sourceBusinessID, clientID, true
 }

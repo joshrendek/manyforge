@@ -46,7 +46,7 @@ func newSecret() (string, error) {
 	return secretPrefix + base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
-// Service owns telemetry client registration.
+// Service owns telemetry client registration, revocation, and analytics-site moves.
 type Service struct {
 	DB *appdb.DB
 	// Sealer seals the mfs_ signing secret at rest. Nil ⇒ the signed tier is not configured for
@@ -199,6 +199,97 @@ func (s *Service) RevokeClient(ctx context.Context, principalID, businessID, cli
 		}
 		out = toClient(row)
 		return nil
+	})
+	if err != nil {
+		return Client{}, mapErr(err)
+	}
+	return out, nil
+}
+
+// MoveTargets returns eligible destinations for an active analytics client. It validates the
+// source/client pair in the same permission-aware shape as MoveClient, so an unknown client, a
+// foreign client, and a source where the caller lacks telemetry.write are indistinguishable.
+func (s *Service) MoveTargets(ctx context.Context, principalID, sourceBusinessID, clientID uuid.UUID) ([]MoveTarget, error) {
+	out := []MoveTarget{}
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		var sourceTenantRoot uuid.UUID
+		err := tx.QueryRow(ctx,
+			`SELECT c.tenant_root_id
+			   FROM telemetry_client c
+			  WHERE c.id = $1
+			    AND c.business_id = $2
+			    AND c.kind = 'analytics'
+			    AND c.status = 'active'
+			    AND c.revoked_at IS NULL
+			    AND c.business_id IN (
+			        SELECT business_id
+			          FROM businesses_with_permission(current_principal(), 'telemetry.write')
+			    )`,
+			clientID, sourceBusinessID).Scan(&sourceTenantRoot)
+		if err != nil {
+			return err
+		}
+
+		rows, err := tx.Query(ctx,
+			`SELECT b.id, b.tenant_root_id, b.name
+			   FROM business b
+			  WHERE b.tenant_root_id = $1
+			    AND b.id <> $2
+			    AND b.status = 'active'
+			    AND b.id IN (
+			        SELECT business_id
+			          FROM businesses_with_permission(current_principal(), 'telemetry.write')
+			    )
+			  ORDER BY lower(b.name), b.id`,
+			sourceTenantRoot, sourceBusinessID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var target MoveTarget
+			if err := rows.Scan(&target.ID, &target.TenantRootID, &target.Name); err != nil {
+				return err
+			}
+			out = append(out, target)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}
+
+// MoveClient atomically changes an active analytics client's owning business while preserving its
+// identity and full history. telemetry_move_analytics_client performs the target permission check
+// and takes the client lock that serializes this transaction with every ingest path.
+func (s *Service) MoveClient(ctx context.Context, principalID, sourceBusinessID, clientID, targetBusinessID uuid.UUID) (Client, error) {
+	var out Client
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		var outcome string
+		if err := tx.QueryRow(ctx,
+			`SELECT telemetry_move_analytics_client($1, $2, $3)`,
+			sourceBusinessID, clientID, targetBusinessID).Scan(&outcome); err != nil {
+			return err
+		}
+		switch outcome {
+		case "moved":
+			row, err := dbgen.New(tx).GetTelemetryClient(ctx, dbgen.GetTelemetryClientParams{
+				ID: clientID, BusinessID: targetBusinessID,
+			})
+			if err != nil {
+				return err
+			}
+			out = toClient(row)
+			return nil
+		case "not_found":
+			return errs.ErrNotFound
+		case "conflict":
+			return errs.ErrConflict
+		default:
+			return fmt.Errorf("telemetry: unexpected move outcome %q", outcome)
+		}
 	})
 	if err != nil {
 		return Client{}, mapErr(err)

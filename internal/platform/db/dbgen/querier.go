@@ -312,6 +312,7 @@ type Querier interface {
 	// GetSecret fetches one sealed secret scoped to (id, business). RLS + the business predicate
 	// make a foreign/unknown id return no row (→ not-found).
 	GetSecret(ctx context.Context, arg GetSecretParams) (Secret, error)
+	GetTelemetryClient(ctx context.Context, arg GetTelemetryClientParams) (TelemetryClient, error)
 	// ---- US2 write / threading queries ----
 	// GetThreadingParent loads the latest message on a ticket (any direction) — its
 	// message_id becomes the new outbound In-Reply-To; its references chain (+ its own

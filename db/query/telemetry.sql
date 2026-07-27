@@ -19,3 +19,7 @@ UPDATE telemetry_client
 SET status = 'revoked', revoked_at = now()
 WHERE id = $1 AND tenant_root_id = $2 AND status = 'active'
 RETURNING *;
+
+-- name: GetTelemetryClient :one
+SELECT * FROM telemetry_client
+WHERE id = $1 AND business_id = $2;
