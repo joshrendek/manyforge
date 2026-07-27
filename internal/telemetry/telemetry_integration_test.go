@@ -24,6 +24,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -436,6 +437,24 @@ func seedTenant(t *testing.T, ctx context.Context, tdb *testdb.TestDB, name stri
 	return s
 }
 
+func seedChildBusiness(t *testing.T, ctx context.Context, tdb *testdb.TestDB, parent, tenantRoot uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,'active',now(),now())`,
+		id, parent, tenantRoot, name); err != nil {
+		t.Fatalf("insert child business: %v", err)
+	}
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id)
+		 VALUES ($1,$1,0,$2), ($3,$1,1,$2)`,
+		id, tenantRoot, parent); err != nil {
+		t.Fatalf("insert child closure: %v", err)
+	}
+	return id
+}
+
 func TestClientLifecycle_CreateListRevoke(t *testing.T) {
 	ctx, e := newEnv(t)
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
@@ -544,6 +563,313 @@ func TestClientLifecycle_TenantIsolation(t *testing.T) {
 	// A's key still works.
 	if code, _ := post(t, e.srv, aClient.PublishableKey, analyticsBody(1), nil); code != http.StatusAccepted {
 		t.Fatalf("alpha's client was damaged by beta's attempts: got %d", code)
+	}
+}
+
+func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing.T) {
+	ctx, e := newEnv(t)
+	seed := seedTenant(t, ctx, e.tdb, "MoveCo")
+	targetID := seedChildBusiness(t, ctx, e.tdb, seed.businessID, seed.businessID, "MoveCo Labs")
+	svc := telemetry.NewService(e.tdb.App, e.sealer)
+
+	created, err := svc.CreateClient(
+		ctx, seed.principalID, seed.businessID, "analytics", "move.example", false,
+	)
+	if err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	statements := []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO analytics_event
+		    (id,tenant_root_id,business_id,client_id,occurred_at,name,path,visitor_hash)
+		  VALUES ($1,$2,$3,$4,now(),'pageview','/',decode('01','hex'))`,
+			[]any{uuid.New(), seed.businessID, seed.businessID, created.ID}},
+		{`INSERT INTO analytics_event_daily
+		    (tenant_root_id,business_id,client_id,bucket_date,event_count)
+		  VALUES ($1,$2,$3,$4::date,7)`,
+			[]any{seed.businessID, seed.businessID, created.ID, today}},
+		{`INSERT INTO analytics_daily
+		    (tenant_root_id,business_id,client_id,bucket_date,pageviews,visitors)
+		  VALUES ($1,$2,$3,$4::date,7,3)`,
+			[]any{seed.businessID, seed.businessID, created.ID, today}},
+		{`INSERT INTO analytics_page_daily
+		    (tenant_root_id,business_id,client_id,bucket_date,path,pageviews,visitors)
+		  VALUES ($1,$2,$3,$4::date,'/',7,3)`,
+			[]any{seed.businessID, seed.businessID, created.ID, today}},
+		{`INSERT INTO analytics_referrer_daily
+		    (tenant_root_id,business_id,client_id,bucket_date,referrer_host,pageviews,visitors)
+		  VALUES ($1,$2,$3,$4::date,'example.test',2,1)`,
+			[]any{seed.businessID, seed.businessID, created.ID, today}},
+		{`INSERT INTO analytics_dimension_daily
+		    (tenant_root_id,business_id,client_id,bucket_date,dimension,value,pageviews,visitors)
+		  VALUES ($1,$2,$3,$4::date,'device','desktop',7,3)`,
+			[]any{seed.businessID, seed.businessID, created.ID, today}},
+	}
+	for _, statement := range statements {
+		if _, err := e.tdb.Super.Exec(ctx, statement.sql, statement.args...); err != nil {
+			t.Fatalf("seed analytics history: %v\nSQL: %s", err, statement.sql)
+		}
+	}
+
+	targets, err := svc.MoveTargets(ctx, seed.principalID, seed.businessID, created.ID)
+	if err != nil {
+		t.Fatalf("MoveTargets: %v", err)
+	}
+	if len(targets) != 1 || targets[0].ID != targetID {
+		t.Fatalf("MoveTargets = %#v, want only %s", targets, targetID)
+	}
+
+	moved, err := svc.MoveClient(
+		ctx, seed.principalID, seed.businessID, created.ID, targetID,
+	)
+	if err != nil {
+		t.Fatalf("MoveClient: %v", err)
+	}
+	if moved.ID != created.ID || moved.PublishableKey != created.PublishableKey {
+		t.Fatalf("site identity changed: before=%#v after=%#v", created, moved)
+	}
+	if moved.BusinessID != targetID || moved.TenantRootID != seed.businessID {
+		t.Fatalf("site scope = business %s tenant %s, want %s/%s",
+			moved.BusinessID, moved.TenantRootID, targetID, seed.businessID)
+	}
+	sourceList, err := svc.ListClients(ctx, seed.principalID, seed.businessID, 50)
+	if err != nil {
+		t.Fatalf("source ListClients: %v", err)
+	}
+	targetList, err := svc.ListClients(ctx, seed.principalID, targetID, 50)
+	if err != nil {
+		t.Fatalf("target ListClients: %v", err)
+	}
+	if len(sourceList) != 0 || len(targetList) != 1 || targetList[0].ID != created.ID {
+		t.Fatalf("lists after move: source=%#v target=%#v", sourceList, targetList)
+	}
+
+	for _, table := range []string{
+		"analytics_event", "analytics_event_daily", "analytics_daily", "analytics_page_daily",
+		"analytics_referrer_daily", "analytics_dimension_daily",
+	} {
+		var sourceRows, targetRows int
+		if err := e.tdb.Super.QueryRow(ctx,
+			`SELECT count(*) FILTER (WHERE business_id=$2),
+			        count(*) FILTER (WHERE business_id=$3)
+			   FROM `+table+` WHERE client_id=$1`,
+			created.ID, seed.businessID, targetID).Scan(&sourceRows, &targetRows); err != nil {
+			t.Fatalf("%s ownership: %v", table, err)
+		}
+		if sourceRows != 0 || targetRows != 1 {
+			t.Errorf("%s ownership source=%d target=%d, want 0/1", table, sourceRows, targetRows)
+		}
+	}
+	var sourceClients, targetClients int
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FILTER (WHERE business_id=$2),
+		        count(*) FILTER (WHERE business_id=$3)
+		   FROM telemetry_client WHERE id=$1`,
+		created.ID, seed.businessID, targetID).Scan(&sourceClients, &targetClients); err != nil {
+		t.Fatalf("telemetry_client ownership: %v", err)
+	}
+	if sourceClients != 0 || targetClients != 1 {
+		t.Errorf("telemetry_client ownership source=%d target=%d, want 0/1",
+			sourceClients, targetClients)
+	}
+
+	analyticsSvc := analytics.NewService(e.tdb.App)
+	from := time.Now().UTC().Truncate(24 * time.Hour)
+	summary, err := analyticsSvc.Summary(
+		ctx, seed.principalID, targetID, created.ID, from, from,
+	)
+	if err != nil {
+		t.Fatalf("target Summary: %v", err)
+	}
+	if summary.Pageviews != 7 || summary.Visitors != 3 || len(summary.TopPages) != 1 {
+		t.Fatalf("target history was not preserved: %#v", summary)
+	}
+	if _, err := analyticsSvc.Summary(
+		ctx, seed.principalID, seed.businessID, created.ID, from, from,
+	); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("source Summary after move = %v, want ErrNotFound", err)
+	}
+	overview, err := analyticsSvc.Overview(ctx, seed.principalID, from, from)
+	if err != nil {
+		t.Fatalf("Overview after move: %v", err)
+	}
+	if len(overview) != 1 || overview[0].BusinessID != targetID.String() ||
+		overview[0].ClientID != created.ID.String() {
+		t.Fatalf("cross-business overview after move = %#v", overview)
+	}
+
+	// The deployed snippet keeps working with the original key and writes to the destination.
+	if code, body := post(t, e.srv, created.PublishableKey, analyticsBody(1), nil); code != http.StatusAccepted {
+		t.Fatalf("post-move ingest: status %d body %s", code, body)
+	}
+	var staleRows int
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM analytics_event
+		  WHERE client_id=$1 AND business_id<>$2`,
+		created.ID, targetID).Scan(&staleRows); err != nil {
+		t.Fatalf("post-move event ownership: %v", err)
+	}
+	if staleRows != 0 {
+		t.Fatalf("post-move ingest left %d events outside destination", staleRows)
+	}
+}
+
+func TestClientLifecycle_MoveRefusesOraclesNoOpsAndCrossTenant(t *testing.T) {
+	ctx, e := newEnv(t)
+	source := seedTenant(t, ctx, e.tdb, "MoveSource")
+	targetID := seedChildBusiness(
+		t, ctx, e.tdb, source.businessID, source.businessID, "MoveTarget",
+	)
+	foreignTenant := seedTenant(t, ctx, e.tdb, "ForeignAuthorized")
+	unauthorizedTenant := seedTenant(t, ctx, e.tdb, "ForeignHidden")
+	svc := telemetry.NewService(e.tdb.App, e.sealer)
+
+	client, err := svc.CreateClient(
+		ctx, source.principalID, source.businessID, "analytics", "site", false,
+	)
+	if err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+	crashClient, err := svc.CreateClient(
+		ctx, source.principalID, source.businessID, "crash", "app", false,
+	)
+	if err != nil {
+		t.Fatalf("CreateClient(crash): %v", err)
+	}
+
+	if _, err := svc.MoveClient(
+		ctx, source.principalID, source.businessID, client.ID, source.businessID,
+	); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("same-business move = %v, want ErrConflict", err)
+	}
+
+	var ownerRole uuid.UUID
+	if err := e.tdb.Super.QueryRow(ctx,
+		"SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'").Scan(&ownerRole); err != nil {
+		t.Fatalf("owner role: %v", err)
+	}
+	if _, err := e.tdb.Super.Exec(ctx,
+		`INSERT INTO membership
+		    (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		  VALUES ($1,$2,$2,$3,now())`,
+		source.principalID, foreignTenant.businessID, ownerRole); err != nil {
+		t.Fatalf("grant foreign target permission: %v", err)
+	}
+	if _, err := svc.MoveClient(
+		ctx, source.principalID, source.businessID, client.ID, foreignTenant.businessID,
+	); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("cross-tenant move = %v, want ErrConflict", err)
+	}
+
+	unknownErr := func() error {
+		_, err := svc.MoveClient(
+			ctx, source.principalID, source.businessID, uuid.New(), targetID,
+		)
+		return err
+	}()
+	hiddenTargetErr := func() error {
+		_, err := svc.MoveClient(
+			ctx, source.principalID, source.businessID, client.ID, unauthorizedTenant.businessID,
+		)
+		return err
+	}()
+	nonAnalyticsErr := func() error {
+		_, err := svc.MoveClient(
+			ctx, source.principalID, source.businessID, crashClient.ID, targetID,
+		)
+		return err
+	}()
+	for label, err := range map[string]error{
+		"unknown client":      unknownErr,
+		"unauthorized target": hiddenTargetErr,
+		"non-analytics":       nonAnalyticsErr,
+	} {
+		if !errors.Is(err, errs.ErrNotFound) {
+			t.Errorf("%s = %v, want ErrNotFound", label, err)
+		}
+	}
+
+	var businessID uuid.UUID
+	if err := e.tdb.Super.QueryRow(ctx,
+		"SELECT business_id FROM telemetry_client WHERE id=$1", client.ID).Scan(&businessID); err != nil {
+		t.Fatalf("client after rejected moves: %v", err)
+	}
+	if businessID != source.businessID {
+		t.Fatalf("rejected move partially changed client to %s", businessID)
+	}
+}
+
+func TestClientLifecycle_MoveWaitsForConcurrentIngestAndRewritesIt(t *testing.T) {
+	ctx, e := newEnv(t)
+	seed := seedTenant(t, ctx, e.tdb, "MoveRace")
+	targetID := seedChildBusiness(t, ctx, e.tdb, seed.businessID, seed.businessID, "MoveRace Target")
+	svc := telemetry.NewService(e.tdb.App, e.sealer)
+	client, err := svc.CreateClient(
+		ctx, seed.principalID, seed.businessID, "analytics", "race", false,
+	)
+	if err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+
+	// Keep the ingest transaction open after it has inserted. Its FOR SHARE lock must prevent the
+	// move from acquiring FOR UPDATE until this event commits.
+	ingestTx, err := e.tdb.Super.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin ingest: %v", err)
+	}
+	var accepted int
+	if err := ingestTx.QueryRow(ctx,
+		`SELECT telemetry_ingest_analytics($1, $2::jsonb)`,
+		client.PublishableKey,
+		`[{"occurred_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","name":"pageview"}]`,
+	).Scan(&accepted); err != nil {
+		_ = ingestTx.Rollback(ctx)
+		t.Fatalf("concurrent ingest: %v", err)
+	}
+	if accepted != 1 {
+		_ = ingestTx.Rollback(ctx)
+		t.Fatalf("concurrent ingest accepted %d, want 1", accepted)
+	}
+
+	moveDone := make(chan error, 1)
+	go func() {
+		_, err := svc.MoveClient(
+			context.Background(), seed.principalID, seed.businessID, client.ID, targetID,
+		)
+		moveDone <- err
+	}()
+	select {
+	case err := <-moveDone:
+		_ = ingestTx.Rollback(ctx)
+		t.Fatalf("move completed while ingest still held FOR SHARE: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := ingestTx.Commit(ctx); err != nil {
+		t.Fatalf("commit ingest: %v", err)
+	}
+	select {
+	case err := <-moveDone:
+		if err != nil {
+			t.Fatalf("MoveClient after ingest commit: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("move remained blocked after ingest committed")
+	}
+
+	var sourceRows, targetRows int
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FILTER (WHERE business_id=$2),
+		        count(*) FILTER (WHERE business_id=$3)
+		   FROM analytics_event WHERE client_id=$1`,
+		client.ID, seed.businessID, targetID).Scan(&sourceRows, &targetRows); err != nil {
+		t.Fatalf("event ownership: %v", err)
+	}
+	if sourceRows != 0 || targetRows != 1 {
+		t.Fatalf("concurrent event ownership source=%d target=%d, want 0/1",
+			sourceRows, targetRows)
 	}
 }
 

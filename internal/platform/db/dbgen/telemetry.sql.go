@@ -11,6 +11,35 @@ import (
 	"github.com/google/uuid"
 )
 
+const getTelemetryClient = `-- name: GetTelemetryClient :one
+SELECT id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, status, created_at, revoked_at FROM telemetry_client
+WHERE id = $1 AND business_id = $2
+`
+
+type GetTelemetryClientParams struct {
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+func (q *Queries) GetTelemetryClient(ctx context.Context, arg GetTelemetryClientParams) (TelemetryClient, error) {
+	row := q.db.QueryRow(ctx, getTelemetryClient, arg.ID, arg.BusinessID)
+	var i TelemetryClient
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Kind,
+		&i.Name,
+		&i.PublishableKey,
+		&i.RequireSignature,
+		&i.SealedSecret,
+		&i.Status,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const insertTelemetryClient = `-- name: InsertTelemetryClient :one
 
 INSERT INTO telemetry_client (id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret)

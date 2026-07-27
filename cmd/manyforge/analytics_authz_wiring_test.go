@@ -75,3 +75,55 @@ func TestAnalyticsSummaryIsPermissionGated(t *testing.T) {
 			rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }
+
+// The move service verifies both businesses inside its transaction, but the source-path contract
+// also requires the normal telemetry.write middleware. Pin both the target-list and mutation
+// routes to that production group; drift tests prove presence, not middleware placement.
+func TestAnalyticsSiteMoveRoutesAreTelemetryWriteGated(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	ring, err := auth.NewKeyRing("manyforge", "manyforge-api", "k1", priv,
+		map[string]ed25519.PublicKey{"k1": pub})
+	if err != nil {
+		t.Fatalf("keyring: %v", err)
+	}
+	principalID := uuid.MustParse("00000000-0000-4000-8000-000000000003")
+	tok, err := ring.Sign(principalID, time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+
+	const base = "/api/v1/businesses/00000000-0000-4000-8000-000000000001" +
+		"/telemetry/clients/00000000-0000-4000-8000-000000000002"
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, base + "/move-targets"},
+		{http.MethodPost, base + "/move"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			var telemetryWriteRan bool
+			h := testHandlers()
+			h.telemetryWrite = func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					telemetryWriteRan = true
+					w.WriteHeader(http.StatusNotFound)
+				})
+			}
+			mux := httpx.NewRouter(ring)
+			mountAPIRoutes(mux, h)
+
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if !telemetryWriteRan {
+				t.Fatal("SECURITY REGRESSION: analytics site move route bypassed telemetry.write")
+			}
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("permission gate returned %d, want 404", rec.Code)
+			}
+		})
+	}
+}
