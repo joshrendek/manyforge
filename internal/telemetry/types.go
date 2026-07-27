@@ -47,6 +47,14 @@ type Client struct {
 	Secret string `json:"secret,omitempty"`
 }
 
+// MoveTarget is a business an operator may move an analytics client into. The service only
+// returns active businesses in the same tenant where the caller holds telemetry.write.
+type MoveTarget struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Name         string    `json:"name"`
+}
+
 // AnalyticsEvent is one inbound analytics datum. occurred_at is client-supplied and therefore
 // untrusted — it is clamped/validated before it reaches the database, and it never influences
 // which partition the row lands in.

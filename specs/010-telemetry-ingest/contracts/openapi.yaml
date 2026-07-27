@@ -1,14 +1,14 @@
 openapi: 3.0.3
 info:
   title: manyforge — telemetry ingest + time-series foundation (manyforge-p20)
-  version: "1.0.0"
+  version: "1.1.0"
   description: |
     Shared event-ingest surface for the analytics (manyforge-as0) and crash-reporting
     (manyforge-zw2) epics.
 
     Two distinct surfaces live here:
 
-    * **Authenticated client registration** under `/businesses/{id}/telemetry/clients`,
+    * **Authenticated client lifecycle** under `/businesses/{id}/telemetry/clients`,
       gated by `telemetry.read` / `telemetry.write`. A caller lacking the permission
       receives 404, never 403 — the difference would be a business-existence oracle.
     * **Principal-less batch ingest** at `/telemetry/ingest/{key}`, authenticated by a
@@ -129,6 +129,74 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /businesses/{id}/telemetry/clients/{clientId}/move-targets:
+    get:
+      summary: List eligible analytics-site move targets
+      description: |
+        Requires `telemetry.write` on the source business. Returns only active businesses in the
+        same tenant root where the caller also holds `telemetry.write`, excluding the source.
+        Unknown, foreign, revoked, and non-analytics client ids are all 404.
+      operationId: listTelemetryClientMoveTargets
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Eligible destination businesses
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [targets]
+                properties:
+                  targets:
+                    type: array
+                    items: { $ref: '#/components/schemas/TelemetryMoveTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /businesses/{id}/telemetry/clients/{clientId}/move:
+    post:
+      summary: Move an analytics site to another business
+      description: |
+        Requires `telemetry.write` on both the source and target businesses. The target must be an
+        active business in the same tenant root and must differ from the source. The client id,
+        publishable key, embed snippet, status, and all historical analytics are preserved.
+
+        The move is atomic with concurrent ingest: after this response returns, no event for the
+        client remains under or can commit under the source business. Unknown, foreign, revoked,
+        non-analytics, and unauthorized source/target resources are all 404.
+      operationId: moveTelemetryAnalyticsClient
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_business_id]
+              properties:
+                target_business_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Site moved; identity and publishable key are unchanged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TelemetryClient' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Source and target are the same, or the target belongs to another tenant root
+
   /telemetry/ingest/{key}:
     post:
       summary: Ingest a batch of telemetry events (public, principal-less)
@@ -236,6 +304,14 @@ components:
         has_secret:
           type: boolean
           description: Whether a signing secret exists. The secret itself is never returned after creation.
+
+    TelemetryMoveTarget:
+      type: object
+      required: [id, tenant_root_id, name]
+      properties:
+        id:             { type: string, format: uuid }
+        tenant_root_id: { type: string, format: uuid }
+        name:           { type: string }
 
     AnalyticsEvent:
       type: object
