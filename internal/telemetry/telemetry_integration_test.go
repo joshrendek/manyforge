@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
@@ -455,6 +456,22 @@ func seedChildBusiness(t *testing.T, ctx context.Context, tdb *testdb.TestDB, pa
 	return id
 }
 
+func grantOwnerAtRoot(t *testing.T, ctx context.Context, tdb *testdb.TestDB, principalID, tenantRoot uuid.UUID) {
+	t.Helper()
+	var ownerRole uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'").Scan(&ownerRole); err != nil {
+		t.Fatalf("owner role: %v", err)
+	}
+	if _, err := tdb.Super.Exec(ctx,
+		`INSERT INTO membership
+		    (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		  VALUES ($1,$2,$2,$3,now())`,
+		principalID, tenantRoot, ownerRole); err != nil {
+		t.Fatalf("grant owner at %s: %v", tenantRoot, err)
+	}
+}
+
 func TestClientLifecycle_CreateListRevoke(t *testing.T) {
 	ctx, e := newEnv(t)
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
@@ -569,7 +586,9 @@ func TestClientLifecycle_TenantIsolation(t *testing.T) {
 func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing.T) {
 	ctx, e := newEnv(t)
 	seed := seedTenant(t, ctx, e.tdb, "MoveCo")
-	targetID := seedChildBusiness(t, ctx, e.tdb, seed.businessID, seed.businessID, "MoveCo Labs")
+	destination := seedTenant(t, ctx, e.tdb, "Destination Master")
+	targetID := destination.businessID
+	grantOwnerAtRoot(t, ctx, e.tdb, seed.principalID, targetID)
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 
 	created, err := svc.CreateClient(
@@ -618,7 +637,7 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	if err != nil {
 		t.Fatalf("MoveTargets: %v", err)
 	}
-	if len(targets) != 1 || targets[0].ID != targetID {
+	if len(targets) != 1 || targets[0].ID != targetID || !targets[0].IsTenantRoot {
 		t.Fatalf("MoveTargets = %#v, want only %s", targets, targetID)
 	}
 
@@ -631,9 +650,9 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	if moved.ID != created.ID || moved.PublishableKey != created.PublishableKey {
 		t.Fatalf("site identity changed: before=%#v after=%#v", created, moved)
 	}
-	if moved.BusinessID != targetID || moved.TenantRootID != seed.businessID {
+	if moved.BusinessID != targetID || moved.TenantRootID != targetID {
 		t.Fatalf("site scope = business %s tenant %s, want %s/%s",
-			moved.BusinessID, moved.TenantRootID, targetID, seed.businessID)
+			moved.BusinessID, moved.TenantRootID, targetID, targetID)
 	}
 	sourceList, err := svc.ListClients(ctx, seed.principalID, seed.businessID, 50)
 	if err != nil {
@@ -653,8 +672,8 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	} {
 		var sourceRows, targetRows int
 		if err := e.tdb.Super.QueryRow(ctx,
-			`SELECT count(*) FILTER (WHERE business_id=$2),
-			        count(*) FILTER (WHERE business_id=$3)
+			`SELECT count(*) FILTER (WHERE business_id=$2 OR tenant_root_id=$2),
+			        count(*) FILTER (WHERE business_id=$3 AND tenant_root_id=$3)
 			   FROM `+table+` WHERE client_id=$1`,
 			created.ID, seed.businessID, targetID).Scan(&sourceRows, &targetRows); err != nil {
 			t.Fatalf("%s ownership: %v", table, err)
@@ -665,8 +684,8 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	}
 	var sourceClients, targetClients int
 	if err := e.tdb.Super.QueryRow(ctx,
-		`SELECT count(*) FILTER (WHERE business_id=$2),
-		        count(*) FILTER (WHERE business_id=$3)
+		`SELECT count(*) FILTER (WHERE business_id=$2 OR tenant_root_id=$2),
+		        count(*) FILTER (WHERE business_id=$3 AND tenant_root_id=$3)
 		   FROM telemetry_client WHERE id=$1`,
 		created.ID, seed.businessID, targetID).Scan(&sourceClients, &targetClients); err != nil {
 		t.Fatalf("telemetry_client ownership: %v", err)
@@ -708,16 +727,37 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	var staleRows int
 	if err := e.tdb.Super.QueryRow(ctx,
 		`SELECT count(*) FROM analytics_event
-		  WHERE client_id=$1 AND business_id<>$2`,
+		  WHERE client_id=$1 AND (business_id<>$2 OR tenant_root_id<>$2)`,
 		created.ID, targetID).Scan(&staleRows); err != nil {
 		t.Fatalf("post-move event ownership: %v", err)
 	}
 	if staleRows != 0 {
 		t.Fatalf("post-move ingest left %d events outside destination", staleRows)
 	}
+
+	// Direct app-role SQL must not gain the SECURITY DEFINER function's root-changing authority.
+	// Column privileges block it before the owner-only trigger is even needed.
+	err = e.tdb.App.WithPrincipal(ctx, seed.principalID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE telemetry_client SET tenant_root_id=$2 WHERE id=$1`,
+			created.ID, seed.businessID)
+		return err
+	})
+	if err == nil {
+		t.Fatal("direct app-role tenant-root rewrite unexpectedly succeeded")
+	}
+	var guardedRoot uuid.UUID
+	if err := e.tdb.Super.QueryRow(ctx,
+		"SELECT tenant_root_id FROM telemetry_client WHERE id=$1", created.ID,
+	).Scan(&guardedRoot); err != nil {
+		t.Fatalf("read guarded tenant root: %v", err)
+	}
+	if guardedRoot != targetID {
+		t.Fatalf("failed direct update changed tenant root to %s", guardedRoot)
+	}
 }
 
-func TestClientLifecycle_MoveRefusesOraclesNoOpsAndCrossTenant(t *testing.T) {
+func TestClientLifecycle_MoveRefusesOraclesAndNoOps(t *testing.T) {
 	ctx, e := newEnv(t)
 	source := seedTenant(t, ctx, e.tdb, "MoveSource")
 	targetID := seedChildBusiness(
@@ -733,6 +773,12 @@ func TestClientLifecycle_MoveRefusesOraclesNoOpsAndCrossTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
 	}
+	crossRootClient, err := svc.CreateClient(
+		ctx, source.principalID, source.businessID, "analytics", "cross-root-site", false,
+	)
+	if err != nil {
+		t.Fatalf("CreateClient(cross-root): %v", err)
+	}
 	crashClient, err := svc.CreateClient(
 		ctx, source.principalID, source.businessID, "crash", "app", false,
 	)
@@ -746,23 +792,7 @@ func TestClientLifecycle_MoveRefusesOraclesNoOpsAndCrossTenant(t *testing.T) {
 		t.Fatalf("same-business move = %v, want ErrConflict", err)
 	}
 
-	var ownerRole uuid.UUID
-	if err := e.tdb.Super.QueryRow(ctx,
-		"SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'").Scan(&ownerRole); err != nil {
-		t.Fatalf("owner role: %v", err)
-	}
-	if _, err := e.tdb.Super.Exec(ctx,
-		`INSERT INTO membership
-		    (principal_id,business_id,tenant_root_id,role_id,granted_at)
-		  VALUES ($1,$2,$2,$3,now())`,
-		source.principalID, foreignTenant.businessID, ownerRole); err != nil {
-		t.Fatalf("grant foreign target permission: %v", err)
-	}
-	if _, err := svc.MoveClient(
-		ctx, source.principalID, source.businessID, client.ID, foreignTenant.businessID,
-	); !errors.Is(err, errs.ErrConflict) {
-		t.Fatalf("cross-tenant move = %v, want ErrConflict", err)
-	}
+	grantOwnerAtRoot(t, ctx, e.tdb, source.principalID, foreignTenant.businessID)
 
 	unknownErr := func() error {
 		_, err := svc.MoveClient(
@@ -799,6 +829,19 @@ func TestClientLifecycle_MoveRefusesOraclesNoOpsAndCrossTenant(t *testing.T) {
 	}
 	if businessID != source.businessID {
 		t.Fatalf("rejected move partially changed client to %s", businessID)
+	}
+
+	moved, err := svc.MoveClient(
+		ctx, source.principalID, source.businessID, crossRootClient.ID, foreignTenant.businessID,
+	)
+	if err != nil {
+		t.Fatalf("authorized cross-root move: %v", err)
+	}
+	if moved.BusinessID != foreignTenant.businessID ||
+		moved.TenantRootID != foreignTenant.businessID {
+		t.Fatalf("cross-root client scope = %s/%s, want %s/%s",
+			moved.BusinessID, moved.TenantRootID,
+			foreignTenant.businessID, foreignTenant.businessID)
 	}
 }
 

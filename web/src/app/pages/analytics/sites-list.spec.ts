@@ -17,11 +17,11 @@ const biz = {
     },
     {
       id: 'b2',
-      parent_id: 'b1',
-      tenant_root_id: 'b1',
+      parent_id: null,
+      tenant_root_id: 'b2',
       name: 'Acme Labs',
       status: 'active',
-      is_tenant_root: false,
+      is_tenant_root: true,
     },
   ],
   next_cursor: null,
@@ -136,11 +136,17 @@ describe('AnalyticsSitesListComponent', () => {
     const targets = mock.expectOne('/api/v1/businesses/b1/telemetry/clients/s1/move-targets');
     expect(targets.request.method).toBe('GET');
     targets.flush({
-      targets: [{ id: 'b2', tenant_root_id: 'b1', name: 'Acme Labs' }],
+      targets: [{ id: 'b2', tenant_root_id: 'b2', name: 'Acme Labs', is_tenant_root: true }],
     });
 
     const comp = fixture.componentInstance;
-    comp.moveTargetId = 'b2';
+    fixture.detectChanges();
+    const targetSelect = fixture.nativeElement.querySelector(
+      '[data-testid="site-move-target"]',
+    ) as HTMLSelectElement;
+    expect(targetSelect.textContent).toContain('Acme Labs (master)');
+    targetSelect.value = 'b2';
+    targetSelect.dispatchEvent(new Event('change'));
     fixture.detectChanges();
     expect(
       fixture.nativeElement.querySelector('[data-testid="site-move-confirmation"]').textContent,
@@ -152,11 +158,11 @@ describe('AnalyticsSitesListComponent', () => {
     const req = mock.expectOne('/api/v1/businesses/b1/telemetry/clients/s1/move');
     expect(req.request.method).toBe('POST');
     expect(req.request.body).toEqual({ target_business_id: 'b2' });
-    req.flush({ ...clients.clients[0], business_id: 'b2' });
+    req.flush({ ...clients.clients[0], business_id: 'b2', tenant_root_id: 'b2' });
 
     expect(comp.businessId()).toBe('b2');
     mock.expectOne('/api/v1/businesses/b2/telemetry/clients').flush({
-      clients: [{ ...clients.clients[0], business_id: 'b2' }],
+      clients: [{ ...clients.clients[0], business_id: 'b2', tenant_root_id: 'b2' }],
     });
     fixture.detectChanges();
     expect(

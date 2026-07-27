@@ -133,8 +133,9 @@ paths:
     get:
       summary: List eligible analytics-site move targets
       description: |
-        Requires `telemetry.write` on the source business. Returns only active businesses in the
-        same tenant root where the caller also holds `telemetry.write`, excluding the source.
+        Requires `telemetry.write` on the source business. Returns active businesses across every
+        tenant root where the caller also holds `telemetry.write`, excluding the source. Master
+        businesses are identified by `is_tenant_root` so the selector can distinguish them.
         Unknown, foreign, revoked, and non-analytics client ids are all 404.
       operationId: listTelemetryClientMoveTargets
       parameters:
@@ -162,9 +163,10 @@ paths:
     post:
       summary: Move an analytics site to another business
       description: |
-        Requires `telemetry.write` on both the source and target businesses. The target must be an
-        active business in the same tenant root and must differ from the source. The client id,
-        publishable key, embed snippet, status, and all historical analytics are preserved.
+        Requires `telemetry.write` on both the source and target businesses. The target must be
+        active and differ from the source; it may be in another tenant root (including another
+        master business). The client id, publishable key, embed snippet, status, and all historical
+        analytics are preserved. Both `business_id` and `tenant_root_id` move to the target scope.
 
         The move is atomic with concurrent ingest: after this response returns, no event for the
         client remains under or can commit under the source business. Unknown, foreign, revoked,
@@ -195,7 +197,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Source and target are the same, or the target belongs to another tenant root
+          description: Source and target are the same business
 
   /telemetry/ingest/{key}:
     post:
@@ -307,11 +309,12 @@ components:
 
     TelemetryMoveTarget:
       type: object
-      required: [id, tenant_root_id, name]
+      required: [id, tenant_root_id, name, is_tenant_root]
       properties:
         id:             { type: string, format: uuid }
         tenant_root_id: { type: string, format: uuid }
         name:           { type: string }
+        is_tenant_root: { type: boolean, description: True when this target is a master business. }
 
     AnalyticsEvent:
       type: object
