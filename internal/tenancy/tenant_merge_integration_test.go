@@ -173,8 +173,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.InventoryVersion == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 114 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/114",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 115 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/115",
 				*first.InventoryVersion, *first.SchemaVersion)
 		}
 		if len(first.TableMetrics) != 51 {
@@ -414,6 +414,237 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 	})
 }
 
+func TestTenantMergeFenceDrainsRejectsSkipsAndRecovers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	svc := &tenancy.Service{DB: tdb.App}
+
+	actor, sourceRoot := seedFounder(ctx, t, tdb, "merge-fence-source@x.test")
+	_, destinationRoot := seedFounder(ctx, t, tdb, "merge-fence-destination@x.test")
+	addDirectOwner(ctx, t, tdb, actor, destinationRoot)
+	destinationParent, err := svc.CreateSubBusiness(
+		ctx, actor, destinationRoot, "Fence destination parent",
+	)
+	if err != nil {
+		t.Fatalf("create destination parent: %v", err)
+	}
+	_, unrelatedRoot := seedFounder(ctx, t, tdb, "merge-fence-unrelated@x.test")
+
+	sourceEvent := uuid.New()
+	unrelatedEvent := uuid.New()
+	if _, err := tdb.Super.Exec(ctx, `
+		INSERT INTO outbox (id, tenant_root_id, topic, payload)
+		VALUES
+		    ($1, $2, 'ticket.created', '{}'::jsonb),
+		    ($3, $4, 'ticket.created', '{}'::jsonb)`,
+		sourceEvent, sourceRoot, unrelatedEvent, unrelatedRoot,
+	); err != nil {
+		t.Fatalf("seed outbox rows: %v", err)
+	}
+
+	operation, err := svc.CreateTenantMergeOperation(
+		ctx, actor, sourceRoot, destinationParent.ID, "fence-contract",
+	)
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	ready, err := svc.PreflightTenantMerge(ctx, actor, operation.ID)
+	if err != nil || ready.Status != "ready" {
+		t.Fatalf("preflight: status=%q err=%v conflicts=%+v",
+			ready.Status, err, ready.Conflicts)
+	}
+
+	// The database primitive itself must refuse an unfenced direct invocation;
+	// correctness cannot depend on every caller using the Go orchestration.
+	directOperation, err := svc.CreateTenantMergeOperation(
+		ctx, actor, sourceRoot, destinationParent.ID, "fence-direct-cutover",
+	)
+	if err != nil {
+		t.Fatalf("create direct-cutover operation: %v", err)
+	}
+	directReady, err := svc.PreflightTenantMerge(ctx, actor, directOperation.ID)
+	if err != nil || directReady.Status != "ready" {
+		t.Fatalf("preflight direct-cutover operation: status=%q err=%v",
+			directReady.Status, err)
+	}
+	var directRaw []byte
+	if err := tdb.App.WithPrincipal(ctx, actor, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			"SELECT tenant_merge_cutover($1)", directOperation.ID,
+		).Scan(&directRaw)
+	}); err != nil {
+		t.Fatalf("direct unfenced cutover call: %v", err)
+	}
+	var directResult tenancy.TenantMergeOperation
+	if err := json.Unmarshal(directRaw, &directResult); err != nil {
+		t.Fatalf("decode direct unfenced cutover: %v", err)
+	}
+	if directResult.Status != "failed" {
+		t.Fatalf("direct unfenced cutover status = %q, want failed",
+			directResult.Status)
+	}
+	var sourceRootAfterDirect uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT tenant_root_id FROM business WHERE id=$1", sourceRoot,
+	).Scan(&sourceRootAfterDirect); err != nil || sourceRootAfterDirect != sourceRoot {
+		t.Fatalf("direct unfenced cutover moved source: root=%s err=%v",
+			sourceRootAfterDirect, err)
+	}
+
+	// A writer that acquired the shared root lock before fence creation must
+	// drain first. A short context makes the wait deterministic without timing
+	// assumptions about when a goroutine reaches PostgreSQL.
+	writerTx, err := tdb.App.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin prior writer: %v", err)
+	}
+	var allowed bool
+	if err := writerTx.QueryRow(ctx,
+		"SELECT tenant_merge_root_write_allowed($1)", sourceRoot,
+	).Scan(&allowed); err != nil || !allowed {
+		t.Fatalf("acquire prior shared root lock: allowed=%t err=%v", allowed, err)
+	}
+	waitCtx, waitCancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	_, waitErr := svc.BeginTenantMergeFence(waitCtx, actor, operation.ID)
+	waitCancel()
+	if !errors.Is(waitErr, context.DeadlineExceeded) {
+		t.Fatalf("begin fence while writer active = %v, want context deadline", waitErr)
+	}
+	if err := writerTx.Commit(ctx); err != nil {
+		t.Fatalf("commit prior writer: %v", err)
+	}
+
+	fenced, err := svc.BeginTenantMergeFence(ctx, actor, operation.ID)
+	if err != nil || fenced.Status != "ready" {
+		t.Fatalf("begin durable fence: status=%q err=%v", fenced.Status, err)
+	}
+	var fenceRows int
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT count(*) FROM tenant_merge_fence WHERE operation_id=$1",
+		operation.ID,
+	).Scan(&fenceRows); err != nil || fenceRows != 2 {
+		t.Fatalf("durable fence rows = %d err=%v, want 2", fenceRows, err)
+	}
+
+	if _, err := svc.CreateSubBusiness(ctx, actor, sourceRoot, "Blocked source write"); !errors.Is(err, errs.ErrTenantMaintenance) {
+		t.Fatalf("source write while fenced = %v, want ErrTenantMaintenance", err)
+	}
+	if _, err := svc.CreateSubBusiness(ctx, actor, destinationRoot, "Blocked destination write"); !errors.Is(err, errs.ErrTenantMaintenance) {
+		t.Fatalf("destination write while fenced = %v, want ErrTenantMaintenance", err)
+	}
+
+	// A caller-set operation marker is not a bypass: only the cutover's own
+	// transaction can see the operation in running state.
+	spoofErr := tdb.App.WithPrincipal(ctx, actor, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			"SELECT set_config('manyforge.tenant_merge_operation', $1, true)",
+			operation.ID.String(),
+		); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx,
+			"UPDATE business SET name=name WHERE id=$1", sourceRoot)
+		return err
+	})
+	if !errors.Is(spoofErr, errs.ErrTenantMaintenance) {
+		t.Fatalf("spoofed operation marker write = %v, want ErrTenantMaintenance", spoofErr)
+	}
+
+	// The unrelated tenant is writable while S and D are paused.
+	if _, err := tdb.Super.Exec(ctx,
+		"UPDATE business SET name=name WHERE id=$1", unrelatedRoot,
+	); err != nil {
+		t.Fatalf("unrelated tenant write while fence active: %v", err)
+	}
+
+	var claimedRoots []uuid.UUID
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			"SELECT tenant_root_id FROM claim_outbox_batch(1000)")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var root uuid.UUID
+			if err := rows.Scan(&root); err != nil {
+				return err
+			}
+			claimedRoots = append(claimedRoots, root)
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatalf("claim outbox while fenced: %v", err)
+	}
+	var sawUnrelated bool
+	for _, root := range claimedRoots {
+		if root == sourceRoot || root == destinationRoot {
+			t.Fatalf("worker claimed fenced root %s; all roots=%v", root, claimedRoots)
+		}
+		sawUnrelated = sawUnrelated || root == unrelatedRoot
+	}
+	if !sawUnrelated {
+		t.Fatalf("worker did not claim unrelated root; roots=%v", claimedRoots)
+	}
+
+	var partitionsCreated int
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, "SELECT create_due_partitions()").Scan(&partitionsCreated)
+	}); err != nil || partitionsCreated != 0 {
+		t.Fatalf("partition maintenance while fenced = %d err=%v, want no-op", partitionsCreated, err)
+	}
+
+	cancelled, err := svc.CancelTenantMergeFence(ctx, actor, operation.ID)
+	if err != nil || cancelled.Status != "preflight_required" {
+		t.Fatalf("cancel fence: status=%q err=%v", cancelled.Status, err)
+	}
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT count(*) FROM tenant_merge_fence WHERE operation_id=$1",
+		operation.ID,
+	).Scan(&fenceRows); err != nil || fenceRows != 0 {
+		t.Fatalf("fence rows after cancel = %d err=%v, want 0", fenceRows, err)
+	}
+	if _, err := svc.CreateSubBusiness(ctx, actor, sourceRoot, "Write after cancel"); err != nil {
+		t.Fatalf("source write after verified fence cancel: %v", err)
+	}
+
+	ready, err = svc.PreflightTenantMerge(ctx, actor, operation.ID)
+	if err != nil || ready.Status != "ready" {
+		t.Fatalf("re-preflight: status=%q err=%v conflicts=%+v",
+			ready.Status, err, ready.Conflicts)
+	}
+	if _, err := svc.BeginTenantMergeFence(ctx, actor, operation.ID); err != nil {
+		t.Fatalf("begin crash-recovery fence: %v", err)
+	}
+	if _, err := svc.BeginTenantMergeFence(ctx, actor, operation.ID); err != nil {
+		t.Fatalf("idempotent fence replay: %v", err)
+	}
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT count(*) FROM tenant_merge_fence WHERE operation_id=$1",
+		operation.ID,
+	).Scan(&fenceRows); err != nil || fenceRows != 2 {
+		t.Fatalf("fence replay rows = %d err=%v, want 2", fenceRows, err)
+	}
+
+	succeeded, err := svc.CutoverTenantMerge(ctx, actor, operation.ID)
+	if err != nil || succeeded.Status != "succeeded" {
+		t.Fatalf("resume fenced cutover: status=%q err=%v events=%+v",
+			succeeded.Status, err, succeeded.Events)
+	}
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT count(*) FROM tenant_merge_fence WHERE operation_id=$1",
+		operation.ID,
+	).Scan(&fenceRows); err != nil || fenceRows != 0 {
+		t.Fatalf("fence rows after committed cutover = %d err=%v, want 0", fenceRows, err)
+	}
+}
+
 func TestTenantMergeCutoverMovesCompleteHierarchyAndIsIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -501,12 +732,24 @@ func TestTenantMergeCutoverMovesCompleteHierarchyAndIsIdempotent(t *testing.T) {
 	if succeeded.Status != "succeeded" {
 		t.Fatalf("cutover status = %q; events=%+v", succeeded.Status, succeeded.Events)
 	}
-	if len(succeeded.Events) < 4 ||
-		succeeded.Events[len(succeeded.Events)-2].Event != "cutover.started" ||
-		succeeded.Events[len(succeeded.Events)-1].Event != "cutover.succeeded" {
+	var successMetadata map[string]any
+	var sawFenceStarted, sawCutoverStarted, sawFenceReleased bool
+	for _, event := range succeeded.Events {
+		switch event.Event {
+		case "fence.started":
+			sawFenceStarted = true
+		case "cutover.started":
+			sawCutoverStarted = true
+		case "cutover.succeeded":
+			successMetadata = event.Metadata
+		case "fence.released":
+			sawFenceReleased = true
+		}
+	}
+	if !sawFenceStarted || !sawCutoverStarted ||
+		successMetadata == nil || !sawFenceReleased {
 		t.Fatalf("cutover events = %+v", succeeded.Events)
 	}
-	successMetadata := succeeded.Events[len(succeeded.Events)-1].Metadata
 	tableCounts, ok := successMetadata["table_counts"].(map[string]any)
 	if !ok || len(tableCounts) != len(ready.TableMetrics) {
 		t.Errorf("cutover table counts = %#v, want %d manifest entries",
@@ -695,11 +938,20 @@ func TestTenantMergeCutoverRollsBackInjectedFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cutover returned database error: %v", err)
 	}
-	if failed.Status != "failed" ||
-		failed.Events[len(failed.Events)-1].Event != "cutover.failed" {
+	var failureMetadata map[string]any
+	var sawFenceReleased bool
+	for _, event := range failed.Events {
+		switch event.Event {
+		case "cutover.failed":
+			failureMetadata = event.Metadata
+		case "fence.released":
+			sawFenceReleased = true
+		}
+	}
+	if failed.Status != "failed" || failureMetadata == nil || !sawFenceReleased {
 		t.Fatalf("failed cutover = status %q events=%+v", failed.Status, failed.Events)
 	}
-	if got := failed.Events[len(failed.Events)-1].Metadata["stage"]; got != "role" {
+	if got := failureMetadata["stage"]; got != "role" {
 		t.Errorf("failure stage = %v, want role", got)
 	}
 

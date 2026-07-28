@@ -62,6 +62,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		WriteJSON(w, http.StatusNotFound, ErrorBody{Code: "NOT_FOUND", Message: "not found"})
 	case errors.Is(err, errs.ErrRateLimited):
 		WriteJSON(w, http.StatusTooManyRequests, ErrorBody{Code: "RATE_LIMITED", Message: "rate limited"})
+	case errors.Is(err, errs.ErrTenantMaintenance):
+		WriteJSON(w, http.StatusServiceUnavailable, ErrorBody{
+			Code: "TENANT_MERGE_IN_PROGRESS", Message: "tenant maintenance in progress; retry later",
+		})
 	case errors.Is(err, errs.ErrCodexDisconnected):
 		WriteJSON(w, http.StatusConflict, ErrorBody{Code: "CODEX_DISCONNECTED", Message: "codex credential disconnected; reconnect required"})
 	case errors.Is(err, errs.ErrUpstream):
