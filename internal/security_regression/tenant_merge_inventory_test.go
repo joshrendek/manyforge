@@ -163,4 +163,72 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 			t.Errorf("production tenant-merge manifest contains unreviewed table %q", table)
 		}
 	}
+
+	var tenantConsistentFKs, deferrableFKs, initiallyDeferredFKs int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT count(*),
+		       count(*) FILTER (WHERE condeferrable),
+		       count(*) FILTER (WHERE condeferred)
+		FROM pg_constraint
+		WHERE contype = 'f'
+		  AND conrelid IN (
+		      SELECT table_name::regclass FROM tenant_merge_manifest
+		  )
+		  AND position(
+		      'tenant_root_id' IN pg_get_constraintdef(oid, true)
+		  ) > 0`,
+	).Scan(
+		&tenantConsistentFKs,
+		&deferrableFKs,
+		&initiallyDeferredFKs,
+	); err != nil {
+		t.Fatalf("inspect tenant-consistent foreign keys: %v", err)
+	}
+	if tenantConsistentFKs != 60 ||
+		deferrableFKs != tenantConsistentFKs ||
+		initiallyDeferredFKs != 0 {
+		t.Errorf(
+			"tenant-consistent FKs total/deferrable/initially-deferred = %d/%d/%d, want 60/60/0",
+			tenantConsistentFKs,
+			deferrableFKs,
+			initiallyDeferredFKs,
+		)
+	}
+
+	for signature, wantExecutable := range map[string]bool{
+		"tenant_merge_cutover(uuid)":                       true,
+		"tenant_merge_root_rewrite_allowed(oid,uuid,uuid)": false,
+		"tenant_merge_authorized(uuid,uuid,uuid)":          false,
+		"tenant_merge_schema_state()":                      false,
+		"tenant_merge_root_snapshot(uuid)":                 false,
+		"tenant_merge_operation_json(uuid)":                false,
+		"tenant_merge_validate_preflight(uuid,uuid)":       true,
+		"tenant_merge_create(uuid,uuid,uuid,text)":         true,
+		"tenant_merge_get(uuid,uuid)":                      true,
+		"tenant_merge_preflight(uuid,uuid)":                true,
+	} {
+		var executable bool
+		if err := tdb.Super.QueryRow(ctx,
+			"SELECT has_function_privilege('manyforge_app', $1, 'EXECUTE')",
+			signature,
+		).Scan(&executable); err != nil {
+			t.Fatalf("inspect function grant %s: %v", signature, err)
+		}
+		if executable != wantExecutable {
+			t.Errorf("manyforge_app execute %s = %t, want %t",
+				signature, executable, wantExecutable)
+		}
+	}
+
+	var cutoverArgs int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT pronargs
+		FROM pg_proc
+		WHERE oid = 'tenant_merge_cutover(uuid)'::regprocedure`,
+	).Scan(&cutoverArgs); err != nil {
+		t.Fatalf("inspect cutover signature: %v", err)
+	}
+	if cutoverArgs != 1 {
+		t.Errorf("tenant_merge_cutover argument count = %d, want operation ID only", cutoverArgs)
+	}
 }
