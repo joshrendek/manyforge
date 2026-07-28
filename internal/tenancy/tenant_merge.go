@@ -45,6 +45,49 @@ type TenantMergeTableMetric struct {
 	StableIDDigest string `json:"stable_id_digest"`
 }
 
+// TenantMergeReconciliationTable is the exact operation authorized for one
+// manifest table. Cutover's common write trigger consumes this action for every
+// source-to-destination root rewrite.
+type TenantMergeReconciliationTable struct {
+	Action         string `json:"action"`
+	Rows           int64  `json:"rows"`
+	StableIDDigest string `json:"stable_id_digest"`
+}
+
+// TenantMergeReconciliationPolicy describes one explicit v1 identity/access
+// rule. The optional digests pin indirectly-scoped state such as custom-role
+// permissions without exposing tenant identity values.
+type TenantMergeReconciliationPolicy struct {
+	Key              string `json:"key"`
+	Action           string `json:"action"`
+	Count            int64  `json:"count"`
+	IdentityDigest   string `json:"identity_digest,omitempty"`
+	PermissionCount  int64  `json:"permission_count,omitempty"`
+	PermissionDigest string `json:"permission_digest,omitempty"`
+}
+
+// TenantMergeReconciliationAccess records the access invariants that must
+// survive cutover. Existing grants stay anchored at their original business.
+type TenantMergeReconciliationAccess struct {
+	SourceDirectOwners      int64  `json:"source_direct_owners"`
+	DestinationDirectOwners int64  `json:"destination_direct_owners"`
+	SourceMemberships       int64  `json:"source_memberships"`
+	ScopeRule               string `json:"scope_rule"`
+}
+
+// TenantMergeReconciliationPlan is the versioned, immutable decision consumed
+// by cutover. V1 supports lossless root rewrites only; every collision blocks.
+type TenantMergeReconciliationPlan struct {
+	Version           int32                                     `json:"version"`
+	Mode              string                                    `json:"mode"`
+	SourceRootID      uuid.UUID                                 `json:"source_root_id"`
+	DestinationRootID uuid.UUID                                 `json:"destination_root_id"`
+	Tables            map[string]TenantMergeReconciliationTable `json:"tables"`
+	Access            TenantMergeReconciliationAccess           `json:"access"`
+	Policies          []TenantMergeReconciliationPolicy         `json:"policies"`
+	Conflicts         []TenantMergeFinding                      `json:"conflicts"`
+}
+
 // TenantMergeEvent is the append-only transition audit attached to an
 // operation. It is control-plane metadata, not tenant data.
 type TenantMergeEvent struct {
@@ -74,6 +117,9 @@ type TenantMergeOperation struct {
 	SourceGeneration      *string                           `json:"source_generation"`
 	DestinationGeneration *string                           `json:"destination_generation"`
 	PreflightGeneration   *string                           `json:"preflight_generation"`
+	ReconciliationVersion *int32                            `json:"reconciliation_version"`
+	ReconciliationHash    *string                           `json:"reconciliation_hash"`
+	ReconciliationPlan    *TenantMergeReconciliationPlan    `json:"reconciliation_plan"`
 	TableMetrics          map[string]TenantMergeTableMetric `json:"table_metrics"`
 	ModuleCounts          map[string]TenantMergeCount       `json:"module_counts"`
 	Conflicts             []TenantMergeFinding              `json:"conflicts"`
