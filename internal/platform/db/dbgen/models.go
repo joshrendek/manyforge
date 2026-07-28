@@ -1193,6 +1193,55 @@ type TelemetryClient struct {
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type TenantMergeManifest struct {
+	TableName        string `json:"table_name"`
+	Module           string `json:"module"`
+	Strategy         string `json:"strategy"`
+	InventoryVersion int32  `json:"inventory_version"`
+}
+
+type TenantMergeOperation struct {
+	ID                    uuid.UUID          `json:"id"`
+	SourceRootID          uuid.UUID          `json:"source_root_id"`
+	DestinationParentID   uuid.UUID          `json:"destination_parent_id"`
+	DestinationRootID     uuid.UUID          `json:"destination_root_id"`
+	ActorPrincipalID      uuid.UUID          `json:"actor_principal_id"`
+	IdempotencyKey        string             `json:"idempotency_key"`
+	RequestHash           []byte             `json:"request_hash"`
+	Status                string             `json:"status"`
+	InventoryVersion      *int32             `json:"inventory_version"`
+	SchemaVersion         *int64             `json:"schema_version"`
+	SchemaHash            *string            `json:"schema_hash"`
+	SourceGeneration      *string            `json:"source_generation"`
+	DestinationGeneration *string            `json:"destination_generation"`
+	PreflightGeneration   *string            `json:"preflight_generation"`
+	TableMetrics          []byte             `json:"table_metrics"`
+	ModuleCounts          []byte             `json:"module_counts"`
+	Conflicts             []byte             `json:"conflicts"`
+	Warnings              []byte             `json:"warnings"`
+	AffectedRows          int64              `json:"affected_rows"`
+	EstimatedBytes        int64              `json:"estimated_bytes"`
+	SourceBusinesses      *int32             `json:"source_businesses"`
+	ResultingDepth        *int32             `json:"resulting_depth"`
+	AttachmentCount       int64              `json:"attachment_count"`
+	AttachmentBytes       int64              `json:"attachment_bytes"`
+	PreflightCompletedAt  pgtype.Timestamptz `json:"preflight_completed_at"`
+	ReadyAt               pgtype.Timestamptz `json:"ready_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+}
+
+type TenantMergeOperationEvent struct {
+	ID               int64     `json:"id"`
+	OperationID      uuid.UUID `json:"operation_id"`
+	ActorPrincipalID uuid.UUID `json:"actor_principal_id"`
+	FromStatus       *string   `json:"from_status"`
+	ToStatus         string    `json:"to_status"`
+	Event            string    `json:"event"`
+	Metadata         []byte    `json:"metadata"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
 type Ticket struct {
 	ID                  uuid.UUID          `json:"id"`
 	BusinessID          uuid.UUID          `json:"business_id"`
