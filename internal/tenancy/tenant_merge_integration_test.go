@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,8 +173,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.InventoryVersion == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 113 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/113",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 114 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/114",
 				*first.InventoryVersion, *first.SchemaVersion)
 		}
 		if len(first.TableMetrics) != 51 {
@@ -350,7 +351,7 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Fatalf("schema mutation did not stale: result=%+v err=%v", schemaStale, err)
 		}
 		if _, err := tdb.Super.Exec(ctx,
-			"UPDATE schema_migrations SET version=113",
+			"UPDATE schema_migrations SET version=114",
 		); err != nil {
 			t.Fatalf("restore schema version: %v", err)
 		}
@@ -411,4 +412,320 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestTenantMergeCutoverMovesCompleteHierarchyAndIsIdempotent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	svc := &tenancy.Service{DB: tdb.App}
+
+	actor, sourceRoot := seedFounder(ctx, t, tdb, "cutover-source-owner@x.test")
+	destinationFounder, destinationRoot := seedFounder(
+		ctx, t, tdb, "cutover-destination-owner@x.test",
+	)
+	addDirectOwner(ctx, t, tdb, actor, destinationRoot)
+
+	destinationParent, err := svc.CreateSubBusiness(
+		ctx, actor, destinationRoot, "Destination parent",
+	)
+	if err != nil {
+		t.Fatalf("create destination parent: %v", err)
+	}
+	sourceChild, err := svc.CreateSubBusiness(ctx, actor, sourceRoot, "Source child")
+	if err != nil {
+		t.Fatalf("create source child: %v", err)
+	}
+
+	customRole := uuid.New()
+	if _, err := tdb.Super.Exec(ctx, `
+		INSERT INTO role (id, tenant_root_id, key, name, is_locked, created_at)
+		VALUES ($1, $2, 'source-specialist', 'Source specialist', false, now())`,
+		customRole, sourceRoot,
+	); err != nil {
+		t.Fatalf("seed source custom role: %v", err)
+	}
+
+	operation, err := svc.CreateTenantMergeOperation(
+		ctx, actor, sourceRoot, destinationParent.ID, "cutover-success",
+	)
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	ready, err := svc.PreflightTenantMerge(ctx, actor, operation.ID)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if ready.Status != "ready" {
+		t.Fatalf("preflight status = %q; conflicts=%+v", ready.Status, ready.Conflicts)
+	}
+	reversed, err := svc.CreateTenantMergeOperation(
+		ctx, actor, destinationRoot, sourceRoot, "cutover-reversed",
+	)
+	if err != nil {
+		t.Fatalf("create reversed operation: %v", err)
+	}
+	reversedReady, err := svc.PreflightTenantMerge(ctx, actor, reversed.ID)
+	if err != nil || reversedReady.Status != "ready" {
+		t.Fatalf("reversed preflight: status=%q err=%v conflicts=%+v",
+			reversedReady.Status, err, reversedReady.Conflicts)
+	}
+
+	_, err = svc.CutoverTenantMerge(ctx, destinationFounder, operation.ID)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("non-actor cutover: want ErrNotFound, got %v", err)
+	}
+
+	directErr := tdb.App.WithPrincipal(ctx, actor, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE business SET tenant_root_id=$2 WHERE id=$1`,
+			sourceChild.ID, destinationRoot,
+		)
+		return err
+	})
+	if directErr == nil ||
+		(!strings.Contains(directErr.Error(), "tenant_root_id is immutable") &&
+			!strings.Contains(directErr.Error(), "permission denied")) {
+		t.Fatalf("direct app root rewrite error = %v, want guarded rejection", directErr)
+	}
+
+	succeeded, err := svc.CutoverTenantMerge(ctx, actor, operation.ID)
+	if err != nil {
+		t.Fatalf("cutover: %v", err)
+	}
+	if succeeded.Status != "succeeded" {
+		t.Fatalf("cutover status = %q; events=%+v", succeeded.Status, succeeded.Events)
+	}
+	if len(succeeded.Events) < 4 ||
+		succeeded.Events[len(succeeded.Events)-2].Event != "cutover.started" ||
+		succeeded.Events[len(succeeded.Events)-1].Event != "cutover.succeeded" {
+		t.Fatalf("cutover events = %+v", succeeded.Events)
+	}
+	successMetadata := succeeded.Events[len(succeeded.Events)-1].Metadata
+	tableCounts, ok := successMetadata["table_counts"].(map[string]any)
+	if !ok || len(tableCounts) != len(ready.TableMetrics) {
+		t.Errorf("cutover table counts = %#v, want %d manifest entries",
+			successMetadata["table_counts"], len(ready.TableMetrics))
+	}
+	if got, ok := successMetadata["rewritten_rows"].(float64); !ok ||
+		int64(got) != ready.AffectedRows {
+		t.Errorf("cutover rewritten_rows = %#v, want %d",
+			successMetadata["rewritten_rows"], ready.AffectedRows)
+	}
+
+	var sourceParent, sourceTenant, childParent, childTenant uuid.UUID
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT source.parent_id, source.tenant_root_id,
+		       child.parent_id, child.tenant_root_id
+		FROM business source
+		JOIN business child ON child.id=$2
+		WHERE source.id=$1`,
+		sourceRoot, sourceChild.ID,
+	).Scan(&sourceParent, &sourceTenant, &childParent, &childTenant); err != nil {
+		t.Fatalf("read moved hierarchy: %v", err)
+	}
+	if sourceParent != destinationParent.ID || sourceTenant != destinationRoot {
+		t.Errorf("source root moved to parent/root %s/%s, want %s/%s",
+			sourceParent, sourceTenant, destinationParent.ID, destinationRoot)
+	}
+	if childParent != sourceRoot || childTenant != destinationRoot {
+		t.Errorf("source child parent/root = %s/%s, want %s/%s",
+			childParent, childTenant, sourceRoot, destinationRoot)
+	}
+
+	ancestors := ancestorIDs(ctx, t, tdb, sourceChild.ID)
+	wantDepths := map[string]int32{
+		sourceChild.ID.String():       0,
+		sourceRoot.String():           1,
+		destinationParent.ID.String(): 2,
+		destinationRoot.String():      3,
+	}
+	if !reflect.DeepEqual(ancestors, wantDepths) {
+		t.Errorf("moved child ancestors = %v, want %v", ancestors, wantDepths)
+	}
+
+	var movedRoleRoot uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT tenant_root_id FROM role WHERE id=$1", customRole,
+	).Scan(&movedRoleRoot); err != nil {
+		t.Fatalf("read moved custom role: %v", err)
+	}
+	if movedRoleRoot != destinationRoot {
+		t.Errorf("custom role root = %s, want %s", movedRoleRoot, destinationRoot)
+	}
+	var staleOutboxPayloads int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT count(*)
+		FROM outbox
+		WHERE tenant_root_id=$1
+		  AND topic IN ('business.created', 'agent.action.approved')
+		  AND payload->>'tenant_root_id'=$2`,
+		destinationRoot, sourceRoot.String(),
+	).Scan(&staleOutboxPayloads); err != nil {
+		t.Fatalf("inspect rewritten outbox payloads: %v", err)
+	}
+	if staleOutboxPayloads != 0 {
+		t.Errorf("%d moved outbox payloads retain the source root", staleOutboxPayloads)
+	}
+
+	rows, err := tdb.Super.Query(ctx,
+		"SELECT table_name::text FROM tenant_merge_manifest ORDER BY table_name")
+	if err != nil {
+		t.Fatalf("list manifest: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatalf("scan manifest: %v", err)
+		}
+		var residue int64
+		if err := tdb.Super.QueryRow(ctx,
+			"SELECT count(*) FROM "+
+				pgx.Identifier{table}.Sanitize()+
+				" WHERE tenant_root_id=$1",
+			sourceRoot,
+		).Scan(&residue); err != nil {
+			t.Fatalf("count source residue in %s: %v", table, err)
+		}
+		if residue != 0 {
+			t.Errorf("%s retains %d source-root rows", table, residue)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate manifest: %v", err)
+	}
+
+	eventCount := len(succeeded.Events)
+	replay, err := svc.CutoverTenantMerge(ctx, actor, operation.ID)
+	if err != nil {
+		t.Fatalf("replay cutover: %v", err)
+	}
+	if replay.Status != "succeeded" || len(replay.Events) != eventCount {
+		t.Errorf("replay = status %q, %d events; want succeeded, %d events",
+			replay.Status, len(replay.Events), eventCount)
+	}
+
+	_, err = svc.CutoverTenantMerge(ctx, actor, reversed.ID)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("reversed cutover after success: want ErrNotFound, got %v", err)
+	}
+	reversedAfter, err := svc.GetTenantMergeOperation(ctx, actor, reversed.ID)
+	if err != nil || reversedAfter.Status != "ready" {
+		t.Fatalf("reversed operation after conflict: status=%q err=%v",
+			reversedAfter.Status, err)
+	}
+}
+
+func TestTenantMergeCutoverRollsBackInjectedFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	svc := &tenancy.Service{DB: tdb.App}
+
+	actor, sourceRoot := seedFounder(ctx, t, tdb, "rollback-source-owner@x.test")
+	_, destinationRoot := seedFounder(ctx, t, tdb, "rollback-destination-owner@x.test")
+	addDirectOwner(ctx, t, tdb, actor, destinationRoot)
+	destinationParent, err := svc.CreateSubBusiness(
+		ctx, actor, destinationRoot, "Rollback destination parent",
+	)
+	if err != nil {
+		t.Fatalf("create destination parent: %v", err)
+	}
+	sourceChild, err := svc.CreateSubBusiness(ctx, actor, sourceRoot, "Rollback source child")
+	if err != nil {
+		t.Fatalf("create source child: %v", err)
+	}
+
+	customRole := uuid.New()
+	if _, err := tdb.Super.Exec(ctx, `
+		INSERT INTO role (id, tenant_root_id, key, name, is_locked, created_at)
+		VALUES ($1, $2, 'rollback-role', 'Rollback role', false, now())`,
+		customRole, sourceRoot,
+	); err != nil {
+		t.Fatalf("seed failure role: %v", err)
+	}
+	if _, err := tdb.Super.Exec(ctx, `
+		CREATE FUNCTION tenant_merge_test_fail_role() RETURNS trigger
+		LANGUAGE plpgsql AS $fn$
+		BEGIN
+		    IF NEW.tenant_root_id IS DISTINCT FROM OLD.tenant_root_id THEN
+		        RAISE EXCEPTION 'injected tenant merge failure';
+		    END IF;
+		    RETURN NEW;
+		END;
+		$fn$;
+		CREATE TRIGGER tenant_merge_test_fail_role_trg
+		BEFORE UPDATE ON role
+		FOR EACH ROW EXECUTE FUNCTION tenant_merge_test_fail_role()`,
+	); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = tdb.Super.Exec(context.Background(), `
+			DROP TRIGGER IF EXISTS tenant_merge_test_fail_role_trg ON role;
+			DROP FUNCTION IF EXISTS tenant_merge_test_fail_role()`)
+	})
+
+	sourceBefore := rootSnapshot(ctx, t, tdb, sourceRoot)
+	destinationBefore := rootSnapshot(ctx, t, tdb, destinationRoot)
+	operation, err := svc.CreateTenantMergeOperation(
+		ctx, actor, sourceRoot, destinationParent.ID, "cutover-rollback",
+	)
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	ready, err := svc.PreflightTenantMerge(ctx, actor, operation.ID)
+	if err != nil || ready.Status != "ready" {
+		t.Fatalf("preflight: status=%q err=%v conflicts=%+v",
+			ready.Status, err, ready.Conflicts)
+	}
+
+	failed, err := svc.CutoverTenantMerge(ctx, actor, operation.ID)
+	if err != nil {
+		t.Fatalf("cutover returned database error: %v", err)
+	}
+	if failed.Status != "failed" ||
+		failed.Events[len(failed.Events)-1].Event != "cutover.failed" {
+		t.Fatalf("failed cutover = status %q events=%+v", failed.Status, failed.Events)
+	}
+	if got := failed.Events[len(failed.Events)-1].Metadata["stage"]; got != "role" {
+		t.Errorf("failure stage = %v, want role", got)
+	}
+
+	if after := rootSnapshot(ctx, t, tdb, sourceRoot); !reflect.DeepEqual(after, sourceBefore) {
+		t.Error("failed cutover changed source tenant rows")
+	}
+	if after := rootSnapshot(ctx, t, tdb, destinationRoot); !reflect.DeepEqual(after, destinationBefore) {
+		t.Error("failed cutover changed destination tenant rows")
+	}
+
+	var parent *uuid.UUID
+	var root uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT parent_id, tenant_root_id FROM business WHERE id=$1",
+		sourceRoot,
+	).Scan(&parent, &root); err != nil {
+		t.Fatalf("read source after rollback: %v", err)
+	}
+	if parent != nil || root != sourceRoot {
+		t.Errorf("source after rollback parent/root = %v/%s, want nil/%s",
+			parent, root, sourceRoot)
+	}
+	ancestors := ancestorIDs(ctx, t, tdb, sourceChild.ID)
+	if len(ancestors) != 2 ||
+		ancestors[sourceChild.ID.String()] != 0 ||
+		ancestors[sourceRoot.String()] != 1 {
+		t.Errorf("source closure after rollback = %v", ancestors)
+	}
 }

@@ -217,3 +217,31 @@ func (s *Service) ValidateTenantMergePreflight(
 	})
 	return result, err
 }
+
+// CutoverTenantMerge atomically moves the validated source tenant beneath its
+// destination parent. The database function accepts only the durable operation
+// ID; it derives and rechecks the actor, roots, authorization, and complete
+// preflight generation while holding both root locks.
+//
+// A non-ready or newly-stale operation is returned without mutating tenant
+// rows. A failed cutover returns durable status "failed" after its internal
+// subtransaction has rolled back every hierarchy and tenant-row change.
+func (s *Service) CutoverTenantMerge(
+	ctx context.Context,
+	actorID, operationID uuid.UUID,
+) (TenantMergeOperation, error) {
+	var operation TenantMergeOperation
+	err := s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		var raw []byte
+		err := tx.QueryRow(ctx,
+			"SELECT tenant_merge_cutover($1)",
+			operationID,
+		).Scan(&raw)
+		if err != nil {
+			return tenantMergeDBError(err)
+		}
+		operation, err = decodeTenantMergeOperation(raw)
+		return err
+	})
+	return operation, err
+}
