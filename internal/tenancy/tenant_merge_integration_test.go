@@ -170,12 +170,34 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.DestinationGeneration == nil ||
 			first.SchemaHash == nil ||
 			first.SchemaVersion == nil ||
-			first.InventoryVersion == nil {
+			first.InventoryVersion == nil ||
+			first.ReconciliationVersion == nil ||
+			first.ReconciliationHash == nil ||
+			first.ReconciliationPlan == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 115 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/115",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 116 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/116",
 				*first.InventoryVersion, *first.SchemaVersion)
+		}
+		if *first.ReconciliationVersion != 1 ||
+			*first.ReconciliationHash == "" ||
+			first.ReconciliationPlan.Version != 1 ||
+			first.ReconciliationPlan.Mode != "lossless_block_on_conflict" {
+			t.Errorf("reconciliation plan metadata is incomplete: version=%v hash=%v plan=%+v",
+				first.ReconciliationVersion, first.ReconciliationHash,
+				first.ReconciliationPlan)
+		}
+		if len(first.ReconciliationPlan.Tables) != 51 ||
+			len(first.ReconciliationPlan.Policies) != 8 {
+			t.Errorf("reconciliation plan tables/policies = %d/%d, want 51/8",
+				len(first.ReconciliationPlan.Tables),
+				len(first.ReconciliationPlan.Policies))
+		}
+		if first.ReconciliationPlan.Access.ScopeRule !=
+			"preserve_original_business_subtree" {
+			t.Errorf("reconciliation access rule = %q",
+				first.ReconciliationPlan.Access.ScopeRule)
 		}
 		if len(first.TableMetrics) != 51 {
 			t.Errorf("table metrics = %d, want 51", len(first.TableMetrics))
@@ -202,6 +224,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Fatalf("second preflight: %v", err)
 		}
 		if *second.PreflightGeneration != *first.PreflightGeneration ||
+			*second.ReconciliationHash != *first.ReconciliationHash ||
+			!reflect.DeepEqual(second.ReconciliationPlan, first.ReconciliationPlan) ||
 			!reflect.DeepEqual(second.ModuleCounts, first.ModuleCounts) ||
 			!reflect.DeepEqual(second.TableMetrics, first.TableMetrics) {
 			t.Errorf("unchanged preflight is not deterministic")
@@ -239,6 +263,11 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			!hasFinding(blocked.Conflicts, "custom_role_key_collision") {
 			t.Errorf("custom-role collision did not block: status=%s conflicts=%+v",
 				blocked.Status, blocked.Conflicts)
+		}
+		if blocked.ReconciliationPlan == nil ||
+			!hasFinding(blocked.ReconciliationPlan.Conflicts, "custom_role_key_collision") {
+			t.Errorf("custom-role collision omitted from reconciliation plan: %+v",
+				blocked.ReconciliationPlan)
 		}
 
 		if _, err := tdb.Super.Exec(ctx,
@@ -351,7 +380,7 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Fatalf("schema mutation did not stale: result=%+v err=%v", schemaStale, err)
 		}
 		if _, err := tdb.Super.Exec(ctx,
-			"UPDATE schema_migrations SET version=114",
+			"UPDATE schema_migrations SET version=116",
 		); err != nil {
 			t.Fatalf("restore schema version: %v", err)
 		}
