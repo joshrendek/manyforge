@@ -123,4 +123,44 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 			t.Errorf("tenant-merge inventory contains %q but the migrated schema does not", table)
 		}
 	}
+
+	// The production preflight consumes tenant_merge_manifest, not this Go map.
+	// Keep the migration seed and the design gate byte-for-byte aligned so a
+	// future table cannot be classified in CI but omitted at runtime.
+	manifestRows, err := tdb.Super.Query(ctx, `
+		SELECT table_name::text, strategy, inventory_version
+		FROM tenant_merge_manifest
+		ORDER BY table_name`)
+	if err != nil {
+		t.Fatalf("query production tenant-merge manifest: %v", err)
+	}
+	defer manifestRows.Close()
+
+	production := make(map[string]string)
+	for manifestRows.Next() {
+		var table, strategy string
+		var version int
+		if err := manifestRows.Scan(&table, &strategy, &version); err != nil {
+			t.Fatalf("scan production tenant-merge manifest: %v", err)
+		}
+		if version != 1 {
+			t.Errorf("tenant-merge manifest %q version = %d, want 1", table, version)
+		}
+		production[table] = strategy
+	}
+	if err := manifestRows.Err(); err != nil {
+		t.Fatalf("iterate production tenant-merge manifest: %v", err)
+	}
+	for table, strategy := range tenantMergeTableInventory {
+		if got, ok := production[table]; !ok {
+			t.Errorf("production tenant-merge manifest omits %q", table)
+		} else if got != strategy {
+			t.Errorf("production tenant-merge manifest strategy for %q = %q, want %q", table, got, strategy)
+		}
+	}
+	for table := range production {
+		if _, ok := tenantMergeTableInventory[table]; !ok {
+			t.Errorf("production tenant-merge manifest contains unreviewed table %q", table)
+		}
+	}
 }

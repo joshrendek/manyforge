@@ -1,0 +1,11 @@
+DROP FUNCTION IF EXISTS tenant_merge_validate_preflight(uuid, uuid);
+DROP FUNCTION IF EXISTS tenant_merge_preflight(uuid, uuid);
+DROP FUNCTION IF EXISTS tenant_merge_get(uuid, uuid);
+DROP FUNCTION IF EXISTS tenant_merge_create(uuid, uuid, uuid, text);
+DROP FUNCTION IF EXISTS tenant_merge_operation_json(uuid);
+DROP FUNCTION IF EXISTS tenant_merge_root_snapshot(uuid);
+DROP FUNCTION IF EXISTS tenant_merge_schema_state();
+DROP FUNCTION IF EXISTS tenant_merge_authorized(uuid, uuid, uuid);
+DROP TABLE IF EXISTS tenant_merge_operation_event;
+DROP TABLE IF EXISTS tenant_merge_operation;
+DROP TABLE IF EXISTS tenant_merge_manifest;
