@@ -4,6 +4,7 @@ package security_regression
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,8 +197,14 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 
 	for signature, wantExecutable := range map[string]bool{
+		"tenant_merge_begin_fence(uuid,uuid)":              true,
+		"tenant_merge_cancel_fence(uuid,uuid)":             true,
 		"tenant_merge_cutover(uuid)":                       true,
+		"tenant_merge_release_fence(uuid,uuid)":            true,
 		"tenant_merge_root_rewrite_allowed(oid,uuid,uuid)": false,
+		"tenant_merge_root_write_allowed(uuid)":            true,
+		"tenant_merge_running_requires_fence()":            false,
+		"tenant_merge_write_fence()":                       false,
 		"tenant_merge_authorized(uuid,uuid,uuid)":          false,
 		"tenant_merge_schema_state()":                      false,
 		"tenant_merge_root_snapshot(uuid)":                 false,
@@ -230,5 +237,86 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 	if cutoverArgs != 1 {
 		t.Errorf("tenant_merge_cutover argument count = %d, want operation ID only", cutoverArgs)
+	}
+
+	var guardedTables int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT count(*)
+		FROM tenant_merge_manifest manifest
+		JOIN pg_trigger trigger
+		  ON trigger.tgrelid = manifest.table_name::regclass
+		 AND trigger.tgname = 'tenant_merge_write_fence'
+		 AND NOT trigger.tgisinternal`,
+	).Scan(&guardedTables); err != nil {
+		t.Fatalf("inspect tenant write-fence triggers: %v", err)
+	}
+	if guardedTables != len(tenantMergeTableInventory) {
+		t.Errorf("tenant write-fence triggers = %d, want %d",
+			guardedTables, len(tenantMergeTableInventory))
+	}
+
+	var cutoverFenceTrigger bool
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM pg_trigger
+		    WHERE tgrelid = 'tenant_merge_operation'::regclass
+		      AND tgname = 'tenant_merge_running_requires_fence'
+		      AND NOT tgisinternal
+		)`,
+	).Scan(&cutoverFenceTrigger); err != nil {
+		t.Fatalf("inspect cutover fence trigger: %v", err)
+	}
+	if !cutoverFenceTrigger {
+		t.Error("tenant_merge_operation lacks the cutover fence trigger")
+	}
+
+	var appCanReadFence bool
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT has_table_privilege('manyforge_app', 'tenant_merge_fence', 'SELECT')",
+	).Scan(&appCanReadFence); err != nil {
+		t.Fatalf("inspect tenant_merge_fence grants: %v", err)
+	}
+	if appCanReadFence {
+		t.Error("manyforge_app must not read tenant_merge_fence directly")
+	}
+
+	for _, signature := range []string{
+		"list_connectors_due_for_reconcile(interval)",
+		"claim_outbox_batch(integer)",
+		"claim_outbound_ops(integer,interval)",
+		"claim_next_queued_agent_run()",
+		"expire_stale_approvals()",
+		"reap_stale_agent_runs(double precision)",
+		"claim_code_reviews(integer,integer)",
+		"codex_claim_for_refresh(timestamp with time zone,text[])",
+	} {
+		var definition string
+		if err := tdb.Super.QueryRow(ctx,
+			"SELECT pg_get_functiondef($1::regprocedure)", signature,
+		).Scan(&definition); err != nil {
+			t.Fatalf("inspect fenced worker function %s: %v", signature, err)
+		}
+		if !strings.Contains(definition, "tenant_merge_root_write_allowed") {
+			t.Errorf("worker function %s does not use the shared tenant-merge guard",
+				signature)
+		}
+	}
+
+	for _, signature := range []string{
+		"create_due_partitions()",
+		"drop_expired_partitions()",
+	} {
+		var definition string
+		if err := tdb.Super.QueryRow(ctx,
+			"SELECT pg_get_functiondef($1::regprocedure)", signature,
+		).Scan(&definition); err != nil {
+			t.Fatalf("inspect partition function %s: %v", signature, err)
+		}
+		if !strings.Contains(definition, "tenant_merge_fence") ||
+			!strings.Contains(definition, "partition_maintenance") {
+			t.Errorf("partition function %s is not serialized with merge fencing",
+				signature)
+		}
 	}
 }

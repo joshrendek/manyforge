@@ -112,7 +112,7 @@ func tenantMergeDBError(err error) error {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "TM409" {
-		return fmt.Errorf("idempotency key reused for another tenant merge: %w", errs.ErrConflict)
+		return fmt.Errorf("tenant root already belongs to another active merge: %w", errs.ErrConflict)
 	}
 	return err
 }
@@ -218,20 +218,83 @@ func (s *Service) ValidateTenantMergePreflight(
 	return result, err
 }
 
-// CutoverTenantMerge atomically moves the validated source tenant beneath its
-// destination parent. The database function accepts only the durable operation
-// ID; it derives and rechecks the actor, roots, authorization, and complete
-// preflight generation while holding both root locks.
+// BeginTenantMergeFence publishes a durable two-root maintenance fence after
+// draining earlier writers and workers. Replays are idempotent, which lets a
+// process resume after crashing between the fence and cutover transactions.
+func (s *Service) BeginTenantMergeFence(
+	ctx context.Context,
+	actorID, operationID uuid.UUID,
+) (TenantMergeOperation, error) {
+	return s.runTenantMergeControl(ctx, actorID, operationID, "tenant_merge_begin_fence")
+}
+
+// ReleaseTenantMergeFence unpauses roots only after the operation is terminal
+// or its preflight was invalidated. It drains worker lock namespaces again so
+// no transaction with a pre-cutover snapshot can resume after release.
+func (s *Service) ReleaseTenantMergeFence(
+	ctx context.Context,
+	actorID, operationID uuid.UUID,
+) (TenantMergeOperation, error) {
+	return s.runTenantMergeControl(ctx, actorID, operationID, "tenant_merge_release_fence")
+}
+
+// CancelTenantMergeFence recovers a ready operation that was fenced but never
+// entered cutover. It invalidates the preflight before releasing the roots.
+func (s *Service) CancelTenantMergeFence(
+	ctx context.Context,
+	actorID, operationID uuid.UUID,
+) (TenantMergeOperation, error) {
+	return s.runTenantMergeControl(ctx, actorID, operationID, "tenant_merge_cancel_fence")
+}
+
+func (s *Service) runTenantMergeControl(
+	ctx context.Context,
+	actorID, operationID uuid.UUID,
+	function string,
+) (TenantMergeOperation, error) {
+	var operation TenantMergeOperation
+	err := s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		var raw []byte
+		query := "SELECT " + function + "($1, $2)"
+		err := tx.QueryRow(ctx, query, actorID, operationID).Scan(&raw)
+		if err != nil {
+			return tenantMergeDBError(err)
+		}
+		operation, err = decodeTenantMergeOperation(raw)
+		return err
+	})
+	return operation, err
+}
+
+// CutoverTenantMerge first commits the durable fence, then atomically moves the
+// validated source tenant beneath its destination parent. The database cutover
+// accepts only the operation ID; it derives and rechecks the actor, roots,
+// authorization, and complete preflight generation while holding both roots.
 //
 // A non-ready or newly-stale operation is returned without mutating tenant
 // rows. A failed cutover returns durable status "failed" after its internal
-// subtransaction has rolled back every hierarchy and tenant-row change.
+// subtransaction has rolled back every hierarchy and tenant-row change. A
+// successful call releases the fence only after that cutover transaction has
+// committed; an interrupted call deliberately leaves the durable fence for a
+// retry or explicit CancelTenantMergeFence recovery.
 func (s *Service) CutoverTenantMerge(
 	ctx context.Context,
 	actorID, operationID uuid.UUID,
 ) (TenantMergeOperation, error) {
-	var operation TenantMergeOperation
-	err := s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+	operation, err := s.BeginTenantMergeFence(ctx, actorID, operationID)
+	if err != nil {
+		return TenantMergeOperation{}, err
+	}
+	if operation.Status != "ready" {
+		if operation.Status == "preflight_required" ||
+			operation.Status == "succeeded" ||
+			operation.Status == "failed" {
+			return s.ReleaseTenantMergeFence(ctx, actorID, operationID)
+		}
+		return operation, nil
+	}
+
+	err = s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
 		var raw []byte
 		err := tx.QueryRow(ctx,
 			"SELECT tenant_merge_cutover($1)",
@@ -243,5 +306,13 @@ func (s *Service) CutoverTenantMerge(
 		operation, err = decodeTenantMergeOperation(raw)
 		return err
 	})
-	return operation, err
+	if err != nil {
+		return TenantMergeOperation{}, err
+	}
+	if operation.Status == "preflight_required" ||
+		operation.Status == "succeeded" ||
+		operation.Status == "failed" {
+		return s.ReleaseTenantMergeFence(ctx, actorID, operationID)
+	}
+	return operation, nil
 }

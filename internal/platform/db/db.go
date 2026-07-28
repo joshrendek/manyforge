@@ -6,11 +6,15 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 type DB struct{ pool *pgxpool.Pool }
@@ -54,6 +58,21 @@ func Open(ctx context.Context, dsn string, opts ...Option) (*DB, error) {
 func (d *DB) Pool() *pgxpool.Pool { return d.pool }
 func (d *DB) Close()              { d.pool.Close() }
 
+// mapTxError promotes the database-wide tenant-fence SQLSTATE to the shared
+// service sentinel. Keeping this at the transaction boundary makes every API,
+// public ingest path, and principal-less worker observe the same retryable
+// maintenance condition without duplicating pgconn handling in each package.
+func mapTxError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "TM503" {
+		return fmt.Errorf("tenant merge in progress: %w", errs.ErrTenantMaintenance)
+	}
+	return err
+}
+
 // WithTx runs fn in a transaction WITHOUT a principal context — for system and
 // auth operations on non-RLS tables (account, principal, refresh_token,
 // one_time_token). Use WithPrincipal for tenant-scoped work.
@@ -64,9 +83,9 @@ func (d *DB) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
-		return err
+		return mapTxError(err)
 	}
-	return tx.Commit(ctx)
+	return mapTxError(tx.Commit(ctx))
 }
 
 // WithPrincipal runs fn inside a transaction whose RLS context is scoped to
@@ -87,7 +106,7 @@ func (d *DB) WithPrincipal(ctx context.Context, principalID uuid.UUID, fn func(p
 		return fmt.Errorf("set principal context: %w", err)
 	}
 	if err := fn(tx); err != nil {
-		return err
+		return mapTxError(err)
 	}
-	return tx.Commit(ctx)
+	return mapTxError(tx.Commit(ctx))
 }
