@@ -28,6 +28,11 @@ var (
 	// (e.g. outbound reply volume per business/recipient). Maps to HTTP 429.
 	ErrRateLimited = errors.New("rate limited")
 
+	// ErrTenantMaintenance marks a tenant mutation paused by a durable
+	// maintenance operation such as a whole-tenant merge. It is retryable and
+	// maps to a stable HTTP 503 response.
+	ErrTenantMaintenance = errors.New("tenant maintenance")
+
 	// ErrUpstream marks a failed call to an external provider (e.g. auth.openai.com). Maps to
 	// HTTP 502; the upstream body is logged server-side and never surfaced to the client.
 	ErrUpstream = errors.New("upstream")
