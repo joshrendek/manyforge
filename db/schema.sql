@@ -906,3 +906,56 @@ CREATE TABLE telemetry_client (
     UNIQUE (id, tenant_root_id),
     UNIQUE (publishable_key)
 );
+
+-- Tenant-merge control plane (migration 0113). These tables have no app-role
+-- grants in the live schema and are accessed only through raw-pgx calls to
+-- SECURITY DEFINER functions, but their structure is mirrored here for sqlc.
+CREATE TABLE tenant_merge_manifest (
+    table_name        name PRIMARY KEY,
+    module            text NOT NULL,
+    strategy          text NOT NULL,
+    inventory_version integer NOT NULL
+);
+
+CREATE TABLE tenant_merge_operation (
+    id                       uuid PRIMARY KEY,
+    source_root_id           uuid NOT NULL,
+    destination_parent_id    uuid NOT NULL,
+    destination_root_id      uuid NOT NULL,
+    actor_principal_id       uuid NOT NULL,
+    idempotency_key          text NOT NULL,
+    request_hash             bytea NOT NULL,
+    status                   text NOT NULL,
+    inventory_version        integer,
+    schema_version           bigint,
+    schema_hash              text,
+    source_generation        text,
+    destination_generation   text,
+    preflight_generation     text,
+    table_metrics            jsonb NOT NULL,
+    module_counts            jsonb NOT NULL,
+    conflicts                jsonb NOT NULL,
+    warnings                 jsonb NOT NULL,
+    affected_rows            bigint NOT NULL,
+    estimated_bytes          bigint NOT NULL,
+    source_businesses        integer,
+    resulting_depth          integer,
+    attachment_count         bigint NOT NULL,
+    attachment_bytes         bigint NOT NULL,
+    preflight_completed_at   timestamptz,
+    ready_at                 timestamptz,
+    created_at               timestamptz NOT NULL,
+    updated_at               timestamptz NOT NULL,
+    UNIQUE (actor_principal_id, idempotency_key)
+);
+
+CREATE TABLE tenant_merge_operation_event (
+    id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    operation_id       uuid NOT NULL REFERENCES tenant_merge_operation(id) ON DELETE CASCADE,
+    actor_principal_id uuid NOT NULL,
+    from_status        text,
+    to_status          text NOT NULL,
+    event              text NOT NULL,
+    metadata           jsonb NOT NULL,
+    created_at         timestamptz NOT NULL
+);
