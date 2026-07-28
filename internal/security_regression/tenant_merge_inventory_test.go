@@ -197,22 +197,30 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 
 	for signature, wantExecutable := range map[string]bool{
-		"tenant_merge_begin_fence(uuid,uuid)":              true,
-		"tenant_merge_cancel_fence(uuid,uuid)":             true,
-		"tenant_merge_cutover(uuid)":                       true,
-		"tenant_merge_release_fence(uuid,uuid)":            true,
-		"tenant_merge_root_rewrite_allowed(oid,uuid,uuid)": false,
-		"tenant_merge_root_write_allowed(uuid)":            true,
-		"tenant_merge_running_requires_fence()":            false,
-		"tenant_merge_write_fence()":                       false,
-		"tenant_merge_authorized(uuid,uuid,uuid)":          false,
-		"tenant_merge_schema_state()":                      false,
-		"tenant_merge_root_snapshot(uuid)":                 false,
-		"tenant_merge_operation_json(uuid)":                false,
-		"tenant_merge_validate_preflight(uuid,uuid)":       true,
-		"tenant_merge_create(uuid,uuid,uuid,text)":         true,
-		"tenant_merge_get(uuid,uuid)":                      true,
-		"tenant_merge_preflight(uuid,uuid)":                true,
+		"tenant_merge_begin_fence(uuid,uuid)":                      true,
+		"tenant_merge_cancel_fence(uuid,uuid)":                     true,
+		"tenant_merge_cutover(uuid)":                               true,
+		"tenant_merge_release_fence(uuid,uuid)":                    true,
+		"tenant_merge_root_rewrite_allowed(oid,uuid,uuid)":         false,
+		"tenant_merge_root_write_allowed(uuid)":                    true,
+		"tenant_merge_jsonb_hash(jsonb)":                           false,
+		"tenant_merge_preflight_inventory_v1(uuid,uuid)":           false,
+		"tenant_merge_reconciliation_plan(uuid)":                   false,
+		"tenant_merge_reconciliation_table_allowed(oid,uuid,uuid)": false,
+		"tenant_merge_reconciliation_transition_audit()":           false,
+		"tenant_merge_role_permission_fence()":                     false,
+		"tenant_merge_running_requires_reconciliation()":           false,
+		"tenant_merge_running_requires_fence()":                    false,
+		"tenant_merge_write_fence()":                               false,
+		"tenant_merge_authorized(uuid,uuid,uuid)":                  false,
+		"tenant_merge_schema_state()":                              false,
+		"tenant_merge_root_snapshot(uuid)":                         false,
+		"tenant_merge_operation_json(uuid)":                        false,
+		"tenant_merge_validate_preflight_inventory_v1(uuid,uuid)":  false,
+		"tenant_merge_validate_preflight(uuid,uuid)":               true,
+		"tenant_merge_create(uuid,uuid,uuid,text)":                 true,
+		"tenant_merge_get(uuid,uuid)":                              true,
+		"tenant_merge_preflight(uuid,uuid)":                        true,
 	} {
 		var executable bool
 		if err := tdb.Super.QueryRow(ctx,
@@ -269,6 +277,47 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 	if !cutoverFenceTrigger {
 		t.Error("tenant_merge_operation lacks the cutover fence trigger")
+	}
+
+	var reconciliationTrigger, rolePermissionFence bool
+	if err := tdb.Super.QueryRow(ctx, `
+			SELECT
+			    EXISTS (
+			        SELECT 1 FROM pg_trigger
+			        WHERE tgrelid = 'tenant_merge_operation'::regclass
+			          AND tgname = 'tenant_merge_running_requires_reconciliation'
+			          AND NOT tgisinternal
+			    ),
+			    EXISTS (
+			        SELECT 1 FROM pg_trigger
+			        WHERE tgrelid = 'role_permission'::regclass
+			          AND tgname = 'tenant_merge_role_permission_fence'
+			          AND NOT tgisinternal
+			    )`,
+	).Scan(&reconciliationTrigger, &rolePermissionFence); err != nil {
+		t.Fatalf("inspect reconciliation triggers: %v", err)
+	}
+	if !reconciliationTrigger {
+		t.Error("tenant_merge_operation lacks the reconciliation-plan trigger")
+	}
+	if !rolePermissionFence {
+		t.Error("role_permission lacks the indirect tenant write fence")
+	}
+
+	for signature, requiredFragment := range map[string]string{
+		"tenant_merge_preflight(uuid,uuid)":          "tenant_merge_reconciliation_plan",
+		"tenant_merge_validate_preflight(uuid,uuid)": "tenant_merge_reconciliation_plan",
+		"tenant_merge_write_fence()":                 "tenant_merge_reconciliation_table_allowed",
+	} {
+		var definition string
+		if err := tdb.Super.QueryRow(ctx,
+			"SELECT pg_get_functiondef($1::regprocedure)", signature,
+		).Scan(&definition); err != nil {
+			t.Fatalf("inspect reconciliation function %s: %v", signature, err)
+		}
+		if !strings.Contains(definition, requiredFragment) {
+			t.Errorf("%s does not consume %s", signature, requiredFragment)
+		}
 	}
 
 	var appCanReadFence bool
