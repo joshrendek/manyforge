@@ -11,6 +11,18 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/dashboard').then((m) => m.DashboardComponent),
   },
   {
+    path: 'tenant-merges/new/:sourceRootId',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/tenant-merge').then((m) => m.TenantMergeComponent),
+  },
+  {
+    path: 'tenant-merges/:operationId',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/tenant-merge').then((m) => m.TenantMergeComponent),
+  },
+  {
     path: 'support',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/support/ticket-list').then((m) => m.TicketListComponent),

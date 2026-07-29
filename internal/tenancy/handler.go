@@ -40,6 +40,7 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 // TenantMergeRoutes mounts the separately rate-limited whole-master merge
 // surface. Authentication is applied by the parent API group.
 func (h *Handler) TenantMergeRoutes(r chi.Router) {
+	r.Get("/tenant-merge-options", h.listTenantMergeOptions)
 	r.Post("/businesses/{id}/tenant-merges", h.createTenantMerge)
 	r.Get("/tenant-merges/{operationId}", h.getTenantMerge)
 	r.Post("/tenant-merges/{operationId}/preflight", h.preflightTenantMerge)

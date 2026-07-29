@@ -9,6 +9,7 @@ import { Business, Row, buildTree, flatten } from '../core/tree';
 import { PageHeader } from '../ui/page-header/page-header';
 import { StatusPill } from '../ui/status-pill/status-pill';
 import { EmptyState } from '../ui/empty-state/empty-state';
+import { TenantMergeService } from '../core/tenant-merge.service';
 
 type PanelKind = 'add' | 'rename' | 'move';
 
@@ -61,6 +62,17 @@ type PanelKind = 'add' | 'rename' | 'move';
                 <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="openPanel('rename', row)">Rename</button>
                 @if (!row.business.is_tenant_root) {
                   <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="openPanel('move', row)">Move</button>
+                }
+                @if (
+                  row.business.is_tenant_root &&
+                  row.business.status === 'active' &&
+                  canMoveMaster(row.business.id)
+                ) {
+                  <a
+                    class="mf-btn mf-btn-ghost mf-btn-sm"
+                    [routerLink]="['/tenant-merges/new', row.business.id]"
+                    data-testid="move-master"
+                  >Move master</a>
                 }
                 @if (row.business.status === 'archived') {
                   <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="restore(row.business)">Restore</button>
@@ -160,9 +172,11 @@ type PanelKind = 'add' | 'rename' | 'move';
 export class DashboardComponent implements OnInit {
   private auth = inject(AuthService);
   private api = inject(BusinessService);
+  private tenantMerge = inject(TenantMergeService);
   private router = inject(Router);
 
   businesses = signal<Business[]>([]);
+  mergeEligibleSources = signal<ReadonlySet<string>>(new Set());
   collapsed = signal<ReadonlySet<string>>(new Set());
   loading = signal(true);
   loadFailed = signal(false);
@@ -180,6 +194,28 @@ export class DashboardComponent implements OnInit {
   ngOnInit(): void {
     this.auth.me().subscribe({ next: () => {}, error: () => this.forceLogin() });
     this.loadBusinesses();
+    this.loadMergeOptions();
+  }
+
+  private loadMergeOptions(): void {
+    this.tenantMerge.options().subscribe({
+      next: (response) => {
+        this.mergeEligibleSources.set(
+          new Set(
+            (response.sources ?? [])
+              .filter((source) => source.destinations.length > 0)
+              .map((source) => source.source_root_id),
+          ),
+        );
+      },
+      // This is a privileged affordance. If its authorization read fails, hide
+      // it and leave ordinary hierarchy management fully usable.
+      error: () => this.mergeEligibleSources.set(new Set()),
+    });
+  }
+
+  canMoveMaster(id: string): boolean {
+    return this.mergeEligibleSources().has(id);
   }
 
   loadBusinesses(): void {
