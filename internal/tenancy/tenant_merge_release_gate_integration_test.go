@@ -27,6 +27,15 @@ func TestTenantMergeReleaseGateMovesEveryModuleAndPreservesState(t *testing.T) {
 		t.Fatalf("start testdb: %v", err)
 	}
 	t.Cleanup(func() { tdb.Close(context.Background()) })
+	var partitionsCreated int
+	if err := tdb.Super.QueryRow(
+		ctx, "SELECT create_due_partitions()",
+	).Scan(&partitionsCreated); err != nil {
+		t.Fatalf("create telemetry partitions: %v", err)
+	}
+	if partitionsCreated == 0 {
+		t.Fatal("create telemetry partitions = 0, want fresh child partitions")
+	}
 	metrics := observability.NewMetrics()
 	preflightBaseline := metrics.Get(
 		observability.MetricTenantMergePreflightTotal,
@@ -79,6 +88,8 @@ func TestTenantMergeReleaseGateMovesEveryModuleAndPreservesState(t *testing.T) {
 		"github_app_installation": uuid.New(),
 		"feedback_board":          uuid.New(),
 		"telemetry_client":        uuid.New(),
+		"analytics_event":         uuid.New(),
+		"crash_event":             uuid.New(),
 		"notification":            uuid.New(),
 		"audit_entry":             uuid.New(),
 		"outbox":                  uuid.New(),
@@ -260,6 +271,34 @@ func TestTenantMergeReleaseGateMovesEveryModuleAndPreservesState(t *testing.T) {
 			    'mf_release_gate_public_key'
 			)`,
 			[]any{ids["telemetry_client"], sourceChild.ID, sourceRoot}},
+		{"partitioned analytics event", `
+			INSERT INTO analytics_event (
+			    id, tenant_root_id, business_id, client_id,
+			    occurred_at, name, props, path, visitor_hash,
+			    device_type
+			) VALUES (
+			    $1, $2, $3, $4, now(), 'pageview',
+			    '{"stable_external_ref":"analytics-release-gate"}',
+			    '/release-gate', decode('0123456789abcdef', 'hex'),
+			    'desktop'
+			)`,
+			[]any{
+				ids["analytics_event"], sourceRoot, sourceChild.ID,
+				ids["telemetry_client"],
+			}},
+		{"partitioned crash event", `
+			INSERT INTO crash_event (
+			    id, tenant_root_id, business_id, client_id,
+			    occurred_at, platform, app_version, signature, payload
+			) VALUES (
+			    $1, $2, $3, $4, now(), 'release-gate',
+			    '1.0.0', 'release-gate-signature',
+			    '{"stable_external_ref":"crash-release-gate"}'
+			)`,
+			[]any{
+				ids["crash_event"], sourceRoot, sourceChild.ID,
+				ids["telemetry_client"],
+			}},
 		{"notification", `
 			INSERT INTO notification (
 			    id, tenant_root_id, principal_id, kind, ref
@@ -490,6 +529,16 @@ func TestTenantMergeReleaseGateMovesEveryModuleAndPreservesState(t *testing.T) {
 			SELECT rollup_analytics_dimensions(
 			    interval '0', interval '0'
 			)`,
+	} {
+		var changed int
+		err := tdb.Super.QueryRow(ctx, query).Scan(&changed)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "TM503" {
+			t.Errorf("%s while fenced = %d err=%v, want TM503 retry",
+				name, changed, err)
+		}
+	}
+	for name, query := range map[string]string{
 		"create partitions": "SELECT create_due_partitions()",
 		"drop partitions":   "SELECT drop_expired_partitions()",
 	} {
@@ -642,7 +691,8 @@ func pgxIdentifier(table string) string {
 		"connector", "connector_outbound_op", "feedback_board",
 		"github_app_installation", "mcp_server", "notification", "outbox",
 		"principal", "repo_connector", "requester", "role", "secret",
-		"telemetry_client", "ticket", "ticket_message",
+		"telemetry_client", "analytics_event", "crash_event", "ticket",
+		"ticket_message",
 	} {
 		if table == allowed {
 			return `"` + table + `"`
