@@ -700,9 +700,10 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 
 	for signature, requiredFragment := range map[string]string{
-		"tenant_merge_preflight(uuid,uuid)":          "tenant_merge_reconciliation_plan",
-		"tenant_merge_validate_preflight(uuid,uuid)": "tenant_merge_reconciliation_plan",
-		"tenant_merge_write_fence()":                 "tenant_merge_reconciliation_table_allowed",
+		"tenant_merge_preflight(uuid,uuid)":                        "tenant_merge_reconciliation_plan",
+		"tenant_merge_validate_preflight(uuid,uuid)":               "tenant_merge_reconciliation_plan",
+		"tenant_merge_reconciliation_table_allowed(oid,uuid,uuid)": "pg_partition_root",
+		"tenant_merge_write_fence()":                               "tenant_merge_reconciliation_table_allowed",
 	} {
 		var definition string
 		if err := tdb.Super.QueryRow(ctx,
