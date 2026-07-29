@@ -3,14 +3,17 @@ package main
 import (
 	"crypto/ed25519"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/manyforge/manyforge/internal/account"
@@ -67,6 +70,7 @@ func testHandlers() apiHandlers {
 		inboxWebhook:     inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),
 		bounce:           inbox.NewBounceHandler(nil, "", 0, nil),
 		authLimit:        noop,
+		tenantMergeLimit: noop,
 		ingestLimit:      noop,
 		ticketsRead:      noop,
 		ticketsReply:     noop,
@@ -131,6 +135,48 @@ func apiRoutes(t *testing.T) map[string]bool {
 		t.Fatalf("walk routes: %v", err)
 	}
 	return routes
+}
+
+func TestTenantMergeRoutesUseDedicatedRateLimit(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	ring, err := auth.NewKeyRing(
+		"manyforge", "manyforge-api", "k1", priv,
+		map[string]ed25519.PublicKey{"k1": pub},
+	)
+	if err != nil {
+		t.Fatalf("key ring: %v", err)
+	}
+	called := false
+	handlers := testHandlers()
+	handlers.tenantMergeLimit = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			httpx.WriteJSON(w, http.StatusTooManyRequests, httpx.ErrorBody{
+				Code: "RATE_LIMITED", Message: "too many requests",
+			})
+		})
+	}
+	router := httpx.NewRouter(ring)
+	mountAPIRoutes(router, handlers)
+	token, err := ring.Sign(uuid.New(), time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/tenant-merges/"+uuid.NewString(),
+		nil,
+	)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if !called || response.Code != http.StatusTooManyRequests {
+		t.Fatalf("tenant merge limiter called/status = %t/%d, want true/429",
+			called, response.Code)
+	}
 }
 
 // specPath resolves an OpenAPI contract file relative to the repo root.
@@ -285,6 +331,16 @@ func spec011Routes(t *testing.T) map[string]bool {
 	return specRoutesFrom(t, p)
 }
 
+// spec012Routes returns the whole-tenant merge control-plane contract.
+func spec012Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	p := specPath("specs", "012-tenant-merge", "contracts", "openapi.yaml")
+	if _, err := os.Stat(p); err != nil {
+		return map[string]bool{}
+	}
+	return specRoutesFrom(t, p)
+}
+
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
 // operation served but documented in NO contract at all. Direction 2 unions every spec
@@ -340,6 +396,9 @@ func TestOpenAPIDrift(t *testing.T) {
 		documented[op] = true
 	}
 	for op := range spec011Routes(t) {
+		documented[op] = true
+	}
+	for op := range spec012Routes(t) {
 		documented[op] = true
 	}
 	spec006 := spec006Routes(t)

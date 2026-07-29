@@ -333,6 +333,7 @@ func TestTenantMergeReconciliationPreservesIdentityAndAccess(t *testing.T) {
 		t.Fatalf("re-preflight after fence cancel: status=%q err=%v conflicts=%+v",
 			ready.Status, err, ready.Conflicts)
 	}
+	authorizeTenantMergeCutover(ctx, t, tdb, operation.ID)
 
 	succeeded, err := svc.CutoverTenantMerge(ctx, actor, operation.ID)
 	if err != nil {

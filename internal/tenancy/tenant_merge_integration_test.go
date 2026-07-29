@@ -67,6 +67,29 @@ func hasFinding(findings []tenancy.TenantMergeFinding, code string) bool {
 	return false
 }
 
+// authorizeTenantMergeCutover is test-only superuser setup for low-level
+// cutover/fencing contracts. HTTP/service confirmation behavior, including
+// password verification and typed names, is covered separately.
+func authorizeTenantMergeCutover(
+	ctx context.Context,
+	t *testing.T,
+	tdb *testdb.TestDB,
+	operationID uuid.UUID,
+) {
+	t.Helper()
+	if _, err := tdb.Super.Exec(ctx, `
+		UPDATE tenant_merge_operation
+		SET confirmed_at = now(),
+		    confirmation_method = 'password_and_typed_names',
+		    confirmation_hash = repeat('a', 64),
+		    confirmation_preflight_generation = preflight_generation
+		WHERE id = $1`,
+		operationID,
+	); err != nil {
+		t.Fatalf("authorize test cutover: %v", err)
+	}
+}
+
 func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -176,8 +199,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.ReconciliationPlan == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 116 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/116",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 117 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/117",
 				*first.InventoryVersion, *first.SchemaVersion)
 		}
 		if *first.ReconciliationVersion != 1 ||
@@ -380,7 +403,7 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Fatalf("schema mutation did not stale: result=%+v err=%v", schemaStale, err)
 		}
 		if _, err := tdb.Super.Exec(ctx,
-			"UPDATE schema_migrations SET version=116",
+			"UPDATE schema_migrations SET version=117",
 		); err != nil {
 			t.Fatalf("restore schema version: %v", err)
 		}
@@ -550,8 +573,16 @@ func TestTenantMergeFenceDrainsRejectsSkipsAndRecovers(t *testing.T) {
 	}
 
 	fenced, err := svc.BeginTenantMergeFence(ctx, actor, operation.ID)
-	if err != nil || fenced.Status != "ready" {
+	if err != nil || fenced.Status != "running" {
 		t.Fatalf("begin durable fence: status=%q err=%v", fenced.Status, err)
+	}
+	restartedService := &tenancy.Service{DB: tdb.App}
+	restartedStatus, err := restartedService.GetTenantMergeOperation(
+		ctx, actor, operation.ID,
+	)
+	if err != nil || restartedStatus.Status != "running" {
+		t.Fatalf("restart-visible fenced status=%q err=%v, want running",
+			restartedStatus.Status, err)
 	}
 	var fenceRows int
 	if err := tdb.Super.QueryRow(ctx,
@@ -648,6 +679,7 @@ func TestTenantMergeFenceDrainsRejectsSkipsAndRecovers(t *testing.T) {
 		t.Fatalf("re-preflight: status=%q err=%v conflicts=%+v",
 			ready.Status, err, ready.Conflicts)
 	}
+	authorizeTenantMergeCutover(ctx, t, tdb, operation.ID)
 	if _, err := svc.BeginTenantMergeFence(ctx, actor, operation.ID); err != nil {
 		t.Fatalf("begin crash-recovery fence: %v", err)
 	}
@@ -735,6 +767,7 @@ func TestTenantMergeCutoverMovesCompleteHierarchyAndIsIdempotent(t *testing.T) {
 		t.Fatalf("reversed preflight: status=%q err=%v conflicts=%+v",
 			reversedReady.Status, err, reversedReady.Conflicts)
 	}
+	authorizeTenantMergeCutover(ctx, t, tdb, operation.ID)
 
 	_, err = svc.CutoverTenantMerge(ctx, destinationFounder, operation.ID)
 	if !errors.Is(err, errs.ErrNotFound) {
@@ -962,6 +995,7 @@ func TestTenantMergeCutoverRollsBackInjectedFailure(t *testing.T) {
 		t.Fatalf("preflight: status=%q err=%v conflicts=%+v",
 			ready.Status, err, ready.Conflicts)
 	}
+	authorizeTenantMergeCutover(ctx, t, tdb, operation.ID)
 
 	failed, err := svc.CutoverTenantMerge(ctx, actor, operation.ID)
 	if err != nil {
@@ -982,6 +1016,32 @@ func TestTenantMergeCutoverRollsBackInjectedFailure(t *testing.T) {
 	}
 	if got := failureMetadata["stage"]; got != "role" {
 		t.Errorf("failure stage = %v, want role", got)
+	}
+	if _, leaked := failureMetadata["message"]; leaked {
+		t.Errorf("safe failure metadata leaked database message: %+v", failureMetadata)
+	}
+	if _, leaked := failureMetadata["sqlstate"]; leaked {
+		t.Errorf("safe failure metadata leaked SQLSTATE: %+v", failureMetadata)
+	}
+	if failed.Failure == nil ||
+		failed.Failure.Code != "CUTOVER_FAILED" ||
+		failed.Failure.Stage != "role" ||
+		failed.Failure.OperatorCorrelationID != failed.CorrelationID {
+		t.Errorf("safe failure response = %+v", failed.Failure)
+	}
+	if failed.Manifest != nil {
+		t.Errorf("failed cutover emitted success manifest: %+v", failed.Manifest)
+	}
+	var failedReceipts int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT count(*)
+		FROM audit_entry
+		WHERE action = 'tenant.merge.completed'
+		  AND correlation_id = $1`,
+		failed.CorrelationID.String(),
+	).Scan(&failedReceipts); err != nil || failedReceipts != 0 {
+		t.Errorf("failed cutover success receipts = %d err=%v, want 0",
+			failedReceipts, err)
 	}
 
 	if after := rootSnapshot(ctx, t, tdb, sourceRoot); !reflect.DeepEqual(after, sourceBefore) {
@@ -1008,5 +1068,27 @@ func TestTenantMergeCutoverRollsBackInjectedFailure(t *testing.T) {
 		ancestors[sourceChild.ID.String()] != 0 ||
 		ancestors[sourceRoot.String()] != 1 {
 		t.Errorf("source closure after rollback = %v", ancestors)
+	}
+
+	if _, err := tdb.Super.Exec(ctx, `
+		DROP TRIGGER tenant_merge_test_fail_role_trg ON role;
+		DROP FUNCTION tenant_merge_test_fail_role()`,
+	); err != nil {
+		t.Fatalf("remove injected failure before retry: %v", err)
+	}
+	retryReady, err := svc.PreflightTenantMerge(ctx, actor, operation.ID)
+	if err != nil || retryReady.Status != "ready" {
+		t.Fatalf("failed-operation preflight retry: status=%q err=%v conflicts=%+v",
+			retryReady.Status, err, retryReady.Conflicts)
+	}
+	if retryReady.ConfirmedAt != nil {
+		t.Errorf("new preflight retained old confirmation: %v",
+			retryReady.ConfirmedAt)
+	}
+	authorizeTenantMergeCutover(ctx, t, tdb, operation.ID)
+	retried, err := svc.CutoverTenantMerge(ctx, actor, operation.ID)
+	if err != nil || retried.Status != "succeeded" || retried.Manifest == nil {
+		t.Fatalf("safe failed-operation retry: status=%q manifest=%+v err=%v",
+			retried.Status, retried.Manifest, err)
 	}
 }

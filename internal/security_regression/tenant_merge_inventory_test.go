@@ -197,30 +197,36 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 
 	for signature, wantExecutable := range map[string]bool{
-		"tenant_merge_begin_fence(uuid,uuid)":                      true,
-		"tenant_merge_cancel_fence(uuid,uuid)":                     true,
-		"tenant_merge_cutover(uuid)":                               true,
-		"tenant_merge_release_fence(uuid,uuid)":                    true,
-		"tenant_merge_root_rewrite_allowed(oid,uuid,uuid)":         false,
-		"tenant_merge_root_write_allowed(uuid)":                    true,
-		"tenant_merge_jsonb_hash(jsonb)":                           false,
-		"tenant_merge_preflight_inventory_v1(uuid,uuid)":           false,
-		"tenant_merge_reconciliation_plan(uuid)":                   false,
-		"tenant_merge_reconciliation_table_allowed(oid,uuid,uuid)": false,
-		"tenant_merge_reconciliation_transition_audit()":           false,
-		"tenant_merge_role_permission_fence()":                     false,
-		"tenant_merge_running_requires_reconciliation()":           false,
-		"tenant_merge_running_requires_fence()":                    false,
-		"tenant_merge_write_fence()":                               false,
-		"tenant_merge_authorized(uuid,uuid,uuid)":                  false,
-		"tenant_merge_schema_state()":                              false,
-		"tenant_merge_root_snapshot(uuid)":                         false,
-		"tenant_merge_operation_json(uuid)":                        false,
-		"tenant_merge_validate_preflight_inventory_v1(uuid,uuid)":  false,
-		"tenant_merge_validate_preflight(uuid,uuid)":               true,
-		"tenant_merge_create(uuid,uuid,uuid,text)":                 true,
-		"tenant_merge_get(uuid,uuid)":                              true,
-		"tenant_merge_preflight(uuid,uuid)":                        true,
+		"tenant_merge_begin_fence(uuid,uuid)":                           true,
+		"tenant_merge_cancel_fence(uuid,uuid)":                          true,
+		"tenant_merge_confirm(uuid,uuid,text,text,text)":                true,
+		"tenant_merge_cutover(uuid)":                                    true,
+		"tenant_merge_release_fence(uuid,uuid)":                         true,
+		"tenant_merge_root_rewrite_allowed(oid,uuid,uuid)":              false,
+		"tenant_merge_root_write_allowed(uuid)":                         true,
+		"tenant_merge_jsonb_hash(jsonb)":                                false,
+		"tenant_merge_mark_attachments_staged(uuid,uuid,bigint,bigint)": true,
+		"tenant_merge_preflight_inventory_v1(uuid,uuid)":                false,
+		"tenant_merge_reconciliation_plan(uuid)":                        false,
+		"tenant_merge_reconciliation_table_allowed(oid,uuid,uuid)":      false,
+		"tenant_merge_reconciliation_transition_audit()":                false,
+		"tenant_merge_role_permission_fence()":                          false,
+		"tenant_merge_running_requires_confirmation()":                  false,
+		"tenant_merge_running_requires_reconciliation()":                false,
+		"tenant_merge_running_requires_fence()":                         false,
+		"tenant_merge_audit_manifest_immutable()":                       false,
+		"tenant_merge_write_success_manifest()":                         false,
+		"tenant_merge_write_fence()":                                    false,
+		"tenant_merge_authorized(uuid,uuid,uuid)":                       false,
+		"tenant_merge_schema_state()":                                   false,
+		"tenant_merge_root_snapshot(uuid)":                              false,
+		"tenant_merge_operation_json(uuid)":                             false,
+		"tenant_merge_preflight_clears_confirmation()":                  false,
+		"tenant_merge_validate_preflight_inventory_v1(uuid,uuid)":       false,
+		"tenant_merge_validate_preflight(uuid,uuid)":                    true,
+		"tenant_merge_create(uuid,uuid,uuid,text)":                      true,
+		"tenant_merge_get(uuid,uuid)":                                   true,
+		"tenant_merge_preflight(uuid,uuid)":                             true,
 	} {
 		var executable bool
 		if err := tdb.Super.QueryRow(ctx,
@@ -302,6 +308,49 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 	if !rolePermissionFence {
 		t.Error("role_permission lacks the indirect tenant write fence")
+	}
+
+	var confirmationTrigger, preflightResetTrigger bool
+	var manifestImmutableTrigger, successManifestTrigger bool
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT
+		    EXISTS (
+		        SELECT 1 FROM pg_trigger
+		        WHERE tgrelid = 'tenant_merge_operation'::regclass
+		          AND tgname = 'tenant_merge_preflight_clears_confirmation'
+		          AND NOT tgisinternal
+		    ),
+		    EXISTS (
+		        SELECT 1 FROM pg_trigger
+		        WHERE tgrelid = 'tenant_merge_operation'::regclass
+		          AND tgname = 'tenant_merge_running_requires_confirmation'
+		          AND NOT tgisinternal
+		    ),
+		    EXISTS (
+		        SELECT 1 FROM pg_trigger
+		        WHERE tgrelid = 'tenant_merge_audit_manifest'::regclass
+		          AND tgname = 'tenant_merge_audit_manifest_immutable'
+		          AND NOT tgisinternal
+		    ),
+		    EXISTS (
+		        SELECT 1 FROM pg_trigger
+		        WHERE tgrelid = 'tenant_merge_operation_event'::regclass
+		          AND tgname = 'tenant_merge_write_success_manifest'
+		          AND NOT tgisinternal
+		    )`,
+	).Scan(
+		&confirmationTrigger,
+		&preflightResetTrigger,
+		&manifestImmutableTrigger,
+		&successManifestTrigger,
+	); err != nil {
+		t.Fatalf("inspect confirmation/manifest triggers: %v", err)
+	}
+	if !confirmationTrigger || !preflightResetTrigger ||
+		!manifestImmutableTrigger || !successManifestTrigger {
+		t.Errorf("confirmation/preflight-reset/manifest triggers = %t/%t/%t/%t, want all true",
+			confirmationTrigger, preflightResetTrigger,
+			manifestImmutableTrigger, successManifestTrigger)
 	}
 
 	for signature, requiredFragment := range map[string]string{
