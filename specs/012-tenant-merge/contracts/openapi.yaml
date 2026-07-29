@@ -8,6 +8,28 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /tenant-merge-options:
+    get:
+      summary: List merge-eligible source masters and destination businesses
+      description: |
+        Returns only active source masters where the current human is a direct
+        built-in Owner and active destination businesses in other directly
+        owned roots where the caller has hierarchy.manage. Hidden, inactive,
+        same-root, and otherwise unauthorized businesses are omitted.
+      responses:
+        '200':
+          description: Authorized merge source/destination pairs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TenantMergeSourceOptions'
+        '429': { $ref: '#/components/responses/RateLimited' }
   /businesses/{id}/tenant-merges:
     post:
       summary: Create an idempotent merge operation and run its preflight
@@ -132,6 +154,32 @@ components:
       description: 1-255 characters, unique per actor and logical merge request.
       schema: { type: string, minLength: 1, maxLength: 255 }
   schemas:
+    TenantMergeDestination:
+      type: object
+      required:
+        - id
+        - name
+        - tenant_root_id
+        - tenant_root_name
+        - hierarchy_path
+        - is_tenant_root
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        tenant_root_id: { type: string, format: uuid }
+        tenant_root_name: { type: string }
+        hierarchy_path: { type: string }
+        is_tenant_root: { type: boolean }
+    TenantMergeSourceOptions:
+      type: object
+      required: [source_root_id, source_root_name, destinations]
+      properties:
+        source_root_id: { type: string, format: uuid }
+        source_root_name: { type: string }
+        destinations:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantMergeDestination'
     CreateTenantMerge:
       type: object
       additionalProperties: false

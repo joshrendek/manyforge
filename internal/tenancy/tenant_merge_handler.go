@@ -15,6 +15,19 @@ func tenantMergeOperationID(r *http.Request) (uuid.UUID, error) {
 	return uuid.Parse(chi.URLParam(r, "operationId"))
 }
 
+func (h *Handler) listTenantMergeOptions(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	options, err := h.svc.ListTenantMergeOptions(r.Context(), actorID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sources": options})
+}
+
 func (h *Handler) createTenantMerge(w http.ResponseWriter, r *http.Request) {
 	actorID, ok := h.principal(w, r)
 	if !ok {

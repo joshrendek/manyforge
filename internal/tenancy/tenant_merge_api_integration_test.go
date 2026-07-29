@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +191,24 @@ func TestTenantMergeAPIConfirmationStatusAndManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create destination parent: %v", err)
 	}
+	archivedDestination, err := svc.CreateSubBusiness(
+		ctx, actor, destinationRoot, "Archived destination",
+	)
+	if err != nil {
+		t.Fatalf("create archived destination: %v", err)
+	}
+	if err := svc.Archive(ctx, actor, archivedDestination.ID); err != nil {
+		t.Fatalf("archive destination: %v", err)
+	}
+	archivedSource, err := svc.CreateMasterBusiness(
+		ctx, actor, "Archived source master",
+	)
+	if err != nil {
+		t.Fatalf("create archived source: %v", err)
+	}
+	if err := svc.Archive(ctx, actor, archivedSource.ID); err != nil {
+		t.Fatalf("archive source: %v", err)
+	}
 	if _, err := tdb.Super.Exec(ctx,
 		"UPDATE business SET name='Source company' WHERE id=$1",
 		sourceRoot,
@@ -266,6 +285,73 @@ func TestTenantMergeAPIConfirmationStatusAndManifest(t *testing.T) {
 
 	actorToken := tenantMergeToken(t, ring, actor)
 	outsiderToken := tenantMergeToken(t, ring, outsider)
+	optionsStatus, optionsBody := tenantMergeRequest(
+		t, router, actorToken, http.MethodGet, "/tenant-merge-options", "", nil,
+	)
+	var optionsResponse struct {
+		Sources []tenancy.TenantMergeSourceOptions `json:"sources"`
+	}
+	if err := json.Unmarshal(optionsBody, &optionsResponse); err != nil {
+		t.Fatalf("decode merge options %s: %v", optionsBody, err)
+	}
+	if optionsStatus != http.StatusOK {
+		t.Fatalf("merge options status=%d body=%s", optionsStatus, optionsBody)
+	}
+	var sourceOptions *tenancy.TenantMergeSourceOptions
+	for index := range optionsResponse.Sources {
+		if optionsResponse.Sources[index].SourceRootID == archivedSource.ID {
+			t.Fatalf("merge options include archived source: %+v",
+				optionsResponse.Sources[index])
+		}
+		if optionsResponse.Sources[index].SourceRootID == sourceRoot {
+			sourceOptions = &optionsResponse.Sources[index]
+			break
+		}
+	}
+	if sourceOptions == nil {
+		t.Fatalf("merge options omit eligible source %s: %+v",
+			sourceRoot, optionsResponse.Sources)
+	}
+	foundDestinationParent := false
+	for _, destination := range sourceOptions.Destinations {
+		if destination.TenantRootID == sourceRoot ||
+			destination.TenantRootID == archivedDestination.TenantRootID &&
+				destination.ID == archivedDestination.ID {
+			t.Fatalf("merge options include same-root or archived destination: %+v",
+				destination)
+		}
+		if destination.ID == destinationParent.ID {
+			foundDestinationParent = true
+			if destination.TenantRootID != destinationRoot ||
+				destination.TenantRootName == "" ||
+				!strings.HasSuffix(
+					destination.HierarchyPath,
+					" / Destination company",
+				) {
+				t.Fatalf("destination option lacks root/path labels: %+v",
+					destination)
+			}
+		}
+	}
+	if !foundDestinationParent {
+		t.Fatalf("merge options omit destination parent %s: %+v",
+			destinationParent.ID, sourceOptions.Destinations)
+	}
+
+	outsiderOptionsStatus, outsiderOptionsBody := tenantMergeRequest(
+		t, router, outsiderToken, http.MethodGet, "/tenant-merge-options", "", nil,
+	)
+	var outsiderOptions struct {
+		Sources []tenancy.TenantMergeSourceOptions `json:"sources"`
+	}
+	if err := json.Unmarshal(outsiderOptionsBody, &outsiderOptions); err != nil {
+		t.Fatalf("decode outsider merge options %s: %v", outsiderOptionsBody, err)
+	}
+	if outsiderOptionsStatus != http.StatusOK || len(outsiderOptions.Sources) != 0 {
+		t.Fatalf("single-root owner options = status %d response %+v",
+			outsiderOptionsStatus, outsiderOptions.Sources)
+	}
+
 	createPath := "/businesses/" + sourceRoot.String() + "/tenant-merges"
 	createBody := map[string]any{
 		"destination_parent_id": destinationParent.ID,
