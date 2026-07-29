@@ -199,8 +199,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.ReconciliationPlan == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 117 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/117",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 118 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/118",
 				*first.InventoryVersion, *first.SchemaVersion)
 		}
 		if *first.ReconciliationVersion != 1 ||
@@ -403,7 +403,7 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Fatalf("schema mutation did not stale: result=%+v err=%v", schemaStale, err)
 		}
 		if _, err := tdb.Super.Exec(ctx,
-			"UPDATE schema_migrations SET version=117",
+			"UPDATE schema_migrations SET version=118",
 		); err != nil {
 			t.Fatalf("restore schema version: %v", err)
 		}
@@ -904,6 +904,20 @@ func TestTenantMergeCutoverMovesCompleteHierarchyAndIsIdempotent(t *testing.T) {
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate manifest: %v", err)
+	}
+
+	var verificationRaw []byte
+	if err := tdb.Super.QueryRow(ctx,
+		"SELECT tenant_merge_verify($1)", operation.ID,
+	).Scan(&verificationRaw); err != nil {
+		t.Fatalf("run post-merge verifier: %v", err)
+	}
+	var verification map[string]any
+	if err := json.Unmarshal(verificationRaw, &verification); err != nil {
+		t.Fatalf("decode post-merge verification: %v", err)
+	}
+	if ok, _ := verification["ok"].(bool); !ok {
+		t.Errorf("post-merge verification failed: %+v", verification)
 	}
 
 	eventCount := len(succeeded.Events)
