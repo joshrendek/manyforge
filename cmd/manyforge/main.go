@@ -148,7 +148,7 @@ func main() {
 		DB: database, Ring: ring, Mailer: mailer.LogMailer{Logger: logger},
 		AccessTTL: cfg.AccessTokenTTL, RefreshTTL: 30 * 24 * time.Hour, TokenTTL: 24 * time.Hour,
 	}
-	tenSvc := &tenancy.Service{DB: database}
+	tenSvc := &tenancy.Service{DB: database, Metrics: metrics}
 	authzSvc := &authz.Service{DB: database}
 	invSvc := &invitations.Service{DB: database, Mailer: mailer.LogMailer{Logger: logger}}
 	// Outbound send rate limiter (FR-020): per-business AND per-recipient token

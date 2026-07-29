@@ -104,6 +104,12 @@ they need Docker but no local database. Run a single package/test:
 go test -tags integration ./internal/tenancy/ -run TestTransferOwnership -count=1
 ```
 
+## Operations
+
+- [Whole-master tenant merge runbook](docs/runbooks/tenant-merge.md) — capacity
+  limits, preflight interpretation, maintenance communication, monitoring,
+  backup/PITR prerequisites, safe recovery, escalation, and verification SQL.
+
 ## Layout
 
 | Path | What |
