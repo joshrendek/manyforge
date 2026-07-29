@@ -1193,6 +1193,20 @@ type TelemetryClient struct {
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type TenantMergeCapacityPolicy struct {
+	Singleton             bool      `json:"singleton"`
+	MaxSourceBusinesses   int64     `json:"max_source_businesses"`
+	MaxResultingDepth     int64     `json:"max_resulting_depth"`
+	MaxRelationalRows     int64     `json:"max_relational_rows"`
+	MaxRelationalBytes    int64     `json:"max_relational_bytes"`
+	MaxAttachmentObjects  int64     `json:"max_attachment_objects"`
+	MaxAttachmentBytes    int64     `json:"max_attachment_bytes"`
+	MaxLockWaitMs         int64     `json:"max_lock_wait_ms"`
+	MaxCutoverStatementMs int64     `json:"max_cutover_statement_ms"`
+	ReleaseGateP95Ms      int64     `json:"release_gate_p95_ms"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
 type TenantMergeManifest struct {
 	TableName        string `json:"table_name"`
 	Module           string `json:"module"`
@@ -1215,6 +1229,9 @@ type TenantMergeOperation struct {
 	SourceGeneration      *string            `json:"source_generation"`
 	DestinationGeneration *string            `json:"destination_generation"`
 	PreflightGeneration   *string            `json:"preflight_generation"`
+	ReconciliationVersion *int32             `json:"reconciliation_version"`
+	ReconciliationHash    *string            `json:"reconciliation_hash"`
+	ReconciliationPlan    []byte             `json:"reconciliation_plan"`
 	TableMetrics          []byte             `json:"table_metrics"`
 	ModuleCounts          []byte             `json:"module_counts"`
 	Conflicts             []byte             `json:"conflicts"`

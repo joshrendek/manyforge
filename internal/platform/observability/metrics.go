@@ -37,6 +37,19 @@ const (
 	MetricAnalyticsCollected       = "analytics.collected"
 	MetricAnalyticsCollectRejected = "analytics.collect_rejected"
 	MetricAnalyticsCollectFailed   = "analytics.collect_failed"
+
+	// Whole-master tenant merge observations. Counters are request-local
+	// telemetry; the append-only tenant_merge_operation_event and immutable
+	// audit manifest remain the durable authority across process restarts.
+	MetricTenantMergePreflightTotal      = "tenant_merge.preflight_total"
+	MetricTenantMergePreflightDurationMS = "tenant_merge.preflight_duration_ms"
+	MetricTenantMergeConflicts           = "tenant_merge.conflicts"
+	MetricTenantMergeSucceeded           = "tenant_merge.succeeded"
+	MetricTenantMergeFailures            = "tenant_merge.failures"
+	MetricTenantMergeRollbacks           = "tenant_merge.rollbacks"
+	MetricTenantMergeOperationDurationMS = "tenant_merge.operation_duration_ms"
+	MetricTenantMergeFenceDurationMS     = "tenant_merge.fence_duration_ms"
+	MetricTenantMergeRowsPrefix          = "tenant_merge.rows."
 )
 
 // Metrics is a thin, nil-safe wrapper over a published expvar.Map. A nil *Metrics
