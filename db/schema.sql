@@ -962,3 +962,19 @@ CREATE TABLE tenant_merge_operation_event (
     metadata           jsonb NOT NULL,
     created_at         timestamptz NOT NULL
 );
+
+-- Operator-only V1 envelope published by migration 0118. Runtime preflight
+-- enforcement uses raw SQL functions/triggers, so sqlc has no queries for it.
+CREATE TABLE tenant_merge_capacity_policy (
+    singleton                    boolean PRIMARY KEY DEFAULT true,
+    max_source_businesses        bigint NOT NULL,
+    max_resulting_depth          bigint NOT NULL,
+    max_relational_rows          bigint NOT NULL,
+    max_relational_bytes         bigint NOT NULL,
+    max_attachment_objects       bigint NOT NULL,
+    max_attachment_bytes         bigint NOT NULL,
+    max_lock_wait_ms             bigint NOT NULL,
+    max_cutover_statement_ms     bigint NOT NULL,
+    release_gate_p95_ms          bigint NOT NULL,
+    created_at                   timestamptz NOT NULL DEFAULT now()
+);

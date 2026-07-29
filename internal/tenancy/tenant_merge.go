@@ -16,6 +16,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // TenantMergeFinding is a machine-readable preflight blocker or warning. Values
@@ -275,6 +276,15 @@ func (s *Service) PreflightTenantMerge(
 	ctx context.Context,
 	actorID, operationID uuid.UUID,
 ) (TenantMergeOperation, error) {
+	startedAt := time.Now()
+	defer func() {
+		s.Metrics.Inc(observability.MetricTenantMergePreflightTotal)
+		s.Metrics.Add(
+			observability.MetricTenantMergePreflightDurationMS,
+			time.Since(startedAt).Milliseconds(),
+		)
+	}()
+
 	var operation TenantMergeOperation
 	err := s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
 		var raw []byte
@@ -288,6 +298,12 @@ func (s *Service) PreflightTenantMerge(
 		operation, err = decodeTenantMergeOperation(raw)
 		return err
 	})
+	if err == nil {
+		s.Metrics.Add(
+			observability.MetricTenantMergeConflicts,
+			int64(len(operation.Conflicts)),
+		)
+	}
 	return operation, err
 }
 
@@ -392,6 +408,7 @@ func (s *Service) CutoverTenantMerge(
 		}
 		return operation, nil
 	}
+	beforeCutoverEvents := len(operation.Events)
 
 	err = s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
 		var raw []byte
@@ -411,9 +428,81 @@ func (s *Service) CutoverTenantMerge(
 	if operation.Status == "preflight_required" ||
 		operation.Status == "succeeded" ||
 		operation.Status == "failed" {
-		return s.ReleaseTenantMergeFence(ctx, actorID, operationID)
+		released, releaseErr := s.ReleaseTenantMergeFence(
+			ctx, actorID, operationID,
+		)
+		if releaseErr == nil {
+			s.recordTenantMergeTerminalMetrics(beforeCutoverEvents, released)
+		}
+		return released, releaseErr
 	}
 	return operation, nil
+}
+
+func (s *Service) recordTenantMergeTerminalMetrics(
+	beforeCutoverEvents int,
+	operation TenantMergeOperation,
+) {
+	if beforeCutoverEvents < 0 ||
+		beforeCutoverEvents >= len(operation.Events) {
+		return
+	}
+
+	var terminal *TenantMergeEvent
+	for i := beforeCutoverEvents; i < len(operation.Events); i++ {
+		switch operation.Events[i].Event {
+		case "cutover.succeeded", "cutover.failed":
+			terminal = &operation.Events[i]
+		}
+	}
+	if terminal == nil {
+		return
+	}
+
+	duration := terminal.CreatedAt.Sub(operation.CreatedAt).Milliseconds()
+	if duration > 0 {
+		s.Metrics.Add(
+			observability.MetricTenantMergeOperationDurationMS,
+			duration,
+		)
+	}
+
+	if terminal.Event == "cutover.succeeded" {
+		s.Metrics.Inc(observability.MetricTenantMergeSucceeded)
+		for module, count := range operation.ModuleCounts {
+			s.Metrics.Add(
+				observability.MetricTenantMergeRowsPrefix+module,
+				count.Rows,
+			)
+		}
+	} else {
+		s.Metrics.Inc(observability.MetricTenantMergeFailures)
+		s.Metrics.Inc(observability.MetricTenantMergeRollbacks)
+	}
+
+	var fenceStarted, fenceReleased *time.Time
+	for i := range operation.Events {
+		switch operation.Events[i].Event {
+		case "fence.started":
+			started := operation.Events[i].CreatedAt
+			fenceStarted = &started
+			fenceReleased = nil
+		case "fence.released":
+			if fenceStarted != nil {
+				released := operation.Events[i].CreatedAt
+				fenceReleased = &released
+			}
+		}
+	}
+	if fenceStarted != nil && fenceReleased != nil {
+		duration := fenceReleased.Sub(*fenceStarted).Milliseconds()
+		if duration > 0 {
+			s.Metrics.Add(
+				observability.MetricTenantMergeFenceDurationMS,
+				duration,
+			)
+		}
+	}
 }
 
 // ConfirmTenantMerge verifies the actor's current password, records exact typed

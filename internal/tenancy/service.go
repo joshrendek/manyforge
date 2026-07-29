@@ -15,6 +15,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/events"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 )
 
 // MaxDepth bounds hierarchy nesting (FR-004; configurable later).
@@ -22,8 +23,9 @@ const MaxDepth = 10
 
 // Service implements the tenancy use cases.
 type Service struct {
-	DB   *db.DB
-	Blob blob.Store
+	DB      *db.DB
+	Blob    blob.Store
+	Metrics *observability.Metrics
 }
 
 // loadVisible returns a business the caller can see, or ErrNotFound (no oracle).
