@@ -66,6 +66,14 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		WriteJSON(w, http.StatusServiceUnavailable, ErrorBody{
 			Code: "TENANT_MERGE_IN_PROGRESS", Message: "tenant maintenance in progress; retry later",
 		})
+	case errors.Is(err, errs.ErrReauthenticationRequired):
+		WriteJSON(w, http.StatusUnauthorized, ErrorBody{
+			Code: "REAUTHENTICATION_FAILED", Message: "fresh authentication required",
+		})
+	case errors.Is(err, errs.ErrStalePrecondition):
+		WriteJSON(w, http.StatusPreconditionFailed, ErrorBody{
+			Code: "STALE_PREFLIGHT", Message: "preflight is stale; run it again",
+		})
 	case errors.Is(err, errs.ErrCodexDisconnected):
 		WriteJSON(w, http.StatusConflict, ErrorBody{Code: "CODEX_DISCONNECTED", Message: "codex credential disconnected; reconnect required"})
 	case errors.Is(err, errs.ErrUpstream):

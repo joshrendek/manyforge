@@ -23,6 +23,8 @@ func TestWriteErrorMapping(t *testing.T) {
 		{"validation", fmt.Errorf("bad email: %w", errs.ErrValidation), 400, "VALIDATION"},
 		{"conflict", errs.ErrConflict, 409, "CONFLICT"},
 		{"tenant maintenance -> 503", fmt.Errorf("write: %w", errs.ErrTenantMaintenance), 503, "TENANT_MERGE_IN_PROGRESS"},
+		{"reauthentication -> 401", errs.ErrReauthenticationRequired, 401, "REAUTHENTICATION_FAILED"},
+		{"stale precondition -> 412", errs.ErrStalePrecondition, 412, "STALE_PREFLIGHT"},
 		{"codex disconnected -> 409", fmt.Errorf("mint: %w", errs.ErrCodexDisconnected), 409, "CODEX_DISCONNECTED"},
 		{"upstream -> 502", fmt.Errorf("codex refresh: %w", errs.ErrUpstream), 502, "UPSTREAM"},
 		{"unknown -> 500", errors.New("boom"), 500, "INTERNAL"},
