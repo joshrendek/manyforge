@@ -12,8 +12,8 @@ import (
 func TestOpenAPIDrift012(t *testing.T) {
 	routes := apiRoutes(t)
 	spec := spec012Routes(t)
-	if len(spec) != 4 {
-		t.Fatalf("012 contract operations = %d, want 4", len(spec))
+	if len(spec) != 5 {
+		t.Fatalf("012 contract operations = %d, want 5", len(spec))
 	}
 	for operation := range spec {
 		if !routes[operation] {

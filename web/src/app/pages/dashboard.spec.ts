@@ -11,7 +11,13 @@ describe('DashboardComponent', () => {
     localStorage.clear();
   });
 
-  function mount() {
+  function mount(
+    mergeSources: {
+      source_root_id: string;
+      source_root_name: string;
+      destinations: unknown[];
+    }[] = [],
+  ) {
     TestBed.configureTestingModule({
       providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
     });
@@ -38,6 +44,9 @@ describe('DashboardComponent', () => {
         },
       ],
     });
+    ctrl.expectOne('/api/v1/tenant-merge-options').flush({
+      sources: mergeSources,
+    });
     f.detectChanges();
     return { f, ctrl };
   }
@@ -62,5 +71,25 @@ describe('DashboardComponent', () => {
     const { f } = mount();
     const el: HTMLElement = f.nativeElement;
     expect(el.querySelector('.mf-card')).toBeTruthy();
+  });
+
+  it('shows Move master only when the authorization read returns an eligible source', () => {
+    const unauthorized = mount();
+    expect(
+      unauthorized.f.nativeElement.querySelector('[data-testid="move-master"]'),
+    ).toBeFalsy();
+
+    TestBed.resetTestingModule();
+    const authorized = mount([
+      {
+        source_root_id: 'b1',
+        source_root_name: 'Acme',
+        destinations: [{ id: 'd1' }],
+      },
+    ]);
+    const action: HTMLAnchorElement | null =
+      authorized.f.nativeElement.querySelector('[data-testid="move-master"]');
+    expect(action).toBeTruthy();
+    expect(action?.getAttribute('href')).toBe('/tenant-merges/new/b1');
   });
 });

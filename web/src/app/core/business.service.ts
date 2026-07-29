@@ -13,6 +13,10 @@ export class BusinessService {
     return this.http.get<{ items: Business[] }>('/api/v1/businesses');
   }
 
+  get(id: string): Observable<Business> {
+    return this.http.get<Business>(`/api/v1/businesses/${id}`);
+  }
+
   create(name: string, parentId?: string): Observable<Business> {
     const body = parentId ? { name, parent_id: parentId } : { name };
     return this.http.post<Business>('/api/v1/businesses', body);
