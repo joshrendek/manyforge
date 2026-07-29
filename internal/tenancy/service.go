@@ -10,6 +10,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/platform/audit"
+	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -21,7 +22,8 @@ const MaxDepth = 10
 
 // Service implements the tenancy use cases.
 type Service struct {
-	DB *db.DB
+	DB   *db.DB
+	Blob blob.Store
 }
 
 // loadVisible returns a business the caller can see, or ErrNotFound (no oracle).

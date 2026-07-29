@@ -582,6 +582,7 @@ func main() {
 	} else {
 		logger.Warn("MANYFORGE_BLOB_URL unset; inbound attachments disabled")
 	}
+	tenSvc.Blob = blobStore
 
 	// US1 inbound ingestion. The reply-token key degrades gracefully when unset in
 	// dev (nil key ⇒ threading falls back to RFC822 headers; the webhook path does
@@ -695,6 +696,13 @@ func main() {
 	cloudflareSources := parseSourceCIDRs(cfg.CloudflareSourceCIDR, "Cloudflare source", logger)
 	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
+	tenantMergeLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	tenantMergeKey := func(r *http.Request) string {
+		if principalID, ok := httpx.PrincipalFromContext(r.Context()); ok {
+			return principalID.String()
+		}
+		return ratelimit.ClientIP(r, trusted)
+	}
 
 	// Public ingest handlers are built HERE, after the trusted-proxy CIDRs are parsed, because
 	// both key their rate limiters on the client IP. Constructing them earlier left TrustedProxies
@@ -748,6 +756,7 @@ func main() {
 		inboxWebhook:     inboxWebhookH,
 		bounce:           bounceH,
 		authLimit:        httpx.RateLimit(authLimiter, ipKey),
+		tenantMergeLimit: httpx.RateLimit(tenantMergeLimiter, tenantMergeKey),
 		ingestLimit:      httpx.RateLimit(ingestIPLimiter, ingestIPKey),
 		ticketsRead:      httpx.RequirePermission(database, permResolve, authz.PermTicketsRead, businessIDFromPath),
 		ticketsReply:     httpx.RequirePermission(database, permResolve, authz.PermTicketsReply, businessIDFromPath),
@@ -995,12 +1004,13 @@ type apiHandlers struct {
 	// ticketsReply (tickets.reply gate for the US2 reply + note write slice),
 	// ticketsWrite (tickets.write gate for the US3 triage PATCH slice),
 	// ticketsAssign (tickets.assign gate for the assignee-picker list endpoint).
-	authLimit     func(http.Handler) http.Handler
-	ingestLimit   func(http.Handler) http.Handler
-	ticketsRead   func(http.Handler) http.Handler
-	ticketsReply  func(http.Handler) http.Handler
-	ticketsWrite  func(http.Handler) http.Handler
-	ticketsAssign func(http.Handler) http.Handler
+	authLimit        func(http.Handler) http.Handler
+	tenantMergeLimit func(http.Handler) http.Handler
+	ingestLimit      func(http.Handler) http.Handler
+	ticketsRead      func(http.Handler) http.Handler
+	ticketsReply     func(http.Handler) http.Handler
+	ticketsWrite     func(http.Handler) http.Handler
+	ticketsAssign    func(http.Handler) http.Handler
 	// ticketsDelete gates the US5 delete/redact slice (DELETE a ticket → soft-delete/
 	// redact-in-place) on the tickets.delete permission, same RLS-bound 404 shape.
 	ticketsDelete func(http.Handler) http.Handler
@@ -1168,6 +1178,10 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Use(httpx.RequireAuth)
 			h.account.ProtectedRoutes(pr)
 			h.tenancy.ProtectedRoutes(pr)
+			pr.Group(func(merge chi.Router) {
+				merge.Use(h.tenantMergeLimit)
+				h.tenancy.TenantMergeRoutes(merge)
+			})
 			h.authz.ProtectedRoutes(pr)
 			h.invitations.ProtectedRoutes(pr)
 			// US1 ticketing read slice: every endpoint gated on tickets.read at the
