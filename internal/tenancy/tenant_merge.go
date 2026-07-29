@@ -2,15 +2,19 @@ package tenancy
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/manyforge/manyforge/internal/platform/auth"
+	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
@@ -101,10 +105,48 @@ type TenantMergeEvent struct {
 	CreatedAt        time.Time      `json:"created_at"`
 }
 
+// TenantMergeFailure is the safe status detail returned to a tenant owner.
+// Raw PostgreSQL messages stay in the control-plane event table for operators;
+// the API exposes only the failed stage and correlation ID.
+type TenantMergeFailure struct {
+	Code                  string    `json:"code"`
+	Stage                 string    `json:"stage"`
+	OperatorCorrelationID uuid.UUID `json:"operator_correlation_id"`
+}
+
+// TenantMergeAuditManifest is the immutable success receipt written in the
+// same transaction as cutover. It contains identifiers, aggregate counts, and
+// digests, but no tenant PII or credentials.
+type TenantMergeAuditManifest struct {
+	OperationID           uuid.UUID                         `json:"operation_id"`
+	CorrelationID         uuid.UUID                         `json:"correlation_id"`
+	ActorPrincipalID      uuid.UUID                         `json:"actor_principal_id"`
+	SourceRootID          uuid.UUID                         `json:"source_root_id"`
+	DestinationRootID     uuid.UUID                         `json:"destination_root_id"`
+	DestinationParentID   uuid.UUID                         `json:"destination_parent_id"`
+	InventoryVersion      int32                             `json:"inventory_version"`
+	SchemaVersion         int64                             `json:"schema_version"`
+	SchemaHash            string                            `json:"schema_hash"`
+	PreflightGeneration   string                            `json:"preflight_generation"`
+	ReconciliationVersion int32                             `json:"reconciliation_version"`
+	ReconciliationHash    string                            `json:"reconciliation_hash"`
+	TableMetrics          map[string]TenantMergeTableMetric `json:"table_metrics"`
+	TableCounts           map[string]int64                  `json:"table_counts"`
+	ModuleCounts          map[string]TenantMergeCount       `json:"module_counts"`
+	AffectedRows          int64                             `json:"affected_rows"`
+	EstimatedBytes        int64                             `json:"estimated_bytes"`
+	Warnings              []TenantMergeFinding              `json:"warnings"`
+	Resolutions           []TenantMergeFinding              `json:"resolutions"`
+	StartedAt             time.Time                         `json:"started_at"`
+	CompletedAt           time.Time                         `json:"completed_at"`
+	CreatedAt             time.Time                         `json:"created_at"`
+}
+
 // TenantMergeOperation is the durable preflight result consumed by the later
 // cutover primitive.
 type TenantMergeOperation struct {
 	ID                    uuid.UUID                         `json:"id"`
+	CorrelationID         uuid.UUID                         `json:"correlation_id"`
 	SourceRootID          uuid.UUID                         `json:"source_root_id"`
 	DestinationParentID   uuid.UUID                         `json:"destination_parent_id"`
 	DestinationRootID     uuid.UUID                         `json:"destination_root_id"`
@@ -130,11 +172,15 @@ type TenantMergeOperation struct {
 	ResultingDepth        *int32                            `json:"resulting_depth"`
 	AttachmentCount       int64                             `json:"attachment_count"`
 	AttachmentBytes       int64                             `json:"attachment_bytes"`
+	AttachmentsStagedAt   *time.Time                        `json:"attachments_staged_at"`
 	PreflightCompletedAt  *time.Time                        `json:"preflight_completed_at"`
 	ReadyAt               *time.Time                        `json:"ready_at"`
+	ConfirmedAt           *time.Time                        `json:"confirmed_at"`
 	CreatedAt             time.Time                         `json:"created_at"`
 	UpdatedAt             time.Time                         `json:"updated_at"`
 	Events                []TenantMergeEvent                `json:"events"`
+	Failure               *TenantMergeFailure               `json:"failure"`
+	Manifest              *TenantMergeAuditManifest         `json:"manifest"`
 }
 
 // ValidateTenantMergeResult reports whether the stored ready generation still
@@ -157,8 +203,15 @@ func tenantMergeDBError(err error) error {
 		return errs.ErrNotFound
 	}
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "TM409" {
-		return fmt.Errorf("tenant root already belongs to another active merge: %w", errs.ErrConflict)
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "TM400":
+			return fmt.Errorf("confirmation names must exactly match the current source and destination names: %w", errs.ErrValidation)
+		case "TM409":
+			return fmt.Errorf("tenant merge operation conflicts with current state: %w", errs.ErrConflict)
+		case "TM412":
+			return fmt.Errorf("tenant merge preflight is stale: %w", errs.ErrStalePrecondition)
+		}
 	}
 	return err
 }
@@ -331,7 +384,7 @@ func (s *Service) CutoverTenantMerge(
 	if err != nil {
 		return TenantMergeOperation{}, err
 	}
-	if operation.Status != "ready" {
+	if operation.Status != "ready" && operation.Status != "running" {
 		if operation.Status == "preflight_required" ||
 			operation.Status == "succeeded" ||
 			operation.Status == "failed" {
@@ -361,4 +414,212 @@ func (s *Service) CutoverTenantMerge(
 		return s.ReleaseTenantMergeFence(ctx, actorID, operationID)
 	}
 	return operation, nil
+}
+
+// ConfirmTenantMerge verifies the actor's current password, records exact typed
+// source/destination confirmation against the current preflight generation, and
+// immediately starts or safely resumes cutover. Replays never create a second
+// operation: terminal/running status is returned from the durable operation.
+func (s *Service) ConfirmTenantMerge(
+	ctx context.Context,
+	actorID, operationID uuid.UUID,
+	sourceName, destinationName, password string,
+) (TenantMergeOperation, error) {
+	if sourceName == "" || destinationName == "" || password == "" {
+		return TenantMergeOperation{}, fmt.Errorf(
+			"source_name, destination_name, and password are required: %w",
+			errs.ErrValidation,
+		)
+	}
+	if _, err := s.GetTenantMergeOperation(ctx, actorID, operationID); err != nil {
+		return TenantMergeOperation{}, err
+	}
+	if err := s.verifyTenantMergePassword(ctx, actorID, password); err != nil {
+		return TenantMergeOperation{}, err
+	}
+
+	proof := sha256.Sum256([]byte(
+		actorID.String() + "|" + operationID.String() + "|" +
+			sourceName + "|" + destinationName,
+	))
+	var operation TenantMergeOperation
+	err := s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		var raw []byte
+		err := tx.QueryRow(ctx,
+			"SELECT tenant_merge_confirm($1, $2, $3, $4, $5)",
+			actorID, operationID, sourceName, destinationName,
+			fmt.Sprintf("%x", proof[:]),
+		).Scan(&raw)
+		if err != nil {
+			return tenantMergeDBError(err)
+		}
+		operation, err = decodeTenantMergeOperation(raw)
+		return err
+	})
+	if err != nil {
+		return TenantMergeOperation{}, err
+	}
+	if operation.Status == "preflight_required" {
+		return TenantMergeOperation{}, errs.ErrStalePrecondition
+	}
+	if operation.Status != "ready" && operation.Status != "running" {
+		return operation, nil
+	}
+	if err := s.stageTenantMergeAttachments(ctx, actorID, operation); err != nil {
+		return TenantMergeOperation{}, err
+	}
+	operation, err = s.CutoverTenantMerge(ctx, actorID, operationID)
+	if err != nil {
+		return TenantMergeOperation{}, err
+	}
+	if operation.Status == "preflight_required" {
+		return TenantMergeOperation{}, errs.ErrStalePrecondition
+	}
+	return operation, nil
+}
+
+type tenantMergeAttachment struct {
+	Key         string
+	ContentType string
+	Size        int64
+}
+
+// stageTenantMergeAttachments copies every source object to its post-merge key
+// before the database fence/cutover. The copy is idempotent; preflight
+// generation is recorded only after every object has been verified and written.
+func (s *Service) stageTenantMergeAttachments(
+	ctx context.Context,
+	actorID uuid.UUID,
+	operation TenantMergeOperation,
+) error {
+	if operation.AttachmentCount == 0 {
+		return nil
+	}
+	if s.Blob == nil {
+		return fmt.Errorf(
+			"attachment storage is unavailable for this merge: %w",
+			errs.ErrConflict,
+		)
+	}
+
+	attachments := make([]tenantMergeAttachment, 0, operation.AttachmentCount)
+	err := s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT blob_key, content_type, size
+			FROM attachment
+			WHERE tenant_root_id = $1
+			ORDER BY id`,
+			operation.SourceRootID,
+		)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var attachment tenantMergeAttachment
+			if err := rows.Scan(
+				&attachment.Key, &attachment.ContentType, &attachment.Size,
+			); err != nil {
+				return err
+			}
+			attachments = append(attachments, attachment)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return err
+	}
+	if int64(len(attachments)) != operation.AttachmentCount {
+		return errs.ErrStalePrecondition
+	}
+
+	sourcePrefix := operation.SourceRootID.String() + "/"
+	destinationPrefix := operation.DestinationRootID.String() + "/"
+	var stagedBytes int64
+	for _, attachment := range attachments {
+		if !strings.HasPrefix(attachment.Key, sourcePrefix) {
+			return fmt.Errorf(
+				"source attachment key is outside its tenant namespace: %w",
+				errs.ErrConflict,
+			)
+		}
+		content, err := s.Blob.Get(ctx, attachment.Key)
+		if err != nil {
+			return fmt.Errorf("read source attachment for tenant merge: %w", err)
+		}
+		if int64(len(content)) != attachment.Size {
+			return fmt.Errorf(
+				"source attachment size changed: %w",
+				errs.ErrStalePrecondition,
+			)
+		}
+		destinationKey := destinationPrefix +
+			strings.TrimPrefix(attachment.Key, sourcePrefix)
+		if err := s.Blob.Put(
+			ctx, destinationKey, content, attachment.ContentType,
+		); err != nil {
+			return fmt.Errorf("stage destination attachment for tenant merge: %w", err)
+		}
+		stagedBytes += attachment.Size
+	}
+	if stagedBytes != operation.AttachmentBytes {
+		return errs.ErrStalePrecondition
+	}
+
+	return s.DB.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		var raw []byte
+		err := tx.QueryRow(ctx,
+			"SELECT tenant_merge_mark_attachments_staged($1, $2, $3, $4)",
+			actorID, operation.ID, int64(len(attachments)), stagedBytes,
+		).Scan(&raw)
+		if err != nil {
+			return tenantMergeDBError(err)
+		}
+		staged, err := decodeTenantMergeOperation(raw)
+		if err != nil {
+			return err
+		}
+		if staged.Status == "preflight_required" {
+			return errs.ErrStalePrecondition
+		}
+		if staged.Status != "ready" || staged.AttachmentsStagedAt == nil {
+			return fmt.Errorf(
+				"attachment staging was not accepted: %w",
+				errs.ErrConflict,
+			)
+		}
+		return nil
+	})
+}
+
+func (s *Service) verifyTenantMergePassword(
+	ctx context.Context,
+	actorID uuid.UUID,
+	password string,
+) error {
+	verified := false
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		account, err := dbgen.New(tx).GetAccountByPrincipal(ctx, actorID)
+		if err != nil {
+			auth.DummyVerify(password)
+			return nil
+		}
+		if account.PasswordHash == nil {
+			auth.DummyVerify(password)
+			return nil
+		}
+		if account.Status != "active" {
+			auth.DummyVerify(password)
+			return nil
+		}
+		verified = auth.VerifyPassword(password, *account.PasswordHash) == nil
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return errs.ErrReauthenticationRequired
+	}
+	return nil
 }

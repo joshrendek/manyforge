@@ -33,6 +33,16 @@ var (
 	// maps to a stable HTTP 503 response.
 	ErrTenantMaintenance = errors.New("tenant maintenance")
 
+	// ErrReauthenticationRequired marks a high-risk action whose fresh
+	// credential verification failed. It deliberately does not distinguish a
+	// missing password, passwordless account, disabled account, or mismatch.
+	ErrReauthenticationRequired = errors.New("reauthentication required")
+
+	// ErrStalePrecondition marks an operation whose previously reviewed state
+	// no longer matches current data. Callers must rerun preflight and review
+	// the new result rather than retrying the mutation blindly.
+	ErrStalePrecondition = errors.New("stale precondition")
+
 	// ErrUpstream marks a failed call to an external provider (e.g. auth.openai.com). Maps to
 	// HTTP 502; the upstream body is logged server-side and never surfaced to the client.
 	ErrUpstream = errors.New("upstream")

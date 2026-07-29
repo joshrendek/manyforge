@@ -1,0 +1,379 @@
+openapi: 3.0.3
+info:
+  title: ManyForge Whole-Tenant Merge API
+  version: 1.0.0
+  description: Owner-authorized, all-or-nothing movement of one master business beneath another tenant hierarchy.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /businesses/{id}/tenant-merges:
+    post:
+      summary: Create an idempotent merge operation and run its preflight
+      description: |
+        `id` is the source master business. The server derives both tenant roots;
+        clients never submit a tenant_root_id. Reusing an Idempotency-Key with
+        the same actor/source/destination returns the same durable operation.
+        Reusing it for different inputs returns 409.
+      parameters:
+        - $ref: '#/components/parameters/BusinessID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantMerge'
+      responses:
+        '201':
+          description: Durable operation and current preflight result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantMergeOperation'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Maintenance' }
+  /tenant-merges/{operationId}:
+    get:
+      summary: Read durable merge status
+      description: |
+        Unknown operations and operations owned by another principal return the
+        same 404. Safe failure details include only a stage and operator
+        correlation ID; raw database errors are never returned.
+      parameters:
+        - $ref: '#/components/parameters/OperationID'
+      responses:
+        '200':
+          description: Current durable status, transition history, and success manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantMergeOperation'
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /tenant-merges/{operationId}/preflight:
+    post:
+      summary: Recompute merge preflight
+      description: |
+        Recomputes every count, checksum, conflict, warning, and generation.
+        Terminal/running operations return their current status unchanged.
+        A failed operation can be preflighted again before a safe retry.
+      parameters:
+        - $ref: '#/components/parameters/OperationID'
+      responses:
+        '200':
+          description: Current preflight or terminal operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantMergeOperation'
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Maintenance' }
+  /tenant-merges/{operationId}/confirm:
+    post:
+      summary: Freshly authenticate, confirm exact names, and start cutover
+      description: |
+        Requires the current human actor to remain a direct built-in Owner at
+        both roots, hierarchy.manage at the destination parent, a current
+        conflict-free preflight, current password verification, and exact
+        case-sensitive source/destination-parent names. Replays are
+        status-driven: running/succeeded/failed returns the same durable
+        operation and never starts a duplicate cutover. A stale preflight
+        returns 412 and must be reviewed again.
+      parameters:
+        - $ref: '#/components/parameters/OperationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmTenantMerge'
+      responses:
+        '200':
+          description: Running or terminal durable operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantMergeOperation'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/ReauthenticationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/StalePreflight' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Maintenance' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    BusinessID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OperationID:
+      name: operationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 1-255 characters, unique per actor and logical merge request.
+      schema: { type: string, minLength: 1, maxLength: 255 }
+  schemas:
+    CreateTenantMerge:
+      type: object
+      additionalProperties: false
+      required: [destination_parent_id]
+      properties:
+        destination_parent_id: { type: string, format: uuid }
+    ConfirmTenantMerge:
+      type: object
+      additionalProperties: false
+      required: [source_name, destination_name, password]
+      properties:
+        source_name:
+          type: string
+          description: Exact current source-master name.
+        destination_name:
+          type: string
+          description: Exact current destination-parent name.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+    TenantMergeFinding:
+      type: object
+      required: [code, module, object, count]
+      properties:
+        code: { type: string }
+        module: { type: string }
+        object: { type: string }
+        count: { type: integer, format: int64 }
+        limit: { type: integer, format: int64 }
+        bytes: { type: integer, format: int64 }
+        details: { type: object, additionalProperties: true }
+    TenantMergeCount:
+      type: object
+      required: [rows, bytes]
+      properties:
+        rows: { type: integer, format: int64 }
+        bytes: { type: integer, format: int64 }
+    TenantMergeTableMetric:
+      type: object
+      required: [module, strategy, rows, bytes, content_digest, stable_id_digest]
+      properties:
+        module: { type: string }
+        strategy: { type: string }
+        rows: { type: integer, format: int64 }
+        bytes: { type: integer, format: int64 }
+        content_digest: { type: string }
+        stable_id_digest: { type: string }
+    TenantMergeEvent:
+      type: object
+      required: [id, operation_id, actor_principal_id, to_status, event, metadata, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        operation_id: { type: string, format: uuid }
+        actor_principal_id: { type: string, format: uuid }
+        from_status: { type: string, nullable: true }
+        to_status: { type: string }
+        event: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    TenantMergeFailure:
+      type: object
+      required: [code, stage, operator_correlation_id]
+      properties:
+        code: { type: string, enum: [CUTOVER_FAILED] }
+        stage: { type: string }
+        operator_correlation_id: { type: string, format: uuid }
+    TenantMergeManifest:
+      type: object
+      required:
+        - operation_id
+        - correlation_id
+        - actor_principal_id
+        - source_root_id
+        - destination_root_id
+        - destination_parent_id
+        - inventory_version
+        - schema_version
+        - schema_hash
+        - preflight_generation
+        - reconciliation_version
+        - reconciliation_hash
+        - table_metrics
+        - table_counts
+        - module_counts
+        - affected_rows
+        - estimated_bytes
+        - warnings
+        - resolutions
+        - started_at
+        - completed_at
+        - created_at
+      properties:
+        operation_id: { type: string, format: uuid }
+        correlation_id: { type: string, format: uuid }
+        actor_principal_id: { type: string, format: uuid }
+        source_root_id: { type: string, format: uuid }
+        destination_root_id: { type: string, format: uuid }
+        destination_parent_id: { type: string, format: uuid }
+        inventory_version: { type: integer }
+        schema_version: { type: integer, format: int64 }
+        schema_hash: { type: string }
+        preflight_generation: { type: string }
+        reconciliation_version: { type: integer }
+        reconciliation_hash: { type: string }
+        table_metrics:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/TenantMergeTableMetric' }
+        table_counts:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+        module_counts:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/TenantMergeCount' }
+        affected_rows: { type: integer, format: int64 }
+        estimated_bytes: { type: integer, format: int64 }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/TenantMergeFinding' }
+        resolutions:
+          type: array
+          items: { $ref: '#/components/schemas/TenantMergeFinding' }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    TenantMergeOperation:
+      type: object
+      required:
+        - id
+        - correlation_id
+        - source_root_id
+        - destination_parent_id
+        - destination_root_id
+        - actor_principal_id
+        - idempotency_key
+        - status
+        - table_metrics
+        - module_counts
+        - conflicts
+        - warnings
+        - affected_rows
+        - estimated_bytes
+        - attachment_count
+        - attachment_bytes
+        - created_at
+        - updated_at
+        - events
+      properties:
+        id: { type: string, format: uuid }
+        correlation_id: { type: string, format: uuid }
+        source_root_id: { type: string, format: uuid }
+        destination_parent_id: { type: string, format: uuid }
+        destination_root_id: { type: string, format: uuid }
+        actor_principal_id: { type: string, format: uuid }
+        idempotency_key: { type: string }
+        status:
+          type: string
+          enum: [preflight_required, ready, running, succeeded, failed]
+        inventory_version: { type: integer, nullable: true }
+        schema_version: { type: integer, format: int64, nullable: true }
+        schema_hash: { type: string, nullable: true }
+        source_generation: { type: string, nullable: true }
+        destination_generation: { type: string, nullable: true }
+        preflight_generation: { type: string, nullable: true }
+        reconciliation_version: { type: integer, nullable: true }
+        reconciliation_hash: { type: string, nullable: true }
+        reconciliation_plan: { type: object, nullable: true, additionalProperties: true }
+        table_metrics:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/TenantMergeTableMetric' }
+        module_counts:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/TenantMergeCount' }
+        conflicts:
+          type: array
+          items: { $ref: '#/components/schemas/TenantMergeFinding' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/TenantMergeFinding' }
+        affected_rows: { type: integer, format: int64 }
+        estimated_bytes: { type: integer, format: int64 }
+        source_businesses: { type: integer, nullable: true }
+        resulting_depth: { type: integer, nullable: true }
+        attachment_count: { type: integer, format: int64 }
+        attachment_bytes: { type: integer, format: int64 }
+        attachments_staged_at: { type: string, format: date-time, nullable: true }
+        preflight_completed_at: { type: string, format: date-time, nullable: true }
+        ready_at: { type: string, format: date-time, nullable: true }
+        confirmed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/TenantMergeEvent' }
+        failure:
+          allOf: [{ $ref: '#/components/schemas/TenantMergeFailure' }]
+          nullable: true
+        manifest:
+          allOf: [{ $ref: '#/components/schemas/TenantMergeManifest' }]
+          nullable: true
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+  responses:
+    ValidationError:
+      description: Invalid request or typed confirmation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ReauthenticationFailed:
+      description: Current password verification failed; response is deliberately uniform
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown or unauthorized source, destination, or operation (indistinguishable)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Idempotency-key reuse, active-root operation, or unresolved state conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    StalePreflight:
+      description: Reviewed data changed; rerun and review preflight before confirming
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many merge-control requests
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Maintenance:
+      description: One of the roots is under a committed merge fence
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
