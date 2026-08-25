@@ -73,6 +73,20 @@ export interface ValueCount {
   visitors: number;
 }
 
+export interface AnalyticsPropertyValueCount {
+  value: string;
+  events: number;
+  visitors: number;
+}
+
+export interface AnalyticsPropertyBreakdown {
+  rule_id: string;
+  event_name: string;
+  property_key: string;
+  label: string;
+  values: AnalyticsPropertyValueCount[];
+}
+
 // One card on the multi-site overview grid.
 //
 // Average daily visitors is the headline. `visitors` remains the peak day as secondary context;
@@ -110,6 +124,8 @@ export interface AnalyticsSummary {
   // A tracked dimension with no data is present but empty, so the UI can tell "nothing collected"
   // apart from "not a dimension we track".
   breakdowns: Record<string, ValueCount[]>;
+  // Active governed properties. Values come from bounded daily rollups, never raw events.
+  property_breakdowns: AnalyticsPropertyBreakdown[];
 }
 
 export interface AnalyticsSummaryComparison {

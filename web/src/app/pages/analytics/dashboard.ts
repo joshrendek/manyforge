@@ -213,6 +213,46 @@ import { Spinner } from '../../ui/spinner/spinner';
           </div>
         </div>
 
+        @if (propertyPanels().length) {
+          <div class="mf-property-section" data-testid="property-breakdowns">
+            <h2 class="mf-chart-title">Event properties</h2>
+            <div class="mf-two-col">
+              @for (property of propertyPanels(); track property.rule_id) {
+                <div>
+                  <h3 class="mf-subhead" [id]="'property-label-' + property.rule_id">
+                    {{ property.label }}
+                  </h3>
+                  <p class="mf-property-context">
+                    {{ property.event_name }} · {{ property.property_key }}
+                  </p>
+                  <table
+                    class="mf-table mf-property-table"
+                    data-testid="property-breakdown"
+                    [attr.aria-labelledby]="'property-label-' + property.rule_id"
+                  >
+                    <thead>
+                      <tr>
+                        <th scope="col">{{ property.label }}</th>
+                        <th scope="col">Events</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (value of property.values; track value.value) {
+                        <tr data-testid="property-breakdown-row">
+                          <td>
+                            <span class="mf-ellipsis" [title]="value.value">{{ value.value }}</span>
+                          </td>
+                          <td>{{ value.events }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
         <div class="mf-two-col">
           @for (b of breakdownPanels(); track b.key) {
             <div>
@@ -361,6 +401,45 @@ import { Spinner } from '../../ui/spinner/spinner';
         color: var(--mf-text);
         margin-top: 16px;
       }
+      .mf-property-section {
+        margin-top: 24px;
+      }
+      .mf-property-context {
+        margin: -4px 0 8px;
+        color: var(--mf-text-muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: var(--mf-fs-xs);
+        overflow-wrap: anywhere;
+      }
+      .mf-property-table {
+        width: 100%;
+        border-spacing: 0;
+        table-layout: fixed;
+      }
+      .mf-property-table th,
+      .mf-property-table td {
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--mf-border);
+        text-align: left;
+      }
+      .mf-property-table th {
+        background: var(--mf-surface-2);
+        color: var(--mf-text-faint);
+        font-size: var(--mf-fs-xs);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .mf-property-table th:first-child,
+      .mf-property-table td:first-child {
+        width: 75%;
+      }
+      .mf-property-table tbody tr:last-child td {
+        border-bottom: 0;
+      }
+      .mf-property-table .mf-ellipsis {
+        display: block;
+      }
     `,
   ],
 })
@@ -415,6 +494,12 @@ export class AnalyticsDashboardComponent implements OnInit {
         rows: b[k],
       }));
   });
+
+  // Active rules with no values remain useful in the management surface, but an empty dashboard
+  // table is noise. Render only properties with aggregate data in the selected window.
+  propertyPanels = computed(() =>
+    (this.summary()?.property_breakdowns ?? []).filter((property) => property.values.length > 0),
+  );
 
   // Traffic with no resolved countries can mean a historical range, absent/unsupported edge
   // values, or no trusted edge signal. Surface that neutral state rather than inferring which
