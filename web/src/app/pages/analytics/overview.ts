@@ -70,12 +70,13 @@ interface BusinessGroup {
                 <span class="mf-site-name" data-testid="overview-card-name">{{ s.name }}</span>
                 <span class="mf-site-nums">
                   <span class="mf-site-visitors" data-testid="overview-card-visitors">{{
-                    s.visitors.toLocaleString()
+                    s.average_daily_visitors.toFixed(1)
                   }}</span>
-                  <span class="mf-site-unit">peak daily visitors</span>
+                  <span class="mf-site-unit">average daily visitors</span>
                 </span>
                 <span class="mf-site-pv" data-testid="overview-card-pageviews">
-                  {{ s.pageviews.toLocaleString() }} pageviews
+                  {{ s.pageviews.toLocaleString() }} pageviews · peak
+                  {{ s.visitors.toLocaleString() }} visitors
                 </span>
 
                 @if (hasTraffic(s)) {
@@ -274,9 +275,8 @@ export class AnalyticsOverviewComponent implements OnInit {
     return s.series.some((p) => p.pageviews > 0);
   }
 
-  // Points for a 100x28 viewBox. The series omits days with no traffic, so this plots by INDEX
-  // rather than by date: a sparkline is a shape, not a time axis, and gap-accurate spacing would
-  // demand a zero-fill the API deliberately does not send.
+  // Points for a 100x28 viewBox. The API guarantees one ordered point per requested UTC day, so
+  // equal index spacing is equal calendar spacing even across zero-traffic gaps.
   sparkPoints(series: DayPoint[]): string {
     if (!series.length) return '';
     const max = Math.max(...series.map((p) => p.pageviews), 1);

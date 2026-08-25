@@ -161,8 +161,13 @@ paths:
         response time does not grow with traffic volume.
 
         `visitors` is the **peak daily** unique-visitor count across the window, not a sum and not
-        a deduplicated total — see the privacy model. `direct_pageviews` is derived as total
-        pageviews minus attributed referrer pageviews.
+        a deduplicated total — see the privacy model. `average_daily_visitors` is the arithmetic
+        mean of those daily counts, including zero-traffic days. `direct_pageviews` is derived as
+        total pageviews minus attributed referrer pageviews.
+
+        The daily series contains exactly one ordered UTC point per requested calendar day for
+        every supported range (up to 366 days). The comparison is the immediately preceding
+        inclusive window with the same number of days.
       operationId: getAnalyticsSummary
       parameters:
         - name: id
@@ -210,16 +215,17 @@ paths:
         caller can *see* but lacks `telemetry.read` on is omitted — matching what the per-site
         dashboard would do if they opened it directly.
 
-        Sites with no traffic yet are returned with zeroed totals and an empty series rather than
-        omitted: a newly tagged site that vanished from this list would read as a broken tag.
+        Sites with no traffic yet are returned with zeroed totals and a complete zero-filled daily
+        series rather than omitted: a newly tagged site that vanished from this list would read as
+        a broken tag.
 
         Reads exclusively from rollup tables, never raw events. The site list is capped at 200,
-        ordered by visitors descending (ties broken by pageviews, then name, so the order is stable
-        across requests), so the cap sheds the quietest sites.
+        ordered by average daily visitors descending (ties broken by pageviews, then name, so the
+        order is stable across requests), so the cap sheds the quietest sites.
 
         Note the ordering metric and the headline metric are deliberately the same. Ordering by
-        pageviews while presenting visitors would make the cap drop sites that rank highly by the
-        number actually shown on the card.
+        pageviews or peak visitors while presenting average daily visitors would make the cap drop
+        sites that rank highly by the number actually shown on the card.
       operationId: getAnalyticsOverview
       parameters:
         - name: days
@@ -250,7 +256,7 @@ components:
   schemas:
     AnalyticsOverviewSite:
       type: object
-      required: [client_id, name, business_id, business_name, pageviews, visitors, series]
+      required: [client_id, name, business_id, business_name, pageviews, visitors, average_daily_visitors, series]
       properties:
         client_id:     { type: string, format: uuid }
         name:          { type: string }
@@ -264,9 +270,13 @@ components:
             Peak DAILY unique visitors in the window — the SAME definition the per-site summary
             uses, so a card and the dashboard it opens agree. Not a sum and not a cross-day total:
             the daily salt rotation makes cross-day deduplication impossible by design.
+        average_daily_visitors:
+          type: number
+          format: double
+          description: Mean daily unique visitors across every requested day, including zeroes.
         series:
           type: array
-          description: One point per day that has data; days with no traffic are absent, not zero-filled.
+          description: One ordered UTC point for every requested calendar day, including zeroes.
           items:
             type: object
             required: [date, pageviews, visitors]
@@ -276,7 +286,7 @@ components:
               visitors:  { type: integer, format: int64 }
     AnalyticsSummary:
       type: object
-      required: [from, to, pageviews, visitors, series, top_pages, top_referrers, direct_pageviews, breakdowns]
+      required: [from, to, pageviews, visitors, average_daily_visitors, series, top_pages, top_referrers, direct_pageviews, direct_share, comparison, breakdowns]
       properties:
         from: { type: string, format: date }
         to:   { type: string, format: date }
@@ -285,12 +295,25 @@ components:
           type: integer
           format: int64
           description: Peak DAILY unique visitors in the window. Not a sum; not a cross-day total.
+        average_daily_visitors:
+          type: number
+          format: double
+          description: Mean daily unique visitors across every requested day, including zeroes.
         direct_pageviews:
           type: integer
           format: int64
           description: Pageviews with no referrer, derived as total minus attributed referrers.
+        direct_share:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Direct pageviews as a percentage of all pageviews in the current window.
+        comparison:
+          $ref: '#/components/schemas/AnalyticsSummaryComparison'
         series:
           type: array
+          description: One ordered UTC point for every requested calendar day, including zeroes.
           items:
             type: object
             required: [date, pageviews, visitors]
@@ -345,3 +368,32 @@ components:
                 value:     { type: string }
                 pageviews: { type: integer, format: int64 }
                 visitors:  { type: integer, format: int64 }
+    AnalyticsSummaryComparison:
+      type: object
+      required: [from, to, pageviews, average_daily_visitors, direct_pageviews, direct_share, pageviews_change_percent, average_daily_visitors_change_percent, direct_share_change_percentage_points]
+      description: The immediately preceding inclusive window with the same number of calendar days.
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        pageviews: { type: integer, format: int64 }
+        average_daily_visitors: { type: number, format: double }
+        direct_pageviews: { type: integer, format: int64 }
+        direct_share:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+        pageviews_change_percent:
+          type: number
+          format: double
+          nullable: true
+          description: Null when the previous pageview count is zero.
+        average_daily_visitors_change_percent:
+          type: number
+          format: double
+          nullable: true
+          description: Null when the previous average is zero.
+        direct_share_change_percentage_points:
+          type: number
+          format: double
+          description: Current direct share minus previous direct share, in percentage points.

@@ -32,6 +32,7 @@ const overview = {
       business_name: 'Acme Holdings',
       pageviews: 762,
       visitors: 22,
+      average_daily_visitors: 11.8,
       series: series(30, (i) => 5 + i),
     },
     {
@@ -41,6 +42,7 @@ const overview = {
       business_name: 'Acme Holdings',
       pageviews: 555,
       visitors: 13,
+      average_daily_visitors: 7.1,
       series: series(30, (i) => 30 - i),
     },
     {
@@ -50,6 +52,7 @@ const overview = {
       business_name: 'Engineering',
       pageviews: 255,
       visitors: 8,
+      average_daily_visitors: 4.2,
       series: series(30, () => 9),
     },
     {
@@ -60,7 +63,8 @@ const overview = {
       business_name: 'Sales',
       pageviews: 0,
       visitors: 0,
-      series: [],
+      average_daily_visitors: 0,
+      series: series(30, () => 0).map((point) => ({ ...point, visitors: 0 })),
     },
   ],
 };
@@ -139,6 +143,16 @@ test('renders a sparkline for sites with traffic', async ({ page }) => {
     expect(y).toBeGreaterThanOrEqual(0);
     expect(y).toBeLessThanOrEqual(28);
   }
+});
+
+test('headlines average daily visitors and keeps peak visitors as context', async ({ page }) => {
+  await installStack(page);
+  await page.goto('/analytics');
+
+  const card = page.locator('[data-testid="overview-card"][data-client-id="c1"]');
+  await expect(card.getByTestId('overview-card-visitors')).toHaveText('11.8');
+  await expect(card).toContainText('average daily visitors');
+  await expect(card).toContainText('peak 22 visitors');
 });
 
 test('a site with no traffic is listed, with an explicit no-data message', async ({ page }) => {

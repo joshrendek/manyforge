@@ -24,18 +24,36 @@ const topN = 20
 
 // Summary is everything the dashboard needs for one site over one window.
 type Summary struct {
-	From            string      `json:"from"`
-	To              string      `json:"to"`
-	Pageviews       int64       `json:"pageviews"`
-	Visitors        int64       `json:"visitors"`
-	Series          []DayPoint  `json:"series"`
-	TopPages        []PathCount `json:"top_pages"`
-	TopReferrers    []HostCount `json:"top_referrers"`
-	DirectPageviews int64       `json:"direct_pageviews"`
+	From                 string            `json:"from"`
+	To                   string            `json:"to"`
+	Pageviews            int64             `json:"pageviews"`
+	Visitors             int64             `json:"visitors"`
+	AverageDailyVisitors float64           `json:"average_daily_visitors"`
+	Series               []DayPoint        `json:"series"`
+	TopPages             []PathCount       `json:"top_pages"`
+	TopReferrers         []HostCount       `json:"top_referrers"`
+	DirectPageviews      int64             `json:"direct_pageviews"`
+	DirectShare          float64           `json:"direct_share"`
+	Comparison           SummaryComparison `json:"comparison"`
 	// Breakdowns is keyed by dimension ("device", "country", …). A dimension with no data is
 	// present but empty, so a dashboard can distinguish "nothing collected yet" from "not a
 	// dimension we track".
 	Breakdowns map[string][]ValueCount `json:"breakdowns"`
+}
+
+// SummaryComparison is the immediately preceding window with the same inclusive day count.
+// Percentage changes are null when the previous value is zero, because no finite percentage is
+// mathematically defined from that baseline. DirectShareChange is expressed in percentage points.
+type SummaryComparison struct {
+	From                              string   `json:"from"`
+	To                                string   `json:"to"`
+	Pageviews                         int64    `json:"pageviews"`
+	AverageDailyVisitors              float64  `json:"average_daily_visitors"`
+	DirectPageviews                   int64    `json:"direct_pageviews"`
+	DirectShare                       float64  `json:"direct_share"`
+	PageviewsChangePercent            *float64 `json:"pageviews_change_percent"`
+	AverageDailyVisitorsChangePercent *float64 `json:"average_daily_visitors_change_percent"`
+	DirectShareChangePercentagePoints float64  `json:"direct_share_change_percentage_points"`
 }
 
 type DayPoint struct {
@@ -90,12 +108,19 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 		return Summary{}, fmt.Errorf("analytics: range of %d days exceeds the %d day cap: %w",
 			inclusiveDays, maxRangeDays, errs.ErrValidation)
 	}
-	fromD, toD := from.UTC().Format("2006-01-02"), to.UTC().Format("2006-01-02")
+	from = from.UTC().Truncate(24 * time.Hour)
+	to = to.UTC().Truncate(24 * time.Hour)
+	fromD, toD := from.Format("2006-01-02"), to.Format("2006-01-02")
+	days := int(to.Sub(from)/(24*time.Hour)) + 1
+	previousTo := from.AddDate(0, 0, -1)
+	previousFrom := previousTo.AddDate(0, 0, -(days - 1))
+	previousFromD, previousToD := previousFrom.Format("2006-01-02"), previousTo.Format("2006-01-02")
 
 	out := Summary{
 		From: fromD, To: toD,
 		Series: []DayPoint{}, TopPages: []PathCount{}, TopReferrers: []HostCount{},
 		Breakdowns: map[string][]ValueCount{},
+		Comparison: SummaryComparison{From: previousFromD, To: previousToD},
 	}
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		// Ownership: the client must belong to the URL business. RLS already scopes
@@ -113,41 +138,19 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 			return errs.ErrNotFound
 		}
 
-		// Daily series + totals.
-		rows, err := tx.Query(ctx,
-			`SELECT bucket_date::text, pageviews, visitors
-			   FROM analytics_daily
-			  WHERE client_id = $1 AND business_id = $2
-			    AND bucket_date >= $3::date AND bucket_date <= $4::date
-			  ORDER BY bucket_date`,
-			clientID, businessID, fromD, toD)
+		// Daily series are completed against a UTC date spine before any totals are derived. The
+		// dashboard therefore receives one point per requested day even when no rollup row exists.
+		series, err := loadDailySeries(ctx, tx, clientID, businessID, from, to)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var d DayPoint
-			if err := rows.Scan(&d.Date, &d.Pageviews, &d.Visitors); err != nil {
-				rows.Close()
-				return err
-			}
-			out.Series = append(out.Series, d)
-			out.Pageviews += d.Pageviews
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		previousSeries, err := loadDailySeries(ctx, tx, clientID, businessID, previousFrom, previousTo)
+		if err != nil {
 			return err
 		}
-
-		// Visitors is NOT the sum of the daily series: the hash rotates daily, so the same person
-		// on two days is two daily visitors. Summing would overstate a multi-day total. There is
-		// no cross-day identifier by design, so the honest window figure is the busiest day's
-		// count — reported as "daily unique visitors, peak" in the UI rather than implying a
-		// deduplicated total we cannot compute.
-		for _, d := range out.Series {
-			if d.Visitors > out.Visitors {
-				out.Visitors = d.Visitors
-			}
-		}
+		out.Series = series
+		out.Pageviews, out.Visitors, out.AverageDailyVisitors = seriesMetrics(series)
+		out.Comparison.Pageviews, _, out.Comparison.AverageDailyVisitors = seriesMetrics(previousSeries)
 
 		if err := s.topPages(ctx, tx, &out, clientID, businessID, fromD, toD); err != nil {
 			return err
@@ -161,24 +164,117 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 		// from the capped list would silently reclassify every referrer beyond the top 20 as
 		// "direct", and the error would grow precisely for the sites with the most diverse
 		// traffic.
-		var attributed int64
-		if err := tx.QueryRow(ctx,
-			`SELECT coalesce(sum(pageviews), 0)::bigint
-			   FROM analytics_referrer_daily
-			  WHERE client_id = $1 AND business_id = $2
-			    AND bucket_date >= $3::date AND bucket_date <= $4::date`,
-			clientID, businessID, fromD, toD).Scan(&attributed); err != nil {
+		attributed, err := attributedPageviews(ctx, tx, clientID, businessID, fromD, toD)
+		if err != nil {
 			return err
 		}
 		if d := out.Pageviews - attributed; d > 0 {
 			out.DirectPageviews = d
 		}
+		out.DirectShare = percent(out.DirectPageviews, out.Pageviews)
+
+		previousAttributed, err := attributedPageviews(ctx, tx, clientID, businessID, previousFromD, previousToD)
+		if err != nil {
+			return err
+		}
+		if d := out.Comparison.Pageviews - previousAttributed; d > 0 {
+			out.Comparison.DirectPageviews = d
+		}
+		out.Comparison.DirectShare = percent(out.Comparison.DirectPageviews, out.Comparison.Pageviews)
+		out.Comparison.PageviewsChangePercent = percentChange(float64(out.Pageviews), float64(out.Comparison.Pageviews))
+		out.Comparison.AverageDailyVisitorsChangePercent = percentChange(out.AverageDailyVisitors, out.Comparison.AverageDailyVisitors)
+		out.Comparison.DirectShareChangePercentagePoints = out.DirectShare - out.Comparison.DirectShare
 		return s.breakdowns(ctx, tx, &out, clientID, businessID, fromD, toD)
 	})
 	if err != nil {
 		return Summary{}, mapErr(err)
 	}
 	return out, nil
+}
+
+func loadDailySeries(ctx context.Context, tx pgx.Tx, clientID, businessID uuid.UUID, from, to time.Time) ([]DayPoint, error) {
+	fromD, toD := from.Format("2006-01-02"), to.Format("2006-01-02")
+	rows, err := tx.Query(ctx,
+		`SELECT bucket_date::text, pageviews, visitors
+		   FROM analytics_daily
+		  WHERE client_id = $1 AND business_id = $2
+		    AND bucket_date >= $3::date AND bucket_date <= $4::date
+		  ORDER BY bucket_date`,
+		clientID, businessID, fromD, toD)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	sparse := []DayPoint{}
+	for rows.Next() {
+		var d DayPoint
+		if err := rows.Scan(&d.Date, &d.Pageviews, &d.Visitors); err != nil {
+			return nil, err
+		}
+		sparse = append(sparse, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return completeDailySeries(sparse, from, to), nil
+}
+
+func completeDailySeries(sparse []DayPoint, from, to time.Time) []DayPoint {
+	byDate := make(map[string]DayPoint, len(sparse))
+	for _, point := range sparse {
+		byDate[point.Date] = point
+	}
+	series := make([]DayPoint, 0, int(to.Sub(from)/(24*time.Hour))+1)
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		date := day.Format("2006-01-02")
+		point := byDate[date]
+		point.Date = date
+		series = append(series, point)
+	}
+	return series
+}
+
+// seriesMetrics returns pageviews, peak daily visitors, and average daily visitors. The average
+// includes zero-traffic days from the completed series and is therefore comparable across windows.
+func seriesMetrics(series []DayPoint) (int64, int64, float64) {
+	if len(series) == 0 {
+		return 0, 0, 0
+	}
+	var pageviews, peakVisitors, visitorDays int64
+	for _, point := range series {
+		pageviews += point.Pageviews
+		visitorDays += point.Visitors
+		if point.Visitors > peakVisitors {
+			peakVisitors = point.Visitors
+		}
+	}
+	return pageviews, peakVisitors, float64(visitorDays) / float64(len(series))
+}
+
+func attributedPageviews(ctx context.Context, tx pgx.Tx, clientID, businessID uuid.UUID, fromD, toD string) (int64, error) {
+	var attributed int64
+	err := tx.QueryRow(ctx,
+		`SELECT coalesce(sum(pageviews), 0)::bigint
+		   FROM analytics_referrer_daily
+		  WHERE client_id = $1 AND business_id = $2
+		    AND bucket_date >= $3::date AND bucket_date <= $4::date`,
+		clientID, businessID, fromD, toD).Scan(&attributed)
+	return attributed, err
+}
+
+func percent(part, total int64) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(part) / float64(total) * 100
+}
+
+func percentChange(current, previous float64) *float64 {
+	if previous == 0 {
+		return nil
+	}
+	change := (current - previous) / previous * 100
+	return &change
 }
 
 func (s *Service) topPages(ctx context.Context, tx pgx.Tx, out *Summary, clientID, businessID uuid.UUID, fromD, toD string) error {
@@ -278,13 +374,14 @@ const maxOverviewSites = 200
 
 // OverviewSite is one card on the overview grid.
 type OverviewSite struct {
-	ClientID     string     `json:"client_id"`
-	Name         string     `json:"name"`
-	BusinessID   string     `json:"business_id"`
-	BusinessName string     `json:"business_name"`
-	Pageviews    int64      `json:"pageviews"`
-	Visitors     int64      `json:"visitors"`
-	Series       []DayPoint `json:"series"`
+	ClientID             string     `json:"client_id"`
+	Name                 string     `json:"name"`
+	BusinessID           string     `json:"business_id"`
+	BusinessName         string     `json:"business_name"`
+	Pageviews            int64      `json:"pageviews"`
+	Visitors             int64      `json:"visitors"`
+	AverageDailyVisitors float64    `json:"average_daily_visitors"`
+	Series               []DayPoint `json:"series"`
 }
 
 // Overview lists every analytics site the caller can see, across every business they belong to,
@@ -299,11 +396,14 @@ func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to 
 	if to.Before(from) {
 		return nil, fmt.Errorf("analytics: end before start: %w", errs.ErrValidation)
 	}
-	if inclusiveDays := int(to.Sub(from)/(24*time.Hour)) + 1; inclusiveDays > maxRangeDays {
+	from = from.UTC().Truncate(24 * time.Hour)
+	to = to.UTC().Truncate(24 * time.Hour)
+	inclusiveDays := int(to.Sub(from)/(24*time.Hour)) + 1
+	if inclusiveDays > maxRangeDays {
 		return nil, fmt.Errorf("analytics: range of %d days exceeds the %d day cap: %w",
 			inclusiveDays, maxRangeDays, errs.ErrValidation)
 	}
-	fromD, toD := from.UTC().Format("2006-01-02"), to.UTC().Format("2006-01-02")
+	fromD, toD := from.Format("2006-01-02"), to.Format("2006-01-02")
 
 	out := []OverviewSite{}
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -313,11 +413,11 @@ func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to 
 		rows, err := tx.Query(ctx,
 			`SELECT c.id::text, c.name, b.id::text, b.name,
 			        coalesce(sum(d.pageviews), 0)::bigint,
-			        -- MAX, not SUM. The per-site dashboard reports peak daily unique visitors,
-			        -- because the daily salt rotation makes a cross-day dedupe impossible by design.
-			        -- Summing here would give a card a number several times larger than the
-			        -- dashboard it opens, which reads as a bug rather than as two definitions.
-			        coalesce(max(d.visitors),  0)::bigint
+			        -- Peak remains secondary context. The sum is divided by every requested day for
+			        -- the headline average; it is never exposed as a cross-day "unique" total because
+			        -- daily salt rotation makes that deduplication impossible by design.
+			        coalesce(max(d.visitors),  0)::bigint,
+			        coalesce(sum(d.visitors), 0)::double precision / $3::double precision
 			   FROM telemetry_client c
 			   JOIN business b ON b.id = c.business_id
 			   LEFT JOIN analytics_daily d
@@ -335,16 +435,16 @@ func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to 
 			    )
 			  GROUP BY c.id, c.name, b.id, b.name
 			  -- Ordered by the SAME measure the card headlines and the API contract documents:
-			  -- visitors. This was ORDER BY 5, a positional reference to the pageviews column —
+			  -- average daily visitors. This was ORDER BY 5, a positional reference to pageviews —
 			  -- which silently ordered by a different metric than everything describing it said,
-			  -- and at the 200-site cap would have dropped higher-visitor sites in favour of ones
+			  -- and at the 200-site cap would have dropped higher-average sites in favour of ones
 			  -- with more pageviews. Spelled out rather than positional so it cannot drift again
 			  -- if a column is inserted above it.
-			  ORDER BY coalesce(max(d.visitors), 0) DESC,
+			  ORDER BY coalesce(sum(d.visitors), 0)::double precision / $3::double precision DESC,
 			           coalesce(sum(d.pageviews), 0) DESC,
 			           c.name
-			  LIMIT $3`,
-			fromD, toD, maxOverviewSites)
+			  LIMIT $4`,
+			fromD, toD, inclusiveDays, maxOverviewSites)
 		if err != nil {
 			return err
 		}
@@ -353,7 +453,7 @@ func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to 
 		for rows.Next() {
 			var o OverviewSite
 			if err := rows.Scan(&o.ClientID, &o.Name, &o.BusinessID, &o.BusinessName,
-				&o.Pageviews, &o.Visitors); err != nil {
+				&o.Pageviews, &o.Visitors, &o.AverageDailyVisitors); err != nil {
 				return err
 			}
 			o.Series = []DayPoint{}
@@ -393,7 +493,13 @@ func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to 
 				out[i].Series = append(out[i].Series, d)
 			}
 		}
-		return srows.Err()
+		if err := srows.Err(); err != nil {
+			return err
+		}
+		for i := range out {
+			out[i].Series = completeDailySeries(out[i].Series, from, to)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, mapErr(err)

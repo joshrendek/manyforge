@@ -1,15 +1,15 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { AnalyticsService, AnalyticsSummary } from '../../core/analytics.service';
+import { AnalyticsService, AnalyticsSummary, DayPoint } from '../../core/analytics.service';
 import { EmptyState } from '../../ui/empty-state/empty-state';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
 
 // Analytics dashboard for one site.
 //
-// The chart is hand-rolled SVG rather than a charting dependency: it is a single bar series, and
-// a chart library would be a much larger addition to the bundle than the ~20 lines it replaces.
+// The chart is hand-rolled SVG rather than a charting dependency: it shows one selectable daily
+// series at a time, and a chart library would be a much larger addition to the bundle.
 @Component({
   selector: 'app-analytics-dashboard',
   imports: [FormsModule, RouterLink, PageHeader, EmptyState, Spinner],
@@ -45,25 +45,73 @@ import { Spinner } from '../../ui/spinner/spinner';
       </div>
 
       @if (summary(); as s) {
+        <p class="mf-range" data-testid="analytics-date-range">
+          Daily data in UTC: {{ s.from }} – {{ s.to }}. Compared with {{ s.comparison.from }} –
+          {{ s.comparison.to }}.
+        </p>
         <div class="mf-stats" data-testid="analytics-stats">
           <div class="mf-stat">
-            <span class="mf-stat-value" data-testid="stat-pageviews">{{ s.pageviews }}</span>
+            <span class="mf-stat-value" data-testid="stat-pageviews">{{
+              s.pageviews.toLocaleString()
+            }}</span>
             <span class="mf-stat-label">Pageviews</span>
+            <span class="mf-stat-change" data-testid="stat-pageviews-change">{{
+              percentChangeLabel(s.comparison.pageviews_change_percent, s.comparison.pageviews)
+            }}</span>
           </div>
           <div class="mf-stat">
-            <span class="mf-stat-value" data-testid="stat-visitors">{{ s.visitors }}</span>
-            <!-- Labelled "peak daily" rather than "unique visitors" because the visitor hash
-                 rotates daily by design: there is no cross-day identifier, so a deduplicated
-                 multi-day total does not exist and must not be implied. -->
-            <span class="mf-stat-label">Visitors (peak day)</span>
+            <span class="mf-stat-value" data-testid="stat-visitors">{{
+              s.average_daily_visitors.toFixed(1)
+            }}</span>
+            <span class="mf-stat-label">Average daily visitors</span>
+            <span class="mf-stat-change" data-testid="stat-visitors-change">{{
+              percentChangeLabel(
+                s.comparison.average_daily_visitors_change_percent,
+                s.comparison.average_daily_visitors,
+                1
+              )
+            }}</span>
+            <span class="mf-stat-detail">Peak day: {{ s.visitors.toLocaleString() }}</span>
           </div>
           <div class="mf-stat">
-            <span class="mf-stat-value" data-testid="stat-direct">{{ s.direct_pageviews }}</span>
-            <span class="mf-stat-label">Direct</span>
+            <span class="mf-stat-value" data-testid="stat-direct"
+              >{{ s.direct_share.toFixed(1) }}%</span
+            >
+            <span class="mf-stat-label">Direct traffic share</span>
+            <span class="mf-stat-change" data-testid="stat-direct-change">{{
+              pointChangeLabel(
+                s.comparison.direct_share_change_percentage_points,
+                s.comparison.direct_share
+              )
+            }}</span>
+            <span class="mf-stat-detail">{{ s.direct_pageviews.toLocaleString() }} pageviews</span>
           </div>
         </div>
 
         @if (s.pageviews > 0) {
+          <div class="mf-chart-header">
+            <h2 class="mf-chart-title">Daily traffic</h2>
+            <div class="mf-chart-toggle" aria-label="Chart metric">
+              <button
+                type="button"
+                class="mf-btn mf-btn-sm"
+                data-testid="chart-pageviews"
+                [attr.aria-pressed]="chartMetric() === 'pageviews'"
+                (click)="chartMetric.set('pageviews')"
+              >
+                Pageviews
+              </button>
+              <button
+                type="button"
+                class="mf-btn mf-btn-sm"
+                data-testid="chart-visitors"
+                [attr.aria-pressed]="chartMetric() === 'visitors'"
+                (click)="chartMetric.set('visitors')"
+              >
+                Visitors
+              </button>
+            </div>
+          </div>
           <svg
             class="mf-chart"
             data-testid="analytics-chart"
@@ -76,14 +124,35 @@ import { Spinner } from '../../ui/spinner/spinner';
               <rect
                 class="mf-bar"
                 [attr.x]="i * barStep()"
-                [attr.y]="120 - barHeight(p.pageviews)"
+                [attr.y]="120 - barHeight(chartValue(p))"
                 [attr.width]="Math.max(barStep() - 2, 1)"
-                [attr.height]="barHeight(p.pageviews)"
+                [attr.height]="barHeight(chartValue(p))"
               >
                 <title>{{ p.date }}: {{ p.pageviews }} pageviews, {{ p.visitors }} visitors</title>
               </rect>
             }
           </svg>
+          <div class="mf-chart-axis" aria-hidden="true">
+            <span>{{ s.from }}</span
+            ><span>{{ s.to }}</span>
+          </div>
+          <details class="mf-chart-data" data-testid="analytics-chart-data">
+            <summary>View daily data</summary>
+            <div class="mf-table" role="table" aria-label="Daily analytics data">
+              <div class="mf-tr mf-th" role="row">
+                <span role="columnheader">Date (UTC)</span>
+                <span role="columnheader">Pageviews</span>
+                <span role="columnheader">Visitors</span>
+              </div>
+              @for (p of s.series; track p.date) {
+                <div class="mf-tr" role="row" data-testid="daily-data-row">
+                  <span role="cell">{{ p.date }}</span>
+                  <span role="cell">{{ p.pageviews }}</span>
+                  <span role="cell">{{ p.visitors }}</span>
+                </div>
+              }
+            </div>
+          </details>
         }
 
         <div class="mf-two-col">
@@ -213,14 +282,58 @@ import { Spinner } from '../../ui/spinner/spinner';
         font-size: var(--mf-fs-sm);
         color: var(--mf-text-muted);
       }
+      .mf-stat-change,
+      .mf-stat-detail,
+      .mf-range,
+      .mf-chart-axis,
+      .mf-chart-data {
+        font-size: var(--mf-fs-xs);
+        color: var(--mf-text-muted);
+      }
+      .mf-stat-change {
+        margin-top: 4px;
+      }
+      .mf-range {
+        margin: 12px 0 0;
+      }
+      .mf-chart-header,
+      .mf-chart-axis {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .mf-chart-title {
+        font-size: var(--mf-fs-sm);
+        margin: 0;
+      }
+      .mf-chart-toggle {
+        display: flex;
+        gap: 6px;
+      }
+      .mf-chart-toggle [aria-pressed='true'] {
+        border-color: var(--mf-accent);
+        color: var(--mf-accent);
+      }
       .mf-chart {
         width: 100%;
         height: 120px;
-        margin: 8px 0 20px;
+        margin: 8px 0 4px;
         display: block;
       }
       .mf-bar {
         fill: var(--mf-accent, #4f8ef7);
+      }
+      .mf-chart-data {
+        margin: 8px 0 20px;
+      }
+      .mf-chart-data summary {
+        cursor: pointer;
+      }
+      .mf-chart-data .mf-table {
+        margin-top: 8px;
+        max-height: 260px;
+        overflow: auto;
       }
       .mf-two-col {
         display: grid;
@@ -255,14 +368,16 @@ export class AnalyticsDashboardComponent implements OnInit {
   businessId = signal('');
   siteId = signal('');
   days = signal(30);
+  chartMetric = signal<'pageviews' | 'visitors'>('pageviews');
   summary = signal<AnalyticsSummary | null>(null);
   loading = signal(false);
   error = signal('');
 
-  private maxPageviews = computed(() => {
+  private maxChartValue = computed(() => {
     const s = this.summary();
     if (!s || !s.series.length) return 0;
-    return s.series.reduce((m, p) => (p.pageviews > m ? p.pageviews : m), 0);
+    const metric = this.chartMetric();
+    return s.series.reduce((max, point) => Math.max(max, point[metric]), 0);
   });
 
   chartWidth = computed(() => Math.max((this.summary()?.series.length ?? 0) * 12, 1));
@@ -307,13 +422,29 @@ export class AnalyticsDashboardComponent implements OnInit {
   chartLabel = computed(() => {
     const s = this.summary();
     if (!s) return 'Pageviews chart';
-    return `Pageviews per day from ${s.from} to ${s.to}, peak ${this.maxPageviews()}`;
+    const label = this.chartMetric() === 'pageviews' ? 'Pageviews' : 'Daily visitors';
+    return `${label} per day from ${s.from} to ${s.to}, peak ${this.maxChartValue()}`;
   });
 
   barHeight(v: number): number {
-    const max = this.maxPageviews();
+    const max = this.maxChartValue();
     if (max <= 0) return 0;
     return Math.max((v / max) * 110, v > 0 ? 2 : 0);
+  }
+
+  chartValue(point: DayPoint): number {
+    return point[this.chartMetric()];
+  }
+
+  percentChangeLabel(change: number | null, previous: number, previousDigits = 0): string {
+    if (change === null) return `No prior baseline (${previous.toFixed(previousDigits)} prior)`;
+    const prefix = change > 0 ? '+' : '';
+    return `${prefix}${change.toFixed(1)}% vs ${previous.toFixed(previousDigits)} prior`;
+  }
+
+  pointChangeLabel(change: number, previous: number): string {
+    const prefix = change > 0 ? '+' : '';
+    return `${prefix}${change.toFixed(1)} points vs ${previous.toFixed(1)}% prior`;
   }
 
   ngOnInit(): void {
