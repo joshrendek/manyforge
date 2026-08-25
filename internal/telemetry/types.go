@@ -52,8 +52,8 @@ type Client struct {
 	Name           string    `json:"name"`
 	PublishableKey string    `json:"publishable_key"`
 	// AllowedOrigins is the exact normalized browser-origin allowlist for analytics collection.
-	// Empty marks an existing legacy site as explicitly unrestricted; new analytics clients must
-	// provide at least one origin.
+	// Only migrated legacy rows may be empty (explicitly unrestricted); create and update always
+	// require at least one origin.
 	AllowedOrigins []string `json:"allowed_origins"`
 	Status         string   `json:"status"`
 	// RequireSignature reports whether ingest demands an HMAC for this client. False (the default)

@@ -656,6 +656,26 @@ func TestCollect_NoOracleAndNoWriteForBadKeys(t *testing.T) {
 	}
 }
 
+func TestCollect_LegacyUnrestrictedAcceptsMissingOrAnyOrigin(t *testing.T) {
+	ctx, e := newEnv(t)
+	for _, origins := range [][]string{nil, {"https://unconfigured.example"}} {
+		if code := e.collectWithOrigins(
+			t, e.key, "/legacy-origin", "", humanUA, "203.0.113.8", origins,
+		); code != http.StatusNoContent {
+			t.Fatalf("legacy-unrestricted collect status = %d, want 204", code)
+		}
+	}
+	var rows int
+	if err := e.tdb.Super.QueryRow(ctx,
+		"SELECT count(*) FROM analytics_event WHERE client_id=$1", e.site,
+	).Scan(&rows); err != nil {
+		t.Fatalf("count legacy-unrestricted events: %v", err)
+	}
+	if rows != 2 {
+		t.Fatalf("legacy-unrestricted stored rows = %d, want 2", rows)
+	}
+}
+
 func TestCollect_AllowedOriginsAreUniformAndObservable(t *testing.T) {
 	ctx, e := newEnv(t)
 	if _, err := e.tdb.Super.Exec(ctx,

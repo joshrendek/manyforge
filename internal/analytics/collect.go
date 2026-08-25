@@ -175,6 +175,9 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 
 	ua := r.Header.Get("User-Agent")
 	origin := ""
+	// Missing and malformed headers deliberately collapse to the same empty internal value. A
+	// configured allowlist rejects it in analytics_collect and reports -1 for unlabeled metrics;
+	// legacy-unrestricted rows accept it. Do not log the caller-controlled value or vary the 204.
 	if normalized, err := weborigin.FromHeader(r.Header.Values("Origin")); err == nil {
 		origin = normalized
 	}
