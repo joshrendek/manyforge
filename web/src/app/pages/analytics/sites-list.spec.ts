@@ -37,6 +37,7 @@ const clients = {
       kind: 'analytics',
       name: 'garden.gg',
       publishable_key: 'mfk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      allowed_origins: ['https://garden.gg'],
       status: 'active',
       require_signature: false,
       has_secret: false,
@@ -91,6 +92,50 @@ describe('AnalyticsSitesListComponent', () => {
     expect(rows.length).toBe(1);
     expect(fixture.nativeElement.textContent).toContain('garden.gg');
     expect(fixture.nativeElement.textContent).not.toContain('iOS app');
+    expect(fixture.nativeElement.textContent).toContain('https://garden.gg');
+  });
+
+  it('replaces allowed origins without rotating or losing site health', () => {
+    fixture.nativeElement
+      .querySelector('[data-testid="site-manage-origins"]')
+      .dispatchEvent(new MouseEvent('click'));
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    expect(comp.originsDraft).toBe('https://garden.gg');
+    comp.originsDraft = 'https://www.garden.gg\nhttp://localhost:4300';
+    comp.saveOrigins(comp.sites()[0]);
+
+    const req = mock.expectOne('/api/v1/businesses/b1/telemetry/clients/s1/allowed-origins');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({
+      allowed_origins: ['https://www.garden.gg', 'http://localhost:4300'],
+    });
+    req.flush({
+      ...clients.clients[0],
+      allowed_origins: ['https://www.garden.gg', 'http://localhost:4300'],
+      analytics_health: undefined,
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('https://www.garden.gg');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health-message"]').textContent,
+    ).toContain('No accepted event yet');
+    expect(TestBed.inject(ToastService).toasts().at(-1)?.message).toContain(
+      'embed key is unchanged',
+    );
+  });
+
+  it('labels legacy unrestricted sites and lets operators restrict them', () => {
+    fixture.componentInstance.selectBusiness('b1');
+    mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
+      clients: [{ ...clients.clients[0], allowed_origins: [] }],
+    });
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-origin-unrestricted"]').textContent,
+    ).toContain('any origin');
+    expect(fixture.nativeElement.querySelector('[data-testid="site-manage-origins"]')).toBeTruthy();
   });
 
   // The embed tag is the deliverable of this screen — if it does not render correctly and in
@@ -257,6 +302,7 @@ describe('AnalyticsSitesListComponent', () => {
   it('creates sites with require_signature false', () => {
     const comp = fixture.componentInstance;
     comp.newName = 'example.com';
+    comp.newOrigin = 'https://example.com';
     comp.create();
     const req = mock.expectOne('/api/v1/businesses/b1/telemetry/clients');
     expect(req.request.method).toBe('POST');
@@ -264,6 +310,7 @@ describe('AnalyticsSitesListComponent', () => {
       kind: 'analytics',
       name: 'example.com',
       require_signature: false,
+      allowed_origins: ['https://example.com'],
     });
     req.flush({ ...clients.clients[0], id: 's2', name: 'example.com' });
     mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush(clients);

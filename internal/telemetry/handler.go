@@ -27,6 +27,7 @@ func (h *Handler) ReadRoutes(r chi.Router) {
 // WriteRoutes mounts the authenticated write endpoints (gated on telemetry.write by the caller).
 func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Post("/businesses/{id}/telemetry/clients", h.create)
+	r.Put("/businesses/{id}/telemetry/clients/{clientID}/allowed-origins", h.setAllowedOrigins)
 	r.Post("/businesses/{id}/telemetry/clients/{clientID}/revoke", h.revoke)
 	r.Get("/businesses/{id}/telemetry/clients/{clientID}/move-targets", h.moveTargets)
 	r.Post("/businesses/{id}/telemetry/clients/{clientID}/move", h.move)
@@ -37,7 +38,12 @@ type createClientRequest struct {
 	Name string `json:"name"`
 	// RequireSignature defaults to false — the embeddable-SDK mode. Set it only for a
 	// server-to-server sender that can hold an mfs_ secret safely.
-	RequireSignature bool `json:"require_signature"`
+	RequireSignature bool     `json:"require_signature"`
+	AllowedOrigins   []string `json:"allowed_origins"`
+}
+
+type setAllowedOriginsRequest struct {
+	AllowedOrigins []string `json:"allowed_origins"`
 }
 
 type moveClientRequest struct {
@@ -59,12 +65,34 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	client, err := h.Svc.CreateClient(r.Context(), principalID, businessID, req.Kind, req.Name, req.RequireSignature)
+	client, err := h.Svc.CreateClient(
+		r.Context(), principalID, businessID, req.Kind, req.Name, req.RequireSignature,
+		req.AllowedOrigins,
+	)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, client)
+}
+
+func (h *Handler) setAllowedOrigins(w http.ResponseWriter, r *http.Request) {
+	principalID, businessID, clientID, ok := moveRouteIDs(w, r)
+	if !ok {
+		return
+	}
+	var req setAllowedOriginsRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	client, err := h.Svc.SetAllowedOrigins(
+		r.Context(), principalID, businessID, clientID, req.AllowedOrigins,
+	)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, client)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

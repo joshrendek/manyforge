@@ -33,6 +33,8 @@ import (
 	"github.com/manyforge/manyforge/internal/telemetry"
 )
 
+var testAllowedOrigins = []string{"https://example.test"}
+
 type env struct {
 	tdb    *testdb.TestDB
 	srv    *httptest.Server
@@ -477,12 +479,15 @@ func TestClientLifecycle_CreateListRevoke(t *testing.T) {
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 
-	created, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "web", false)
+	created, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "web", false, testAllowedOrigins)
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
 	}
 	if !strings.HasPrefix(created.PublishableKey, "mfk_") {
 		t.Fatalf("bad publishable key: %q", created.PublishableKey)
+	}
+	if len(created.AllowedOrigins) != 1 || created.AllowedOrigins[0] != "https://example.test" {
+		t.Fatalf("allowed origins = %v, want normalized test origin", created.AllowedOrigins)
 	}
 	// The DEFAULT client is the embeddable-SDK shape: no secret, no signature demanded. Minting a
 	// secret for every client would force embeddable keys into signed mode.
@@ -502,6 +507,9 @@ func TestClientLifecycle_CreateListRevoke(t *testing.T) {
 	if list[0].Secret != "" {
 		t.Fatal("SECRET LEAK: ListClients returned the plaintext signing secret")
 	}
+	if len(list[0].AllowedOrigins) != 1 || list[0].AllowedOrigins[0] != "https://example.test" {
+		t.Fatalf("listed allowed origins = %v", list[0].AllowedOrigins)
+	}
 
 	revoked, err := svc.RevokeClient(ctx, seed.principalID, seed.businessID, created.ID)
 	if err != nil {
@@ -520,12 +528,107 @@ func TestClientLifecycle_CreateListRevoke(t *testing.T) {
 	}
 }
 
+func TestClientLifecycle_SetAllowedOriginsIsBoundedAndTenantSafe(t *testing.T) {
+	ctx, e := newEnv(t)
+	a := seedTenant(t, ctx, e.tdb, "Origin Alpha")
+	b := seedTenant(t, ctx, e.tdb, "Origin Beta")
+	svc := telemetry.NewService(e.tdb.App, e.sealer)
+
+	client, err := svc.CreateClient(
+		ctx, a.principalID, a.businessID, "analytics", "site", false,
+		[]string{"HTTPS://ONE.EXAMPLE:443/"},
+	)
+	if err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+	updated, err := svc.SetAllowedOrigins(
+		ctx, a.principalID, a.businessID, client.ID,
+		[]string{"https://two.example/", "http://localhost:4300"},
+	)
+	if err != nil {
+		t.Fatalf("SetAllowedOrigins: %v", err)
+	}
+	if updated.PublishableKey != client.PublishableKey || len(updated.AllowedOrigins) != 2 ||
+		updated.AllowedOrigins[0] != "https://two.example" ||
+		updated.AllowedOrigins[1] != "http://localhost:4300" {
+		t.Fatalf("updated client = %+v", updated)
+	}
+
+	for name, values := range map[string][]string{
+		"empty":                {},
+		"wildcard":             {"https://*.example"},
+		"public http":          {"http://example.com"},
+		"normalized duplicate": {"https://two.example", "HTTPS://TWO.EXAMPLE:443/"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := svc.SetAllowedOrigins(
+				ctx, a.principalID, a.businessID, client.ID, values,
+			); !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("SetAllowedOrigins(%v) = %v, want validation", values, err)
+			}
+		})
+	}
+
+	// Both a foreign URL business and the real business without permission are no-oracle misses.
+	for _, businessID := range []uuid.UUID{b.businessID, a.businessID} {
+		if _, err := svc.SetAllowedOrigins(
+			ctx, b.principalID, businessID, client.ID, []string{"https://evil.example"},
+		); !errors.Is(err, errs.ErrNotFound) {
+			t.Fatalf("cross-business set under %s = %v, want not found", businessID, err)
+		}
+	}
+
+	// The app role cannot bypass the validating owner function with a direct column update.
+	for name, values := range map[string][]string{
+		"null":           nil,
+		"wildcard":       {"https://*.example"},
+		"noncanonical":   {"HTTPS://ONE.EXAMPLE:443/"},
+		"bad loopback":   {"http://127.999.0.1"},
+		"default port":   {"https://one.example:443"},
+		"oversized port": {"https://one.example:65536"},
+	} {
+		t.Run("direct function "+name, func(t *testing.T) {
+			var outcome string
+			err := e.tdb.App.WithPrincipal(ctx, a.principalID, func(tx pgx.Tx) error {
+				return tx.QueryRow(ctx,
+					`SELECT telemetry_set_analytics_origins($1, $2, $3)`,
+					a.businessID, client.ID, values).Scan(&outcome)
+			})
+			if err != nil {
+				t.Fatalf("direct function call: %v", err)
+			}
+			if outcome != "invalid" {
+				t.Fatalf("direct function outcome = %q, want invalid", outcome)
+			}
+		})
+	}
+
+	err = e.tdb.App.WithPrincipal(ctx, a.principalID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE telemetry_client SET allowed_origins=ARRAY['https://bypass.example'] WHERE id=$1`,
+			client.ID)
+		return err
+	})
+	if err == nil {
+		t.Fatal("direct app-role allowed_origins update unexpectedly succeeded")
+	}
+
+	if _, err := svc.RevokeClient(ctx, a.principalID, a.businessID, client.ID); err != nil {
+		t.Fatalf("RevokeClient: %v", err)
+	}
+	if _, err := svc.SetAllowedOrigins(
+		ctx, a.principalID, a.businessID, client.ID, []string{"https://after.example"},
+	); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("set revoked client = %v, want not found", err)
+	}
+}
+
 func TestClientLifecycle_RevokeIsIdempotentAndNotAnOracle(t *testing.T) {
 	ctx, e := newEnv(t)
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 
-	created, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "web", false)
+	created, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "web", false, testAllowedOrigins)
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
 	}
@@ -552,7 +655,7 @@ func TestClientLifecycle_TenantIsolation(t *testing.T) {
 	b := seedTenant(t, ctx, e.tdb, "BetaCo")
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 
-	aClient, err := svc.CreateClient(ctx, a.principalID, a.businessID, "analytics", "alpha-web", false)
+	aClient, err := svc.CreateClient(ctx, a.principalID, a.businessID, "analytics", "alpha-web", false, testAllowedOrigins)
 	if err != nil {
 		t.Fatalf("CreateClient(alpha): %v", err)
 	}
@@ -593,6 +696,7 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 
 	created, err := svc.CreateClient(
 		ctx, seed.principalID, seed.businessID, "analytics", "move.example", false,
+		testAllowedOrigins,
 	)
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
@@ -657,6 +761,9 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	}
 	if moved.ID != created.ID || moved.PublishableKey != created.PublishableKey {
 		t.Fatalf("site identity changed: before=%#v after=%#v", created, moved)
+	}
+	if len(moved.AllowedOrigins) != 1 || moved.AllowedOrigins[0] != testAllowedOrigins[0] {
+		t.Fatalf("site origins changed across move: %v", moved.AllowedOrigins)
 	}
 	if moved.BusinessID != targetID || moved.TenantRootID != targetID {
 		t.Fatalf("site scope = business %s tenant %s, want %s/%s",
@@ -790,18 +897,20 @@ func TestClientLifecycle_MoveRefusesOraclesAndNoOps(t *testing.T) {
 
 	client, err := svc.CreateClient(
 		ctx, source.principalID, source.businessID, "analytics", "site", false,
+		testAllowedOrigins,
 	)
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
 	}
 	crossRootClient, err := svc.CreateClient(
 		ctx, source.principalID, source.businessID, "analytics", "cross-root-site", false,
+		testAllowedOrigins,
 	)
 	if err != nil {
 		t.Fatalf("CreateClient(cross-root): %v", err)
 	}
 	crashClient, err := svc.CreateClient(
-		ctx, source.principalID, source.businessID, "crash", "app", false,
+		ctx, source.principalID, source.businessID, "crash", "app", false, nil,
 	)
 	if err != nil {
 		t.Fatalf("CreateClient(crash): %v", err)
@@ -873,6 +982,7 @@ func TestClientLifecycle_MoveWaitsForConcurrentIngestAndRewritesIt(t *testing.T)
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 	client, err := svc.CreateClient(
 		ctx, seed.principalID, seed.businessID, "analytics", "race", false,
+		testAllowedOrigins,
 	)
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
@@ -942,11 +1052,21 @@ func TestClientLifecycle_RejectsInvalidKindAndEmptyName(t *testing.T) {
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 
-	if _, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "metrics", "x", false); !errors.Is(err, errs.ErrValidation) {
+	if _, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "metrics", "x", false, nil); !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("unknown kind should be ErrValidation, got %v", err)
 	}
-	if _, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "   ", false); !errors.Is(err, errs.ErrValidation) {
+	if _, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "   ", false, testAllowedOrigins); !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("blank name should be ErrValidation, got %v", err)
+	}
+	if _, err := svc.CreateClient(
+		ctx, seed.principalID, seed.businessID, "analytics", "web", false, nil,
+	); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("analytics client without an origin should be ErrValidation, got %v", err)
+	}
+	if _, err := svc.CreateClient(
+		ctx, seed.principalID, seed.businessID, "crash", "app", false, testAllowedOrigins,
+	); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("crash client with origins should be ErrValidation, got %v", err)
 	}
 }
 
@@ -958,7 +1078,7 @@ func TestIngest_RevocationIsAtomicWithInsert(t *testing.T) {
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 
-	created, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "web", false)
+	created, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "web", false, testAllowedOrigins)
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
 	}
@@ -1023,7 +1143,7 @@ func TestClientLifecycle_SigningClientIsOptIn(t *testing.T) {
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
 	svc := telemetry.NewService(e.tdb.App, e.sealer)
 
-	signed, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "backend", true)
+	signed, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "backend", true, testAllowedOrigins)
 	if err != nil {
 		t.Fatalf("CreateClient(signed): %v", err)
 	}
@@ -1071,7 +1191,7 @@ func TestIngest_EmbeddableClientNeedsNoSignature(t *testing.T) {
 	seed := seedTenant(t, ctx, e.tdb, "TelCo")
 	svc := telemetry.NewService(e.tdb.App, e.sealer) // sealer IS configured
 
-	c, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "mobile-app", false)
+	c, err := svc.CreateClient(ctx, seed.principalID, seed.businessID, "analytics", "mobile-app", false, testAllowedOrigins)
 	if err != nil {
 		t.Fatalf("CreateClient: %v", err)
 	}

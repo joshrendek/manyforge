@@ -50,6 +50,7 @@ const clients = {
       kind: 'analytics',
       name: 'garden.gg',
       publishable_key: KEY,
+      allowed_origins: ['https://garden.gg'],
       status: 'active',
       require_signature: false,
       has_secret: false,
@@ -173,6 +174,30 @@ test('sites screen lists analytics sites and renders a complete embed tag', asyn
   await expect(page.getByTestId('site-install-checklist')).toContainText(
     'Visit or reload the site once',
   );
+  await expect(page.getByTestId('site-allowed-origins')).toContainText('https://garden.gg');
+});
+
+test('replaces a site origin without rotating its embed key', async ({ page }) => {
+  await installStack(page);
+  let updateBody: unknown;
+  await page.route(
+    `**/api/v1/businesses/${BIZ_ID}/telemetry/clients/${SITE_ID}/allowed-origins`,
+    async (route) => {
+      updateBody = route.request().postDataJSON();
+      await route.fulfill({
+        json: { ...clients.clients[0], allowed_origins: ['https://www.garden.gg'] },
+      });
+    },
+  );
+
+  await page.goto('/analytics/sites');
+  await page.getByTestId('site-manage-origins').click();
+  await page.getByTestId('site-origin-input').fill('https://www.garden.gg');
+  await page.getByTestId('site-origin-save').click();
+
+  expect(updateBody).toEqual({ allowed_origins: ['https://www.garden.gg'] });
+  await expect(page.getByTestId('site-allowed-origins')).toContainText('https://www.garden.gg');
+  await expect(page.getByTestId('site-embed')).toContainText(KEY);
 });
 
 test('installation check recovers a never-seen site after data arrives', async ({ page }) => {
