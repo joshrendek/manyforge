@@ -322,7 +322,9 @@ components:
           enum: [checking, never_seen, healthy, stale, revoked]
           description: |
             `checking` means the activity rollup has not completed recently enough to make a
-            per-site claim. `never_seen` means it completed and found no accepted event.
+            per-site claim. `never_seen` means it completed and found no accepted event. `healthy`
+            means an event was accepted within 24 hours; `stale` means earlier activity exists but
+            no exact event was accepted in that window. `revoked` means collection is disabled.
         receiving_data:
           type: boolean
           description: True only when an accepted event arrived within the last 24 hours.

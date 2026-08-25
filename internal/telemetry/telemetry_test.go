@@ -124,6 +124,16 @@ func TestAnalyticsSiteHealthStates(t *testing.T) {
 	}
 }
 
+func TestTimestamptzPtrRejectsInfinity(t *testing.T) {
+	for _, modifier := range []pgtype.InfinityModifier{pgtype.Infinity, pgtype.NegativeInfinity} {
+		if got := timestamptzPtr(pgtype.Timestamptz{
+			Valid: true, InfinityModifier: modifier,
+		}); got != nil {
+			t.Errorf("timestamptzPtr(%s) = %v, want nil", modifier, got)
+		}
+	}
+}
+
 // A single stale or malformed event must not discard the rest of the batch.
 func TestSanitizeAnalytics_DropsBadEventsNotTheBatch(t *testing.T) {
 	now := time.Now().UTC()

@@ -62,8 +62,8 @@ type Client struct {
 	// Secret is the plaintext 'mfs_' signing secret. Populated ONLY by CreateClient, on the
 	// single response that mints it; every other path leaves it empty.
 	Secret string `json:"secret,omitempty"`
-	// AnalyticsHealth is populated by authenticated list reads for analytics clients. Crash
-	// clients and mutation responses omit it because they use a different health model.
+	// AnalyticsHealth is populated by authenticated list responses for analytics clients.
+	// Crash clients and mutation responses omit it because their response models differ.
 	AnalyticsHealth *AnalyticsSiteHealth `json:"analytics_health,omitempty"`
 }
 
