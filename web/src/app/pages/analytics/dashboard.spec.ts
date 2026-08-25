@@ -51,6 +51,25 @@ const summary = {
     country: [],
     event: [{ value: 'grow_start', pageviews: 7, visitors: 5 }],
   },
+  property_breakdowns: [
+    {
+      rule_id: '11111111-2222-3333-4444-555555555555',
+      event_name: 'grow_start',
+      property_key: 'mode',
+      label: 'Game mode',
+      values: [
+        { value: 'classic', events: 5, visitors: 4 },
+        { value: 'timed', events: 2, visitors: 2 },
+      ],
+    },
+    {
+      rule_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      event_name: 'grow_exit',
+      property_key: 'reason',
+      label: 'Exit reason',
+      values: [],
+    },
+  ],
 };
 
 function mount(): {
@@ -270,6 +289,19 @@ describe('AnalyticsDashboardComponent', () => {
     // Other dimensions keep the pageview label.
     const device = el.querySelector('[data-testid="breakdown-device"]');
     expect(device.querySelector('.mf-th').textContent).toContain('Pageviews');
+  });
+
+  it('renders non-empty governed property panels with event counts', () => {
+    const panels = fixture.nativeElement.querySelectorAll('[data-testid="property-breakdown"]');
+    expect(panels.length).toBe(1);
+    expect(panels[0].getAttribute('aria-label')).toContain(
+      'Game mode values for grow_start events',
+    );
+    expect(panels[0].textContent).toContain('Events');
+    expect(panels[0].textContent).not.toContain('Pageviews');
+    expect(panels[0].textContent).toContain('classic');
+    expect(panels[0].textContent).toContain('5');
+    expect(fixture.nativeElement.textContent).not.toContain('Exit reason');
   });
 
   it('surfaces an error without crashing', () => {

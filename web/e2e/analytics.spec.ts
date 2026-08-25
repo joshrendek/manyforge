@@ -117,6 +117,18 @@ const summary = {
     browser: [{ value: 'Chrome', pageviews: 42, visitors: 9 }],
     country: [],
   },
+  property_breakdowns: [
+    {
+      rule_id: '55555555-5555-5555-5555-555555555555',
+      event_name: 'grow_start',
+      property_key: 'mode',
+      label: 'Game mode',
+      values: [
+        { value: 'classic', events: 5, visitors: 4 },
+        { value: 'timed', events: 2, visitors: 2 },
+      ],
+    },
+  ],
 };
 
 async function installStack(page: Page, opts: { summary?: unknown } = {}) {
@@ -401,6 +413,19 @@ test('breakdown panels render only for dimensions that have data', async ({ page
 
   await expect(page.getByTestId('breakdown-device')).toContainText('desktop');
   await expect(page.getByTestId('breakdown-device')).toContainText('mobile');
+});
+
+test('governed property panels use configured labels and event counts', async ({ page }) => {
+  await installStack(page);
+  await page.goto(`/analytics/${BIZ_ID}/${SITE_ID}`);
+
+  const property = page.getByTestId('property-breakdown');
+  await expect(property).toHaveCount(1);
+  await expect(property).toHaveAttribute('aria-label', 'Game mode values for grow_start events');
+  await expect(property).toContainText('classic');
+  await expect(property).toContainText('5');
+  await expect(property).toContainText('Events');
+  await expect(property).not.toContainText('Pageviews');
 });
 
 // With traffic but no country data, report the neutral state without guessing whether the cause

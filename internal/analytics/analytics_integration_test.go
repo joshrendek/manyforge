@@ -381,16 +381,19 @@ func TestSummary_FillsDailyGapsAndComparesEquivalentPriorWindow(t *testing.T) {
 func TestSummaryAndOverview_UseCommonCompletedDashboardWatermark(t *testing.T) {
 	ctx, e := newEnv(t)
 	newer := timeNow().Add(-2 * time.Minute)
-	older := timeNow().Add(-7 * time.Minute)
+	middle := timeNow().Add(-7 * time.Minute)
+	older := timeNow().Add(-11 * time.Minute)
 	if _, err := e.tdb.Super.Exec(ctx,
 		`UPDATE rollup_state
 		    SET watermark_ingested_at = CASE rollup_name
 		          WHEN 'analytics_pageviews' THEN $1::timestamptz
 		          WHEN 'analytics_dimensions' THEN $2::timestamptz
+		          WHEN 'analytics_properties' THEN $3::timestamptz
 		        END,
 		        updated_at = now()
-		  WHERE rollup_name = ANY($3::text[])`,
-		newer, older, []string{"analytics_pageviews", "analytics_dimensions"}); err != nil {
+		  WHERE rollup_name = ANY($4::text[])`,
+		newer, middle, older,
+		[]string{"analytics_pageviews", "analytics_dimensions", "analytics_properties"}); err != nil {
 		t.Fatalf("seed watermarks: %v", err)
 	}
 
@@ -412,8 +415,8 @@ func TestSummaryAndOverview_UseCommonCompletedDashboardWatermark(t *testing.T) {
 	// imply every dashboard panel is current through a point that one pipeline has not reached.
 	if _, err := e.tdb.Super.Exec(ctx,
 		`UPDATE rollup_state SET watermark_ingested_at = '-infinity'
-		  WHERE rollup_name = 'analytics_dimensions'`); err != nil {
-		t.Fatalf("rewind dimension watermark: %v", err)
+		  WHERE rollup_name = 'analytics_properties'`); err != nil {
+		t.Fatalf("rewind property watermark: %v", err)
 	}
 	_, unavailable := e.summary(t, e.site)
 	if unavailable.DataAsOf != nil {
@@ -471,7 +474,7 @@ func TestSiteHealth_NeverSeenStaleRecoveredAndRevoked(t *testing.T) {
 			list[0].AnalyticsHealth, err)
 	}
 
-	// Dashboard freshness is only meaningful when both component rollups exist. A missing state
+	// Dashboard freshness is only meaningful when every component rollup exists. A missing state
 	// row must degrade to an unknown watermark rather than reporting the surviving pipeline as if
 	// every dashboard panel were current.
 	if _, err := e.tdb.Super.Exec(ctx,
@@ -1395,6 +1398,159 @@ func TestCustomEvent_NoConfigurationStoresNoProperties(t *testing.T) {
 	}
 }
 
+func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) {
+	ctx, e := newEnv(t)
+
+	// This raw property predates the rule. Configuring a panel must not make old JSON eligible.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`INSERT INTO analytics_event (
+		    tenant_root_id, business_id, client_id, occurred_at, name, props, path, visitor_hash
+		 ) VALUES ($1,$1,$2,now() - interval '1 hour','grow_start',
+		           '{"mode":"legacy"}','/game',decode('01','hex'))`,
+		e.biz, e.site); err != nil {
+		t.Fatalf("seed pre-activation event: %v", err)
+	}
+
+	svc := analytics.NewService(e.tdb.App)
+	rules, err := svc.ReplacePropertyRules(ctx, e.prin, e.biz, e.site, []analytics.PropertyRuleInput{
+		{EventName: "grow_exit", PropertyKey: "reason", Label: "Exit reason"},
+		{EventName: "grow_start", PropertyKey: "mode", Label: "Game mode"},
+	})
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("configure property rules = %+v, %v", rules, err)
+	}
+	for _, event := range []struct {
+		value string
+		ip    string
+	}{
+		{value: "classic", ip: "203.0.113.1"},
+		{value: "classic", ip: "203.0.113.2"},
+		{value: "timed", ip: "203.0.113.3"},
+	} {
+		if code := e.collectEvent(t, "grow_start", map[string]any{"mode": event.value}, humanUA, event.ip); code != http.StatusNoContent {
+			t.Fatalf("collect %s status = %d", event.value, code)
+		}
+	}
+	e.collectEvent(t, "grow_start", map[string]any{"mode": "bot"}, "Googlebot/2.1", "203.0.113.9")
+	e.rollup(t, ctx)
+
+	_, first := e.summary(t, e.site)
+	if len(first.PropertyBreakdowns) != 2 {
+		t.Fatalf("property panels = %+v, want configured non-empty and empty panels", first.PropertyBreakdowns)
+	}
+	var game, empty *analytics.PropertyBreakdown
+	for i := range first.PropertyBreakdowns {
+		switch first.PropertyBreakdowns[i].Label {
+		case "Game mode":
+			game = &first.PropertyBreakdowns[i]
+		case "Exit reason":
+			empty = &first.PropertyBreakdowns[i]
+		}
+	}
+	if game == nil || empty == nil || len(empty.Values) != 0 {
+		t.Fatalf("structured property panels = %+v", first.PropertyBreakdowns)
+	}
+	if len(game.Values) != 2 || game.Values[0].Value != "classic" ||
+		game.Values[0].Events != 2 || game.Values[0].Visitors != 2 ||
+		game.Values[1].Value != "timed" || game.Values[1].Events != 1 ||
+		game.Values[1].Visitors != 1 {
+		t.Fatalf("game mode values = %+v, want classic 2/2 and timed 1/1", game.Values)
+	}
+	for _, value := range game.Values {
+		if value.Value == "legacy" || value.Value == "bot" {
+			t.Fatalf("ineligible value was aggregated: %+v", game.Values)
+		}
+	}
+	if len(first.Breakdowns["event"]) != 1 || first.Breakdowns["event"][0].Pageviews != 4 {
+		t.Fatalf("standard event breakdown changed by property rollup: %+v", first.Breakdowns["event"])
+	}
+
+	// Rewinding and recomputing the bucket must replace, not increment, the aggregate.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE rollup_state SET watermark_ingested_at='-infinity'
+		  WHERE rollup_name='analytics_properties'`); err != nil {
+		t.Fatalf("rewind property rollup: %v", err)
+	}
+	e.rollup(t, ctx)
+	_, second := e.summary(t, e.site)
+	if fmt.Sprint(second.PropertyBreakdowns) != fmt.Sprint(first.PropertyBreakdowns) {
+		t.Fatalf("property rollup is not idempotent: first=%+v second=%+v",
+			first.PropertyBreakdowns, second.PropertyBreakdowns)
+	}
+
+	// Dashboard reads are independent of raw-event retention after aggregation.
+	if _, err := e.tdb.Super.Exec(ctx, `DELETE FROM analytics_event WHERE client_id=$1`, e.site); err != nil {
+		t.Fatalf("delete raw events: %v", err)
+	}
+	_, afterRetention := e.summary(t, e.site)
+	if fmt.Sprint(afterRetention.PropertyBreakdowns) != fmt.Sprint(first.PropertyBreakdowns) {
+		t.Fatalf("summary changed after raw retention: before=%+v after=%+v",
+			first.PropertyBreakdowns, afterRetention.PropertyBreakdowns)
+	}
+}
+
+func TestPropertyAggregates_CardinalityCapAndReactivation(t *testing.T) {
+	ctx, e := newEnv(t)
+	svc := analytics.NewService(e.tdb.App)
+	configured, err := svc.ReplacePropertyRules(ctx, e.prin, e.biz, e.site,
+		[]analytics.PropertyRuleInput{{EventName: "grow_start", PropertyKey: "mode", Label: "Mode"}})
+	if err != nil || len(configured) != 1 {
+		t.Fatalf("configure = %+v, %v", configured, err)
+	}
+	for value, count := range map[string]int{"alpha": 3, "beta": 2, "gamma": 1} {
+		for i := 0; i < count; i++ {
+			e.collectEvent(t, "grow_start", map[string]any{"mode": value}, humanUA,
+				fmt.Sprintf("203.0.113.%d", 20+i))
+		}
+	}
+	if _, err := e.tdb.Super.Exec(ctx,
+		"SELECT rollup_analytics_properties(interval '0', interval '5 minutes', 2)"); err != nil {
+		t.Fatalf("bounded property rollup: %v", err)
+	}
+	dimension := "property:" + configured[0].ID.String()
+	var rows int
+	var total, other int64
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*), coalesce(sum(pageviews),0),
+		        coalesce(sum(pageviews) FILTER (WHERE value='(other)'),0)
+		   FROM analytics_dimension_daily WHERE client_id=$1 AND dimension=$2`,
+		e.site, dimension).Scan(&rows, &total, &other); err != nil {
+		t.Fatalf("read bounded property rows: %v", err)
+	}
+	if rows != 3 || total != 6 || other != 1 {
+		t.Fatalf("bounded rows/counts = %d/%d/%d, want 3/6/1", rows, total, other)
+	}
+
+	if _, err := svc.ReplacePropertyRules(ctx, e.prin, e.biz, e.site, nil); err != nil {
+		t.Fatalf("remove rule: %v", err)
+	}
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM analytics_dimension_daily WHERE client_id=$1 AND dimension=$2`,
+		e.site, dimension).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("removed rule rows = %d, err %v", rows, err)
+	}
+	reactivated, err := svc.ReplacePropertyRules(ctx, e.prin, e.biz, e.site,
+		[]analytics.PropertyRuleInput{{EventName: "grow_start", PropertyKey: "mode", Label: "Mode"}})
+	if err != nil || len(reactivated) != 1 {
+		t.Fatalf("reactivate = %+v, %v", reactivated, err)
+	}
+	if reactivated[0].ID == configured[0].ID || !reactivated[0].EnabledAt.After(configured[0].EnabledAt) {
+		t.Fatalf("reactivation did not establish a new boundary: before=%+v after=%+v",
+			configured[0], reactivated[0])
+	}
+	e.collectEvent(t, "grow_start", map[string]any{"mode": "delta"}, humanUA, "203.0.113.40")
+	if _, err := e.tdb.Super.Exec(ctx,
+		"SELECT rollup_analytics_properties(interval '0', interval '5 minutes', 2)"); err != nil {
+		t.Fatalf("reactivated property rollup: %v", err)
+	}
+	_, summary := e.summary(t, e.site)
+	if len(summary.PropertyBreakdowns) != 1 || len(summary.PropertyBreakdowns[0].Values) != 1 ||
+		summary.PropertyBreakdowns[0].Values[0].Value != "delta" ||
+		summary.PropertyBreakdowns[0].Values[0].Events != 1 {
+		t.Fatalf("reactivated panel included pre-boundary values: %+v", summary.PropertyBreakdowns)
+	}
+}
+
 func TestPropertyRules_APIStableIdentityValidationAndClear(t *testing.T) {
 	ctx, e := newEnv(t)
 	path := "/businesses/" + e.biz.String() + "/analytics/sites/" + e.site.String() + "/property-rules"
@@ -1574,6 +1730,8 @@ func TestPropertyRules_FollowSiteAcrossTenantRootMove(t *testing.T) {
 	if err != nil || len(configured) != 1 {
 		t.Fatalf("configure = %+v, %v", configured, err)
 	}
+	e.collectEvent(t, "grow_start", map[string]any{"mode": "classic"}, humanUA, "203.0.113.1")
+	e.rollup(t, ctx)
 
 	target := uuid.New()
 	var ownerRole uuid.UUID
@@ -1617,6 +1775,26 @@ func TestPropertyRules_FollowSiteAcrossTenantRootMove(t *testing.T) {
 	}
 	if businessID != target || tenantRootID != target {
 		t.Fatalf("moved rule scope = %s/%s, want %s/%s", businessID, tenantRootID, target, target)
+	}
+	var dimensionBusinessID, dimensionTenantRootID uuid.UUID
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT business_id, tenant_root_id FROM analytics_dimension_daily
+		  WHERE client_id=$1 AND dimension=$2`,
+		e.site, "property:"+moved[0].ID.String(),
+	).Scan(&dimensionBusinessID, &dimensionTenantRootID); err != nil {
+		t.Fatalf("read moved property aggregate: %v", err)
+	}
+	if dimensionBusinessID != target || dimensionTenantRootID != target {
+		t.Fatalf("moved aggregate scope = %s/%s, want %s/%s",
+			dimensionBusinessID, dimensionTenantRootID, target, target)
+	}
+	movedSummary, err := analyticsSvc.Summary(
+		ctx, e.prin, target, e.site, timeNow().AddDate(0, 0, -6), timeNow(),
+	)
+	if err != nil || len(movedSummary.PropertyBreakdowns) != 1 ||
+		len(movedSummary.PropertyBreakdowns[0].Values) != 1 ||
+		movedSummary.PropertyBreakdowns[0].Values[0].Value != "classic" {
+		t.Fatalf("moved property summary = %+v, %v", movedSummary.PropertyBreakdowns, err)
 	}
 }
 

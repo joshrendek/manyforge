@@ -80,6 +80,7 @@ var rollupSpecs = []rollupSpec{
 	{function: "rollup_analytics_daily", state: "analytics_daily"},
 	{function: "rollup_analytics_pageviews", state: "analytics_pageviews"},
 	{function: "rollup_analytics_dimensions", state: "analytics_dimensions"},
+	{function: "rollup_analytics_properties", state: "analytics_properties"},
 	{function: "rollup_analytics_site_health", state: "analytics_site_health"},
 }
 

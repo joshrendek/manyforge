@@ -790,7 +790,7 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 		!movedHealth.LastAcceptedAt.Equal(seededLastAccepted.UTC()) ||
 		movedHealth.ActivityDataAsOf == nil || movedHealth.DataAsOf != nil {
 		t.Fatalf("site health values changed across move: got %+v, last accepted want %s, "+
-			"dashboard watermark want unavailable until both rollups complete",
+			"dashboard watermark want unavailable until all dashboard rollups complete",
 			movedHealth, seededLastAccepted.UTC())
 	}
 

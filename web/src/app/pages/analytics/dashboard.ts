@@ -213,6 +213,47 @@ import { Spinner } from '../../ui/spinner/spinner';
           </div>
         </div>
 
+        @if (propertyPanels().length) {
+          <div class="mf-property-section" data-testid="property-breakdowns">
+            <h2 class="mf-chart-title">Event properties</h2>
+            <div class="mf-two-col">
+              @for (property of propertyPanels(); track property.rule_id) {
+                <div>
+                  <h3 class="mf-subhead">{{ property.label }}</h3>
+                  <p class="mf-property-context">
+                    {{ property.event_name }} · {{ property.property_key }}
+                  </p>
+                  <div
+                    class="mf-table"
+                    data-testid="property-breakdown"
+                    role="table"
+                    [attr.aria-label]="
+                      property.label + ' values for ' + property.event_name + ' events'
+                    "
+                  >
+                    <div class="mf-tr mf-th" role="row">
+                      <span style="flex:3" role="columnheader">{{ property.label }}</span>
+                      <span style="flex:1" role="columnheader">Events</span>
+                    </div>
+                    @for (value of property.values; track value.value) {
+                      <div class="mf-tr" role="row" data-testid="property-breakdown-row">
+                        <span
+                          style="flex:3"
+                          class="mf-ellipsis"
+                          role="cell"
+                          [title]="value.value"
+                          >{{ value.value }}</span
+                        >
+                        <span style="flex:1" role="cell">{{ value.events }}</span>
+                      </div>
+                    }
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
         <div class="mf-two-col">
           @for (b of breakdownPanels(); track b.key) {
             <div>
@@ -361,6 +402,16 @@ import { Spinner } from '../../ui/spinner/spinner';
         color: var(--mf-text);
         margin-top: 16px;
       }
+      .mf-property-section {
+        margin-top: 24px;
+      }
+      .mf-property-context {
+        margin: -4px 0 8px;
+        color: var(--mf-text-muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: var(--mf-fs-xs);
+        overflow-wrap: anywhere;
+      }
     `,
   ],
 })
@@ -415,6 +466,12 @@ export class AnalyticsDashboardComponent implements OnInit {
         rows: b[k],
       }));
   });
+
+  // Active rules with no values remain useful in the management surface, but an empty dashboard
+  // table is noise. Render only properties with aggregate data in the selected window.
+  propertyPanels = computed(() =>
+    (this.summary()?.property_breakdowns ?? []).filter((property) => property.values.length > 0),
+  );
 
   // Traffic with no resolved countries can mean a historical range, absent/unsupported edge
   // values, or no trusted edge signal. Surface that neutral state rather than inferring which
