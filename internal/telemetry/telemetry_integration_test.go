@@ -634,6 +634,12 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 			t.Fatalf("seed analytics history: %v\nSQL: %s", err, statement.sql)
 		}
 	}
+	var seededLastAccepted time.Time
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT last_accepted_at FROM analytics_site_activity WHERE client_id=$1`,
+		created.ID).Scan(&seededLastAccepted); err != nil {
+		t.Fatalf("read seeded site health: %v", err)
+	}
 
 	targets, err := svc.MoveTargets(ctx, seed.principalID, seed.businessID, created.ID)
 	if err != nil {
@@ -671,6 +677,14 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 		targetList[0].AnalyticsHealth.Status != telemetry.SiteHealthHealthy {
 		t.Fatalf("site health did not follow authoritative client ownership: %+v",
 			targetList[0].AnalyticsHealth)
+	}
+	movedHealth := targetList[0].AnalyticsHealth
+	if movedHealth.LastAcceptedAt == nil ||
+		!movedHealth.LastAcceptedAt.Equal(seededLastAccepted.UTC()) ||
+		movedHealth.ActivityDataAsOf == nil || movedHealth.DataAsOf != nil {
+		t.Fatalf("site health values changed across move: got %+v, last accepted want %s, "+
+			"dashboard watermark want unavailable until both rollups complete",
+			movedHealth, seededLastAccepted.UTC())
 	}
 
 	for _, table := range []string{
