@@ -183,6 +183,9 @@ test('empty state when the account has no sites', async ({ page }) => {
   await installStack(page, { sites: [], data_as_of: null });
   await page.goto('/analytics');
   await expect(page.getByTestId('overview-empty')).toBeVisible();
+  await expect(page.getByTestId('overview-freshness')).toContainText(
+    'Data freshness is not available yet',
+  );
 });
 
 test('site management is still reachable from the grid', async ({ page }) => {

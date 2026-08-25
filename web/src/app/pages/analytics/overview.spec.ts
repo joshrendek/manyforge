@@ -59,6 +59,19 @@ describe('AnalyticsOverviewComponent', () => {
     req.flush({ sites: [], data_as_of: null });
   });
 
+  it('shows that data freshness is updating while the overview request is in flight', () => {
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="overview-freshness"]').textContent,
+    ).toContain('Updating data freshness');
+
+    http.expectOne('/api/v1/analytics/overview?days=30').flush({
+      sites: [],
+      data_as_of: null,
+    });
+  });
+
   it('shows the common dashboard freshness watermark', () => {
     flush([site()]);
     const freshness = fixture.nativeElement.querySelector('[data-testid="overview-freshness"]');
