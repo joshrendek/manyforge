@@ -24,7 +24,24 @@ import (
 const (
 	KindAnalytics = "analytics"
 	KindCrash     = "crash"
+
+	SiteHealthChecking  = "checking"
+	SiteHealthNeverSeen = "never_seen"
+	SiteHealthHealthy   = "healthy"
+	SiteHealthStale     = "stale"
+	SiteHealthRevoked   = "revoked"
 )
+
+// AnalyticsSiteHealth separates collector activity from dashboard processing freshness. A site
+// can be receiving events while its reporting rollups are delayed, or have fresh rollups but no
+// accepted events of its own.
+type AnalyticsSiteHealth struct {
+	Status           string     `json:"status"`
+	ReceivingData    bool       `json:"receiving_data"`
+	LastAcceptedAt   *time.Time `json:"last_accepted_at"`
+	ActivityDataAsOf *time.Time `json:"activity_data_as_of"`
+	DataAsOf         *time.Time `json:"data_as_of"`
+}
 
 // Client is a registered telemetry source (an app for crash, a site for analytics).
 type Client struct {
@@ -45,6 +62,9 @@ type Client struct {
 	// Secret is the plaintext 'mfs_' signing secret. Populated ONLY by CreateClient, on the
 	// single response that mints it; every other path leaves it empty.
 	Secret string `json:"secret,omitempty"`
+	// AnalyticsHealth is populated by authenticated list responses for analytics clients.
+	// Crash clients and mutation responses omit it because their response models differ.
+	AnalyticsHealth *AnalyticsSiteHealth `json:"analytics_health,omitempty"`
 }
 
 // MoveTarget is a business an operator may move an analytics client into. The service only

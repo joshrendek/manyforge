@@ -25,6 +25,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/timeseries"
+	"github.com/manyforge/manyforge/internal/telemetry"
 )
 
 const humanUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
@@ -407,6 +408,142 @@ func TestSummaryAndOverview_UseCommonCompletedDashboardWatermark(t *testing.T) {
 	if unavailableOverview.DataAsOf != nil {
 		t.Errorf("overview data_as_of = %q with an incomplete rollup, want null",
 			*unavailableOverview.DataAsOf)
+	}
+}
+
+func TestSiteHealth_NeverSeenStaleRecoveredAndRevoked(t *testing.T) {
+	ctx, e := newEnv(t)
+	svc := telemetry.NewService(e.tdb.App, nil)
+	var appCanReadActivity bool
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT has_table_privilege('manyforge_app', 'analytics_site_activity', 'SELECT')`,
+	).Scan(&appCanReadActivity); err != nil {
+		t.Fatalf("inspect activity-table grant: %v", err)
+	}
+	if appCanReadActivity {
+		t.Fatal("analytics_site_activity is directly readable; tenant-safe function must be the only read path")
+	}
+
+	// A completed health sweep with no activity distinguishes "never seen" from a health pipeline
+	// that has not checked yet. The dashboard rollups advance in the same worker sweep.
+	e.rollup(t, ctx)
+	list, err := svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || len(list) != 1 || list[0].AnalyticsHealth == nil {
+		t.Fatalf("initial site health = list %d, err %v, value %+v", len(list), err, list)
+	}
+	if got := list[0].AnalyticsHealth; got.Status != telemetry.SiteHealthNeverSeen ||
+		got.ReceivingData || got.ActivityDataAsOf == nil || got.DataAsOf == nil {
+		t.Fatalf("never-seen health = %+v", got)
+	}
+
+	// A stale activity watermark means the health pipeline itself is delayed, so ListClients must
+	// not turn the absence of recent activity into an installation warning. This exercises the
+	// full SECURITY DEFINER read and service orchestration rather than only the state helper.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE rollup_state SET watermark_ingested_at = now() - interval '16 minutes'
+		  WHERE rollup_name = 'analytics_site_health'`); err != nil {
+		t.Fatalf("delay health watermark: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthChecking {
+		t.Fatalf("delayed-rollup health = %+v, err %v", list[0].AnalyticsHealth, err)
+	}
+	// Let the worker catch the health watermark back up before testing per-site states.
+	e.rollup(t, ctx)
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthNeverSeen {
+		t.Fatalf("health after delayed rollup recovered = %+v, err %v",
+			list[0].AnalyticsHealth, err)
+	}
+
+	// Dashboard freshness is only meaningful when both component rollups exist. A missing state
+	// row must degrade to an unknown watermark rather than reporting the surviving pipeline as if
+	// every dashboard panel were current.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`DELETE FROM rollup_state WHERE rollup_name = 'analytics_dimensions'`); err != nil {
+		t.Fatalf("remove dimension watermark: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.DataAsOf != nil {
+		t.Fatalf("health with missing dashboard watermark = %+v, err %v",
+			list[0].AnalyticsHealth, err)
+	}
+	if _, err := e.tdb.Super.Exec(ctx,
+		`INSERT INTO rollup_state (rollup_name, watermark_ingested_at)
+		 VALUES ('analytics_dimensions', '-infinity')`); err != nil {
+		t.Fatalf("restore dimension watermark state: %v", err)
+	}
+	e.rollup(t, ctx)
+
+	// Simulate a migration-backfilled row recording that historical activity existed without
+	// inventing an exact ingest time. It is stale, not never installed, and the next accepted event
+	// must replace that NULL with an exact timestamp rather than leaving the site permanently stale.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`INSERT INTO analytics_site_activity (client_id, last_accepted_at)
+		 VALUES ($1, NULL)`, e.site); err != nil {
+		t.Fatalf("seed stale activity: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthStale {
+		t.Fatalf("stale health = %+v, err %v", list[0].AnalyticsHealth, err)
+	}
+
+	// Exercise the actual public browser collector. It remains a uniform 204, then the async
+	// health rollup observes the accepted row and the authenticated site state recovers.
+	if code := e.collect(t, e.key, "/verify-installation", "", humanUA, "203.0.113.9"); code != http.StatusNoContent {
+		t.Fatalf("public collector status = %d, want 204", code)
+	}
+	e.rollup(t, ctx)
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil {
+		t.Fatalf("list recovered health: %v", err)
+	}
+	recovered := list[0].AnalyticsHealth
+	if recovered.Status != telemetry.SiteHealthHealthy || !recovered.ReceivingData ||
+		recovered.LastAcceptedAt == nil {
+		t.Fatalf("recovered health = %+v", recovered)
+	}
+
+	// Pin the time-based healthy-to-stale transition separately from the NULL historical-backfill
+	// state above, then revoke while stale to prove the client status always wins.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE analytics_site_activity
+		    SET last_accepted_at = now() - interval '25 hours'
+		  WHERE client_id = $1`, e.site); err != nil {
+		t.Fatalf("age accepted activity: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthStale {
+		t.Fatalf("healthy-to-stale health = %+v, err %v", list[0].AnalyticsHealth, err)
+	}
+
+	if _, err := svc.RevokeClient(ctx, e.prin, e.biz, e.site); err != nil {
+		t.Fatalf("revoke site: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthRevoked ||
+		list[0].AnalyticsHealth.ReceivingData {
+		t.Fatalf("revoked health = %+v, err %v", list[0].AnalyticsHealth, err)
+	}
+}
+
+func TestSiteHealth_RevokedBeforeFirstEvent(t *testing.T) {
+	ctx, e := newEnv(t)
+	svc := telemetry.NewService(e.tdb.App, nil)
+
+	// Complete one sweep so this would otherwise be a genuine never-seen site, then revoke it
+	// before any collector request. Revocation must win even without an activity row.
+	e.rollup(t, ctx)
+	if _, err := svc.RevokeClient(ctx, e.prin, e.biz, e.site); err != nil {
+		t.Fatalf("revoke never-seen site: %v", err)
+	}
+	list, err := svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || len(list) != 1 || list[0].AnalyticsHealth == nil {
+		t.Fatalf("list revoked never-seen site = %+v, err %v", list, err)
+	}
+	if got := list[0].AnalyticsHealth; got.Status != telemetry.SiteHealthRevoked ||
+		got.ReceivingData || got.LastAcceptedAt != nil {
+		t.Fatalf("revoked never-seen health = %+v", got)
 	}
 }
 

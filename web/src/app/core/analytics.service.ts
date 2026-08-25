@@ -26,6 +26,17 @@ export interface TelemetryClient {
   secret?: string;
   created_at: string;
   revoked_at?: string | null;
+  // Authenticated list responses include this for analytics clients. Mutation responses and
+  // crash clients omit it because their health models differ.
+  analytics_health?: AnalyticsSiteHealth;
+}
+
+export interface AnalyticsSiteHealth {
+  status: 'checking' | 'never_seen' | 'healthy' | 'stale' | 'revoked';
+  receiving_data: boolean;
+  last_accepted_at: string | null;
+  activity_data_as_of: string | null;
+  data_as_of: string | null;
 }
 
 export interface TelemetryMoveTarget {
