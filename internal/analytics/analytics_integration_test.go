@@ -403,6 +403,11 @@ func TestSummaryAndOverview_UseCommonCompletedDashboardWatermark(t *testing.T) {
 	if unavailable.DataAsOf != nil {
 		t.Errorf("data_as_of = %q with an incomplete rollup, want null", *unavailable.DataAsOf)
 	}
+	unavailableOverview := e.getOverview(t, e.prin)
+	if unavailableOverview.DataAsOf != nil {
+		t.Errorf("overview data_as_of = %q with an incomplete rollup, want null",
+			*unavailableOverview.DataAsOf)
+	}
 }
 
 func TestRollup_ExcludesBots(t *testing.T) {

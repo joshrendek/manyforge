@@ -88,8 +88,12 @@ func (m *Metrics) Set(key string, n int64) {
 	if m == nil || m.m == nil {
 		return
 	}
-	if v, ok := m.m.Get(key).(*expvar.Int); ok && v != nil {
-		v.Set(n)
+	if existing := m.m.Get(key); existing != nil {
+		// Match expvar.Map.Add: a key already owned by a different metric type is left intact.
+		// Metric-name collisions must not silently replace a published map, string, or float.
+		if v, ok := existing.(*expvar.Int); ok {
+			v.Set(n)
+		}
 		return
 	}
 	v := new(expvar.Int)
