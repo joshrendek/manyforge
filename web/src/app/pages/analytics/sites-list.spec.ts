@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ToastService } from '../../ui/toast/toast.service';
 import { AnalyticsSitesListComponent } from './sites-list';
 
 const biz = {
@@ -41,6 +42,13 @@ const clients = {
       has_secret: false,
       created_at: '',
       revoked_at: null,
+      analytics_health: {
+        status: 'never_seen',
+        receiving_data: false,
+        last_accepted_at: null,
+        activity_data_as_of: '2026-07-25T00:00:00Z',
+        data_as_of: '2026-07-25T00:00:00Z',
+      },
     },
     {
       id: 'c1',
@@ -95,6 +103,152 @@ describe('AnalyticsSitesListComponent', () => {
     expect(tag).toContain('/a.js');
     expect(tag).toContain('data-key="mfk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"');
     expect(tag).toContain('defer');
+  });
+
+  it('shows a setup checklist when the collector has never accepted an event', () => {
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-status-cell"]').textContent,
+    ).toContain('Never seen');
+    const checklist = fixture.nativeElement.querySelector('[data-testid="site-install-checklist"]');
+    expect(checklist.textContent).toContain('Paste it into the site');
+    expect(checklist.textContent).toContain('Visit or reload the site');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health-message"]').textContent,
+    ).toContain('No accepted event yet');
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="site-check-installation"]')
+        .getAttribute('aria-label'),
+    ).toContain('garden.gg');
+    expect(checklist.closest('[data-testid="site-health"]').textContent).toContain(
+      'Installation health for garden.gg',
+    );
+  });
+
+  it('checks installation, reflects recovery, and preserves keyboard focus', async () => {
+    const checkButton = fixture.nativeElement.querySelector(
+      '[data-testid="site-check-installation"]',
+    ) as HTMLButtonElement;
+    checkButton.focus();
+    checkButton.dispatchEvent(new MouseEvent('click'));
+
+    mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
+      clients: [
+        {
+          ...clients.clients[0],
+          analytics_health: {
+            status: 'healthy',
+            receiving_data: true,
+            last_accepted_at: '2026-07-25T00:01:00Z',
+            activity_data_as_of: '2026-07-25T00:01:30Z',
+            data_as_of: '2026-07-25T00:01:30Z',
+          },
+        },
+      ],
+    });
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve));
+    fixture.detectChanges();
+
+    const statusCell = fixture.nativeElement.querySelector(
+      '[data-testid="site-status-cell"]',
+    ) as HTMLElement;
+    expect(statusCell.textContent).toContain('Healthy');
+    expect(document.activeElement).toBe(statusCell);
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health-message"]').textContent,
+    ).toContain('Data is arriving');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-install-checklist"]'),
+    ).toBeNull();
+    expect(TestBed.inject(ToastService).toasts().at(-1)?.message).toContain(
+      'Installation verified',
+    );
+  });
+
+  it('keeps the health action available while processing catches up', () => {
+    fixture.nativeElement
+      .querySelector('[data-testid="site-check-installation"]')
+      .dispatchEvent(new MouseEvent('click'));
+    mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
+      clients: [
+        {
+          ...clients.clients[0],
+          analytics_health: {
+            ...clients.clients[0].analytics_health,
+            status: 'checking',
+            activity_data_as_of: null,
+          },
+        },
+      ],
+    });
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health-message"]').textContent,
+    ).toContain('still processing');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-check-installation"]'),
+    ).toBeTruthy();
+    expect(TestBed.inject(ToastService).toasts().at(-1)?.message).toContain(
+      'processing is catching up',
+    );
+  });
+
+  it('recovers from an installation-check request failure', () => {
+    fixture.nativeElement
+      .querySelector('[data-testid="site-check-installation"]')
+      .dispatchEvent(new MouseEvent('click'));
+    mock
+      .expectOne('/api/v1/businesses/b1/telemetry/clients')
+      .flush({ error: 'unavailable' }, { status: 503, statusText: 'Unavailable' });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.verifyingSiteId()).toBe('');
+    expect(TestBed.inject(ToastService).toasts().at(-1)?.message).toContain(
+      'Could not check installation',
+    );
+  });
+
+  it('shows a stale site with the exact last accepted event', () => {
+    fixture.componentInstance.selectBusiness('b1');
+    mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
+      clients: [
+        {
+          ...clients.clients[0],
+          analytics_health: {
+            ...clients.clients[0].analytics_health,
+            status: 'stale',
+            last_accepted_at: '2026-07-20T12:00:00Z',
+          },
+        },
+      ],
+    });
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-status-cell"]').textContent,
+    ).toContain('Stale');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health"]').textContent,
+    ).toContain('2026-07-20T12:00:00Z');
+
+    fixture.nativeElement
+      .querySelector('[data-testid="site-check-installation"]')
+      .dispatchEvent(new MouseEvent('click'));
+    mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
+      clients: [
+        {
+          ...clients.clients[0],
+          analytics_health: {
+            ...clients.clients[0].analytics_health,
+            status: 'stale',
+            last_accepted_at: '2026-07-20T12:00:00Z',
+          },
+        },
+      ],
+    });
+    expect(TestBed.inject(ToastService).toasts().at(-1)?.message).toContain('No recent event yet');
   });
 
   // A site created from this screen must never request a signing secret: the mfs_ secret is

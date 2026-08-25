@@ -1,5 +1,13 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, ElementRef, OnInit, inject, signal, viewChild } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  OnInit,
+  inject,
+  signal,
+  viewChild,
+  viewChildren,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import {
@@ -15,6 +23,7 @@ import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
 import { StatusPill } from '../../ui/status-pill/status-pill';
 import { ToastService } from '../../ui/toast/toast.service';
+import { Tone } from '../../ui/status';
 
 // Analytics sites: register a site, get an embed snippet, revoke when done.
 //
@@ -83,7 +92,7 @@ import { ToastService } from '../../ui/toast/toast.service';
         <div class="mf-tr mf-th" role="row">
           <span style="flex:2" role="columnheader">Site</span>
           <span style="flex:3" role="columnheader">Embed tag</span>
-          <span style="flex:1" role="columnheader">Status</span>
+          <span style="flex:2" role="columnheader">Status</span>
           <span style="flex:2" role="columnheader">Actions</span>
         </div>
         @for (c of sites(); track c.id) {
@@ -111,11 +120,22 @@ import { ToastService } from '../../ui/toast/toast.service';
                 <span class="mf-muted">—</span>
               }
             </span>
-            <span style="flex:1" role="cell" data-testid="site-status-cell">
-              @if (c.status === 'active') {
-                <mf-status-pill tone="success" label="Active" />
-              } @else {
+            <span
+              #statusCell
+              style="flex:2"
+              role="cell"
+              tabindex="-1"
+              data-testid="site-status-cell"
+              [attr.data-site-id]="c.id"
+            >
+              @if (c.status === 'revoked') {
                 <mf-status-pill tone="neutral" label="Revoked" />
+              } @else {
+                <mf-status-pill
+                  [tone]="healthTone(c)"
+                  [label]="healthLabel(c)"
+                  [ariaLabel]="c.name + ' installation health: ' + healthLabel(c)"
+                />
               }
             </span>
             <span style="flex:2" role="cell">
@@ -141,6 +161,58 @@ import { ToastService } from '../../ui/toast/toast.service';
               }
             </span>
           </div>
+          @if (c.status === 'active') {
+            <section
+              class="mf-health-panel"
+              data-testid="site-health"
+              [attr.aria-labelledby]="'site-health-title-' + c.id"
+            >
+              <h2 class="mf-sr-only" [id]="'site-health-title-' + c.id">
+                Installation health for {{ c.name }}
+              </h2>
+              <div class="mf-health-summary" role="status" aria-live="polite" aria-atomic="true">
+                <strong data-testid="site-health-message">{{ healthMessage(c) }}</strong>
+                @if (c.analytics_health?.last_accepted_at; as lastAcceptedAt) {
+                  <span>
+                    Last accepted event
+                    <time [attr.datetime]="lastAcceptedAt">{{ lastAcceptedAt }}</time
+                    >.
+                  </span>
+                } @else if (c.analytics_health?.status === 'stale') {
+                  <span>Earlier activity predates exact health tracking.</span>
+                }
+                @if (c.analytics_health?.data_as_of; as dataAsOf) {
+                  <span>
+                    Analytics current through <time [attr.datetime]="dataAsOf">{{ dataAsOf }}</time
+                    >.
+                  </span>
+                } @else {
+                  <span>Analytics freshness is not available yet.</span>
+                }
+              </div>
+              @if (needsHealthAction(c)) {
+                <div class="mf-install-check" data-testid="site-install-checklist">
+                  <ol>
+                    <li>Copy the embed tag above.</li>
+                    <li>Paste it into the site's HTML and publish the change.</li>
+                    <li>Visit or reload the site once.</li>
+                  </ol>
+                  <button
+                    type="button"
+                    class="mf-btn mf-btn-sm mf-btn-primary"
+                    data-testid="site-check-installation"
+                    [attr.aria-label]="
+                      'Check installation status for ' + c.name + ', currently ' + healthLabel(c)
+                    "
+                    [disabled]="verifyingSiteId() === c.id"
+                    (click)="checkInstallation(c)"
+                  >
+                    {{ verifyingSiteId() === c.id ? 'Checking…' : 'Check installation' }}
+                  </button>
+                </div>
+              }
+            </section>
+          }
           @if (movingSiteId() === c.id) {
             <div class="mf-move-panel" data-testid="site-move-panel">
               @if (loadingTargets()) {
@@ -231,6 +303,38 @@ import { ToastService } from '../../ui/toast/toast.service';
       .mf-muted {
         color: var(--mf-text-muted);
       }
+      .mf-health-panel {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--mf-border);
+        background: var(--mf-surface-2);
+      }
+      .mf-health-summary {
+        display: grid;
+        gap: 4px;
+        flex: 1 1 320px;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
+      }
+      .mf-health-summary strong {
+        color: var(--mf-text);
+      }
+      .mf-install-check {
+        display: flex;
+        flex: 1 1 420px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .mf-install-check ol {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
+      }
       .mf-move-panel {
         display: flex;
         flex-wrap: wrap;
@@ -262,6 +366,7 @@ export class AnalyticsSitesListComponent implements OnInit {
   private toast = inject(ToastService);
 
   private createBtn = viewChild<ElementRef<HTMLButtonElement>>('createBtn');
+  private statusCells = viewChildren<ElementRef<HTMLElement>>('statusCell');
 
   businesses = signal<Business[]>([]);
   businessId = signal<string>('');
@@ -275,6 +380,7 @@ export class AnalyticsSitesListComponent implements OnInit {
   loadingTargets = signal(false);
   moving = signal(false);
   moveTargetId = '';
+  verifyingSiteId = signal('');
 
   ngOnInit(): void {
     this.bizApi.list().subscribe({
@@ -294,6 +400,7 @@ export class AnalyticsSitesListComponent implements OnInit {
 
   selectBusiness(id: string): void {
     this.cancelMove();
+    this.verifyingSiteId.set('');
     this.businessId.set(id);
     this.current.set(id);
     this.reload();
@@ -330,6 +437,86 @@ export class AnalyticsSitesListComponent implements OnInit {
       () => this.toast.success('Embed tag copied'),
       () => this.toast.error('Could not copy — select the tag and copy manually'),
     );
+  }
+
+  healthLabel(c: TelemetryClient): string {
+    switch (c.status === 'revoked' ? 'revoked' : c.analytics_health?.status) {
+      case 'healthy':
+        return 'Healthy';
+      case 'never_seen':
+        return 'Never seen';
+      case 'stale':
+        return 'Stale';
+      case 'revoked':
+        return 'Revoked';
+      default:
+        return 'Checking';
+    }
+  }
+
+  healthTone(c: TelemetryClient): Tone {
+    switch (c.analytics_health?.status) {
+      case 'healthy':
+        return 'success';
+      case 'never_seen':
+      case 'stale':
+        return 'warn';
+      default:
+        return 'neutral';
+    }
+  }
+
+  healthMessage(c: TelemetryClient): string {
+    switch (c.analytics_health?.status) {
+      case 'healthy':
+        return 'Data is arriving from this site.';
+      case 'never_seen':
+        return 'No accepted event yet. Complete the setup check.';
+      case 'stale':
+        return 'No event arrived in the last 24 hours. Verify the tag if the site has traffic.';
+      case 'revoked':
+        return 'This embed tag no longer collects data.';
+      default:
+        return 'Installation health is still processing. Try again shortly.';
+    }
+  }
+
+  needsHealthAction(c: TelemetryClient): boolean {
+    return c.analytics_health?.status !== 'healthy';
+  }
+
+  checkInstallation(c: TelemetryClient): void {
+    if (this.verifyingSiteId()) return;
+    const businessId = this.businessId();
+    this.verifyingSiteId.set(c.id);
+    this.api.listClients(businessId).subscribe({
+      next: (r) => {
+        if (this.businessId() !== businessId) return;
+        const sites = (r.clients ?? []).filter((client) => client.kind === 'analytics');
+        this.sites.set(sites);
+        this.verifyingSiteId.set('');
+        const status = sites.find((site) => site.id === c.id)?.analytics_health?.status;
+        if (status === 'healthy') {
+          this.toast.success('Installation verified — data is arriving');
+          // The successful state removes the button that initiated the check. Move focus to the
+          // persistent status cell after Angular renders the replacement so keyboard users do not
+          // lose their place; the adjacent polite live region announces the updated health copy.
+          setTimeout(() => {
+            this.statusCells()
+              .find((cell) => cell.nativeElement.dataset['siteId'] === c.id)
+              ?.nativeElement.focus();
+          });
+        } else if (status === 'checking') {
+          this.toast.error('Health processing is catching up — try again shortly');
+        } else {
+          this.toast.error('No recent event yet — visit the site, then check again');
+        }
+      },
+      error: () => {
+        this.verifyingSiteId.set('');
+        this.toast.error('Could not check installation');
+      },
+    });
   }
 
   // A site is always created WITHOUT a signing secret. The mfs_ secret is server-to-server only

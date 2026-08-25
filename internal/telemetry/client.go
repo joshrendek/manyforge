@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
@@ -59,6 +61,16 @@ func NewService(database *appdb.DB, sealer *crypto.Sealer) *Service {
 }
 
 const maxClientsPerPage = 200
+
+const (
+	// The health rollup normally advances every minute. When its watermark is older than fifteen
+	// minutes, the UI reports processing delay instead of inferring a per-site state.
+	activityHealthFreshFor = 15 * time.Minute
+	// A site whose most recent accepted event is no more than 24 hours old is actively receiving.
+	// Low-traffic sites can be quiet longer without being broken, so stale copy asks the operator
+	// to verify traffic rather than declaring the installation broken.
+	receivingDataFreshFor = 24 * time.Hour
+)
 
 func clampLimit(n int) int {
 	if n <= 0 {
@@ -163,8 +175,52 @@ func (s *Service) ListClients(ctx context.Context, principalID, businessID uuid.
 			return qerr
 		}
 		out = make([]Client, 0, len(rows))
+		analyticsClientIDs := make([]uuid.UUID, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, toClient(r))
+			client := toClient(r)
+			out = append(out, client)
+			if client.Kind == KindAnalytics {
+				analyticsClientIDs = append(analyticsClientIDs, client.ID)
+			}
+		}
+
+		healthRows, herr := tx.Query(ctx,
+			`SELECT client_id, ever_accepted, last_accepted_at,
+			        activity_data_as_of, dashboard_data_as_of
+			   FROM analytics_site_health($1, $2)`,
+			businessID, analyticsClientIDs)
+		if herr != nil {
+			return herr
+		}
+		defer healthRows.Close()
+		healthByClient := make(map[uuid.UUID]*AnalyticsSiteHealth)
+		for healthRows.Next() {
+			var clientID uuid.UUID
+			var everAccepted bool
+			var lastAccepted, activityDataAsOf, dataAsOf pgtype.Timestamptz
+			if err := healthRows.Scan(
+				&clientID, &everAccepted, &lastAccepted, &activityDataAsOf, &dataAsOf,
+			); err != nil {
+				return err
+			}
+			healthByClient[clientID] = analyticsSiteHealth(
+				"active", everAccepted, lastAccepted, activityDataAsOf, dataAsOf, time.Now().UTC(),
+			)
+		}
+		if err := healthRows.Err(); err != nil {
+			return err
+		}
+		for i := range out {
+			if out[i].Kind != KindAnalytics {
+				continue
+			}
+			if health := healthByClient[out[i].ID]; health != nil {
+				if out[i].Status == SiteHealthRevoked {
+					health.Status = SiteHealthRevoked
+					health.ReceivingData = false
+				}
+				out[i].AnalyticsHealth = health
+			}
 		}
 		return nil
 	})
@@ -172,6 +228,45 @@ func (s *Service) ListClients(ctx context.Context, principalID, businessID uuid.
 		return nil, mapErr(err)
 	}
 	return out, nil
+}
+
+// analyticsSiteHealth derives the five-state UI model from an active/revoked client and the two
+// independent rollup watermarks. Unknown clientStatus values behave like active clients; callers
+// supply the persisted telemetry_client status, whose constraint permits only active or revoked.
+func analyticsSiteHealth(
+	clientStatus string,
+	everAccepted bool,
+	lastAccepted, activityDataAsOf, dataAsOf pgtype.Timestamptz,
+	now time.Time,
+) *AnalyticsSiteHealth {
+	health := &AnalyticsSiteHealth{
+		LastAcceptedAt:   timestamptzPtr(lastAccepted),
+		ActivityDataAsOf: timestamptzPtr(activityDataAsOf),
+		DataAsOf:         timestamptzPtr(dataAsOf),
+	}
+	switch {
+	case clientStatus == SiteHealthRevoked:
+		health.Status = SiteHealthRevoked
+	case !activityDataAsOf.Valid || now.Sub(activityDataAsOf.Time) > activityHealthFreshFor:
+		health.Status = SiteHealthChecking
+	case !everAccepted:
+		health.Status = SiteHealthNeverSeen
+	case !lastAccepted.Valid || now.Sub(lastAccepted.Time) > receivingDataFreshFor:
+		health.Status = SiteHealthStale
+	default:
+		health.Status = SiteHealthHealthy
+		health.ReceivingData = true
+	}
+	return health
+}
+
+// timestamptzPtr returns nil for SQL NULL and either infinity sentinel, otherwise the UTC value.
+func timestamptzPtr(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid || value.InfinityModifier != pgtype.Finite {
+		return nil
+	}
+	t := value.Time.UTC()
+	return &t
 }
 
 // RevokeClient disables a client; ingest with its key then fails the resolve and returns the same

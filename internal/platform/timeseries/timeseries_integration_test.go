@@ -230,16 +230,16 @@ func TestRollup_FailureDoesNotSkipIndependentLaterRollups(t *testing.T) {
 		   FROM rollup_state
 		  WHERE rollup_name = ANY($1::text[])
 		    AND isfinite(watermark_ingested_at)`,
-		[]string{"analytics_pageviews", "analytics_dimensions"}).Scan(&completed); err != nil {
+		[]string{"analytics_pageviews", "analytics_dimensions", "analytics_site_health"}).Scan(&completed); err != nil {
 		t.Fatalf("read later watermarks: %v", err)
 	}
-	if completed != 2 {
-		t.Fatalf("only %d later rollups completed, want 2", completed)
+	if completed != 3 {
+		t.Fatalf("only %d later rollups completed, want 3", completed)
 	}
 	if got := metrics.Get("rollup.analytics_daily.failures"); got != beforeFailures+1 {
 		t.Errorf("first-rollup failures = %d, want %d", got, beforeFailures+1)
 	}
-	for _, state := range []string{"analytics_pageviews", "analytics_dimensions"} {
+	for _, state := range []string{"analytics_pageviews", "analytics_dimensions", "analytics_site_health"} {
 		if got := metrics.Get("rollup." + state + ".last_success_unix"); got <= 0 {
 			t.Errorf("%s last success metric = %d, want a Unix timestamp", state, got)
 		}

@@ -55,6 +55,13 @@ const clients = {
       has_secret: false,
       created_at: '2026-07-25T00:00:00Z',
       revoked_at: null,
+      analytics_health: {
+        status: 'never_seen',
+        receiving_data: false,
+        last_accepted_at: null,
+        activity_data_as_of: '2026-07-25T00:00:00Z',
+        data_as_of: '2026-07-25T00:00:00Z',
+      },
     },
     {
       id: '33333333-3333-3333-3333-333333333333',
@@ -161,6 +168,71 @@ test('sites screen lists analytics sites and renders a complete embed tag', asyn
   expect(tag).toContain('/a.js');
   expect(tag).toContain(`data-key="${KEY}"`);
   expect(tag).toContain('</script>');
+
+  await expect(page.getByTestId('site-status-cell')).toContainText('Never seen');
+  await expect(page.getByTestId('site-install-checklist')).toContainText(
+    'Visit or reload the site once',
+  );
+});
+
+test('installation check recovers a never-seen site after data arrives', async ({ page }) => {
+  await installStack(page);
+  let listCalls = 0;
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/telemetry/clients`, (route) => {
+    listCalls += 1;
+    const healthy = listCalls > 1;
+    return route.fulfill({
+      json: {
+        clients: [
+          {
+            ...clients.clients[0],
+            analytics_health: healthy
+              ? {
+                  status: 'healthy',
+                  receiving_data: true,
+                  last_accepted_at: '2026-07-25T00:02:00Z',
+                  activity_data_as_of: '2026-07-25T00:02:30Z',
+                  data_as_of: '2026-07-25T00:02:30Z',
+                }
+              : clients.clients[0].analytics_health,
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto('/analytics/sites');
+  await expect(page.getByTestId('site-status-cell')).toContainText('Never seen');
+  await page.getByTestId('site-check-installation').click();
+
+  await expect(page.getByTestId('site-status-cell')).toContainText('Healthy');
+  await expect(page.getByTestId('site-health-message')).toContainText('Data is arriving');
+  await expect(page.getByTestId('site-install-checklist')).toHaveCount(0);
+});
+
+test('stale site health keeps setup recovery available', async ({ page }) => {
+  await installStack(page);
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/telemetry/clients`, (route) =>
+    route.fulfill({
+      json: {
+        clients: [
+          {
+            ...clients.clients[0],
+            analytics_health: {
+              ...clients.clients[0].analytics_health,
+              status: 'stale',
+              last_accepted_at: '2026-07-20T12:00:00Z',
+            },
+          },
+        ],
+      },
+    }),
+  );
+
+  await page.goto('/analytics/sites');
+  await expect(page.getByTestId('site-status-cell')).toContainText('Stale');
+  await expect(page.getByTestId('site-health')).toContainText('2026-07-20T12:00:00Z');
+  await expect(page.getByTestId('site-check-installation')).toBeVisible();
 });
 
 test('revoked sites stop advertising an embed tag', async ({ page }) => {

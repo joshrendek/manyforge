@@ -626,11 +626,19 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 		    (tenant_root_id,business_id,client_id,bucket_date,dimension,value,pageviews,visitors)
 		  VALUES ($1,$2,$3,$4::date,'device','desktop',7,3)`,
 			[]any{seed.businessID, seed.businessID, created.ID, today}},
+		{`INSERT INTO analytics_site_activity (client_id,last_accepted_at)
+		  VALUES ($1,now())`, []any{created.ID}},
 	}
 	for _, statement := range statements {
 		if _, err := e.tdb.Super.Exec(ctx, statement.sql, statement.args...); err != nil {
 			t.Fatalf("seed analytics history: %v\nSQL: %s", err, statement.sql)
 		}
+	}
+	var seededLastAccepted time.Time
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT last_accepted_at FROM analytics_site_activity WHERE client_id=$1`,
+		created.ID).Scan(&seededLastAccepted); err != nil {
+		t.Fatalf("read seeded site health: %v", err)
 	}
 
 	targets, err := svc.MoveTargets(ctx, seed.principalID, seed.businessID, created.ID)
@@ -664,6 +672,19 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	}
 	if len(sourceList) != 0 || len(targetList) != 1 || targetList[0].ID != created.ID {
 		t.Fatalf("lists after move: source=%#v target=%#v", sourceList, targetList)
+	}
+	if targetList[0].AnalyticsHealth == nil ||
+		targetList[0].AnalyticsHealth.Status != telemetry.SiteHealthHealthy {
+		t.Fatalf("site health did not follow authoritative client ownership: %+v",
+			targetList[0].AnalyticsHealth)
+	}
+	movedHealth := targetList[0].AnalyticsHealth
+	if movedHealth.LastAcceptedAt == nil ||
+		!movedHealth.LastAcceptedAt.Equal(seededLastAccepted.UTC()) ||
+		movedHealth.ActivityDataAsOf == nil || movedHealth.DataAsOf != nil {
+		t.Fatalf("site health values changed across move: got %+v, last accepted want %s, "+
+			"dashboard watermark want unavailable until both rollups complete",
+			movedHealth, seededLastAccepted.UTC())
 	}
 
 	for _, table := range []string{
