@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 func TestNewPublishableKey_ShapeAndUniqueness(t *testing.T) {
@@ -131,6 +133,38 @@ func TestTimestamptzPtrRejectsInfinity(t *testing.T) {
 		}); got != nil {
 			t.Errorf("timestamptzPtr(%s) = %v, want nil", modifier, got)
 		}
+	}
+}
+
+func TestNormalizeAllowedOrigins(t *testing.T) {
+	got, err := normalizeAllowedOrigins(KindAnalytics, []string{
+		"HTTPS://Example.COM:443/", "http://localhost:4300",
+	})
+	if err != nil || len(got) != 2 || got[0] != "https://example.com" ||
+		got[1] != "http://localhost:4300" {
+		t.Fatalf("normalizeAllowedOrigins = %v, %v", got, err)
+	}
+
+	tooMany := make([]string, 11)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("https://site-%d.example", i)
+	}
+	for name, tc := range map[string]struct {
+		kind   string
+		values []string
+	}{
+		"missing analytics origin": {KindAnalytics, nil},
+		"too many":                 {KindAnalytics, tooMany},
+		"normalized duplicate":     {KindAnalytics, []string{"https://x.example", "HTTPS://X.EXAMPLE:443/"}},
+		"wildcard":                 {KindAnalytics, []string{"https://*.example"}},
+		"crash origins":            {KindCrash, []string{"https://x.example"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := normalizeAllowedOrigins(tc.kind, tc.values); !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("normalizeAllowedOrigins(%q, %v) = %v, want validation",
+					tc.kind, tc.values, err)
+			}
+		})
 	}
 }
 

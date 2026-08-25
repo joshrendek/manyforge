@@ -17,6 +17,7 @@ import (
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
+	"github.com/manyforge/manyforge/internal/platform/weborigin"
 )
 
 // maxCollectBytes caps a collect body. A pageview beacon is a few hundred bytes; anything larger
@@ -173,6 +174,13 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ua := r.Header.Get("User-Agent")
+	origin := ""
+	// Missing and malformed headers deliberately collapse to the same empty internal value. A
+	// configured allowlist rejects it in analytics_collect and reports -1 for unlabeled metrics;
+	// legacy-unrestricted rows accept it. Do not log the caller-controlled value or vary the 204.
+	if normalized, err := weborigin.FromHeader(r.Header.Values("Origin")); err == nil {
+		origin = normalized
+	}
 
 	// Every request-derived dimension is normalized or bounded HERE before it touches SQL. The SQL
 	// function consumes the raw IP and UA only to derive a visitor hash and never persists them.
@@ -201,8 +209,9 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 			trustCountryHeader,
 			r.Header.Values(cloudflareCountryHeader),
 		),
-		name:  name,
-		props: SanitizeProps(req.Data),
+		name:   name,
+		props:  SanitizeProps(req.Data),
+		origin: origin,
 	}
 	n, err := h.store(r.Context(), ev)
 	if err != nil {
@@ -214,6 +223,9 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	if n > 0 {
 		h.Metrics.Inc(observability.MetricAnalyticsCollected)
 	} else {
+		if n == -1 {
+			h.Metrics.Inc(observability.MetricAnalyticsOriginRejected)
+		}
 		h.Metrics.Inc(observability.MetricAnalyticsCollectRejected)
 	}
 }
@@ -233,6 +245,7 @@ type collectEvent struct {
 	country  string            // uppercase ISO 3166-1 alpha-2; "" ⇒ no accepted country value
 	name     string            // "" ⇒ automatic pageview
 	props    map[string]string // nil ⇒ no custom properties
+	origin   string            // exact normalized browser Origin; empty ⇒ missing or malformed
 }
 
 func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) {
@@ -247,11 +260,11 @@ func (h *PublicHandler) store(ctx context.Context, e collectEvent) (int, error) 
 	var n int
 	err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			"SELECT analytics_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+			"SELECT analytics_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
 			e.key, e.path, e.referrer, e.ip, e.ua, e.isBot,
 			e.utm.Source, e.utm.Medium, e.utm.Campaign,
 			e.device, e.browser, e.country,
-			e.name, props).Scan(&n)
+			e.name, props, e.origin).Scan(&n)
 	})
 	return n, err
 }

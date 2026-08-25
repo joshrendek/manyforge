@@ -199,8 +199,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.ReconciliationPlan == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 120 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/120",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 121 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/121",
 				*first.InventoryVersion, *first.SchemaVersion)
 		}
 		if *first.ReconciliationVersion != 1 ||
@@ -403,7 +403,7 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Fatalf("schema mutation did not stale: result=%+v err=%v", schemaStale, err)
 		}
 		if _, err := tdb.Super.Exec(ctx,
-			"UPDATE schema_migrations SET version=120",
+			"UPDATE schema_migrations SET version=121",
 		); err != nil {
 			t.Fatalf("restore schema version: %v", err)
 		}

@@ -29,6 +29,13 @@ at five minutes so investigation can begin before the page threshold. The platfo
 owns worker and database recovery; the analytics product owner owns customer-facing freshness
 wording and follow-up communication.
 
+The collector also publishes cumulative `analytics.collected`, `analytics.collect_rejected`, and
+`analytics.origin_rejected` counters. `origin_rejected` is an unlabeled subset of rejected
+collection; it never includes a key, origin, tenant, or site. Alert on a sustained increase in the
+origin-rejection ratio rather than a single event. A rise can mean a site moved domains without
+updating its exact allowlist, a preview/`www` origin was omitted, or a public key is being reused.
+Origin is spoofable and is not authentication, so a low rejection count is not a security signal.
+
 ## Diagnose
 
 Inspect durable state without tenant or event labels:
@@ -59,6 +66,12 @@ WHERE rollup_name IN ('analytics_pageviews', 'analytics_dimensions');
 
 Correlate the named rollup in the structured `rollup sweep` error with database errors and recent
 migrations. Do not add tenant, site, path, event, or campaign values to alerts or metric keys.
+
+For origin rejections, first compare the site's configured origins in authenticated site
+management with its deployed browser origin (scheme, host, and non-default port). Correct the
+allowlist through the product/API; do not rotate the public key unless it is otherwise being
+retired. The collector deliberately returns the same 204 for allowed, rejected, unknown, and
+revoked keys, so public response probing cannot diagnose configuration.
 
 ## Recover and verify
 

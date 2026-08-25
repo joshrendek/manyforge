@@ -1188,6 +1188,7 @@ type TelemetryClient struct {
 	PublishableKey   string             `json:"publishable_key"`
 	RequireSignature bool               `json:"require_signature"`
 	SealedSecret     *string            `json:"sealed_secret"`
+	AllowedOrigins   []string           `json:"allowed_origins"`
 	Status           string             `json:"status"`
 	CreatedAt        time.Time          `json:"created_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`

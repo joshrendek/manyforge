@@ -177,6 +177,45 @@ func TestPin_AS0CollectIsUniformAndQuiet(t *testing.T) {
 	}
 }
 
+func TestPin_AS0AllowedOriginsRemainAnIntegrityGuard(t *testing.T) {
+	raw := mustRead(t, "../../migrations/0121_analytics_allowed_origins.up.sql")
+	mig := strings.ToLower(raw)
+	for _, required := range []string{
+		"cardinality(allowed_origins) <= 10",
+		"security definer set search_path = public",
+		"businesses_with_permission(current_principal(), 'telemetry.write')",
+		"revoke all on function telemetry_set_analytics_origins(uuid,uuid,text[]) from public",
+		"cardinality(c.allowed_origins) > 0",
+		"p_origin = any(c.allowed_origins)",
+		"return -1",
+	} {
+		if !strings.Contains(mig, required) {
+			t.Errorf("allowed-origin migration is missing %q", required)
+		}
+	}
+	if strings.Contains(mig, "grant update (allowed_origins)") ||
+		strings.Contains(mig, "grant update on telemetry_client") {
+		t.Error("allowed_origins must be replaced only through the permission-checking definer")
+	}
+
+	collect := strings.ToLower(functionBody(t, stripSQLComments(raw), "analytics_collect"))
+	insertAt := strings.Index(collect, "insert into analytics_event")
+	if insertAt < 0 {
+		t.Fatal("analytics_collect no longer inserts analytics_event")
+	}
+	if strings.Contains(collect[insertAt:], "p_origin") {
+		t.Error("request Origin appears in the event insert; only configured origins may be stored")
+	}
+
+	// The public handler must collapse a missing/duplicate/malformed header to an internal value
+	// and keep the single deferred 204 response. Origin mismatch must never become a public status.
+	src := mustRead(t, as0Collect)
+	if !strings.Contains(src, `weborigin.FromHeader(r.Header.Values("Origin"))`) ||
+		!strings.Contains(src, "defer w.WriteHeader(http.StatusNoContent)") {
+		t.Error("collector no longer normalizes Origin while preserving its uniform 204")
+	}
+}
+
 const as0Enrichment = "../../migrations/0107_analytics_enrichment.up.sql"
 
 // TestPin_AS0EnrichmentStoresOnlyLowCardinalityDerivations asserts the enrichment columns hold
