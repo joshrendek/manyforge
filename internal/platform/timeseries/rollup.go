@@ -2,6 +2,7 @@ package timeseries
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -63,16 +64,22 @@ func (w *RollupWorker) withDefaults() {
 	}
 }
 
-// rollupFns are the SECURITY DEFINER rollup functions this worker drives. Each takes
+// rollupSpecs names the SECURITY DEFINER rollup functions this worker drives and their durable
+// state rows. Each function takes
 // (lag interval, overlap interval) and returns the number of bucket rows written.
 //
-// This list is a COMPILE-TIME constant and is interpolated into SQL. It must never be fed from
-// configuration or a request — a rollup name is an identifier, not a bindable parameter, so a
-// caller-supplied value here would be injection.
-var rollupFns = []string{
-	"rollup_analytics_daily",      // p20 generic event counter
-	"rollup_analytics_pageviews",  // as0 pageviews / visitors / pages / referrers
-	"rollup_analytics_dimensions", // as0 utm / device / browser / country breakdowns
+// The function fields are fixed at compile time because SQL identifiers cannot be bind parameters;
+// only those fixed function names are interpolated. State names are ordinary bound values. Neither
+// field may be fed from configuration or a request.
+type rollupSpec struct {
+	function string
+	state    string
+}
+
+var rollupSpecs = []rollupSpec{
+	{function: "rollup_analytics_daily", state: "analytics_daily"},
+	{function: "rollup_analytics_pageviews", state: "analytics_pageviews"},
+	{function: "rollup_analytics_dimensions", state: "analytics_dimensions"},
 }
 
 // SweepOnce advances every rollup by one window and returns the total bucket rows written. A
@@ -84,19 +91,35 @@ var rollupFns = []string{
 func (w *RollupWorker) SweepOnce(ctx context.Context) (int, error) {
 	lag := max(w.Lag, 0)
 	total := 0
-	for _, fn := range rollupFns {
+	var failures []error
+	for _, spec := range rollupSpecs {
+		started := time.Now()
 		var n int
+		var watermark time.Time
 		err := w.DB.WithTx(ctx, func(tx pgx.Tx) error {
+			if err := tx.QueryRow(ctx,
+				"SELECT "+spec.function+"(make_interval(secs => $1::int), make_interval(secs => $2::int))",
+				int(lag.Seconds()), int(w.overlap().Seconds())).Scan(&n); err != nil {
+				return err
+			}
 			return tx.QueryRow(ctx,
-				"SELECT "+fn+"(make_interval(secs => $1::int), make_interval(secs => $2::int))",
-				int(lag.Seconds()), int(w.overlap().Seconds())).Scan(&n)
+				`SELECT watermark_ingested_at FROM rollup_state WHERE rollup_name = $1`,
+				spec.state).Scan(&watermark)
 		})
+		metricBase := "rollup." + spec.state
+		w.Metrics.Set(metricBase+".duration_ms", max(time.Since(started).Milliseconds(), int64(1)))
 		if err != nil {
-			return total, fmt.Errorf("%s: %w", fn, err)
+			w.Metrics.Inc(metricBase + ".failures")
+			failures = append(failures, fmt.Errorf("%s: %w", spec.function, err))
+			continue
 		}
 		total += n
+		now := time.Now().UTC()
+		w.Metrics.Set(metricBase+".buckets_written", int64(n))
+		w.Metrics.Set(metricBase+".last_success_unix", now.Unix())
+		w.Metrics.Set(metricBase+".watermark_lag_seconds", max(int64(now.Sub(watermark).Seconds()), int64(0)))
 	}
-	return total, nil
+	return total, errors.Join(failures...)
 }
 
 // Run sweeps on every tick until ctx is cancelled.
@@ -111,15 +134,15 @@ func (w *RollupWorker) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			n, err := w.SweepOnce(ctx)
+			if n > 0 {
+				w.Metrics.Add(observability.MetricRollupBucketsWritten, int64(n))
+			}
 			if err != nil {
-				// Watermark is unadvanced; the next tick retries the same window. Safe only
-				// because the rollup recomputes rather than increments.
+				// Each failed rollup leaves only its own watermark unadvanced; successful siblings
+				// committed independently and the next tick safely retries the failed windows.
 				w.Logger.ErrorContext(ctx, "rollup sweep", "err", err)
 				w.Metrics.Inc(observability.MetricRollupSweepFailed)
 				continue
-			}
-			if n > 0 {
-				w.Metrics.Add(observability.MetricRollupBucketsWritten, int64(n))
 			}
 		}
 	}

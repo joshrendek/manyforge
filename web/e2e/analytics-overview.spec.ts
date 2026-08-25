@@ -24,6 +24,7 @@ function series(days: number, at: (i: number) => number) {
 }
 
 const overview = {
+  data_as_of: '2026-07-30T23:59:30Z',
   sites: [
     {
       client_id: 'c1',
@@ -106,6 +107,7 @@ test('shows sites from several businesses at once, grouped by business', async (
   await expect(page.getByTestId('overview-card')).toHaveCount(4);
   await expect(groups.nth(0).getByTestId('overview-card')).toHaveCount(2);
   await expect(groups.nth(1).getByTestId('overview-card')).toHaveCount(1);
+  await expect(page.getByTestId('overview-freshness')).toContainText('2026-07-30T23:59:30Z');
 });
 
 test('a card links to that site’s dashboard under its OWN business', async ({ page }) => {
@@ -178,9 +180,12 @@ test('changing the range refetches with the new window', async ({ page }) => {
 });
 
 test('empty state when the account has no sites', async ({ page }) => {
-  await installStack(page, { sites: [] });
+  await installStack(page, { sites: [], data_as_of: null });
   await page.goto('/analytics');
   await expect(page.getByTestId('overview-empty')).toBeVisible();
+  await expect(page.getByTestId('overview-freshness')).toContainText(
+    'Data freshness is not available yet',
+  );
 });
 
 test('site management is still reachable from the grid', async ({ page }) => {

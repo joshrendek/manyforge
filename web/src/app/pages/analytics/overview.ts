@@ -50,6 +50,17 @@ interface BusinessGroup {
         </span>
       </mf-page-header>
 
+      <p class="mf-freshness" data-testid="overview-freshness">
+        @if (loading()) {
+          Updating data freshness…
+        } @else if (dataAsOf()) {
+          Data current through <time [attr.datetime]="dataAsOf()">{{ dataAsOf() }}</time
+          >.
+        } @else {
+          Data freshness is not available yet.
+        }
+      </p>
+
       @if (!loading() && !groups().length && !error()) {
         <mf-empty-state title="No sites yet" data-testid="overview-empty">
           Add a site to get an embed tag, then paste it into your site's HTML.
@@ -124,6 +135,11 @@ interface BusinessGroup {
       }
       .mf-group + .mf-group {
         margin-top: 22px;
+      }
+      .mf-freshness {
+        margin: 8px 0 14px;
+        font-size: var(--mf-fs-xs);
+        color: var(--mf-text-muted);
       }
       .mf-group-title {
         font-size: var(--mf-fs-sm);
@@ -217,6 +233,7 @@ export class AnalyticsOverviewComponent implements OnInit {
   loading = signal(false);
   error = signal('');
   days = signal(30);
+  dataAsOf = signal<string | null>(null);
   // Monotonic request counter; only the newest response is allowed to write state.
   private reqToken = 0;
 
@@ -259,12 +276,14 @@ export class AnalyticsOverviewComponent implements OnInit {
       next: (r) => {
         if (token !== this.reqToken) return;
         this.sites.set(r.sites ?? []);
+        this.dataAsOf.set(r.data_as_of ?? null);
         this.error.set('');
         this.loading.set(false);
       },
       error: () => {
         if (token !== this.reqToken) return;
         this.sites.set([]);
+        this.dataAsOf.set(null);
         this.error.set('Could not load analytics');
         this.loading.set(false);
       },

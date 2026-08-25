@@ -48,6 +48,12 @@ import { Spinner } from '../../ui/spinner/spinner';
         <p class="mf-range" data-testid="analytics-date-range">
           Daily data in UTC: {{ s.from }} – {{ s.to }}. Compared with {{ s.comparison.from }} –
           {{ s.comparison.to }}.
+          @if (s.data_as_of) {
+            Data current through <time [attr.datetime]="s.data_as_of">{{ s.data_as_of }}</time
+            >.
+          } @else {
+            Data freshness is not available yet.
+          }
         </p>
         <div class="mf-stats" data-testid="analytics-stats">
           <div class="mf-stat">
