@@ -102,8 +102,7 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 	if to.Before(from) {
 		return Summary{}, fmt.Errorf("analytics: end before start: %w", errs.ErrValidation)
 	}
-	// The window is INCLUSIVE, so a span of N intervals covers N+1 days. Comparing the span
-	// against maxRangeDays with a strict > therefore admitted maxRangeDays+1 actual days.
+	// The window is inclusive, so compare its N+1 calendar-day count directly with the cap.
 	if inclusiveDays := int(to.Sub(from)/(24*time.Hour)) + 1; inclusiveDays > maxRangeDays {
 		return Summary{}, fmt.Errorf("analytics: range of %d days exceeds the %d day cap: %w",
 			inclusiveDays, maxRangeDays, errs.ErrValidation)
