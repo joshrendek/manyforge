@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/timeseries"
@@ -97,6 +99,7 @@ func newEnvWithCloudflareCountryTrustAndProxy(t *testing.T, trust, trustLoopback
 			})
 		})
 		rd.ReadRoutes(pr)
+		rd.WriteRoutes(pr)
 		rd.OverviewRoutes(pr)
 	})
 	e.srv = httptest.NewServer(r)
@@ -1344,7 +1347,17 @@ func (e *env) collectEvent(t *testing.T, name string, props map[string]any, ua, 
 
 func TestCustomEvent_StoredWithNameAndProps(t *testing.T) {
 	ctx, e := newEnv(t)
-	e.collectEvent(t, "grow_start", map[string]any{"level": 3, "mode": "classic"}, humanUA, "203.0.113.1")
+	svc := analytics.NewService(e.tdb.App)
+	if _, err := svc.ReplacePropertyRules(ctx, e.prin, e.biz, e.site, []analytics.PropertyRuleInput{
+		{EventName: "grow_start", PropertyKey: "level", Label: "Level"},
+		{EventName: "grow_start", PropertyKey: "mode", Label: "Mode"},
+	}); err != nil {
+		t.Fatalf("configure properties: %v", err)
+	}
+	e.collectEvent(t, "grow_start", map[string]any{
+		"level": 3, "mode": "classic", "unknown": "discard me", "email": "private@example.test",
+		"nested": map[string]any{"discard": true},
+	}, humanUA, "203.0.113.1")
 
 	var name, props string
 	if err := e.tdb.Super.QueryRow(ctx,
@@ -1359,6 +1372,335 @@ func TestCustomEvent_StoredWithNameAndProps(t *testing.T) {
 	}
 	if !strings.Contains(props, "classic") {
 		t.Errorf("props missing mode: %s", props)
+	}
+	for _, forbidden := range []string{"unknown", "private@example.test", "nested"} {
+		if strings.Contains(props, forbidden) {
+			t.Errorf("unconfigured/non-scalar property %q retained: %s", forbidden, props)
+		}
+	}
+}
+
+func TestCustomEvent_NoConfigurationStoresNoProperties(t *testing.T) {
+	ctx, e := newEnv(t)
+	e.collectEvent(t, "grow_start", map[string]any{
+		"mode": "classic", "customer_id": "persistent-123",
+	}, humanUA, "203.0.113.1")
+	var props string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT props::text FROM analytics_event WHERE client_id=$1`, e.site).Scan(&props); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if props != "{}" {
+		t.Fatalf("props without configuration = %s, want {}", props)
+	}
+}
+
+func TestPropertyRules_APIStableIdentityValidationAndClear(t *testing.T) {
+	ctx, e := newEnv(t)
+	path := "/businesses/" + e.biz.String() + "/analytics/sites/" + e.site.String() + "/property-rules"
+
+	put := func(body string) (*http.Response, map[string][]analytics.PropertyRule) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPut,
+			e.srv.URL+path,
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := e.srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT property rules: %v", err)
+		}
+		var decoded map[string][]analytics.PropertyRule
+		if resp.StatusCode == http.StatusOK {
+			if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+				resp.Body.Close()
+				t.Fatalf("decode rules: %v", err)
+			}
+		}
+		resp.Body.Close()
+		return resp, decoded
+	}
+
+	firstResponse, first := put(`{"rules":[{"event_name":"checkout_completed","property_key":"plan","label":"Plan"}]}`)
+	if firstResponse.StatusCode != http.StatusOK || len(first["rules"]) != 1 {
+		t.Fatalf("first replace = status %d body %+v", firstResponse.StatusCode, first)
+	}
+	firstRule := first["rules"][0]
+	getResponse, err := e.srv.Client().Get(e.srv.URL + path)
+	if err != nil {
+		t.Fatalf("GET property rules: %v", err)
+	}
+	var listed map[string][]analytics.PropertyRule
+	if err := json.NewDecoder(getResponse.Body).Decode(&listed); err != nil {
+		getResponse.Body.Close()
+		t.Fatalf("decode listed rules: %v", err)
+	}
+	getResponse.Body.Close()
+	if getResponse.StatusCode != http.StatusOK || len(listed["rules"]) != 1 ||
+		listed["rules"][0].ID != firstRule.ID {
+		t.Fatalf("GET rules = status %d body %+v", getResponse.StatusCode, listed)
+	}
+
+	secondResponse, second := put(`{"rules":[{"event_name":"checkout_completed","property_key":"plan","label":"Subscription plan"}]}`)
+	if secondResponse.StatusCode != http.StatusOK || len(second["rules"]) != 1 {
+		t.Fatalf("label replace = status %d body %+v", secondResponse.StatusCode, second)
+	}
+	if second["rules"][0].ID != firstRule.ID || !second["rules"][0].EnabledAt.Equal(firstRule.EnabledAt) {
+		t.Fatalf("label-only update changed stable boundary: first=%+v second=%+v",
+			firstRule, second["rules"][0])
+	}
+
+	badResponse, _ := put(`{"rules":[{"event_name":"checkout_completed","property_key":"customer_id","label":"Customer"}]}`)
+	if badResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("sensitive property status = %d, want 400", badResponse.StatusCode)
+	}
+	for _, body := range []string{
+		`{}`,
+		`{"rules":null}`,
+		`{"rules":[{"event_name":"checkout_completed","property_key":"plan","label":"Plan","typo":true}]}`,
+	} {
+		response, _ := put(body)
+		if response.StatusCode != http.StatusBadRequest {
+			t.Errorf("invalid body %s status = %d, want 400", body, response.StatusCode)
+		}
+	}
+
+	getStatus := func(requestPath string) int {
+		t.Helper()
+		response, err := e.srv.Client().Get(e.srv.URL + requestPath)
+		if err != nil {
+			t.Fatalf("GET %s: %v", requestPath, err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+	if status := getStatus("/businesses/not-a-uuid/analytics/sites/" + e.site.String() + "/property-rules"); status != http.StatusBadRequest {
+		t.Errorf("malformed business status = %d, want 400", status)
+	}
+	if status := getStatus("/businesses/" + e.biz.String() + "/analytics/sites/not-a-uuid/property-rules"); status != http.StatusNotFound {
+		t.Errorf("malformed client status = %d, want 404", status)
+	}
+
+	unauthenticatedRouter := chi.NewRouter()
+	handler := analytics.NewHandler(analytics.NewService(e.tdb.App))
+	handler.ReadRoutes(unauthenticatedRouter)
+	handler.WriteRoutes(unauthenticatedRouter)
+	unauthenticatedServer := httptest.NewServer(unauthenticatedRouter)
+	defer unauthenticatedServer.Close()
+	unauthenticated, err := unauthenticatedServer.Client().Get(unauthenticatedServer.URL + path)
+	if err != nil {
+		t.Fatalf("unauthenticated GET: %v", err)
+	}
+	unauthenticated.Body.Close()
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Errorf("unauthenticated GET status = %d, want 401", unauthenticated.StatusCode)
+	}
+
+	clearResponse, cleared := put(`{"rules":[]}`)
+	if clearResponse.StatusCode != http.StatusOK || len(cleared["rules"]) != 0 {
+		t.Fatalf("clear = status %d body %+v", clearResponse.StatusCode, cleared)
+	}
+	var count int
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT count(*) FROM analytics_property_rule WHERE client_id=$1`, e.site).Scan(&count); err != nil {
+		t.Fatalf("count rules: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rules after clear = %d, want 0", count)
+	}
+}
+
+func TestPropertyRules_SQLBoundaryAndTenantIsolation(t *testing.T) {
+	ctx, e := newEnv(t)
+	svc := analytics.NewService(e.tdb.App)
+	if _, err := svc.ReplacePropertyRules(ctx, e.prin, e.biz, e.site, []analytics.PropertyRuleInput{
+		{EventName: "grow_start", PropertyKey: "mode", Label: "Mode"},
+	}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+
+	if _, err := svc.ListPropertyRules(ctx, e.prin, uuid.New(), e.site); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("wrong business = %v, want not found", err)
+	}
+	if _, err := svc.ListPropertyRules(ctx, e.prin, e.biz, uuid.New()); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("unknown client = %v, want not found", err)
+	}
+
+	if err := e.tdb.App.WithPrincipal(ctx, e.prin, func(tx pgx.Tx) error {
+		for _, payload := range []string{
+			`[{"event_name":"grow_start","property_key":"email","label":"Email"}]`,
+			`[{"event_name":"grow_start","property_key":"bad/key","label":"Bad"}]`,
+			`[{"event_name":"bad@event","property_key":"mode","label":"Bad"}]`,
+			`{"event_name":"grow_start","property_key":"mode","label":"Mode"}`,
+			`[null]`,
+		} {
+			var outcome string
+			if err := tx.QueryRow(ctx,
+				`SELECT analytics_replace_property_rules($1,$2,$3::jsonb)`, e.biz, e.site, payload,
+			).Scan(&outcome); err != nil {
+				return err
+			}
+			if outcome != "invalid" {
+				t.Fatalf("direct SQL validation for %s = %q, want invalid", payload, outcome)
+			}
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO analytics_property_rule
+			 (tenant_root_id,business_id,client_id,event_name,property_key,label)
+			 VALUES ($1,$1,$2,'grow_start','mode2','Mode 2')`, e.biz, e.site)
+		return err
+	}); err == nil {
+		t.Fatal("manyforge_app could mutate analytics_property_rule directly")
+	}
+
+	tel := telemetry.NewService(e.tdb.App, nil)
+	if _, err := tel.RevokeClient(ctx, e.prin, e.biz, e.site); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, err := svc.ListPropertyRules(ctx, e.prin, e.biz, e.site); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("list revoked = %v, want not found", err)
+	}
+	if _, err := svc.ReplacePropertyRules(ctx, e.prin, e.biz, e.site, nil); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("replace revoked = %v, want not found", err)
+	}
+}
+
+func TestPropertyRules_FollowSiteAcrossTenantRootMove(t *testing.T) {
+	ctx, e := newEnv(t)
+	analyticsSvc := analytics.NewService(e.tdb.App)
+	configured, err := analyticsSvc.ReplacePropertyRules(
+		ctx, e.prin, e.biz, e.site,
+		[]analytics.PropertyRuleInput{{EventName: "grow_start", PropertyKey: "mode", Label: "Mode"}},
+	)
+	if err != nil || len(configured) != 1 {
+		t.Fatalf("configure = %+v, %v", configured, err)
+	}
+
+	target := uuid.New()
+	var ownerRole uuid.UUID
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'`).Scan(&ownerRole); err != nil {
+		t.Fatalf("owner role: %v", err)
+	}
+	for _, statement := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at)
+		  VALUES ($1,NULL,$1,'Property target','active',now(),now())`, []any{target}},
+		{`INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id)
+		  VALUES ($1,$1,0,$1)`, []any{target}},
+		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at)
+		  VALUES ($1,$2,$2,$3,now())`, []any{e.prin, target, ownerRole}},
+	} {
+		if _, err := e.tdb.Super.Exec(ctx, statement.sql, statement.args...); err != nil {
+			t.Fatalf("seed move target: %v\n%s", err, statement.sql)
+		}
+	}
+
+	if _, err := telemetry.NewService(e.tdb.App, nil).MoveClient(
+		ctx, e.prin, e.biz, e.site, target,
+	); err != nil {
+		t.Fatalf("move site: %v", err)
+	}
+	moved, err := analyticsSvc.ListPropertyRules(ctx, e.prin, target, e.site)
+	if err != nil || len(moved) != 1 {
+		t.Fatalf("list moved rules = %+v, %v", moved, err)
+	}
+	if moved[0].ID != configured[0].ID || !moved[0].EnabledAt.Equal(configured[0].EnabledAt) {
+		t.Fatalf("move changed stable rule boundary: before=%+v after=%+v", configured[0], moved[0])
+	}
+	var businessID, tenantRootID uuid.UUID
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT business_id, tenant_root_id FROM analytics_property_rule WHERE id=$1`, moved[0].ID,
+	).Scan(&businessID, &tenantRootID); err != nil {
+		t.Fatalf("read moved scope: %v", err)
+	}
+	if businessID != target || tenantRootID != target {
+		t.Fatalf("moved rule scope = %s/%s, want %s/%s", businessID, tenantRootID, target, target)
+	}
+}
+
+func TestPropertyRules_ReplacementSerializesWithCollection(t *testing.T) {
+	ctx, e := newEnv(t)
+	tx, err := e.tdb.App.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin replacement: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('manyforge.principal_id', $1, true)`, e.prin.String()); err != nil {
+		t.Fatalf("set principal: %v", err)
+	}
+	var outcome string
+	if err := tx.QueryRow(ctx,
+		`SELECT analytics_replace_property_rules($1,$2,$3::jsonb)`, e.biz, e.site,
+		`[{"event_name":"grow_start","property_key":"mode","label":"Mode"}]`,
+	).Scan(&outcome); err != nil || outcome != "updated" {
+		t.Fatalf("replace inside held transaction = %q, %v", outcome, err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		body, _ := json.Marshal(map[string]any{
+			"k": e.key, "p": "/game", "n": "grow_start", "d": map[string]any{"mode": "classic"},
+		})
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/a/e", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+		resp, requestErr := e.srv.Client().Do(req)
+		if requestErr == nil {
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusNoContent {
+				requestErr = fmt.Errorf("collector status %d", resp.StatusCode)
+			}
+		}
+		done <- requestErr
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waitingOnLock bool
+		if err := e.tdb.Super.QueryRow(ctx,
+			`SELECT EXISTS (
+			    SELECT 1
+			      FROM pg_stat_activity
+			     WHERE datname = current_database()
+			       AND query LIKE '%analytics_collect(%'
+			       AND wait_event_type = 'Lock'
+			)`,
+		).Scan(&waitingOnLock); err != nil {
+			t.Fatalf("inspect collector lock wait: %v", err)
+		}
+		if waitingOnLock {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("collector completed before reaching the rule-set lock: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("collector never reached the expected client-row lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit replacement: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("collector after commit: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collector remained blocked after property-rule commit")
+	}
+	var props string
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT props::text FROM analytics_event WHERE client_id=$1`, e.site).Scan(&props); err != nil {
+		t.Fatalf("read collected props: %v", err)
+	}
+	if !strings.Contains(props, "classic") {
+		t.Fatalf("collector did not use committed rule set: %s", props)
 	}
 }
 

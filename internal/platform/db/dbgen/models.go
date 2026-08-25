@@ -631,6 +631,18 @@ type AiProviderCredential struct {
 	UpdatedAt           time.Time          `json:"updated_at"`
 }
 
+type AnalyticsPropertyRule struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	ClientID     uuid.UUID `json:"client_id"`
+	EventName    string    `json:"event_name"`
+	PropertyKey  string    `json:"property_key"`
+	Label        string    `json:"label"`
+	EnabledAt    time.Time `json:"enabled_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type ApprovalItem struct {
 	ID                   uuid.UUID          `json:"id"`
 	AgentRunID           uuid.UUID          `json:"agent_run_id"`

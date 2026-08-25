@@ -36,6 +36,13 @@ origin-rejection ratio rather than a single event. A rise can mean a site moved 
 updating its exact allowlist, a preview/`www` origin was omitted, or a public key is being reused.
 Origin is spoofable and is not authentication, so a low rejection count is not a security signal.
 
+Custom-event properties are deny-by-default. The collector persists only exact scalar event/key
+pairs configured for the active site, with at most 20 pairs per site and six per event. Sensitive
+fields, secrets, network identifiers, and persistent user/account/session/device identifiers are
+prohibited at both the application and SQL boundaries. Enabling a property is not retroactive:
+its stable `enabled_at` boundary excludes older events from future aggregation. Pre-governance raw
+properties are not rewritten; their partitions expire under the existing 90-day event retention.
+
 ## Diagnose
 
 Inspect durable state without tenant or event labels:

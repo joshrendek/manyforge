@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: manyforge — web analytics (manyforge-as0)
-  version: "1.1.0"
+  version: "1.2.0"
   description: |
     Privacy-first web analytics for tenant sites, built on the manyforge-p20 storage foundation.
 
@@ -107,7 +107,7 @@ paths:
                   maxLength: 64
                   description: |
                     Custom event name. Omitted (the usual case) means an automatic pageview.
-                    Restricted to `[A-Za-z0-9_.:-]` and **`pageview` is reserved** — accepting it
+                    Restricted to `[A-Za-z0-9_:.-]` and **`pageview` is reserved** — accepting it
                     here would let a site inflate its own pageview count through the event API and
                     disagree with the pageview rollup every other panel reconciles against.
                     A malformed name drops the event rather than being coerced.
@@ -115,10 +115,11 @@ paths:
                   type: object
                   additionalProperties: true
                   description: |
-                    Custom event properties. Bounded server-side: at most 12 keys, key and value
-                    lengths capped, values flattened to strings. Nested objects and arrays are
-                    dropped — a JSON blob is not a groupable dashboard value, and a free-form bag
-                    is where PII ends up.
+                    Custom event properties. The collector retains only scalar values whose exact
+                    event/property pair is configured through the authenticated property-rule API.
+                    Unknown keys, nested values, and arrays are dropped. Sensitive-data, secret,
+                    network-identifier, and persistent-identifier key names are prohibited in both
+                    the management API and database boundary. Values are capped at 128 characters.
                 q:
                   type: string
                   description: |
@@ -207,6 +208,59 @@ paths:
             lacking `telemetry.read`. All four are the same response — the distinctions would be
             existence oracles.
 
+  /businesses/{id}/analytics/sites/{clientID}/property-rules:
+    get:
+      summary: List the custom-event properties retained for one site
+      description: |
+        Requires `telemetry.read`. Unknown, foreign, revoked, malformed, and unauthorized sites
+        are indistinguishable. Rule IDs and `enabled_at` remain stable across label-only updates.
+      operationId: listAnalyticsPropertyRules
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The complete ordered property-rule set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyticsPropertyRulesResponse' }
+        '400': { description: Malformed business id }
+        '401': { description: Missing or invalid credentials }
+        '404': { description: Site unavailable to this caller }
+    put:
+      summary: Replace the custom-event property retention allowlist
+      description: |
+        Requires `telemetry.write`. This is a complete replacement, including an empty list to
+        clear retention. At most 20 rules are allowed per site and six per event. Event/key pairs
+        must be unique. Direct identifiers, secrets, network identifiers, and persistent IDs are
+        prohibited. Enabling a rule is not retroactive: older raw JSON is neither restored nor
+        aggregated, and any pre-governance raw properties age out with the 90-day event retention.
+      operationId: replaceAnalyticsPropertyRules
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: clientID, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rules]
+              properties:
+                rules:
+                  type: array
+                  maxItems: 20
+                  items: { $ref: '#/components/schemas/AnalyticsPropertyRuleInput' }
+      responses:
+        '200':
+          description: The complete saved property-rule set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyticsPropertyRulesResponse' }
+        '400': { description: Malformed business id, body, or unsafe/invalid rule set }
+        '401': { description: Missing or invalid credentials }
+        '404': { description: Site unavailable to this caller }
+
   /analytics/overview:
     get:
       summary: Every analytics site the caller can see, across all their businesses
@@ -269,6 +323,56 @@ paths:
 
 components:
   schemas:
+    AnalyticsPropertyRuleInput:
+      type: object
+      additionalProperties: false
+      required: [event_name, property_key, label]
+      properties:
+        event_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9_:.-]+$'
+        property_key:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[A-Za-z0-9_:.-]+$'
+          description: Must not identify a person, device, account, session, network address, or secret.
+        label:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Human-readable reporting purpose displayed to the operator.
+    AnalyticsPropertyRule:
+      type: object
+      additionalProperties: false
+      required: [id, event_name, property_key, label, enabled_at]
+      properties:
+        id: { type: string, format: uuid }
+        event_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9_:.-]+$'
+        property_key:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[A-Za-z0-9_:.-]+$'
+        label: { type: string, minLength: 1, maxLength: 64 }
+        enabled_at:
+          type: string
+          format: date-time
+          description: Stable non-retroactive activation boundary for this exact event/key pair.
+    AnalyticsPropertyRulesResponse:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/AnalyticsPropertyRule' }
     AnalyticsOverviewSite:
       type: object
       required: [client_id, name, business_id, business_name, pageviews, visitors, average_daily_visitors, series]
