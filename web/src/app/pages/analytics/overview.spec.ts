@@ -38,9 +38,16 @@ describe('AnalyticsOverviewComponent', () => {
 
   afterEach(() => http.verify());
 
-  function flush(sites: OverviewSite[], days = 30): void {
+  function flush(
+    sites: OverviewSite[],
+    days = 30,
+    dataAsOf: string | null = '2026-07-30T23:59:30Z',
+  ): void {
     fixture.detectChanges();
-    http.expectOne(`/api/v1/analytics/overview?days=${days}`).flush({ sites });
+    http.expectOne(`/api/v1/analytics/overview?days=${days}`).flush({
+      sites,
+      data_as_of: dataAsOf,
+    });
     fixture.detectChanges();
   }
 
@@ -49,7 +56,34 @@ describe('AnalyticsOverviewComponent', () => {
     // The absence of a business id is the feature: the server decides which businesses qualify.
     const req = http.expectOne('/api/v1/analytics/overview?days=30');
     expect(req.request.method).toBe('GET');
-    req.flush({ sites: [] });
+    req.flush({ sites: [], data_as_of: null });
+  });
+
+  it('shows that data freshness is updating while the overview request is in flight', () => {
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="overview-freshness"]').textContent,
+    ).toContain('Updating data freshness');
+
+    http.expectOne('/api/v1/analytics/overview?days=30').flush({
+      sites: [],
+      data_as_of: null,
+    });
+  });
+
+  it('shows the common dashboard freshness watermark', () => {
+    flush([site()]);
+    const freshness = fixture.nativeElement.querySelector('[data-testid="overview-freshness"]');
+    expect(freshness.textContent).toContain('2026-07-30T23:59:30Z');
+    expect(freshness.querySelector('time').getAttribute('datetime')).toBe('2026-07-30T23:59:30Z');
+  });
+
+  it('shows unavailable freshness when one rollup has never completed', () => {
+    flush([site()], 30, null);
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="overview-freshness"]').textContent,
+    ).toContain('Data freshness is not available yet');
   });
 
   it('groups sites by business, preserving traffic order', () => {

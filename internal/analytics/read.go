@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -34,6 +35,7 @@ type Summary struct {
 	TopReferrers         []HostCount       `json:"top_referrers"`
 	DirectPageviews      int64             `json:"direct_pageviews"`
 	DirectShare          float64           `json:"direct_share"`
+	DataAsOf             *string           `json:"data_as_of"`
 	Comparison           SummaryComparison `json:"comparison"`
 	// Breakdowns is keyed by dimension ("device", "country", …). A dimension with no data is
 	// present but empty, so a dashboard can distinguish "nothing collected yet" from "not a
@@ -136,6 +138,11 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 			// Unknown id and foreign id are the same answer — no site-existence oracle.
 			return errs.ErrNotFound
 		}
+		var freshnessErr error
+		out.DataAsOf, freshnessErr = dashboardDataAsOf(ctx, tx)
+		if freshnessErr != nil {
+			return freshnessErr
+		}
 
 		// Daily series are completed against a UTC date spine before any totals are derived. The
 		// dashboard therefore receives one point per requested day even when no rollup row exists.
@@ -189,6 +196,31 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 		return Summary{}, mapErr(err)
 	}
 	return out, nil
+}
+
+var dashboardRollupStates = []string{"analytics_pageviews", "analytics_dimensions"}
+
+// dashboardDataAsOf returns the common completed watermark for every rollup used by the
+// dashboard. Returning the minimum prevents a fast series rollup from making slower breakdowns
+// look equally fresh. A missing or never-completed rollup produces null rather than a false date.
+func dashboardDataAsOf(ctx context.Context, tx pgx.Tx) (*string, error) {
+	var watermark pgtype.Timestamptz
+	err := tx.QueryRow(ctx,
+		`SELECT CASE
+		          WHEN count(*) = $2 AND bool_and(isfinite(watermark_ingested_at))
+		          THEN min(watermark_ingested_at)
+		        END
+		   FROM rollup_state
+		  WHERE rollup_name = ANY($1::text[])`,
+		dashboardRollupStates, len(dashboardRollupStates)).Scan(&watermark)
+	if err != nil {
+		return nil, err
+	}
+	if !watermark.Valid {
+		return nil, nil
+	}
+	formatted := watermark.Time.UTC().Format(time.RFC3339Nano)
+	return &formatted, nil
 }
 
 func loadDailySeries(ctx context.Context, tx pgx.Tx, clientID, businessID uuid.UUID, from, to time.Time) ([]DayPoint, error) {
@@ -383,29 +415,47 @@ type OverviewSite struct {
 	Series               []DayPoint `json:"series"`
 }
 
-// Overview lists every analytics site the caller can see, across every business they belong to,
-// with totals and a per-day series for the sparkline.
+// OverviewResult pairs the visible site cards with their common dashboard freshness watermark.
+type OverviewResult struct {
+	Sites    []OverviewSite `json:"sites"`
+	DataAsOf *string        `json:"data_as_of"`
+}
+
+// Overview preserves the original service API for internal callers that only need site rows.
+func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to time.Time) ([]OverviewSite, error) {
+	result, err := s.OverviewWithFreshness(ctx, principalID, from, to)
+	return result.Sites, err
+}
+
+// OverviewWithFreshness lists every analytics site the caller can see, across every business they
+// belong to, with totals, a per-day series for the sparkline, and the common dashboard watermark.
 //
 // There is deliberately NO business id parameter. authorized_businesses() expands a principal's
 // memberships down business_closure, so running unfiltered under the caller's principal returns
 // exactly the businesses they may see and no others. Adding a handler-side business filter on top
 // would not make this safer — it would just be a second predicate to drift out of step with the
 // first. The RLS policy is the single source of truth.
-func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to time.Time) ([]OverviewSite, error) {
+func (s *Service) OverviewWithFreshness(ctx context.Context, principalID uuid.UUID, from, to time.Time) (OverviewResult, error) {
 	if to.Before(from) {
-		return nil, fmt.Errorf("analytics: end before start: %w", errs.ErrValidation)
+		return OverviewResult{}, fmt.Errorf("analytics: end before start: %w", errs.ErrValidation)
 	}
 	from = from.UTC().Truncate(24 * time.Hour)
 	to = to.UTC().Truncate(24 * time.Hour)
 	inclusiveDays := int(to.Sub(from)/(24*time.Hour)) + 1
 	if inclusiveDays > maxRangeDays {
-		return nil, fmt.Errorf("analytics: range of %d days exceeds the %d day cap: %w",
+		return OverviewResult{}, fmt.Errorf("analytics: range of %d days exceeds the %d day cap: %w",
 			inclusiveDays, maxRangeDays, errs.ErrValidation)
 	}
 	fromD, toD := from.Format("2006-01-02"), to.Format("2006-01-02")
 
 	out := []OverviewSite{}
+	var dataAsOf *string
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		var err error
+		dataAsOf, err = dashboardDataAsOf(ctx, tx)
+		if err != nil {
+			return err
+		}
 		// LEFT JOIN, not INNER: a site registered a minute ago has no rollup rows yet, and omitting
 		// it would read as "your tag is broken" at exactly the moment someone is checking whether
 		// their tag works. It appears with zeroes instead.
@@ -501,7 +551,7 @@ func (s *Service) Overview(ctx context.Context, principalID uuid.UUID, from, to 
 		return nil
 	})
 	if err != nil {
-		return nil, mapErr(err)
+		return OverviewResult{}, mapErr(err)
 	}
-	return out, nil
+	return OverviewResult{Sites: out, DataAsOf: dataAsOf}, nil
 }
