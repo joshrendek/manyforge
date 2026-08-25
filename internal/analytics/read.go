@@ -41,6 +41,9 @@ type Summary struct {
 	// present but empty, so a dashboard can distinguish "nothing collected yet" from "not a
 	// dimension we track".
 	Breakdowns map[string][]ValueCount `json:"breakdowns"`
+	// PropertyBreakdowns are active governed event/property rules with bounded rollup values.
+	// They are structured separately because their labels and event semantics are operator-defined.
+	PropertyBreakdowns []PropertyBreakdown `json:"property_breakdowns"`
 }
 
 // SummaryComparison is the immediately preceding window with the same inclusive day count.
@@ -83,6 +86,24 @@ type ValueCount struct {
 	Visitors  int64  `json:"visitors"`
 }
 
+// PropertyBreakdown is one configured event/property panel. Values may be empty when the rule is
+// active but has not received an eligible post-activation event in the requested window.
+type PropertyBreakdown struct {
+	RuleID      uuid.UUID            `json:"rule_id"`
+	EventName   string               `json:"event_name"`
+	PropertyKey string               `json:"property_key"`
+	Label       string               `json:"label"`
+	Values      []PropertyValueCount `json:"values"`
+}
+
+// PropertyValueCount uses Events rather than the legacy generic Pageviews field so the API never
+// labels custom-event counts as pageviews.
+type PropertyValueCount struct {
+	Value    string `json:"value"`
+	Events   int64  `json:"events"`
+	Visitors int64  `json:"visitors"`
+}
+
 // Dimension keys served by the breakdowns map. These are matched against an allowlist before
 // reaching SQL — the value is a WHERE parameter, but constraining it also keeps a caller from
 // probing for dimensions that do not exist.
@@ -120,7 +141,7 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 	out := Summary{
 		From: fromD, To: toD,
 		Series: []DayPoint{}, TopPages: []PathCount{}, TopReferrers: []HostCount{},
-		Breakdowns: map[string][]ValueCount{},
+		Breakdowns: map[string][]ValueCount{}, PropertyBreakdowns: []PropertyBreakdown{},
 		Comparison: SummaryComparison{From: previousFromD, To: previousToD},
 	}
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -190,7 +211,10 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 		out.Comparison.PageviewsChangePercent = percentChange(float64(out.Pageviews), float64(out.Comparison.Pageviews))
 		out.Comparison.AverageDailyVisitorsChangePercent = percentChange(out.AverageDailyVisitors, out.Comparison.AverageDailyVisitors)
 		out.Comparison.DirectShareChangePercentagePoints = out.DirectShare - out.Comparison.DirectShare
-		return s.breakdowns(ctx, tx, &out, clientID, businessID, fromD, toD)
+		if err := s.breakdowns(ctx, tx, &out, clientID, businessID, fromD, toD); err != nil {
+			return err
+		}
+		return s.propertyBreakdowns(ctx, tx, &out, clientID, businessID, fromD, toD)
 	})
 	if err != nil {
 		return Summary{}, mapErr(err)
@@ -198,7 +222,9 @@ func (s *Service) Summary(ctx context.Context, principalID, businessID, clientID
 	return out, nil
 }
 
-var dashboardRollupStates = []string{"analytics_pageviews", "analytics_dimensions"}
+var dashboardRollupStates = []string{
+	"analytics_pageviews", "analytics_dimensions", "analytics_properties",
+}
 
 // dashboardDataAsOf returns the common completed watermark for every rollup used by the
 // dashboard. Returning the minimum prevents a fast series rollup from making slower breakdowns
@@ -389,6 +415,71 @@ func (s *Service) breakdowns(ctx context.Context, tx pgx.Tx, out *Summary, clien
 			return err
 		}
 		out.Breakdowns[dim] = append(out.Breakdowns[dim], v)
+	}
+	return rows.Err()
+}
+
+// propertyBreakdowns loads active rules and their top values from rollups in one query. The raw
+// event table is intentionally absent: dashboard latency and retention semantics stay independent
+// of traffic volume. Daily visitor hashes cannot be deduplicated across days, so Visitors matches
+// the established breakdown contract and reports the peak daily value for each property value.
+func (s *Service) propertyBreakdowns(
+	ctx context.Context,
+	tx pgx.Tx,
+	out *Summary,
+	clientID, businessID uuid.UUID,
+	fromD, toD string,
+) error {
+	rows, err := tx.Query(ctx,
+		`SELECT rule_id, event_name, property_key, label, value, events, visitors
+		   FROM (
+		       SELECT r.id AS rule_id, r.event_name, r.property_key, r.label, d.value,
+		              coalesce(sum(d.pageviews), 0)::bigint AS events,
+		              coalesce(max(d.visitors), 0)::bigint AS visitors,
+		              row_number() OVER (
+		                  PARTITION BY r.id
+		                  ORDER BY sum(d.pageviews) DESC NULLS LAST, d.value
+		              ) AS rn
+		         FROM analytics_property_rule r
+		         LEFT JOIN analytics_dimension_daily d
+		           ON d.client_id = r.client_id
+		          AND d.business_id = r.business_id
+		          AND d.dimension = 'property:' || r.id::text
+		          AND d.bucket_date >= $3::date AND d.bucket_date <= $4::date
+		        WHERE r.client_id = $1 AND r.business_id = $2
+		        GROUP BY r.id, r.event_name, r.property_key, r.label, d.value
+		   ) ranked
+		  WHERE value IS NULL OR rn <= $5
+		  ORDER BY event_name, property_key, events DESC, value`,
+		clientID, businessID, fromD, toD, topN)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var current *PropertyBreakdown
+	for rows.Next() {
+		var ruleID uuid.UUID
+		var eventName, propertyKey, label string
+		var value pgtype.Text
+		var events, visitors int64
+		if err := rows.Scan(
+			&ruleID, &eventName, &propertyKey, &label, &value, &events, &visitors,
+		); err != nil {
+			return err
+		}
+		if current == nil || current.RuleID != ruleID {
+			out.PropertyBreakdowns = append(out.PropertyBreakdowns, PropertyBreakdown{
+				RuleID: ruleID, EventName: eventName, PropertyKey: propertyKey,
+				Label: label, Values: []PropertyValueCount{},
+			})
+			current = &out.PropertyBreakdowns[len(out.PropertyBreakdowns)-1]
+		}
+		if value.Valid {
+			current.Values = append(current.Values, PropertyValueCount{
+				Value: value.String, Events: events, Visitors: visitors,
+			})
+		}
 	}
 	return rows.Err()
 }

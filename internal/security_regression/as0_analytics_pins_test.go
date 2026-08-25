@@ -493,3 +493,50 @@ func TestPin_AS0SnippetNeverThrowsIntoHostPage(t *testing.T) {
 		t.Error("the window.mf body must be wrapped so it never throws into the host page")
 	}
 }
+
+const as0PropertyAggregates = "../../migrations/0123_analytics_property_aggregates.up.sql"
+
+// TestPin_AS0GovernedPropertyRollupStaysBoundedAndNonRetroactive protects the privacy and storage
+// boundaries that distinguish configured reporting from arbitrary raw-JSON exploration.
+func TestPin_AS0GovernedPropertyRollupStaysBoundedAndNonRetroactive(t *testing.T) {
+	mig := stripSQLComments(mustRead(t, as0PropertyAggregates))
+	rollup := functionBody(t, mig, "rollup_analytics_properties")
+	for _, required := range []string{
+		"greatest(1, least(coalesce(p_max_values, 20), 20))",
+		"'property:' || r.id::text",
+		"e.occurred_at >= r.enabled_at",
+		"e.is_bot = false",
+		"ELSE '(other)'",
+		"d.dimension LIKE 'property:%'",
+	} {
+		if !strings.Contains(rollup, required) {
+			t.Errorf("governed-property rollup is missing invariant %q", required)
+		}
+	}
+	if strings.Contains(rollup, "DELETE FROM analytics_dimension_daily d\n    USING touched_property t\n    WHERE d.client_id = t.client_id\n      AND d.bucket_date = t.bucket_date;") {
+		t.Error("property recomputation can delete unrelated standard dimensions")
+	}
+}
+
+// TestPin_AS0PropertyDashboardReadsRollupsOnly prevents a future convenience query from turning
+// dashboard latency and retention behavior back into a function of raw event volume.
+func TestPin_AS0PropertyDashboardReadsRollupsOnly(t *testing.T) {
+	src := mustRead(t, "../../internal/analytics/read.go")
+	start := strings.Index(src, "func (s *Service) propertyBreakdowns(")
+	if start < 0 {
+		t.Fatal("propertyBreakdowns query is missing")
+	}
+	end := strings.Index(src[start:], "// ---------------------------------------------------------------------------")
+	if end < 0 {
+		t.Fatal("could not isolate propertyBreakdowns")
+	}
+	body := src[start : start+end]
+	if strings.Contains(body, "analytics_event") {
+		t.Error("property dashboard query reads raw analytics_event instead of bounded rollups")
+	}
+	for _, required := range []string{"analytics_property_rule", "analytics_dimension_daily"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("property dashboard query is missing %s", required)
+		}
+	}
+}

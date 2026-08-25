@@ -288,9 +288,10 @@ paths:
         pageviews or peak visitors while presenting average daily visitors would make the cap drop
         sites that rank highly by the number actually shown on the card.
 
-        `data_as_of` is the minimum completed watermark shared by the pageview and dimension
-        rollups. It is null until both have completed, so no panel implies that slower sibling data
-        is fresher than it is. The watermark is global processing state and contains no tenant data.
+        `data_as_of` is the minimum completed watermark shared by the pageview, standard-dimension,
+        and governed-property rollups. It is null until all three have completed, so no panel
+        implies that slower sibling data is fresher than it is. The watermark is global processing
+        state and contains no tenant data.
       operationId: getAnalyticsOverview
       parameters:
         - name: days
@@ -405,7 +406,7 @@ components:
               visitors:  { type: integer, format: int64 }
     AnalyticsSummary:
       type: object
-      required: [from, to, data_as_of, pageviews, visitors, average_daily_visitors, series, top_pages, top_referrers, direct_pageviews, direct_share, comparison, breakdowns]
+      required: [from, to, data_as_of, pageviews, visitors, average_daily_visitors, series, top_pages, top_referrers, direct_pageviews, direct_share, comparison, breakdowns, property_breakdowns]
       properties:
         from: { type: string, format: date }
         to:   { type: string, format: date }
@@ -414,8 +415,9 @@ components:
           format: date-time
           nullable: true
           description: |
-            Minimum completed watermark shared by the pageview and dimension rollups. Null until
-            both have completed. This global processing timestamp contains no tenant data.
+            Minimum completed watermark shared by the pageview, standard-dimension, and governed-
+            property rollups. Null until all three have completed. This global processing
+            timestamp contains no tenant data.
         pageviews: { type: integer, format: int64 }
         visitors:
           type: integer
@@ -494,6 +496,36 @@ components:
                 value:     { type: string }
                 pageviews: { type: integer, format: int64 }
                 visitors:  { type: integer, format: int64 }
+        property_breakdowns:
+          type: array
+          description: |
+            Active governed event/property rules and their bounded aggregate values. The API reads
+            these from daily rollups only. `events` counts matching custom events; `visitors` is
+            the peak daily visitor count because visitor hashes intentionally rotate each day.
+            A configured rule may be present with an empty `values` array. Values before the
+            rule's activation boundary are never aggregated retroactively.
+          items:
+            type: object
+            additionalProperties: false
+            required: [rule_id, event_name, property_key, label, values]
+            properties:
+              rule_id: { type: string, format: uuid }
+              event_name: { type: string }
+              property_key: { type: string }
+              label: { type: string }
+              values:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [value, events, visitors]
+                  properties:
+                    value: { type: string }
+                    events: { type: integer, format: int64 }
+                    visitors:
+                      type: integer
+                      format: int64
+                      description: Peak daily visitors for this value in the selected window.
     AnalyticsSummaryComparison:
       type: object
       required: [from, to, pageviews, average_daily_visitors, direct_pageviews, direct_share, pageviews_change_percent, average_daily_visitors_change_percent, direct_share_change_percentage_points]
