@@ -14,6 +14,15 @@ const DEST_BIZ_ID = '44444444-4444-4444-4444-444444444444';
 const SITE_ID = '22222222-2222-2222-2222-222222222222';
 const KEY = 'mfk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
+function dailySeries() {
+  const start = Date.UTC(2026, 5, 26);
+  return Array.from({ length: 30 }, (_, i) => ({
+    date: new Date(start + i * 86_400_000).toISOString().slice(0, 10),
+    pageviews: i === 28 ? 12 : i === 29 ? 30 : 0,
+    visitors: i === 28 ? 4 : i === 29 ? 9 : 0,
+  }));
+}
+
 const business = {
   id: BIZ_ID,
   parent_id: null,
@@ -68,11 +77,21 @@ const summary = {
   to: '2026-07-25',
   pageviews: 42,
   visitors: 9,
+  average_daily_visitors: 13 / 30,
   direct_pageviews: 30,
-  series: [
-    { date: '2026-07-24', pageviews: 12, visitors: 4 },
-    { date: '2026-07-25', pageviews: 30, visitors: 9 },
-  ],
+  direct_share: (30 / 42) * 100,
+  comparison: {
+    from: '2026-05-27',
+    to: '2026-06-25',
+    pageviews: 21,
+    average_daily_visitors: 0.2,
+    direct_pageviews: 15,
+    direct_share: (15 / 21) * 100,
+    pageviews_change_percent: 100,
+    average_daily_visitors_change_percent: ((13 / 30 - 0.2) / 0.2) * 100,
+    direct_share_change_percentage_points: 0,
+  },
+  series: dailySeries(),
   top_pages: [
     { path: '/', pageviews: 25, visitors: 8 },
     { path: '/pricing', pageviews: 17, visitors: 5 },
@@ -232,14 +251,22 @@ test('dashboard renders totals, chart, top pages and referrers', async ({ page }
   await page.goto(`/analytics/${BIZ_ID}/${SITE_ID}`);
 
   await expect(page.getByTestId('stat-pageviews')).toHaveText('42');
-  await expect(page.getByTestId('stat-visitors')).toHaveText('9');
-  await expect(page.getByTestId('stat-direct')).toHaveText('30');
+  await expect(page.getByTestId('stat-visitors')).toHaveText('0.4');
+  await expect(page.getByTestId('stat-direct')).toHaveText('71.4%');
+  await expect(page.getByTestId('stat-pageviews-change')).toContainText('+100.0%');
 
-  // One bar per day, with an accessible description.
+  // One gap-accurate bar per requested day, with an accessible description and data table.
   const chart = page.getByTestId('analytics-chart');
   await expect(chart).toBeVisible();
   await expect(chart).toHaveAttribute('role', 'img');
-  await expect(chart.locator('rect')).toHaveCount(2);
+  await expect(chart.locator('rect')).toHaveCount(30);
+  await expect(page.getByTestId('analytics-date-range')).toContainText('2026-06-26 – 2026-07-25');
+  await expect(page.getByTestId('daily-data-row')).toHaveCount(30);
+  await expect(page.getByTestId('daily-data-row').nth(10)).toContainText('0');
+
+  await page.getByTestId('chart-visitors').click();
+  await expect(page.getByTestId('chart-visitors')).toHaveAttribute('aria-pressed', 'true');
+  await expect(chart).toHaveAttribute('aria-label', /Daily visitors per day/);
 
   await expect(page.getByTestId('top-page-row')).toHaveCount(2);
   await expect(page.getByTestId('top-referrers')).toContainText('news.ycombinator.com');
@@ -248,11 +275,14 @@ test('dashboard renders totals, chart, top pages and referrers', async ({ page }
 // The visitor hash rotates daily by design, so no cross-day identifier exists and a deduplicated
 // multi-day total cannot be computed. The label must not imply one — this is a correctness
 // property of the privacy model, not a wording preference.
-test('visitors is labelled as a peak-day figure, never a window total', async ({ page }) => {
+test('visitors uses a daily average and keeps peak-day context, never a window total', async ({
+  page,
+}) => {
   await installStack(page);
   await page.goto(`/analytics/${BIZ_ID}/${SITE_ID}`);
 
-  await expect(page.getByTestId('analytics-stats')).toContainText('peak day');
+  await expect(page.getByTestId('analytics-stats')).toContainText('Average daily visitors');
+  await expect(page.getByTestId('analytics-stats')).toContainText('Peak day: 9');
   await expect(page.getByTestId('analytics-stats')).not.toContainText('Unique visitors');
 });
 
@@ -291,8 +321,10 @@ test('a site with no traffic yet points back at the embed tag', async ({ page })
       ...summary,
       pageviews: 0,
       visitors: 0,
+      average_daily_visitors: 0,
       direct_pageviews: 0,
-      series: [],
+      direct_share: 0,
+      series: summary.series.map((point) => ({ ...point, pageviews: 0, visitors: 0 })),
       top_pages: [],
       top_referrers: [],
       breakdowns: {

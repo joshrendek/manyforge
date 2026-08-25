@@ -10,8 +10,26 @@ const summary = {
   to: '2026-07-25',
   pageviews: 42,
   visitors: 9,
+  average_daily_visitors: 13 / 7,
   direct_pageviews: 30,
+  direct_share: (30 / 42) * 100,
+  comparison: {
+    from: '2026-07-12',
+    to: '2026-07-18',
+    pageviews: 21,
+    average_daily_visitors: 1,
+    direct_pageviews: 12,
+    direct_share: (12 / 21) * 100,
+    pageviews_change_percent: 100,
+    average_daily_visitors_change_percent: (6 / 7) * 100,
+    direct_share_change_percentage_points: (30 / 42) * 100 - (12 / 21) * 100,
+  },
   series: [
+    { date: '2026-07-19', pageviews: 0, visitors: 0 },
+    { date: '2026-07-20', pageviews: 0, visitors: 0 },
+    { date: '2026-07-21', pageviews: 0, visitors: 0 },
+    { date: '2026-07-22', pageviews: 0, visitors: 0 },
+    { date: '2026-07-23', pageviews: 0, visitors: 0 },
     { date: '2026-07-24', pageviews: 12, visitors: 4 },
     { date: '2026-07-25', pageviews: 30, visitors: 9 },
   ],
@@ -78,25 +96,53 @@ describe('AnalyticsDashboardComponent', () => {
   it('renders headline totals', () => {
     const el = fixture.nativeElement;
     expect(el.querySelector('[data-testid="stat-pageviews"]').textContent.trim()).toBe('42');
-    expect(el.querySelector('[data-testid="stat-visitors"]').textContent.trim()).toBe('9');
-    expect(el.querySelector('[data-testid="stat-direct"]').textContent.trim()).toBe('30');
+    expect(el.querySelector('[data-testid="stat-visitors"]').textContent.trim()).toBe('1.9');
+    expect(el.querySelector('[data-testid="stat-direct"]').textContent.trim()).toBe('71.4%');
+    expect(el.querySelector('[data-testid="stat-pageviews-change"]').textContent).toContain(
+      '+100.0%',
+    );
+    expect(el.querySelector('[data-testid="stat-pageviews-change"]').textContent).toContain(
+      '21 prior',
+    );
   });
 
   // The visitor hash rotates daily by design, so a multi-day deduplicated total does not exist.
   // The label must not claim one — this is a correctness property of the privacy model, not
   // wording preference.
-  it('labels visitors as a peak-day figure rather than a window total', () => {
+  it('uses an average daily visitor headline and preserves peak-day context', () => {
     const stats = fixture.nativeElement.querySelector('[data-testid="analytics-stats"]');
-    expect(stats.textContent).toContain('peak day');
+    expect(stats.textContent).toContain('Average daily visitors');
+    expect(stats.textContent).toContain('Peak day: 9');
     expect(stats.textContent).not.toContain('Unique visitors');
   });
 
-  it('renders one chart bar per day with an accessible label', () => {
+  it('renders every calendar day and exposes exact dates and accessible daily data', () => {
     const chart = fixture.nativeElement.querySelector('[data-testid="analytics-chart"]');
     expect(chart).toBeTruthy();
     expect(chart.getAttribute('role')).toBe('img');
     expect(chart.getAttribute('aria-label')).toContain('Pageviews per day');
-    expect(chart.querySelectorAll('rect').length).toBe(2);
+    expect(chart.querySelectorAll('rect').length).toBe(7);
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="analytics-date-range"]').textContent,
+    ).toContain('2026-07-19 – 2026-07-25');
+    const rows = fixture.nativeElement.querySelectorAll('[data-testid="daily-data-row"]');
+    expect(rows.length).toBe(7);
+    expect(rows[1].textContent).toContain('2026-07-20');
+    expect(rows[1].textContent).toContain('0');
+  });
+
+  it('switches the chart between pageviews and daily visitors', () => {
+    const visitors: HTMLButtonElement = fixture.nativeElement.querySelector(
+      '[data-testid="chart-visitors"]',
+    );
+    visitors.click();
+    fixture.detectChanges();
+    expect(visitors.getAttribute('aria-pressed')).toBe('true');
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="analytics-chart"]')
+        .getAttribute('aria-label'),
+    ).toContain('Daily visitors per day');
   });
 
   it('renders top pages and referrers', () => {
@@ -117,6 +163,22 @@ describe('AnalyticsDashboardComponent', () => {
     expect(
       fixture.nativeElement.querySelector('[data-testid="stat-pageviews"]').textContent.trim(),
     ).toBe('5');
+  });
+
+  it('does not invent an infinite percentage when the prior baseline is zero', () => {
+    fixture.componentInstance.setDays(7);
+    mock.expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=7').flush({
+      ...summary,
+      comparison: {
+        ...summary.comparison,
+        pageviews: 0,
+        pageviews_change_percent: null,
+      },
+    });
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="stat-pageviews-change"]').textContent,
+    ).toContain('No prior baseline');
   });
 
   it('guides the user when there is no traffic yet', () => {
