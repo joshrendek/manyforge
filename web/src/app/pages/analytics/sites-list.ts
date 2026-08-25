@@ -74,13 +74,25 @@ import { Tone } from '../../ui/status';
               [(ngModel)]="newName"
             />
           </div>
+          <div class="mf-field" style="flex:1 1 300px">
+            <label for="an-new-origin">Allowed origin</label>
+            <input
+              id="an-new-origin"
+              class="mf-input"
+              type="url"
+              name="newOrigin"
+              placeholder="https://garden.gg"
+              [(ngModel)]="newOrigin"
+            />
+            <span class="mf-field-hint">Exact site origin; no path or wildcard.</span>
+          </div>
           <div style="display:flex;align-items:flex-end">
             <button
               #createBtn
               type="submit"
               class="mf-btn mf-btn-primary mf-btn-sm"
               data-testid="site-create"
-              [disabled]="!newName.trim() || creating()"
+              [disabled]="!newName.trim() || !newOrigin.trim() || creating()"
             >
               {{ creating() ? 'Creating…' : 'Add site' }}
             </button>
@@ -103,10 +115,31 @@ import { Tone } from '../../ui/status';
               } @else {
                 {{ c.name }}
               }
+              @if (c.allowed_origins.length) {
+                <small class="mf-origin-summary" data-testid="site-allowed-origins">
+                  {{ c.allowed_origins.join(', ') }}
+                </small>
+              } @else {
+                <small
+                  class="mf-origin-summary mf-origin-unrestricted"
+                  data-testid="site-origin-unrestricted"
+                >
+                  Legacy site: any origin can send data
+                </small>
+              }
             </span>
             <span style="flex:3" role="cell">
               @if (c.status === 'active') {
                 <code class="mf-embed" data-testid="site-embed">{{ embed(c) }}</code>
+                <button
+                  type="button"
+                  class="mf-btn mf-btn-sm"
+                  data-testid="site-manage-origins"
+                  [attr.aria-label]="'Manage allowed origins for ' + c.name"
+                  (click)="startOrigins(c)"
+                >
+                  Origins
+                </button>
                 <button
                   type="button"
                   class="mf-btn mf-btn-sm"
@@ -213,6 +246,44 @@ import { Tone } from '../../ui/status';
               }
             </section>
           }
+          @if (editingOriginsSiteId() === c.id) {
+            <div class="mf-origin-panel" data-testid="site-origin-panel">
+              <div class="mf-field mf-origin-field">
+                <label [for]="'allowed-origins-' + c.id">Allowed origins for {{ c.name }}</label>
+                <textarea
+                  [id]="'allowed-origins-' + c.id"
+                  class="mf-input"
+                  data-testid="site-origin-input"
+                  [(ngModel)]="originsDraft"
+                  [name]="'allowedOrigins-' + c.id"
+                  rows="3"
+                ></textarea>
+                <span class="mf-field-hint">
+                  One exact HTTPS origin per line (up to 10). Origin is an integrity guard, not
+                  authentication. Localhost may use HTTP.
+                </span>
+              </div>
+              <div class="mf-origin-actions">
+                <button
+                  type="button"
+                  class="mf-btn mf-btn-sm mf-btn-primary"
+                  data-testid="site-origin-save"
+                  [disabled]="!parsedOrigins().length || savingOrigins()"
+                  (click)="saveOrigins(c)"
+                >
+                  {{ savingOrigins() ? 'Saving…' : 'Save origins' }}
+                </button>
+                <button
+                  type="button"
+                  class="mf-btn mf-btn-sm"
+                  [disabled]="savingOrigins()"
+                  (click)="cancelOrigins()"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          }
           @if (movingSiteId() === c.id) {
             <div class="mf-move-panel" data-testid="site-move-panel">
               @if (loadingTargets()) {
@@ -303,6 +374,16 @@ import { Tone } from '../../ui/status';
       .mf-muted {
         color: var(--mf-text-muted);
       }
+      .mf-field-hint,
+      .mf-origin-summary {
+        display: block;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-xs);
+        overflow-wrap: anywhere;
+      }
+      .mf-origin-unrestricted {
+        color: var(--mf-warn-text);
+      }
       .mf-health-panel {
         display: flex;
         flex-wrap: wrap;
@@ -344,6 +425,25 @@ import { Tone } from '../../ui/status';
         border-top: 1px solid var(--mf-border);
         background: var(--mf-surface-2);
       }
+      .mf-origin-panel {
+        display: flex;
+        align-items: end;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--mf-border);
+        background: var(--mf-surface-2);
+      }
+      .mf-origin-field {
+        flex: 1 1 420px;
+      }
+      .mf-origin-field textarea {
+        resize: vertical;
+      }
+      .mf-origin-actions {
+        display: flex;
+        gap: 8px;
+      }
       .mf-move-panel .mf-field {
         min-width: 220px;
       }
@@ -374,6 +474,7 @@ export class AnalyticsSitesListComponent implements OnInit {
   loading = signal(false);
   error = signal('');
   newName = '';
+  newOrigin = '';
   creating = signal(false);
   movingSiteId = signal('');
   moveTargets = signal<TelemetryMoveTarget[]>([]);
@@ -381,6 +482,9 @@ export class AnalyticsSitesListComponent implements OnInit {
   moving = signal(false);
   moveTargetId = '';
   verifyingSiteId = signal('');
+  editingOriginsSiteId = signal('');
+  originsDraft = '';
+  savingOrigins = signal(false);
 
   ngOnInit(): void {
     this.bizApi.list().subscribe({
@@ -400,10 +504,57 @@ export class AnalyticsSitesListComponent implements OnInit {
 
   selectBusiness(id: string): void {
     this.cancelMove();
+    this.cancelOrigins();
     this.verifyingSiteId.set('');
     this.businessId.set(id);
     this.current.set(id);
     this.reload();
+  }
+
+  startOrigins(c: TelemetryClient): void {
+    if (this.savingOrigins()) return;
+    this.editingOriginsSiteId.set(c.id);
+    this.originsDraft = c.allowed_origins.join('\n');
+  }
+
+  parsedOrigins(): string[] {
+    return this.originsDraft
+      .split(/[\n,]/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  cancelOrigins(): void {
+    if (this.savingOrigins()) return;
+    this.editingOriginsSiteId.set('');
+    this.originsDraft = '';
+  }
+
+  saveOrigins(c: TelemetryClient): void {
+    const origins = this.parsedOrigins();
+    if (!origins.length || this.savingOrigins()) return;
+    this.savingOrigins.set(true);
+    this.api.setAllowedOrigins(this.businessId(), c.id, origins).subscribe({
+      next: (updated) => {
+        this.sites.update((sites) =>
+          sites.map((site) =>
+            site.id === c.id ? { ...site, allowed_origins: updated.allowed_origins } : site,
+          ),
+        );
+        this.savingOrigins.set(false);
+        this.editingOriginsSiteId.set('');
+        this.originsDraft = '';
+        this.toast.success('Allowed origins updated — the embed key is unchanged');
+      },
+      error: (e: HttpErrorResponse) => {
+        this.savingOrigins.set(false);
+        this.toast.error(
+          e.status === 400
+            ? 'Use 1–10 exact HTTPS origins with no path or wildcard'
+            : 'Could not update allowed origins',
+        );
+      },
+    });
   }
 
   reload(): void {
@@ -524,13 +675,20 @@ export class AnalyticsSitesListComponent implements OnInit {
   // every visitor — so the signed tier is deliberately not offered on this screen.
   create(): void {
     const name = this.newName.trim();
-    if (!name || this.creating()) return;
+    const origin = this.newOrigin.trim();
+    if (!name || !origin || this.creating()) return;
     this.creating.set(true);
     this.api
-      .createClient(this.businessId(), { kind: 'analytics', name, require_signature: false })
+      .createClient(this.businessId(), {
+        kind: 'analytics',
+        name,
+        require_signature: false,
+        allowed_origins: [origin],
+      })
       .subscribe({
         next: () => {
           this.newName = '';
+          this.newOrigin = '';
           this.creating.set(false);
           this.toast.success('Site added — copy its embed tag');
           this.reload();
@@ -538,7 +696,11 @@ export class AnalyticsSitesListComponent implements OnInit {
         },
         error: (e: HttpErrorResponse) => {
           this.creating.set(false);
-          this.toast.error(e.status === 400 ? 'That site name is not valid' : 'Could not add site');
+          this.toast.error(
+            e.status === 400
+              ? 'Use a valid site name and exact HTTPS origin (HTTP is allowed for localhost)'
+              : 'Could not add site',
+          );
         },
       });
   }

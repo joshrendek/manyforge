@@ -12,7 +12,7 @@ import (
 )
 
 const getTelemetryClient = `-- name: GetTelemetryClient :one
-SELECT id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, status, created_at, revoked_at FROM telemetry_client
+SELECT id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, allowed_origins, status, created_at, revoked_at FROM telemetry_client
 WHERE id = $1 AND business_id = $2
 `
 
@@ -33,6 +33,7 @@ func (q *Queries) GetTelemetryClient(ctx context.Context, arg GetTelemetryClient
 		&i.PublishableKey,
 		&i.RequireSignature,
 		&i.SealedSecret,
+		&i.AllowedOrigins,
 		&i.Status,
 		&i.CreatedAt,
 		&i.RevokedAt,
@@ -44,7 +45,7 @@ const insertTelemetryClient = `-- name: InsertTelemetryClient :one
 
 INSERT INTO telemetry_client (id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, status, created_at, revoked_at
+RETURNING id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, allowed_origins, status, created_at, revoked_at
 `
 
 type InsertTelemetryClientParams struct {
@@ -83,6 +84,7 @@ func (q *Queries) InsertTelemetryClient(ctx context.Context, arg InsertTelemetry
 		&i.PublishableKey,
 		&i.RequireSignature,
 		&i.SealedSecret,
+		&i.AllowedOrigins,
 		&i.Status,
 		&i.CreatedAt,
 		&i.RevokedAt,
@@ -91,7 +93,7 @@ func (q *Queries) InsertTelemetryClient(ctx context.Context, arg InsertTelemetry
 }
 
 const listTelemetryClients = `-- name: ListTelemetryClients :many
-SELECT id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, status, created_at, revoked_at FROM telemetry_client
+SELECT id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, allowed_origins, status, created_at, revoked_at FROM telemetry_client
 WHERE business_id = $1 AND tenant_root_id = $2
 ORDER BY created_at DESC, id DESC
 LIMIT $3
@@ -121,6 +123,7 @@ func (q *Queries) ListTelemetryClients(ctx context.Context, arg ListTelemetryCli
 			&i.PublishableKey,
 			&i.RequireSignature,
 			&i.SealedSecret,
+			&i.AllowedOrigins,
 			&i.Status,
 			&i.CreatedAt,
 			&i.RevokedAt,
@@ -139,7 +142,7 @@ const revokeTelemetryClient = `-- name: RevokeTelemetryClient :one
 UPDATE telemetry_client
 SET status = 'revoked', revoked_at = now()
 WHERE id = $1 AND tenant_root_id = $2 AND status = 'active'
-RETURNING id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, status, created_at, revoked_at
+RETURNING id, business_id, tenant_root_id, kind, name, publishable_key, require_signature, sealed_secret, allowed_origins, status, created_at, revoked_at
 `
 
 type RevokeTelemetryClientParams struct {
@@ -159,6 +162,7 @@ func (q *Queries) RevokeTelemetryClient(ctx context.Context, arg RevokeTelemetry
 		&i.PublishableKey,
 		&i.RequireSignature,
 		&i.SealedSecret,
+		&i.AllowedOrigins,
 		&i.Status,
 		&i.CreatedAt,
 		&i.RevokedAt,

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: manyforge — telemetry ingest + time-series foundation (manyforge-p20)
-  version: "1.2.0"
+  version: "1.3.0"
   description: |
     Shared event-ingest surface for the analytics (manyforge-as0) and crash-reporting
     (manyforge-zw2) epics.
@@ -88,6 +88,17 @@ paths:
                     alone. Set true ONLY for a server-to-server sender that can hold an `mfs_`
                     secret safely; a signing secret is minted only when this is true, and is
                     returned exactly once in this response.
+                allowed_origins:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  uniqueItems: true
+                  items: { type: string, format: uri }
+                  description: |
+                    Required for analytics clients and rejected for crash clients. Exact browser
+                    origins only: HTTPS with no path/query/userinfo/wildcard; HTTP is accepted only
+                    for localhost or loopback development. Origin is spoofable and is a
+                    data-integrity guard, not authentication.
       responses:
         '201':
           description: Client registered
@@ -103,6 +114,45 @@ paths:
                         description: |
                           The plaintext `mfs_` signing secret. Present ONLY in this response.
                           Server-to-server use only — never embed it in a client binary.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /businesses/{id}/telemetry/clients/{clientId}/allowed-origins:
+    put:
+      summary: Replace an analytics site's allowed browser origins
+      description: |
+        Requires `telemetry.write`. Replaces the complete bounded allowlist without rotating the
+        public key. Unknown, foreign, revoked, non-analytics, and unauthorized clients are all
+        404. Existing sites with an empty list are legacy-unrestricted until this endpoint is used;
+        the list cannot be cleared back to unrestricted.
+      operationId: setTelemetryClientAllowedOrigins
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allowed_origins]
+              properties:
+                allowed_origins:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  uniqueItems: true
+                  items: { type: string, format: uri }
+      responses:
+        '200':
+          description: Updated client; publishable key is unchanged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TelemetryClient' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -290,7 +340,7 @@ components:
   schemas:
     TelemetryClient:
       type: object
-      required: [id, business_id, tenant_root_id, kind, name, publishable_key, status, created_at, require_signature, has_secret]
+      required: [id, business_id, tenant_root_id, kind, name, publishable_key, allowed_origins, status, created_at, require_signature, has_secret]
       properties:
         id:              { type: string, format: uuid }
         business_id:     { type: string, format: uuid }
@@ -298,6 +348,14 @@ components:
         kind:            { type: string, enum: [analytics, crash] }
         name:            { type: string }
         publishable_key: { type: string, description: 'Public `mfk_` token; safe to embed in a client.' }
+        allowed_origins:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          items: { type: string, format: uri }
+          description: |
+            Exact normalized browser origins accepted by the analytics collector. Empty means an
+            existing legacy site is unrestricted; it is never authentication.
         status:          { type: string, enum: [active, revoked] }
         require_signature:
           type: boolean

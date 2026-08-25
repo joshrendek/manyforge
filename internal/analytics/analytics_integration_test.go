@@ -24,6 +24,7 @@ import (
 	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/timeseries"
 	"github.com/manyforge/manyforge/internal/telemetry"
 )
@@ -32,12 +33,13 @@ const humanUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537
 	"(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 type env struct {
-	tdb  *testdb.TestDB
-	srv  *httptest.Server
-	biz  uuid.UUID
-	prin uuid.UUID
-	site uuid.UUID
-	key  string
+	tdb     *testdb.TestDB
+	srv     *httptest.Server
+	biz     uuid.UUID
+	prin    uuid.UUID
+	site    uuid.UUID
+	key     string
+	metrics *observability.Metrics
 }
 
 func newEnv(t *testing.T) (context.Context, *env) {
@@ -60,7 +62,7 @@ func newEnvWithCloudflareCountryTrustAndProxy(t *testing.T, trust, trustLoopback
 		t.Fatalf("create partitions: %v", err)
 	}
 
-	e := &env{tdb: tdb}
+	e := &env{tdb: tdb, metrics: observability.NewMetrics()}
 	e.seedTenant(t, ctx)
 	e.seedSite(t, ctx)
 
@@ -77,6 +79,7 @@ func newEnvWithCloudflareCountryTrustAndProxy(t *testing.T, trust, trustLoopback
 	pub := &analytics.PublicHandler{
 		DB:                           tdb.App,
 		Logger:                       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:                      e.metrics,
 		TrustedProxies:               trustedProxies,
 		CloudflareSourceRanges:       []*net.IPNet{cloudflareTestRange},
 		TrustCloudflareCountryHeader: trust,
@@ -142,6 +145,12 @@ func (e *env) seedSite(t *testing.T, ctx context.Context) {
 }
 
 func (e *env) collect(t *testing.T, key, path, ref, ua, ip string) int {
+	return e.collectWithOrigins(t, key, path, ref, ua, ip, nil)
+}
+
+func (e *env) collectWithOrigins(
+	t *testing.T, key, path, ref, ua, ip string, origins []string,
+) int {
 	t.Helper()
 	b, _ := json.Marshal(map[string]string{"k": key, "p": path, "r": ref})
 	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/a/e", bytes.NewReader(b))
@@ -151,6 +160,9 @@ func (e *env) collect(t *testing.T, key, path, ref, ua, ip string) int {
 	}
 	if ip != "" {
 		req.Header.Set("X-Forwarded-For", ip)
+	}
+	for _, origin := range origins {
+		req.Header.Add("Origin", origin)
 	}
 	resp, err := e.srv.Client().Do(req)
 	if err != nil {
@@ -644,6 +656,68 @@ func TestCollect_NoOracleAndNoWriteForBadKeys(t *testing.T) {
 	}
 }
 
+func TestCollect_AllowedOriginsAreUniformAndObservable(t *testing.T) {
+	ctx, e := newEnv(t)
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE telemetry_client
+		    SET allowed_origins = ARRAY['https://garden.example']
+		  WHERE id = $1`, e.site); err != nil {
+		t.Fatalf("configure allowed origin: %v", err)
+	}
+
+	beforeRejected := e.metrics.Get(observability.MetricAnalyticsOriginRejected)
+	for _, tc := range []struct {
+		name      string
+		key       string
+		origins   []string
+		wantRows  int
+		wantDelta int64
+	}{
+		{"allowed canonicalizes", e.key, []string{"HTTPS://GARDEN.EXAMPLE:443/"}, 1, 0},
+		{"mismatch", e.key, []string{"https://other.example"}, 1, 1},
+		{"missing", e.key, nil, 1, 2},
+		{"duplicate header", e.key, []string{"https://garden.example", "https://other.example"}, 1, 3},
+		// An unknown key with a valid Origin remains a generic rejection. The origin counter must
+		// not claim a mismatch before the key resolves.
+		{"unknown key", "mfk_" + strings.Repeat("Z", 32), []string{"https://other.example"}, 1, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if code := e.collectWithOrigins(
+				t, tc.key, "/origin-check", "", humanUA, "203.0.113.9", tc.origins,
+			); code != http.StatusNoContent {
+				t.Fatalf("status = %d, want uniform 204", code)
+			}
+			var rows int
+			if err := e.tdb.Super.QueryRow(ctx,
+				"SELECT count(*) FROM analytics_event WHERE client_id=$1", e.site,
+			).Scan(&rows); err != nil {
+				t.Fatalf("count events: %v", err)
+			}
+			if rows != tc.wantRows {
+				t.Fatalf("stored rows = %d, want %d", rows, tc.wantRows)
+			}
+			if got := e.metrics.Get(observability.MetricAnalyticsOriginRejected) - beforeRejected; got != tc.wantDelta {
+				t.Fatalf("origin rejection delta = %d, want %d", got, tc.wantDelta)
+			}
+		})
+	}
+
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE telemetry_client SET status='revoked', revoked_at=now() WHERE id=$1`, e.site,
+	); err != nil {
+		t.Fatalf("revoke configured site: %v", err)
+	}
+	if code := e.collectWithOrigins(
+		t, e.key, "/revoked-origin", "", humanUA, "203.0.113.9",
+		[]string{"https://other.example"},
+	); code != http.StatusNoContent {
+		t.Fatalf("revoked configured site status = %d, want uniform 204", code)
+	}
+	if got := e.metrics.Get(observability.MetricAnalyticsOriginRejected) - beforeRejected; got != 3 {
+		t.Fatalf("revoked key changed origin rejection delta to %d; revocation must resolve first", got)
+	}
+}
+
 // A crash-kind key must not be usable to write pageviews.
 func TestCollect_RejectsNonAnalyticsKind(t *testing.T) {
 	ctx, e := newEnv(t)
@@ -789,6 +863,9 @@ func TestCollect_AnswersCORSPreflight(t *testing.T) {
 	if got := resp.Header.Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "content-type") {
 		t.Errorf("Access-Control-Allow-Headers = %q, must allow Content-Type for the XHR fallback", got)
 	}
+	if got := resp.Header.Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("Access-Control-Allow-Credentials = %q; collector must never accept credentials", got)
+	}
 }
 
 func TestCollect_SetsCORSOnThePostItself(t *testing.T) {
@@ -805,6 +882,9 @@ func TestCollect_SetsCORSOnThePostItself(t *testing.T) {
 	defer resp.Body.Close()
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Errorf("POST response missing Access-Control-Allow-Origin (got %q)", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("POST unexpectedly allows credentials: %q", got)
 	}
 
 	// text/plain is what the beacon actually sends, precisely BECAUSE it avoids a preflight. The

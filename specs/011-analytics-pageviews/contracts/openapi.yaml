@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: manyforge — web analytics (manyforge-as0)
-  version: "1.0.0"
+  version: "1.1.0"
   description: |
     Privacy-first web analytics for tenant sites, built on the manyforge-p20 storage foundation.
 
@@ -72,11 +72,18 @@ paths:
       description: |
         Called by the snippet, normally via `navigator.sendBeacon`.
 
-        **Always returns 204**, whatever happens — unknown key, revoked key, malformed body, or a
-        bot. A public collect endpoint must not confirm which keys exist, and a beacon has no
+        **Always returns 204**, whatever happens — unknown key, revoked key, malformed body,
+        disallowed/missing Origin, or a bot. A public collect endpoint must not confirm which keys
+        exist, and a beacon has no
         error handling to receive a status, so a varying status would leak information to an
         attacker while telling a legitimate site nothing. Operators observe health through the
-        `analytics.collected` / `analytics.collect_rejected` metrics instead.
+        `analytics.collected` / `analytics.collect_rejected` metrics instead. Origin mismatches
+        also increment the unlabeled `analytics.origin_rejected` counter without logging the key
+        or origin.
+
+        A configured exact Origin allowlist is a data-integrity guard against accidental key reuse
+        and routine browser pollution. Origin is caller-controlled and spoofable outside a browser,
+        so it is explicitly not authentication. The endpoint accepts no cookies or credentials.
 
         The server derives `occurred_at` from its own clock and the visitor hash from the request
         IP and User-Agent. Neither the IP nor the UA is stored. The path is stripped of its query

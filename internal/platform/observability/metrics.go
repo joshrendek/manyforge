@@ -37,6 +37,9 @@ const (
 	MetricAnalyticsCollected       = "analytics.collected"
 	MetricAnalyticsCollectRejected = "analytics.collect_rejected"
 	MetricAnalyticsCollectFailed   = "analytics.collect_failed"
+	// Origin rejections are a subset of collect_rejected. The counter has no key/origin labels, so
+	// it is observable without turning untrusted public values into logs or high-cardinality data.
+	MetricAnalyticsOriginRejected = "analytics.origin_rejected"
 
 	// Whole-master tenant merge observations. Counters are request-local
 	// telemetry; the append-only tenant_merge_operation_event and immutable

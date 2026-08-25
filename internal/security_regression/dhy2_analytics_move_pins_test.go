@@ -51,8 +51,8 @@ func TestAnalyticsSiteMovePinsAuthorizationLockAndCompleteHistory(t *testing.T) 
 
 func TestAnalyticsIngestKeepsClientShareLocksForMoveSerialization(t *testing.T) {
 	for path, function := range map[string]string{
-		"../../migrations/0105_timeseries_foundation.up.sql":   "telemetry_ingest_analytics",
-		"../../migrations/0109_analytics_custom_events.up.sql": "analytics_collect",
+		"../../migrations/0105_timeseries_foundation.up.sql":     "telemetry_ingest_analytics",
+		"../../migrations/0121_analytics_allowed_origins.up.sql": "analytics_collect",
 	} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
