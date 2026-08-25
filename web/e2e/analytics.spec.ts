@@ -421,7 +421,13 @@ test('governed property panels use configured labels and event counts', async ({
 
   const property = page.getByTestId('property-breakdown');
   await expect(property).toHaveCount(1);
-  await expect(property).toHaveAttribute('aria-label', 'Game mode values for grow_start events');
+  await expect(property).toHaveAttribute(
+    'aria-labelledby',
+    'property-label-55555555-5555-5555-5555-555555555555',
+  );
+  await expect(page.locator('#property-label-55555555-5555-5555-5555-555555555555')).toHaveText(
+    'Game mode',
+  );
   await expect(property).toContainText('classic');
   await expect(property).toContainText('5');
   await expect(property).toContainText('Events');

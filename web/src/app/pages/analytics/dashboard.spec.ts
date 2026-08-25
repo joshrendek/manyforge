@@ -294,9 +294,11 @@ describe('AnalyticsDashboardComponent', () => {
   it('renders non-empty governed property panels with event counts', () => {
     const panels = fixture.nativeElement.querySelectorAll('[data-testid="property-breakdown"]');
     expect(panels.length).toBe(1);
-    expect(panels[0].getAttribute('aria-label')).toContain(
-      'Game mode values for grow_start events',
+    expect(panels[0].tagName).toBe('TABLE');
+    expect(panels[0].getAttribute('aria-labelledby')).toBe(
+      'property-label-11111111-2222-3333-4444-555555555555',
     );
+    expect(panels[0].querySelectorAll('th[scope="col"]').length).toBe(2);
     expect(panels[0].textContent).toContain('Events');
     expect(panels[0].textContent).not.toContain('Pageviews');
     expect(panels[0].textContent).toContain('classic');

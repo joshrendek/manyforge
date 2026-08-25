@@ -219,35 +219,34 @@ import { Spinner } from '../../ui/spinner/spinner';
             <div class="mf-two-col">
               @for (property of propertyPanels(); track property.rule_id) {
                 <div>
-                  <h3 class="mf-subhead">{{ property.label }}</h3>
+                  <h3 class="mf-subhead" [id]="'property-label-' + property.rule_id">
+                    {{ property.label }}
+                  </h3>
                   <p class="mf-property-context">
                     {{ property.event_name }} · {{ property.property_key }}
                   </p>
-                  <div
-                    class="mf-table"
+                  <table
+                    class="mf-table mf-property-table"
                     data-testid="property-breakdown"
-                    role="table"
-                    [attr.aria-label]="
-                      property.label + ' values for ' + property.event_name + ' events'
-                    "
+                    [attr.aria-labelledby]="'property-label-' + property.rule_id"
                   >
-                    <div class="mf-tr mf-th" role="row">
-                      <span style="flex:3" role="columnheader">{{ property.label }}</span>
-                      <span style="flex:1" role="columnheader">Events</span>
-                    </div>
-                    @for (value of property.values; track value.value) {
-                      <div class="mf-tr" role="row" data-testid="property-breakdown-row">
-                        <span
-                          style="flex:3"
-                          class="mf-ellipsis"
-                          role="cell"
-                          [title]="value.value"
-                          >{{ value.value }}</span
-                        >
-                        <span style="flex:1" role="cell">{{ value.events }}</span>
-                      </div>
-                    }
-                  </div>
+                    <thead>
+                      <tr>
+                        <th scope="col">{{ property.label }}</th>
+                        <th scope="col">Events</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (value of property.values; track value.value) {
+                        <tr data-testid="property-breakdown-row">
+                          <td>
+                            <span class="mf-ellipsis" [title]="value.value">{{ value.value }}</span>
+                          </td>
+                          <td>{{ value.events }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
                 </div>
               }
             </div>
@@ -411,6 +410,35 @@ import { Spinner } from '../../ui/spinner/spinner';
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: var(--mf-fs-xs);
         overflow-wrap: anywhere;
+      }
+      .mf-property-table {
+        width: 100%;
+        border-spacing: 0;
+        table-layout: fixed;
+      }
+      .mf-property-table th,
+      .mf-property-table td {
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--mf-border);
+        text-align: left;
+      }
+      .mf-property-table th {
+        background: var(--mf-surface-2);
+        color: var(--mf-text-faint);
+        font-size: var(--mf-fs-xs);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .mf-property-table th:first-child,
+      .mf-property-table td:first-child {
+        width: 75%;
+      }
+      .mf-property-table tbody tr:last-child td {
+        border-bottom: 0;
+      }
+      .mf-property-table .mf-ellipsis {
+        display: block;
       }
     `,
   ],

@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1420,18 +1421,30 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 		t.Fatalf("configure property rules = %+v, %v", rules, err)
 	}
 	for _, event := range []struct {
-		value string
+		value any
 		ip    string
 	}{
 		{value: "classic", ip: "203.0.113.1"},
 		{value: "classic", ip: "203.0.113.2"},
 		{value: "timed", ip: "203.0.113.3"},
+		{value: 3, ip: "203.0.113.4"},
+		{value: true, ip: "203.0.113.5"},
 	} {
 		if code := e.collectEvent(t, "grow_start", map[string]any{"mode": event.value}, humanUA, event.ip); code != http.StatusNoContent {
-			t.Fatalf("collect %s status = %d", event.value, code)
+			t.Fatalf("collect %v status = %d", event.value, code)
 		}
 	}
 	e.collectEvent(t, "grow_start", map[string]any{"mode": "bot"}, "Googlebot/2.1", "203.0.113.9")
+	// The public collector drops nested values, but the SQL rollup also rejects them as defense in
+	// depth if malformed historical data exists.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`INSERT INTO analytics_event (
+		    tenant_root_id, business_id, client_id, occurred_at, name, props, path, visitor_hash
+		 ) VALUES ($1,$1,$2,now(),'grow_start',
+		           '{"mode":{"nested":true}}','/game',decode('02','hex'))`,
+		e.biz, e.site); err != nil {
+		t.Fatalf("seed non-primitive property: %v", err)
+	}
 	e.rollup(t, ctx)
 
 	_, first := e.summary(t, e.site)
@@ -1450,18 +1463,21 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 	if game == nil || empty == nil || len(empty.Values) != 0 {
 		t.Fatalf("structured property panels = %+v", first.PropertyBreakdowns)
 	}
-	if len(game.Values) != 2 || game.Values[0].Value != "classic" ||
-		game.Values[0].Events != 2 || game.Values[0].Visitors != 2 ||
-		game.Values[1].Value != "timed" || game.Values[1].Events != 1 ||
-		game.Values[1].Visitors != 1 {
-		t.Fatalf("game mode values = %+v, want classic 2/2 and timed 1/1", game.Values)
+	values := make(map[string]analytics.PropertyValueCount, len(game.Values))
+	for _, value := range game.Values {
+		values[value.Value] = value
+	}
+	if len(values) != 4 || values["classic"].Events != 2 || values["classic"].Visitors != 2 ||
+		values["timed"].Events != 1 || values["timed"].Visitors != 1 ||
+		values["3"].Events != 1 || values["true"].Events != 1 {
+		t.Fatalf("game mode values = %+v, want governed string/number/boolean values", game.Values)
 	}
 	for _, value := range game.Values {
 		if value.Value == "legacy" || value.Value == "bot" {
 			t.Fatalf("ineligible value was aggregated: %+v", game.Values)
 		}
 	}
-	if len(first.Breakdowns["event"]) != 1 || first.Breakdowns["event"][0].Pageviews != 4 {
+	if len(first.Breakdowns["event"]) != 1 || first.Breakdowns["event"][0].Pageviews != 7 {
 		t.Fatalf("standard event breakdown changed by property rollup: %+v", first.Breakdowns["event"])
 	}
 
@@ -1473,7 +1489,7 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 	}
 	e.rollup(t, ctx)
 	_, second := e.summary(t, e.site)
-	if fmt.Sprint(second.PropertyBreakdowns) != fmt.Sprint(first.PropertyBreakdowns) {
+	if !reflect.DeepEqual(second.PropertyBreakdowns, first.PropertyBreakdowns) {
 		t.Fatalf("property rollup is not idempotent: first=%+v second=%+v",
 			first.PropertyBreakdowns, second.PropertyBreakdowns)
 	}
@@ -1483,7 +1499,7 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 		t.Fatalf("delete raw events: %v", err)
 	}
 	_, afterRetention := e.summary(t, e.site)
-	if fmt.Sprint(afterRetention.PropertyBreakdowns) != fmt.Sprint(first.PropertyBreakdowns) {
+	if !reflect.DeepEqual(afterRetention.PropertyBreakdowns, first.PropertyBreakdowns) {
 		t.Fatalf("summary changed after raw retention: before=%+v after=%+v",
 			first.PropertyBreakdowns, afterRetention.PropertyBreakdowns)
 	}
