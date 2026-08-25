@@ -125,10 +125,12 @@ describe('AnalyticsSitesListComponent', () => {
     );
   });
 
-  it('checks installation and reflects a recovered healthy site', () => {
-    fixture.nativeElement
-      .querySelector('[data-testid="site-check-installation"]')
-      .dispatchEvent(new MouseEvent('click'));
+  it('checks installation, reflects recovery, and preserves keyboard focus', async () => {
+    const checkButton = fixture.nativeElement.querySelector(
+      '[data-testid="site-check-installation"]',
+    ) as HTMLButtonElement;
+    checkButton.focus();
+    checkButton.dispatchEvent(new MouseEvent('click'));
 
     mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
       clients: [
@@ -145,10 +147,14 @@ describe('AnalyticsSitesListComponent', () => {
       ],
     });
     fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve));
+    fixture.detectChanges();
 
-    expect(
-      fixture.nativeElement.querySelector('[data-testid="site-status-cell"]').textContent,
-    ).toContain('Healthy');
+    const statusCell = fixture.nativeElement.querySelector(
+      '[data-testid="site-status-cell"]',
+    ) as HTMLElement;
+    expect(statusCell.textContent).toContain('Healthy');
+    expect(document.activeElement).toBe(statusCell);
     expect(
       fixture.nativeElement.querySelector('[data-testid="site-health-message"]').textContent,
     ).toContain('Data is arriving');
