@@ -64,9 +64,8 @@ func (w *RollupWorker) withDefaults() {
 	}
 }
 
-// rollupSpecs names the SECURITY DEFINER rollup functions this worker drives and their durable
-// state rows. Each function takes
-// (lag interval, overlap interval) and returns the number of bucket rows written.
+// rollupSpec names one SECURITY DEFINER rollup function and its durable state row. Each function
+// takes (lag interval, overlap interval) and returns the number of bucket rows written.
 //
 // The function fields are fixed at compile time because SQL identifiers cannot be bind parameters;
 // only those fixed function names are interpolated. State names are ordinary bound values. Neither
@@ -76,10 +75,12 @@ type rollupSpec struct {
 	state    string
 }
 
+// rollupSpecs is the fixed sweep order. A failed entry never prevents later entries from running.
 var rollupSpecs = []rollupSpec{
 	{function: "rollup_analytics_daily", state: "analytics_daily"},
 	{function: "rollup_analytics_pageviews", state: "analytics_pageviews"},
 	{function: "rollup_analytics_dimensions", state: "analytics_dimensions"},
+	{function: "rollup_analytics_site_health", state: "analytics_site_health"},
 }
 
 // SweepOnce advances every rollup by one window and returns the total bucket rows written. A

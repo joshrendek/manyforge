@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: manyforge — telemetry ingest + time-series foundation (manyforge-p20)
-  version: "1.1.0"
+  version: "1.2.0"
   description: |
     Shared event-ingest surface for the analytics (manyforge-as0) and crash-reporting
     (manyforge-zw2) epics.
@@ -34,7 +34,8 @@ paths:
       description: |
         Requires `telemetry.read`. Publishable keys are returned deliberately — an operator
         needs them to configure an SDK. Signing secrets are never returned here; only
-        `has_secret` is reported.
+        `has_secret` is reported. Analytics clients include asynchronously aggregated site
+        health; collector activity and dashboard rollup freshness are separate signals.
       operationId: listTelemetryClients
       parameters:
         - $ref: '#/components/parameters/BusinessId'
@@ -306,6 +307,40 @@ components:
         has_secret:
           type: boolean
           description: Whether a signing secret exists. The secret itself is never returned after creation.
+        analytics_health:
+          allOf:
+            - $ref: '#/components/schemas/AnalyticsSiteHealth'
+          nullable: true
+          description: Present on analytics clients returned by the authenticated list endpoint.
+
+    AnalyticsSiteHealth:
+      type: object
+      required: [status, receiving_data, last_accepted_at, activity_data_as_of, data_as_of]
+      properties:
+        status:
+          type: string
+          enum: [checking, never_seen, healthy, stale, revoked]
+          description: |
+            `checking` means the activity rollup has not completed recently enough to make a
+            per-site claim. `never_seen` means it completed and found no accepted event.
+        receiving_data:
+          type: boolean
+          description: True only when an accepted event arrived within the last 24 hours.
+        last_accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Server ingest time of the latest compacted event; null before any exact observation.
+        activity_data_as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: Watermark through which the installation-health rollup has checked activity.
+        data_as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: Common completed watermark of the analytics rollups that feed dashboards.
 
     TelemetryMoveTarget:
       type: object

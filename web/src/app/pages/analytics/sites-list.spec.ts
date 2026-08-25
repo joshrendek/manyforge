@@ -41,6 +41,13 @@ const clients = {
       has_secret: false,
       created_at: '',
       revoked_at: null,
+      analytics_health: {
+        status: 'never_seen',
+        receiving_data: false,
+        last_accepted_at: null,
+        activity_data_as_of: '2026-07-25T00:00:00Z',
+        data_as_of: '2026-07-25T00:00:00Z',
+      },
     },
     {
       id: 'c1',
@@ -95,6 +102,74 @@ describe('AnalyticsSitesListComponent', () => {
     expect(tag).toContain('/a.js');
     expect(tag).toContain('data-key="mfk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"');
     expect(tag).toContain('defer');
+  });
+
+  it('shows a setup checklist when the collector has never accepted an event', () => {
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-status-cell"]').textContent,
+    ).toContain('Never seen');
+    const checklist = fixture.nativeElement.querySelector('[data-testid="site-install-checklist"]');
+    expect(checklist.textContent).toContain('Paste it into the site');
+    expect(checklist.textContent).toContain('Visit or reload the site');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health-message"]').textContent,
+    ).toContain('No accepted event yet');
+  });
+
+  it('checks installation and reflects a recovered healthy site', () => {
+    fixture.nativeElement
+      .querySelector('[data-testid="site-check-installation"]')
+      .dispatchEvent(new MouseEvent('click'));
+
+    mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
+      clients: [
+        {
+          ...clients.clients[0],
+          analytics_health: {
+            status: 'healthy',
+            receiving_data: true,
+            last_accepted_at: '2026-07-25T00:01:00Z',
+            activity_data_as_of: '2026-07-25T00:01:30Z',
+            data_as_of: '2026-07-25T00:01:30Z',
+          },
+        },
+      ],
+    });
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-status-cell"]').textContent,
+    ).toContain('Healthy');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health-message"]').textContent,
+    ).toContain('Data is arriving');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-install-checklist"]'),
+    ).toBeNull();
+  });
+
+  it('shows a stale site with the exact last accepted event', () => {
+    fixture.componentInstance.selectBusiness('b1');
+    mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
+      clients: [
+        {
+          ...clients.clients[0],
+          analytics_health: {
+            ...clients.clients[0].analytics_health,
+            status: 'stale',
+            last_accepted_at: '2026-07-20T12:00:00Z',
+          },
+        },
+      ],
+    });
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-status-cell"]').textContent,
+    ).toContain('Stale');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="site-health"]').textContent,
+    ).toContain('2026-07-20T12:00:00Z');
   });
 
   // A site created from this screen must never request a signing secret: the mfs_ secret is

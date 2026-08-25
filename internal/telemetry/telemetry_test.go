@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestNewPublishableKey_ShapeAndUniqueness(t *testing.T) {
@@ -78,6 +80,47 @@ func TestTooOld(t *testing.T) {
 	}
 	if tooOld(now.Add(-time.Hour), now) {
 		t.Fatal("recent event should be accepted")
+	}
+}
+
+func TestAnalyticsSiteHealthStates(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	ts := func(t time.Time) pgtype.Timestamptz {
+		return pgtype.Timestamptz{Time: t, Valid: true}
+	}
+	freshActivity := ts(now.Add(-time.Minute))
+
+	for _, tc := range []struct {
+		name          string
+		clientStatus  string
+		everAccepted  bool
+		lastAccepted  pgtype.Timestamptz
+		activityAsOf  pgtype.Timestamptz
+		wantStatus    string
+		wantReceiving bool
+	}{
+		{"revoked wins", "revoked", true, ts(now), freshActivity, SiteHealthRevoked, false},
+		{"health rollup has not completed", "active", false, pgtype.Timestamptz{}, pgtype.Timestamptz{}, SiteHealthChecking, false},
+		{"health rollup is delayed", "active", true, ts(now), ts(now.Add(-16 * time.Minute)), SiteHealthChecking, false},
+		{"never accepted", "active", false, pgtype.Timestamptz{}, freshActivity, SiteHealthNeverSeen, false},
+		{"recent accepted event", "active", true, ts(now.Add(-time.Hour)), freshActivity, SiteHealthHealthy, true},
+		{"accepted event is stale", "active", true, ts(now.Add(-25 * time.Hour)), freshActivity, SiteHealthStale, false},
+		{"historical activity predates exact tracking", "active", true, pgtype.Timestamptz{}, freshActivity, SiteHealthStale, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := analyticsSiteHealth(
+				tc.clientStatus,
+				tc.everAccepted,
+				tc.lastAccepted,
+				tc.activityAsOf,
+				pgtype.Timestamptz{},
+				now,
+			)
+			if got.Status != tc.wantStatus || got.ReceivingData != tc.wantReceiving {
+				t.Fatalf("health = (%q, receiving %v), want (%q, receiving %v)",
+					got.Status, got.ReceivingData, tc.wantStatus, tc.wantReceiving)
+			}
+		})
 	}
 }
 
