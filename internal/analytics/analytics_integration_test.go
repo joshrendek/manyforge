@@ -25,6 +25,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/timeseries"
+	"github.com/manyforge/manyforge/internal/telemetry"
 )
 
 const humanUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
@@ -407,6 +408,68 @@ func TestSummaryAndOverview_UseCommonCompletedDashboardWatermark(t *testing.T) {
 	if unavailableOverview.DataAsOf != nil {
 		t.Errorf("overview data_as_of = %q with an incomplete rollup, want null",
 			*unavailableOverview.DataAsOf)
+	}
+}
+
+func TestSiteHealth_NeverSeenStaleRecoveredAndRevoked(t *testing.T) {
+	ctx, e := newEnv(t)
+	svc := telemetry.NewService(e.tdb.App, nil)
+	var appCanReadActivity bool
+	if err := e.tdb.Super.QueryRow(ctx,
+		`SELECT has_table_privilege('manyforge_app', 'analytics_site_activity', 'SELECT')`,
+	).Scan(&appCanReadActivity); err != nil {
+		t.Fatalf("inspect activity-table grant: %v", err)
+	}
+	if appCanReadActivity {
+		t.Fatal("analytics_site_activity is directly readable; tenant-safe function must be the only read path")
+	}
+
+	// A completed health sweep with no activity distinguishes "never seen" from a health pipeline
+	// that has not checked yet. The dashboard rollups advance in the same worker sweep.
+	e.rollup(t, ctx)
+	list, err := svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || len(list) != 1 || list[0].AnalyticsHealth == nil {
+		t.Fatalf("initial site health = list %d, err %v, value %+v", len(list), err, list)
+	}
+	if got := list[0].AnalyticsHealth; got.Status != telemetry.SiteHealthNeverSeen ||
+		got.ReceivingData || got.ActivityDataAsOf == nil || got.DataAsOf == nil {
+		t.Fatalf("never-seen health = %+v", got)
+	}
+
+	// Historical accepted activity older than the healthy window is stale, not never installed.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`INSERT INTO analytics_site_activity (client_id, last_accepted_at)
+		 VALUES ($1, now() - interval '48 hours')`, e.site); err != nil {
+		t.Fatalf("seed stale activity: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthStale {
+		t.Fatalf("stale health = %+v, err %v", list[0].AnalyticsHealth, err)
+	}
+
+	// Exercise the actual public browser collector. It remains a uniform 204, then the async
+	// health rollup observes the accepted row and the authenticated site state recovers.
+	if code := e.collect(t, e.key, "/verify-installation", "", humanUA, "203.0.113.9"); code != http.StatusNoContent {
+		t.Fatalf("public collector status = %d, want 204", code)
+	}
+	e.rollup(t, ctx)
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil {
+		t.Fatalf("list recovered health: %v", err)
+	}
+	recovered := list[0].AnalyticsHealth
+	if recovered.Status != telemetry.SiteHealthHealthy || !recovered.ReceivingData ||
+		recovered.LastAcceptedAt == nil {
+		t.Fatalf("recovered health = %+v", recovered)
+	}
+
+	if _, err := svc.RevokeClient(ctx, e.prin, e.biz, e.site); err != nil {
+		t.Fatalf("revoke site: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthRevoked ||
+		list[0].AnalyticsHealth.ReceivingData {
+		t.Fatalf("revoked health = %+v, err %v", list[0].AnalyticsHealth, err)
 	}
 }
 

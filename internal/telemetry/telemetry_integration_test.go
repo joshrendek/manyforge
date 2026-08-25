@@ -626,6 +626,8 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 		    (tenant_root_id,business_id,client_id,bucket_date,dimension,value,pageviews,visitors)
 		  VALUES ($1,$2,$3,$4::date,'device','desktop',7,3)`,
 			[]any{seed.businessID, seed.businessID, created.ID, today}},
+		{`INSERT INTO analytics_site_activity (client_id,last_accepted_at)
+		  VALUES ($1,now())`, []any{created.ID}},
 	}
 	for _, statement := range statements {
 		if _, err := e.tdb.Super.Exec(ctx, statement.sql, statement.args...); err != nil {
@@ -664,6 +666,11 @@ func TestClientLifecycle_MoveAnalyticsSitePreservesIdentityAndHistory(t *testing
 	}
 	if len(sourceList) != 0 || len(targetList) != 1 || targetList[0].ID != created.ID {
 		t.Fatalf("lists after move: source=%#v target=%#v", sourceList, targetList)
+	}
+	if targetList[0].AnalyticsHealth == nil ||
+		targetList[0].AnalyticsHealth.Status != telemetry.SiteHealthHealthy {
+		t.Fatalf("site health did not follow authoritative client ownership: %+v",
+			targetList[0].AnalyticsHealth)
 	}
 
 	for _, table := range []string{
