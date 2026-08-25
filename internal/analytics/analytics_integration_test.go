@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -291,6 +292,73 @@ func TestRollup_VisitorsVsPageviews(t *testing.T) {
 	}
 	if s.TopPages[0].Path != "/" || s.TopPages[0].Pageviews != 2 {
 		t.Errorf("top page = %+v, want / with 2", s.TopPages[0])
+	}
+}
+
+func TestSummary_FillsDailyGapsAndComparesEquivalentPriorWindow(t *testing.T) {
+	ctx, e := newEnv(t)
+	for _, row := range []struct {
+		daysAgo, pv, vis int
+	}{{0, 10, 4}, {2, 20, 2}, {7, 5, 1}, {9, 5, 3}} {
+		if _, err := e.tdb.Super.Exec(ctx,
+			`INSERT INTO analytics_daily
+			   (tenant_root_id, business_id, client_id, bucket_date, pageviews, visitors, updated_at)
+			 VALUES ($1,$2,$3, (now() AT TIME ZONE 'UTC')::date - $4::int, $5, $6, now())`,
+			e.biz, e.biz, e.site, row.daysAgo, row.pv, row.vis); err != nil {
+			t.Fatalf("seed daily: %v", err)
+		}
+	}
+	for _, row := range []struct {
+		daysAgo, pv, vis int
+	}{{0, 6, 2}, {7, 2, 1}} {
+		if _, err := e.tdb.Super.Exec(ctx,
+			`INSERT INTO analytics_referrer_daily
+			   (tenant_root_id, business_id, client_id, bucket_date, referrer_host, pageviews, visitors, updated_at)
+			 VALUES ($1,$2,$3, (now() AT TIME ZONE 'UTC')::date - $4::int, 'example.test', $5, $6, now())`,
+			e.biz, e.biz, e.site, row.daysAgo, row.pv, row.vis); err != nil {
+			t.Fatalf("seed referrer daily: %v", err)
+		}
+	}
+
+	code, got := e.summary(t, e.site)
+	if code != http.StatusOK {
+		t.Fatalf("summary status = %d, want 200", code)
+	}
+	if len(got.Series) != 7 {
+		t.Fatalf("len(series) = %d, want 7", len(got.Series))
+	}
+	wantFrom := timeNow().AddDate(0, 0, -6).Format("2006-01-02")
+	wantTo := timeNow().Format("2006-01-02")
+	if got.Series[0].Date != wantFrom || got.Series[6].Date != wantTo {
+		t.Errorf("series boundaries = %s..%s, want %s..%s",
+			got.Series[0].Date, got.Series[6].Date, wantFrom, wantTo)
+	}
+	if got.Series[4].Pageviews != 20 || got.Series[5].Pageviews != 0 || got.Series[6].Pageviews != 10 {
+		t.Errorf("gap-accurate current series = %+v", got.Series)
+	}
+	if got.Pageviews != 30 || got.Visitors != 4 || math.Abs(got.AverageDailyVisitors-(6.0/7.0)) > 0.0001 {
+		t.Errorf("current metrics = pv %d peak %d avg %f", got.Pageviews, got.Visitors, got.AverageDailyVisitors)
+	}
+	if got.DirectPageviews != 24 || math.Abs(got.DirectShare-80) > 0.0001 {
+		t.Errorf("current direct = %d / %f%%, want 24 / 80%%", got.DirectPageviews, got.DirectShare)
+	}
+	comparison := got.Comparison
+	if comparison.From != timeNow().AddDate(0, 0, -13).Format("2006-01-02") ||
+		comparison.To != timeNow().AddDate(0, 0, -7).Format("2006-01-02") {
+		t.Errorf("comparison boundaries = %s..%s", comparison.From, comparison.To)
+	}
+	if comparison.Pageviews != 10 || math.Abs(comparison.AverageDailyVisitors-(4.0/7.0)) > 0.0001 {
+		t.Errorf("comparison metrics = %+v", comparison)
+	}
+	if comparison.PageviewsChangePercent == nil || math.Abs(*comparison.PageviewsChangePercent-200) > 0.0001 {
+		t.Errorf("pageviews change = %v, want 200%%", comparison.PageviewsChangePercent)
+	}
+	if comparison.AverageDailyVisitorsChangePercent == nil ||
+		math.Abs(*comparison.AverageDailyVisitorsChangePercent-50) > 0.0001 {
+		t.Errorf("visitor change = %v, want 50%%", comparison.AverageDailyVisitorsChangePercent)
+	}
+	if math.Abs(comparison.DirectShareChangePercentagePoints) > 0.0001 {
+		t.Errorf("direct share change = %f points, want 0", comparison.DirectShareChangePercentagePoints)
 	}
 }
 
@@ -1157,13 +1225,14 @@ func TestCustomEvent_EventOnlySweepPreservesPageviewBreakdowns(t *testing.T) {
 
 type overviewResp struct {
 	Sites []struct {
-		ClientID     string `json:"client_id"`
-		Name         string `json:"name"`
-		BusinessID   string `json:"business_id"`
-		BusinessName string `json:"business_name"`
-		Pageviews    int64  `json:"pageviews"`
-		Visitors     int64  `json:"visitors"`
-		Series       []struct {
+		ClientID             string  `json:"client_id"`
+		Name                 string  `json:"name"`
+		BusinessID           string  `json:"business_id"`
+		BusinessName         string  `json:"business_name"`
+		Pageviews            int64   `json:"pageviews"`
+		Visitors             int64   `json:"visitors"`
+		AverageDailyVisitors float64 `json:"average_daily_visitors"`
+		Series               []struct {
 			Date      string `json:"date"`
 			Pageviews int64  `json:"pageviews"`
 		} `json:"series"`
@@ -1253,11 +1322,17 @@ func TestOverview_IncludesSitesWithNoTrafficYet(t *testing.T) {
 	got := e.getOverview(t, e.prin)
 	for _, s := range got.Sites {
 		if s.ClientID == quietSite.String() {
-			if s.Pageviews != 0 || s.Visitors != 0 {
-				t.Errorf("untrafficked site should report zeroes, got pv=%d v=%d", s.Pageviews, s.Visitors)
+			if s.Pageviews != 0 || s.Visitors != 0 || s.AverageDailyVisitors != 0 {
+				t.Errorf("untrafficked site should report zeroes, got pv=%d peak=%d avg=%f",
+					s.Pageviews, s.Visitors, s.AverageDailyVisitors)
 			}
-			if s.Series == nil {
-				t.Error("series must be an empty array, not null — the UI iterates it")
+			if len(s.Series) != 30 {
+				t.Errorf("series has %d points, want 30 zero-filled days", len(s.Series))
+			}
+			for _, point := range s.Series {
+				if point.Pageviews != 0 {
+					t.Errorf("untrafficked site has non-zero series point: %+v", point)
+				}
 			}
 			return
 		}
@@ -1457,8 +1532,20 @@ func TestOverview_AggregatesAndRespectsWindow(t *testing.T) {
 		t.Errorf("visitors = %d, want 9 — the PEAK day, not the sum (15) and not the out-of-window "+
 			"999. Summing would make this card disagree with the dashboard it opens.", got.Visitors)
 	}
-	if len(got.Series) != 3 {
-		t.Errorf("series has %d points, want 3 — only days inside the window", len(got.Series))
+	if math.Abs(got.AverageDailyVisitors-0.5) > 0.0001 {
+		t.Errorf("average daily visitors = %f, want 0.5 (15 visitor-days / 30 calendar days)",
+			got.AverageDailyVisitors)
+	}
+	if len(got.Series) != 30 {
+		t.Errorf("series has %d points, want 30 — every day in the window must be represented", len(got.Series))
+	}
+	if got.Series[0].Date != timeNow().AddDate(0, 0, -29).Format("2006-01-02") ||
+		got.Series[29].Date != timeNow().Format("2006-01-02") {
+		t.Errorf("series boundaries = %s..%s", got.Series[0].Date, got.Series[29].Date)
+	}
+	if got.Series[26].Pageviews != 5 || got.Series[27].Pageviews != 20 ||
+		got.Series[28].Pageviews != 10 || got.Series[29].Pageviews != 0 {
+		t.Errorf("overview series does not preserve calendar gaps: %+v", got.Series[26:30])
 	}
 }
 
@@ -1498,25 +1585,25 @@ func TestOverview_ExcludesRevokedSites(t *testing.T) {
 }
 
 // Ordering drives which sites survive the 200-site cap, so it must be the metric the contract and
-// the card headline both name: visitors.
-func TestOverview_OrdersByVisitors(t *testing.T) {
+// the card headline both name: average daily visitors.
+func TestOverview_OrdersByAverageDailyVisitors(t *testing.T) {
 	ctx, e := newEnv(t)
 	_, many, _ := e.addSubBusiness(t, ctx, "ManyPageviews")
 	_, few, _ := e.addSubBusiness(t, ctx, "ManyVisitors")
 
-	// `many` wins on pageviews; `few` wins on visitors. Ordering by the wrong column puts them the
-	// wrong way round — and at the cap would drop the higher-visitor site.
+	// `many` wins on pageviews and peak visitors (90 on one day). `few` wins on average daily
+	// visitors (50 on two days). Ordering by either old metric puts them the wrong way round.
 	for _, row := range []struct {
-		client  uuid.UUID
-		pv, vis int
-	}{{many, 5000, 3}, {few, 10, 90}} {
+		client           uuid.UUID
+		daysAgo, pv, vis int
+	}{{many, 1, 5000, 90}, {few, 1, 5, 50}, {few, 2, 5, 50}} {
 		if _, err := e.tdb.Super.Exec(ctx,
 			`INSERT INTO analytics_daily
 			   (tenant_root_id, business_id, client_id, bucket_date, pageviews, visitors, updated_at)
 			 SELECT c.tenant_root_id, c.business_id, c.id,
-			        (now() AT TIME ZONE 'UTC')::date - 1, $2, $3, now()
+				        (now() AT TIME ZONE 'UTC')::date - $2::int, $3, $4, now()
 			   FROM telemetry_client c WHERE c.id = $1`,
-			row.client, row.pv, row.vis); err != nil {
+			row.client, row.daysAgo, row.pv, row.vis); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
@@ -1539,8 +1626,7 @@ func TestOverview_OrdersByVisitors(t *testing.T) {
 		t.Fatalf("seeded sites missing (few=%d many=%d)", iFew, iMany)
 	}
 	if iFew > iMany {
-		t.Errorf("site with 90 visitors ranked BELOW one with 3 visitors (but 5000 pageviews) — " +
-			"the overview is ordering by pageviews while its contract and card headline say " +
-			"visitors, so the 200-site cap would shed the wrong sites")
+		t.Errorf("site with the higher daily average ranked below a bursty site with higher peak and " +
+			"pageviews; the 200-site cap would shed the wrong site")
 	}
 }

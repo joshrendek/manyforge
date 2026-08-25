@@ -13,9 +13,11 @@ function site(over: Partial<OverviewSite> = {}): OverviewSite {
     business_name: 'Bluescripts',
     pageviews: 100,
     visitors: 40,
+    average_daily_visitors: 12.5,
     series: [
       { date: '2026-07-01', pageviews: 10, visitors: 5 },
-      { date: '2026-07-02', pageviews: 20, visitors: 9 },
+      { date: '2026-07-02', pageviews: 0, visitors: 0 },
+      { date: '2026-07-03', pageviews: 20, visitors: 9 },
     ],
     ...over,
   };
@@ -74,6 +76,15 @@ describe('AnalyticsOverviewComponent', () => {
     const el: HTMLElement = fixture.nativeElement;
     expect(el.querySelectorAll('[data-testid="overview-group"]').length).toBe(2);
     expect(el.querySelectorAll('[data-testid="overview-card"]').length).toBe(2);
+    expect(el.querySelector('[data-testid="overview-card-visitors"]')?.textContent.trim()).toBe(
+      '12.5',
+    );
+    expect(el.querySelector('[data-testid="overview-card"]')?.textContent).toContain(
+      'average daily visitors',
+    );
+    expect(el.querySelector('[data-testid="overview-card"]')?.textContent).toContain(
+      'peak 40 visitors',
+    );
   });
 
   it('links a card to that site’s dashboard under its OWN business', () => {

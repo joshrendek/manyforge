@@ -61,9 +61,8 @@ export interface ValueCount {
 
 // One card on the multi-site overview grid.
 //
-// `visitors` here is the SAME measure the per-site dashboard headlines — peak daily uniques, not a
-// sum — so a card and the dashboard it opens agree. See the API docs for why cross-day dedupe is
-// impossible under the rotating-salt privacy model.
+// Average daily visitors is the headline. `visitors` remains the peak day as secondary context;
+// neither field claims a cross-day deduplicated total, which the rotating-salt model cannot make.
 export interface OverviewSite {
   client_id: string;
   name: string;
@@ -71,6 +70,7 @@ export interface OverviewSite {
   business_name: string;
   pageviews: number;
   visitors: number;
+  average_daily_visitors: number;
   series: DayPoint[];
 }
 
@@ -81,7 +81,12 @@ export interface AnalyticsSummary {
   // PEAK DAILY unique visitors across the window — not a sum and not a cross-day total. The
   // visitor hash rotates daily by design, so no cross-day identifier exists to deduplicate with.
   visitors: number;
+  // Mean of every daily visitor count in the selected range, including zero-traffic days.
+  average_daily_visitors: number;
   direct_pageviews: number;
+  // Percentage in the range 0..100.
+  direct_share: number;
+  comparison: AnalyticsSummaryComparison;
   series: DayPoint[];
   top_pages: PathCount[];
   top_referrers: HostCount[];
@@ -89,6 +94,19 @@ export interface AnalyticsSummary {
   // A tracked dimension with no data is present but empty, so the UI can tell "nothing collected"
   // apart from "not a dimension we track".
   breakdowns: Record<string, ValueCount[]>;
+}
+
+export interface AnalyticsSummaryComparison {
+  from: string;
+  to: string;
+  pageviews: number;
+  average_daily_visitors: number;
+  direct_pageviews: number;
+  direct_share: number;
+  // Null means the prior value was zero, so a finite percentage change is undefined.
+  pageviews_change_percent: number | null;
+  average_daily_visitors_change_percent: number | null;
+  direct_share_change_percentage_points: number;
 }
 
 @Injectable({ providedIn: 'root' })
