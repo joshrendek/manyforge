@@ -16,6 +16,7 @@ import (
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/weborigin"
 )
 
 // keyPrefix marks a PUBLISHABLE telemetry key. Like a Sentry DSN, it is a public client token —
@@ -89,7 +90,15 @@ func validKind(kind string) bool { return kind == KindAnalytics || kind == KindC
 // requireSignature opts the client into mandatory HMAC ingest. Leave it false for anything that
 // runs on a device or in a browser: those authenticate with the embeddable mfk_ key alone, and the
 // mfs_ secret must never ship inside a client binary. Set it only for a server-to-server sender.
-func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid.UUID, kind, name string, requireSignature bool) (Client, error) {
+// Analytics clients require one to weborigin.MaxAllowed exact allowedOrigins; other kinds reject
+// origins because they do not use the browser collector.
+func (s *Service) CreateClient(
+	ctx context.Context,
+	principalID, businessID uuid.UUID,
+	kind, name string,
+	requireSignature bool,
+	allowedOrigins []string,
+) (Client, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Client{}, fmt.Errorf("telemetry: name is required: %w", errs.ErrValidation)
@@ -97,6 +106,10 @@ func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid
 	if !validKind(kind) {
 		return Client{}, fmt.Errorf("telemetry: kind must be %q or %q: %w",
 			KindAnalytics, KindCrash, errs.ErrValidation)
+	}
+	origins, err := normalizeAllowedOrigins(kind, allowedOrigins)
+	if err != nil {
+		return Client{}, err
 	}
 
 	pk, err := newPublishableKey()
@@ -145,6 +158,18 @@ func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid
 		if ierr != nil {
 			return ierr
 		}
+		if kind == KindAnalytics {
+			var outcome string
+			if err := tx.QueryRow(ctx,
+				`SELECT telemetry_set_analytics_origins($1, $2, $3)`,
+				businessID, row.ID, origins).Scan(&outcome); err != nil {
+				return err
+			}
+			if outcome != "updated" {
+				return fmt.Errorf("telemetry: set origins returned %q", outcome)
+			}
+			row.AllowedOrigins = origins
+		}
 		out = toClient(row)
 		return nil
 	})
@@ -153,6 +178,78 @@ func (s *Service) CreateClient(ctx context.Context, principalID, businessID uuid
 	}
 	// Write-once: toClient never sets Secret, so list/revoke can only ever report HasSecret.
 	out.Secret = secretPlain
+	return out, nil
+}
+
+func normalizeAllowedOrigins(kind string, values []string) ([]string, error) {
+	if kind != KindAnalytics {
+		if len(values) != 0 {
+			return nil, fmt.Errorf("telemetry: allowed_origins apply only to analytics clients: %w", errs.ErrValidation)
+		}
+		return []string{}, nil
+	}
+	if len(values) == 0 || len(values) > weborigin.MaxAllowed {
+		return nil, fmt.Errorf("telemetry: analytics clients require 1-%d allowed_origins: %w",
+			weborigin.MaxAllowed, errs.ErrValidation)
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		normalized, err := weborigin.Normalize(value)
+		if err != nil {
+			return nil, fmt.Errorf("telemetry: invalid allowed origin %q: %v: %w",
+				value, err, errs.ErrValidation)
+		}
+		if _, exists := seen[normalized]; exists {
+			return nil, fmt.Errorf("telemetry: duplicate allowed origin %q: %w",
+				normalized, errs.ErrValidation)
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out, nil
+}
+
+// SetAllowedOrigins replaces an active analytics site's exact browser-origin allowlist. Unknown,
+// foreign, revoked, and unauthorized clients all map to ErrNotFound.
+func (s *Service) SetAllowedOrigins(
+	ctx context.Context,
+	principalID, businessID, clientID uuid.UUID,
+	values []string,
+) (Client, error) {
+	origins, err := normalizeAllowedOrigins(KindAnalytics, values)
+	if err != nil {
+		return Client{}, err
+	}
+	var out Client
+	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		var outcome string
+		if err := tx.QueryRow(ctx,
+			`SELECT telemetry_set_analytics_origins($1, $2, $3)`,
+			businessID, clientID, origins).Scan(&outcome); err != nil {
+			return err
+		}
+		switch outcome {
+		case "updated":
+			row, err := dbgen.New(tx).GetTelemetryClient(ctx, dbgen.GetTelemetryClientParams{
+				ID: clientID, BusinessID: businessID,
+			})
+			if err != nil {
+				return err
+			}
+			out = toClient(row)
+			return nil
+		case "not_found":
+			return errs.ErrNotFound
+		case "invalid":
+			return errs.ErrValidation
+		default:
+			return fmt.Errorf("telemetry: unexpected set-origins outcome %q", outcome)
+		}
+	})
+	if err != nil {
+		return Client{}, mapErr(err)
+	}
 	return out, nil
 }
 

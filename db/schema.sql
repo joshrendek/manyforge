@@ -900,6 +900,7 @@ CREATE TABLE telemetry_client (
     publishable_key text NOT NULL,
     require_signature boolean NOT NULL DEFAULT false,
     sealed_secret   text,
+    allowed_origins text[] NOT NULL DEFAULT '{}',
     status          text NOT NULL DEFAULT 'active',
     created_at      timestamptz NOT NULL DEFAULT now(),
     revoked_at      timestamptz,

@@ -16,6 +16,9 @@ export interface TelemetryClient {
   kind: 'analytics' | 'crash';
   name: string;
   publishable_key: string;
+  // Exact browser origins accepted by web collection. Empty is an explicit legacy-unrestricted
+  // state; Origin reduces accidental pollution but is spoofable and is not authentication.
+  allowed_origins: string[];
   status: string;
   // Whether ingest DEMANDS an HMAC for this client. False is the embeddable mode.
   require_signature: boolean;
@@ -139,11 +142,27 @@ export class AnalyticsService {
 
   createClient(
     businessId: string,
-    body: { kind: 'analytics' | 'crash'; name: string; require_signature: boolean },
+    body: {
+      kind: 'analytics' | 'crash';
+      name: string;
+      require_signature: boolean;
+      allowed_origins?: string[];
+    },
   ): Observable<TelemetryClient> {
     return this.http.post<TelemetryClient>(
       `/api/v1/businesses/${businessId}/telemetry/clients`,
       body,
+    );
+  }
+
+  setAllowedOrigins(
+    businessId: string,
+    clientId: string,
+    allowedOrigins: string[],
+  ): Observable<TelemetryClient> {
+    return this.http.put<TelemetryClient>(
+      `/api/v1/businesses/${businessId}/telemetry/clients/${clientId}/allowed-origins`,
+      { allowed_origins: allowedOrigins },
     );
   }
 

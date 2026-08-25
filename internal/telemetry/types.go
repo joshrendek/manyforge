@@ -51,7 +51,11 @@ type Client struct {
 	Kind           string    `json:"kind"`
 	Name           string    `json:"name"`
 	PublishableKey string    `json:"publishable_key"`
-	Status         string    `json:"status"`
+	// AllowedOrigins is the exact normalized browser-origin allowlist for analytics collection.
+	// Only migrated legacy rows may be empty (explicitly unrestricted); create and update always
+	// require at least one origin.
+	AllowedOrigins []string `json:"allowed_origins"`
+	Status         string   `json:"status"`
 	// RequireSignature reports whether ingest demands an HMAC for this client. False (the default)
 	// is the embeddable-SDK mode: the mfk_ key alone authenticates.
 	RequireSignature bool       `json:"require_signature"`
@@ -102,6 +106,7 @@ func toClient(c dbgen.TelemetryClient) Client {
 		Kind:           c.Kind,
 		Name:           c.Name,
 		PublishableKey: c.PublishableKey,
+		AllowedOrigins: append([]string(nil), c.AllowedOrigins...),
 		Status:         c.Status,
 		CreatedAt:      c.CreatedAt,
 
