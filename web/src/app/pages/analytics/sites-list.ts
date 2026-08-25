@@ -147,7 +147,14 @@ import { Tone } from '../../ui/status';
             </span>
           </div>
           @if (c.status === 'active') {
-            <div class="mf-health-panel" data-testid="site-health">
+            <section
+              class="mf-health-panel"
+              data-testid="site-health"
+              [attr.aria-labelledby]="'site-health-title-' + c.id"
+            >
+              <h2 class="mf-sr-only" [id]="'site-health-title-' + c.id">
+                Installation health for {{ c.name }}
+              </h2>
               <div class="mf-health-summary">
                 <strong data-testid="site-health-message">{{ healthMessage(c) }}</strong>
                 @if (c.analytics_health?.last_accepted_at; as lastAcceptedAt) {
@@ -168,7 +175,7 @@ import { Tone } from '../../ui/status';
                   <span>Analytics freshness is not available yet.</span>
                 }
               </div>
-              @if (needsInstallationCheck(c)) {
+              @if (needsHealthAction(c)) {
                 <div class="mf-install-check" data-testid="site-install-checklist">
                   <ol>
                     <li>Copy the embed tag above.</li>
@@ -179,6 +186,7 @@ import { Tone } from '../../ui/status';
                     type="button"
                     class="mf-btn mf-btn-sm mf-btn-primary"
                     data-testid="site-check-installation"
+                    [attr.aria-label]="'Check installation status for ' + c.name"
                     [disabled]="verifyingSiteId() === c.id"
                     (click)="checkInstallation(c)"
                   >
@@ -186,7 +194,7 @@ import { Tone } from '../../ui/status';
                   </button>
                 </div>
               }
-            </div>
+            </section>
           }
           @if (movingSiteId() === c.id) {
             <div class="mf-move-panel" data-testid="site-move-panel">
@@ -455,7 +463,7 @@ export class AnalyticsSitesListComponent implements OnInit {
     }
   }
 
-  needsInstallationCheck(c: TelemetryClient): boolean {
+  needsHealthAction(c: TelemetryClient): boolean {
     return c.analytics_health?.status !== 'healthy';
   }
 
