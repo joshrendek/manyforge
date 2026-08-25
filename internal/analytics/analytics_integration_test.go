@@ -1420,6 +1420,16 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 	if err != nil || len(rules) != 2 {
 		t.Fatalf("configure property rules = %+v, %v", rules, err)
 	}
+	// A late-ingested event is still ineligible when its occurrence predates activation. This
+	// exercises the boundary independently of the event seeded before configuration existed.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`INSERT INTO analytics_event (
+		    tenant_root_id, business_id, client_id, occurred_at, name, props, path, visitor_hash
+		 ) VALUES ($1,$1,$2,now() - interval '30 minutes','grow_start',
+		           '{"mode":"late"}','/game',decode('03','hex'))`,
+		e.biz, e.site); err != nil {
+		t.Fatalf("seed late pre-activation event: %v", err)
+	}
 	for _, event := range []struct {
 		value any
 		ip    string
@@ -1473,12 +1483,33 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 		t.Fatalf("game mode values = %+v, want governed string/number/boolean values", game.Values)
 	}
 	for _, value := range game.Values {
-		if value.Value == "legacy" || value.Value == "bot" {
+		if value.Value == "legacy" || value.Value == "late" || value.Value == "bot" {
 			t.Fatalf("ineligible value was aggregated: %+v", game.Values)
 		}
 	}
-	if len(first.Breakdowns["event"]) != 1 || first.Breakdowns["event"][0].Pageviews != 7 {
+	if len(first.Breakdowns["event"]) != 1 || first.Breakdowns["event"][0].Pageviews != 8 {
 		t.Fatalf("standard event breakdown changed by property rollup: %+v", first.Breakdowns["event"])
+	}
+
+	// A normal consecutive sweep overlaps the same UTC bucket after one more event arrives. The
+	// whole bucket must be replaced with the new exact count rather than incremented or duplicated.
+	e.collectEvent(t, "grow_start", map[string]any{"mode": "classic"}, humanUA, "203.0.113.6")
+	e.rollup(t, ctx)
+	_, overlapped := e.summary(t, e.site)
+	var classicAfterOverlap int64
+	for _, panel := range overlapped.PropertyBreakdowns {
+		if panel.Label != "Game mode" {
+			continue
+		}
+		for _, value := range panel.Values {
+			if value.Value == "classic" {
+				classicAfterOverlap = value.Events
+			}
+		}
+	}
+	if classicAfterOverlap != 3 {
+		t.Fatalf("classic after overlapping sweep = %d, want exact recomputed count 3",
+			classicAfterOverlap)
 	}
 
 	// Rewinding and recomputing the bucket must replace, not increment, the aggregate.
@@ -1489,9 +1520,9 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 	}
 	e.rollup(t, ctx)
 	_, second := e.summary(t, e.site)
-	if !reflect.DeepEqual(second.PropertyBreakdowns, first.PropertyBreakdowns) {
+	if !reflect.DeepEqual(second.PropertyBreakdowns, overlapped.PropertyBreakdowns) {
 		t.Fatalf("property rollup is not idempotent: first=%+v second=%+v",
-			first.PropertyBreakdowns, second.PropertyBreakdowns)
+			overlapped.PropertyBreakdowns, second.PropertyBreakdowns)
 	}
 
 	// Dashboard reads are independent of raw-event retention after aggregation.
@@ -1499,9 +1530,9 @@ func TestPropertyAggregates_NonRetroactiveIdempotentAndRollupOnly(t *testing.T) 
 		t.Fatalf("delete raw events: %v", err)
 	}
 	_, afterRetention := e.summary(t, e.site)
-	if !reflect.DeepEqual(afterRetention.PropertyBreakdowns, first.PropertyBreakdowns) {
+	if !reflect.DeepEqual(afterRetention.PropertyBreakdowns, overlapped.PropertyBreakdowns) {
 		t.Fatalf("summary changed after raw retention: before=%+v after=%+v",
-			first.PropertyBreakdowns, afterRetention.PropertyBreakdowns)
+			overlapped.PropertyBreakdowns, afterRetention.PropertyBreakdowns)
 	}
 }
 
