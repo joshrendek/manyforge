@@ -130,6 +130,17 @@ export interface AnalyticsOverview {
   data_as_of: string | null;
 }
 
+export interface AnalyticsPropertyRuleInput {
+  event_name: string;
+  property_key: string;
+  label: string;
+}
+
+export interface AnalyticsPropertyRule extends AnalyticsPropertyRuleInput {
+  id: string;
+  enabled_at: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AnalyticsService {
   private http = inject(HttpClient);
@@ -163,6 +174,26 @@ export class AnalyticsService {
     return this.http.put<TelemetryClient>(
       `/api/v1/businesses/${businessId}/telemetry/clients/${clientId}/allowed-origins`,
       { allowed_origins: allowedOrigins },
+    );
+  }
+
+  propertyRules(
+    businessId: string,
+    clientId: string,
+  ): Observable<{ rules: AnalyticsPropertyRule[] }> {
+    return this.http.get<{ rules: AnalyticsPropertyRule[] }>(
+      `/api/v1/businesses/${businessId}/analytics/sites/${clientId}/property-rules`,
+    );
+  }
+
+  replacePropertyRules(
+    businessId: string,
+    clientId: string,
+    rules: AnalyticsPropertyRuleInput[],
+  ): Observable<{ rules: AnalyticsPropertyRule[] }> {
+    return this.http.put<{ rules: AnalyticsPropertyRule[] }>(
+      `/api/v1/businesses/${businessId}/analytics/sites/${clientId}/property-rules`,
+      { rules },
     );
   }
 

@@ -908,6 +908,23 @@ CREATE TABLE telemetry_client (
     UNIQUE (publishable_key)
 );
 
+-- Governed analytics custom-event properties (migration 0122). Mutations use a SECURITY DEFINER
+-- replacement function; the app role receives read access only.
+CREATE TABLE analytics_property_rule (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_root_id  uuid NOT NULL,
+    business_id     uuid NOT NULL,
+    client_id       uuid NOT NULL,
+    event_name      text NOT NULL,
+    property_key    text NOT NULL,
+    label           text NOT NULL,
+    enabled_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (client_id, event_name, property_key),
+    FOREIGN KEY (client_id, tenant_root_id) REFERENCES telemetry_client(id, tenant_root_id)
+        ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
+);
+
 -- Tenant-merge control plane (migration 0113). These tables have no app-role
 -- grants in the live schema and are accessed only through raw-pgx calls to
 -- SECURITY DEFINER functions, but their structure is mirrored here for sqlc.
