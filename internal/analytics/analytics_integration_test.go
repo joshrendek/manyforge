@@ -362,6 +362,49 @@ func TestSummary_FillsDailyGapsAndComparesEquivalentPriorWindow(t *testing.T) {
 	}
 }
 
+func TestSummaryAndOverview_UseCommonCompletedDashboardWatermark(t *testing.T) {
+	ctx, e := newEnv(t)
+	newer := timeNow().Add(-2 * time.Minute)
+	older := timeNow().Add(-7 * time.Minute)
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE rollup_state
+		    SET watermark_ingested_at = CASE rollup_name
+		          WHEN 'analytics_pageviews' THEN $1::timestamptz
+		          WHEN 'analytics_dimensions' THEN $2::timestamptz
+		        END,
+		        updated_at = now()
+		  WHERE rollup_name = ANY($3::text[])`,
+		newer, older, []string{"analytics_pageviews", "analytics_dimensions"}); err != nil {
+		t.Fatalf("seed watermarks: %v", err)
+	}
+
+	code, summary := e.summary(t, e.site)
+	if code != http.StatusOK || summary.DataAsOf == nil {
+		t.Fatalf("summary freshness = code %d, data_as_of %v", code, summary.DataAsOf)
+	}
+	if got, err := time.Parse(time.RFC3339Nano, *summary.DataAsOf); err != nil || !got.Equal(older) {
+		t.Fatalf("summary data_as_of = %q, want common minimum %s (parse err %v)",
+			*summary.DataAsOf, older.Format(time.RFC3339Nano), err)
+	}
+
+	overview := e.getOverview(t, e.prin)
+	if overview.DataAsOf == nil || *overview.DataAsOf != *summary.DataAsOf {
+		t.Fatalf("overview data_as_of = %v, summary = %v", overview.DataAsOf, summary.DataAsOf)
+	}
+
+	// A never-completed component makes freshness unknown; reporting the other watermark would
+	// imply every dashboard panel is current through a point that one pipeline has not reached.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE rollup_state SET watermark_ingested_at = '-infinity'
+		  WHERE rollup_name = 'analytics_dimensions'`); err != nil {
+		t.Fatalf("rewind dimension watermark: %v", err)
+	}
+	_, unavailable := e.summary(t, e.site)
+	if unavailable.DataAsOf != nil {
+		t.Errorf("data_as_of = %q with an incomplete rollup, want null", *unavailable.DataAsOf)
+	}
+}
+
 func TestRollup_ExcludesBots(t *testing.T) {
 	ctx, e := newEnv(t)
 	e.collect(t, e.key, "/", "", humanUA, "203.0.113.1")
@@ -1224,7 +1267,8 @@ func TestCustomEvent_EventOnlySweepPreservesPageviewBreakdowns(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type overviewResp struct {
-	Sites []struct {
+	DataAsOf *string `json:"data_as_of"`
+	Sites    []struct {
 		ClientID             string  `json:"client_id"`
 		Name                 string  `json:"name"`
 		BusinessID           string  `json:"business_id"`

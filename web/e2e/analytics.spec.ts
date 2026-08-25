@@ -75,6 +75,7 @@ const clients = {
 const summary = {
   from: '2026-06-26',
   to: '2026-07-25',
+  data_as_of: '2026-07-25T23:59:30Z',
   pageviews: 42,
   visitors: 9,
   average_daily_visitors: 13 / 30,
@@ -254,6 +255,9 @@ test('dashboard renders totals, chart, top pages and referrers', async ({ page }
   await expect(page.getByTestId('stat-visitors')).toHaveText('0.4');
   await expect(page.getByTestId('stat-direct')).toHaveText('71.4%');
   await expect(page.getByTestId('stat-pageviews-change')).toContainText('+100.0%');
+  await expect(page.getByTestId('analytics-date-range')).toContainText(
+    'Data current through 2026-07-25T23:59:30Z',
+  );
 
   // One gap-accurate bar per requested day, with an accessible description and data table.
   const chart = page.getByTestId('analytics-chart');

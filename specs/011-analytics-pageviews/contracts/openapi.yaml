@@ -226,6 +226,10 @@ paths:
         Note the ordering metric and the headline metric are deliberately the same. Ordering by
         pageviews or peak visitors while presenting average daily visitors would make the cap drop
         sites that rank highly by the number actually shown on the card.
+
+        `data_as_of` is the minimum completed watermark shared by the pageview and dimension
+        rollups. It is null until both have completed, so no panel implies that slower sibling data
+        is fresher than it is. The watermark is global processing state and contains no tenant data.
       operationId: getAnalyticsOverview
       parameters:
         - name: days
@@ -242,8 +246,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [sites]
+                required: [sites, data_as_of]
                 properties:
+                  data_as_of:
+                    type: string
+                    format: date-time
+                    nullable: true
                   sites:
                     type: array
                     items: { $ref: '#/components/schemas/AnalyticsOverviewSite' }
@@ -286,10 +294,17 @@ components:
               visitors:  { type: integer, format: int64 }
     AnalyticsSummary:
       type: object
-      required: [from, to, pageviews, visitors, average_daily_visitors, series, top_pages, top_referrers, direct_pageviews, direct_share, comparison, breakdowns]
+      required: [from, to, data_as_of, pageviews, visitors, average_daily_visitors, series, top_pages, top_referrers, direct_pageviews, direct_share, comparison, breakdowns]
       properties:
         from: { type: string, format: date }
         to:   { type: string, format: date }
+        data_as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Minimum completed watermark shared by the pageview and dimension rollups. Null until
+            both have completed. This global processing timestamp contains no tenant data.
         pageviews: { type: integer, format: int64 }
         visitors:
           type: integer

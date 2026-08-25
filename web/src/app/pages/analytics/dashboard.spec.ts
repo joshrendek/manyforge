@@ -8,6 +8,7 @@ import { AnalyticsDashboardComponent } from './dashboard';
 const summary = {
   from: '2026-07-19',
   to: '2026-07-25',
+  data_as_of: '2026-07-25T23:59:30Z',
   pageviews: 42,
   visitors: 9,
   average_daily_visitors: 13 / 7,
@@ -104,6 +105,24 @@ describe('AnalyticsDashboardComponent', () => {
     expect(el.querySelector('[data-testid="stat-pageviews-change"]').textContent).toContain(
       '21 prior',
     );
+  });
+
+  it('shows the common rollup freshness watermark', () => {
+    const range = fixture.nativeElement.querySelector('[data-testid="analytics-date-range"]');
+    expect(range.textContent).toContain('Data current through 2026-07-25T23:59:30Z');
+    expect(range.querySelector('time').getAttribute('datetime')).toBe('2026-07-25T23:59:30Z');
+  });
+
+  it('does not imply freshness before every dashboard rollup has completed', () => {
+    fixture.componentInstance.setDays(7);
+    mock.expectOne('/api/v1/businesses/b1/analytics/summary?client_id=s1&days=7').flush({
+      ...summary,
+      data_as_of: null,
+    });
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="analytics-date-range"]').textContent,
+    ).toContain('Data freshness is not available yet');
   });
 
   // The visitor hash rotates daily by design, so a multi-day deduplicated total does not exist.
