@@ -138,6 +138,103 @@ describe('AnalyticsSitesListComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="site-manage-origins"]')).toBeTruthy();
   });
 
+  it('loads and replaces the governed property allowlist', () => {
+    fixture.nativeElement
+      .querySelector('[data-testid="site-manage-properties"]')
+      .dispatchEvent(new MouseEvent('click'));
+    const get = mock.expectOne('/api/v1/businesses/b1/analytics/sites/s1/property-rules');
+    expect(get.request.method).toBe('GET');
+    get.flush({
+      rules: [
+        {
+          id: 'r1',
+          event_name: 'checkout_completed',
+          property_key: 'plan',
+          label: 'Plan',
+          enabled_at: '2026-08-25T12:00:00Z',
+        },
+      ],
+    });
+    fixture.detectChanges();
+
+    const panel = fixture.nativeElement.querySelector('[data-testid="site-property-panel"]');
+    expect(panel.textContent).toContain('Only saved event/key pairs are retained');
+    expect(panel.textContent).toContain('never enabled retroactively');
+    expect(fixture.componentInstance.propertyDrafts()).toEqual([
+      { event_name: 'checkout_completed', property_key: 'plan', label: 'Plan' },
+    ]);
+
+    fixture.componentInstance.updateProperty(0, 'label', 'Subscription plan');
+    fixture.componentInstance.addProperty();
+    fixture.componentInstance.updateProperty(1, 'event_name', 'signup_completed');
+    fixture.componentInstance.updateProperty(1, 'property_key', 'source');
+    fixture.componentInstance.updateProperty(1, 'label', 'Signup source');
+    fixture.componentInstance.saveProperties(fixture.componentInstance.sites()[0]);
+
+    const put = mock.expectOne('/api/v1/businesses/b1/analytics/sites/s1/property-rules');
+    expect(put.request.method).toBe('PUT');
+    expect(put.request.body).toEqual({
+      rules: [
+        {
+          event_name: 'checkout_completed',
+          property_key: 'plan',
+          label: 'Subscription plan',
+        },
+        {
+          event_name: 'signup_completed',
+          property_key: 'source',
+          label: 'Signup source',
+        },
+      ],
+    });
+    put.flush({
+      rules: [
+        {
+          id: 'r1',
+          event_name: 'checkout_completed',
+          property_key: 'plan',
+          label: 'Subscription plan',
+          enabled_at: '2026-08-25T12:00:00Z',
+        },
+        {
+          id: 'r2',
+          event_name: 'signup_completed',
+          property_key: 'source',
+          label: 'Signup source',
+          enabled_at: '2026-08-25T12:01:00Z',
+        },
+      ],
+    });
+    expect(TestBed.inject(ToastService).toasts().at(-1)?.message).toContain(
+      '2 retained properties saved',
+    );
+  });
+
+  it('can explicitly clear all retained properties', () => {
+    const comp = fixture.componentInstance;
+    comp.startProperties(comp.sites()[0]);
+    mock.expectOne('/api/v1/businesses/b1/analytics/sites/s1/property-rules').flush({
+      rules: [
+        {
+          id: 'r1',
+          event_name: 'grow_start',
+          property_key: 'mode',
+          label: 'Mode',
+          enabled_at: '2026-08-25T12:00:00Z',
+        },
+      ],
+    });
+    comp.removeProperty(0);
+    expect(comp.propertyDraftsValid()).toBe(true);
+    comp.saveProperties(comp.sites()[0]);
+    const put = mock.expectOne('/api/v1/businesses/b1/analytics/sites/s1/property-rules');
+    expect(put.request.body).toEqual({ rules: [] });
+    put.flush({ rules: [] });
+    expect(TestBed.inject(ToastService).toasts().at(-1)?.message).toContain(
+      'Property retention cleared',
+    );
+  });
+
   // The embed tag is the deliverable of this screen — if it does not render correctly and in
   // full, the user cannot start collecting anything.
   it('renders a complete, copyable embed tag containing the publishable key', () => {

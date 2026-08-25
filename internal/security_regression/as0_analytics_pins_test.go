@@ -216,6 +216,47 @@ func TestPin_AS0AllowedOriginsRemainAnIntegrityGuard(t *testing.T) {
 	}
 }
 
+func TestPin_AS0CustomEventPropertiesAreGovernedBeforeStorage(t *testing.T) {
+	raw := mustRead(t, "../../migrations/0122_analytics_property_governance.up.sql")
+	mig := strings.ToLower(raw)
+	for _, required := range []string{
+		"create table analytics_property_rule",
+		"analytics_property_key_prohibited",
+		"jsonb_object_agg",
+		"p_props ? r.property_key",
+		"jsonb_typeof(p_props->r.property_key) in ('string', 'number', 'boolean')",
+		"grant select on analytics_property_rule to manyforge_app",
+		"revoke all on function analytics_replace_property_rules(uuid,uuid,jsonb) from public",
+		"businesses_with_permission(current_principal(), 'telemetry.write')",
+	} {
+		if !strings.Contains(mig, required) {
+			t.Errorf("property-governance migration is missing %q", required)
+		}
+	}
+	if strings.Contains(mig, "grant insert on analytics_property_rule") ||
+		strings.Contains(mig, "grant update on analytics_property_rule") ||
+		strings.Contains(mig, "grant delete on analytics_property_rule") ||
+		strings.Contains(mig, "grant all on analytics_property_rule") {
+		t.Error("property rules must be mutated only through the validating permission-checking function")
+	}
+
+	collect := strings.ToLower(functionBody(t, stripSQLComments(raw), "analytics_collect"))
+	filterAt := strings.Index(collect, "jsonb_object_agg")
+	insertAt := strings.Index(collect, "insert into analytics_event")
+	if filterAt < 0 || insertAt < 0 || filterAt > insertAt {
+		t.Error("analytics_collect must filter configured properties before inserting the event")
+	}
+	if strings.Contains(collect[insertAt:], "coalesce(p_props") {
+		t.Error("analytics_collect stores free-form p_props instead of the governed filtered object")
+	}
+
+	for _, prohibited := range []string{"email", "password", "token", "ipaddress", "userid", "sessionid", "deviceid", "fingerprint"} {
+		if !strings.Contains(mig, prohibited) {
+			t.Errorf("SQL denylist no longer names %q", prohibited)
+		}
+	}
+}
+
 const as0Enrichment = "../../migrations/0107_analytics_enrichment.up.sql"
 
 // TestPin_AS0EnrichmentStoresOnlyLowCardinalityDerivations asserts the enrichment columns hold

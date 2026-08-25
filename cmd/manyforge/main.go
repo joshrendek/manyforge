@@ -1323,6 +1323,9 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(tw chi.Router) {
 				tw.Use(h.telemetryWrite)
 				h.telemetry.WriteRoutes(tw)
+				if h.analytics != nil {
+					h.analytics.WriteRoutes(tw)
+				}
 			})
 			// Spec 007 code-review slice: repo-connector create gated on connectors.manage,
 			// code-review trigger/get gated on agents.run — same RLS-bound 404-on-lacking-perm
