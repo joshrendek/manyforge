@@ -34,7 +34,7 @@ func TestMetricsNilSafe(t *testing.T) {
 	var m *Metrics               // nil
 	m.Inc(MetricOutboundSent)    // must not panic
 	m.Add(MetricOutboundSent, 3) // must not panic
-	m.Set(MetricOutboundSent, 9) // must not panic
+	m.Set("nil.gauge", 9)        // must not panic
 	if got := m.Get(MetricOutboundSent); got != 0 {
 		t.Errorf("nil Get = %d, want 0", got)
 	}
