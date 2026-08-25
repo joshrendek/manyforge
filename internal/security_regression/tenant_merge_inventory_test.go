@@ -29,6 +29,7 @@ var tenantMergeTableInventory = map[string]string{
 	"analytics_event":                "drain_fence_then_rewrite",
 	"analytics_event_daily":          "drain_fence_then_rewrite",
 	"analytics_page_daily":           "drain_fence_then_rewrite",
+	"analytics_property_rule":        "drain_fence_then_rewrite",
 	"analytics_referrer_daily":       "drain_fence_then_rewrite",
 	"approval_item":                  "drain_fence_then_rewrite",
 	"attachment":                     "external_prestage_then_rewrite",
@@ -84,6 +85,7 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"agent_run.agent_run_agent_id_tenant_root_id_fkey":                                               true,
 	"agent_run.agent_run_business_id_tenant_root_id_fkey":                                            true,
 	"ai_provider_credential.ai_provider_credential_business_id_tenant_root_id_fkey":                  true,
+	"analytics_property_rule.analytics_property_rule_client_fk":                                      true,
 	"approval_item.approval_item_agent_run_id_tenant_root_id_fkey":                                   true,
 	"approval_item.approval_item_business_id_tenant_root_id_fkey":                                    true,
 	"attachment.attachment_business_id_tenant_root_id_fkey":                                          true,
@@ -159,7 +161,7 @@ var tenantMergeRootPayloadInventory = map[string][]string{
 }
 
 // These are the non-generic guards whose root/role/owner invariants cutover
-// must preserve in addition to the common tenant_merge_write_fence on all 51
+// must preserve in addition to the common tenant_merge_write_fence on all 52
 // manifest tables.
 var tenantMergeImmutabilityInventory = map[string]string{
 	"activity_entry.activity_troot_immutable":                                       "support_tenant_root_immutable",
