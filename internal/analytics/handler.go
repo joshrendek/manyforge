@@ -24,9 +24,15 @@ type Handler struct{ Svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{Svc: svc} }
 
-// ReadRoutes mounts the dashboard's read endpoints.
+// ReadRoutes mounts dashboard and analytics-configuration read endpoints.
 func (h *Handler) ReadRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/analytics/summary", h.summary)
+	r.Get("/businesses/{id}/analytics/sites/{clientID}/property-rules", h.listPropertyRules)
+}
+
+// WriteRoutes mounts analytics configuration endpoints under the caller's telemetry.write gate.
+func (h *Handler) WriteRoutes(r chi.Router) {
+	r.Put("/businesses/{id}/analytics/sites/{clientID}/property-rules", h.replacePropertyRules)
 }
 
 // OverviewRoutes mounts the cross-business overview. It is deliberately NOT mounted with the other
@@ -116,6 +122,65 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, sum)
+}
+
+type replacePropertyRulesRequest struct {
+	Rules *[]PropertyRuleInput `json:"rules"`
+}
+
+func propertyRuleRouteIDs(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, uuid.UUID, bool) {
+	principalID, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	businessID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_business_id"})
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	clientID, err := uuid.Parse(chi.URLParam(r, "clientID"))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	return principalID, businessID, clientID, true
+}
+
+func (h *Handler) listPropertyRules(w http.ResponseWriter, r *http.Request) {
+	principalID, businessID, clientID, ok := propertyRuleRouteIDs(w, r)
+	if !ok {
+		return
+	}
+	rules, err := h.Svc.ListPropertyRules(r.Context(), principalID, businessID, clientID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rules": rules})
+}
+
+func (h *Handler) replacePropertyRules(w http.ResponseWriter, r *http.Request) {
+	principalID, businessID, clientID, ok := propertyRuleRouteIDs(w, r)
+	if !ok {
+		return
+	}
+	var req replacePropertyRulesRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Rules == nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_rules"})
+		return
+	}
+	rules, err := h.Svc.ReplacePropertyRules(
+		r.Context(), principalID, businessID, clientID, *req.Rules,
+	)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rules": rules})
 }
 
 // mapErr converts driver errors into the typed sentinels handlers branch on. Raw pg errors never

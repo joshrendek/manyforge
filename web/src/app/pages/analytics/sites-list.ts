@@ -11,6 +11,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import {
+  AnalyticsPropertyRuleInput,
   AnalyticsService,
   TelemetryClient,
   TelemetryMoveTarget,
@@ -139,6 +140,15 @@ import { Tone } from '../../ui/status';
                   (click)="startOrigins(c)"
                 >
                   Origins
+                </button>
+                <button
+                  type="button"
+                  class="mf-btn mf-btn-sm"
+                  data-testid="site-manage-properties"
+                  [attr.aria-label]="'Manage retained event properties for ' + c.name"
+                  (click)="startProperties(c)"
+                >
+                  Properties
                 </button>
                 <button
                   type="button"
@@ -283,6 +293,106 @@ import { Tone } from '../../ui/status';
                 </button>
               </div>
             </div>
+          }
+          @if (editingPropertiesSiteId() === c.id) {
+            <section class="mf-property-panel" data-testid="site-property-panel">
+              <div class="mf-property-heading">
+                <div>
+                  <strong>Retained custom-event properties for {{ c.name }}</strong>
+                  <p class="mf-property-privacy">
+                    Only saved event/key pairs are retained. Sensitive data, secrets, and
+                    persistent identifiers are prohibited. Existing raw properties expire after
+                    90 days and are never enabled retroactively.
+                  </p>
+                </div>
+                <span class="mf-muted">{{ propertyDrafts().length }}/20</span>
+              </div>
+              @if (loadingProperties()) {
+                <span class="mf-loading-row"><mf-spinner /> Loading properties…</span>
+              } @else {
+                @for (rule of propertyDrafts(); track $index; let i = $index) {
+                  <div class="mf-property-row" data-testid="site-property-row">
+                    <div class="mf-field">
+                      <label [for]="'property-event-' + c.id + '-' + i">Event name</label>
+                      <input
+                        [id]="'property-event-' + c.id + '-' + i"
+                        class="mf-input"
+                        data-testid="site-property-event"
+                        [ngModel]="rule.event_name"
+                        (ngModelChange)="updateProperty(i, 'event_name', $event)"
+                        [name]="'propertyEvent-' + c.id + '-' + i"
+                        placeholder="checkout_completed"
+                      />
+                    </div>
+                    <div class="mf-field">
+                      <label [for]="'property-key-' + c.id + '-' + i">Property key</label>
+                      <input
+                        [id]="'property-key-' + c.id + '-' + i"
+                        class="mf-input"
+                        data-testid="site-property-key"
+                        [ngModel]="rule.property_key"
+                        (ngModelChange)="updateProperty(i, 'property_key', $event)"
+                        [name]="'propertyKey-' + c.id + '-' + i"
+                        placeholder="plan"
+                      />
+                    </div>
+                    <div class="mf-field">
+                      <label [for]="'property-label-' + c.id + '-' + i">Dashboard label</label>
+                      <input
+                        [id]="'property-label-' + c.id + '-' + i"
+                        class="mf-input"
+                        data-testid="site-property-label"
+                        [ngModel]="rule.label"
+                        (ngModelChange)="updateProperty(i, 'label', $event)"
+                        [name]="'propertyLabel-' + c.id + '-' + i"
+                        placeholder="Plan"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      class="mf-btn mf-btn-sm"
+                      [attr.aria-label]="'Remove property rule ' + (i + 1)"
+                      (click)="removeProperty(i)"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                }
+                @if (!propertyDrafts().length) {
+                  <p class="mf-muted" data-testid="site-properties-empty">
+                    No custom-event properties are retained.
+                  </p>
+                }
+                <div class="mf-property-actions">
+                  <button
+                    type="button"
+                    class="mf-btn mf-btn-sm"
+                    data-testid="site-property-add"
+                    [disabled]="propertyDrafts().length >= 20 || savingProperties()"
+                    (click)="addProperty()"
+                  >
+                    Add property
+                  </button>
+                  <button
+                    type="button"
+                    class="mf-btn mf-btn-sm mf-btn-primary"
+                    data-testid="site-property-save"
+                    [disabled]="!propertyDraftsValid() || savingProperties()"
+                    (click)="saveProperties(c)"
+                  >
+                    {{ savingProperties() ? 'Saving…' : 'Save properties' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="mf-btn mf-btn-sm"
+                    [disabled]="savingProperties()"
+                    (click)="cancelProperties()"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              }
+            </section>
           }
           @if (movingSiteId() === c.id) {
             <div class="mf-move-panel" data-testid="site-move-panel">
@@ -434,6 +544,36 @@ import { Tone } from '../../ui/status';
         border-top: 1px solid var(--mf-border);
         background: var(--mf-surface-2);
       }
+      .mf-property-panel {
+        display: grid;
+        gap: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--mf-border);
+        background: var(--mf-surface-2);
+      }
+      .mf-property-heading,
+      .mf-property-row,
+      .mf-property-actions {
+        display: flex;
+        align-items: end;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .mf-property-heading {
+        align-items: start;
+        justify-content: space-between;
+      }
+      .mf-property-heading p {
+        margin: 4px 0 0;
+      }
+      .mf-property-privacy {
+        max-width: 760px;
+        color: var(--mf-text-muted);
+        font-size: var(--mf-fs-sm);
+      }
+      .mf-property-row .mf-field {
+        flex: 1 1 180px;
+      }
       .mf-origin-field {
         flex: 1 1 420px;
       }
@@ -485,6 +625,10 @@ export class AnalyticsSitesListComponent implements OnInit {
   editingOriginsSiteId = signal('');
   originsDraft = '';
   savingOrigins = signal(false);
+  editingPropertiesSiteId = signal('');
+  propertyDrafts = signal<AnalyticsPropertyRuleInput[]>([]);
+  loadingProperties = signal(false);
+  savingProperties = signal(false);
 
   ngOnInit(): void {
     this.bizApi.list().subscribe({
@@ -505,6 +649,7 @@ export class AnalyticsSitesListComponent implements OnInit {
   selectBusiness(id: string): void {
     this.cancelMove();
     this.cancelOrigins();
+    this.cancelProperties();
     this.verifyingSiteId.set('');
     this.businessId.set(id);
     this.current.set(id);
@@ -513,6 +658,7 @@ export class AnalyticsSitesListComponent implements OnInit {
 
   startOrigins(c: TelemetryClient): void {
     if (this.savingOrigins()) return;
+    this.cancelProperties();
     this.editingOriginsSiteId.set(c.id);
     this.originsDraft = c.allowed_origins.join('\n');
   }
@@ -555,6 +701,97 @@ export class AnalyticsSitesListComponent implements OnInit {
         );
       },
     });
+  }
+
+  startProperties(c: TelemetryClient): void {
+    if (this.savingProperties()) return;
+    this.cancelOrigins();
+    this.cancelMove();
+    this.editingPropertiesSiteId.set(c.id);
+    this.propertyDrafts.set([]);
+    this.loadingProperties.set(true);
+    const businessId = this.businessId();
+    this.api.propertyRules(businessId, c.id).subscribe({
+      next: ({ rules }) => {
+        if (this.editingPropertiesSiteId() !== c.id || this.businessId() !== businessId) return;
+        this.propertyDrafts.set(
+          (rules ?? []).map(({ event_name, property_key, label }) => ({
+            event_name,
+            property_key,
+            label,
+          })),
+        );
+        this.loadingProperties.set(false);
+      },
+      error: () => {
+        this.loadingProperties.set(false);
+        this.editingPropertiesSiteId.set('');
+        this.toast.error('Could not load retained properties');
+      },
+    });
+  }
+
+  addProperty(): void {
+    if (this.propertyDrafts().length >= 20) return;
+    this.propertyDrafts.update((rules) => [
+      ...rules,
+      { event_name: '', property_key: '', label: '' },
+    ]);
+  }
+
+  updateProperty(index: number, field: keyof AnalyticsPropertyRuleInput, value: string): void {
+    this.propertyDrafts.update((rules) =>
+      rules.map((rule, i) => (i === index ? { ...rule, [field]: value } : rule)),
+    );
+  }
+
+  removeProperty(index: number): void {
+    this.propertyDrafts.update((rules) => rules.filter((_, i) => i !== index));
+  }
+
+  propertyDraftsValid(): boolean {
+    const rules = this.propertyDrafts();
+    if (rules.length > 20) return false;
+    return rules.every(
+      (rule) => rule.event_name.trim() && rule.property_key.trim() && rule.label.trim(),
+    );
+  }
+
+  saveProperties(c: TelemetryClient): void {
+    if (!this.propertyDraftsValid() || this.savingProperties()) return;
+    const rules = this.propertyDrafts().map((rule) => ({
+      event_name: rule.event_name.trim(),
+      property_key: rule.property_key.trim(),
+      label: rule.label.trim(),
+    }));
+    this.savingProperties.set(true);
+    this.api.replacePropertyRules(this.businessId(), c.id, rules).subscribe({
+      next: ({ rules: saved }) => {
+        this.savingProperties.set(false);
+        this.editingPropertiesSiteId.set('');
+        this.propertyDrafts.set([]);
+        this.toast.success(
+          saved.length
+            ? `${saved.length} retained ${saved.length === 1 ? 'property' : 'properties'} saved`
+            : 'Property retention cleared',
+        );
+      },
+      error: (e: HttpErrorResponse) => {
+        this.savingProperties.set(false);
+        this.toast.error(
+          e.status === 400
+            ? 'Use unique event/key pairs and exclude sensitive data or persistent identifiers'
+            : 'Could not save retained properties',
+        );
+      },
+    });
+  }
+
+  cancelProperties(): void {
+    if (this.savingProperties()) return;
+    this.editingPropertiesSiteId.set('');
+    this.propertyDrafts.set([]);
+    this.loadingProperties.set(false);
   }
 
   reload(): void {
@@ -716,6 +953,8 @@ export class AnalyticsSitesListComponent implements OnInit {
   }
 
   startMove(c: TelemetryClient): void {
+    this.cancelOrigins();
+    this.cancelProperties();
     this.movingSiteId.set(c.id);
     this.moveTargets.set([]);
     this.moveTargetId = '';
