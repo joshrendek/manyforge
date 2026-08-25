@@ -68,9 +68,9 @@ func (w *RollupWorker) withDefaults() {
 // state rows. Each function takes
 // (lag interval, overlap interval) and returns the number of bucket rows written.
 //
-// This list is a COMPILE-TIME constant and is interpolated into SQL. It must never be fed from
-// configuration or a request — a rollup name is an identifier, not a bindable parameter, so a
-// caller-supplied value here would be injection.
+// The function fields are fixed at compile time because SQL identifiers cannot be bind parameters;
+// only those fixed function names are interpolated. State names are ordinary bound values. Neither
+// field may be fed from configuration or a request.
 type rollupSpec struct {
 	function string
 	state    string
