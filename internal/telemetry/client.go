@@ -63,11 +63,12 @@ func NewService(database *appdb.DB, sealer *crypto.Sealer) *Service {
 const maxClientsPerPage = 200
 
 const (
-	// The health rollup normally advances every minute. Past fifteen minutes its absence is more
-	// trustworthy than any inferred per-site state, so the UI reports processing delay instead.
+	// The health rollup normally advances every minute. When its watermark is older than fifteen
+	// minutes, the UI reports processing delay instead of inferring a per-site state.
 	activityHealthFreshFor = 15 * time.Minute
-	// A site that accepted data within a day is actively receiving. Low-traffic sites can be quiet
-	// longer without being broken, so stale copy explicitly asks the operator to verify traffic.
+	// A site whose most recent accepted event is no more than 24 hours old is actively receiving.
+	// Low-traffic sites can be quiet longer without being broken, so stale copy asks the operator
+	// to verify traffic rather than declaring the installation broken.
 	receivingDataFreshFor = 24 * time.Hour
 )
 
@@ -229,6 +230,9 @@ func (s *Service) ListClients(ctx context.Context, principalID, businessID uuid.
 	return out, nil
 }
 
+// analyticsSiteHealth derives the five-state UI model from an active/revoked client and the two
+// independent rollup watermarks. Unknown clientStatus values behave like active clients; callers
+// supply the persisted telemetry_client status, whose constraint permits only active or revoked.
 func analyticsSiteHealth(
 	clientStatus string,
 	everAccepted bool,
@@ -256,6 +260,7 @@ func analyticsSiteHealth(
 	return health
 }
 
+// timestamptzPtr returns nil for SQL NULL and either infinity sentinel, otherwise the UTC value.
 func timestamptzPtr(value pgtype.Timestamptz) *time.Time {
 	if !value.Valid || value.InfinityModifier != pgtype.Finite {
 		return nil

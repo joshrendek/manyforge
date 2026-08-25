@@ -450,6 +450,11 @@ func TestSiteHealth_NeverSeenStaleRecoveredAndRevoked(t *testing.T) {
 	}
 	// Let the worker catch the health watermark back up before testing per-site states.
 	e.rollup(t, ctx)
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthNeverSeen {
+		t.Fatalf("health after delayed rollup recovered = %+v, err %v",
+			list[0].AnalyticsHealth, err)
+	}
 
 	// Dashboard freshness is only meaningful when both component rollups exist. A missing state
 	// row must degrade to an unknown watermark rather than reporting the surviving pipeline as if
@@ -470,9 +475,9 @@ func TestSiteHealth_NeverSeenStaleRecoveredAndRevoked(t *testing.T) {
 	}
 	e.rollup(t, ctx)
 
-	// A migration-backfilled row records that historical activity existed without inventing an
-	// exact ingest time. It is stale, not never installed, and the next accepted event must replace
-	// that NULL with an exact timestamp rather than leaving the site permanently stale.
+	// Simulate a migration-backfilled row recording that historical activity existed without
+	// inventing an exact ingest time. It is stale, not never installed, and the next accepted event
+	// must replace that NULL with an exact timestamp rather than leaving the site permanently stale.
 	if _, err := e.tdb.Super.Exec(ctx,
 		`INSERT INTO analytics_site_activity (client_id, last_accepted_at)
 		 VALUES ($1, NULL)`, e.site); err != nil {
@@ -497,6 +502,19 @@ func TestSiteHealth_NeverSeenStaleRecoveredAndRevoked(t *testing.T) {
 	if recovered.Status != telemetry.SiteHealthHealthy || !recovered.ReceivingData ||
 		recovered.LastAcceptedAt == nil {
 		t.Fatalf("recovered health = %+v", recovered)
+	}
+
+	// Pin the time-based healthy-to-stale transition separately from the NULL historical-backfill
+	// state above, then revoke while stale to prove the client status always wins.
+	if _, err := e.tdb.Super.Exec(ctx,
+		`UPDATE analytics_site_activity
+		    SET last_accepted_at = now() - interval '25 hours'
+		  WHERE client_id = $1`, e.site); err != nil {
+		t.Fatalf("age accepted activity: %v", err)
+	}
+	list, err = svc.ListClients(ctx, e.prin, e.biz, 50)
+	if err != nil || list[0].AnalyticsHealth.Status != telemetry.SiteHealthStale {
+		t.Fatalf("healthy-to-stale health = %+v, err %v", list[0].AnalyticsHealth, err)
 	}
 
 	if _, err := svc.RevokeClient(ctx, e.prin, e.biz, e.site); err != nil {

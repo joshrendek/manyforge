@@ -1,5 +1,13 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, ElementRef, OnInit, inject, signal, viewChild } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  OnInit,
+  inject,
+  signal,
+  viewChild,
+  viewChildren,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import {
@@ -112,7 +120,14 @@ import { Tone } from '../../ui/status';
                 <span class="mf-muted">—</span>
               }
             </span>
-            <span style="flex:2" role="cell" data-testid="site-status-cell">
+            <span
+              #statusCell
+              style="flex:2"
+              role="cell"
+              tabindex="-1"
+              data-testid="site-status-cell"
+              [attr.data-site-id]="c.id"
+            >
               @if (c.status === 'revoked') {
                 <mf-status-pill tone="neutral" label="Revoked" />
               } @else {
@@ -155,7 +170,7 @@ import { Tone } from '../../ui/status';
               <h2 class="mf-sr-only" [id]="'site-health-title-' + c.id">
                 Installation health for {{ c.name }}
               </h2>
-              <div class="mf-health-summary">
+              <div class="mf-health-summary" role="status" aria-live="polite" aria-atomic="true">
                 <strong data-testid="site-health-message">{{ healthMessage(c) }}</strong>
                 @if (c.analytics_health?.last_accepted_at; as lastAcceptedAt) {
                   <span>
@@ -186,7 +201,9 @@ import { Tone } from '../../ui/status';
                     type="button"
                     class="mf-btn mf-btn-sm mf-btn-primary"
                     data-testid="site-check-installation"
-                    [attr.aria-label]="'Check installation status for ' + c.name"
+                    [attr.aria-label]="
+                      'Check installation status for ' + c.name + ', currently ' + healthLabel(c)
+                    "
                     [disabled]="verifyingSiteId() === c.id"
                     (click)="checkInstallation(c)"
                   >
@@ -349,6 +366,7 @@ export class AnalyticsSitesListComponent implements OnInit {
   private toast = inject(ToastService);
 
   private createBtn = viewChild<ElementRef<HTMLButtonElement>>('createBtn');
+  private statusCells = viewChildren<ElementRef<HTMLElement>>('statusCell');
 
   businesses = signal<Business[]>([]);
   businessId = signal<string>('');
@@ -480,6 +498,14 @@ export class AnalyticsSitesListComponent implements OnInit {
         const status = sites.find((site) => site.id === c.id)?.analytics_health?.status;
         if (status === 'healthy') {
           this.toast.success('Installation verified — data is arriving');
+          // The successful state removes the button that initiated the check. Move focus to the
+          // persistent status cell after Angular renders the replacement so keyboard users do not
+          // lose their place; the adjacent polite live region announces the updated health copy.
+          setTimeout(() => {
+            this.statusCells()
+              .find((cell) => cell.nativeElement.dataset['siteId'] === c.id)
+              ?.nativeElement.focus();
+          });
         } else if (status === 'checking') {
           this.toast.error('Health processing is catching up — try again shortly');
         } else {
