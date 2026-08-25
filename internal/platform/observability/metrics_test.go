@@ -20,10 +20,21 @@ func TestMetricsCounters(t *testing.T) {
 	}
 }
 
+func TestMetricsGauge(t *testing.T) {
+	m := NewMetrics()
+	const key = "test.gauge"
+	m.Set(key, 41)
+	m.Set(key, 7)
+	if got := m.Get(key); got != 7 {
+		t.Errorf("gauge = %d, want latest value 7", got)
+	}
+}
+
 func TestMetricsNilSafe(t *testing.T) {
 	var m *Metrics               // nil
 	m.Inc(MetricOutboundSent)    // must not panic
 	m.Add(MetricOutboundSent, 3) // must not panic
+	m.Set(MetricOutboundSent, 9) // must not panic
 	if got := m.Get(MetricOutboundSent); got != 0 {
 		t.Errorf("nil Get = %d, want 0", got)
 	}

@@ -66,12 +66,12 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_days"})
 		return
 	}
-	sites, err := h.Svc.Overview(r.Context(), principalID, from, to)
+	result, err := h.Svc.OverviewWithFreshness(r.Context(), principalID, from, to)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sites": sites})
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {

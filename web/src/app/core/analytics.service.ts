@@ -77,6 +77,8 @@ export interface OverviewSite {
 export interface AnalyticsSummary {
   from: string;
   to: string;
+  // Common completed watermark for every rollup feeding the dashboard; null until all complete.
+  data_as_of: string | null;
   pageviews: number;
   // PEAK DAILY unique visitors across the window — not a sum and not a cross-day total. The
   // visitor hash rotates daily by design, so no cross-day identifier exists to deduplicate with.
@@ -107,6 +109,11 @@ export interface AnalyticsSummaryComparison {
   pageviews_change_percent: number | null;
   average_daily_visitors_change_percent: number | null;
   direct_share_change_percentage_points: number;
+}
+
+export interface AnalyticsOverview {
+  sites: OverviewSite[];
+  data_as_of: string | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -158,8 +165,8 @@ export class AnalyticsService {
 
   // Every site the caller can read, across every business. No business id: the server decides
   // which businesses qualify, from the caller's permissions.
-  overview(days: number): Observable<{ sites: OverviewSite[] }> {
-    return this.http.get<{ sites: OverviewSite[] }>(`/api/v1/analytics/overview?days=${days}`);
+  overview(days: number): Observable<AnalyticsOverview> {
+    return this.http.get<AnalyticsOverview>(`/api/v1/analytics/overview?days=${days}`);
   }
 
   summary(businessId: string, clientId: string, days: number): Observable<AnalyticsSummary> {

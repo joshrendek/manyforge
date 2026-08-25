@@ -4,7 +4,9 @@ package timeseries_test
 
 import (
 	"context"
+	"expvar"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/observability"
 	"github.com/manyforge/manyforge/internal/platform/timeseries"
 )
 
@@ -196,6 +199,60 @@ func TestRollupAnalyticsDaily_IsIdempotent(t *testing.T) {
 	if second := dailyCount(t, ctx, tdb, s); second != first {
 		t.Fatalf("rollup is not idempotent: %d then %d — recompute was replaced by increment?",
 			first, second)
+	}
+}
+
+func TestRollup_FailureDoesNotSkipIndependentLaterRollups(t *testing.T) {
+	ctx, tdb := start(t)
+	metrics := observability.NewMetrics()
+	beforeFailures := metrics.Get("rollup.analytics_daily.failures")
+
+	// Break only the first function in the fixed sweep order. The other two functions and their
+	// transactions remain valid and must still be attempted.
+	if _, err := tdb.Super.Exec(ctx,
+		`ALTER FUNCTION rollup_analytics_daily(interval, interval)
+		 RENAME TO rollup_analytics_daily_broken_for_test`); err != nil {
+		t.Fatalf("rename first rollup: %v", err)
+	}
+
+	w := &timeseries.RollupWorker{DB: tdb.App, Metrics: metrics, Lag: -1}
+	_, err := w.SweepOnce(ctx)
+	if err == nil {
+		t.Fatal("sweep succeeded despite the missing first rollup function")
+	}
+	if !strings.Contains(err.Error(), "rollup_analytics_daily") {
+		t.Fatalf("error does not identify the failed rollup: %v", err)
+	}
+
+	var completed int
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT count(*)
+		   FROM rollup_state
+		  WHERE rollup_name = ANY($1::text[])
+		    AND isfinite(watermark_ingested_at)`,
+		[]string{"analytics_pageviews", "analytics_dimensions"}).Scan(&completed); err != nil {
+		t.Fatalf("read later watermarks: %v", err)
+	}
+	if completed != 2 {
+		t.Fatalf("only %d later rollups completed, want 2", completed)
+	}
+	if got := metrics.Get("rollup.analytics_daily.failures"); got != beforeFailures+1 {
+		t.Errorf("first-rollup failures = %d, want %d", got, beforeFailures+1)
+	}
+	for _, state := range []string{"analytics_pageviews", "analytics_dimensions"} {
+		if got := metrics.Get("rollup." + state + ".last_success_unix"); got <= 0 {
+			t.Errorf("%s last success metric = %d, want a Unix timestamp", state, got)
+		}
+		if got := metrics.Get("rollup." + state + ".duration_ms"); got <= 0 {
+			t.Errorf("%s duration metric = %d, want a positive duration", state, got)
+		}
+		published := expvar.Get("support").String()
+		for _, suffix := range []string{"buckets_written", "watermark_lag_seconds"} {
+			key := "rollup." + state + "." + suffix
+			if !strings.Contains(published, `"`+key+`"`) {
+				t.Errorf("published metrics do not contain %s: %s", key, published)
+			}
+		}
 	}
 }
 

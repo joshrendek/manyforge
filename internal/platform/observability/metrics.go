@@ -82,6 +82,21 @@ func (m *Metrics) Add(key string, n int64) {
 	m.m.Add(key, n)
 }
 
+// Set publishes a gauge value. No-op on a nil receiver. Gauges are process-local snapshots; use
+// Add for counters whose deltas must remain meaningful for the lifetime of the process.
+func (m *Metrics) Set(key string, n int64) {
+	if m == nil || m.m == nil {
+		return
+	}
+	if v, ok := m.m.Get(key).(*expvar.Int); ok && v != nil {
+		v.Set(n)
+		return
+	}
+	v := new(expvar.Int)
+	v.Set(n)
+	m.m.Set(key, v)
+}
+
 // Get reads the named counter (0 if unset). For tests/inspection.
 func (m *Metrics) Get(key string) int64 {
 	if m == nil || m.m == nil {
