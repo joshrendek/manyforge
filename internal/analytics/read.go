@@ -415,6 +415,7 @@ type OverviewSite struct {
 	Series               []DayPoint `json:"series"`
 }
 
+// OverviewResult pairs the visible site cards with their common dashboard freshness watermark.
 type OverviewResult struct {
 	Sites    []OverviewSite `json:"sites"`
 	DataAsOf *string        `json:"data_as_of"`

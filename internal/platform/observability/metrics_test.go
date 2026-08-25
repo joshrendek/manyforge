@@ -1,6 +1,9 @@
 package observability
 
-import "testing"
+import (
+	"expvar"
+	"testing"
+)
 
 func TestMetricsCounters(t *testing.T) {
 	m := NewMetrics()
@@ -27,6 +30,20 @@ func TestMetricsGauge(t *testing.T) {
 	m.Set(key, 7)
 	if got := m.Get(key); got != 7 {
 		t.Errorf("gauge = %d, want latest value 7", got)
+	}
+}
+
+func TestMetricsGaugeDoesNotReplaceAnotherMetricType(t *testing.T) {
+	m := NewMetrics()
+	const key = "test.string"
+	want := new(expvar.String)
+	want.Set("kept")
+	m.m.Set(key, want)
+
+	m.Set(key, 7)
+
+	if got := m.m.Get(key); got != want {
+		t.Fatalf("Set replaced existing %T metric with %T", want, got)
 	}
 }
 
