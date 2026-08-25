@@ -1397,11 +1397,12 @@ func TestCustomEvent_NoConfigurationStoresNoProperties(t *testing.T) {
 
 func TestPropertyRules_APIStableIdentityValidationAndClear(t *testing.T) {
 	ctx, e := newEnv(t)
+	path := "/businesses/" + e.biz.String() + "/analytics/sites/" + e.site.String() + "/property-rules"
 
 	put := func(body string) (*http.Response, map[string][]analytics.PropertyRule) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodPut,
-			e.srv.URL+"/businesses/"+e.biz.String()+"/analytics/sites/"+e.site.String()+"/property-rules",
+			e.srv.URL+path,
 			strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := e.srv.Client().Do(req)
@@ -1424,6 +1425,21 @@ func TestPropertyRules_APIStableIdentityValidationAndClear(t *testing.T) {
 		t.Fatalf("first replace = status %d body %+v", firstResponse.StatusCode, first)
 	}
 	firstRule := first["rules"][0]
+	getResponse, err := e.srv.Client().Get(e.srv.URL + path)
+	if err != nil {
+		t.Fatalf("GET property rules: %v", err)
+	}
+	var listed map[string][]analytics.PropertyRule
+	if err := json.NewDecoder(getResponse.Body).Decode(&listed); err != nil {
+		getResponse.Body.Close()
+		t.Fatalf("decode listed rules: %v", err)
+	}
+	getResponse.Body.Close()
+	if getResponse.StatusCode != http.StatusOK || len(listed["rules"]) != 1 ||
+		listed["rules"][0].ID != firstRule.ID {
+		t.Fatalf("GET rules = status %d body %+v", getResponse.StatusCode, listed)
+	}
+
 	secondResponse, second := put(`{"rules":[{"event_name":"checkout_completed","property_key":"plan","label":"Subscription plan"}]}`)
 	if secondResponse.StatusCode != http.StatusOK || len(second["rules"]) != 1 {
 		t.Fatalf("label replace = status %d body %+v", secondResponse.StatusCode, second)
@@ -1436,6 +1452,47 @@ func TestPropertyRules_APIStableIdentityValidationAndClear(t *testing.T) {
 	badResponse, _ := put(`{"rules":[{"event_name":"checkout_completed","property_key":"customer_id","label":"Customer"}]}`)
 	if badResponse.StatusCode != http.StatusBadRequest {
 		t.Fatalf("sensitive property status = %d, want 400", badResponse.StatusCode)
+	}
+	for _, body := range []string{
+		`{}`,
+		`{"rules":null}`,
+		`{"rules":[{"event_name":"checkout_completed","property_key":"plan","label":"Plan","typo":true}]}`,
+	} {
+		response, _ := put(body)
+		if response.StatusCode != http.StatusBadRequest {
+			t.Errorf("invalid body %s status = %d, want 400", body, response.StatusCode)
+		}
+	}
+
+	getStatus := func(requestPath string) int {
+		t.Helper()
+		response, err := e.srv.Client().Get(e.srv.URL + requestPath)
+		if err != nil {
+			t.Fatalf("GET %s: %v", requestPath, err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+	if status := getStatus("/businesses/not-a-uuid/analytics/sites/" + e.site.String() + "/property-rules"); status != http.StatusBadRequest {
+		t.Errorf("malformed business status = %d, want 400", status)
+	}
+	if status := getStatus("/businesses/" + e.biz.String() + "/analytics/sites/not-a-uuid/property-rules"); status != http.StatusNotFound {
+		t.Errorf("malformed client status = %d, want 404", status)
+	}
+
+	unauthenticatedRouter := chi.NewRouter()
+	handler := analytics.NewHandler(analytics.NewService(e.tdb.App))
+	handler.ReadRoutes(unauthenticatedRouter)
+	handler.WriteRoutes(unauthenticatedRouter)
+	unauthenticatedServer := httptest.NewServer(unauthenticatedRouter)
+	defer unauthenticatedServer.Close()
+	unauthenticated, err := unauthenticatedServer.Client().Get(unauthenticatedServer.URL + path)
+	if err != nil {
+		t.Fatalf("unauthenticated GET: %v", err)
+	}
+	unauthenticated.Body.Close()
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Errorf("unauthenticated GET status = %d, want 401", unauthenticated.StatusCode)
 	}
 
 	clearResponse, cleared := put(`{"rules":[]}`)
@@ -1471,6 +1528,8 @@ func TestPropertyRules_SQLBoundaryAndTenantIsolation(t *testing.T) {
 	if err := e.tdb.App.WithPrincipal(ctx, e.prin, func(tx pgx.Tx) error {
 		for _, payload := range []string{
 			`[{"event_name":"grow_start","property_key":"email","label":"Email"}]`,
+			`[{"event_name":"grow_start","property_key":"bad/key","label":"Bad"}]`,
+			`[{"event_name":"bad@event","property_key":"mode","label":"Bad"}]`,
 			`{"event_name":"grow_start","property_key":"mode","label":"Mode"}`,
 			`[null]`,
 		} {
@@ -1597,10 +1656,32 @@ func TestPropertyRules_ReplacementSerializesWithCollection(t *testing.T) {
 		done <- requestErr
 	}()
 
-	select {
-	case err := <-done:
-		t.Fatalf("collector did not wait for the uncommitted rule set: %v", err)
-	case <-time.After(150 * time.Millisecond):
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waitingOnLock bool
+		if err := e.tdb.Super.QueryRow(ctx,
+			`SELECT EXISTS (
+			    SELECT 1
+			      FROM pg_stat_activity
+			     WHERE datname = current_database()
+			       AND query LIKE '%analytics_collect(%'
+			       AND wait_event_type = 'Lock'
+			)`,
+		).Scan(&waitingOnLock); err != nil {
+			t.Fatalf("inspect collector lock wait: %v", err)
+		}
+		if waitingOnLock {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("collector completed before reaching the rule-set lock: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("collector never reached the expected client-row lock")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit replacement: %v", err)

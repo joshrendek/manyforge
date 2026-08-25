@@ -24,7 +24,7 @@ type Handler struct{ Svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{Svc: svc} }
 
-// ReadRoutes mounts the dashboard's read endpoints.
+// ReadRoutes mounts dashboard and analytics-configuration read endpoints.
 func (h *Handler) ReadRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/analytics/summary", h.summary)
 	r.Get("/businesses/{id}/analytics/sites/{clientID}/property-rules", h.listPropertyRules)
