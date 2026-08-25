@@ -38,8 +38,9 @@ type createClientRequest struct {
 	Name string `json:"name"`
 	// RequireSignature defaults to false — the embeddable-SDK mode. Set it only for a
 	// server-to-server sender that can hold an mfs_ secret safely.
-	RequireSignature bool     `json:"require_signature"`
-	AllowedOrigins   []string `json:"allowed_origins"`
+	RequireSignature bool `json:"require_signature"`
+	// AllowedOrigins is required for analytics and rejected for crash clients.
+	AllowedOrigins []string `json:"allowed_origins"`
 }
 
 type setAllowedOriginsRequest struct {

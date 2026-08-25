@@ -665,23 +665,30 @@ func TestCollect_AllowedOriginsAreUniformAndObservable(t *testing.T) {
 		t.Fatalf("configure allowed origin: %v", err)
 	}
 
-	beforeRejected := e.metrics.Get(observability.MetricAnalyticsOriginRejected)
 	for _, tc := range []struct {
-		name      string
-		key       string
-		origins   []string
-		wantRows  int
-		wantDelta int64
+		name               string
+		key                string
+		origins            []string
+		wantStored         int
+		wantOriginRejected int64
 	}{
 		{"allowed canonicalizes", e.key, []string{"HTTPS://GARDEN.EXAMPLE:443/"}, 1, 0},
-		{"mismatch", e.key, []string{"https://other.example"}, 1, 1},
-		{"missing", e.key, nil, 1, 2},
-		{"duplicate header", e.key, []string{"https://garden.example", "https://other.example"}, 1, 3},
+		{"mismatch", e.key, []string{"https://other.example"}, 0, 1},
+		{"missing", e.key, nil, 0, 1},
+		{"duplicate header", e.key, []string{"https://garden.example", "https://other.example"}, 0, 1},
+		{"malformed header", e.key, []string{"null"}, 0, 1},
 		// An unknown key with a valid Origin remains a generic rejection. The origin counter must
 		// not claim a mismatch before the key resolves.
-		{"unknown key", "mfk_" + strings.Repeat("Z", 32), []string{"https://other.example"}, 1, 3},
+		{"unknown key", "mfk_" + strings.Repeat("Z", 32), []string{"https://other.example"}, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var rowsBefore int
+			if err := e.tdb.Super.QueryRow(ctx,
+				"SELECT count(*) FROM analytics_event WHERE client_id=$1", e.site,
+			).Scan(&rowsBefore); err != nil {
+				t.Fatalf("count events before collect: %v", err)
+			}
+			rejectedBefore := e.metrics.Get(observability.MetricAnalyticsOriginRejected)
 			if code := e.collectWithOrigins(
 				t, tc.key, "/origin-check", "", humanUA, "203.0.113.9", tc.origins,
 			); code != http.StatusNoContent {
@@ -693,11 +700,11 @@ func TestCollect_AllowedOriginsAreUniformAndObservable(t *testing.T) {
 			).Scan(&rows); err != nil {
 				t.Fatalf("count events: %v", err)
 			}
-			if rows != tc.wantRows {
-				t.Fatalf("stored rows = %d, want %d", rows, tc.wantRows)
+			if got := rows - rowsBefore; got != tc.wantStored {
+				t.Fatalf("stored row delta = %d, want %d", got, tc.wantStored)
 			}
-			if got := e.metrics.Get(observability.MetricAnalyticsOriginRejected) - beforeRejected; got != tc.wantDelta {
-				t.Fatalf("origin rejection delta = %d, want %d", got, tc.wantDelta)
+			if got := e.metrics.Get(observability.MetricAnalyticsOriginRejected) - rejectedBefore; got != tc.wantOriginRejected {
+				t.Fatalf("origin rejection delta = %d, want %d", got, tc.wantOriginRejected)
 			}
 		})
 	}
@@ -707,14 +714,15 @@ func TestCollect_AllowedOriginsAreUniformAndObservable(t *testing.T) {
 	); err != nil {
 		t.Fatalf("revoke configured site: %v", err)
 	}
+	rejectedBefore := e.metrics.Get(observability.MetricAnalyticsOriginRejected)
 	if code := e.collectWithOrigins(
 		t, e.key, "/revoked-origin", "", humanUA, "203.0.113.9",
 		[]string{"https://other.example"},
 	); code != http.StatusNoContent {
 		t.Fatalf("revoked configured site status = %d, want uniform 204", code)
 	}
-	if got := e.metrics.Get(observability.MetricAnalyticsOriginRejected) - beforeRejected; got != 3 {
-		t.Fatalf("revoked key changed origin rejection delta to %d; revocation must resolve first", got)
+	if got := e.metrics.Get(observability.MetricAnalyticsOriginRejected) - rejectedBefore; got != 0 {
+		t.Fatalf("revoked key changed origin rejection delta by %d; revocation must resolve first", got)
 	}
 }
 

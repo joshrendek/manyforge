@@ -90,6 +90,8 @@ func validKind(kind string) bool { return kind == KindAnalytics || kind == KindC
 // requireSignature opts the client into mandatory HMAC ingest. Leave it false for anything that
 // runs on a device or in a browser: those authenticate with the embeddable mfk_ key alone, and the
 // mfs_ secret must never ship inside a client binary. Set it only for a server-to-server sender.
+// Analytics clients require one to weborigin.MaxAllowed exact allowedOrigins; other kinds reject
+// origins because they do not use the browser collector.
 func (s *Service) CreateClient(
 	ctx context.Context,
 	principalID, businessID uuid.UUID,
