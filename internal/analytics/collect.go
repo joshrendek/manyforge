@@ -174,7 +174,10 @@ func (h *PublicHandler) collect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ua := r.Header.Get("User-Agent")
-	origin, _ := weborigin.FromHeader(r.Header.Values("Origin"))
+	origin := ""
+	if normalized, err := weborigin.FromHeader(r.Header.Values("Origin")); err == nil {
+		origin = normalized
+	}
 
 	// Every request-derived dimension is normalized or bounded HERE before it touches SQL. The SQL
 	// function consumes the raw IP and UA only to derive a visitor hash and never persists them.

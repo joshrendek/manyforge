@@ -45,6 +45,8 @@ func TestFromHeaderRequiresOneValue(t *testing.T) {
 	for _, values := range [][]string{
 		nil,
 		{},
+		{"null"},
+		{"not-a-url"},
 		{"https://example.com", "https://evil.test"},
 		{"https://example.com, https://evil.test"},
 	} {
