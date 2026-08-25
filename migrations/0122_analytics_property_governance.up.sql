@@ -37,11 +37,11 @@ CREATE TABLE analytics_property_rule (
     CONSTRAINT analytics_property_rule_event_valid CHECK (
         char_length(event_name) BETWEEN 1 AND 64
         AND event_name <> 'pageview'
-        AND event_name ~ '^[A-Za-z0-9_.:-]+$'
+        AND event_name ~ '^[A-Za-z0-9_:.-]+$'
     ),
     CONSTRAINT analytics_property_rule_key_valid CHECK (
         char_length(property_key) BETWEEN 1 AND 32
-        AND property_key ~ '^[A-Za-z0-9_.:-]+$'
+        AND property_key ~ '^[A-Za-z0-9_:.-]+$'
         AND NOT analytics_property_key_prohibited(property_key)
     ),
     CONSTRAINT analytics_property_rule_label_valid CHECK (
@@ -97,9 +97,9 @@ BEGIN
               OR jsonb_typeof(rule->'label') IS DISTINCT FROM 'string'
               OR char_length(rule->>'event_name') NOT BETWEEN 1 AND 64
               OR rule->>'event_name' = 'pageview'
-              OR rule->>'event_name' !~ '^[A-Za-z0-9_.:-]+$'
+              OR rule->>'event_name' !~ '^[A-Za-z0-9_:.-]+$'
               OR char_length(rule->>'property_key') NOT BETWEEN 1 AND 32
-              OR rule->>'property_key' !~ '^[A-Za-z0-9_.:-]+$'
+              OR rule->>'property_key' !~ '^[A-Za-z0-9_:.-]+$'
               OR analytics_property_key_prohibited(rule->>'property_key')
               OR char_length(rule->>'label') NOT BETWEEN 1 AND 64
               OR rule->>'label' <> btrim(rule->>'label')

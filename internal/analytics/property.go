@@ -63,6 +63,7 @@ type PropertyRule struct {
 }
 
 func propertyKeyOK(value string) bool {
+	// Share the collector's bound so a rule can never name a key the public path would discard.
 	if value == "" || len(value) > maxPropKeyLen {
 		return false
 	}

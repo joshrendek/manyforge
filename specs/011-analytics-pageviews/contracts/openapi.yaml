@@ -107,7 +107,7 @@ paths:
                   maxLength: 64
                   description: |
                     Custom event name. Omitted (the usual case) means an automatic pageview.
-                    Restricted to `[A-Za-z0-9_.:-]` and **`pageview` is reserved** — accepting it
+                    Restricted to `[A-Za-z0-9_:.-]` and **`pageview` is reserved** — accepting it
                     here would let a site inflate its own pageview count through the event API and
                     disagree with the pageview rollup every other panel reconciles against.
                     A malformed name drops the event rather than being coerced.
@@ -332,12 +332,12 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: '^[A-Za-z0-9_.:-]+$'
+          pattern: '^[A-Za-z0-9_:.-]+$'
         property_key:
           type: string
           minLength: 1
           maxLength: 32
-          pattern: '^[A-Za-z0-9_.:-]+$'
+          pattern: '^[A-Za-z0-9_:.-]+$'
           description: Must not identify a person, device, account, session, network address, or secret.
         label:
           type: string
@@ -354,12 +354,12 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: '^[A-Za-z0-9_.:-]+$'
+          pattern: '^[A-Za-z0-9_:.-]+$'
         property_key:
           type: string
           minLength: 1
           maxLength: 32
-          pattern: '^[A-Za-z0-9_.:-]+$'
+          pattern: '^[A-Za-z0-9_:.-]+$'
         label: { type: string, minLength: 1, maxLength: 64 }
         enabled_at:
           type: string

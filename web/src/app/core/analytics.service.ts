@@ -130,12 +130,14 @@ export interface AnalyticsOverview {
   data_as_of: string | null;
 }
 
+// One exact custom-event property the operator chooses to retain for reporting.
 export interface AnalyticsPropertyRuleInput {
   event_name: string;
   property_key: string;
   label: string;
 }
 
+// A saved rule with a stable identity and non-retroactive activation boundary.
 export interface AnalyticsPropertyRule extends AnalyticsPropertyRuleInput {
   id: string;
   enabled_at: string;
@@ -177,6 +179,7 @@ export class AnalyticsService {
     );
   }
 
+  // Returns the complete governed property set for an active analytics site.
   propertyRules(
     businessId: string,
     clientId: string,
@@ -186,6 +189,7 @@ export class AnalyticsService {
     );
   }
 
+  // Atomically replaces the complete set; an empty array explicitly clears retention.
   replacePropertyRules(
     businessId: string,
     clientId: string,
