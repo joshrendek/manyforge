@@ -19,6 +19,7 @@ import { PageHeader } from '../../ui/page-header/page-header';
 import { StatusPill } from '../../ui/status-pill/status-pill';
 import { Spinner } from '../../ui/spinner/spinner';
 import { ticketStatusTone, ticketPriorityTone } from '../../ui/status';
+import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
 
 // Thread view for a single ticket. Mirrors signup.ts's signal-driven view
 // switching and dashboard.ts's load/error pattern. Business id + ticket id come
@@ -27,7 +28,7 @@ import { ticketStatusTone, ticketPriorityTone } from '../../ui/status';
 // inbound/outbound/note styling, attachments, and the SPF/DKIM/DMARC flags.
 @Component({
   selector: 'app-thread-view',
-  imports: [RouterLink, DatePipe, FormsModule, PageHeader, StatusPill, Spinner],
+  imports: [RouterLink, DatePipe, FormsModule, PageHeader, StatusPill, Spinner, TagChipInput],
   template: `
     <div class="mf-card">
       <mf-page-header title="Conversation">
@@ -113,32 +114,15 @@ import { ticketStatusTone, ticketPriorityTone } from '../../ui/status';
 
             <div class="mf-field triage-field triage-tags-field">
               <label>Tags</label>
-              <div class="chips" data-testid="triage-tags">
-                @for (tag of t.tags; track tag) {
-                  <span class="mf-pill mf-pill-neutral chip" data-testid="triage-chip">
-                    {{ tag }}
-                    <button
-                      type="button"
-                      class="chip-x"
-                      data-testid="triage-chip-remove"
-                      [attr.aria-label]="'Remove tag ' + tag"
-                      [disabled]="triaging()"
-                      (click)="removeTag(tag)"
-                    >
-                      ×
-                    </button>
-                  </span>
-                }
-                <input
-                  type="text"
-                  class="mf-input chip-input"
-                  data-testid="triage-tag-input"
-                  placeholder="add tag…"
-                  [(ngModel)]="tagDraft"
-                  [disabled]="triaging()"
-                  (keyup.enter)="addTag()"
-                />
-              </div>
+              <mf-tag-chip-input
+                data-testid="triage-tags"
+                [tags]="t.tags"
+                [disabled]="triaging()"
+                inputTestId="triage-tag-input"
+                chipTestId="triage-chip"
+                removeTestId="triage-chip-remove"
+                (tagsChange)="replaceTags($event)"
+              />
             </div>
 
             <div class="mf-field triage-field triage-assignee-field">
@@ -832,6 +816,13 @@ export class ThreadViewComponent implements OnInit {
     const t = this.ticket();
     if (!t) return;
     this.patch({ tags: t.tags.filter((x) => x !== tag) });
+  }
+
+  replaceTags(tags: string[]): void {
+    const t = this.ticket();
+    if (!t || (tags.length === t.tags.length && tags.every((tag, index) => tag === t.tags[index])))
+      return;
+    this.patch({ tags });
   }
 
   // Assignee tri-state. We only ever put `assignee_principal_id` in the body
