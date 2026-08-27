@@ -1,0 +1,21 @@
+openapi: 3.0.3
+info:
+  title: ManyForge Mailing Lists and Broadcast Campaigns API
+  version: 0.1.0
+  description: |
+    Incremental contract for Spec 013. Backend slices add their complete paths,
+    schemas, uniform oracle behavior, and permission requirements here before
+    implementation. The canonical endpoint inventory is in sections 5.7, 5.8,
+    and 5.10 of the mailing-lists and automations design.
+servers:
+  - url: /api/v1
+    description: Authenticated, public subscription, S2S, and provider webhook API
+security:
+  - bearerAuth: []
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
