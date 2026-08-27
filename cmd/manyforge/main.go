@@ -37,6 +37,7 @@ import (
 	"github.com/manyforge/manyforge/internal/githubapp"
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
+	"github.com/manyforge/manyforge/internal/mailing"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/config"
@@ -219,6 +220,20 @@ func main() {
 	feedbackSvc := &feedback.Service{DB: database, Sealer: feedbackSealer}
 	feedbackH := feedback.NewHandler(feedbackSvc)
 	feedbackPublicH := feedback.NewPublicHandler(database, logger, feedbackSealer)
+
+	var mailingSealer *mfcrypto.Sealer
+	var mailingH *mailing.Handler
+	if len(cfg.MailingMasterKey) > 0 {
+		mailingSealer, err = mfcrypto.NewSealer(cfg.MailingMasterKey)
+		if err != nil {
+			logger.Error("init mailing sealer", "err", err)
+			os.Exit(1)
+		}
+		mailingSvc := &mailing.Service{DB: database, Sealer: mailingSealer, Vault: secrets.NewVault(mailingSealer)}
+		mailingH = mailing.NewHandler(mailingSvc)
+	} else {
+		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled")
+	}
 
 	// manyforge-p20 telemetry: client registration (authenticated, gated by telemetry.read /
 	// telemetry.write) plus the principal-less batch ingest endpoint shared by the analytics and
@@ -784,6 +799,10 @@ func main() {
 		feedbackPublic:   feedbackPublicH,
 		feedbackRead:     httpx.RequirePermission(database, permResolve, authz.PermFeedbackRead, businessIDFromPath),
 		feedbackWrite:    httpx.RequirePermission(database, permResolve, authz.PermFeedbackWrite, businessIDFromPath),
+		mailing:          mailingH,
+		mailingRead:      httpx.RequirePermission(database, permResolve, authz.PermMailingRead, businessIDFromPath),
+		mailingWrite:     httpx.RequirePermission(database, permResolve, authz.PermMailingWrite, businessIDFromPath),
+		mailingSend:      httpx.RequirePermission(database, permResolve, authz.PermMailingSend, businessIDFromPath),
 		telemetry:        telemetryH,
 		telemetryPublic:  telemetryPublicH,
 		telemetryRead:    httpx.RequirePermission(database, permResolve, authz.PermTelemetryRead, businessIDFromPath),
@@ -1083,6 +1102,11 @@ type apiHandlers struct {
 	feedbackRead  func(http.Handler) http.Handler
 	feedbackWrite func(http.Handler) http.Handler
 
+	mailing      *mailing.Handler
+	mailingRead  func(http.Handler) http.Handler
+	mailingWrite func(http.Handler) http.Handler
+	mailingSend  func(http.Handler) http.Handler
+
 	// telemetry is the manyforge-p20 authenticated client-registration handler (register, list,
 	// revoke telemetry clients under a business).
 	telemetry *telemetry.Handler
@@ -1299,6 +1323,10 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				fw.Use(h.feedbackWrite)
 				h.feedback.WriteRoutes(fw)
 			})
+			if h.mailing != nil {
+				pr.Group(func(mr chi.Router) { mr.Use(h.mailingRead); h.mailing.ReadRoutes(mr) })
+				pr.Group(func(mw chi.Router) { mw.Use(h.mailingWrite); h.mailing.WriteRoutes(mw) })
+			}
 			// manyforge-p20 telemetry read slice: list registered clients, gated on
 			// telemetry.read. Publishable keys are returned deliberately — an operator needs
 			// them to configure an SDK.

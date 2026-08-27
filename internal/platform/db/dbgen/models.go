@@ -7,6 +7,7 @@ package dbgen
 import (
 	"database/sql/driver"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -362,6 +363,183 @@ func (ns NullInboundAddressKind) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.InboundAddressKind), nil
+}
+
+type MailingConsentSource string
+
+const (
+	MailingConsentSourcePublicForm MailingConsentSource = "public_form"
+	MailingConsentSourceApi        MailingConsentSource = "api"
+	MailingConsentSourceCsvImport  MailingConsentSource = "csv_import"
+	MailingConsentSourceCrm        MailingConsentSource = "crm"
+	MailingConsentSourceManual     MailingConsentSource = "manual"
+)
+
+func (e *MailingConsentSource) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MailingConsentSource(s)
+	case string:
+		*e = MailingConsentSource(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MailingConsentSource: %T", src)
+	}
+	return nil
+}
+
+type NullMailingConsentSource struct {
+	MailingConsentSource MailingConsentSource `json:"mailing_consent_source"`
+	Valid                bool                 `json:"valid"` // Valid is true if MailingConsentSource is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMailingConsentSource) Scan(value interface{}) error {
+	if value == nil {
+		ns.MailingConsentSource, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MailingConsentSource.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMailingConsentSource) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MailingConsentSource), nil
+}
+
+type MailingSendMode string
+
+const (
+	MailingSendModeRelay  MailingSendMode = "relay"
+	MailingSendModeResend MailingSendMode = "resend"
+	MailingSendModeSes    MailingSendMode = "ses"
+)
+
+func (e *MailingSendMode) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MailingSendMode(s)
+	case string:
+		*e = MailingSendMode(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MailingSendMode: %T", src)
+	}
+	return nil
+}
+
+type NullMailingSendMode struct {
+	MailingSendMode MailingSendMode `json:"mailing_send_mode"`
+	Valid           bool            `json:"valid"` // Valid is true if MailingSendMode is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMailingSendMode) Scan(value interface{}) error {
+	if value == nil {
+		ns.MailingSendMode, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MailingSendMode.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMailingSendMode) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MailingSendMode), nil
+}
+
+type MailingSubscriberStatus string
+
+const (
+	MailingSubscriberStatusPending      MailingSubscriberStatus = "pending"
+	MailingSubscriberStatusActive       MailingSubscriberStatus = "active"
+	MailingSubscriberStatusUnsubscribed MailingSubscriberStatus = "unsubscribed"
+	MailingSubscriberStatusBounced      MailingSubscriberStatus = "bounced"
+	MailingSubscriberStatusComplained   MailingSubscriberStatus = "complained"
+)
+
+func (e *MailingSubscriberStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MailingSubscriberStatus(s)
+	case string:
+		*e = MailingSubscriberStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MailingSubscriberStatus: %T", src)
+	}
+	return nil
+}
+
+type NullMailingSubscriberStatus struct {
+	MailingSubscriberStatus MailingSubscriberStatus `json:"mailing_subscriber_status"`
+	Valid                   bool                    `json:"valid"` // Valid is true if MailingSubscriberStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMailingSubscriberStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.MailingSubscriberStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MailingSubscriberStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMailingSubscriberStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MailingSubscriberStatus), nil
+}
+
+type MailingSuppressionReason string
+
+const (
+	MailingSuppressionReasonBounce      MailingSuppressionReason = "bounce"
+	MailingSuppressionReasonComplaint   MailingSuppressionReason = "complaint"
+	MailingSuppressionReasonUnsubscribe MailingSuppressionReason = "unsubscribe"
+	MailingSuppressionReasonManual      MailingSuppressionReason = "manual"
+)
+
+func (e *MailingSuppressionReason) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MailingSuppressionReason(s)
+	case string:
+		*e = MailingSuppressionReason(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MailingSuppressionReason: %T", src)
+	}
+	return nil
+}
+
+type NullMailingSuppressionReason struct {
+	MailingSuppressionReason MailingSuppressionReason `json:"mailing_suppression_reason"`
+	Valid                    bool                     `json:"valid"` // Valid is true if MailingSuppressionReason is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMailingSuppressionReason) Scan(value interface{}) error {
+	if value == nil {
+		ns.MailingSuppressionReason, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MailingSuppressionReason.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMailingSuppressionReason) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MailingSuppressionReason), nil
 }
 
 type MessageDeliveryState string
@@ -991,6 +1169,102 @@ type Invitation struct {
 	CreatedAt    time.Time          `json:"created_at"`
 }
 
+type ListSubscriber struct {
+	ID                uuid.UUID               `json:"id"`
+	BusinessID        uuid.UUID               `json:"business_id"`
+	TenantRootID      uuid.UUID               `json:"tenant_root_id"`
+	ListID            uuid.UUID               `json:"list_id"`
+	Email             string                  `json:"email"`
+	FirstName         *string                 `json:"first_name"`
+	LastName          *string                 `json:"last_name"`
+	Attributes        []byte                  `json:"attributes"`
+	Status            MailingSubscriberStatus `json:"status"`
+	ContactID         pgtype.UUID             `json:"contact_id"`
+	ConsentSource     MailingConsentSource    `json:"consent_source"`
+	ConsentAttestedBy pgtype.UUID             `json:"consent_attested_by"`
+	ConsentIp         *netip.Addr             `json:"consent_ip"`
+	ConsentUserAgent  *string                 `json:"consent_user_agent"`
+	ConsentAt         time.Time               `json:"consent_at"`
+	ConfirmTokenHash  []byte                  `json:"confirm_token_hash"`
+	ConfirmExpiresAt  pgtype.Timestamptz      `json:"confirm_expires_at"`
+	ConfirmedAt       pgtype.Timestamptz      `json:"confirmed_at"`
+	UnsubscribedAt    pgtype.Timestamptz      `json:"unsubscribed_at"`
+	StatusReason      *string                 `json:"status_reason"`
+	CreatedAt         time.Time               `json:"created_at"`
+	UpdatedAt         time.Time               `json:"updated_at"`
+}
+
+type MailingList struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Slug         string    `json:"slug"`
+	Name         string    `json:"name"`
+	Description  *string   `json:"description"`
+	DoubleOptIn  bool      `json:"double_opt_in"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type MailingListKey struct {
+	ID             uuid.UUID          `json:"id"`
+	BusinessID     uuid.UUID          `json:"business_id"`
+	TenantRootID   uuid.UUID          `json:"tenant_root_id"`
+	ListID         uuid.UUID          `json:"list_id"`
+	PublishableKey string             `json:"publishable_key"`
+	SealedSecret   *string            `json:"sealed_secret"`
+	Label          *string            `json:"label"`
+	Status         string             `json:"status"`
+	CreatedAt      time.Time          `json:"created_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type MailingSendingProfile struct {
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	TenantRootID        uuid.UUID          `json:"tenant_root_id"`
+	Mode                MailingSendMode    `json:"mode"`
+	FromEmail           string             `json:"from_email"`
+	FromName            string             `json:"from_name"`
+	ReplyTo             *string            `json:"reply_to"`
+	PostalAddress       *string            `json:"postal_address"`
+	EmailDomainID       pgtype.UUID        `json:"email_domain_id"`
+	SecretRef           pgtype.UUID        `json:"secret_ref"`
+	SesRegion           *string            `json:"ses_region"`
+	SesConfigurationSet *string            `json:"ses_configuration_set"`
+	SnsTopicArn         *string            `json:"sns_topic_arn"`
+	Status              string             `json:"status"`
+	LastVerifiedAt      pgtype.Timestamptz `json:"last_verified_at"`
+	VerifyError         *string            `json:"verify_error"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+type MailingSuppression struct {
+	ID           uuid.UUID                `json:"id"`
+	BusinessID   uuid.UUID                `json:"business_id"`
+	TenantRootID uuid.UUID                `json:"tenant_root_id"`
+	Email        string                   `json:"email"`
+	Reason       MailingSuppressionReason `json:"reason"`
+	Source       string                   `json:"source"`
+	CreatedAt    time.Time                `json:"created_at"`
+}
+
+type MailingTemplate struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Name         string    `json:"name"`
+	Subject      string    `json:"subject"`
+	Preheader    *string   `json:"preheader"`
+	BodyMarkdown string    `json:"body_markdown"`
+	TrackOpens   bool      `json:"track_opens"`
+	TrackClicks  bool      `json:"track_clicks"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type McpServer struct {
 	ID            uuid.UUID `json:"id"`
 	BusinessID    uuid.UUID `json:"business_id"`
@@ -1189,6 +1463,16 @@ type Secret struct {
 	SealedValue  string    `json:"sealed_value"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type SubscriberTag struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	ListID       uuid.UUID `json:"list_id"`
+	SubscriberID uuid.UUID `json:"subscriber_id"`
+	Tag          string    `json:"tag"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type TelemetryClient struct {

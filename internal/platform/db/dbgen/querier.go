@@ -23,6 +23,7 @@ type Querier interface {
 	// Sum of cost across this agent's runs in the current calendar month (UTC).
 	AgentMonthToDateCostCents(ctx context.Context, arg AgentMonthToDateCostCentsParams) (int64, error)
 	AllPermissionKeys(ctx context.Context) ([]string, error)
+	ArchiveMailingList(ctx context.Context, arg ArchiveMailingListParams) (MailingList, error)
 	// BlankTicketAttachments blanks attachment filenames on a ticket (the blob bytes are
 	// purged out-of-band via attachment.purge). Returns the count blanked — the audit
 	// scope count. Joined through ticket_message so it stays scoped to one ticket.
@@ -133,6 +134,9 @@ type Querier interface {
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams) (int64, error)
 	DeleteMCPToolPolicy(ctx context.Context, arg DeleteMCPToolPolicyParams) (int64, error)
+	DeleteMailingSendingProfile(ctx context.Context, arg DeleteMailingSendingProfileParams) (MailingSendingProfile, error)
+	DeleteMailingSuppression(ctx context.Context, arg DeleteMailingSuppressionParams) (MailingSuppression, error)
+	DeleteMailingTemplate(ctx context.Context, arg DeleteMailingTemplateParams) (MailingTemplate, error)
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
@@ -146,6 +150,7 @@ type Querier interface {
 	DeleteRole(ctx context.Context, arg DeleteRoleParams) error
 	// DeleteSecret removes one secret scoped to (id, business); :execrows lets the caller detect a no-op delete.
 	DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error)
+	DeleteSubscriberTags(ctx context.Context, arg DeleteSubscriberTagsParams) error
 	// DeleteTicketTags removes every tag row for a ticket — the first half of a
 	// full-set tag replacement. Scoped to (ticket_id, business_id).
 	DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsParams) error
@@ -255,6 +260,7 @@ type Querier interface {
 	// GetContactByEmail looks up a live contact by (tenant_root_id, primary_email) — the
 	// dedup probe before requester linkage.
 	GetContactByEmail(ctx context.Context, arg GetContactByEmailParams) (Contact, error)
+	GetContactsByIDs(ctx context.Context, arg GetContactsByIDsParams) ([]Contact, error)
 	// A tenant-owned (non-preset) role; presets have NULL tenant_root_id and never match.
 	GetCustomRole(ctx context.Context, arg GetCustomRoleParams) (GetCustomRoleRow, error)
 	// GetEmailDomain loads a single email domain scoped to (id, business_id) — the
@@ -274,11 +280,16 @@ type Querier interface {
 	GetFeedbackBoard(ctx context.Context, arg GetFeedbackBoardParams) (FeedbackBoard, error)
 	GetFeedbackPost(ctx context.Context, arg GetFeedbackPostParams) (FeedbackPost, error)
 	GetGithubAppConfig(ctx context.Context) (GetGithubAppConfigRow, error)
+	GetListSubscriber(ctx context.Context, arg GetListSubscriberParams) (ListSubscriber, error)
 	// GetMCPServerByID loads an MCP server by (id, business_id) — the ownership
 	// predicate. RLS scopes rows to the caller's authorized businesses; the explicit
 	// business_id is defense in depth. pgx.ErrNoRows => ErrNotFound.
 	GetMCPServerByID(ctx context.Context, arg GetMCPServerByIDParams) (McpServer, error)
 	GetMCPToolPolicy(ctx context.Context, arg GetMCPToolPolicyParams) (McpToolPolicy, error)
+	GetMailingList(ctx context.Context, arg GetMailingListParams) (MailingList, error)
+	// ---- sending profile ----
+	GetMailingSendingProfile(ctx context.Context, arg GetMailingSendingProfileParams) (MailingSendingProfile, error)
+	GetMailingTemplate(ctx context.Context, arg GetMailingTemplateParams) (MailingTemplate, error)
 	// ---- Member role management (T063) ----
 	// The target principal's direct membership at a business. RLS scopes this to the
 	// caller's authorized subtree, so an admin can read members of a business they
@@ -439,6 +450,8 @@ type Querier interface {
 	// service bumps vote_count only on a genuinely new vote.
 	InsertFeedbackVote(ctx context.Context, arg InsertFeedbackVoteParams) (int64, error)
 	InsertGithubAppConfig(ctx context.Context, arg InsertGithubAppConfigParams) (int64, error)
+	// ---- subscribers ----
+	InsertListSubscriber(ctx context.Context, arg InsertListSubscriberParams) (ListSubscriber, error)
 	// Agent runtime (spec 003 US6) — per-business MCP server registry queries.
 	// Every query runs inside the caller's RLS principal context (db.WithPrincipal)
 	// AND pushes the (business_id, …) ownership predicate into SQL (dual enforcement,
@@ -449,6 +462,19 @@ type Querier interface {
 	// returns no row, so the NOT NULL column rejects the insert → service maps to 404).
 	// Duplicate (business_id, name) → unique violation → 409.
 	InsertMCPServer(ctx context.Context, arg InsertMCPServerParams) (McpServer, error)
+	// Mailing-list core queries (Spec 013, migration 0124). All tables are business-scoped.
+	// Every query runs inside db.WithPrincipal (RLS) and every ID-taking query also carries
+	// tenant_root_id. Services additionally assert business/list containment so a sibling-business,
+	// foreign-tenant, archived, or unknown identifier collapses to ErrNotFound.
+	// ---- lists ----
+	InsertMailingList(ctx context.Context, arg InsertMailingListParams) (MailingList, error)
+	// ---- list keys ----
+	InsertMailingListKey(ctx context.Context, arg InsertMailingListKeyParams) (MailingListKey, error)
+	InsertMailingSendingProfile(ctx context.Context, arg InsertMailingSendingProfileParams) (MailingSendingProfile, error)
+	// ---- suppressions ----
+	InsertMailingSuppression(ctx context.Context, arg InsertMailingSuppressionParams) (MailingSuppression, error)
+	// ---- templates ----
+	InsertMailingTemplate(ctx context.Context, arg InsertMailingTemplateParams) (MailingTemplate, error)
 	// InsertNoteMessage persists an internal note (never delivered, delivery_state NULL).
 	// source_approval_item_id (nullable) is the idempotency key for agent-driven notes:
 	// a redelivered ApprovalExecutor replay supplies the same key, which the service
@@ -472,6 +498,11 @@ type Querier interface {
 	// InsertSecret seals-then-stores: caller passes a pre-generated id + the sealed ciphertext.
 	// tenant_root_id is derived from the (RLS-visible) business, so an invisible business inserts zero rows.
 	InsertSecret(ctx context.Context, arg InsertSecretParams) (Secret, error)
+	InsertSubscriberTag(ctx context.Context, arg InsertSubscriberTagParams) (SubscriberTag, error)
+	// InsertSubscribersBatch is the atomic import primitive. Go validates equal-length arrays
+	// before calling because multi-array unnest pads short arrays with NULL. Duplicate emails on
+	// the list are skipped and the returned rows are the imported set.
+	InsertSubscribersBatch(ctx context.Context, arg InsertSubscribersBatchParams) ([]ListSubscriber, error)
 	InsertSuppression(ctx context.Context, arg InsertSuppressionParams) error
 	// manyforge-p20 telemetry client registration.
 	//
@@ -587,10 +618,19 @@ type Querier interface {
 	// ListInboundAddressesAfter is the keyset continuation: rows strictly after (created_at, id).
 	ListInboundAddressesAfter(ctx context.Context, arg ListInboundAddressesAfterParams) ([]InboundAddress, error)
 	ListInvitations(ctx context.Context, businessID uuid.UUID) ([]ListInvitationsRow, error)
+	ListListSubscribers(ctx context.Context, arg ListListSubscribersParams) ([]ListSubscriber, error)
+	ListListSubscribersAfter(ctx context.Context, arg ListListSubscribersAfterParams) ([]ListSubscriber, error)
 	// ListMCPServers lists all MCP servers for a business, ordered by name for a
 	// stable, deterministic result.
 	ListMCPServers(ctx context.Context, businessID uuid.UUID) ([]McpServer, error)
 	ListMCPToolPolicies(ctx context.Context, arg ListMCPToolPoliciesParams) ([]McpToolPolicy, error)
+	ListMailingListKeys(ctx context.Context, arg ListMailingListKeysParams) ([]MailingListKey, error)
+	ListMailingLists(ctx context.Context, arg ListMailingListsParams) ([]MailingList, error)
+	ListMailingListsAfter(ctx context.Context, arg ListMailingListsAfterParams) ([]MailingList, error)
+	ListMailingSuppressions(ctx context.Context, arg ListMailingSuppressionsParams) ([]MailingSuppression, error)
+	ListMailingSuppressionsAfter(ctx context.Context, arg ListMailingSuppressionsAfterParams) ([]MailingSuppression, error)
+	ListMailingTemplates(ctx context.Context, arg ListMailingTemplatesParams) ([]MailingTemplate, error)
+	ListMailingTemplatesAfter(ctx context.Context, arg ListMailingTemplatesAfterParams) ([]MailingTemplate, error)
 	// ---- ticket messages ----
 	// ListMessages is the first page of a ticket's thread, oldest first, matching the
 	// SC-010 ticket_message(ticket_id, created_at) index. Scoped to (ticket_id,
@@ -642,6 +682,9 @@ type Querier interface {
 	// resolver turns these into the review's dimension lanes; activeDimensions() then applies the
 	// enabled + scope filtering. An empty result ⇒ the caller falls back to the default panel.
 	ListReviewDimensions(ctx context.Context, businessID uuid.UUID) ([]ReviewDimension, error)
+	ListSubscriberTags(ctx context.Context, arg ListSubscriberTagsParams) ([]SubscriberTag, error)
+	ListSubscribersForExport(ctx context.Context, arg ListSubscribersForExportParams) ([]ListSubscriber, error)
+	ListSubscribersForExportAfter(ctx context.Context, arg ListSubscribersForExportAfterParams) ([]ListSubscriber, error)
 	ListTelemetryClients(ctx context.Context, arg ListTelemetryClientsParams) ([]TelemetryClient, error)
 	// Presets (tenant_root_id IS NULL) plus the tenant's custom roles. RLS scopes
 	// this to roles the caller may see; the predicate narrows to one tenant.
@@ -748,6 +791,7 @@ type Querier interface {
 	// id matches zero rows ⇒ pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
 	RevokeFeedbackIngestKey(ctx context.Context, arg RevokeFeedbackIngestKeyParams) (FeedbackIngestKey, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (uuid.UUID, error)
+	RevokeMailingListKey(ctx context.Context, arg RevokeMailingListKeyParams) (MailingListKey, error)
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
 	RevokeTelemetryClient(ctx context.Context, arg RevokeTelemetryClientParams) (TelemetryClient, error)
 	// Invitation lifecycle queries. Create/list/revoke/resend run under the inviter's
@@ -780,6 +824,7 @@ type Querier interface {
 	SoftDeleteContact(ctx context.Context, arg SoftDeleteContactParams) error
 	SoftDeleteFeedbackPost(ctx context.Context, arg SoftDeleteFeedbackPostParams) error
 	SubtreeHeight(ctx context.Context, ancestorID uuid.UUID) (int32, error)
+	UnsubscribeListSubscriber(ctx context.Context, arg UnsubscribeListSubscriberParams) (ListSubscriber, error)
 	// UpdateAICredentialConfig partially updates the two SAFE config columns of a credential
 	// (PATCH): COALESCE(narg, col) preserves any field the caller omitted. Scoped to (id,
 	// business_id). Deliberately does NOT touch allow_private_base_url / base_url / sealed_key_ref
@@ -823,10 +868,14 @@ type Querier interface {
 	// UpdateFeedbackBoard is a partial update: a NULL narg preserves the current column value via
 	// COALESCE. is_public/name/description are each tri-state (NULL = unchanged).
 	UpdateFeedbackBoard(ctx context.Context, arg UpdateFeedbackBoardParams) (FeedbackBoard, error)
+	UpdateListSubscriber(ctx context.Context, arg UpdateListSubscriberParams) (ListSubscriber, error)
 	// UpdateMCPServer partially updates an MCP server (PATCH): COALESCE(narg, col)
 	// preserves any field the caller omitted (narg NULL = absent).
 	// No match → ErrNoRows → 404.
 	UpdateMCPServer(ctx context.Context, arg UpdateMCPServerParams) (McpServer, error)
+	UpdateMailingList(ctx context.Context, arg UpdateMailingListParams) (MailingList, error)
+	UpdateMailingSendingProfile(ctx context.Context, arg UpdateMailingSendingProfileParams) (MailingSendingProfile, error)
+	UpdateMailingTemplate(ctx context.Context, arg UpdateMailingTemplateParams) (MailingTemplate, error)
 	// Reassigns a member's role at a business, recording who made the change. :exec
 	// (no RETURNING): RLS can hide the just-updated row from the caller (42501).
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error
