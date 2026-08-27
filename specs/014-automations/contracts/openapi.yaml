@@ -1,0 +1,20 @@
+openapi: 3.0.3
+info:
+  title: ManyForge Branching Drip Automations API
+  version: 0.1.0
+  description: |
+    Incremental contract for Spec 014. Backend slices add complete automation,
+    version, validation, lifecycle, enrollment, event, and statistics paths here
+    before implementation. The canonical endpoint inventory is in section 6.7
+    of the mailing-lists and automations design.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
