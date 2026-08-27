@@ -31,6 +31,10 @@ const (
 	PermFeedbackRead  = "feedback.read"
 	PermFeedbackWrite = "feedback.write"
 
+	PermMailingRead  = "mailing.read"
+	PermMailingWrite = "mailing.write"
+	PermMailingSend  = "mailing.send"
+
 	PermTelemetryRead  = "telemetry.read"
 	PermTelemetryWrite = "telemetry.write"
 )

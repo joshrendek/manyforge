@@ -117,6 +117,9 @@ type Config struct {
 	// disabled (anonymous ingress unaffected) and the server still boots. Set-but-wrong-length
 	// is a hard config error caught here.
 	FeedbackMasterKey []byte
+	// MailingMasterKey seals list S2S signing secrets and BYO provider credentials.
+	// MANYFORGE_MAILING_MASTER_KEY is optional at boot and must decode to 32 bytes when set.
+	MailingMasterKey []byte
 
 	// InstanceOperatorPrincipal gates instance setup routes (GitHub App manifest
 	// creation, etc.). MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL (UUID). uuid.Nil when
@@ -369,6 +372,9 @@ func Load() (Config, error) {
 	// HMAC-signed verified ingress sealing.
 	if cfg.FeedbackMasterKey, err = envKey32("MANYFORGE_FEEDBACK_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_FEEDBACK_MASTER_KEY: %w", err)
+	}
+	if cfg.MailingMasterKey, err = envKey32("MANYFORGE_MAILING_MASTER_KEY"); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_MASTER_KEY: %w", err)
 	}
 
 	// Instance operator principal (GitHub App setup gate): unset ⇒ uuid.Nil, so the

@@ -39,6 +39,12 @@ const (
 	// worker drains it to delete the attachment object from blob storage out-of-band
 	// (T066/FR-014). Payload carries {blob_key}. The handler is idempotent.
 	TopicAttachmentPurge = "attachment.purge"
+
+	// Mailing subscriber lifecycle topics are emitted in the same transaction as the
+	// source mutation. Spec 014 consumes them to enroll or exit drip automations.
+	TopicMailingSubscriberActivated     = "mailing.subscriber.activated"
+	TopicMailingSubscriberTagAdded      = "mailing.subscriber.tag_added"
+	TopicMailingSubscriberStatusChanged = "mailing.subscriber.status_changed"
 )
 
 // Event is a drained outbox row handed to subscribers.

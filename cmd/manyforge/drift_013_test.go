@@ -1,0 +1,41 @@
+//go:build contract
+
+package main
+
+import (
+	"sort"
+	"strings"
+	"testing"
+)
+
+var inScope013CoreOps = []string{
+	"GET /businesses/{}/mailing/lists", "POST /businesses/{}/mailing/lists", "GET /businesses/{}/mailing/lists/{}", "PATCH /businesses/{}/mailing/lists/{}", "DELETE /businesses/{}/mailing/lists/{}",
+	"GET /businesses/{}/mailing/lists/{}/subscribers", "POST /businesses/{}/mailing/lists/{}/subscribers", "POST /businesses/{}/mailing/lists/{}/subscribers/from-contacts", "POST /businesses/{}/mailing/lists/{}/subscribers/import", "GET /businesses/{}/mailing/lists/{}/subscribers/export", "GET /businesses/{}/mailing/lists/{}/subscribers/{}", "PATCH /businesses/{}/mailing/lists/{}/subscribers/{}", "DELETE /businesses/{}/mailing/lists/{}/subscribers/{}",
+	"GET /businesses/{}/mailing/lists/{}/keys", "POST /businesses/{}/mailing/lists/{}/keys", "DELETE /businesses/{}/mailing/lists/{}/keys/{}",
+	"GET /businesses/{}/mailing/sending-profile", "PUT /businesses/{}/mailing/sending-profile", "DELETE /businesses/{}/mailing/sending-profile",
+	"GET /businesses/{}/mailing/templates", "POST /businesses/{}/mailing/templates", "GET /businesses/{}/mailing/templates/{}", "PATCH /businesses/{}/mailing/templates/{}", "DELETE /businesses/{}/mailing/templates/{}",
+	"GET /businesses/{}/mailing/suppressions", "POST /businesses/{}/mailing/suppressions", "DELETE /businesses/{}/mailing/suppressions/{}",
+}
+
+func TestOpenAPIDrift013Core(t *testing.T) {
+	routes := apiRoutes(t)
+	spec := spec013Routes(t)
+	for _, op := range inScope013CoreOps {
+		if !spec[op] {
+			t.Errorf("test bug: %q missing from 013 contract", op)
+		}
+		if !routes[op] {
+			t.Errorf("013 drift: %q documented but not served", op)
+		}
+	}
+	var extra []string
+	for op := range routes {
+		if strings.Contains(op, "/mailing/") && !spec[op] {
+			extra = append(extra, op)
+		}
+	}
+	sort.Strings(extra)
+	for _, op := range extra {
+		t.Errorf("013 drift: %q served but undocumented", op)
+	}
+}
