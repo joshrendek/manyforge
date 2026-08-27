@@ -96,10 +96,13 @@ earlier slices working when a shared layer grows.
 | **SL-A** | **Agent Runtime & AI Gateway** — provider abstraction, per-tenant BYO keys, model registry, token/cost accounting, run loop, **tool registry** (internal tools + connector tools + MCP host), **autonomy-gate implementation**, **approvals queue**, per-run audit | `internal/agents`, `internal/platform/ai` | Spec 003 |
 | **SL-B** | **Connectors & Credential Vault** — envelope-encrypted per-tenant secrets, OAuth2 + API-key connections, typed connector interface (ticketing / repo / crm capabilities), signed inbound webhooks, sync engine (external-id mapping, conflict resolution) | `internal/connectors`, `internal/platform/secrets` | Spec 004 |
 | **SL-C** | **Eventing & Activity Timeline** — in-process pub/sub + transactional **outbox** (reliable side-effects in the source write's transaction), unified "what happened on this entity" stream reused by tickets / contacts / feedback | `internal/platform/events` | Spec 002 (thin) |
-| **SL-D** | **Notifications** — templated outbound (extends 001's `Mailer`), in-app notifications, per-user preferences, digesting | `internal/platform/notify` | Spec 002 (thin) |
+| **SL-D** | **Notifications & Mailing** — transactional and bulk templated outbound, in-app notifications, preferences, digests, consented lists, provider-neutral delivery, unsubscribe/suppression, tracking, and branching drip automations | `internal/platform/notify`, `internal/mailing`, `internal/automations` | Spec 002 (thin); expanded by Specs 013–014 |
 | **SL-E** | **Attachments / Object Storage** — local FS (self-host) + S3-compatible, MIME-sniffed on the first 512 bytes, tenant-scoped | `internal/platform/blob` | Spec 002 (thin) |
 
 All package names above are already anticipated by the constitution's module map.
+Spec 013 adds the SL-D permission surface `mailing.read`, `mailing.write`, and
+`mailing.send`; Spec 014 deliberately reuses those permissions and Spec 013's
+transactional mailing ports instead of creating a parallel sender.
 
 ---
 
@@ -122,6 +125,10 @@ All package names above are already anticipated by the constitution's module map
 007  Coding & Review Agents (opencode)   agents/coding  (reuses SL-A + SL-B)
         ⋯
 (008 stretch) Founder Copilot — cross-business read-only assistant on SL-A
+        ⋯
+013  Mailing Lists & Broadcast Campaigns   mailing  (SL-D hardened)
+        ▼
+014  Branching Drip Automations             automations  (reuses 013 delivery)
 ```
 
 After 003 the runtime is a domain-agnostic capability layer, so the support track
@@ -221,6 +228,37 @@ A cross-business, read-only conversational assistant built on SL-A with read too
 spanning the verticals ("ask your portfolio anything"). May fold into 003. Listed
 to mark the intent, not yet scoped.
 
+### 013 — Mailing Lists & Broadcast Campaigns
+- **Modules:** `internal/mailing`; hardens SL-D and reuses notifications, events,
+  the credential vault, CRM activity, and tenant-merge fencing.
+- **Scope:** consented lists and subscribers; public form, signed S2S, CSV, and
+  CRM acquisition; relay/Resend/SES sending profiles; Markdown templates and
+  campaigns; lease-based delivery; unsubscribe, suppression, click/open
+  tracking, provider webhooks, and campaign statistics.
+- **Depends on:** 002 (notification/email primitives), 004 (credential vault),
+  005 (contacts and activity timeline).
+- **Demo:** subscribe and confirm through a hosted form → author and send a
+  campaign → inspect engagement → unsubscribe → verify later fan-out excludes
+  the recipient.
+- **Regression contract:** tenant/RLS and public-oracle pins; consent and token
+  integrity; resumable fan-out and lease reclaim; suppression exclusion;
+  provider/webhook idempotency; bidirectional OpenAPI drift; browser flows.
+- **Size:** L.
+
+### 014 — Branching Drip Automations
+- **Modules:** `internal/automations`; reuses Spec 013's subscriber, template,
+  delivery, engagement, and tag ports.
+- **Scope:** immutable JSON graph versions; list/tag/custom-event triggers;
+  send, wait, condition, add/remove-tag, and exit nodes; lease-based stepper;
+  enrollment timelines and per-node stats; deterministic auto-layout canvas.
+- **Depends on:** 013.
+- **Demo:** activate welcome → wait → clicked? → tag/reminder automation; enroll
+  a subscriber and inspect the version-pinned execution timeline and node stats.
+- **Regression contract:** graph validation; transactional enqueue/step state;
+  claim, pause, crash, and replay invariants; trigger idempotency; tenant/oracle
+  pins; deterministic accessible canvas and Playwright lifecycle coverage.
+- **Size:** L.
+
 ---
 
 ## New `internal/` modules (cumulative)
@@ -239,6 +277,8 @@ to mark the intent, not yet scoped.
 | `internal/crm` | 005 | Contacts, companies, deals, activity timeline |
 | `internal/feedback` | 006 | Feature-request / bug-report boards |
 | `internal/agents/coding` | 007 | opencode coding/review agents + sandbox host |
+| `internal/mailing` | 013 | Lists, consent, templates, profiles, campaigns, delivery, tracking (SL-D) |
+| `internal/automations` | 014 | Versioned drip graphs, enrollments, stepper, and mailing ports (SL-D) |
 
 ---
 
@@ -281,6 +321,6 @@ pins and contract tests that spec must add before it is considered done.
 
 ## Next step
 
-Brainstorm **Spec 002 — Native Support Desk** through the normal
-brainstorm → spec → plan → tasks flow, producing `specs/002-support-desk/`.
-Optionally, file `bd` epics for 002–007 to track the program in the issue tracker.
+Implement **Spec 013 — Mailing Lists & Broadcast Campaigns** in the ordered,
+single-branch slices in its approved design, then implement dependent Spec 014.
+Track each slice under the corresponding `bd` epic.
