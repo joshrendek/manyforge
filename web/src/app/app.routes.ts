@@ -133,6 +133,35 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/feedback/portal').then((m) => m.FeedbackPortalComponent),
   },
   {
+    path: 'mailing',
+    pathMatch: 'full',
+    redirectTo: 'mailing/lists',
+  },
+  {
+    path: 'mailing/lists',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/lists-list').then((m) => m.MailingListsListComponent),
+  },
+  {
+    path: 'mailing/templates',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/templates-list').then((m) => m.MailingTemplatesListComponent),
+  },
+  {
+    path: 'mailing/:businessId/lists/:listId',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/list-detail').then((m) => m.MailingListDetailComponent),
+  },
+  {
+    path: 'mailing/:businessId/templates/:templateId',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/template-editor').then((m) => m.MailingTemplateEditorComponent),
+  },
+  {
     path: 'credentials/connector',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/connectors/list').then((m) => m.ConnectorsListComponent),
