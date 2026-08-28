@@ -721,7 +721,9 @@ export class MailingListDetailComponent implements OnInit {
   }
 
   hostedUrl(key: MailingListKey): string {
-    return `${globalThis.location?.origin ?? ''}/m/s/${key.publishable_key}`;
+    const name = this.list()?.name;
+    const query = name ? `?name=${encodeURIComponent(name)}` : '';
+    return `${globalThis.location?.origin ?? ''}/m/s/${key.publishable_key}${query}`;
   }
   embedSnippet(key: MailingListKey): string {
     return `<form method="post" action="${globalThis.location?.origin ?? ''}/api/v1/mailing/public/${key.publishable_key}/subscribe">\n  <input type="email" name="email" required>\n  <button type="submit">Subscribe</button>\n</form>`;

@@ -47,6 +47,16 @@ describe('App shell', () => {
     mock.expectNone('/api/v1/me');
   });
 
+  it('classifies mailing routes as bare public portal routes', () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance as unknown as {
+      isPortalRoute(url: string): boolean;
+    };
+    expect(app.isPortalRoute('/m/s/mlp_demo')).toBe(true);
+    expect(app.isPortalRoute('/m/confirm/token?source=email')).toBe(true);
+    expect(app.isPortalRoute('/mailing/lists')).toBe(false);
+  });
+
   it('renders all nav items including Accounting', () => {
     localStorage.setItem('mf_access', 'tok');
     const f = TestBed.createComponent(App); f.detectChanges();

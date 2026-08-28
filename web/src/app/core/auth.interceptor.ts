@@ -20,11 +20,12 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   // Never try to refresh for:
   //  - the auth endpoints themselves (login/signup/refresh/…) — a 401 there is a real
   //    failure and refreshing would loop; and
-  //  - the public feedback ingress (/feedback/public/…) — it is principal-less (keyed by a
-  //    publishable board key), so a 401 means an unknown/revoked key or a private board and
-  //    an anonymous portal visitor must NOT be bounced to /login.
+  //  - principal-less public ingress (feedback and mailing) — anonymous visitors must not be
+  //    bounced to /login when a publishable key is unknown or revoked.
   const skipRefresh =
-    req.url.includes('/api/v1/auth/') || req.url.includes('/api/v1/feedback/public/');
+    req.url.includes('/api/v1/auth/') ||
+    req.url.includes('/api/v1/feedback/public/') ||
+    req.url.includes('/api/v1/mailing/public/');
 
   return next(authReq).pipe(
     catchError((err: HttpErrorResponse) => {

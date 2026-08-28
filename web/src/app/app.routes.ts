@@ -133,6 +133,21 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/feedback/portal').then((m) => m.FeedbackPortalComponent),
   },
   {
+    path: 'm/s/:key',
+    loadComponent: () =>
+      import('./pages/mailing/public/subscribe').then((m) => m.MailingSubscribeComponent),
+  },
+  {
+    path: 'm/confirm/:token',
+    loadComponent: () =>
+      import('./pages/mailing/public/confirm').then((m) => m.MailingConfirmComponent),
+  },
+  {
+    path: 'm/u/:token',
+    loadComponent: () =>
+      import('./pages/mailing/public/unsubscribe').then((m) => m.MailingUnsubscribeComponent),
+  },
+  {
     path: 'mailing',
     pathMatch: 'full',
     redirectTo: 'mailing/lists',
@@ -148,6 +163,12 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () =>
       import('./pages/mailing/templates-list').then((m) => m.MailingTemplatesListComponent),
+  },
+  {
+    path: 'mailing/sending',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/sending-profile').then((m) => m.MailingSendingProfileComponent),
   },
   {
     path: 'mailing/:businessId/lists/:listId',

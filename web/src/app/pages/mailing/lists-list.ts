@@ -20,6 +20,13 @@ import { ToastService } from '../../ui/toast/toast.service';
     <div class="mf-card" data-testid="mailing-lists-page">
       <mf-page-header title="Mailing lists" subtitle="Collect and manage opted-in subscribers">
         <a
+          routerLink="/mailing/sending"
+          class="mf-btn mf-btn-ghost mf-btn-sm"
+          data-testid="mailing-sending-link"
+          actions
+          >Sending profile</a
+        >
+        <a
           routerLink="/mailing/templates"
           class="mf-btn mf-btn-ghost mf-btn-sm"
           data-testid="mailing-templates-link"

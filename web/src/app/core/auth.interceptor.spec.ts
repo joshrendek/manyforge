@@ -82,6 +82,18 @@ describe('authInterceptor refresh-on-401', () => {
     expect(errStatus).toBe(401);
   });
 
+  it('does not refresh or redirect for anonymous mailing ingress', () => {
+    let errStatus = 0;
+    http
+      .post('/api/v1/mailing/public/mlp_unknown/subscribe', { email: 'a@example.test' })
+      .subscribe({ error: (e) => (errStatus = e.status) });
+    mock
+      .expectOne('/api/v1/mailing/public/mlp_unknown/subscribe')
+      .flush(null, { status: 401, statusText: 'Unauthorized' });
+    mock.expectNone('/api/v1/auth/refresh');
+    expect(errStatus).toBe(401);
+  });
+
   it('clears the session when the refresh itself fails', () => {
     let errStatus = 0;
     http.get('/api/v1/me').subscribe({ error: (e) => (errStatus = e.status) });

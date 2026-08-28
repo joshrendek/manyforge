@@ -5,6 +5,8 @@ import { Page } from './ticket.service';
 
 export type MailingListStatus = 'active' | 'archived';
 export type SubscriberStatus = 'pending' | 'active' | 'unsubscribed' | 'bounced' | 'complained';
+export type MailingSendingMode = 'relay' | 'resend' | 'ses';
+export type MailingSendingProfileStatus = 'unverified' | 'verified' | 'error';
 
 export interface MailingList {
   id: string;
@@ -73,6 +75,41 @@ export interface MailingImportResult {
   imported: number;
   skipped: number;
   errors: Array<{ row: number; message: string }>;
+}
+
+export interface MailingSendingProfile {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  mode: MailingSendingMode;
+  from_email: string;
+  from_name: string;
+  reply_to: string | null;
+  postal_address: string | null;
+  email_domain_id: string | null;
+  ses_region: string | null;
+  ses_configuration_set: string | null;
+  sns_topic_arn: string | null;
+  status: MailingSendingProfileStatus;
+  last_verified_at: string | null;
+  verify_error: string | null;
+  has_credentials: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MailingSendingProfileInput {
+  mode: MailingSendingMode;
+  from_email: string;
+  from_name: string;
+  reply_to?: string | null;
+  postal_address?: string | null;
+  email_domain_id?: string | null;
+  resend?: { api_key: string; webhook_secret?: string };
+  ses?: { access_key_id: string; secret_access_key: string };
+  ses_region?: string | null;
+  ses_configuration_set?: string | null;
+  sns_topic_arn?: string | null;
 }
 
 export interface SubscriberFilters {
@@ -234,6 +271,32 @@ export class MailingService {
 
   revokeKey(businessId: string, listId: string, keyId: string): Observable<void> {
     return this.http.delete<void>(`${this.base(businessId)}/lists/${listId}/keys/${keyId}`);
+  }
+
+  getSendingProfile(businessId: string): Observable<MailingSendingProfile> {
+    return this.http.get<MailingSendingProfile>(`${this.base(businessId)}/sending-profile`);
+  }
+
+  putSendingProfile(
+    businessId: string,
+    body: MailingSendingProfileInput,
+  ): Observable<MailingSendingProfile> {
+    return this.http.put<MailingSendingProfile>(`${this.base(businessId)}/sending-profile`, body);
+  }
+
+  deleteSendingProfile(businessId: string): Observable<void> {
+    return this.http.delete<void>(`${this.base(businessId)}/sending-profile`);
+  }
+
+  verifySendingProfile(businessId: string): Observable<MailingSendingProfile> {
+    return this.http.post<MailingSendingProfile>(
+      `${this.base(businessId)}/sending-profile/verify`,
+      {},
+    );
+  }
+
+  testSendingProfile(businessId: string, to: string): Observable<void> {
+    return this.http.post<void>(`${this.base(businessId)}/sending-profile/test-send`, { to });
   }
 
   listTemplates(businessId: string, cursor?: string): Observable<Page<MailingTemplate>> {
