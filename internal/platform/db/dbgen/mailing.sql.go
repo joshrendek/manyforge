@@ -1474,6 +1474,60 @@ func (q *Queries) RevokeMailingListKey(ctx context.Context, arg RevokeMailingLis
 	return i, err
 }
 
+const setMailingSendingProfileVerification = `-- name: SetMailingSendingProfileVerification :one
+UPDATE mailing_sending_profile SET
+    status = $1::text,
+    last_verified_at = CASE WHEN $1::text = 'verified' THEN now() ELSE NULL END,
+    verify_error = NULLIF($2::text, '')
+WHERE id = $3
+  AND tenant_root_id = $4
+  AND updated_at = $5::timestamptz
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+`
+
+type SetMailingSendingProfileVerificationParams struct {
+	Status            string    `json:"status"`
+	VerifyError       string    `json:"verify_error"`
+	ID                uuid.UUID `json:"id"`
+	TenantRootID      uuid.UUID `json:"tenant_root_id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
+
+// Verification performs provider I/O with no transaction open. The updated_at
+// compare prevents a slow response from marking credentials verified after an
+// operator rotated the profile concurrently.
+func (q *Queries) SetMailingSendingProfileVerification(ctx context.Context, arg SetMailingSendingProfileVerificationParams) (MailingSendingProfile, error) {
+	row := q.db.QueryRow(ctx, setMailingSendingProfileVerification,
+		arg.Status,
+		arg.VerifyError,
+		arg.ID,
+		arg.TenantRootID,
+		arg.ExpectedUpdatedAt,
+	)
+	var i MailingSendingProfile
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Mode,
+		&i.FromEmail,
+		&i.FromName,
+		&i.ReplyTo,
+		&i.PostalAddress,
+		&i.EmailDomainID,
+		&i.SecretRef,
+		&i.SesRegion,
+		&i.SesConfigurationSet,
+		&i.SnsTopicArn,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.VerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const unsubscribeListSubscriber = `-- name: UnsubscribeListSubscriber :one
 UPDATE list_subscriber SET
     status = 'unsubscribed', unsubscribed_at = COALESCE(unsubscribed_at, now()),

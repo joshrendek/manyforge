@@ -257,6 +257,19 @@ DELETE FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
 RETURNING *;
 
+-- Verification performs provider I/O with no transaction open. The updated_at
+-- compare prevents a slow response from marking credentials verified after an
+-- operator rotated the profile concurrently.
+-- name: SetMailingSendingProfileVerification :one
+UPDATE mailing_sending_profile SET
+    status = sqlc.arg('status')::text,
+    last_verified_at = CASE WHEN sqlc.arg('status')::text = 'verified' THEN now() ELSE NULL END,
+    verify_error = NULLIF(sqlc.arg('verify_error')::text, '')
+WHERE id = sqlc.arg('id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
+RETURNING *;
+
 -- ---- templates ----
 
 -- name: InsertMailingTemplate :one

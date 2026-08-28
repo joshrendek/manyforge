@@ -46,11 +46,19 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Delete("/businesses/{id}/mailing/lists/{lid}/keys/{kid}", h.revokeKey)
 	r.Put("/businesses/{id}/mailing/sending-profile", h.putProfile)
 	r.Delete("/businesses/{id}/mailing/sending-profile", h.deleteProfile)
+	r.Post("/businesses/{id}/mailing/sending-profile/verify", h.verifyProfile)
 	r.Post("/businesses/{id}/mailing/templates", h.createTemplate)
+	r.Post("/businesses/{id}/mailing/templates/preview", h.preview)
 	r.Patch("/businesses/{id}/mailing/templates/{tid}", h.updateTemplate)
 	r.Delete("/businesses/{id}/mailing/templates/{tid}", h.deleteTemplate)
+	r.Post("/businesses/{id}/mailing/campaigns/preview", h.preview)
 	r.Post("/businesses/{id}/mailing/suppressions", h.createSuppression)
 	r.Delete("/businesses/{id}/mailing/suppressions/{sid}", h.deleteSuppression)
+}
+
+// SendRoutes registers operations that require the mailing send permission.
+func (h *Handler) SendRoutes(r chi.Router) {
+	r.Post("/businesses/{id}/mailing/sending-profile/test-send", h.testProfile)
 }
 
 type nullableString struct {
@@ -135,6 +143,15 @@ type templateBody struct {
 type suppressionBody struct {
 	Email  string `json:"email"`
 	Reason string `json:"reason"`
+}
+type previewBody struct {
+	BodyMarkdown  string  `json:"body_markdown"`
+	Preheader     *string `json:"preheader"`
+	FromName      *string `json:"from_name"`
+	PostalAddress *string `json:"postal_address"`
+}
+type testSendBody struct {
+	To string `json:"to"`
 }
 
 func requestIDs(w http.ResponseWriter, r *http.Request, names ...string) (uuid.UUID, []uuid.UUID, bool) {
@@ -463,6 +480,29 @@ func (h *Handler) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	noContent(w)
 }
+func (h *Handler) verifyProfile(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id")
+	if !ok {
+		return
+	}
+	v, err := h.svc.VerifySendingProfile(r.Context(), pid, ids[0])
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) testProfile(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id")
+	if !ok {
+		return
+	}
+	var body testSendBody
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if err := h.svc.TestSendingProfile(r.Context(), pid, ids[0], body.To); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	noContent(w)
+}
 
 func (h *Handler) listTemplates(w http.ResponseWriter, r *http.Request) {
 	pid, ids, ok := requestIDs(w, r, "id")
@@ -529,6 +569,18 @@ func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	noContent(w)
+}
+func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id")
+	if !ok {
+		return
+	}
+	var body previewBody
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	v, err := h.svc.Preview(r.Context(), pid, ids[0], PreviewInput(body))
+	write(w, r, http.StatusOK, v, err)
 }
 func (h *Handler) listSuppressions(w http.ResponseWriter, r *http.Request) {
 	pid, ids, ok := requestIDs(w, r, "id")

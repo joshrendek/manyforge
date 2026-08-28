@@ -106,6 +106,14 @@ spec:
                   name: {{ .Values.secrets.masterKeys.secretName }}
                   key: {{ .Values.secrets.masterKeys.feedbackKey }}
                   optional: true
+            # AES-256 mailing credential/token master key (spec 013). Optional:
+            # absent → the mailing API is disabled and the app still boots.
+            - name: MANYFORGE_MAILING_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.mailingKey }}
+                  optional: true
             # --- optional secrets — opt-in via secrets.smtp/secrets.inbound -
             {{- if .Values.secrets.smtp.secretName }}
             - name: MANYFORGE_SMTP_USER
