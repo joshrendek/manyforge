@@ -8,19 +8,37 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/mailing"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
+	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	mfcrypto "github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/notify"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
 type mailingSeed struct{ businessID, principalID uuid.UUID }
+
+type capturedDeliverer struct {
+	verified bool
+	mail     notify.Mail
+}
+
+func (d *capturedDeliverer) Verify(context.Context) error {
+	d.verified = true
+	return nil
+}
+func (d *capturedDeliverer) Send(_ context.Context, mail notify.Mail) (mailprovider.SendResult, error) {
+	d.mail = mail
+	return mailprovider.SendResult{ProviderID: "captured"}, nil
+}
 
 func seedMailingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) mailingSeed {
 	t.Helper()
@@ -152,6 +170,27 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	}
 	if !profile.HasCredentials {
 		t.Fatal("profile should report credentials")
+	}
+	captured := &capturedDeliverer{}
+	svc.Providers = mailprovider.NewCache(func(_ context.Context, resolved mailprovider.Profile) (mailprovider.Deliverer, error) {
+		if resolved.ID != profile.ID || resolved.ResendAPIKey != "re_secret" {
+			t.Fatalf("resolved provider profile = %+v", resolved)
+		}
+		return captured, nil
+	}, time.Minute)
+	svc.Renderer, err = mailrender.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
+	if err != nil || verified.Status != "verified" || !captured.verified {
+		t.Fatalf("VerifySendingProfile = %+v, err=%v, called=%v", verified, err, captured.verified)
+	}
+	if err = svc.TestSendingProfile(ctx, a.principalID, a.businessID, "reader@example.net"); err != nil {
+		t.Fatalf("TestSendingProfile: %v", err)
+	}
+	if captured.mail.To != "reader@example.net" || captured.mail.BodyHTML == "" || !strings.HasPrefix(captured.mail.Subject, "[TEST]") {
+		t.Fatalf("captured test mail = %+v", captured.mail)
 	}
 	if _, err = svc.PutSendingProfile(ctx, a.principalID, a.businessID, mailing.SendingProfileInput{Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender", Resend: &mailing.ResendCredentials{APIKey: "re_rotated"}}); err != nil {
 		t.Fatalf("rotate profile: %v", err)

@@ -38,6 +38,8 @@ import (
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/mailing"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
+	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/blob"
@@ -223,6 +225,7 @@ func main() {
 	feedbackPublicH := feedback.NewPublicHandler(database, logger, feedbackSealer)
 
 	var mailingSealer *mfcrypto.Sealer
+	var mailingSvc *mailing.Service
 	var mailingH *mailing.Handler
 	var mailingPublicH *mailing.PublicHandler
 	if len(cfg.MailingMasterKey) > 0 {
@@ -236,7 +239,7 @@ func main() {
 			logger.Error("init mailing token codec", "err", tokenErr)
 			os.Exit(1)
 		}
-		mailingSvc := &mailing.Service{
+		mailingSvc = &mailing.Service{
 			DB: database, Sealer: mailingSealer, Vault: secrets.NewVault(mailingSealer),
 			Tokens: mailingTokens, Mailer: mailer.LogMailer{Logger: logger}, Logger: logger,
 			PublicBaseURL: cfg.PublicBaseURL,
@@ -666,6 +669,21 @@ func main() {
 	} else {
 		sender = notify.LogSender{Logger: logger, Suppression: notify.DBSuppression{DB: database}}
 		logger.Warn("MANYFORGE_SMTP_HOST unset; outbound replies are logged, not sent (dev LogSender)")
+	}
+	if mailingSvc != nil {
+		renderer, renderErr := mailrender.New()
+		if renderErr != nil {
+			logger.Error("init mailing renderer", "err", renderErr)
+			os.Exit(1)
+		}
+		factory := &mailprovider.Factory{
+			DB: database, DKIMSealer: dkimSealer, RelaySender: sender,
+			HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		}
+		mailingSvc.Providers = mailprovider.NewCache(factory.Build, 5*time.Minute)
+		mailingSvc.Renderer = renderer
+		mailingSvc.OutboundLimiter = outboundLimiter
+		mailingSvc.MessageDomain = cfg.MailingMessageDomain
 	}
 	// US4 outbound identity selection (T059/FR-013): the send subscriber shares the
 	// SAME DKIM sealer the IdentityService uses, so it can unseal a verified custom
@@ -1352,6 +1370,7 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			if h.mailing != nil {
 				pr.Group(func(mr chi.Router) { mr.Use(h.mailingRead); h.mailing.ReadRoutes(mr) })
 				pr.Group(func(mw chi.Router) { mw.Use(h.mailingWrite); h.mailing.WriteRoutes(mw) })
+				pr.Group(func(ms chi.Router) { ms.Use(h.mailingSend); h.mailing.SendRoutes(ms) })
 			}
 			// manyforge-p20 telemetry read slice: list registered clients, gated on
 			// telemetry.read. Publishable keys are returned deliberately — an operator needs

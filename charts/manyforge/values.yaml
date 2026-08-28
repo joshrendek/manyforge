@@ -130,6 +130,15 @@ trustedProxyCidr: ""
 instanceOperatorPrincipal: ""
 publicBaseURL: ""
 
+mailing:
+  rateRPS: 10
+  rateBurst: 50
+  sendBatch: 100
+  sendEvery: 2s
+  lease: 2m
+  # Empty reuses MANYFORGE_INBOUND_SYSTEM_DOMAIN at runtime for Message-ID values.
+  messageDomain: ""
+
 # Country lookup remains off unless a deployment explicitly declares CF-IPCountry trustworthy.
 # Enabling it also requires Cloudflare's current origin-facing CIDRs: the chart allowlists them at
 # ingress and the application verifies the ingress-overwritten forwarded source against the same
@@ -217,6 +226,9 @@ secrets:
     # the verified-identity tier (spec 006). Optional: if absent the app boots
     # with the verified tier disabled (anonymous feedback ingress unaffected).
     feedbackKey: feedback
+    # AES-256 key sealing mailing provider credentials and list/token material.
+    # Optional: if absent the mailing API is disabled and the app still boots.
+    mailingKey: mailing
   # Owner-role DSN for the migrate Job — distinct from the app DSN above,
   # since migrations need DDL privileges the app role should not have.
   migrateDatabase:

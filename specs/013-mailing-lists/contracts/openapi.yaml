@@ -184,6 +184,17 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SendingProfileInput'}}}}
       responses: {'200': {$ref: '#/components/responses/Profile'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
     delete: {operationId: deleteMailingSendingProfile, responses: {'204': {description: Deleted}, '404': {$ref: '#/components/responses/NotFound'}}}
+  /businesses/{id}/mailing/sending-profile/verify:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}]
+    post:
+      operationId: verifyMailingSendingProfile
+      responses: {'200': {$ref: '#/components/responses/Profile'}, '404': {$ref: '#/components/responses/NotFound'}, '409': {$ref: '#/components/responses/Conflict'}}
+  /businesses/{id}/mailing/sending-profile/test-send:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}]
+    post:
+      operationId: testMailingSendingProfile
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TestSendInput'}}}}
+      responses: {'204': {description: Test message accepted by the provider}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}, '429': {description: Outbound rate limit exceeded}, '502': {description: Provider rejected or could not accept the message}}
   /businesses/{id}/mailing/templates:
     parameters: [{$ref: '#/components/parameters/BusinessID'}]
     get:
@@ -194,6 +205,12 @@ paths:
       operationId: createMailingTemplate
       requestBody: {$ref: '#/components/requestBodies/TemplateInput'}
       responses: {'201': {$ref: '#/components/responses/Template'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
+  /businesses/{id}/mailing/templates/preview:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}]
+    post:
+      operationId: previewMailingTemplate
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PreviewInput'}}}}
+      responses: {'200': {$ref: '#/components/responses/Preview'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
   /businesses/{id}/mailing/templates/{tid}:
     parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/TemplateID'}]
     get: {operationId: getMailingTemplate, responses: {'200': {$ref: '#/components/responses/Template'}, '404': {$ref: '#/components/responses/NotFound'}}}
@@ -202,6 +219,12 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TemplatePatch'}}}}
       responses: {'200': {$ref: '#/components/responses/Template'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
     delete: {operationId: deleteMailingTemplate, responses: {'204': {description: Deleted}, '404': {$ref: '#/components/responses/NotFound'}}}
+  /businesses/{id}/mailing/campaigns/preview:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}]
+    post:
+      operationId: previewMailingCampaign
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PreviewInput'}}}}
+      responses: {'200': {$ref: '#/components/responses/Preview'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
   /businesses/{id}/mailing/suppressions:
     parameters: [{$ref: '#/components/parameters/BusinessID'}]
     get:
@@ -250,6 +273,7 @@ components:
     KeyPage: {description: Keys, content: {application/json: {schema: {$ref: '#/components/schemas/KeyPage'}}}}
     ImportResult: {description: Synchronous import result, content: {application/json: {schema: {$ref: '#/components/schemas/ImportResult'}}}}
     PublicSubscriber: {description: S2S subscriber result, content: {application/json: {schema: {$ref: '#/components/schemas/PublicSubscriber'}}}}
+    Preview: {description: Rendered email preview with tracking disabled, content: {application/json: {schema: {$ref: '#/components/schemas/PreviewOutput'}}}}
     PublicBadRequest: {description: Invalid public request, content: {application/json: {schema: {$ref: '#/components/schemas/PublicError'}}}}
   schemas:
     Error: {type: object, required: [code, message], properties: {code: {type: string}, message: {type: string}}}
@@ -280,6 +304,9 @@ components:
       required: [id, business_id, tenant_root_id, mode, from_email, from_name, status, has_credentials, created_at, updated_at]
       properties: {id: {type: string, format: uuid}, business_id: {type: string, format: uuid}, tenant_root_id: {type: string, format: uuid}, mode: {type: string, enum: [relay, resend, ses]}, from_email: {type: string, format: email}, from_name: {type: string}, reply_to: {type: string, format: email, nullable: true}, postal_address: {type: string, nullable: true}, email_domain_id: {type: string, format: uuid, nullable: true}, ses_region: {type: string, nullable: true}, ses_configuration_set: {type: string, nullable: true}, sns_topic_arn: {type: string, nullable: true}, status: {type: string, enum: [unverified, verified, error]}, last_verified_at: {type: string, format: date-time, nullable: true}, verify_error: {type: string, nullable: true}, has_credentials: {type: boolean}, created_at: {type: string, format: date-time}, updated_at: {type: string, format: date-time}}
     SendingProfileInput: {type: object, required: [mode, from_email, from_name], properties: {mode: {type: string, enum: [relay, resend, ses]}, from_email: {type: string, format: email}, from_name: {type: string}, reply_to: {type: string, format: email, nullable: true}, postal_address: {type: string, nullable: true}, email_domain_id: {type: string, format: uuid, nullable: true}, resend: {type: object, properties: {api_key: {type: string, writeOnly: true}, webhook_secret: {type: string, writeOnly: true}}}, ses: {type: object, properties: {access_key_id: {type: string, writeOnly: true}, secret_access_key: {type: string, writeOnly: true}}}, ses_region: {type: string}, ses_configuration_set: {type: string}, sns_topic_arn: {type: string}}}
+    TestSendInput: {type: object, required: [to], properties: {to: {type: string, format: email}}}
+    PreviewInput: {type: object, required: [body_markdown], properties: {body_markdown: {type: string, maxLength: 1048576}, preheader: {type: string, nullable: true}, from_name: {type: string, nullable: true}, postal_address: {type: string, nullable: true}}}
+    PreviewOutput: {type: object, required: [html, text], properties: {html: {type: string}, text: {type: string}}}
     Template: {type: object, required: [id, business_id, tenant_root_id, name, subject, body_markdown, track_opens, track_clicks, created_at, updated_at], properties: {id: {type: string, format: uuid}, business_id: {type: string, format: uuid}, tenant_root_id: {type: string, format: uuid}, name: {type: string}, subject: {type: string}, preheader: {type: string, nullable: true}, body_markdown: {type: string}, track_opens: {type: boolean}, track_clicks: {type: boolean}, created_at: {type: string, format: date-time}, updated_at: {type: string, format: date-time}}}
     TemplateInput: {type: object, required: [name, subject, body_markdown], properties: {name: {type: string, maxLength: 200}, subject: {type: string, maxLength: 500}, preheader: {type: string, nullable: true}, body_markdown: {type: string, maxLength: 1048576}, track_opens: {type: boolean, default: true}, track_clicks: {type: boolean, default: true}}}
     TemplatePatch: {type: object, properties: {name: {type: string, maxLength: 200}, subject: {type: string, maxLength: 500}, preheader: {type: string, nullable: true}, body_markdown: {type: string, maxLength: 1048576}, track_opens: {type: boolean}, track_clicks: {type: boolean}}}

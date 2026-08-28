@@ -1,0 +1,36 @@
+<!DOCTYPE html><html lang="en"><head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light"/>
+  <title>Email from Acme &amp; Sons</title>
+  <style>
+    body { margin: 0; background: #f4f6f8; color: #17212b; font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .shell { width: 100%; padding: 28px 12px; }
+    .card { max-width: 640px; margin: 0 auto; background: #fff; border: 1px solid #dfe5ea; border-radius: 12px; overflow: hidden; }
+    .brand { padding: 20px 28px; border-bottom: 1px solid #e8edf1; font-weight: 700; }
+    .preheader { display: none !important; max-height: 0; overflow: hidden; opacity: 0; color: transparent; }
+    .content { padding: 28px; }
+    .content img { max-width: 100%; height: auto; }
+    .content a { color: #1769aa; }
+    .footer { max-width: 640px; margin: 16px auto 0; color: #667480; font-size: 13px; text-align: center; }
+    .footer a { color: #52616d; }
+  </style>
+</head>
+<body>
+  <span class="preheader">A small update</span>
+  <div class="shell">
+    <div class="card">
+      <div class="brand">Acme &amp; Sons</div>
+      <div class="content"><h1>Hello &lt;img src=x onerror=alert(1)&gt;</h1>
+<p>Visit <a href="https://hub.example/m/c/token?to=https://example.com/a?q=1">our site</a>, <a href="mailto:hi@example.com">email us</a>, or <a href="">bad</a>.</p>
+<!-- raw HTML omitted -->
+</div>
+    </div>
+    <div class="footer">
+      <div>10 Main St &lt;Suite 2&gt;</div>
+      <div><a href="https://hub.example/m/u/token">Unsubscribe</a></div>
+    </div>
+  </div>
+
+
+<img src="https://hub.example/m/o/token" width="1" height="1" alt="" style="display:none!important"/></body></html>
