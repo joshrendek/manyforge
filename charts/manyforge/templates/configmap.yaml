@@ -36,6 +36,12 @@ data:
   # operator-gated setup routes 404 and the webhook/OAuth redirect URLs unset.
   MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL: {{ .Values.instanceOperatorPrincipal | quote }}
   MANYFORGE_PUBLIC_BASE_URL: {{ .Values.publicBaseURL | quote }}
+  MANYFORGE_MAILING_RATE_RPS: {{ .Values.mailing.rateRPS | quote }}
+  MANYFORGE_MAILING_RATE_BURST: {{ .Values.mailing.rateBurst | quote }}
+  MANYFORGE_MAILING_SEND_BATCH: {{ .Values.mailing.sendBatch | quote }}
+  MANYFORGE_MAILING_SEND_EVERY: {{ .Values.mailing.sendEvery | quote }}
+  MANYFORGE_MAILING_LEASE: {{ .Values.mailing.lease | quote }}
+  MANYFORGE_MAILING_MESSAGE_DOMAIN: {{ .Values.mailing.messageDomain | quote }}
   # Explicit trust-boundary opt-in. Enable only when Cloudflare is the sole public path to origin.
   MANYFORGE_TRUST_CF_IPCOUNTRY: {{ .Values.analytics.trustCloudflareCountryHeader | quote }}
   # Also enforced in-process so a false→true rollout cannot trust headers before ingress reloads.

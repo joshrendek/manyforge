@@ -21,6 +21,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
+	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
@@ -28,6 +30,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/mailer"
+	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
@@ -39,15 +42,21 @@ const (
 // Service is the authenticated core mailing surface. Sealer protects list S2S secrets;
 // Vault protects provider credential bundles. Relay-only profiles require neither.
 type Service struct {
-	DB            *db.DB
-	Vault         *secrets.Vault
-	Sealer        *crypto.Sealer
-	Tokens        *mailtoken.Codec
-	Mailer        mailer.Mailer
-	Logger        *slog.Logger
-	PublicBaseURL string
-	Now           func() time.Time
-	Rand          io.Reader
+	DB        *db.DB
+	Vault     *secrets.Vault
+	Sealer    *crypto.Sealer
+	Tokens    *mailtoken.Codec
+	Mailer    mailer.Mailer
+	Providers interface {
+		Resolve(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error)
+	}
+	Renderer        *mailrender.Renderer
+	OutboundLimiter ratelimit.Limiter
+	MessageDomain   string
+	Logger          *slog.Logger
+	PublicBaseURL   string
+	Now             func() time.Time
+	Rand            io.Reader
 }
 
 type Page[T any] struct {
@@ -259,7 +268,8 @@ func mapErr(err error) error {
 		return fmt.Errorf("mailing: foreign key: %w", errs.ErrNotFound)
 	case errors.As(err, &pgErr) && pgErr.Code == "23514":
 		return fmt.Errorf("mailing: invalid value: %w", errs.ErrValidation)
-	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrConflict):
+	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrConflict),
+		errors.Is(err, errs.ErrRateLimited), errors.Is(err, errs.ErrUpstream):
 		return err
 	default:
 		return fmt.Errorf("mailing: query: %w", err)

@@ -814,6 +814,10 @@ type Querier interface {
 	// attempts and leave these columns alone.
 	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
 	SetFeedbackPostStatus(ctx context.Context, arg SetFeedbackPostStatusParams) (FeedbackPost, error)
+	// Verification performs provider I/O with no transaction open. The updated_at
+	// compare prevents a slow response from marking credentials verified after an
+	// operator rotated the profile concurrently.
+	SetMailingSendingProfileVerification(ctx context.Context, arg SetMailingSendingProfileVerificationParams) (MailingSendingProfile, error)
 	SetSubtreeStatus(ctx context.Context, arg SetSubtreeStatusParams) error
 	// Cuts off access immediately; PII anonymization is deferred to the purge worker.
 	SoftDeleteAccount(ctx context.Context, id uuid.UUID) error

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -119,7 +120,13 @@ type Config struct {
 	FeedbackMasterKey []byte
 	// MailingMasterKey seals list S2S signing secrets and BYO provider credentials.
 	// MANYFORGE_MAILING_MASTER_KEY is optional at boot and must decode to 32 bytes when set.
-	MailingMasterKey []byte
+	MailingMasterKey     []byte
+	MailingRateRPS       float64
+	MailingRateBurst     float64
+	MailingSendBatch     int
+	MailingSendEvery     time.Duration
+	MailingLease         time.Duration
+	MailingMessageDomain string
 
 	// InstanceOperatorPrincipal gates instance setup routes (GitHub App manifest
 	// creation, etc.). MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL (UUID). uuid.Nil when
@@ -376,6 +383,25 @@ func Load() (Config, error) {
 	if cfg.MailingMasterKey, err = envKey32("MANYFORGE_MAILING_MASTER_KEY"); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_MAILING_MASTER_KEY: %w", err)
 	}
+	if cfg.MailingRateRPS, err = envFloat("MANYFORGE_MAILING_RATE_RPS", 10); err != nil || cfg.MailingRateRPS <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_RATE_RPS: must be a positive number")
+	}
+	if cfg.MailingRateBurst, err = envFloat("MANYFORGE_MAILING_RATE_BURST", 50); err != nil || cfg.MailingRateBurst <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_RATE_BURST: must be a positive number")
+	}
+	if cfg.MailingSendBatch, err = envInt("MANYFORGE_MAILING_SEND_BATCH", 100); err != nil || cfg.MailingSendBatch <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_SEND_BATCH: must be a positive integer")
+	}
+	if cfg.MailingSendEvery, err = envDuration("MANYFORGE_MAILING_SEND_EVERY", 2*time.Second); err != nil || cfg.MailingSendEvery <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_SEND_EVERY: must be a positive duration")
+	}
+	if cfg.MailingLease, err = envDuration("MANYFORGE_MAILING_LEASE", 2*time.Minute); err != nil || cfg.MailingLease <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_LEASE: must be a positive duration")
+	}
+	cfg.MailingMessageDomain = env("MANYFORGE_MAILING_MESSAGE_DOMAIN", cfg.InboundSystemDomain)
+	if strings.ContainsAny(cfg.MailingMessageDomain, "\r\n@") {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_MESSAGE_DOMAIN: must be a domain")
+	}
 
 	// Instance operator principal (GitHub App setup gate): unset ⇒ uuid.Nil, so the
 	// operator-only routes 404 for everyone until explicitly configured.
@@ -385,6 +411,12 @@ func Load() (Config, error) {
 		}
 	}
 	cfg.PublicBaseURL = strings.TrimSuffix(os.Getenv("MANYFORGE_PUBLIC_BASE_URL"), "/")
+	if len(cfg.MailingMasterKey) > 0 {
+		publicURL, parseErr := url.Parse(cfg.PublicBaseURL)
+		if parseErr != nil || publicURL.Host == "" || (publicURL.Scheme != "http" && publicURL.Scheme != "https") {
+			return Config{}, fmt.Errorf("MANYFORGE_PUBLIC_BASE_URL: an absolute http(s) URL is required when mailing is enabled")
+		}
+	}
 
 	// Agent run loop bounds (Spec 003 §8). Defaults mirror agents.RunLimits; a malformed value
 	// is a hard config error rather than a silent fallback (the loop budget is a safety bound).

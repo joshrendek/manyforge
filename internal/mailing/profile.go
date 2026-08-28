@@ -40,8 +40,8 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 	}
 	in.FromEmail = email
 	in.FromName = strings.TrimSpace(in.FromName)
-	if in.FromName == "" || len(in.FromName) > 200 {
-		return SendingProfile{}, validation("from_name is required and must not exceed 200 characters")
+	if in.FromName == "" || len(in.FromName) > 200 || strings.ContainsAny(in.FromName, "\r\n") {
+		return SendingProfile{}, validation("from_name is required, must be one line, and must not exceed 200 characters")
 	}
 	if in.ReplyTo != nil {
 		reply, err := normalizeEmail(*in.ReplyTo)

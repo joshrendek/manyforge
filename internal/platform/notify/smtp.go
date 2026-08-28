@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/smtp"
+	"sort"
 	"strings"
 
 	"github.com/emersion/go-msgauth/dkim"
@@ -56,7 +57,7 @@ func (s *SMTPSender) Send(ctx context.Context, m Mail) error {
 			return ErrSuppressed
 		}
 	}
-	raw, err := buildMIME(m)
+	raw, err := BuildMIME(m)
 	if err != nil {
 		return err
 	}
@@ -86,11 +87,11 @@ func (s *SMTPSender) Send(ctx context.Context, m Mail) error {
 	return smtp.SendMail(fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port), auth, from, []string{m.To}, raw)
 }
 
-// buildMIME renders an RFC 822 message. Pure (no network) so it is unit-tested.
+// BuildMIME renders an RFC 822 message. Pure (no network) so it is unit-tested.
 // Header keys/values are the chokepoint for header injection: US2 subjects derive
 // from attacker-controlled inbound mail, so a CR/LF in any header key or value is
 // rejected (not stripped) to prevent header smuggling / body splitting.
-func buildMIME(m Mail) ([]byte, error) {
+func BuildMIME(m Mail) ([]byte, error) {
 	var b bytes.Buffer
 	var headerErr error
 	h := func(k, v string) {
@@ -123,7 +124,13 @@ func buildMIME(m Mail) ([]byte, error) {
 	}
 	h("Reply-To", m.ReplyTo)
 	h("Auto-Submitted", m.AutoSubmitted)
-	for k, v := range m.ExtraHeaders {
+	extraKeys := make([]string, 0, len(m.ExtraHeaders))
+	for k := range m.ExtraHeaders {
+		extraKeys = append(extraKeys, k)
+	}
+	sort.Strings(extraKeys)
+	for _, k := range extraKeys {
+		v := m.ExtraHeaders[k]
 		h(k, v)
 	}
 	h("MIME-Version", "1.0")
@@ -155,6 +162,10 @@ func buildMIME(m Mail) ([]byte, error) {
 	fmt.Fprintf(&b, "--%s--\r\n", boundary)
 	return b.Bytes(), nil
 }
+
+// buildMIME preserves the package-private seam used by older tests. New callers
+// outside notify must use BuildMIME so every transport shares this implementation.
+func buildMIME(m Mail) ([]byte, error) { return BuildMIME(m) }
 
 // writeBodyCRLF writes body and guarantees a trailing CRLF.
 func writeBodyCRLF(b *bytes.Buffer, body string) {

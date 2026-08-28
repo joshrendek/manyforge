@@ -54,6 +54,26 @@ func TestBuildMIMERejectsHeaderInjection(t *testing.T) {
 	}
 }
 
+func TestBuildMIMEExtraHeadersAreDeterministic(t *testing.T) {
+	mail := Mail{From: "a@b", To: "c@d", ExtraHeaders: map[string]string{
+		"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+		"List-Unsubscribe":      "<https://example.test/u/token>",
+	}}
+	first, err := BuildMIME(mail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		next, err := BuildMIME(mail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(first, next) {
+			t.Fatal("BuildMIME changed output for the same Mail")
+		}
+	}
+}
+
 // TestBuildMIMEMultipartAlternativeWhenHTML (manyforge-7c0) — when BodyHTML is set,
 // the message is multipart/alternative carrying BOTH a text/plain and a text/html
 // part (plain first, html last per RFC 2046 so clients render the richest they can).
