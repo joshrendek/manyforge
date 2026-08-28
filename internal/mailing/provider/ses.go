@@ -29,6 +29,7 @@ type SES struct {
 	ConfigurationSet string
 }
 
+// NewSES validates static configuration and constructs an AWS SES v2 client.
 func NewSES(ctx context.Context, profile Profile, endpoint sesv2.EndpointResolverV2, httpClient sesv2.HTTPClient) (*SES, error) {
 	if strings.TrimSpace(profile.SESRegion) == "" {
 		return nil, fmt.Errorf("provider: SES region is required")
@@ -53,6 +54,7 @@ func NewSES(ctx context.Context, profile Profile, endpoint sesv2.EndpointResolve
 	return &SES{Client: client, FromEmail: profile.FromEmail, ConfigurationSet: profile.SESConfigurationSet}, nil
 }
 
+// Send submits shared, header-validated raw MIME to SES.
 func (s *SES) Send(ctx context.Context, mail notify.Mail) (SendResult, error) {
 	raw, err := notify.BuildMIME(mail)
 	if err != nil {
@@ -71,6 +73,7 @@ func (s *SES) Send(ctx context.Context, mail notify.Mail) (SendResult, error) {
 	return SendResult{ProviderID: aws.ToString(out.MessageId)}, nil
 }
 
+// Verify checks that the From domain is verified and account sending is enabled.
 func (s *SES) Verify(ctx context.Context) error {
 	address, err := mail.ParseAddress(s.FromEmail)
 	if err != nil {

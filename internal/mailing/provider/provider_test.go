@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -252,6 +253,33 @@ func TestCacheExpirationAndBuildError(t *testing.T) {
 	p.UpdatedAt = p.UpdatedAt.Add(time.Second)
 	if _, err := cache.Resolve(context.Background(), p); err == nil || err.Error() != "build failed" {
 		t.Fatalf("build error = %v", err)
+	}
+}
+
+func TestCacheConcurrentResolve(t *testing.T) {
+	cache := NewCache(func(context.Context, Profile) (Deliverer, error) {
+		return stubDeliverer{}, nil
+	}, time.Minute)
+	p := Profile{ID: uuid.New(), UpdatedAt: time.Now()}
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := cache.Resolve(context.Background(), p)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(cache.entries); got != 1 {
+		t.Fatalf("cache entries = %d, want 1", got)
 	}
 }
 

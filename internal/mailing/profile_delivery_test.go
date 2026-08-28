@@ -30,3 +30,11 @@ func TestSendingProfileRejectsInvalidFromName(t *testing.T) {
 		}
 	}
 }
+
+func TestSafeProviderMessageTruncatesByRune(t *testing.T) {
+	message := strings.Repeat("é", 501)
+	got := safeProviderMessage(errors.New(message))
+	if len([]rune(got)) != 500 || !strings.HasSuffix(got, "é") {
+		t.Fatalf("safeProviderMessage rune length = %d", len([]rune(got)))
+	}
+}

@@ -77,6 +77,8 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	return out, mapErr(err)
 }
 
+// TestSendingProfile sends a live sample message through a verified profile and
+// charges the business outbound limiter before contacting the provider.
 func (s *Service) TestSendingProfile(ctx context.Context, principalID, businessID uuid.UUID, recipient string) error {
 	to, err := normalizeEmail(recipient)
 	if err != nil {

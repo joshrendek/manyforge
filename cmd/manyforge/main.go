@@ -685,8 +685,8 @@ func main() {
 		mailingSvc.OutboundLimiter = outboundLimiter
 		mailingSvc.MessageDomain = cfg.MailingMessageDomain
 	}
-	// US4 outbound identity selection (T059/FR-013): the send subscriber shares the
-	// SAME DKIM sealer the IdentityService uses, so it can unseal a verified custom
+	// Outbound identity selection shares the same DKIM sealer as IdentityService,
+	// so it can unseal a verified custom
 	// domain's private key and sign the reply as that domain. When the sealer is nil
 	// (no MANYFORGE_DKIM_MASTER_KEY), the send path simply never selects a custom
 	// identity and every reply goes out from the system address — the correct degrade.

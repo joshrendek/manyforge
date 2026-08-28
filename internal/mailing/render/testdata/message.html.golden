@@ -26,9 +26,9 @@
 <!-- raw HTML omitted -->
 </div>
     </div>
-    <footer class="footer">
+    <footer class="footer" role="contentinfo">
       <div>10 Main St &lt;Suite 2&gt;</div>
-      <div><a aria-label="Unsubscribe from Acme &amp; Sons emails" href="https://hub.example/m/u/token">Unsubscribe</a></div>
+      <div><a href="https://hub.example/m/u/token">Unsubscribe from Acme &amp; Sons emails</a></div>
     </footer>
   </main>
 

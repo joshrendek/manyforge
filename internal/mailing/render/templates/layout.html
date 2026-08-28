@@ -25,9 +25,9 @@
       <div class="brand">{{.FromName}}</div>
       <div class="content">{{.Body}}</div>
     </div>
-    <footer class="footer">
+    <footer class="footer" role="contentinfo">
       {{if .PostalAddress}}<div>{{.PostalAddress}}</div>{{end}}
-      <div><a href="{{.UnsubscribeMarker}}" aria-label="Unsubscribe from {{.FromName}} emails">Unsubscribe</a></div>
+      <div><a href="{{.UnsubscribeMarker}}">Unsubscribe from {{.FromName}} emails</a></div>
     </footer>
   </main>
 </body>

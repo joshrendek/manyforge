@@ -25,11 +25,13 @@ type Relay struct {
 	EmailDomainID uuid.UUID
 }
 
+// Verify confirms a complete verified DKIM identity can be resolved and opened.
 func (r *Relay) Verify(ctx context.Context) error {
 	_, err := r.identity(ctx)
 	return err
 }
 
+// Send attaches the verified per-domain DKIM identity and dispatches the message.
 func (r *Relay) Send(ctx context.Context, mail notify.Mail) (SendResult, error) {
 	identity, err := r.identity(ctx)
 	if err != nil {

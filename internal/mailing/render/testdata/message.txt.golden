@@ -8,4 +8,4 @@ Hello <img src=x onerror=alert(1)>
 Visit our site ( https://hub.example/m/c/token?to=https://example.com/a?q=1 ) , email us ( hi@example.com ) , or bad.
 
 10 Main St <Suite 2>
-Unsubscribe ( https://hub.example/m/u/token )
+Unsubscribe from Acme & Sons emails ( https://hub.example/m/u/token )

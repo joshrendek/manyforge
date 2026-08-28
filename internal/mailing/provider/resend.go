@@ -24,6 +24,7 @@ type Resend struct {
 	Client    *http.Client
 }
 
+// Send validates message headers and submits a structured Resend API request.
 func (r *Resend) Send(ctx context.Context, mail notify.Mail) (SendResult, error) {
 	// Resend accepts structured headers rather than raw MIME, but it must still
 	// pass the shared CR/LF injection chokepoint used by SMTP and SES.
@@ -59,6 +60,7 @@ func (r *Resend) Send(ctx context.Context, mail notify.Mail) (SendResult, error)
 	return SendResult{ProviderID: response.ID}, nil
 }
 
+// Verify confirms the configured From domain is verified in Resend.
 func (r *Resend) Verify(ctx context.Context) error {
 	address, err := mail.ParseAddress(r.FromEmail)
 	if err != nil {
