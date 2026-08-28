@@ -19,16 +19,16 @@
   </style>
 </head>
 <body>
-  <span class="preheader">{{.Preheader}}</span>
-  <div class="shell">
+  <span class="preheader" aria-hidden="true">{{.Preheader}}</span>
+  <main class="shell" role="main">
     <div class="card">
       <div class="brand">{{.FromName}}</div>
       <div class="content">{{.Body}}</div>
     </div>
-    <div class="footer">
+    <footer class="footer">
       {{if .PostalAddress}}<div>{{.PostalAddress}}</div>{{end}}
-      <div><a href="{{.UnsubscribeMarker}}">Unsubscribe</a></div>
-    </div>
-  </div>
+      <div><a href="{{.UnsubscribeMarker}}" aria-label="Unsubscribe from {{.FromName}} emails">Unsubscribe</a></div>
+    </footer>
+  </main>
 </body>
 </html>

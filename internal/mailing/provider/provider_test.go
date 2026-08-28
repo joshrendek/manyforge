@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
+	"github.com/aws/smithy-go"
 	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	"github.com/google/uuid"
 
@@ -44,6 +46,8 @@ func TestClassify(t *testing.T) {
 		{name: "SES suspended", err: &types.AccountSuspendedException{}, status: "failed"},
 		{name: "rate limit", err: &HTTPError{StatusCode: 429}, status: "retry", retry: true, delay: 30 * time.Second},
 		{name: "server", err: &HTTPError{StatusCode: 503}, attempts: 2, status: "retry", retry: true, delay: 2 * time.Minute},
+		{name: "network", err: &net.DNSError{Err: "temporary", IsTemporary: true}, attempts: 1, status: "retry", retry: true, delay: time.Minute},
+		{name: "smithy server", err: &smithy.GenericAPIError{Code: "InternalFailure", Message: "retry", Fault: smithy.FaultServer}, attempts: 1, status: "retry", retry: true, delay: time.Minute},
 		{name: "attempt cap", err: &HTTPError{StatusCode: 503}, attempts: 5, status: "failed"},
 		{name: "unknown", err: errors.New("boom"), status: "failed"},
 	}
@@ -221,5 +225,52 @@ func TestCacheKeysByProfileAndUpdatedAt(t *testing.T) {
 	}
 	if got := builds.Load(); got != 2 {
 		t.Fatalf("build count = %d, want 2", got)
+	}
+	if got := len(cache.entries); got != 1 {
+		t.Fatalf("cache entries = %d, want 1", got)
+	}
+}
+
+func TestCacheExpirationAndBuildError(t *testing.T) {
+	now := time.Unix(10, 0)
+	var builds atomic.Int32
+	cache := NewCache(func(context.Context, Profile) (Deliverer, error) {
+		if builds.Add(1) == 3 {
+			return nil, errors.New("build failed")
+		}
+		return stubDeliverer{}, nil
+	}, time.Minute)
+	cache.now = func() time.Time { return now }
+	p := Profile{ID: uuid.New(), UpdatedAt: now}
+	if _, err := cache.Resolve(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := cache.Resolve(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	p.UpdatedAt = p.UpdatedAt.Add(time.Second)
+	if _, err := cache.Resolve(context.Background(), p); err == nil || err.Error() != "build failed" {
+		t.Fatalf("build error = %v", err)
+	}
+}
+
+func TestRelayRequiresCompleteConfiguration(t *testing.T) {
+	r := &Relay{}
+	if err := r.Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("Verify error = %v", err)
+	}
+}
+
+func TestNewSESValidatesStaticConfiguration(t *testing.T) {
+	tests := []Profile{
+		{SESAccessKeyID: "id", SESSecretAccessKey: "secret"},
+		{SESRegion: "us-east-1", SESSecretAccessKey: "secret"},
+		{SESRegion: "us-east-1", SESAccessKeyID: "id"},
+	}
+	for _, profile := range tests {
+		if _, err := NewSES(context.Background(), profile, nil, nil); err == nil {
+			t.Fatalf("NewSES(%+v) succeeded", profile)
+		}
 	}
 }

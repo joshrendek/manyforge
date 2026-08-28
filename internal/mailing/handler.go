@@ -56,6 +56,7 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Delete("/businesses/{id}/mailing/suppressions/{sid}", h.deleteSuppression)
 }
 
+// SendRoutes registers operations that require the mailing send permission.
 func (h *Handler) SendRoutes(r chi.Router) {
 	r.Post("/businesses/{id}/mailing/sending-profile/test-send", h.testProfile)
 }

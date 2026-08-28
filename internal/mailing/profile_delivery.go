@@ -19,6 +19,8 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 
+// PreviewInput contains template content and optional layout overrides. BodyMarkdown
+// is limited to one mebibyte of Unicode code points before rendering.
 type PreviewInput struct {
 	BodyMarkdown  string
 	Preheader     *string
@@ -123,6 +125,8 @@ func (s *Service) TestSendingProfile(ctx context.Context, principalID, businessI
 	return nil
 }
 
+// Preview renders sample recipient output without tracking. Profile defaults are
+// used when present; explicit input values override them.
 func (s *Service) Preview(ctx context.Context, principalID, businessID uuid.UUID, in PreviewInput) (mailrender.Output, error) {
 	if utf8.RuneCountInString(in.BodyMarkdown) > 1<<20 {
 		return mailrender.Output{}, validation("body_markdown must not exceed 1 MiB")

@@ -171,6 +171,17 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if !profile.HasCredentials {
 		t.Fatal("profile should report credentials")
 	}
+	degraded, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
+	if err != nil || degraded.Status != "error" || degraded.VerifyError == nil {
+		t.Fatalf("VerifySendingProfile without providers = %+v, err=%v", degraded, err)
+	}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return stubMailDeliverer{}, nil
+	}, time.Minute)
+	unsupported, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
+	if err != nil || unsupported.Status != "error" || unsupported.VerifyError == nil {
+		t.Fatalf("VerifySendingProfile without verifier = %+v, err=%v", unsupported, err)
+	}
 	captured := &capturedDeliverer{}
 	svc.Providers = mailprovider.NewCache(func(_ context.Context, resolved mailprovider.Profile) (mailprovider.Deliverer, error) {
 		if resolved.ID != profile.ID || resolved.ResendAPIKey != "re_secret" {
@@ -186,6 +197,11 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if err != nil || verified.Status != "verified" || !captured.verified {
 		t.Fatalf("VerifySendingProfile = %+v, err=%v, called=%v", verified, err, captured.verified)
 	}
+	svc.OutboundLimiter = &toggleLimiter{deny: true}
+	if err = svc.TestSendingProfile(ctx, a.principalID, a.businessID, "reader@example.net"); !errors.Is(err, errs.ErrRateLimited) {
+		t.Fatalf("rate-limited TestSendingProfile error = %v", err)
+	}
+	svc.OutboundLimiter = nil
 	if err = svc.TestSendingProfile(ctx, a.principalID, a.businessID, "reader@example.net"); err != nil {
 		t.Fatalf("TestSendingProfile: %v", err)
 	}
@@ -211,4 +227,10 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("RLS direct read error = %v", err)
 	}
+}
+
+type stubMailDeliverer struct{}
+
+func (stubMailDeliverer) Send(context.Context, notify.Mail) (mailprovider.SendResult, error) {
+	return mailprovider.SendResult{}, nil
 }

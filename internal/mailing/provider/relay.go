@@ -13,8 +13,11 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 
+// KeyOpener decrypts the sealed Ed25519 private key stored for a relay domain.
 type KeyOpener interface{ Open(string) ([]byte, error) }
 
+// Relay sends through the shared notifier after resolving and attaching the
+// selected verified domain's DKIM identity.
 type Relay struct {
 	DB            *db.DB
 	Sealer        KeyOpener

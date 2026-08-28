@@ -24,6 +24,7 @@ var layoutSource string
 
 var variablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
 
+// Input contains campaign-stable Markdown and layout fields to compile.
 type Input struct {
 	BodyMarkdown  string
 	FromName      string
@@ -31,6 +32,8 @@ type Input struct {
 	PostalAddress string
 }
 
+// Variables contains the supported recipient substitutions: first_name,
+// last_name, email, unsubscribe_url, and list_name.
 type Variables struct {
 	FirstName      string
 	LastName       string
@@ -46,18 +49,23 @@ type Tracking struct {
 	OpenURL  string
 }
 
+// Compiled is campaign-stable HTML that can be reused across recipients.
 type Compiled struct{ HTML string }
 
+// Output contains the final recipient-specific HTML and generated plain text.
 type Output struct {
 	HTML string `json:"html"`
 	Text string `json:"text"`
 }
 
+// Renderer compiles safe Markdown and renders recipient-specific output. It is
+// safe for concurrent use after construction.
 type Renderer struct {
 	markdown goldmark.Markdown
 	layout   *template.Template
 }
 
+// New constructs a renderer using the package's embedded email layout.
 func New() (*Renderer, error) {
 	t, err := template.New("mailing-layout").Parse(layoutSource)
 	if err != nil {
@@ -133,6 +141,7 @@ func (r *Renderer) Render(compiled Compiled, vars Variables, tracking Tracking) 
 	return Output{HTML: rendered.String(), Text: strings.TrimSpace(plain)}, nil
 }
 
+// RenderInput composes Compile and Render for callers that do not cache compiled output.
 func (r *Renderer) RenderInput(in Input, vars Variables, tracking Tracking) (Output, error) {
 	compiled, err := r.Compile(in)
 	if err != nil {

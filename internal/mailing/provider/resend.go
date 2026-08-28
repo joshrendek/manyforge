@@ -15,6 +15,8 @@ import (
 
 const defaultResendBaseURL = "https://api.resend.com"
 
+// Resend delivers structured messages through the Resend HTTP API. An empty
+// BaseURL selects the public Resend endpoint.
 type Resend struct {
 	APIKey    string
 	FromEmail string

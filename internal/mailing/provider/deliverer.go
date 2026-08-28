@@ -17,16 +17,22 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 
+// Deliverer sends one fully rendered message through a provider.
 type Deliverer interface {
 	Send(context.Context, notify.Mail) (SendResult, error)
 }
 
+// Verifier checks that a provider is configured and authorized to send.
 type Verifier interface{ Verify(context.Context) error }
 
+// SendResult identifies a message accepted by the upstream provider.
 type SendResult struct {
 	ProviderID string
 }
 
+// Profile contains the provider-neutral identity and mode-specific credentials
+// needed to build a Deliverer. Relay uses EmailDomainID, Resend uses its API
+// key, and SES uses region plus static credentials.
 type Profile struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
@@ -40,6 +46,7 @@ type Profile struct {
 	SESSecretAccessKey  string
 }
 
+// HTTPError records a provider response that did not have a successful status.
 type HTTPError struct {
 	StatusCode int
 	Code       string
@@ -53,6 +60,8 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("provider: http %d: %s", e.StatusCode, e.Message)
 }
 
+// Classification is the delivery worker's stable sent/suppressed/retry/failed
+// outcome, with NotBefore populated for retryable errors.
 type Classification struct {
 	Status    string
 	Retry     bool

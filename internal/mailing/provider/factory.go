@@ -11,6 +11,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 
+// Factory owns the shared dependencies used to construct provider clients.
 type Factory struct {
 	DB                  *db.DB
 	DKIMSealer          KeyOpener
@@ -20,6 +21,7 @@ type Factory struct {
 	SESEndpointResolver sesv2.EndpointResolverV2
 }
 
+// Build constructs the relay, Resend, or SES client selected by profile.Mode.
 func (f *Factory) Build(ctx context.Context, profile Profile) (Deliverer, error) {
 	switch profile.Mode {
 	case "relay":

@@ -15,12 +15,14 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 
+// SESAPI is the subset of the AWS SES v2 client used for delivery and profile verification.
 type SESAPI interface {
 	SendEmail(context.Context, *sesv2.SendEmailInput, ...func(*sesv2.Options)) (*sesv2.SendEmailOutput, error)
 	GetEmailIdentity(context.Context, *sesv2.GetEmailIdentityInput, ...func(*sesv2.Options)) (*sesv2.GetEmailIdentityOutput, error)
 	GetAccount(context.Context, *sesv2.GetAccountInput, ...func(*sesv2.Options)) (*sesv2.GetAccountOutput, error)
 }
 
+// SES delivers raw MIME and verifies both the configured identity and account.
 type SES struct {
 	Client           SESAPI
 	FromEmail        string
@@ -28,6 +30,12 @@ type SES struct {
 }
 
 func NewSES(ctx context.Context, profile Profile, endpoint sesv2.EndpointResolverV2, httpClient sesv2.HTTPClient) (*SES, error) {
+	if strings.TrimSpace(profile.SESRegion) == "" {
+		return nil, fmt.Errorf("provider: SES region is required")
+	}
+	if strings.TrimSpace(profile.SESAccessKeyID) == "" || strings.TrimSpace(profile.SESSecretAccessKey) == "" {
+		return nil, fmt.Errorf("provider: SES static credentials are required")
+	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(profile.SESRegion),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(profile.SESAccessKeyID, profile.SESSecretAccessKey, "")),

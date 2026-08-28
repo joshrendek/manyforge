@@ -8,38 +8,39 @@ import (
 	"github.com/google/uuid"
 )
 
+// BuildFunc constructs a provider client from a fully resolved sending profile.
 type BuildFunc func(context.Context, Profile) (Deliverer, error)
-
-type cacheKey struct {
-	id        uuid.UUID
-	updatedAt time.Time
-}
 
 type cacheEntry struct {
 	deliverer Deliverer
+	updatedAt time.Time
 	expiresAt time.Time
 }
 
+// Cache stores at most one concurrency-safe provider client per profile ID.
+// A changed UpdatedAt value or an expired TTL causes the client to be rebuilt.
 type Cache struct {
 	mu      sync.Mutex
-	entries map[cacheKey]cacheEntry
+	entries map[uuid.UUID]cacheEntry
 	build   BuildFunc
 	ttl     time.Duration
 	now     func() time.Time
 }
 
+// NewCache returns a provider cache. Non-positive TTLs use five minutes.
 func NewCache(build BuildFunc, ttl time.Duration) *Cache {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	return &Cache{entries: make(map[cacheKey]cacheEntry), build: build, ttl: ttl, now: time.Now}
+	return &Cache{entries: make(map[uuid.UUID]cacheEntry), build: build, ttl: ttl, now: time.Now}
 }
 
+// Resolve returns the cached client for the profile ID and version, building it
+// when absent, expired, or invalidated by a changed UpdatedAt timestamp.
 func (c *Cache) Resolve(ctx context.Context, profile Profile) (Deliverer, error) {
-	key := cacheKey{id: profile.ID, updatedAt: profile.UpdatedAt}
 	now := c.now()
 	c.mu.Lock()
-	if entry, ok := c.entries[key]; ok && now.Before(entry.expiresAt) {
+	if entry, ok := c.entries[profile.ID]; ok && entry.updatedAt.Equal(profile.UpdatedAt) && now.Before(entry.expiresAt) {
 		c.mu.Unlock()
 		return entry.deliverer, nil
 	}
@@ -52,12 +53,7 @@ func (c *Cache) Resolve(ctx context.Context, profile Profile) (Deliverer, error)
 		return nil, err
 	}
 	c.mu.Lock()
-	for old := range c.entries {
-		if old.id == profile.ID && old != key {
-			delete(c.entries, old)
-		}
-	}
-	c.entries[key] = cacheEntry{deliverer: deliverer, expiresAt: now.Add(c.ttl)}
+	c.entries[profile.ID] = cacheEntry{deliverer: deliverer, updatedAt: profile.UpdatedAt, expiresAt: now.Add(c.ttl)}
 	c.mu.Unlock()
 	return deliverer, nil
 }
