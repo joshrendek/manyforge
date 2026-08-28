@@ -38,6 +38,7 @@ import (
 	"github.com/manyforge/manyforge/internal/inbox"
 	"github.com/manyforge/manyforge/internal/invitations"
 	"github.com/manyforge/manyforge/internal/mailing"
+	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/config"
@@ -223,14 +224,25 @@ func main() {
 
 	var mailingSealer *mfcrypto.Sealer
 	var mailingH *mailing.Handler
+	var mailingPublicH *mailing.PublicHandler
 	if len(cfg.MailingMasterKey) > 0 {
 		mailingSealer, err = mfcrypto.NewSealer(cfg.MailingMasterKey)
 		if err != nil {
 			logger.Error("init mailing sealer", "err", err)
 			os.Exit(1)
 		}
-		mailingSvc := &mailing.Service{DB: database, Sealer: mailingSealer, Vault: secrets.NewVault(mailingSealer)}
+		mailingTokens, tokenErr := mailtoken.New(cfg.MailingMasterKey)
+		if tokenErr != nil {
+			logger.Error("init mailing token codec", "err", tokenErr)
+			os.Exit(1)
+		}
+		mailingSvc := &mailing.Service{
+			DB: database, Sealer: mailingSealer, Vault: secrets.NewVault(mailingSealer),
+			Tokens: mailingTokens, Mailer: mailer.LogMailer{Logger: logger}, Logger: logger,
+			PublicBaseURL: cfg.PublicBaseURL,
+		}
 		mailingH = mailing.NewHandler(mailingSvc)
+		mailingPublicH = mailing.NewPublicHandler(mailingSvc, logger, mailingSealer, nil)
 	} else {
 		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled")
 	}
@@ -760,6 +772,12 @@ func main() {
 	// ingestIPKey unifies the webhook per-IP key with the SMTP per-IP key: both run
 	// the bare client IP through inbox.IPRateLimitKey so the two share one bucket.
 	ingestIPKey := func(r *http.Request) string { return inbox.IPRateLimitKey(ratelimit.ClientIP(r, trusted)) }
+	ingestHTTP := httpx.RateLimit(ingestIPLimiter, ingestIPKey)
+	if mailingPublicH != nil {
+		mailingPublicH.ClientIP = func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
+		mailingPublicH.PerKey = ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
+		mailingPublicH.IngestLimit = ingestHTTP
+	}
 
 	mountAPIRoutes(mux, apiHandlers{
 		account:          acctH,
@@ -772,7 +790,7 @@ func main() {
 		bounce:           bounceH,
 		authLimit:        httpx.RateLimit(authLimiter, ipKey),
 		tenantMergeLimit: httpx.RateLimit(tenantMergeLimiter, tenantMergeKey),
-		ingestLimit:      httpx.RateLimit(ingestIPLimiter, ingestIPKey),
+		ingestLimit:      ingestHTTP,
 		ticketsRead:      httpx.RequirePermission(database, permResolve, authz.PermTicketsRead, businessIDFromPath),
 		ticketsReply:     httpx.RequirePermission(database, permResolve, authz.PermTicketsReply, businessIDFromPath),
 		ticketsWrite:     httpx.RequirePermission(database, permResolve, authz.PermTicketsWrite, businessIDFromPath),
@@ -800,6 +818,7 @@ func main() {
 		feedbackRead:     httpx.RequirePermission(database, permResolve, authz.PermFeedbackRead, businessIDFromPath),
 		feedbackWrite:    httpx.RequirePermission(database, permResolve, authz.PermFeedbackWrite, businessIDFromPath),
 		mailing:          mailingH,
+		mailingPublic:    mailingPublicH,
 		mailingRead:      httpx.RequirePermission(database, permResolve, authz.PermMailingRead, businessIDFromPath),
 		mailingWrite:     httpx.RequirePermission(database, permResolve, authz.PermMailingWrite, businessIDFromPath),
 		mailingSend:      httpx.RequirePermission(database, permResolve, authz.PermMailingSend, businessIDFromPath),
@@ -1102,10 +1121,11 @@ type apiHandlers struct {
 	feedbackRead  func(http.Handler) http.Handler
 	feedbackWrite func(http.Handler) http.Handler
 
-	mailing      *mailing.Handler
-	mailingRead  func(http.Handler) http.Handler
-	mailingWrite func(http.Handler) http.Handler
-	mailingSend  func(http.Handler) http.Handler
+	mailing       *mailing.Handler
+	mailingPublic *mailing.PublicHandler
+	mailingRead   func(http.Handler) http.Handler
+	mailingWrite  func(http.Handler) http.Handler
+	mailingSend   func(http.Handler) http.Handler
 
 	// telemetry is the manyforge-p20 authenticated client-registration handler (register, list,
 	// revoke telemetry clients under a business).
@@ -1158,6 +1178,9 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 		h.analyticsPublic.SnippetRoutes(mux)
 		h.analyticsPublic.CollectRoutes(mux)
 	}
+	if h.mailingPublic != nil {
+		h.mailingPublic.RootRoutes(mux)
+	}
 
 	mux.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(pub chi.Router) {
@@ -1192,6 +1215,9 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			// board key (not JWT), per-IP ingest-rate-limited. Unknown/revoked key or a
 			// non-public board → uniform 401 (no business/board existence oracle).
 			h.feedbackPublic.PublicRoutes(ingress)
+			if h.mailingPublic != nil {
+				h.mailingPublic.PublicRoutes(ingress)
+			}
 			// manyforge-p20 telemetry ingest: public, authenticated by a publishable mfk_
 			// client key, per-IP ingest-rate-limited here and additionally per-key inside
 			// the handler. Unknown, revoked, and malformed keys all return a byte-identical

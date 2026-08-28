@@ -96,6 +96,7 @@ func testHandlers() apiHandlers {
 		feedbackRead:     noop,
 		feedbackWrite:    noop,
 		mailing:          mailing.NewHandler(&mailing.Service{}),
+		mailingPublic:    mailing.NewPublicHandler(&mailing.Service{}, nil, nil, nil),
 		mailingRead:      noop,
 		mailingWrite:     noop,
 		mailingSend:      noop,

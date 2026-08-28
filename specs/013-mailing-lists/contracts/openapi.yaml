@@ -3,14 +3,98 @@ info:
   title: ManyForge Mailing Lists and Broadcast Campaigns API
   version: 0.1.0
   description: >
-    Incremental Spec 013 contract. This slice covers authenticated mailing core CRUD.
-    GET operations require mailing.read; mutations require mailing.write. Missing permission,
-    invisible business, cross-tenant ID, and unknown ID all return the same 404 response.
+    Incremental Spec 013 contract. Authenticated core CRUD uses bearer permissions; public
+    subscriptions use publishable keys and S2S mutations use a purpose-specific HMAC secret.
+    Missing permission, invisible business, cross-tenant ID, and unknown ID all return the same
+    404 response on authenticated routes.
 servers:
   - url: /api/v1
 security:
   - bearerAuth: []
 paths:
+  /mailing/public/{key}/subscribe:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: subscribeMailingPublic
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PublicSubscriptionInput'}
+          application/x-www-form-urlencoded:
+            schema: {$ref: '#/components/schemas/PublicSubscriptionInput'}
+      responses:
+        '202': {description: Uniform JSON acceptance response}
+        '303': {description: Uniform hosted-form redirect}
+        '400': {$ref: '#/components/responses/PublicBadRequest'}
+        '413': {description: Payload exceeds 64 KiB}
+        '429': {description: Ingress or resolved-key rate limit exceeded}
+    options:
+      operationId: preflightMailingPublicSubscribe
+      security: []
+      responses: {'204': {description: CORS preflight}}
+  /mailing/s2s/{key}/subscribers:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/MailingSignature'}
+      - {$ref: '#/components/parameters/MailingTimestamp'}
+    post:
+      operationId: subscribeMailingS2S
+      security: []
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/S2SSubscriptionInput'}}}
+      responses:
+        '200': {$ref: '#/components/responses/PublicSubscriber'}
+        '201': {$ref: '#/components/responses/PublicSubscriber'}
+        '400': {$ref: '#/components/responses/PublicBadRequest'}
+        '401': {description: Unknown, revoked, unsigned, or incorrectly signed key}
+        '413': {description: Payload exceeds 64 KiB}
+        '429': {description: Ingress or resolved-key rate limit exceeded}
+  /mailing/s2s/{key}/subscribers/{email}:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: email, in: path, required: true, schema: {type: string, format: email}}
+      - {$ref: '#/components/parameters/MailingSignature'}
+      - {$ref: '#/components/parameters/MailingTimestamp'}
+    delete:
+      operationId: unsubscribeMailingS2S
+      security: []
+      responses:
+        '204': {description: Unsubscribed or already absent}
+        '400': {$ref: '#/components/responses/PublicBadRequest'}
+        '401': {description: Unknown, revoked, unsigned, or incorrectly signed key}
+        '429': {description: Ingress or resolved-key rate limit exceeded}
+  /m/confirm/{token}:
+    servers: [{url: /}]
+    parameters:
+      - {name: token, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getMailingConfirmationPage
+      security: []
+      responses: {'200': {description: Uniform confirmation page, content: {text/html: {schema: {type: string}}}}}
+    post:
+      operationId: confirmMailingSubscription
+      security: []
+      responses: {'200': {description: Uniform completion page, content: {text/html: {schema: {type: string}}}}}
+  /m/u/{token}:
+    servers: [{url: /}]
+    parameters:
+      - {name: token, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getMailingUnsubscribePage
+      security: []
+      responses: {'200': {description: Uniform unsubscribe page, content: {text/html: {schema: {type: string}}}}}
+    post:
+      operationId: unsubscribeMailingSubscription
+      security: []
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema: {type: object, properties: {List-Unsubscribe: {type: string, enum: [One-Click]}}}
+      responses: {'200': {description: Uniform empty response}}
   /businesses/{id}/mailing/lists:
     parameters: [{$ref: '#/components/parameters/BusinessID'}]
     get:
@@ -143,6 +227,8 @@ components:
     SuppressionID: {name: sid, in: path, required: true, schema: {type: string, format: uuid}}
     Cursor: {name: cursor, in: query, schema: {type: string}}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+    MailingSignature: {name: X-Mailing-Signature, in: header, required: true, schema: {type: string}, description: Hex HMAC-SHA256 over ts.method.path.body using the mls_ secret.}
+    MailingTimestamp: {name: X-Mailing-Timestamp, in: header, required: true, schema: {type: string}, description: Unix seconds within five minutes of server time.}
   requestBodies:
     ListInput: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ListInput'}}}}
     ListPatch: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ListPatch'}}}}
@@ -163,9 +249,15 @@ components:
     SuppressionPage: {description: Suppressions, content: {application/json: {schema: {$ref: '#/components/schemas/SuppressionPage'}}}}
     KeyPage: {description: Keys, content: {application/json: {schema: {$ref: '#/components/schemas/KeyPage'}}}}
     ImportResult: {description: Synchronous import result, content: {application/json: {schema: {$ref: '#/components/schemas/ImportResult'}}}}
+    PublicSubscriber: {description: S2S subscriber result, content: {application/json: {schema: {$ref: '#/components/schemas/PublicSubscriber'}}}}
+    PublicBadRequest: {description: Invalid public request, content: {application/json: {schema: {$ref: '#/components/schemas/PublicError'}}}}
   schemas:
     Error: {type: object, required: [code, message], properties: {code: {type: string}, message: {type: string}}}
     SubscriberStatus: {type: string, enum: [pending, active, unsubscribed, bounced, complained]}
+    PublicError: {type: object, required: [error], properties: {error: {type: string}}}
+    PublicSubscriptionInput: {type: object, required: [email], properties: {email: {type: string, format: email}, first_name: {type: string, nullable: true}, last_name: {type: string, nullable: true}, attributes: {type: object, additionalProperties: true}, website: {type: string, description: Honeypot; non-empty submissions are silently accepted.}}}
+    S2SSubscriptionInput: {type: object, required: [email], properties: {email: {type: string, format: email}, first_name: {type: string, nullable: true}, last_name: {type: string, nullable: true}, attributes: {type: object, additionalProperties: true}, skip_confirmation: {type: boolean, default: false}}}
+    PublicSubscriber: {type: object, required: [subscriber_id, created, status], properties: {subscriber_id: {type: string, format: uuid}, created: {type: boolean}, status: {$ref: '#/components/schemas/SubscriberStatus'}}}
     SuppressionReason: {type: string, enum: [bounce, complaint, unsubscribe, manual], default: manual}
     MailingList:
       type: object
