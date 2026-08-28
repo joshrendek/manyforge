@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/mail"
 	"regexp"
 	"strings"
@@ -20,11 +21,13 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/mailer"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
@@ -36,10 +39,15 @@ const (
 // Service is the authenticated core mailing surface. Sealer protects list S2S secrets;
 // Vault protects provider credential bundles. Relay-only profiles require neither.
 type Service struct {
-	DB     *db.DB
-	Vault  *secrets.Vault
-	Sealer *crypto.Sealer
-	Rand   io.Reader
+	DB            *db.DB
+	Vault         *secrets.Vault
+	Sealer        *crypto.Sealer
+	Tokens        *mailtoken.Codec
+	Mailer        mailer.Mailer
+	Logger        *slog.Logger
+	PublicBaseURL string
+	Now           func() time.Time
+	Rand          io.Reader
 }
 
 type Page[T any] struct {
