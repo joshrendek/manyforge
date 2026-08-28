@@ -133,7 +133,9 @@ test('mailing list detail: signup access, consent gate, tags, and manual add', a
 
   await page.goto('/mailing/b1/lists/l1');
   await expect(page.getByTestId('mailing-publishable-key')).toContainText('mlp_demo123');
-  await expect(page.getByTestId('mailing-hosted-url')).toContainText('/m/s/mlp_demo123');
+  await expect(page.getByTestId('mailing-hosted-url')).toContainText(
+    '/m/s/mlp_demo123?name=Product%20updates',
+  );
   await expect(page.getByTestId('subscriber-row').first()).toContainText('vip');
 
   const importSubmit = page.getByTestId('subscriber-import-submit');
