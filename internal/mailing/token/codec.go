@@ -19,7 +19,9 @@ const (
 	macSize          = sha256.Size
 	uuidSize         = 16
 	confirmSize      = 32
-	maxClickURL      = 8 << 10
+	// Eight KiB covers practical marketing URLs while bounding generated links and decoder
+	// allocation well below normal HTTP request-line limits.
+	maxClickURL = 8 << 10
 )
 
 var ErrInvalid = errors.New("mailing token: invalid token")
@@ -96,6 +98,7 @@ func (c *Codec) EncodeUnsubscribe(subscriberID, campaignID uuid.UUID) string {
 	return c.encode(purposeUnsubscribe, payload)
 }
 
+// DecodeUnsubscribe verifies and decodes an unsubscribe token.
 func (c *Codec) DecodeUnsubscribe(raw string) (uuid.UUID, uuid.UUID, error) {
 	payload, err := c.decode(purposeUnsubscribe, raw, 2*uuidSize, 2*uuidSize)
 	if err != nil {
@@ -107,10 +110,12 @@ func (c *Codec) DecodeUnsubscribe(raw string) (uuid.UUID, uuid.UUID, error) {
 	return subscriberID, campaignID, nil
 }
 
+// EncodeOpen creates an authenticated token for an open-tracking delivery ID.
 func (c *Codec) EncodeOpen(deliveryID uuid.UUID) string {
 	return c.encode(purposeOpen, deliveryID[:])
 }
 
+// DecodeOpen verifies and decodes an open-tracking token.
 func (c *Codec) DecodeOpen(raw string) (uuid.UUID, error) {
 	payload, err := c.decode(purposeOpen, raw, uuidSize, uuidSize)
 	if err != nil {
@@ -121,6 +126,7 @@ func (c *Codec) DecodeOpen(raw string) (uuid.UUID, error) {
 	return deliveryID, nil
 }
 
+// EncodeClick binds a delivery and renderer-approved target URL into one authenticated token.
 func (c *Codec) EncodeClick(deliveryID uuid.UUID, targetURL string) (string, error) {
 	if targetURL == "" || len(targetURL) > maxClickURL {
 		return "", ErrInvalid
@@ -131,6 +137,7 @@ func (c *Codec) EncodeClick(deliveryID uuid.UUID, targetURL string) (string, err
 	return c.encode(purposeClick, payload), nil
 }
 
+// DecodeClick verifies and decodes a click token without redirecting to its target.
 func (c *Codec) DecodeClick(raw string) (uuid.UUID, string, error) {
 	payload, err := c.decode(purposeClick, raw, uuidSize+1, uuidSize+maxClickURL)
 	if err != nil {

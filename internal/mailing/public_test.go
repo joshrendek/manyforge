@@ -56,8 +56,30 @@ func TestUnsubscribeOracleResponsesAreByteIdentical(t *testing.T) {
 	}
 	bad := request(http.MethodGet, "bad")
 	validUnknown := request(http.MethodGet, codec.EncodeUnsubscribe([16]byte{1}, [16]byte{2}))
+	if bad.Code != http.StatusOK || bad.Body.String() != unsubscribePageHTML {
+		t.Fatalf("unexpected unsubscribe page: status=%d body=%q", bad.Code, bad.Body.String())
+	}
 	if bad.Code != validUnknown.Code || bad.Body.String() != validUnknown.Body.String() {
 		t.Fatalf("GET oracle differs: bad=(%d,%q), valid unknown=(%d,%q)", bad.Code, bad.Body.String(), validUnknown.Code, validUnknown.Body.String())
+	}
+}
+
+func TestRootRoutesApplyConfiguredIngressLimit(t *testing.T) {
+	called := false
+	h := NewPublicHandler(&Service{}, nil, nil, nil)
+	h.IngestLimit = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusTooManyRequests)
+		})
+	}
+	r := chi.NewRouter()
+	h.RootRoutes(r)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/m/u/token", nil))
+	if !called || w.Code != http.StatusTooManyRequests {
+		t.Fatalf("ingress limiter called/status = %t/%d", called, w.Code)
 	}
 }
 

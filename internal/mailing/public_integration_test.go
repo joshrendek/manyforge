@@ -32,6 +32,14 @@ type captureMailer struct {
 	messages []mailer.Message
 }
 
+type toggleLimiter struct {
+	deny bool
+}
+
+func (l *toggleLimiter) Allow(string) bool {
+	return !l.deny
+}
+
 func (m *captureMailer) Send(_ context.Context, msg mailer.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -82,6 +90,8 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	}
 	h := mailing.NewPublicHandler(svc, nil, sealer, func(*http.Request) string { return "203.0.113.7" })
 	h.Now = svc.Now
+	perKey := &toggleLimiter{}
+	h.PerKey = perKey
 	router := chi.NewRouter()
 	router.Route("/api/v1", h.PublicRoutes)
 	h.RootRoutes(router)
@@ -99,7 +109,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 
 	subscribeBody := []byte(`{"email":"Ada@Example.test","first_name":"Ada"}`)
 	accepted := request(http.MethodPost, "/api/v1/mailing/public/"+key.PublishableKey+"/subscribe", subscribeBody, map[string]string{"Content-Type": "application/json", "User-Agent": "mailing-test/1"})
-	if accepted.Code != http.StatusAccepted {
+	if accepted.Code != http.StatusAccepted || accepted.Body.String() != "{\"accepted\":true}\n" {
 		t.Fatalf("subscribe status/body = %d/%s", accepted.Code, accepted.Body.String())
 	}
 	unknown := request(http.MethodPost, "/api/v1/mailing/public/mlk_unknown/subscribe", subscribeBody, map[string]string{"Content-Type": "application/json"})
@@ -129,7 +139,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	confirmed := request(http.MethodPost, "/m/confirm/"+rawConfirmation, nil, nil)
 	replayed := request(http.MethodPost, "/m/confirm/"+rawConfirmation, nil, nil)
 	invalidConfirm := request(http.MethodPost, "/m/confirm/not-a-token", nil, nil)
-	if confirmed.Code != http.StatusOK || confirmed.Body.String() != replayed.Body.String() || replayed.Body.String() != invalidConfirm.Body.String() {
+	if confirmed.Code != http.StatusOK || !strings.Contains(confirmed.Body.String(), "All set") || confirmed.Body.String() != replayed.Body.String() || replayed.Body.String() != invalidConfirm.Body.String() {
 		t.Fatalf("confirmation oracle differs: first=(%d,%q), replay=(%d,%q), invalid=(%d,%q)", confirmed.Code, confirmed.Body.String(), replayed.Code, replayed.Body.String(), invalidConfirm.Code, invalidConfirm.Body.String())
 	}
 	var hashCleared bool
@@ -148,7 +158,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	unsubscribed := request(http.MethodPost, "/m/u/"+unsubToken, []byte("List-Unsubscribe=One-Click"), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
 	validUnknown := request(http.MethodPost, "/m/u/"+codec.EncodeUnsubscribe(uuid.New(), uuid.Nil), nil, nil)
 	bad := request(http.MethodPost, "/m/u/not-a-token", nil, nil)
-	if unsubscribed.Code != http.StatusOK || validUnknown.Code != bad.Code || validUnknown.Body.String() != bad.Body.String() {
+	if unsubscribed.Code != http.StatusOK || unsubscribed.Body.Len() != 0 || validUnknown.Code != http.StatusOK || validUnknown.Body.Len() != 0 || bad.Code != http.StatusOK || bad.Body.Len() != 0 {
 		t.Fatalf("unsubscribe responses differ: real=%d unknown=(%d,%q) bad=(%d,%q)", unsubscribed.Code, validUnknown.Code, validUnknown.Body.String(), bad.Code, bad.Body.String())
 	}
 	var suppressionCount int
@@ -192,7 +202,20 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	badHeaders := map[string]string{"X-Mailing-Timestamp": ts, "X-Mailing-Signature": strings.Repeat("00", sha256.Size), "Content-Type": "application/json"}
 	badKnown := request(http.MethodPost, path, s2sBody, badHeaders)
 	badUnknown := request(http.MethodPost, "/api/v1/mailing/s2s/mlk_unknown/subscribers", s2sBody, badHeaders)
+	if badKnown.Code != http.StatusUnauthorized || badKnown.Body.String() != "{\"error\":\"unauthorized\"}\n" {
+		t.Fatalf("unexpected S2S auth failure: status=%d body=%q", badKnown.Code, badKnown.Body.String())
+	}
 	if badKnown.Code != badUnknown.Code || badKnown.Body.String() != badUnknown.Body.String() {
 		t.Fatalf("S2S auth oracle differs: bad known=(%d,%q), unknown=(%d,%q)", badKnown.Code, badKnown.Body.String(), badUnknown.Code, badUnknown.Body.String())
+	}
+
+	perKey.deny = true
+	rateLimitedPublic := request(http.MethodPost, "/api/v1/mailing/public/"+key.PublishableKey+"/subscribe", subscribeBody, map[string]string{"Content-Type": "application/json"})
+	if rateLimitedPublic.Code != http.StatusTooManyRequests {
+		t.Fatalf("public per-key limit status/body = %d/%q", rateLimitedPublic.Code, rateLimitedPublic.Body.String())
+	}
+	rateLimitedS2S := request(http.MethodPost, path, s2sBody, s2sHeaders)
+	if rateLimitedS2S.Code != http.StatusTooManyRequests {
+		t.Fatalf("S2S per-key limit status/body = %d/%q", rateLimitedS2S.Code, rateLimitedS2S.Body.String())
 	}
 }

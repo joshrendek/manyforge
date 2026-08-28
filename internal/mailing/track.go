@@ -11,6 +11,8 @@ import (
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 )
 
+// Confirm activates an unexpired one-time token. Malformed and unknown tokens are deliberately
+// successful no-ops so the root route cannot become a token-validity oracle.
 func (s *Service) Confirm(ctx context.Context, raw string) error {
 	if s.Tokens == nil {
 		return nil
@@ -25,6 +27,8 @@ func (s *Service) Confirm(ctx context.Context, raw string) error {
 	})
 }
 
+// Unsubscribe verifies the stateless token before database access. Invalid and valid-unknown
+// tokens are deliberately successful no-ops and therefore receive byte-identical responses.
 func (s *Service) Unsubscribe(ctx context.Context, raw string) error {
 	if s.Tokens == nil {
 		return nil

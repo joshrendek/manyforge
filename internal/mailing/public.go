@@ -40,6 +40,7 @@ type publicListContext struct {
 	sealedSecret                            *string
 }
 
+// PublicSubscriptionInput carries normalized subscriber fields into the DEFINER boundary.
 type PublicSubscriptionInput struct {
 	Email            string
 	FirstName        *string
@@ -50,6 +51,8 @@ type PublicSubscriptionInput struct {
 	SkipConfirmation bool
 }
 
+// PublicSubscriptionResult is returned to authenticated S2S callers. Public-form callers receive
+// a deliberately uniform acceptance body instead.
 type PublicSubscriptionResult struct {
 	SubscriberID uuid.UUID `json:"subscriber_id"`
 	Created      bool      `json:"created"`
@@ -170,10 +173,12 @@ type PublicHandler struct {
 	maxBytes    int64
 }
 
+// NewPublicHandler builds the principal-less mailing ingress and tracking handler.
 func NewPublicHandler(svc *Service, logger *slog.Logger, sealer *crypto.Sealer, clientIP func(*http.Request) string) *PublicHandler {
 	return &PublicHandler{Service: svc, Logger: logger, Sealer: sealer, ClientIP: clientIP, Now: time.Now, maxBytes: maxPublicMailingBytes}
 }
 
+// PublicRoutes mounts public-form and HMAC-authenticated S2S routes under /api/v1.
 func (h *PublicHandler) PublicRoutes(r chi.Router) {
 	r.Post("/mailing/public/{key}/subscribe", h.publicSubscribe)
 	r.Options("/mailing/public/{key}/subscribe", h.publicPreflight)
@@ -181,6 +186,8 @@ func (h *PublicHandler) PublicRoutes(r chi.Router) {
 	r.Delete("/mailing/s2s/{key}/subscribers/{email}", h.s2sUnsubscribe)
 }
 
+// mailingCORS is intentionally open: hosted forms may run on arbitrary tenant sites, these
+// routes take no cookie or bearer credentials, and they return no tenant data.
 func mailingCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
