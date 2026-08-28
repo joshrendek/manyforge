@@ -68,6 +68,18 @@ export function feedbackStatusLabel(s: string): string {
   return labels[s] ?? s;
 }
 
+export function mailingProfileStatusTone(s: string): Tone {
+  switch (s) {
+    case 'verified':
+      return 'success';
+    case 'error':
+      return 'danger';
+    case 'unverified':
+    default:
+      return 'warn';
+  }
+}
+
 export function effectClassTone(e: number): Tone {
   switch (e) {
     case 1:

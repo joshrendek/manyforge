@@ -46,9 +46,9 @@ export class App implements OnInit, OnDestroy {
   private currentUrl = signal(this.router.url);
 
   // Show the persistent sidebar only when authenticated AND not on an auth screen AND not
-  // on the public feedback portal. A logged-in user who navigates to /login or /signup (no
+  // on a public portal. A logged-in user who navigates to /login or /signup (no
   // guard stops them) must see the bare auth page, not the app shell wrapped around the
-  // login form; likewise a logged-in admin opening /p/:key sees the standalone portal.
+  // login form; likewise a logged-in admin opening /p/:key or /m/* sees the standalone portal.
   readonly showShell = computed(
     () =>
       this.auth.isAuthenticated() &&
@@ -56,7 +56,7 @@ export class App implements OnInit, OnDestroy {
       !this.isPortalRoute(this.currentUrl()),
   );
 
-  // The public feedback portal renders with its own full-page chrome (no admin sidebar and
+  // Public feedback and mailing pages render with their own full-page chrome (no admin sidebar and
   // no founder-platform topbar), so the shell gives it a bare router-outlet.
   readonly portalRoute = computed(() => this.isPortalRoute(this.currentUrl()));
 
@@ -107,7 +107,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   private isPortalRoute(url: string): boolean {
-    return url.startsWith('/p/');
+    return url.startsWith('/p/') || url.startsWith('/m/');
   }
 
   private toLogin(): void {

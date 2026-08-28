@@ -70,4 +70,30 @@ describe('MailingService', () => {
     });
     request.flush({});
   });
+
+  it('keeps sending-profile credentials write-only and exposes verify/test actions', () => {
+    service
+      .putSendingProfile('b1', {
+        mode: 'resend',
+        from_email: 'news@example.test',
+        from_name: 'News',
+        resend: { api_key: 're_secret' },
+      })
+      .subscribe();
+    const put = http.expectOne('/api/v1/businesses/b1/mailing/sending-profile');
+    expect(put.request.method).toBe('PUT');
+    expect(put.request.body.resend.api_key).toBe('re_secret');
+    put.flush({ has_credentials: true });
+
+    service.verifySendingProfile('b1').subscribe();
+    const verify = http.expectOne('/api/v1/businesses/b1/mailing/sending-profile/verify');
+    expect(verify.request.method).toBe('POST');
+    verify.flush({ status: 'verified', has_credentials: true });
+
+    service.testSendingProfile('b1', 'operator@example.test').subscribe();
+    const test = http.expectOne('/api/v1/businesses/b1/mailing/sending-profile/test-send');
+    expect(test.request.method).toBe('POST');
+    expect(test.request.body).toEqual({ to: 'operator@example.test' });
+    test.flush(null);
+  });
 });
