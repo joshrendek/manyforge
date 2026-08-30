@@ -434,7 +434,8 @@ func (s *Service) TestCampaign(ctx context.Context, principalID, businessID, cam
 		}
 		message := notify.Mail{From: (&mail.Address{Name: profile.FromName, Address: profile.FromEmail}).String(),
 			To: recipient, Subject: "[TEST] " + campaign.Subject, BodyText: rendered.Text,
-			BodyHTML: rendered.HTML, MessageID: uuid.New().String() + "@" + safeMessageDomain(s.MessageDomain)}
+			BodyHTML: rendered.HTML, MessageID: uuid.New().String() + "@" + safeMessageDomain(s.MessageDomain),
+			EnvelopeFrom: profile.FromEmail}
 		if profile.ReplyTo != nil {
 			message.ReplyTo = *profile.ReplyTo
 		}

@@ -5,6 +5,7 @@ package mailing_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	mfcrypto "github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
@@ -112,9 +114,33 @@ func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	updatedSubject := "Hello updated"
+	campaign, err = svc.UpdateCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, mailing.CampaignUpdate{Subject: &updatedSubject})
+	if err != nil || campaign.Subject != updatedSubject {
+		t.Fatalf("update draft campaign = %#v, err=%v", campaign, err)
+	}
+	if err = svc.TestCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, []string{"preview@example.test"}); err != nil {
+		t.Fatalf("test campaign: %v", err)
+	}
+	if captured.mail.To != "preview@example.test" || captured.mail.Subject != "[TEST] "+updatedSubject ||
+		captured.mail.EnvelopeFrom != "news@example.test" {
+		t.Fatalf("campaign test mail = %+v", captured.mail)
+	}
+	if _, err = svc.CancelCampaign(ctx, seed.principalID, seed.businessID, campaign.ID); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("cancel draft error = %v, want conflict", err)
+	}
 	campaign, err = svc.SendCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, nil)
 	if err != nil || campaign.ProfileID == nil || campaign.Status != "scheduled" {
 		t.Fatalf("schedule = %#v, err=%v", campaign, err)
+	}
+	if _, err = svc.UpdateCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, mailing.CampaignUpdate{Subject: &updatedSubject}); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("update scheduled error = %v, want conflict", err)
+	}
+	if _, err = svc.SendCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, nil); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("resend scheduled error = %v, want conflict", err)
+	}
+	if err = svc.DeleteCampaign(ctx, seed.principalID, seed.businessID, campaign.ID); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("delete scheduled error = %v, want conflict", err)
 	}
 
 	var claimed uuid.UUID
@@ -254,6 +280,24 @@ func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 	deliveries, err := svc.ListCampaignDeliveries(ctx, seed.principalID, seed.businessID, campaign.ID, "sent", "", 10)
 	if err != nil || len(deliveries.Items) != 2 {
 		t.Fatalf("delivery page = %#v, err=%v", deliveries, err)
+	}
+	if _, err = svc.ListCampaignDeliveries(ctx, seed.principalID, seed.businessID, campaign.ID, "unknown", "", 10); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("invalid delivery status error = %v, want validation", err)
+	}
+	if _, err = svc.CancelCampaign(ctx, seed.principalID, seed.businessID, campaign.ID); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("cancel sent error = %v, want conflict", err)
+	}
+	emptyCampaign, err := svc.CreateCampaign(ctx, seed.principalID, seed.businessID, mailing.CampaignInput{
+		ListID: list.ID, Name: "Incomplete draft",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.SendCampaign(ctx, seed.principalID, seed.businessID, emptyCampaign.ID, nil); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("send incomplete draft error = %v, want validation", err)
+	}
+	if err = svc.DeleteCampaign(ctx, seed.principalID, seed.businessID, emptyCampaign.ID); err != nil {
+		t.Fatalf("delete incomplete draft: %v", err)
 	}
 	cancellable, err := svc.CreateCampaign(ctx, seed.principalID, seed.businessID, mailing.CampaignInput{
 		ListID: list.ID, Name: "Cancel me", Subject: "Later", BodyMarkdown: "Later",
@@ -470,6 +514,13 @@ func TestCampaignTrackingOracleAndEvents(t *testing.T) {
 	invalidClick := request("/m/c/not-a-token")
 	if validClick.Code != http.StatusFound || validClick.Header().Get("Location") != "https://example.test/post" || invalidClick.Code != http.StatusNotFound {
 		t.Fatalf("click outcomes valid=%d/%q invalid=%d", validClick.Code, validClick.Header().Get("Location"), invalidClick.Code)
+	}
+	unsafeClickToken, err := svc.Tokens.EncodeClick(deliveryID, "javascript:alert(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unsafeClick := request("/m/c/" + unsafeClickToken); unsafeClick.Code != http.StatusNotFound {
+		t.Fatalf("unsafe click status=%d, want 404", unsafeClick.Code)
 	}
 	var opens, clicks int
 	if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FILTER (WHERE kind='open'),
