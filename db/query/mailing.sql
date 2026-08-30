@@ -343,3 +343,103 @@ LIMIT sqlc.arg('lim');
 DELETE FROM mailing_suppression
 WHERE id = $1 AND tenant_root_id = $2
 RETURNING *;
+
+-- ---- campaigns ----
+
+-- name: InsertCampaign :one
+INSERT INTO campaign (
+    id, business_id, tenant_root_id, list_id, name, subject, preheader,
+    body_markdown, tag_filter, track_opens, track_clicks, created_by,
+    created_at, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now()
+)
+RETURNING *;
+
+-- name: GetCampaign :one
+SELECT * FROM campaign
+WHERE id = $1 AND tenant_root_id = $2;
+
+-- name: ListCampaigns :many
+SELECT * FROM campaign
+WHERE business_id = $1 AND tenant_root_id = $2
+ORDER BY created_at DESC, id DESC
+LIMIT $3;
+
+-- name: ListCampaignsAfter :many
+SELECT * FROM campaign
+WHERE business_id = sqlc.arg('business_id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND (created_at, id) < (sqlc.arg('cur_created')::timestamptz, sqlc.arg('cur_id')::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('lim');
+
+-- name: UpdateCampaign :one
+UPDATE campaign SET
+    list_id = sqlc.arg('list_id'),
+    name = sqlc.arg('name'),
+    subject = sqlc.arg('subject'),
+    preheader = sqlc.narg('preheader'),
+    body_markdown = sqlc.arg('body_markdown'),
+    tag_filter = sqlc.arg('tag_filter'),
+    track_opens = sqlc.arg('track_opens'),
+    track_clicks = sqlc.arg('track_clicks'),
+    updated_at = now()
+WHERE id = sqlc.arg('id') AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND status = 'draft'
+RETURNING *;
+
+-- name: DeleteCampaign :one
+DELETE FROM campaign
+WHERE id = $1 AND tenant_root_id = $2 AND status IN ('draft', 'cancelled')
+RETURNING *;
+
+-- Pin the currently verified business profile and transition atomically. The list/profile
+-- joins prevent cross-business IDs even inside a caller-authorized tenant root.
+-- name: ScheduleCampaign :one
+UPDATE campaign c SET
+    profile_id = p.id,
+    status = 'scheduled',
+    scheduled_at = GREATEST(sqlc.arg('scheduled_at')::timestamptz, now()),
+    fanout_cursor = NULL,
+    fanout_done = false,
+    last_error = NULL,
+    updated_at = now()
+FROM mailing_sending_profile p, mailing_list l
+WHERE c.id = sqlc.arg('id')
+  AND c.tenant_root_id = sqlc.arg('tenant_root_id')
+  AND c.business_id = sqlc.arg('business_id')
+  AND c.status = 'draft'
+  AND btrim(c.subject) <> ''
+  AND btrim(c.body_markdown) <> ''
+  AND l.id = c.list_id AND l.tenant_root_id = c.tenant_root_id
+  AND l.business_id = c.business_id AND l.status = 'active'
+  AND p.business_id = c.business_id AND p.tenant_root_id = c.tenant_root_id
+  AND p.status = 'verified'
+RETURNING c.*;
+
+-- name: ListCampaignDeliveries :many
+SELECT d.* FROM mailing_delivery d
+WHERE d.campaign_id = sqlc.arg('campaign_id')
+  AND d.tenant_root_id = sqlc.arg('tenant_root_id')
+  AND (sqlc.arg('status')::text = '' OR d.status::text = sqlc.arg('status')::text)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT sqlc.arg('lim');
+
+-- name: ListCampaignDeliveriesAfter :many
+SELECT d.* FROM mailing_delivery d
+WHERE d.campaign_id = sqlc.arg('campaign_id')
+  AND d.tenant_root_id = sqlc.arg('tenant_root_id')
+  AND (sqlc.arg('status')::text = '' OR d.status::text = sqlc.arg('status')::text)
+  AND (d.created_at, d.id) < (sqlc.arg('cur_created')::timestamptz, sqlc.arg('cur_id')::uuid)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT sqlc.arg('lim');
+
+-- name: CampaignLinkStats :many
+SELECT e.url, count(*)::bigint AS click_count,
+       count(DISTINCT e.subscriber_id)::bigint AS unique_click_count
+FROM mailing_tracking_event e
+WHERE e.campaign_id = $1 AND e.tenant_root_id = $2
+  AND e.kind = 'click' AND e.url IS NOT NULL
+GROUP BY e.url
+ORDER BY click_count DESC, e.url;

@@ -61,6 +61,52 @@ func (ns NullAiProvider) Value() (driver.Value, error) {
 	return string(ns.AiProvider), nil
 }
 
+type CampaignStatus string
+
+const (
+	CampaignStatusDraft     CampaignStatus = "draft"
+	CampaignStatusScheduled CampaignStatus = "scheduled"
+	CampaignStatusSending   CampaignStatus = "sending"
+	CampaignStatusSent      CampaignStatus = "sent"
+	CampaignStatusCancelled CampaignStatus = "cancelled"
+	CampaignStatusFailed    CampaignStatus = "failed"
+)
+
+func (e *CampaignStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = CampaignStatus(s)
+	case string:
+		*e = CampaignStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for CampaignStatus: %T", src)
+	}
+	return nil
+}
+
+type NullCampaignStatus struct {
+	CampaignStatus CampaignStatus `json:"campaign_status"`
+	Valid          bool           `json:"valid"` // Valid is true if CampaignStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullCampaignStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.CampaignStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.CampaignStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullCampaignStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.CampaignStatus), nil
+}
+
 type ConnectorOutboundOpStatus string
 
 const (
@@ -410,6 +456,97 @@ func (ns NullMailingConsentSource) Value() (driver.Value, error) {
 	return string(ns.MailingConsentSource), nil
 }
 
+type MailingDeliverySource string
+
+const (
+	MailingDeliverySourceCampaign   MailingDeliverySource = "campaign"
+	MailingDeliverySourceAutomation MailingDeliverySource = "automation"
+)
+
+func (e *MailingDeliverySource) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MailingDeliverySource(s)
+	case string:
+		*e = MailingDeliverySource(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MailingDeliverySource: %T", src)
+	}
+	return nil
+}
+
+type NullMailingDeliverySource struct {
+	MailingDeliverySource MailingDeliverySource `json:"mailing_delivery_source"`
+	Valid                 bool                  `json:"valid"` // Valid is true if MailingDeliverySource is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMailingDeliverySource) Scan(value interface{}) error {
+	if value == nil {
+		ns.MailingDeliverySource, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MailingDeliverySource.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMailingDeliverySource) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MailingDeliverySource), nil
+}
+
+type MailingDeliveryStatus string
+
+const (
+	MailingDeliveryStatusQueued     MailingDeliveryStatus = "queued"
+	MailingDeliveryStatusSending    MailingDeliveryStatus = "sending"
+	MailingDeliveryStatusSent       MailingDeliveryStatus = "sent"
+	MailingDeliveryStatusDelivered  MailingDeliveryStatus = "delivered"
+	MailingDeliveryStatusBounced    MailingDeliveryStatus = "bounced"
+	MailingDeliveryStatusComplained MailingDeliveryStatus = "complained"
+	MailingDeliveryStatusFailed     MailingDeliveryStatus = "failed"
+	MailingDeliveryStatusSuppressed MailingDeliveryStatus = "suppressed"
+	MailingDeliveryStatusCancelled  MailingDeliveryStatus = "cancelled"
+)
+
+func (e *MailingDeliveryStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MailingDeliveryStatus(s)
+	case string:
+		*e = MailingDeliveryStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MailingDeliveryStatus: %T", src)
+	}
+	return nil
+}
+
+type NullMailingDeliveryStatus struct {
+	MailingDeliveryStatus MailingDeliveryStatus `json:"mailing_delivery_status"`
+	Valid                 bool                  `json:"valid"` // Valid is true if MailingDeliveryStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMailingDeliveryStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.MailingDeliveryStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MailingDeliveryStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMailingDeliveryStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MailingDeliveryStatus), nil
+}
+
 type MailingSendMode string
 
 const (
@@ -540,6 +677,52 @@ func (ns NullMailingSuppressionReason) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.MailingSuppressionReason), nil
+}
+
+type MailingTrackKind string
+
+const (
+	MailingTrackKindOpen        MailingTrackKind = "open"
+	MailingTrackKindClick       MailingTrackKind = "click"
+	MailingTrackKindUnsubscribe MailingTrackKind = "unsubscribe"
+	MailingTrackKindDelivered   MailingTrackKind = "delivered"
+	MailingTrackKindBounce      MailingTrackKind = "bounce"
+	MailingTrackKindComplaint   MailingTrackKind = "complaint"
+)
+
+func (e *MailingTrackKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MailingTrackKind(s)
+	case string:
+		*e = MailingTrackKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MailingTrackKind: %T", src)
+	}
+	return nil
+}
+
+type NullMailingTrackKind struct {
+	MailingTrackKind MailingTrackKind `json:"mailing_track_kind"`
+	Valid            bool             `json:"valid"` // Valid is true if MailingTrackKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMailingTrackKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.MailingTrackKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MailingTrackKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMailingTrackKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MailingTrackKind), nil
 }
 
 type MessageDeliveryState string
@@ -886,6 +1069,40 @@ type BusinessClosure struct {
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 }
 
+type Campaign struct {
+	ID                uuid.UUID          `json:"id"`
+	BusinessID        uuid.UUID          `json:"business_id"`
+	TenantRootID      uuid.UUID          `json:"tenant_root_id"`
+	ListID            uuid.UUID          `json:"list_id"`
+	ProfileID         pgtype.UUID        `json:"profile_id"`
+	Name              string             `json:"name"`
+	Subject           string             `json:"subject"`
+	Preheader         *string            `json:"preheader"`
+	BodyMarkdown      string             `json:"body_markdown"`
+	TagFilter         []string           `json:"tag_filter"`
+	TrackOpens        bool               `json:"track_opens"`
+	TrackClicks       bool               `json:"track_clicks"`
+	Status            CampaignStatus     `json:"status"`
+	ScheduledAt       pgtype.Timestamptz `json:"scheduled_at"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	FanoutCursor      pgtype.UUID        `json:"fanout_cursor"`
+	FanoutDone        bool               `json:"fanout_done"`
+	RecipientCount    int32              `json:"recipient_count"`
+	SentCount         int32              `json:"sent_count"`
+	DeliveredCount    int32              `json:"delivered_count"`
+	BouncedCount      int32              `json:"bounced_count"`
+	ComplainedCount   int32              `json:"complained_count"`
+	OpenedCount       int32              `json:"opened_count"`
+	ClickedCount      int32              `json:"clicked_count"`
+	UnsubscribedCount int32              `json:"unsubscribed_count"`
+	FailedCount       int32              `json:"failed_count"`
+	LastError         *string            `json:"last_error"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+}
+
 type CodeReview struct {
 	ID                uuid.UUID          `json:"id"`
 	BusinessID        uuid.UUID          `json:"business_id"`
@@ -1194,6 +1411,30 @@ type ListSubscriber struct {
 	UpdatedAt         time.Time               `json:"updated_at"`
 }
 
+type MailingDelivery struct {
+	ID                uuid.UUID             `json:"id"`
+	BusinessID        uuid.UUID             `json:"business_id"`
+	TenantRootID      uuid.UUID             `json:"tenant_root_id"`
+	SourceKind        MailingDeliverySource `json:"source_kind"`
+	SourceID          uuid.UUID             `json:"source_id"`
+	CampaignID        pgtype.UUID           `json:"campaign_id"`
+	TemplateID        pgtype.UUID           `json:"template_id"`
+	SubscriberID      uuid.UUID             `json:"subscriber_id"`
+	Email             string                `json:"email"`
+	Status            MailingDeliveryStatus `json:"status"`
+	Attempts          int32                 `json:"attempts"`
+	ClaimGeneration   int32                 `json:"claim_generation"`
+	NotBefore         time.Time             `json:"not_before"`
+	LeaseUntil        pgtype.Timestamptz    `json:"lease_until"`
+	MessageID         string                `json:"message_id"`
+	ProviderMessageID *string               `json:"provider_message_id"`
+	OpenedAt          pgtype.Timestamptz    `json:"opened_at"`
+	FirstClickedAt    pgtype.Timestamptz    `json:"first_clicked_at"`
+	LastError         *string               `json:"last_error"`
+	CreatedAt         time.Time             `json:"created_at"`
+	UpdatedAt         time.Time             `json:"updated_at"`
+}
+
 type MailingList struct {
 	ID           uuid.UUID `json:"id"`
 	BusinessID   uuid.UUID `json:"business_id"`
@@ -1218,6 +1459,16 @@ type MailingListKey struct {
 	Status         string             `json:"status"`
 	CreatedAt      time.Time          `json:"created_at"`
 	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type MailingProviderWebhookDelivery struct {
+	ID              uuid.UUID `json:"id"`
+	BusinessID      uuid.UUID `json:"business_id"`
+	TenantRootID    uuid.UUID `json:"tenant_root_id"`
+	ProfileID       uuid.UUID `json:"profile_id"`
+	Provider        string    `json:"provider"`
+	ExternalEventID string    `json:"external_event_id"`
+	ReceivedAt      time.Time `json:"received_at"`
 }
 
 type MailingSendingProfile struct {
@@ -1263,6 +1514,22 @@ type MailingTemplate struct {
 	TrackClicks  bool      `json:"track_clicks"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type MailingTrackingEvent struct {
+	ID              uuid.UUID        `json:"id"`
+	BusinessID      uuid.UUID        `json:"business_id"`
+	TenantRootID    uuid.UUID        `json:"tenant_root_id"`
+	CampaignID      pgtype.UUID      `json:"campaign_id"`
+	DeliveryID      pgtype.UUID      `json:"delivery_id"`
+	SubscriberID    pgtype.UUID      `json:"subscriber_id"`
+	Kind            MailingTrackKind `json:"kind"`
+	Url             *string          `json:"url"`
+	Ip              *netip.Addr      `json:"ip"`
+	UserAgent       *string          `json:"user_agent"`
+	ProviderPayload []byte           `json:"provider_payload"`
+	OccurredAt      time.Time        `json:"occurred_at"`
+	CreatedAt       time.Time        `json:"created_at"`
 }
 
 type McpServer struct {

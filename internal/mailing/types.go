@@ -1,6 +1,5 @@
 // Package mailing owns tenant mailing lists, subscriber consent, templates, sending
-// profiles, and suppressions for Spec 013. Campaigns, public ingress, delivery, tracking,
-// and provider webhooks are added by later slices over these core records.
+// profiles, broadcast campaigns, delivery, and tracking for Spec 013.
 package mailing
 
 import (
@@ -29,7 +28,6 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
-	"github.com/manyforge/manyforge/internal/platform/mailer"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
@@ -46,7 +44,6 @@ type Service struct {
 	Vault     *secrets.Vault
 	Sealer    *crypto.Sealer
 	Tokens    *mailtoken.Codec
-	Mailer    mailer.Mailer
 	Providers interface {
 		Resolve(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error)
 	}
@@ -245,6 +242,89 @@ type Suppression struct {
 	Reason       string    `json:"reason"`
 	Source       string    `json:"source"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type Campaign struct {
+	ID                uuid.UUID  `json:"id"`
+	BusinessID        uuid.UUID  `json:"business_id"`
+	TenantRootID      uuid.UUID  `json:"tenant_root_id"`
+	ListID            uuid.UUID  `json:"list_id"`
+	ProfileID         *uuid.UUID `json:"profile_id"`
+	Name              string     `json:"name"`
+	Subject           string     `json:"subject"`
+	Preheader         *string    `json:"preheader"`
+	BodyMarkdown      string     `json:"body_markdown"`
+	TagFilter         []string   `json:"tag_filter"`
+	TrackOpens        bool       `json:"track_opens"`
+	TrackClicks       bool       `json:"track_clicks"`
+	Status            string     `json:"status"`
+	ScheduledAt       *time.Time `json:"scheduled_at"`
+	StartedAt         *time.Time `json:"started_at"`
+	CompletedAt       *time.Time `json:"completed_at"`
+	RecipientCount    int32      `json:"recipient_count"`
+	SentCount         int32      `json:"sent_count"`
+	DeliveredCount    int32      `json:"delivered_count"`
+	BouncedCount      int32      `json:"bounced_count"`
+	ComplainedCount   int32      `json:"complained_count"`
+	OpenedCount       int32      `json:"opened_count"`
+	ClickedCount      int32      `json:"clicked_count"`
+	UnsubscribedCount int32      `json:"unsubscribed_count"`
+	FailedCount       int32      `json:"failed_count"`
+	LastError         *string    `json:"last_error"`
+	CreatedBy         *uuid.UUID `json:"created_by"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+type CampaignInput struct {
+	ListID       uuid.UUID
+	Name         string
+	Subject      string
+	Preheader    *string
+	BodyMarkdown string
+	TagFilter    []string
+	TrackOpens   bool
+	TrackClicks  bool
+}
+
+type CampaignUpdate struct {
+	ListID       *uuid.UUID
+	Name         *string
+	Subject      *string
+	Preheader    *string
+	SetPreheader bool
+	BodyMarkdown *string
+	TagFilter    *[]string
+	TrackOpens   *bool
+	TrackClicks  *bool
+}
+
+type Delivery struct {
+	ID                uuid.UUID  `json:"id"`
+	CampaignID        *uuid.UUID `json:"campaign_id"`
+	SubscriberID      uuid.UUID  `json:"subscriber_id"`
+	Email             string     `json:"email"`
+	Status            string     `json:"status"`
+	Attempts          int32      `json:"attempts"`
+	NotBefore         time.Time  `json:"not_before"`
+	LeaseUntil        *time.Time `json:"lease_until"`
+	MessageID         string     `json:"message_id"`
+	ProviderMessageID *string    `json:"provider_message_id"`
+	OpenedAt          *time.Time `json:"opened_at"`
+	FirstClickedAt    *time.Time `json:"first_clicked_at"`
+	LastError         *string    `json:"last_error"`
+	CreatedAt         time.Time  `json:"created_at"`
+}
+
+type CampaignLinkStat struct {
+	URL              string `json:"url"`
+	ClickCount       int64  `json:"click_count"`
+	UniqueClickCount int64  `json:"unique_click_count"`
+}
+
+type CampaignStats struct {
+	Campaign Campaign           `json:"campaign"`
+	Links    []CampaignLinkStat `json:"links"`
 }
 
 func resolveTenantRoot(ctx context.Context, q *dbgen.Queries, businessID uuid.UUID) (uuid.UUID, error) {

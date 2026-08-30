@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -19,10 +20,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
-	"github.com/manyforge/manyforge/internal/platform/mailer"
+	"github.com/manyforge/manyforge/internal/platform/notify"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 )
 
@@ -133,20 +135,43 @@ func (s *Service) subscribeResolved(ctx context.Context, tx pgx.Tx, list publicL
 	return out, rawConfirmation, email, nil
 }
 
-func (s *Service) sendConfirmation(ctx context.Context, email, raw string) {
-	if s.Mailer == nil {
+func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, email, raw string) {
+	logger := s.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if s.Providers == nil || s.Renderer == nil {
+		logger.ErrorContext(ctx, "mailing confirmation send failed", "err", "delivery is not configured")
 		return
 	}
 	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
-	err := s.Mailer.Send(ctx, mailer.Message{
-		To: email, Subject: "Confirm your subscription",
-		Body: "Confirm your subscription: " + link,
-	})
+	profile, err := s.resolveBusinessProfile(ctx, businessID)
 	if err != nil {
-		logger := s.Logger
-		if logger == nil {
-			logger = slog.Default()
-		}
+		logger.ErrorContext(ctx, "mailing confirmation profile resolution failed", "err", err)
+		return
+	}
+	deliverer, err := s.Providers.Resolve(ctx, profile.provider)
+	if err != nil {
+		logger.ErrorContext(ctx, "mailing confirmation provider resolution failed", "err", err)
+		return
+	}
+	rendered, err := s.Renderer.RenderInput(mailrender.Input{
+		BodyMarkdown: "# Confirm your subscription\n\n[Confirm your subscription](" + link + ")",
+		FromName:     profile.fromName, PostalAddress: stringValue(profile.postalAddress),
+	}, mailrender.Variables{Email: email, UnsubscribeURL: "#", ListName: "Mailing list"}, mailrender.Tracking{})
+	if err != nil {
+		logger.ErrorContext(ctx, "mailing confirmation render failed", "err", err)
+		return
+	}
+	message := notify.Mail{From: (&mail.Address{Name: profile.fromName, Address: profile.provider.FromEmail}).String(),
+		To: email, Subject: "Confirm your subscription", BodyText: rendered.Text,
+		BodyHTML: rendered.HTML, MessageID: uuid.New().String() + "@" + safeMessageDomain(s.MessageDomain),
+		EnvelopeFrom: profile.provider.FromEmail}
+	if profile.replyTo != nil {
+		message.ReplyTo = *profile.replyTo
+	}
+	_, err = deliverer.Send(ctx, message)
+	if err != nil {
 		logger.ErrorContext(ctx, "mailing confirmation send failed", "err", err)
 	}
 }
@@ -290,6 +315,7 @@ func (h *PublicHandler) publicSubscribe(w http.ResponseWriter, r *http.Request) 
 func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in PublicSubscriptionInput) (PublicSubscriptionResult, error) {
 	var result PublicSubscriptionResult
 	var rawConfirmation, email string
+	var confirmationBusinessID uuid.UUID
 	err := h.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		list, found, err := resolvePublicList(ctx, tx, key)
 		if err != nil || !found {
@@ -298,6 +324,7 @@ func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in Publ
 		if h.PerKey != nil && !h.PerKey.Allow(list.keyID.String()) {
 			return errMailingRateLimited
 		}
+		confirmationBusinessID = list.businessID
 		result, rawConfirmation, email, err = h.Service.subscribeResolved(ctx, tx, list, in, false)
 		return err
 	})
@@ -305,7 +332,7 @@ func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in Publ
 		return PublicSubscriptionResult{}, err
 	}
 	if result.Status == "pending" && rawConfirmation != "" {
-		h.Service.sendConfirmation(ctx, email, rawConfirmation)
+		h.Service.sendConfirmation(ctx, confirmationBusinessID, email, rawConfirmation)
 	}
 	return result, nil
 }
@@ -329,8 +356,10 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	var result PublicSubscriptionResult
 	var rawConfirmation, email string
+	var confirmationBusinessID uuid.UUID
 	authorized, err := h.withVerifiedS2S(r, raw, func(list publicListContext, tx pgx.Tx) error {
 		var subErr error
+		confirmationBusinessID = list.businessID
 		result, rawConfirmation, email, subErr = h.Service.subscribeResolved(r.Context(), tx, list, PublicSubscriptionInput{
 			Email: body.Email, FirstName: body.FirstName, LastName: body.LastName,
 			Attributes: body.Attributes, SkipConfirmation: body.SkipConfirmation,
@@ -355,7 +384,9 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Status == "pending" && rawConfirmation != "" {
-		h.Service.sendConfirmation(r.Context(), email, rawConfirmation)
+		// The signed S2S path resolves the same verified business profile as public signup.
+		// Send failure is intentionally logged only; subscription response semantics stay stable.
+		h.Service.sendConfirmation(r.Context(), confirmationBusinessID, email, rawConfirmation)
 	}
 	status := http.StatusOK
 	if result.Created {

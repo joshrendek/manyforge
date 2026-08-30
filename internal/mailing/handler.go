@@ -31,6 +31,10 @@ func (h *Handler) ReadRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/mailing/sending-profile", h.getProfile)
 	r.Get("/businesses/{id}/mailing/templates", h.listTemplates)
 	r.Get("/businesses/{id}/mailing/templates/{tid}", h.getTemplate)
+	r.Get("/businesses/{id}/mailing/campaigns", h.listCampaigns)
+	r.Get("/businesses/{id}/mailing/campaigns/{cid}", h.getCampaign)
+	r.Get("/businesses/{id}/mailing/campaigns/{cid}/stats", h.campaignStats)
+	r.Get("/businesses/{id}/mailing/campaigns/{cid}/deliveries", h.listCampaignDeliveries)
 	r.Get("/businesses/{id}/mailing/suppressions", h.listSuppressions)
 }
 func (h *Handler) WriteRoutes(r chi.Router) {
@@ -52,6 +56,9 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Patch("/businesses/{id}/mailing/templates/{tid}", h.updateTemplate)
 	r.Delete("/businesses/{id}/mailing/templates/{tid}", h.deleteTemplate)
 	r.Post("/businesses/{id}/mailing/campaigns/preview", h.preview)
+	r.Post("/businesses/{id}/mailing/campaigns", h.createCampaign)
+	r.Patch("/businesses/{id}/mailing/campaigns/{cid}", h.updateCampaign)
+	r.Delete("/businesses/{id}/mailing/campaigns/{cid}", h.deleteCampaign)
 	r.Post("/businesses/{id}/mailing/suppressions", h.createSuppression)
 	r.Delete("/businesses/{id}/mailing/suppressions/{sid}", h.deleteSuppression)
 }
@@ -59,6 +66,9 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 // SendRoutes registers operations that require the mailing send permission.
 func (h *Handler) SendRoutes(r chi.Router) {
 	r.Post("/businesses/{id}/mailing/sending-profile/test-send", h.testProfile)
+	r.Post("/businesses/{id}/mailing/campaigns/{cid}/test-send", h.testCampaign)
+	r.Post("/businesses/{id}/mailing/campaigns/{cid}/send", h.sendCampaign)
+	r.Post("/businesses/{id}/mailing/campaigns/{cid}/cancel", h.cancelCampaign)
 }
 
 type nullableString struct {
@@ -152,6 +162,22 @@ type previewBody struct {
 }
 type testSendBody struct {
 	To string `json:"to"`
+}
+type campaignBody struct {
+	ListID       *uuid.UUID     `json:"list_id"`
+	Name         *string        `json:"name"`
+	Subject      *string        `json:"subject"`
+	Preheader    nullableString `json:"preheader"`
+	BodyMarkdown *string        `json:"body_markdown"`
+	TagFilter    *[]string      `json:"tag_filter"`
+	TrackOpens   *bool          `json:"track_opens"`
+	TrackClicks  *bool          `json:"track_clicks"`
+}
+type campaignSendBody struct {
+	ScheduledAt *time.Time `json:"scheduled_at"`
+}
+type campaignTestBody struct {
+	To []string `json:"to"`
 }
 
 func requestIDs(w http.ResponseWriter, r *http.Request, names ...string) (uuid.UUID, []uuid.UUID, bool) {
@@ -582,6 +608,135 @@ func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
 	v, err := h.svc.Preview(r.Context(), pid, ids[0], PreviewInput(body))
 	write(w, r, http.StatusOK, v, err)
 }
+
+func (h *Handler) listCampaigns(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id")
+	if !ok {
+		return
+	}
+	v, err := h.svc.ListCampaigns(r.Context(), pid, ids[0], r.URL.Query().Get("cursor"), queryLimit(r))
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) getCampaign(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	v, err := h.svc.GetCampaign(r.Context(), pid, ids[0], ids[1])
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) createCampaign(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id")
+	if !ok {
+		return
+	}
+	var b campaignBody
+	if !httpx.DecodeJSON(w, r, &b) {
+		return
+	}
+	trackOpens, trackClicks := true, true
+	if b.TrackOpens != nil {
+		trackOpens = *b.TrackOpens
+	}
+	if b.TrackClicks != nil {
+		trackClicks = *b.TrackClicks
+	}
+	var listID uuid.UUID
+	if b.ListID != nil {
+		listID = *b.ListID
+	}
+	tags := []string{}
+	if b.TagFilter != nil {
+		tags = *b.TagFilter
+	}
+	v, err := h.svc.CreateCampaign(r.Context(), pid, ids[0], CampaignInput{
+		ListID: listID, Name: stringValue(b.Name), Subject: stringValue(b.Subject),
+		Preheader: b.Preheader.Value, BodyMarkdown: stringValue(b.BodyMarkdown),
+		TagFilter: tags, TrackOpens: trackOpens, TrackClicks: trackClicks,
+	})
+	write(w, r, http.StatusCreated, v, err)
+}
+func (h *Handler) updateCampaign(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	var b campaignBody
+	if !httpx.DecodeJSON(w, r, &b) {
+		return
+	}
+	v, err := h.svc.UpdateCampaign(r.Context(), pid, ids[0], ids[1], CampaignUpdate{
+		ListID: b.ListID, Name: b.Name, Subject: b.Subject, Preheader: b.Preheader.Value,
+		SetPreheader: b.Preheader.Set, BodyMarkdown: b.BodyMarkdown, TagFilter: b.TagFilter,
+		TrackOpens: b.TrackOpens, TrackClicks: b.TrackClicks,
+	})
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) deleteCampaign(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteCampaign(r.Context(), pid, ids[0], ids[1]); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	noContent(w)
+}
+func (h *Handler) campaignStats(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	v, err := h.svc.CampaignStats(r.Context(), pid, ids[0], ids[1])
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) listCampaignDeliveries(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	v, err := h.svc.ListCampaignDeliveries(r.Context(), pid, ids[0], ids[1],
+		q.Get("status"), q.Get("cursor"), queryLimit(r))
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) sendCampaign(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	var b campaignSendBody
+	if r.ContentLength != 0 && !httpx.DecodeJSON(w, r, &b) {
+		return
+	}
+	v, err := h.svc.SendCampaign(r.Context(), pid, ids[0], ids[1], b.ScheduledAt)
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) cancelCampaign(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	v, err := h.svc.CancelCampaign(r.Context(), pid, ids[0], ids[1])
+	write(w, r, http.StatusOK, v, err)
+}
+func (h *Handler) testCampaign(w http.ResponseWriter, r *http.Request) {
+	pid, ids, ok := requestIDs(w, r, "id", "cid")
+	if !ok {
+		return
+	}
+	var b campaignTestBody
+	if !httpx.DecodeJSON(w, r, &b) {
+		return
+	}
+	if err := h.svc.TestCampaign(r.Context(), pid, ids[0], ids[1], b.To); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	noContent(w)
+}
+
 func (h *Handler) listSuppressions(w http.ResponseWriter, r *http.Request) {
 	pid, ids, ok := requestIDs(w, r, "id")
 	if !ok {
