@@ -199,7 +199,7 @@ var tenantMergeRootPayloadInventory = map[string][]string{
 }
 
 // These are the non-generic guards whose root/role/owner invariants cutover
-// must preserve in addition to the common tenant_merge_write_fence on all 59
+// must preserve in addition to the common tenant_merge_write_fence on all 63
 // manifest tables.
 var tenantMergeImmutabilityInventory = map[string]string{
 	"activity_entry.activity_troot_immutable":                                             "support_tenant_root_immutable",
