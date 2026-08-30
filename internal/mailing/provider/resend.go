@@ -51,6 +51,9 @@ func (r *Resend) Send(ctx context.Context, mail notify.Mail) (SendResult, error)
 	if len(headers) > 0 {
 		payload["headers"] = headers
 	}
+	if deliveryID := strings.TrimSpace(mail.ExtraHeaders["X-MF-Delivery"]); deliveryID != "" {
+		payload["tags"] = []map[string]string{{"name": "mf_delivery", "value": deliveryID}}
+	}
 	var response struct {
 		ID string `json:"id"`
 	}

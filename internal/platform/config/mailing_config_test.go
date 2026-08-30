@@ -57,6 +57,13 @@ func TestMailingConfigRejectsInvalidBounds(t *testing.T) {
 	}
 }
 
+func TestMailingConfigRejectsInvalidMessageDomain(t *testing.T) {
+	t.Setenv("MANYFORGE_MAILING_MESSAGE_DOMAIN", "mail example.com")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected a message domain containing spaces to fail")
+	}
+}
+
 func TestMailingMasterKeyRejectsWrongLength(t *testing.T) {
 	t.Setenv("MANYFORGE_MAILING_MASTER_KEY", base64.StdEncoding.EncodeToString(make([]byte, 31)))
 	if _, err := Load(); err == nil {

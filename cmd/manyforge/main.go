@@ -228,6 +228,7 @@ func main() {
 	var mailingSvc *mailing.Service
 	var mailingH *mailing.Handler
 	var mailingPublicH *mailing.PublicHandler
+	var mailingWorker *mailing.SendWorker
 	if len(cfg.MailingMasterKey) > 0 {
 		mailingSealer, err = mfcrypto.NewSealer(cfg.MailingMasterKey)
 		if err != nil {
@@ -241,7 +242,7 @@ func main() {
 		}
 		mailingSvc = &mailing.Service{
 			DB: database, Sealer: mailingSealer, Vault: secrets.NewVault(mailingSealer),
-			Tokens: mailingTokens, Mailer: mailer.LogMailer{Logger: logger}, Logger: logger,
+			Tokens: mailingTokens, Logger: logger,
 			PublicBaseURL: cfg.PublicBaseURL,
 		}
 		mailingH = mailing.NewHandler(mailingSvc)
@@ -684,6 +685,12 @@ func main() {
 		mailingSvc.Renderer = renderer
 		mailingSvc.OutboundLimiter = outboundLimiter
 		mailingSvc.MessageDomain = cfg.MailingMessageDomain
+		mailingWorker = &mailing.SendWorker{
+			Service: mailingSvc, Batch: cfg.MailingSendBatch, Lease: cfg.MailingLease,
+			Every:   cfg.MailingSendEvery,
+			Limiter: ratelimit.NewTokenBucket(cfg.MailingRateRPS, cfg.MailingRateBurst),
+			Logger:  logger,
+		}
 	}
 	// Outbound identity selection shares the same DKIM sealer as IdentityService,
 	// so it can unseal a verified custom
@@ -869,6 +876,9 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	go outboxWorker.Run(workerCtx)
+	if mailingWorker != nil {
+		go mailingWorker.Run(workerCtx)
+	}
 
 	// Spec 007 code-review worker: polls the code_review queue and runs pending jobs
 	// as the owning principal (RLS re-entered inside runJob). The claim/requeue/fail
