@@ -74,6 +74,8 @@ func TestPin_MailingQueriesKeepTenantPredicate(t *testing.T) {
 		"GetListSubscriber", "UpdateListSubscriber", "UnsubscribeListSubscriber",
 		"RevokeMailingListKey", "GetMailingTemplate", "UpdateMailingTemplate",
 		"DeleteMailingTemplate", "DeleteMailingSuppression",
+		"GetCampaign", "UpdateCampaign", "DeleteCampaign",
+		"ScheduleCampaign", "ListCampaignDeliveries", "CampaignLinkStats",
 	} {
 		marker := "-- name: " + name + " "
 		start := strings.Index(sql, marker)
@@ -88,6 +90,83 @@ func TestPin_MailingQueriesKeepTenantPredicate(t *testing.T) {
 		}
 		if !strings.Contains(rest, "tenant_root_id") {
 			t.Errorf("query %s lacks tenant_root_id predicate", name)
+		}
+	}
+}
+
+func TestPin_MailingCampaignWorkerBoundary(t *testing.T) {
+	upBytes, err := os.ReadFile("../../migrations/0126_mailing_campaigns.up.sql")
+	if err != nil {
+		t.Fatalf("read mailing campaigns migration: %v", err)
+	}
+	up := string(upBytes)
+	for _, table := range []string{"campaign", "mailing_delivery", "mailing_tracking_event", "mailing_provider_webhook_delivery"} {
+		for _, check := range []string{
+			"CREATE TABLE " + table,
+			"ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY",
+			"CREATE POLICY " + table + "_rls ON " + table + " FOR ALL",
+			"CREATE TRIGGER " + table + "_troot_immutable",
+			"BEFORE INSERT OR UPDATE OR DELETE ON " + table,
+			"('" + table + "', 'mailing', 'drain_fence_then_rewrite', 1)",
+		} {
+			if !strings.Contains(up, check) {
+				t.Errorf("%s missing %q", table, check)
+			}
+		}
+	}
+	if strings.Contains(up, "authorized_tenants") {
+		t.Fatal("campaign worker boundaries must never broaden to authorized_tenants")
+	}
+	for _, fn := range []string{
+		"mailing_claim_campaigns_for_fanout", "mailing_fanout_batch",
+		"mailing_claim_deliveries", "mailing_release_delivery",
+		"mailing_renew_delivery", "mailing_complete_delivery", "mailing_fail_delivery",
+		"mailing_cancel_campaign", "mailing_rollup_campaigns",
+		"mailing_profile_context", "mailing_business_profile_context",
+		"mailing_record_track", "mailing_record_unsubscribe", "mailing_mark_bounced",
+		"mailing_enqueue_delivery", "mailing_delivery_engagement",
+	} {
+		start := strings.Index(up, "CREATE FUNCTION "+fn+"(")
+		if start < 0 {
+			t.Errorf("missing campaign worker function %s", fn)
+			continue
+		}
+		body := up[start:]
+		end := strings.Index(body, "$$;")
+		if end < 0 || !strings.Contains(body[:end], "SECURITY DEFINER") || !strings.Contains(body[:end], "SET search_path = public") {
+			t.Errorf("function %s is not a search-path-pinned SECURITY DEFINER", fn)
+		}
+		if !strings.Contains(up, "REVOKE ALL ON FUNCTION "+fn+"(") {
+			t.Errorf("function %s retains default PUBLIC execute", fn)
+		}
+	}
+	for _, fn := range []string{
+		"mailing_claim_campaigns_for_fanout", "mailing_fanout_batch",
+		"mailing_claim_deliveries", "mailing_rollup_campaigns",
+	} {
+		start := strings.Index(up, "CREATE FUNCTION "+fn+"(")
+		if start < 0 {
+			t.Errorf("missing tenant-fenced function %s", fn)
+			continue
+		}
+		body := up[start:]
+		end := strings.Index(body, "$$;")
+		if end < 0 || !strings.Contains(body[:end], "tenant_merge_root_write_allowed") {
+			t.Errorf("function %s does not honor the tenant merge write fence", fn)
+		}
+	}
+	workerBytes, err := os.ReadFile("../mailing/sendworker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := string(workerBytes)
+	for _, pin := range []string{
+		"mailing_claim_deliveries", "mailing_release_delivery", "mailing_renew_delivery", "mailing_complete_delivery",
+		"deliverer.Send(ctx, message) // no database transaction is open here",
+		"List-Unsubscribe-Post", "X-MF-Delivery",
+	} {
+		if !strings.Contains(worker, pin) {
+			t.Errorf("mailing worker missing pin %q", pin)
 		}
 	}
 }

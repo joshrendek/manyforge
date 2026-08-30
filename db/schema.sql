@@ -1084,6 +1084,129 @@ CREATE TABLE mailing_template (
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
 
+-- Mailing campaigns, shared delivery queue, and tracking (Spec 013, migration 0126).
+CREATE TYPE campaign_status AS ENUM (
+    'draft', 'scheduled', 'sending', 'sent', 'cancelled', 'failed'
+);
+CREATE TYPE mailing_delivery_status AS ENUM (
+    'queued', 'sending', 'sent', 'delivered', 'bounced', 'complained',
+    'failed', 'suppressed', 'cancelled'
+);
+CREATE TYPE mailing_track_kind AS ENUM (
+    'open', 'click', 'unsubscribe', 'delivered', 'bounce', 'complaint'
+);
+CREATE TYPE mailing_delivery_source AS ENUM ('campaign', 'automation');
+
+CREATE TABLE campaign (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id        uuid NOT NULL,
+    tenant_root_id     uuid NOT NULL,
+    list_id            uuid NOT NULL,
+    profile_id         uuid,
+    name               text NOT NULL,
+    subject            text NOT NULL,
+    preheader          text,
+    body_markdown      text NOT NULL,
+    tag_filter         text[] NOT NULL DEFAULT '{}',
+    track_opens        boolean NOT NULL DEFAULT true,
+    track_clicks       boolean NOT NULL DEFAULT true,
+    status             campaign_status NOT NULL DEFAULT 'draft',
+    scheduled_at       timestamptz,
+    started_at         timestamptz,
+    completed_at       timestamptz,
+    fanout_cursor      uuid,
+    fanout_done        boolean NOT NULL DEFAULT false,
+    recipient_count    integer NOT NULL DEFAULT 0,
+    sent_count         integer NOT NULL DEFAULT 0,
+    delivered_count    integer NOT NULL DEFAULT 0,
+    bounced_count      integer NOT NULL DEFAULT 0,
+    complained_count   integer NOT NULL DEFAULT 0,
+    opened_count       integer NOT NULL DEFAULT 0,
+    clicked_count      integer NOT NULL DEFAULT 0,
+    unsubscribed_count integer NOT NULL DEFAULT 0,
+    failed_count       integer NOT NULL DEFAULT 0,
+    last_error         text,
+    created_by         uuid REFERENCES principal(id) ON DELETE SET NULL,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (list_id, tenant_root_id) REFERENCES mailing_list(id, tenant_root_id),
+    FOREIGN KEY (profile_id, tenant_root_id) REFERENCES mailing_sending_profile(id, tenant_root_id)
+);
+
+CREATE TABLE mailing_delivery (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id         uuid NOT NULL,
+    tenant_root_id      uuid NOT NULL,
+    source_kind         mailing_delivery_source NOT NULL,
+    source_id           uuid NOT NULL,
+    campaign_id         uuid,
+    template_id         uuid,
+    subscriber_id       uuid NOT NULL,
+    email               citext NOT NULL,
+    status              mailing_delivery_status NOT NULL DEFAULT 'queued',
+    attempts            integer NOT NULL DEFAULT 0,
+    claim_generation    integer NOT NULL DEFAULT 0,
+    not_before          timestamptz NOT NULL DEFAULT now(),
+    lease_until         timestamptz,
+    message_id          text NOT NULL UNIQUE,
+    provider_message_id text,
+    opened_at           timestamptz,
+    first_clicked_at    timestamptz,
+    last_error          text,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    updated_at          timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (source_kind, source_id, subscriber_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (campaign_id, tenant_root_id) REFERENCES campaign(id, tenant_root_id) ON DELETE CASCADE,
+    FOREIGN KEY (template_id, tenant_root_id) REFERENCES mailing_template(id, tenant_root_id),
+    FOREIGN KEY (subscriber_id, tenant_root_id) REFERENCES list_subscriber(id, tenant_root_id),
+    CHECK (
+        (source_kind = 'campaign' AND campaign_id IS NOT NULL AND template_id IS NULL)
+        OR (source_kind = 'automation' AND campaign_id IS NULL AND template_id IS NOT NULL)
+    ),
+    CHECK (attempts >= 0),
+    CHECK (claim_generation >= 0)
+);
+
+CREATE TABLE mailing_tracking_event (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id      uuid NOT NULL,
+    tenant_root_id   uuid NOT NULL,
+    campaign_id      uuid,
+    delivery_id      uuid,
+    subscriber_id    uuid,
+    kind             mailing_track_kind NOT NULL,
+    url              text,
+    ip               inet,
+    user_agent       text,
+    provider_payload jsonb,
+    occurred_at      timestamptz NOT NULL DEFAULT now(),
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (campaign_id, tenant_root_id) REFERENCES campaign(id, tenant_root_id) ON DELETE CASCADE,
+    FOREIGN KEY (delivery_id, tenant_root_id) REFERENCES mailing_delivery(id, tenant_root_id) ON DELETE CASCADE,
+    FOREIGN KEY (subscriber_id, tenant_root_id) REFERENCES list_subscriber(id, tenant_root_id)
+);
+
+CREATE TABLE mailing_provider_webhook_delivery (
+    id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id       uuid NOT NULL,
+    tenant_root_id    uuid NOT NULL,
+    profile_id        uuid NOT NULL,
+    provider          text NOT NULL,
+    external_event_id text NOT NULL,
+    received_at       timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (profile_id, external_event_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (profile_id, tenant_root_id) REFERENCES mailing_sending_profile(id, tenant_root_id) ON DELETE CASCADE,
+    CHECK (provider IN ('resend', 'ses'))
+);
+
 -- Tenant-merge control plane (migration 0113). These tables have no app-role
 -- grants in the live schema and are accessed only through raw-pgx calls to
 -- SECURITY DEFINER functions, but their structure is mirrored here for sqlc.

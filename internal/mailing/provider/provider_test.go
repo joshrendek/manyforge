@@ -86,6 +86,10 @@ func TestResendSendAndVerify(t *testing.T) {
 			if body["html"] != "<p>Hello</p>" || body["text"] != "Hello" {
 				t.Errorf("body = %#v", body)
 			}
+			tags, ok := body["tags"].([]any)
+			if !ok || len(tags) != 1 || tags[0].(map[string]any)["name"] != "mf_delivery" || tags[0].(map[string]any)["value"] != "delivery-id" {
+				t.Errorf("tags = %#v", body["tags"])
+			}
 			_, _ = io.WriteString(w, `{"id":"resend-123"}`)
 		default:
 			http.NotFound(w, r)
@@ -100,6 +104,7 @@ func TestResendSendAndVerify(t *testing.T) {
 	result, err := r.Send(context.Background(), notify.Mail{
 		From: "Acme <sender@example.com>", To: "reader@example.net", Subject: "News",
 		BodyText: "Hello", BodyHTML: "<p>Hello</p>", MessageID: "delivery@example.test",
+		ExtraHeaders: map[string]string{"X-MF-Delivery": "delivery-id"},
 	})
 	if err != nil {
 		t.Fatalf("Send: %v", err)

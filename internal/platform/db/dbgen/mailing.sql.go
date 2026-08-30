@@ -42,6 +42,97 @@ func (q *Queries) ArchiveMailingList(ctx context.Context, arg ArchiveMailingList
 	return i, err
 }
 
+const campaignLinkStats = `-- name: CampaignLinkStats :many
+SELECT e.url, count(*)::bigint AS click_count,
+       count(DISTINCT e.subscriber_id)::bigint AS unique_click_count
+FROM mailing_tracking_event e
+WHERE e.campaign_id = $1 AND e.tenant_root_id = $2
+  AND e.kind = 'click' AND e.url IS NOT NULL
+GROUP BY e.url
+ORDER BY click_count DESC, e.url
+`
+
+type CampaignLinkStatsParams struct {
+	CampaignID   pgtype.UUID `json:"campaign_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+}
+
+type CampaignLinkStatsRow struct {
+	Url              *string `json:"url"`
+	ClickCount       int64   `json:"click_count"`
+	UniqueClickCount int64   `json:"unique_click_count"`
+}
+
+func (q *Queries) CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsParams) ([]CampaignLinkStatsRow, error) {
+	rows, err := q.db.Query(ctx, campaignLinkStats, arg.CampaignID, arg.TenantRootID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CampaignLinkStatsRow
+	for rows.Next() {
+		var i CampaignLinkStatsRow
+		if err := rows.Scan(&i.Url, &i.ClickCount, &i.UniqueClickCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteCampaign = `-- name: DeleteCampaign :one
+DELETE FROM campaign
+WHERE id = $1 AND tenant_root_id = $2 AND status IN ('draft', 'cancelled')
+RETURNING id, business_id, tenant_root_id, list_id, profile_id, name, subject, preheader, body_markdown, tag_filter, track_opens, track_clicks, status, scheduled_at, started_at, completed_at, fanout_cursor, fanout_done, recipient_count, sent_count, delivered_count, bounced_count, complained_count, opened_count, clicked_count, unsubscribed_count, failed_count, last_error, created_by, created_at, updated_at
+`
+
+type DeleteCampaignParams struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+func (q *Queries) DeleteCampaign(ctx context.Context, arg DeleteCampaignParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, deleteCampaign, arg.ID, arg.TenantRootID)
+	var i Campaign
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.ListID,
+		&i.ProfileID,
+		&i.Name,
+		&i.Subject,
+		&i.Preheader,
+		&i.BodyMarkdown,
+		&i.TagFilter,
+		&i.TrackOpens,
+		&i.TrackClicks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FanoutCursor,
+		&i.FanoutDone,
+		&i.RecipientCount,
+		&i.SentCount,
+		&i.DeliveredCount,
+		&i.BouncedCount,
+		&i.ComplainedCount,
+		&i.OpenedCount,
+		&i.ClickedCount,
+		&i.UnsubscribedCount,
+		&i.FailedCount,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteMailingSendingProfile = `-- name: DeleteMailingSendingProfile :one
 DELETE FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
@@ -148,6 +239,55 @@ type DeleteSubscriberTagsParams struct {
 func (q *Queries) DeleteSubscriberTags(ctx context.Context, arg DeleteSubscriberTagsParams) error {
 	_, err := q.db.Exec(ctx, deleteSubscriberTags, arg.SubscriberID, arg.TenantRootID)
 	return err
+}
+
+const getCampaign = `-- name: GetCampaign :one
+SELECT id, business_id, tenant_root_id, list_id, profile_id, name, subject, preheader, body_markdown, tag_filter, track_opens, track_clicks, status, scheduled_at, started_at, completed_at, fanout_cursor, fanout_done, recipient_count, sent_count, delivered_count, bounced_count, complained_count, opened_count, clicked_count, unsubscribed_count, failed_count, last_error, created_by, created_at, updated_at FROM campaign
+WHERE id = $1 AND tenant_root_id = $2
+`
+
+type GetCampaignParams struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+func (q *Queries) GetCampaign(ctx context.Context, arg GetCampaignParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, getCampaign, arg.ID, arg.TenantRootID)
+	var i Campaign
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.ListID,
+		&i.ProfileID,
+		&i.Name,
+		&i.Subject,
+		&i.Preheader,
+		&i.BodyMarkdown,
+		&i.TagFilter,
+		&i.TrackOpens,
+		&i.TrackClicks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FanoutCursor,
+		&i.FanoutDone,
+		&i.RecipientCount,
+		&i.SentCount,
+		&i.DeliveredCount,
+		&i.BouncedCount,
+		&i.ComplainedCount,
+		&i.OpenedCount,
+		&i.ClickedCount,
+		&i.UnsubscribedCount,
+		&i.FailedCount,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getContactsByIDs = `-- name: GetContactsByIDs :many
@@ -321,6 +461,86 @@ func (q *Queries) GetMailingTemplate(ctx context.Context, arg GetMailingTemplate
 		&i.BodyMarkdown,
 		&i.TrackOpens,
 		&i.TrackClicks,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertCampaign = `-- name: InsertCampaign :one
+
+INSERT INTO campaign (
+    id, business_id, tenant_root_id, list_id, name, subject, preheader,
+    body_markdown, tag_filter, track_opens, track_clicks, created_by,
+    created_at, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now()
+)
+RETURNING id, business_id, tenant_root_id, list_id, profile_id, name, subject, preheader, body_markdown, tag_filter, track_opens, track_clicks, status, scheduled_at, started_at, completed_at, fanout_cursor, fanout_done, recipient_count, sent_count, delivered_count, bounced_count, complained_count, opened_count, clicked_count, unsubscribed_count, failed_count, last_error, created_by, created_at, updated_at
+`
+
+type InsertCampaignParams struct {
+	ID           uuid.UUID   `json:"id"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	ListID       uuid.UUID   `json:"list_id"`
+	Name         string      `json:"name"`
+	Subject      string      `json:"subject"`
+	Preheader    *string     `json:"preheader"`
+	BodyMarkdown string      `json:"body_markdown"`
+	TagFilter    []string    `json:"tag_filter"`
+	TrackOpens   bool        `json:"track_opens"`
+	TrackClicks  bool        `json:"track_clicks"`
+	CreatedBy    pgtype.UUID `json:"created_by"`
+}
+
+// ---- campaigns ----
+func (q *Queries) InsertCampaign(ctx context.Context, arg InsertCampaignParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, insertCampaign,
+		arg.ID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.ListID,
+		arg.Name,
+		arg.Subject,
+		arg.Preheader,
+		arg.BodyMarkdown,
+		arg.TagFilter,
+		arg.TrackOpens,
+		arg.TrackClicks,
+		arg.CreatedBy,
+	)
+	var i Campaign
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.ListID,
+		&i.ProfileID,
+		&i.Name,
+		&i.Subject,
+		&i.Preheader,
+		&i.BodyMarkdown,
+		&i.TagFilter,
+		&i.TrackOpens,
+		&i.TrackClicks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FanoutCursor,
+		&i.FanoutDone,
+		&i.RecipientCount,
+		&i.SentCount,
+		&i.DeliveredCount,
+		&i.BouncedCount,
+		&i.ComplainedCount,
+		&i.OpenedCount,
+		&i.ClickedCount,
+		&i.UnsubscribedCount,
+		&i.FailedCount,
+		&i.LastError,
+		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -784,6 +1004,277 @@ func (q *Queries) InsertSubscribersBatch(ctx context.Context, arg InsertSubscrib
 			&i.ConfirmedAt,
 			&i.UnsubscribedAt,
 			&i.StatusReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCampaignDeliveries = `-- name: ListCampaignDeliveries :many
+SELECT d.id, d.business_id, d.tenant_root_id, d.source_kind, d.source_id, d.campaign_id, d.template_id, d.subscriber_id, d.email, d.status, d.attempts, d.claim_generation, d.not_before, d.lease_until, d.message_id, d.provider_message_id, d.opened_at, d.first_clicked_at, d.last_error, d.created_at, d.updated_at FROM mailing_delivery d
+WHERE d.campaign_id = $1
+  AND d.tenant_root_id = $2
+  AND ($3::text = '' OR d.status::text = $3::text)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT $4
+`
+
+type ListCampaignDeliveriesParams struct {
+	CampaignID   pgtype.UUID `json:"campaign_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	Status       string      `json:"status"`
+	Lim          int32       `json:"lim"`
+}
+
+func (q *Queries) ListCampaignDeliveries(ctx context.Context, arg ListCampaignDeliveriesParams) ([]MailingDelivery, error) {
+	rows, err := q.db.Query(ctx, listCampaignDeliveries,
+		arg.CampaignID,
+		arg.TenantRootID,
+		arg.Status,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MailingDelivery
+	for rows.Next() {
+		var i MailingDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.TenantRootID,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.CampaignID,
+			&i.TemplateID,
+			&i.SubscriberID,
+			&i.Email,
+			&i.Status,
+			&i.Attempts,
+			&i.ClaimGeneration,
+			&i.NotBefore,
+			&i.LeaseUntil,
+			&i.MessageID,
+			&i.ProviderMessageID,
+			&i.OpenedAt,
+			&i.FirstClickedAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCampaignDeliveriesAfter = `-- name: ListCampaignDeliveriesAfter :many
+SELECT d.id, d.business_id, d.tenant_root_id, d.source_kind, d.source_id, d.campaign_id, d.template_id, d.subscriber_id, d.email, d.status, d.attempts, d.claim_generation, d.not_before, d.lease_until, d.message_id, d.provider_message_id, d.opened_at, d.first_clicked_at, d.last_error, d.created_at, d.updated_at FROM mailing_delivery d
+WHERE d.campaign_id = $1
+  AND d.tenant_root_id = $2
+  AND ($3::text = '' OR d.status::text = $3::text)
+  AND (d.created_at, d.id) < ($4::timestamptz, $5::uuid)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT $6
+`
+
+type ListCampaignDeliveriesAfterParams struct {
+	CampaignID   pgtype.UUID `json:"campaign_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	Status       string      `json:"status"`
+	CurCreated   time.Time   `json:"cur_created"`
+	CurID        uuid.UUID   `json:"cur_id"`
+	Lim          int32       `json:"lim"`
+}
+
+func (q *Queries) ListCampaignDeliveriesAfter(ctx context.Context, arg ListCampaignDeliveriesAfterParams) ([]MailingDelivery, error) {
+	rows, err := q.db.Query(ctx, listCampaignDeliveriesAfter,
+		arg.CampaignID,
+		arg.TenantRootID,
+		arg.Status,
+		arg.CurCreated,
+		arg.CurID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MailingDelivery
+	for rows.Next() {
+		var i MailingDelivery
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.TenantRootID,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.CampaignID,
+			&i.TemplateID,
+			&i.SubscriberID,
+			&i.Email,
+			&i.Status,
+			&i.Attempts,
+			&i.ClaimGeneration,
+			&i.NotBefore,
+			&i.LeaseUntil,
+			&i.MessageID,
+			&i.ProviderMessageID,
+			&i.OpenedAt,
+			&i.FirstClickedAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCampaigns = `-- name: ListCampaigns :many
+SELECT id, business_id, tenant_root_id, list_id, profile_id, name, subject, preheader, body_markdown, tag_filter, track_opens, track_clicks, status, scheduled_at, started_at, completed_at, fanout_cursor, fanout_done, recipient_count, sent_count, delivered_count, bounced_count, complained_count, opened_count, clicked_count, unsubscribed_count, failed_count, last_error, created_by, created_at, updated_at FROM campaign
+WHERE business_id = $1 AND tenant_root_id = $2
+ORDER BY created_at DESC, id DESC
+LIMIT $3
+`
+
+type ListCampaignsParams struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Limit        int32     `json:"limit"`
+}
+
+func (q *Queries) ListCampaigns(ctx context.Context, arg ListCampaignsParams) ([]Campaign, error) {
+	rows, err := q.db.Query(ctx, listCampaigns, arg.BusinessID, arg.TenantRootID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Campaign
+	for rows.Next() {
+		var i Campaign
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.TenantRootID,
+			&i.ListID,
+			&i.ProfileID,
+			&i.Name,
+			&i.Subject,
+			&i.Preheader,
+			&i.BodyMarkdown,
+			&i.TagFilter,
+			&i.TrackOpens,
+			&i.TrackClicks,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.FanoutCursor,
+			&i.FanoutDone,
+			&i.RecipientCount,
+			&i.SentCount,
+			&i.DeliveredCount,
+			&i.BouncedCount,
+			&i.ComplainedCount,
+			&i.OpenedCount,
+			&i.ClickedCount,
+			&i.UnsubscribedCount,
+			&i.FailedCount,
+			&i.LastError,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCampaignsAfter = `-- name: ListCampaignsAfter :many
+SELECT id, business_id, tenant_root_id, list_id, profile_id, name, subject, preheader, body_markdown, tag_filter, track_opens, track_clicks, status, scheduled_at, started_at, completed_at, fanout_cursor, fanout_done, recipient_count, sent_count, delivered_count, bounced_count, complained_count, opened_count, clicked_count, unsubscribed_count, failed_count, last_error, created_by, created_at, updated_at FROM campaign
+WHERE business_id = $1
+  AND tenant_root_id = $2
+  AND (created_at, id) < ($3::timestamptz, $4::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $5
+`
+
+type ListCampaignsAfterParams struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	CurCreated   time.Time `json:"cur_created"`
+	CurID        uuid.UUID `json:"cur_id"`
+	Lim          int32     `json:"lim"`
+}
+
+func (q *Queries) ListCampaignsAfter(ctx context.Context, arg ListCampaignsAfterParams) ([]Campaign, error) {
+	rows, err := q.db.Query(ctx, listCampaignsAfter,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.CurCreated,
+		arg.CurID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Campaign
+	for rows.Next() {
+		var i Campaign
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.TenantRootID,
+			&i.ListID,
+			&i.ProfileID,
+			&i.Name,
+			&i.Subject,
+			&i.Preheader,
+			&i.BodyMarkdown,
+			&i.TagFilter,
+			&i.TrackOpens,
+			&i.TrackClicks,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.FanoutCursor,
+			&i.FanoutDone,
+			&i.RecipientCount,
+			&i.SentCount,
+			&i.DeliveredCount,
+			&i.BouncedCount,
+			&i.ComplainedCount,
+			&i.OpenedCount,
+			&i.ClickedCount,
+			&i.UnsubscribedCount,
+			&i.FailedCount,
+			&i.LastError,
+			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -1474,6 +1965,82 @@ func (q *Queries) RevokeMailingListKey(ctx context.Context, arg RevokeMailingLis
 	return i, err
 }
 
+const scheduleCampaign = `-- name: ScheduleCampaign :one
+UPDATE campaign c SET
+    profile_id = p.id,
+    status = 'scheduled',
+    scheduled_at = GREATEST($1::timestamptz, now()),
+    fanout_cursor = NULL,
+    fanout_done = false,
+    last_error = NULL,
+    updated_at = now()
+FROM mailing_sending_profile p, mailing_list l
+WHERE c.id = $2
+  AND c.tenant_root_id = $3
+  AND c.business_id = $4
+  AND c.status = 'draft'
+  AND btrim(c.subject) <> ''
+  AND btrim(c.body_markdown) <> ''
+  AND l.id = c.list_id AND l.tenant_root_id = c.tenant_root_id
+  AND l.business_id = c.business_id AND l.status = 'active'
+  AND p.business_id = c.business_id AND p.tenant_root_id = c.tenant_root_id
+  AND p.status = 'verified'
+RETURNING c.id, c.business_id, c.tenant_root_id, c.list_id, c.profile_id, c.name, c.subject, c.preheader, c.body_markdown, c.tag_filter, c.track_opens, c.track_clicks, c.status, c.scheduled_at, c.started_at, c.completed_at, c.fanout_cursor, c.fanout_done, c.recipient_count, c.sent_count, c.delivered_count, c.bounced_count, c.complained_count, c.opened_count, c.clicked_count, c.unsubscribed_count, c.failed_count, c.last_error, c.created_by, c.created_at, c.updated_at
+`
+
+type ScheduleCampaignParams struct {
+	ScheduledAt  time.Time `json:"scheduled_at"`
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+}
+
+// Pin the currently verified business profile and transition atomically. The list/profile
+// joins prevent cross-business IDs even inside a caller-authorized tenant root.
+func (q *Queries) ScheduleCampaign(ctx context.Context, arg ScheduleCampaignParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, scheduleCampaign,
+		arg.ScheduledAt,
+		arg.ID,
+		arg.TenantRootID,
+		arg.BusinessID,
+	)
+	var i Campaign
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.ListID,
+		&i.ProfileID,
+		&i.Name,
+		&i.Subject,
+		&i.Preheader,
+		&i.BodyMarkdown,
+		&i.TagFilter,
+		&i.TrackOpens,
+		&i.TrackClicks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FanoutCursor,
+		&i.FanoutDone,
+		&i.RecipientCount,
+		&i.SentCount,
+		&i.DeliveredCount,
+		&i.BouncedCount,
+		&i.ComplainedCount,
+		&i.OpenedCount,
+		&i.ClickedCount,
+		&i.UnsubscribedCount,
+		&i.FailedCount,
+		&i.LastError,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setMailingSendingProfileVerification = `-- name: SetMailingSendingProfileVerification :one
 UPDATE mailing_sending_profile SET
     status = $1::text,
@@ -1566,6 +2133,85 @@ func (q *Queries) UnsubscribeListSubscriber(ctx context.Context, arg Unsubscribe
 		&i.ConfirmedAt,
 		&i.UnsubscribedAt,
 		&i.StatusReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateCampaign = `-- name: UpdateCampaign :one
+UPDATE campaign SET
+    list_id = $1,
+    name = $2,
+    subject = $3,
+    preheader = $4,
+    body_markdown = $5,
+    tag_filter = $6,
+    track_opens = $7,
+    track_clicks = $8,
+    updated_at = now()
+WHERE id = $9 AND tenant_root_id = $10
+  AND status = 'draft'
+RETURNING id, business_id, tenant_root_id, list_id, profile_id, name, subject, preheader, body_markdown, tag_filter, track_opens, track_clicks, status, scheduled_at, started_at, completed_at, fanout_cursor, fanout_done, recipient_count, sent_count, delivered_count, bounced_count, complained_count, opened_count, clicked_count, unsubscribed_count, failed_count, last_error, created_by, created_at, updated_at
+`
+
+type UpdateCampaignParams struct {
+	ListID       uuid.UUID `json:"list_id"`
+	Name         string    `json:"name"`
+	Subject      string    `json:"subject"`
+	Preheader    *string   `json:"preheader"`
+	BodyMarkdown string    `json:"body_markdown"`
+	TagFilter    []string  `json:"tag_filter"`
+	TrackOpens   bool      `json:"track_opens"`
+	TrackClicks  bool      `json:"track_clicks"`
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+func (q *Queries) UpdateCampaign(ctx context.Context, arg UpdateCampaignParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, updateCampaign,
+		arg.ListID,
+		arg.Name,
+		arg.Subject,
+		arg.Preheader,
+		arg.BodyMarkdown,
+		arg.TagFilter,
+		arg.TrackOpens,
+		arg.TrackClicks,
+		arg.ID,
+		arg.TenantRootID,
+	)
+	var i Campaign
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.ListID,
+		&i.ProfileID,
+		&i.Name,
+		&i.Subject,
+		&i.Preheader,
+		&i.BodyMarkdown,
+		&i.TagFilter,
+		&i.TrackOpens,
+		&i.TrackClicks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FanoutCursor,
+		&i.FanoutDone,
+		&i.RecipientCount,
+		&i.SentCount,
+		&i.DeliveredCount,
+		&i.BouncedCount,
+		&i.ComplainedCount,
+		&i.OpenedCount,
+		&i.ClickedCount,
+		&i.UnsubscribedCount,
+		&i.FailedCount,
+		&i.LastError,
+		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

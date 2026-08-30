@@ -19,6 +19,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var mailingMessageDomainPattern = regexp.MustCompile(`^[a-z0-9.-]+$`)
+
 // Config holds runtime configuration.
 type Config struct {
 	Addr             string        // HTTP listen address
@@ -398,8 +400,8 @@ func Load() (Config, error) {
 	if cfg.MailingLease, err = envDuration("MANYFORGE_MAILING_LEASE", 2*time.Minute); err != nil || cfg.MailingLease <= 0 {
 		return Config{}, fmt.Errorf("MANYFORGE_MAILING_LEASE: must be a positive duration")
 	}
-	cfg.MailingMessageDomain = env("MANYFORGE_MAILING_MESSAGE_DOMAIN", cfg.InboundSystemDomain)
-	if strings.ContainsAny(cfg.MailingMessageDomain, "\r\n@") {
+	cfg.MailingMessageDomain = strings.ToLower(strings.TrimSpace(env("MANYFORGE_MAILING_MESSAGE_DOMAIN", cfg.InboundSystemDomain)))
+	if !mailingMessageDomainPattern.MatchString(cfg.MailingMessageDomain) {
 		return Config{}, fmt.Errorf("MANYFORGE_MAILING_MESSAGE_DOMAIN: must be a domain")
 	}
 

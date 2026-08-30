@@ -29,6 +29,7 @@ type mailingSeed struct{ businessID, principalID uuid.UUID }
 type capturedDeliverer struct {
 	verified bool
 	mail     notify.Mail
+	mails    []notify.Mail
 }
 
 type callbackDeliverer struct{ verify func() error }
@@ -44,6 +45,7 @@ func (d *capturedDeliverer) Verify(context.Context) error {
 }
 func (d *capturedDeliverer) Send(_ context.Context, mail notify.Mail) (mailprovider.SendResult, error) {
 	d.mail = mail
+	d.mails = append(d.mails, mail)
 	return mailprovider.SendResult{ProviderID: "captured"}, nil
 }
 
