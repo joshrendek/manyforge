@@ -95,6 +95,20 @@ paths:
           application/x-www-form-urlencoded:
             schema: {type: object, properties: {List-Unsubscribe: {type: string, enum: [One-Click]}}}
       responses: {'200': {description: Uniform empty response}}
+  /m/o/{token}:
+    servers: [{url: /}]
+    parameters: [{name: token, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: trackMailingOpen
+      security: []
+      responses: {'200': {description: Uniform transparent GIF for every token outcome, content: {image/gif: {schema: {type: string, format: binary}}}}}
+  /m/c/{token}:
+    servers: [{url: /}]
+    parameters: [{name: token, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: trackMailingClick
+      security: []
+      responses: {'302': {description: Redirect to the URL authenticated inside the token}, '404': {description: Invalid token}}
   /businesses/{id}/mailing/lists:
     parameters: [{$ref: '#/components/parameters/BusinessID'}]
     get:
@@ -225,6 +239,53 @@ paths:
       operationId: previewMailingCampaign
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PreviewInput'}}}}
       responses: {'200': {$ref: '#/components/responses/Preview'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
+  /businesses/{id}/mailing/campaigns:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}]
+    get:
+      operationId: listMailingCampaigns
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {'200': {$ref: '#/components/responses/CampaignPage'}, '404': {$ref: '#/components/responses/NotFound'}}
+    post:
+      operationId: createMailingCampaign
+      requestBody: {$ref: '#/components/requestBodies/CampaignInput'}
+      responses: {'201': {$ref: '#/components/responses/Campaign'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
+  /businesses/{id}/mailing/campaigns/{cid}:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/CampaignID'}]
+    get: {operationId: getMailingCampaign, responses: {'200': {$ref: '#/components/responses/Campaign'}, '404': {$ref: '#/components/responses/NotFound'}}}
+    patch:
+      operationId: updateMailingCampaign
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CampaignPatch'}}}}
+      responses: {'200': {$ref: '#/components/responses/Campaign'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}, '409': {$ref: '#/components/responses/Conflict'}}
+    delete: {operationId: deleteMailingCampaign, responses: {'204': {description: Draft or cancelled campaign deleted}, '404': {$ref: '#/components/responses/NotFound'}, '409': {$ref: '#/components/responses/Conflict'}}}
+  /businesses/{id}/mailing/campaigns/{cid}/send:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/CampaignID'}]
+    post:
+      operationId: sendMailingCampaign
+      requestBody: {content: {application/json: {schema: {type: object, properties: {scheduled_at: {type: string, format: date-time, nullable: true}}}}}}
+      responses: {'200': {$ref: '#/components/responses/Campaign'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}, '409': {$ref: '#/components/responses/Conflict'}}
+  /businesses/{id}/mailing/campaigns/{cid}/cancel:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/CampaignID'}]
+    post:
+      operationId: cancelMailingCampaign
+      responses: {'200': {$ref: '#/components/responses/Campaign'}, '404': {$ref: '#/components/responses/NotFound'}, '409': {$ref: '#/components/responses/Conflict'}}
+  /businesses/{id}/mailing/campaigns/{cid}/test-send:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/CampaignID'}]
+    post:
+      operationId: testMailingCampaign
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CampaignTestSendInput'}}}}
+      responses: {'204': {description: Test messages accepted by the provider}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}, '429': {description: Outbound rate limit exceeded}, '502': {description: Provider rejected or could not accept a message}}
+  /businesses/{id}/mailing/campaigns/{cid}/stats:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/CampaignID'}]
+    get: {operationId: getMailingCampaignStats, responses: {'200': {$ref: '#/components/responses/CampaignStats'}, '404': {$ref: '#/components/responses/NotFound'}}}
+  /businesses/{id}/mailing/campaigns/{cid}/deliveries:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/CampaignID'}]
+    get:
+      operationId: listMailingCampaignDeliveries
+      parameters:
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/DeliveryStatus'}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses: {'200': {$ref: '#/components/responses/DeliveryPage'}, '400': {$ref: '#/components/responses/BadRequest'}, '404': {$ref: '#/components/responses/NotFound'}}
   /businesses/{id}/mailing/suppressions:
     parameters: [{$ref: '#/components/parameters/BusinessID'}]
     get:
@@ -247,6 +308,7 @@ components:
     SubscriberID: {name: sid, in: path, required: true, schema: {type: string, format: uuid}}
     KeyID: {name: kid, in: path, required: true, schema: {type: string, format: uuid}}
     TemplateID: {name: tid, in: path, required: true, schema: {type: string, format: uuid}}
+    CampaignID: {name: cid, in: path, required: true, schema: {type: string, format: uuid}}
     SuppressionID: {name: sid, in: path, required: true, schema: {type: string, format: uuid}}
     Cursor: {name: cursor, in: query, schema: {type: string}}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
@@ -257,6 +319,7 @@ components:
     ListPatch: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ListPatch'}}}}
     SubscriberInput: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SubscriberInput'}}}}
     TemplateInput: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TemplateInput'}}}}
+    CampaignInput: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CampaignInput'}}}}
   responses:
     BadRequest: {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     NotFound: {description: Unknown, unauthorized, or cross-tenant resource, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
@@ -265,10 +328,14 @@ components:
     Subscriber: {description: Subscriber, content: {application/json: {schema: {$ref: '#/components/schemas/Subscriber'}}}}
     Profile: {description: Sending profile, content: {application/json: {schema: {$ref: '#/components/schemas/SendingProfile'}}}}
     Template: {description: Template, content: {application/json: {schema: {$ref: '#/components/schemas/Template'}}}}
+    Campaign: {description: Campaign, content: {application/json: {schema: {$ref: '#/components/schemas/Campaign'}}}}
+    CampaignStats: {description: Campaign counters and per-link click totals, content: {application/json: {schema: {$ref: '#/components/schemas/CampaignStats'}}}}
     Suppression: {description: Suppression, content: {application/json: {schema: {$ref: '#/components/schemas/Suppression'}}}}
     ListPage: {description: Lists, content: {application/json: {schema: {$ref: '#/components/schemas/ListPage'}}}}
     SubscriberPage: {description: Subscribers, content: {application/json: {schema: {$ref: '#/components/schemas/SubscriberPage'}}}}
     TemplatePage: {description: Templates, content: {application/json: {schema: {$ref: '#/components/schemas/TemplatePage'}}}}
+    CampaignPage: {description: Campaigns, content: {application/json: {schema: {$ref: '#/components/schemas/CampaignPage'}}}}
+    DeliveryPage: {description: Campaign deliveries, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryPage'}}}}
     SuppressionPage: {description: Suppressions, content: {application/json: {schema: {$ref: '#/components/schemas/SuppressionPage'}}}}
     KeyPage: {description: Keys, content: {application/json: {schema: {$ref: '#/components/schemas/KeyPage'}}}}
     ImportResult: {description: Synchronous import result, content: {application/json: {schema: {$ref: '#/components/schemas/ImportResult'}}}}
@@ -310,9 +377,52 @@ components:
     Template: {type: object, required: [id, business_id, tenant_root_id, name, subject, body_markdown, track_opens, track_clicks, created_at, updated_at], properties: {id: {type: string, format: uuid}, business_id: {type: string, format: uuid}, tenant_root_id: {type: string, format: uuid}, name: {type: string}, subject: {type: string}, preheader: {type: string, nullable: true}, body_markdown: {type: string}, track_opens: {type: boolean}, track_clicks: {type: boolean}, created_at: {type: string, format: date-time}, updated_at: {type: string, format: date-time}}}
     TemplateInput: {type: object, required: [name, subject, body_markdown], properties: {name: {type: string, maxLength: 200}, subject: {type: string, maxLength: 500}, preheader: {type: string, nullable: true}, body_markdown: {type: string, maxLength: 1048576}, track_opens: {type: boolean, default: true}, track_clicks: {type: boolean, default: true}}}
     TemplatePatch: {type: object, properties: {name: {type: string, maxLength: 200}, subject: {type: string, maxLength: 500}, preheader: {type: string, nullable: true}, body_markdown: {type: string, maxLength: 1048576}, track_opens: {type: boolean}, track_clicks: {type: boolean}}}
+    CampaignStatus: {type: string, enum: [draft, scheduled, sending, sent, cancelled, failed]}
+    DeliveryStatus: {type: string, enum: [queued, sending, sent, delivered, bounced, complained, failed, suppressed, cancelled]}
+    Campaign:
+      type: object
+      required: [id, business_id, tenant_root_id, list_id, name, subject, body_markdown, tag_filter, track_opens, track_clicks, status, recipient_count, sent_count, delivered_count, bounced_count, complained_count, opened_count, clicked_count, unsubscribed_count, failed_count, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        tenant_root_id: {type: string, format: uuid}
+        list_id: {type: string, format: uuid}
+        profile_id: {type: string, format: uuid, nullable: true}
+        name: {type: string}
+        subject: {type: string}
+        preheader: {type: string, nullable: true}
+        body_markdown: {type: string}
+        tag_filter: {type: array, items: {type: string}}
+        track_opens: {type: boolean}
+        track_clicks: {type: boolean}
+        status: {$ref: '#/components/schemas/CampaignStatus'}
+        scheduled_at: {type: string, format: date-time, nullable: true}
+        started_at: {type: string, format: date-time, nullable: true}
+        completed_at: {type: string, format: date-time, nullable: true}
+        recipient_count: {type: integer, minimum: 0}
+        sent_count: {type: integer, minimum: 0}
+        delivered_count: {type: integer, minimum: 0}
+        bounced_count: {type: integer, minimum: 0}
+        complained_count: {type: integer, minimum: 0}
+        opened_count: {type: integer, minimum: 0}
+        clicked_count: {type: integer, minimum: 0}
+        unsubscribed_count: {type: integer, minimum: 0}
+        failed_count: {type: integer, minimum: 0}
+        last_error: {type: string, nullable: true}
+        created_by: {type: string, format: uuid, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CampaignInput: {type: object, required: [list_id, name], properties: {list_id: {type: string, format: uuid}, name: {type: string, maxLength: 200}, subject: {type: string, maxLength: 500}, preheader: {type: string, nullable: true}, body_markdown: {type: string, maxLength: 1048576}, tag_filter: {type: array, maxItems: 50, items: {type: string, maxLength: 64}}, track_opens: {type: boolean, default: true}, track_clicks: {type: boolean, default: true}}}
+    CampaignPatch: {type: object, properties: {list_id: {type: string, format: uuid}, name: {type: string, maxLength: 200}, subject: {type: string, maxLength: 500}, preheader: {type: string, nullable: true}, body_markdown: {type: string, maxLength: 1048576}, tag_filter: {type: array, maxItems: 50, items: {type: string, maxLength: 64}}, track_opens: {type: boolean}, track_clicks: {type: boolean}}}
+    CampaignTestSendInput: {type: object, required: [to], properties: {to: {type: array, minItems: 1, maxItems: 5, items: {type: string, format: email}}}}
+    Delivery: {type: object, required: [id, subscriber_id, email, status, attempts, not_before, message_id, created_at], properties: {id: {type: string, format: uuid}, campaign_id: {type: string, format: uuid, nullable: true}, subscriber_id: {type: string, format: uuid}, email: {type: string, format: email}, status: {$ref: '#/components/schemas/DeliveryStatus'}, attempts: {type: integer, minimum: 0}, not_before: {type: string, format: date-time}, lease_until: {type: string, format: date-time, nullable: true}, message_id: {type: string}, provider_message_id: {type: string, nullable: true}, opened_at: {type: string, format: date-time, nullable: true}, first_clicked_at: {type: string, format: date-time, nullable: true}, last_error: {type: string, nullable: true}, created_at: {type: string, format: date-time}}}
+    CampaignLinkStat: {type: object, required: [url, click_count, unique_click_count], properties: {url: {type: string, format: uri}, click_count: {type: integer, minimum: 0}, unique_click_count: {type: integer, minimum: 0}}}
+    CampaignStats: {type: object, required: [campaign, links], properties: {campaign: {$ref: '#/components/schemas/Campaign'}, links: {type: array, items: {$ref: '#/components/schemas/CampaignLinkStat'}}}}
     Suppression: {type: object, required: [id, business_id, tenant_root_id, email, reason, source, created_at], properties: {id: {type: string, format: uuid}, business_id: {type: string, format: uuid}, tenant_root_id: {type: string, format: uuid}, email: {type: string, format: email}, reason: {$ref: '#/components/schemas/SuppressionReason'}, source: {type: string}, created_at: {type: string, format: date-time}}}
     ListPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/MailingList'}}, next_cursor: {type: string, nullable: true}}}
     SubscriberPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Subscriber'}}, next_cursor: {type: string, nullable: true}}}
     TemplatePage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Template'}}, next_cursor: {type: string, nullable: true}}}
+    CampaignPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Campaign'}}, next_cursor: {type: string, nullable: true}}}
+    DeliveryPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Delivery'}}, next_cursor: {type: string, nullable: true}}}
     SuppressionPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Suppression'}}, next_cursor: {type: string, nullable: true}}}
     KeyPage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/ListKey'}}}}

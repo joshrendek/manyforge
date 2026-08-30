@@ -186,6 +186,18 @@ func NewDBBounceSuppressor(database *db.DB) *DBBounceSuppressor {
 // idempotent under provider at-least-once redelivery.
 func (s *DBBounceSuppressor) SuppressBounce(ctx context.Context, recipient, messageID string) error {
 	return s.db.WithTx(ctx, func(tx pgx.Tx) error {
+		// Mailing campaign Message-IDs are tenant-owned. Link them first so a bounce only
+		// suppresses this business's subscriber; falling through to the legacy global table
+		// would let one tenant's campaign suppress delivery for every other tenant.
+		if messageID != "" {
+			var mailingMatched bool
+			if err := tx.QueryRow(ctx, "SELECT mailing_mark_bounced($1)", messageID).Scan(&mailingMatched); err != nil {
+				return err
+			}
+			if mailingMatched {
+				return nil
+			}
+		}
 		// email_suppression is global (no tenant scope, no RLS) ⇒ principal-less dbgen
 		// in a plain WithTx is correct.
 		if err := dbgen.New(tx).InsertSuppression(ctx, dbgen.InsertSuppressionParams{

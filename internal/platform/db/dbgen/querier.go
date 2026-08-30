@@ -34,6 +34,7 @@ type Querier interface {
 	// BumpTicketActivity touches the denormalized last_message_at/updated_at after a
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
+	CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsParams) ([]CampaignLinkStatsRow, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
 	// sealed credential blob for the principal-less webhook handler to build the typed connector
@@ -113,6 +114,7 @@ type Querier interface {
 	// row is deleted first (it FKs the principal), then the principal. rows-affected (the
 	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
 	DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error)
+	DeleteCampaign(ctx context.Context, arg DeleteCampaignParams) (Campaign, error)
 	// DeleteCodexPending consumes the pending row (same tx as UpsertCodexCredential).
 	DeleteCodexPending(ctx context.Context, arg DeleteCodexPendingParams) error
 	// DeleteCompany hard-deletes a company scoped to (id, tenant_root_id) (companies carry no
@@ -236,6 +238,7 @@ type Querier interface {
 	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
+	GetCampaign(ctx context.Context, arg GetCampaignParams) (Campaign, error)
 	GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (CodeReview, error)
 	// === Codex Increment 2 (manyforge-gi9u) ===
 	// GetCodexCredentialForRefresh row-locks the codex credential (FOR UPDATE) so exactly one
@@ -358,6 +361,8 @@ type Querier interface {
 	// source_id-bearing events dedupe on activity_dedup_idx; NULL-source events always insert.
 	InsertActivityEntry(ctx context.Context, arg InsertActivityEntryParams) error
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
+	// ---- campaigns ----
+	InsertCampaign(ctx context.Context, arg InsertCampaignParams) (Campaign, error)
 	// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
 	// (+1 depth). The child's self row is inserted separately via InsertClosureSelf.
 	InsertChildClosure(ctx context.Context, arg InsertChildClosureParams) error
@@ -565,6 +570,10 @@ type Querier interface {
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
+	ListCampaignDeliveries(ctx context.Context, arg ListCampaignDeliveriesParams) ([]MailingDelivery, error)
+	ListCampaignDeliveriesAfter(ctx context.Context, arg ListCampaignDeliveriesAfterParams) ([]MailingDelivery, error)
+	ListCampaigns(ctx context.Context, arg ListCampaignsParams) ([]Campaign, error)
+	ListCampaignsAfter(ctx context.Context, arg ListCampaignsAfterParams) ([]Campaign, error)
 	// ListCodeReviews returns the business's reviews newest-first for the history UI.
 	// Join repo_connector so each row shows its repo (owner/name) in one query, no O(n)
 	// per-row connector resolve. repo_connector_id is a NOT NULL FK, so this normally
@@ -806,6 +815,9 @@ type Querier interface {
 	// Scoped to (id, business_id); unknown/foreign id → no row → pgx.ErrNoRows → 404.
 	RotateConnectorSecretRef(ctx context.Context, arg RotateConnectorSecretRefParams) (uuid.UUID, error)
 	RotateInvitationToken(ctx context.Context, arg RotateInvitationTokenParams) (uuid.UUID, error)
+	// Pin the currently verified business profile and transition atomically. The list/profile
+	// joins prevent cross-business IDs even inside a caller-authorized tenant root.
+	ScheduleCampaign(ctx context.Context, arg ScheduleCampaignParams) (Campaign, error)
 	// Records the irreversible-purge schedule; idempotent so a repeated delete is safe.
 	ScheduleErasure(ctx context.Context, arg ScheduleErasureParams) error
 	// Records token usage + cost on the review row WITHOUT touching status/findings.
@@ -840,6 +852,7 @@ type Querier interface {
 	UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error)
 	// Final/intermediate state write. status + token/cost totals + optional error.
 	UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRunProgressParams) (AgentRun, error)
+	UpdateCampaign(ctx context.Context, arg UpdateCampaignParams) (Campaign, error)
 	UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeReviewResultParams) (CodeReview, error)
 	// UpdateCodexOAuthTokens writes a freshly-rotated token set. Scoped to (business_id, provider);
 	// deliberately does NOT touch allow_private_base_url (it is not a config update — see the

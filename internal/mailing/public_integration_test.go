@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,16 +20,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/manyforge/manyforge/internal/mailing"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
+	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	mfcrypto "github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
-	"github.com/manyforge/manyforge/internal/platform/mailer"
+	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
-
-type captureMailer struct {
-	mu       sync.Mutex
-	messages []mailer.Message
-}
 
 type toggleLimiter struct {
 	deny bool
@@ -38,23 +34,6 @@ type toggleLimiter struct {
 
 func (l *toggleLimiter) Allow(string) bool {
 	return !l.deny
-}
-
-func (m *captureMailer) Send(_ context.Context, msg mailer.Message) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.messages = append(m.messages, msg)
-	return nil
-}
-
-func (m *captureMailer) last(t *testing.T) mailer.Message {
-	t.Helper()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.messages) == 0 {
-		t.Fatal("no confirmation message sent")
-	}
-	return m.messages[len(m.messages)-1]
 }
 
 func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
@@ -74,14 +53,31 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := &captureMailer{}
+	renderer, err := mailrender.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := &capturedDeliverer{}
 	svc := &mailing.Service{
-		DB: tdb.App, Sealer: sealer, Tokens: codec, Mailer: captured,
+		DB: tdb.App, Sealer: sealer, Vault: secrets.NewVault(sealer), Tokens: codec,
+		Providers: mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+			return captured, nil
+		}, time.Minute), Renderer: renderer, MessageDomain: "mail.example.test",
 		PublicBaseURL: "https://hub.example.test",
 		Now:           func() time.Time { return time.Unix(1_800_000_000, 0) },
 	}
 	list, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{Name: "Updates", DoubleOptIn: true})
 	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "updates@example.test", FromName: "Updates",
+		Resend: &mailing.ResendCredentials{APIKey: "re_test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tdb.Super.Exec(ctx, "UPDATE mailing_sending_profile SET status='verified' WHERE id=$1", profile.ID); err != nil {
 		t.Fatal(err)
 	}
 	key, err := svc.CreateListKey(ctx, seed.principalID, seed.businessID, list.ID, nil)
@@ -130,8 +126,15 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	if want := svc.Now().Add(48 * time.Hour); !expires.Equal(want) {
 		t.Fatalf("confirmation expiry = %s, want %s", expires, want)
 	}
-	confirmationURL := strings.TrimSpace(strings.TrimPrefix(captured.last(t).Body, "Confirm your subscription: "))
-	rawConfirmation := confirmationURL[strings.LastIndex(confirmationURL, "/")+1:]
+	if captured.mail.EnvelopeFrom != "updates@example.test" {
+		t.Fatalf("confirmation envelope-from = %q", captured.mail.EnvelopeFrom)
+	}
+	marker := "/m/confirm/"
+	start := strings.Index(captured.mail.BodyText, marker)
+	if start < 0 {
+		t.Fatalf("confirmation mail has no link: %q", captured.mail.BodyText)
+	}
+	rawConfirmation := strings.Fields(captured.mail.BodyText[start+len(marker):])[0]
 	if strings.Contains(hex.EncodeToString(storedHash), rawConfirmation) {
 		t.Fatal("database stored the raw confirmation token")
 	}
