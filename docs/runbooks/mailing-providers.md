@@ -27,8 +27,9 @@ cannot be opened. It never falls back to unsigned tenant mail.
    `Idempotency-Key`.
 4. Create a Resend webhook for the profile's inbound URL and subscribe to
    `email.delivered`, `email.bounced`, `email.complained`, and
-   `email.delivery_delayed`. Store the `whsec_` secret with the profile. Webhook
-   ingestion is enabled by the Spec 013 webhook rollout.
+   `email.delivery_delayed`. Store the `whsec_` secret with the profile and point
+   Resend at `/api/v1/inbound/mailing/{profileID}/resend`. ManyForge verifies the
+   Svix signature against the exact request bytes and deduplicates on `svix-id`.
 
 ## Amazon SES v2
 
@@ -41,8 +42,10 @@ cannot be opened. It never falls back to unsigned tenant mail.
 4. Create an SES configuration set and an SNS event destination for Bounce,
    Complaint, and Delivery. Create an HTTPS SNS subscription to the profile's
    inbound SES webhook URL, leave raw message delivery disabled, and save the SNS
-   topic ARN on the profile. Webhook ingestion is enabled by the Spec 013 webhook
-   rollout.
+   topic ARN on the profile. The URL is
+   `/api/v1/inbound/mailing/{profileID}/ses`; ManyForge verifies the SNS signing
+   certificate and requires the signed `TopicArn` to match the saved value before
+   automatically following a signed subscription-confirmation URL.
 5. Save the access key, secret, region, and configuration-set name. Verify checks
    both `GetEmailIdentity(domain).VerifiedForSendingStatus` and
    `GetAccount().SendingEnabled`.

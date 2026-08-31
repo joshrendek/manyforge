@@ -232,3 +232,69 @@ func TestPin_MailingPublicDefinersAndTokens(t *testing.T) {
 		t.Fatal("unsubscribe token MAC must be verified before the first database access")
 	}
 }
+
+func TestPin_MailingProviderWebhookBoundary(t *testing.T) {
+	migrationBytes, err := os.ReadFile("../../migrations/0127_mailing_provider_webhooks.up.sql")
+	if err != nil {
+		t.Fatalf("read mailing webhook migration: %v", err)
+	}
+	migration := string(migrationBytes)
+	for _, fn := range []string{
+		"mailing_webhook_context", "mailing_record_webhook", "mailing_apply_provider_event",
+	} {
+		start := strings.Index(migration, "FUNCTION "+fn+"(")
+		if start < 0 {
+			t.Errorf("missing provider webhook function %s", fn)
+			continue
+		}
+		body := migration[start:]
+		end := strings.Index(body, "$$;")
+		if end < 0 || !strings.Contains(body[:end], "SECURITY DEFINER") ||
+			!strings.Contains(body[:end], "SET search_path = public") {
+			t.Errorf("function %s is not a search-path-pinned SECURITY DEFINER", fn)
+		}
+		if !strings.Contains(body[:end], "tenant_merge_root_write_allowed") {
+			t.Errorf("function %s does not honor the tenant merge write fence", fn)
+		}
+		if !strings.Contains(migration, "REVOKE ALL ON FUNCTION "+fn+"(") {
+			t.Errorf("function %s retains default PUBLIC execute", fn)
+		}
+	}
+	for _, pin := range []string{
+		"Severity is monotonic", "mailing_suppression.reason = 'complaint'",
+		"ON CONFLICT (tenant_root_id, source_type, source_id, kind)",
+	} {
+		if !strings.Contains(migration, pin) {
+			t.Errorf("mailing webhook migration missing behavioral pin %q", pin)
+		}
+	}
+
+	svixBytes, err := os.ReadFile("../mailing/webhook_resend.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svix := string(svixBytes)
+	for _, pin := range []string{
+		"http.MaxBytesReader", "hmac.Equal", "svixTolerance", "whsec_",
+		"mailing_record_webhook", "mailing_apply_provider_event",
+	} {
+		if !strings.Contains(svix+mustRead(t, "../mailing/webhook.go"), pin) {
+			t.Errorf("Resend webhook boundary missing pin %q", pin)
+		}
+	}
+
+	snsBytes, err := os.ReadFile("../mailing/snsverify/verify.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sns := string(snsBytes)
+	for _, pin := range []string{
+		"^sns\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?$",
+		"netsafe.NewClient", "rsa.VerifyPKCS1v15", "x509.ParseCertificate",
+		"SignatureVersion", "validateSNSURL(req.URL.String(), false)",
+	} {
+		if !strings.Contains(sns, pin) {
+			t.Errorf("SNS verifier missing pin %q", pin)
+		}
+	}
+}
