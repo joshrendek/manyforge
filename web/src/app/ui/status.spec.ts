@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { ticketPriorityTone, ticketStatusTone, runStatusTone, Tone, effectClassTone, effectClassLabel } from './status';
+import {
+  effectClassLabel,
+  effectClassTone,
+  mailingCampaignStatusTone,
+  runStatusTone,
+  ticketPriorityTone,
+  ticketStatusTone,
+  Tone,
+} from './status';
 
 describe('status tone helpers', () => {
   it('maps ticket status to a tone', () => {
@@ -19,6 +27,12 @@ describe('status tone helpers', () => {
     expect(runStatusTone('succeeded')).toBe<Tone>('success');
     expect(runStatusTone('failed')).toBe<Tone>('danger');
     expect(runStatusTone('running')).toBe<Tone>('accent');
+  });
+  it('maps campaign lifecycle status to a tone', () => {
+    expect(mailingCampaignStatusTone('draft')).toBe<Tone>('neutral');
+    expect(mailingCampaignStatusTone('scheduled')).toBe<Tone>('accent');
+    expect(mailingCampaignStatusTone('sent')).toBe<Tone>('success');
+    expect(mailingCampaignStatusTone('failed')).toBe<Tone>('danger');
   });
 });
 
