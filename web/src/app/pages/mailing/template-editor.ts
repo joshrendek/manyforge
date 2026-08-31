@@ -1,15 +1,25 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, HostListener, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MailingService, MailingTemplate } from '../../core/mailing.service';
+import { HasUnsavedChanges, protectBeforeUnload } from '../../core/unsaved-changes.guard';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
 import { ToastService } from '../../ui/toast/toast.service';
+import { MailingContentDraft, MailingContentEditorComponent } from './content-editor';
+import { MailingPreviewPaneComponent } from './preview-pane';
 
 @Component({
   selector: 'app-mailing-template-editor',
   standalone: true,
-  imports: [FormsModule, RouterLink, PageHeader, Spinner],
+  imports: [
+    FormsModule,
+    RouterLink,
+    PageHeader,
+    Spinner,
+    MailingContentEditorComponent,
+    MailingPreviewPaneComponent,
+  ],
   template: `
     <div class="mf-card" data-testid="mailing-template-editor">
       <mf-page-header
@@ -29,112 +39,74 @@ import { ToastService } from '../../ui/toast/toast.service';
           <mf-spinner /> Loading template…
         </div>
       } @else if (template()) {
-        <form class="editor" data-testid="template-editor-form" (ngSubmit)="save()">
-          <div class="top-fields">
+        <div class="workspace" data-testid="template-editor-form">
+          <section class="form-pane">
             <div class="mf-field">
-              <label for="editor-name">Name</label
-              ><input
+              <label for="editor-name">Name</label>
+              <input
                 id="editor-name"
                 class="mf-input"
                 name="name"
                 data-testid="template-editor-name"
                 [(ngModel)]="name"
+                [readonly]="saving() || deleting()"
                 required
               />
             </div>
-            <div class="mf-field">
-              <label for="editor-subject">Subject</label
-              ><input
-                id="editor-subject"
-                class="mf-input"
-                name="subject"
-                data-testid="template-editor-subject"
-                [(ngModel)]="subject"
-                required
-              />
-            </div>
-          </div>
-          <div class="mf-field">
-            <label for="editor-preheader">Preheader</label
-            ><input
-              id="editor-preheader"
-              class="mf-input"
-              name="preheader"
-              data-testid="template-editor-preheader"
-              [(ngModel)]="preheader"
-              placeholder="Optional inbox preview text"
+            <app-mailing-content-editor
+              [value]="content()"
+              [readOnly]="saving() || deleting()"
+              (valueChange)="content.set($event)"
             />
-          </div>
-          <div class="mf-field">
-            <label for="editor-body">Markdown body</label
-            ><textarea
-              id="editor-body"
-              class="mf-input body"
-              name="body"
-              data-testid="template-editor-body"
-              [(ngModel)]="bodyMarkdown"
-              rows="20"
-            ></textarea>
-          </div>
-          <div class="tracking">
-            <label class="mf-check"
-              ><input
-                type="checkbox"
-                name="opens"
-                data-testid="template-track-opens"
-                [(ngModel)]="trackOpens"
-              />
-              Track opens</label
-            >
-            <label class="mf-check"
-              ><input
-                type="checkbox"
-                name="clicks"
-                data-testid="template-track-clicks"
-                [(ngModel)]="trackClicks"
-              />
-              Track clicks</label
-            >
-          </div>
-          <div class="actions">
+          </section>
+          <app-mailing-preview-pane
+            [businessId]="businessId"
+            kind="templates"
+            [content]="content()"
+          />
+        </div>
+
+        <div class="actions">
+          <button
+            type="button"
+            class="mf-btn mf-btn-primary"
+            data-testid="template-editor-save"
+            [disabled]="!canSave()"
+            (click)="save()"
+          >
+            {{ saving() ? 'Saving…' : 'Save template' }}
+          </button>
+          @if (!confirmDelete()) {
             <button
-              type="submit"
-              class="mf-btn mf-btn-primary"
-              data-testid="template-editor-save"
-              [disabled]="!name.trim() || !subject.trim() || saving()"
+              type="button"
+              class="mf-btn mf-btn-danger"
+              data-testid="template-editor-delete"
+              [disabled]="saving()"
+              (click)="confirmDelete.set(true)"
             >
-              {{ saving() ? 'Saving…' : 'Save template' }}
+              Delete
             </button>
-            @if (!confirmDelete()) {
-              <button
-                type="button"
-                class="mf-btn mf-btn-danger"
-                data-testid="template-editor-delete"
-                (click)="confirmDelete.set(true)"
-              >
-                Delete
-              </button>
-            } @else {
-              <button
-                type="button"
-                class="mf-btn mf-btn-danger"
-                data-testid="template-editor-delete-confirm"
-                [disabled]="deleting()"
-                (click)="remove()"
-              >
-                {{ deleting() ? 'Deleting…' : 'Confirm delete' }}
-              </button>
-              <button
-                type="button"
-                class="mf-btn mf-btn-ghost"
-                data-testid="template-editor-delete-cancel"
-                (click)="confirmDelete.set(false)"
-              >
-                Cancel
-              </button>
-            }
-          </div>
-        </form>
+          } @else {
+            <button
+              type="button"
+              class="mf-btn mf-btn-danger"
+              data-testid="template-editor-delete-confirm"
+              [disabled]="deleting() || saving()"
+              (click)="remove()"
+            >
+              {{ deleting() ? 'Deleting…' : 'Confirm delete' }}
+            </button>
+            <button
+              type="button"
+              class="mf-btn mf-btn-ghost"
+              data-testid="template-editor-delete-cancel"
+              [disabled]="deleting() || saving()"
+              (click)="confirmDelete.set(false)"
+            >
+              Cancel
+            </button>
+          }
+        </div>
       }
       @if (error()) {
         <p class="mf-err" data-testid="template-editor-error">{{ error() }}</p>
@@ -144,61 +116,59 @@ import { ToastService } from '../../ui/toast/toast.service';
   styles: [
     `
       .loading,
-      .tracking,
       .actions {
         display: flex;
         align-items: center;
         gap: 12px;
       }
-      .editor {
+      .workspace {
         display: grid;
-        gap: 16px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 24px;
       }
-      .top-fields {
+      .form-pane {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-content: start;
         gap: 16px;
+        min-width: 0;
       }
-      .body {
-        resize: vertical;
-        min-height: 360px;
-        font-family: var(--mf-mono, ui-monospace, monospace);
-        line-height: 1.55;
+      .actions {
+        flex-wrap: wrap;
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid var(--mf-border);
       }
-      .mf-check {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        font-size: var(--mf-fs-sm);
-      }
-      @media (max-width: 760px) {
-        .top-fields {
+      @media (max-width: 960px) {
+        .workspace {
           grid-template-columns: 1fr;
         }
       }
     `,
   ],
 })
-export class MailingTemplateEditorComponent implements OnInit {
+export class MailingTemplateEditorComponent implements OnInit, HasUnsavedChanges {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private mailing = inject(MailingService);
   private toast = inject(ToastService);
+  private savedSnapshot = '';
 
   businessId = '';
   templateId = '';
   template = signal<MailingTemplate | null>(null);
+  content = signal<MailingContentDraft>({
+    subject: '',
+    preheader: '',
+    body_markdown: '',
+    track_opens: true,
+    track_clicks: true,
+  });
   loading = signal(true);
   saving = signal(false);
   deleting = signal(false);
   confirmDelete = signal(false);
   error = signal('');
   name = '';
-  subject = '';
-  preheader = '';
-  bodyMarkdown = '';
-  trackOpens = true;
-  trackClicks = true;
 
   ngOnInit(): void {
     this.businessId = this.route.snapshot.paramMap.get('businessId') ?? '';
@@ -220,27 +190,38 @@ export class MailingTemplateEditorComponent implements OnInit {
     });
   }
 
-  private populate(template: MailingTemplate): void {
-    this.template.set(template);
-    this.name = template.name;
-    this.subject = template.subject;
-    this.preheader = template.preheader ?? '';
-    this.bodyMarkdown = template.body_markdown;
-    this.trackOpens = template.track_opens;
-    this.trackClicks = template.track_clicks;
+  canSave(): boolean {
+    return (
+      !!this.name.trim() &&
+      !!this.content().subject.trim() &&
+      !this.saving() &&
+      !this.deleting() &&
+      this.hasUnsavedChanges()
+    );
+  }
+
+  hasUnsavedChanges(): boolean {
+    return !!this.savedSnapshot && this.snapshot() !== this.savedSnapshot;
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  beforeUnload(event: BeforeUnloadEvent): void {
+    protectBeforeUnload(event, this.hasUnsavedChanges());
   }
 
   save(): void {
-    if (!this.name.trim() || !this.subject.trim() || this.saving()) return;
+    if (!this.name.trim() || !this.content().subject.trim() || this.saving() || this.deleting())
+      return;
     this.saving.set(true);
+    const content = this.content();
     this.mailing
       .updateTemplate(this.businessId, this.templateId, {
         name: this.name.trim(),
-        subject: this.subject.trim(),
-        preheader: this.preheader.trim() || null,
-        body_markdown: this.bodyMarkdown,
-        track_opens: this.trackOpens,
-        track_clicks: this.trackClicks,
+        subject: content.subject.trim(),
+        preheader: content.preheader.trim() || null,
+        body_markdown: content.body_markdown,
+        track_opens: content.track_opens,
+        track_clicks: content.track_clicks,
       })
       .subscribe({
         next: (template) => {
@@ -256,10 +237,11 @@ export class MailingTemplateEditorComponent implements OnInit {
   }
 
   remove(): void {
-    if (this.deleting()) return;
+    if (this.deleting() || this.saving()) return;
     this.deleting.set(true);
     this.mailing.deleteTemplate(this.businessId, this.templateId).subscribe({
       next: () => {
+        this.savedSnapshot = this.snapshot();
         this.toast.success('Template deleted');
         void this.router.navigate(['/mailing/templates']);
       },
@@ -268,5 +250,22 @@ export class MailingTemplateEditorComponent implements OnInit {
         this.toast.error('Could not delete template');
       },
     });
+  }
+
+  private populate(template: MailingTemplate): void {
+    this.template.set(template);
+    this.name = template.name;
+    this.content.set({
+      subject: template.subject,
+      preheader: template.preheader ?? '',
+      body_markdown: template.body_markdown,
+      track_opens: template.track_opens,
+      track_clicks: template.track_clicks,
+    });
+    this.savedSnapshot = this.snapshot();
+  }
+
+  private snapshot(): string {
+    return JSON.stringify({ name: this.name, content: this.content() });
   }
 }

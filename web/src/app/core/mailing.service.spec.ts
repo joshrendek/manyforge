@@ -51,6 +51,21 @@ describe('MailingService', () => {
     request.flush({ imported: 1, skipped: 0, errors: [] });
   });
 
+  it('loads every mailing-list page for selectors', () => {
+    let lists: string[] = [];
+    service.listAllLists('b1').subscribe((items) => (lists = items.map((item) => item.id)));
+    http
+      .expectOne('/api/v1/businesses/b1/mailing/lists')
+      .flush({ items: [{ id: 'l1' }], next_cursor: 'next' });
+    const next = http.expectOne(
+      (request) =>
+        request.url === '/api/v1/businesses/b1/mailing/lists' &&
+        request.params.get('cursor') === 'next',
+    );
+    next.flush({ items: [{ id: 'l2' }], next_cursor: null });
+    expect(lists).toEqual(['l1', 'l2']);
+  });
+
   it('creates templates with the API snake_case body unchanged', () => {
     service
       .createTemplate('b1', {
@@ -95,5 +110,41 @@ describe('MailingService', () => {
     expect(test.request.method).toBe('POST');
     expect(test.request.body).toEqual({ to: 'operator@example.test' });
     test.flush(null);
+  });
+
+  it('uses campaign preview and lifecycle endpoints with exact request bodies', () => {
+    service
+      .previewCampaign('b1', {
+        body_markdown: '# Hi',
+        preheader: 'Preview',
+        from_name: 'Acme',
+      })
+      .subscribe();
+    const preview = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/preview');
+    expect(preview.request.method).toBe('POST');
+    expect(preview.request.body).toMatchObject({ body_markdown: '# Hi', from_name: 'Acme' });
+    preview.flush({ html: '<p>Hi</p>', text: 'Hi' });
+
+    service.testCampaign('b1', 'c1', ['ada@example.com', 'grace@example.com']).subscribe();
+    const test = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/test-send');
+    expect(test.request.body).toEqual({ to: ['ada@example.com', 'grace@example.com'] });
+    test.flush(null);
+
+    service.sendCampaign('b1', 'c1', '2026-09-01T16:00:00.000Z').subscribe();
+    const schedule = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/send');
+    expect(schedule.request.body).toEqual({ scheduled_at: '2026-09-01T16:00:00.000Z' });
+    schedule.flush({ status: 'scheduled' });
+
+    service.cancelCampaign('b1', 'c1').subscribe();
+    const cancel = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/cancel');
+    expect(cancel.request.body).toEqual({});
+    cancel.flush({ status: 'cancelled' });
+  });
+
+  it('uses the distinct template preview endpoint', () => {
+    service.previewTemplate('b1', { body_markdown: '# Template' }).subscribe();
+    const request = http.expectOne('/api/v1/businesses/b1/mailing/templates/preview');
+    expect(request.request.method).toBe('POST');
+    request.flush({ html: '<h1>Template</h1>', text: 'Template' });
   });
 });

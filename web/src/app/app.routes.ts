@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/auth.guard';
+import { unsavedChangesGuard } from './core/unsaved-changes.guard';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
@@ -165,6 +166,12 @@ export const routes: Routes = [
       import('./pages/mailing/templates-list').then((m) => m.MailingTemplatesListComponent),
   },
   {
+    path: 'mailing/campaigns',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/campaigns-list').then((m) => m.MailingCampaignsListComponent),
+  },
+  {
     path: 'mailing/sending',
     canActivate: [authGuard],
     loadComponent: () =>
@@ -179,8 +186,16 @@ export const routes: Routes = [
   {
     path: 'mailing/:businessId/templates/:templateId',
     canActivate: [authGuard],
+    canDeactivate: [unsavedChangesGuard],
     loadComponent: () =>
       import('./pages/mailing/template-editor').then((m) => m.MailingTemplateEditorComponent),
+  },
+  {
+    path: 'mailing/:businessId/campaigns/:campaignId',
+    canActivate: [authGuard],
+    canDeactivate: [unsavedChangesGuard],
+    loadComponent: () =>
+      import('./pages/mailing/campaign-editor').then((m) => m.MailingCampaignEditorComponent),
   },
   {
     path: 'credentials/connector',
