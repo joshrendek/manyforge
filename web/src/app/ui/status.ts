@@ -80,6 +80,22 @@ export function mailingProfileStatusTone(s: string): Tone {
   }
 }
 
+export function mailingCampaignStatusTone(s: string): Tone {
+  switch (s) {
+    case 'scheduled':
+    case 'sending':
+      return 'accent';
+    case 'sent':
+      return 'success';
+    case 'failed':
+      return 'danger';
+    case 'draft':
+    case 'cancelled':
+    default:
+      return 'neutral';
+  }
+}
+
 export function effectClassTone(e: number): Tone {
   switch (e) {
     case 1:

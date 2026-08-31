@@ -1,12 +1,19 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { EMPTY, Observable, expand, map, reduce } from 'rxjs';
 import { Page } from './ticket.service';
 
 export type MailingListStatus = 'active' | 'archived';
 export type SubscriberStatus = 'pending' | 'active' | 'unsubscribed' | 'bounced' | 'complained';
 export type MailingSendingMode = 'relay' | 'resend' | 'ses';
 export type MailingSendingProfileStatus = 'unverified' | 'verified' | 'error';
+export type MailingCampaignStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'sending'
+  | 'sent'
+  | 'cancelled'
+  | 'failed';
 
 export interface MailingList {
   id: string;
@@ -112,6 +119,61 @@ export interface MailingSendingProfileInput {
   sns_topic_arn?: string | null;
 }
 
+export interface MailingCampaign {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  list_id: string;
+  profile_id: string | null;
+  name: string;
+  subject: string;
+  preheader: string | null;
+  body_markdown: string;
+  tag_filter: string[];
+  track_opens: boolean;
+  track_clicks: boolean;
+  status: MailingCampaignStatus;
+  scheduled_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  recipient_count: number;
+  sent_count: number;
+  delivered_count: number;
+  bounced_count: number;
+  complained_count: number;
+  opened_count: number;
+  clicked_count: number;
+  unsubscribed_count: number;
+  failed_count: number;
+  last_error: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MailingCampaignInput {
+  list_id: string;
+  name: string;
+  subject: string;
+  preheader?: string | null;
+  body_markdown: string;
+  tag_filter?: string[];
+  track_opens?: boolean;
+  track_clicks?: boolean;
+}
+
+export interface MailingPreviewInput {
+  body_markdown: string;
+  preheader?: string | null;
+  from_name?: string | null;
+  postal_address?: string | null;
+}
+
+export interface MailingPreview {
+  html: string;
+  text: string;
+}
+
 export interface SubscriberFilters {
   q?: string;
   status?: SubscriberStatus;
@@ -140,6 +202,14 @@ export class MailingService {
   listLists(businessId: string, cursor?: string): Observable<Page<MailingList>> {
     const params = cursor ? new HttpParams().set('cursor', cursor) : undefined;
     return this.http.get<Page<MailingList>>(`${this.base(businessId)}/lists`, { params });
+  }
+
+  listAllLists(businessId: string): Observable<MailingList[]> {
+    return this.listLists(businessId).pipe(
+      expand((page) => (page.next_cursor ? this.listLists(businessId, page.next_cursor) : EMPTY)),
+      map((page) => page.items ?? []),
+      reduce((all, items) => [...all, ...items], [] as MailingList[]),
+    );
   }
 
   getList(businessId: string, listId: string): Observable<MailingList> {
@@ -342,5 +412,65 @@ export class MailingService {
 
   deleteTemplate(businessId: string, templateId: string): Observable<void> {
     return this.http.delete<void>(`${this.base(businessId)}/templates/${templateId}`);
+  }
+
+  previewTemplate(businessId: string, body: MailingPreviewInput): Observable<MailingPreview> {
+    return this.http.post<MailingPreview>(`${this.base(businessId)}/templates/preview`, body);
+  }
+
+  listCampaigns(businessId: string, cursor?: string): Observable<Page<MailingCampaign>> {
+    const params = cursor ? new HttpParams().set('cursor', cursor) : undefined;
+    return this.http.get<Page<MailingCampaign>>(`${this.base(businessId)}/campaigns`, { params });
+  }
+
+  getCampaign(businessId: string, campaignId: string): Observable<MailingCampaign> {
+    return this.http.get<MailingCampaign>(`${this.base(businessId)}/campaigns/${campaignId}`);
+  }
+
+  createCampaign(businessId: string, body: MailingCampaignInput): Observable<MailingCampaign> {
+    return this.http.post<MailingCampaign>(`${this.base(businessId)}/campaigns`, body);
+  }
+
+  updateCampaign(
+    businessId: string,
+    campaignId: string,
+    body: Partial<MailingCampaignInput>,
+  ): Observable<MailingCampaign> {
+    return this.http.patch<MailingCampaign>(
+      `${this.base(businessId)}/campaigns/${campaignId}`,
+      body,
+    );
+  }
+
+  deleteCampaign(businessId: string, campaignId: string): Observable<void> {
+    return this.http.delete<void>(`${this.base(businessId)}/campaigns/${campaignId}`);
+  }
+
+  previewCampaign(businessId: string, body: MailingPreviewInput): Observable<MailingPreview> {
+    return this.http.post<MailingPreview>(`${this.base(businessId)}/campaigns/preview`, body);
+  }
+
+  testCampaign(businessId: string, campaignId: string, to: string[]): Observable<void> {
+    return this.http.post<void>(`${this.base(businessId)}/campaigns/${campaignId}/test-send`, {
+      to,
+    });
+  }
+
+  sendCampaign(
+    businessId: string,
+    campaignId: string,
+    scheduledAt: string | null,
+  ): Observable<MailingCampaign> {
+    return this.http.post<MailingCampaign>(
+      `${this.base(businessId)}/campaigns/${campaignId}/send`,
+      { scheduled_at: scheduledAt },
+    );
+  }
+
+  cancelCampaign(businessId: string, campaignId: string): Observable<MailingCampaign> {
+    return this.http.post<MailingCampaign>(
+      `${this.base(businessId)}/campaigns/${campaignId}/cancel`,
+      {},
+    );
   }
 }
