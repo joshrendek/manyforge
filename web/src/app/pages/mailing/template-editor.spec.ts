@@ -50,9 +50,14 @@ describe('MailingTemplateEditorComponent', () => {
     fixture.detectChanges();
     http.expectOne('/api/v1/businesses/b1/mailing/templates/t1').flush(template);
     fixture.detectChanges();
-    expect(fixture.componentInstance.bodyMarkdown).toBe('# Hi');
-    fixture.componentInstance.bodyMarkdown = '# Updated';
-    fixture.componentInstance.trackClicks = false;
+    expect(fixture.componentInstance.content().body_markdown).toBe('# Hi');
+    expect(fixture.componentInstance.hasUnsavedChanges()).toBe(false);
+    fixture.componentInstance.content.update((content) => ({
+      ...content,
+      body_markdown: '# Updated',
+      track_clicks: false,
+    }));
+    expect(fixture.componentInstance.hasUnsavedChanges()).toBe(true);
     fixture.componentInstance.save();
     const request = http.expectOne('/api/v1/businesses/b1/mailing/templates/t1');
     expect(request.request.method).toBe('PATCH');
@@ -61,5 +66,6 @@ describe('MailingTemplateEditorComponent', () => {
       track_clicks: false,
     });
     request.flush({ ...template, body_markdown: '# Updated', track_clicks: false });
+    expect(fixture.componentInstance.hasUnsavedChanges()).toBe(false);
   });
 });
