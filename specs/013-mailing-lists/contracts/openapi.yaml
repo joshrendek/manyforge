@@ -109,6 +109,41 @@ paths:
       operationId: trackMailingClick
       security: []
       responses: {'302': {description: Redirect to the URL authenticated inside the token}, '404': {description: Invalid token}}
+  /inbound/mailing/{profileID}/ses:
+    parameters:
+      - {name: profileID, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      operationId: receiveMailingSESWebhook
+      security: []
+      description: Verifies the SNS X.509 signature and the profile-pinned TopicArn before applying SES delivery events.
+      requestBody:
+        required: true
+        content:
+          text/plain: {schema: {type: object, additionalProperties: true}}
+          application/json: {schema: {type: object, additionalProperties: true}}
+      responses:
+        '200': {description: Authenticated event accepted, ignored, or already processed}
+        '401': {description: Unknown or disabled profile, invalid SNS signature, or TopicArn mismatch}
+        '413': {description: Payload exceeds 256 KiB}
+        '429': {description: Ingress rate limit exceeded}
+  /inbound/mailing/{profileID}/resend:
+    parameters:
+      - {name: profileID, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: svix-id, in: header, required: true, schema: {type: string}}
+      - {name: svix-timestamp, in: header, required: true, schema: {type: string}}
+      - {name: svix-signature, in: header, required: true, schema: {type: string}}
+    post:
+      operationId: receiveMailingResendWebhook
+      security: []
+      description: Verifies the Svix HMAC over the exact raw body before applying Resend delivery events.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, additionalProperties: true}}}
+      responses:
+        '200': {description: Authenticated event accepted, ignored, or already processed}
+        '401': {description: Unknown or disabled profile or invalid Svix signature}
+        '413': {description: Payload exceeds 256 KiB}
+        '429': {description: Ingress rate limit exceeded}
   /businesses/{id}/mailing/lists:
     parameters: [{$ref: '#/components/parameters/BusinessID'}]
     get:

@@ -66,6 +66,13 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		if strings.TrimSpace(in.Resend.APIKey) == "" {
 			return SendingProfile{}, validation("resend api_key is required")
 		}
+		if in.Resend.WebhookSecret != "" {
+			key, keyErr := decodeSvixSecret(in.Resend.WebhookSecret)
+			clear(key)
+			if keyErr != nil {
+				return SendingProfile{}, validation("resend webhook_secret must be a valid whsec_ secret")
+			}
+		}
 		credential, err = json.Marshal(in.Resend)
 	}
 	if in.SES != nil {

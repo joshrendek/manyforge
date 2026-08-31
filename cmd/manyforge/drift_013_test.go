@@ -11,6 +11,7 @@ import (
 var inScope013CoreOps = []string{
 	"POST /mailing/public/{}/subscribe", "OPTIONS /mailing/public/{}/subscribe",
 	"POST /mailing/s2s/{}/subscribers", "DELETE /mailing/s2s/{}/subscribers/{}",
+	"POST /inbound/mailing/{}/ses", "POST /inbound/mailing/{}/resend",
 	"GET /m/confirm/{}", "POST /m/confirm/{}", "GET /m/u/{}", "POST /m/u/{}",
 	"GET /m/o/{}", "GET /m/c/{}",
 	"GET /businesses/{}/mailing/lists", "POST /businesses/{}/mailing/lists", "GET /businesses/{}/mailing/lists/{}", "PATCH /businesses/{}/mailing/lists/{}", "DELETE /businesses/{}/mailing/lists/{}",
