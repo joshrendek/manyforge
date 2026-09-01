@@ -228,6 +228,7 @@ func main() {
 	var mailingSvc *mailing.Service
 	var mailingH *mailing.Handler
 	var mailingPublicH *mailing.PublicHandler
+	var mailingWebhookH *mailing.WebhookHandler
 	var mailingWorker *mailing.SendWorker
 	if len(cfg.MailingMasterKey) > 0 {
 		mailingSealer, err = mfcrypto.NewSealer(cfg.MailingMasterKey)
@@ -247,6 +248,7 @@ func main() {
 		}
 		mailingH = mailing.NewHandler(mailingSvc)
 		mailingPublicH = mailing.NewPublicHandler(mailingSvc, logger, mailingSealer, nil)
+		mailingWebhookH = mailing.NewWebhookHandler(database, mailingSealer, logger)
 	} else {
 		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled")
 	}
@@ -844,6 +846,7 @@ func main() {
 		feedbackWrite:    httpx.RequirePermission(database, permResolve, authz.PermFeedbackWrite, businessIDFromPath),
 		mailing:          mailingH,
 		mailingPublic:    mailingPublicH,
+		mailingWebhook:   mailingWebhookH,
 		mailingRead:      httpx.RequirePermission(database, permResolve, authz.PermMailingRead, businessIDFromPath),
 		mailingWrite:     httpx.RequirePermission(database, permResolve, authz.PermMailingWrite, businessIDFromPath),
 		mailingSend:      httpx.RequirePermission(database, permResolve, authz.PermMailingSend, businessIDFromPath),
@@ -1149,11 +1152,12 @@ type apiHandlers struct {
 	feedbackRead  func(http.Handler) http.Handler
 	feedbackWrite func(http.Handler) http.Handler
 
-	mailing       *mailing.Handler
-	mailingPublic *mailing.PublicHandler
-	mailingRead   func(http.Handler) http.Handler
-	mailingWrite  func(http.Handler) http.Handler
-	mailingSend   func(http.Handler) http.Handler
+	mailing        *mailing.Handler
+	mailingPublic  *mailing.PublicHandler
+	mailingWebhook *mailing.WebhookHandler
+	mailingRead    func(http.Handler) http.Handler
+	mailingWrite   func(http.Handler) http.Handler
+	mailingSend    func(http.Handler) http.Handler
 
 	// telemetry is the manyforge-p20 authenticated client-registration handler (register, list,
 	// revoke telemetry clients under a business).
@@ -1245,6 +1249,9 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			h.feedbackPublic.PublicRoutes(ingress)
 			if h.mailingPublic != nil {
 				h.mailingPublic.PublicRoutes(ingress)
+			}
+			if h.mailingWebhook != nil {
+				h.mailingWebhook.PublicRoutes(ingress)
 			}
 			// manyforge-p20 telemetry ingest: public, authenticated by a publishable mfk_
 			// client key, per-IP ingest-rate-limited here and additionally per-key inside
