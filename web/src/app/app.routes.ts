@@ -14,14 +14,12 @@ export const routes: Routes = [
   {
     path: 'tenant-merges/new/:sourceRootId',
     canActivate: [authGuard],
-    loadComponent: () =>
-      import('./pages/tenant-merge').then((m) => m.TenantMergeComponent),
+    loadComponent: () => import('./pages/tenant-merge').then((m) => m.TenantMergeComponent),
   },
   {
     path: 'tenant-merges/:operationId',
     canActivate: [authGuard],
-    loadComponent: () =>
-      import('./pages/tenant-merge').then((m) => m.TenantMergeComponent),
+    loadComponent: () => import('./pages/tenant-merge').then((m) => m.TenantMergeComponent),
   },
   {
     path: 'support',
@@ -178,6 +176,12 @@ export const routes: Routes = [
       import('./pages/mailing/sending-profile').then((m) => m.MailingSendingProfileComponent),
   },
   {
+    path: 'mailing/suppression',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/suppression-list').then((m) => m.MailingSuppressionListComponent),
+  },
+  {
     path: 'mailing/:businessId/lists/:listId',
     canActivate: [authGuard],
     loadComponent: () =>
@@ -189,6 +193,12 @@ export const routes: Routes = [
     canDeactivate: [unsavedChangesGuard],
     loadComponent: () =>
       import('./pages/mailing/template-editor').then((m) => m.MailingTemplateEditorComponent),
+  },
+  {
+    path: 'mailing/:businessId/campaigns/:campaignId/stats',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/campaign-stats').then((m) => m.MailingCampaignStatsComponent),
   },
   {
     path: 'mailing/:businessId/campaigns/:campaignId',

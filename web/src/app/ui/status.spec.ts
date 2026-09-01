@@ -3,6 +3,7 @@ import {
   effectClassLabel,
   effectClassTone,
   mailingCampaignStatusTone,
+  mailingDeliveryStatusTone,
   runStatusTone,
   ticketPriorityTone,
   ticketStatusTone,
@@ -33,6 +34,13 @@ describe('status tone helpers', () => {
     expect(mailingCampaignStatusTone('scheduled')).toBe<Tone>('accent');
     expect(mailingCampaignStatusTone('sent')).toBe<Tone>('success');
     expect(mailingCampaignStatusTone('failed')).toBe<Tone>('danger');
+  });
+  it('maps delivery status to a tone', () => {
+    expect(mailingDeliveryStatusTone('queued')).toBe<Tone>('accent');
+    expect(mailingDeliveryStatusTone('delivered')).toBe<Tone>('success');
+    expect(mailingDeliveryStatusTone('bounced')).toBe<Tone>('danger');
+    expect(mailingDeliveryStatusTone('suppressed')).toBe<Tone>('warn');
+    expect(mailingDeliveryStatusTone('cancelled')).toBe<Tone>('neutral');
   });
 });
 

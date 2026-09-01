@@ -147,4 +147,47 @@ describe('MailingService', () => {
     expect(request.request.method).toBe('POST');
     request.flush({ html: '<h1>Template</h1>', text: 'Template' });
   });
+
+  it('loads campaign reporting and delivery pages with filters', () => {
+    service.getCampaignStats('b1', 'c1').subscribe();
+    http
+      .expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/stats')
+      .flush({ campaign: { id: 'c1' }, links: [] });
+
+    service
+      .listCampaignDeliveries('b1', 'c1', {
+        status: 'bounced',
+        cursor: 'next',
+        limit: 25,
+      })
+      .subscribe();
+    const deliveries = http.expectOne(
+      (request) => request.url === '/api/v1/businesses/b1/mailing/campaigns/c1/deliveries',
+    );
+    expect(deliveries.request.params.get('status')).toBe('bounced');
+    expect(deliveries.request.params.get('cursor')).toBe('next');
+    expect(deliveries.request.params.get('limit')).toBe('25');
+    deliveries.flush({ items: [], next_cursor: null });
+  });
+
+  it('creates, lists, and deletes tenant suppressions', () => {
+    service.listSuppressions('b1', 'next', 25).subscribe();
+    const list = http.expectOne(
+      (request) => request.url === '/api/v1/businesses/b1/mailing/suppressions',
+    );
+    expect(list.request.params.get('cursor')).toBe('next');
+    expect(list.request.params.get('limit')).toBe('25');
+    list.flush({ items: [], next_cursor: null });
+
+    service.createSuppression('b1', 'blocked@example.com').subscribe();
+    const create = http.expectOne('/api/v1/businesses/b1/mailing/suppressions');
+    expect(create.request.method).toBe('POST');
+    expect(create.request.body).toEqual({ email: 'blocked@example.com', reason: 'manual' });
+    create.flush({ id: 'sup1' });
+
+    service.deleteSuppression('b1', 'sup1').subscribe();
+    const remove = http.expectOne('/api/v1/businesses/b1/mailing/suppressions/sup1');
+    expect(remove.request.method).toBe('DELETE');
+    remove.flush(null);
+  });
 });

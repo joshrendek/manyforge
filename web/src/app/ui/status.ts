@@ -96,6 +96,26 @@ export function mailingCampaignStatusTone(s: string): Tone {
   }
 }
 
+export function mailingDeliveryStatusTone(s: string): Tone {
+  switch (s) {
+    case 'queued':
+    case 'sending':
+      return 'accent';
+    case 'sent':
+    case 'delivered':
+      return 'success';
+    case 'bounced':
+    case 'complained':
+    case 'failed':
+      return 'danger';
+    case 'suppressed':
+      return 'warn';
+    case 'cancelled':
+    default:
+      return 'neutral';
+  }
+}
+
 export function effectClassTone(e: number): Tone {
   switch (e) {
     case 1:
