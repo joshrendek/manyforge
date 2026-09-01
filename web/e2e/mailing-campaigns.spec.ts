@@ -177,3 +177,121 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
   await expect.poll(() => sendCount).toBe(1);
   await expect(page.getByTestId('campaign-cancel')).toBeDisabled();
 });
+
+test('campaigns: inspect stats and manage the suppression list through real navigation', async ({
+  page,
+}) => {
+  await shellRoutes(page);
+  const sentCampaign = {
+    ...draftCampaign(),
+    status: 'sent',
+    subject: 'What is new',
+    recipient_count: 100,
+    sent_count: 98,
+    delivered_count: 96,
+    bounced_count: 2,
+    complained_count: 1,
+    opened_count: 48,
+    clicked_count: 24,
+    unsubscribed_count: 3,
+    failed_count: 2,
+  };
+  let suppressions = [
+    {
+      id: 'sup1',
+      business_id: 'b1',
+      tenant_root_id: 'b1',
+      email: 'blocked@example.com',
+      reason: 'bounce',
+      source: 'resend',
+      created_at: '2026-09-01T12:00:00Z',
+    },
+  ];
+
+  await page.route('**/api/v1/businesses/b1/mailing/lists', (route) =>
+    route.fulfill({ json: { items: [list], next_cursor: null } }),
+  );
+  await page.route('**/api/v1/businesses/b1/mailing/sending-profile', (route) =>
+    route.fulfill({ json: profile }),
+  );
+  await page.route('**/api/v1/businesses/b1/mailing/campaigns', (route) =>
+    route.fulfill({ json: { items: [sentCampaign], next_cursor: null } }),
+  );
+  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1', (route) =>
+    route.fulfill({ json: sentCampaign }),
+  );
+  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1/stats', (route) =>
+    route.fulfill({
+      json: {
+        campaign: sentCampaign,
+        links: [{ url: 'https://example.com/docs', click_count: 30, unique_click_count: 24 }],
+      },
+    }),
+  );
+  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1/deliveries**', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 'd1',
+            campaign_id: 'c1',
+            subscriber_id: 's1',
+            email: 'ada@example.com',
+            status: 'delivered',
+            attempts: 1,
+            not_before: '2026-09-01T12:00:00Z',
+            lease_until: null,
+            message_id: 'message-1',
+            provider_message_id: 'provider-1',
+            opened_at: '2026-09-01T12:02:00Z',
+            first_clicked_at: '2026-09-01T12:03:00Z',
+            last_error: null,
+            created_at: '2026-09-01T12:00:00Z',
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route('**/api/v1/businesses/b1/mailing/suppressions**', (route) => {
+    const method = route.request().method();
+    const url = new URL(route.request().url());
+    if (method === 'POST') {
+      const body = route.request().postDataJSON() as { email: string; reason: string };
+      const created = {
+        ...suppressions[0],
+        id: 'sup2',
+        email: body.email,
+        reason: body.reason,
+        source: 'manual',
+      };
+      suppressions = [created, ...suppressions];
+      return route.fulfill({ status: 201, json: created });
+    }
+    if (method === 'DELETE') {
+      const id = url.pathname.split('/').at(-1);
+      suppressions = suppressions.filter((item) => item.id !== id);
+      return route.fulfill({ status: 204 });
+    }
+    return route.fulfill({ json: { items: suppressions, next_cursor: null } });
+  });
+
+  await page.goto('/mailing/campaigns');
+  await page.getByTestId('mailing-campaign-open').click();
+  await expect(page).toHaveURL(/\/mailing\/b1\/campaigns\/c1$/);
+  await page.getByTestId('campaign-view-stats').click();
+  await expect(page).toHaveURL(/\/mailing\/b1\/campaigns\/c1\/stats$/);
+  await expect(page.getByTestId('stat-delivered')).toHaveText('96');
+  await expect(page.getByTestId('campaign-link-row')).toContainText('example.com/docs');
+  await expect(page.getByTestId('campaign-delivery-row')).toContainText('ada@example.com');
+
+  await page.getByTestId('campaign-stats-back').click();
+  await page.getByTestId('campaigns-suppression-link').click();
+  await expect(page).toHaveURL(/\/mailing\/suppression$/);
+  await page.getByTestId('suppression-email').fill('manual@example.com');
+  await page.getByTestId('suppression-create').click();
+  await expect(page.getByTestId('suppression-row').first()).toContainText('manual@example.com');
+  await page.getByTestId('suppression-delete').first().click();
+  await page.getByTestId('suppression-delete-confirm').click();
+  await expect(page.getByText('manual@example.com')).toHaveCount(0);
+});

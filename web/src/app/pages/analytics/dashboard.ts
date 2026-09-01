@@ -5,6 +5,7 @@ import { AnalyticsService, AnalyticsSummary, DayPoint } from '../../core/analyti
 import { EmptyState } from '../../ui/empty-state/empty-state';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
+import { StatTile, StatTiles } from '../../ui/stat-tiles/stat-tiles';
 
 // Analytics dashboard for one site.
 //
@@ -12,7 +13,7 @@ import { Spinner } from '../../ui/spinner/spinner';
 // series at a time, and a chart library would be a much larger addition to the bundle.
 @Component({
   selector: 'app-analytics-dashboard',
-  imports: [FormsModule, RouterLink, PageHeader, EmptyState, Spinner],
+  imports: [FormsModule, RouterLink, PageHeader, EmptyState, Spinner, StatTiles],
   template: `
     <div class="mf-card" data-testid="analytics-dashboard-page">
       <mf-page-header title="Analytics" subtitle="Privacy-first, cookieless traffic">
@@ -55,44 +56,7 @@ import { Spinner } from '../../ui/spinner/spinner';
             Data freshness is not available yet.
           }
         </p>
-        <div class="mf-stats" data-testid="analytics-stats">
-          <div class="mf-stat">
-            <span class="mf-stat-value" data-testid="stat-pageviews">{{
-              s.pageviews.toLocaleString()
-            }}</span>
-            <span class="mf-stat-label">Pageviews</span>
-            <span class="mf-stat-change" data-testid="stat-pageviews-change">{{
-              percentChangeLabel(s.comparison.pageviews_change_percent, s.comparison.pageviews)
-            }}</span>
-          </div>
-          <div class="mf-stat">
-            <span class="mf-stat-value" data-testid="stat-visitors">{{
-              s.average_daily_visitors.toFixed(1)
-            }}</span>
-            <span class="mf-stat-label">Average daily visitors</span>
-            <span class="mf-stat-change" data-testid="stat-visitors-change">{{
-              percentChangeLabel(
-                s.comparison.average_daily_visitors_change_percent,
-                s.comparison.average_daily_visitors,
-                1
-              )
-            }}</span>
-            <span class="mf-stat-detail">Peak day: {{ s.visitors.toLocaleString() }}</span>
-          </div>
-          <div class="mf-stat">
-            <span class="mf-stat-value" data-testid="stat-direct"
-              >{{ s.direct_share.toFixed(1) }}%</span
-            >
-            <span class="mf-stat-label">Direct traffic share</span>
-            <span class="mf-stat-change" data-testid="stat-direct-change">{{
-              pointChangeLabel(
-                s.comparison.direct_share_change_percentage_points,
-                s.comparison.direct_share
-              )
-            }}</span>
-            <span class="mf-stat-detail">{{ s.direct_pageviews.toLocaleString() }} pageviews</span>
-          </div>
-        </div>
+        <mf-stat-tiles [tiles]="summaryTiles(s)" data-testid="analytics-stats" />
 
         @if (s.pageviews > 0) {
           <div class="mf-chart-header">
@@ -309,35 +273,11 @@ import { Spinner } from '../../ui/spinner/spinner';
         align-items: center;
         gap: 10px;
       }
-      .mf-stats {
-        display: flex;
-        gap: 24px;
-        flex-wrap: wrap;
-        margin: 16px 0;
-      }
-      .mf-stat {
-        display: flex;
-        flex-direction: column;
-        min-width: 120px;
-      }
-      .mf-stat-value {
-        font-size: 28px;
-        font-weight: 600;
-      }
-      .mf-stat-label {
-        font-size: var(--mf-fs-sm);
-        color: var(--mf-text-muted);
-      }
-      .mf-stat-change,
-      .mf-stat-detail,
       .mf-range,
       .mf-chart-axis,
       .mf-chart-data {
         font-size: var(--mf-fs-xs);
         color: var(--mf-text-muted);
-      }
-      .mf-stat-change {
-        margin-top: 4px;
       }
       .mf-range {
         margin: 12px 0 0;
@@ -525,6 +465,41 @@ export class AnalyticsDashboardComponent implements OnInit {
 
   chartValue(point: DayPoint): number {
     return point[this.chartMetric()];
+  }
+
+  summaryTiles(summary: AnalyticsSummary): StatTile[] {
+    return [
+      {
+        label: 'Pageviews',
+        value: summary.pageviews.toLocaleString(),
+        change: this.percentChangeLabel(
+          summary.comparison.pageviews_change_percent,
+          summary.comparison.pageviews,
+        ),
+        testid: 'stat-pageviews',
+      },
+      {
+        label: 'Average daily visitors',
+        value: summary.average_daily_visitors.toFixed(1),
+        change: this.percentChangeLabel(
+          summary.comparison.average_daily_visitors_change_percent,
+          summary.comparison.average_daily_visitors,
+          1,
+        ),
+        detail: `Peak day: ${summary.visitors.toLocaleString()}`,
+        testid: 'stat-visitors',
+      },
+      {
+        label: 'Direct traffic share',
+        value: `${summary.direct_share.toFixed(1)}%`,
+        change: this.pointChangeLabel(
+          summary.comparison.direct_share_change_percentage_points,
+          summary.comparison.direct_share,
+        ),
+        detail: `${summary.direct_pageviews.toLocaleString()} pageviews`,
+        testid: 'stat-direct',
+      },
+    ];
   }
 
   percentChangeLabel(change: number | null, previous: number, previousDigits = 0): string {

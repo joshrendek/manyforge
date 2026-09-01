@@ -245,4 +245,12 @@ describe('MailingCampaignEditorComponent', () => {
     cancel.flush({ ...campaign, status: 'cancelled' });
     expect(editor.componentInstance.campaign()?.status).toBe('cancelled');
   });
+
+  it('links completed campaigns to their statistics page', () => {
+    const editor = mount({ ...campaign, status: 'sent' });
+    const link = editor.nativeElement.querySelector(
+      '[data-testid="campaign-view-stats"]',
+    ) as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('/mailing/b1/campaigns/c1/stats');
+  });
 });
