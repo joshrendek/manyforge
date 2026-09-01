@@ -14,6 +14,17 @@ export type MailingCampaignStatus =
   | 'sent'
   | 'cancelled'
   | 'failed';
+export type MailingDeliveryStatus =
+  | 'queued'
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'bounced'
+  | 'complained'
+  | 'failed'
+  | 'suppressed'
+  | 'cancelled';
+export type MailingSuppressionReason = 'bounce' | 'complaint' | 'unsubscribe' | 'manual';
 
 export interface MailingList {
   id: string;
@@ -160,6 +171,44 @@ export interface MailingCampaignInput {
   tag_filter?: string[];
   track_opens?: boolean;
   track_clicks?: boolean;
+}
+
+export interface MailingDelivery {
+  id: string;
+  campaign_id: string | null;
+  subscriber_id: string;
+  email: string;
+  status: MailingDeliveryStatus;
+  attempts: number;
+  not_before: string;
+  lease_until: string | null;
+  message_id: string;
+  provider_message_id: string | null;
+  opened_at: string | null;
+  first_clicked_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface MailingCampaignLinkStat {
+  url: string;
+  click_count: number;
+  unique_click_count: number;
+}
+
+export interface MailingCampaignStats {
+  campaign: MailingCampaign;
+  links: MailingCampaignLinkStat[];
+}
+
+export interface MailingSuppression {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  email: string;
+  reason: MailingSuppressionReason;
+  source: string;
+  created_at: string;
 }
 
 export interface MailingPreviewInput {
@@ -472,5 +521,54 @@ export class MailingService {
       `${this.base(businessId)}/campaigns/${campaignId}/cancel`,
       {},
     );
+  }
+
+  getCampaignStats(businessId: string, campaignId: string): Observable<MailingCampaignStats> {
+    return this.http.get<MailingCampaignStats>(
+      `${this.base(businessId)}/campaigns/${campaignId}/stats`,
+    );
+  }
+
+  listCampaignDeliveries(
+    businessId: string,
+    campaignId: string,
+    filters: { status?: MailingDeliveryStatus; cursor?: string; limit?: number } = {},
+  ): Observable<Page<MailingDelivery>> {
+    let params = new HttpParams();
+    if (filters.status) params = params.set('status', filters.status);
+    if (filters.cursor) params = params.set('cursor', filters.cursor);
+    if (filters.limit != null) params = params.set('limit', String(filters.limit));
+    return this.http.get<Page<MailingDelivery>>(
+      `${this.base(businessId)}/campaigns/${campaignId}/deliveries`,
+      { params },
+    );
+  }
+
+  listSuppressions(
+    businessId: string,
+    cursor?: string,
+    limit?: number,
+  ): Observable<Page<MailingSuppression>> {
+    let params = new HttpParams();
+    if (cursor) params = params.set('cursor', cursor);
+    if (limit != null) params = params.set('limit', String(limit));
+    return this.http.get<Page<MailingSuppression>>(`${this.base(businessId)}/suppressions`, {
+      params,
+    });
+  }
+
+  createSuppression(
+    businessId: string,
+    email: string,
+    reason: MailingSuppressionReason = 'manual',
+  ): Observable<MailingSuppression> {
+    return this.http.post<MailingSuppression>(`${this.base(businessId)}/suppressions`, {
+      email,
+      reason,
+    });
+  }
+
+  deleteSuppression(businessId: string, suppressionId: string): Observable<void> {
+    return this.http.delete<void>(`${this.base(businessId)}/suppressions/${suppressionId}`);
   }
 }

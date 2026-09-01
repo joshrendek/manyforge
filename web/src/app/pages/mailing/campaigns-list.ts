@@ -41,6 +41,13 @@ import { ToastService } from '../../ui/toast/toast.service';
           actions
           >Sending profile</a
         >
+        <a
+          routerLink="/mailing/suppression"
+          class="mf-btn mf-btn-ghost mf-btn-sm"
+          data-testid="campaigns-suppression-link"
+          actions
+          >Suppression list</a
+        >
       </mf-page-header>
 
       <div class="mf-filters">

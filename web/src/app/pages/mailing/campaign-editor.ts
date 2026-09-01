@@ -247,15 +247,13 @@ import { MailingPreviewPaneComponent } from './preview-pane';
               <mf-spinner /> Sending — cancellation unavailable
             </button>
           } @else {
-            <button
-              type="button"
+            <a
               class="mf-btn mf-btn-primary"
               data-testid="campaign-view-stats"
-              title="Campaign reporting is available in the statistics page shipping next"
-              disabled
+              [routerLink]="['/mailing', businessId, 'campaigns', campaignId, 'stats']"
             >
               View stats
-            </button>
+            </a>
           }
         </section>
 
