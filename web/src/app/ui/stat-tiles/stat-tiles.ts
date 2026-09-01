@@ -13,7 +13,7 @@ export interface StatTile {
   standalone: true,
   template: `
     <div class="mf-stats" data-testid="stat-tiles">
-      @for (tile of tiles; track tile.label) {
+      @for (tile of tiles; track $index) {
         <div class="mf-stat" [attr.data-testid]="tile.testid ? tile.testid + '-tile' : null">
           <span class="mf-stat-value" [attr.data-testid]="tile.testid || null">{{
             tile.value
