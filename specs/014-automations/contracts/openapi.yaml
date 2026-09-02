@@ -11,10 +11,262 @@ servers:
   - url: /api/v1
 security:
   - bearerAuth: []
-paths: {}
+paths:
+  /businesses/{id}/mailing/automations:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+    get:
+      operationId: listAutomations
+      parameters:
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Automation page, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationPage'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      operationId: createAutomation
+      requestBody: {$ref: '#/components/requestBodies/AutomationCreate'}
+      responses:
+        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
+        '400': {$ref: '#/components/responses/Validation'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /businesses/{id}/mailing/automations/{aid}:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+    get:
+      operationId: getAutomation
+      responses:
+        '200': {description: Automation, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      operationId: updateAutomation
+      requestBody: {$ref: '#/components/requestBodies/AutomationUpdate'}
+      responses:
+        '200': {description: Updated, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
+        '400': {$ref: '#/components/responses/Validation'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/versions:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+    get:
+      operationId: listAutomationVersions
+      responses:
+        '200': {description: Versions, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/AutomationVersion'}}}}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      operationId: createAutomationDraftVersion
+      responses:
+        '201': {description: Active graph cloned into a draft, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationVersion'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/versions/{vid}:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+      - $ref: '#/components/parameters/VersionID'
+    get:
+      operationId: getAutomationVersion
+      responses:
+        '200': {description: Version including graph, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationVersion'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /businesses/{id}/mailing/automations/{aid}/versions/{vid}/graph:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+      - $ref: '#/components/parameters/VersionID'
+    put:
+      operationId: replaceAutomationGraph
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Graph'}}}
+      responses:
+        '200': {description: Saved draft, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationVersion'}}}}
+        '400': {$ref: '#/components/responses/Validation'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/versions/{vid}/validate:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+      - $ref: '#/components/parameters/VersionID'
+    post:
+      operationId: validateAutomationVersion
+      responses:
+        '200': {description: Validation result, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationResult'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /businesses/{id}/mailing/automations/{aid}/versions/{vid}/activate:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+      - $ref: '#/components/parameters/VersionID'
+    post:
+      operationId: activateAutomationVersion
+      responses:
+        '200': {description: Activated, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/AutomationInvalid'}
+  /businesses/{id}/mailing/automations/{aid}/pause:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+    post:
+      operationId: pauseAutomation
+      responses:
+        '200': {description: Paused, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/resume:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+    post:
+      operationId: resumeAutomation
+      responses:
+        '200': {description: Resumed, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/archive:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+    post:
+      operationId: archiveAutomation
+      responses:
+        '200': {description: Archived, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  parameters:
+    BusinessID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+    AutomationID: {name: aid, in: path, required: true, schema: {type: string, format: uuid}}
+    VersionID: {name: vid, in: path, required: true, schema: {type: string, format: uuid}}
+  requestBodies:
+    AutomationCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: {type: string, minLength: 1, maxLength: 200}
+              description: {type: string, nullable: true, maxLength: 5000}
+              allow_reenroll: {type: boolean, default: false}
+    AutomationUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              name: {type: string, minLength: 1, maxLength: 200}
+              description: {type: string, nullable: true, maxLength: 5000}
+              allow_reenroll: {type: boolean}
+  schemas:
+    Automation:
+      type: object
+      required: [id, business_id, tenant_root_id, name, status, allow_reenroll, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        tenant_root_id: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string, nullable: true}
+        status: {type: string, enum: [draft, active, paused, archived]}
+        allow_reenroll: {type: boolean}
+        active_version_id: {type: string, format: uuid, nullable: true}
+        draft_version_id: {type: string, format: uuid, nullable: true}
+        created_by_principal_id: {type: string, format: uuid, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    AutomationPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Automation'}}
+        next_cursor: {type: string, nullable: true}
+    AutomationVersion:
+      type: object
+      required: [id, business_id, tenant_root_id, automation_id, number, status, graph, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        tenant_root_id: {type: string, format: uuid}
+        automation_id: {type: string, format: uuid}
+        number: {type: integer, minimum: 1}
+        status: {type: string, enum: [draft, active, superseded]}
+        graph: {$ref: '#/components/schemas/Graph'}
+        trigger_kind: {type: string, nullable: true, enum: [list_joined, tag_added, event]}
+        trigger_ref: {type: string, nullable: true}
+        activated_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Graph:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          maxItems: 200
+          items: {$ref: '#/components/schemas/Node'}
+        edges:
+          type: array
+          items: {$ref: '#/components/schemas/Edge'}
+    Node:
+      type: object
+      required: [id, kind, config]
+      properties:
+        id: {type: string, pattern: '^[a-z0-9_-]{1,64}$'}
+        kind: {type: string, enum: [trigger, send_email, wait, condition, add_tag, remove_tag, exit]}
+        name: {type: string, maxLength: 200}
+        config: {type: object, additionalProperties: true}
+    Edge:
+      type: object
+      required: [id, from, to, branch]
+      properties:
+        id: {type: string, pattern: '^[a-z0-9_-]{1,64}$'}
+        from: {type: string}
+        to: {type: string}
+        branch: {type: string, enum: ['yes', 'no'], nullable: true}
+    Issue:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        node_id: {type: string}
+        edge_id: {type: string}
+        message: {type: string}
+    ValidationResult:
+      type: object
+      required: [valid, issues]
+      properties:
+        valid: {type: boolean}
+        issues: {type: array, items: {$ref: '#/components/schemas/Issue'}}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+    AutomationInvalid:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [issues]
+          properties:
+            code: {type: string, enum: [AUTOMATION_INVALID]}
+            issues: {type: array, items: {$ref: '#/components/schemas/Issue'}}
+  responses:
+    Validation: {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    NotFound: {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    Conflict: {description: Lifecycle conflict, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    AutomationInvalid: {description: Graph validation failed, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationInvalid'}}}}
