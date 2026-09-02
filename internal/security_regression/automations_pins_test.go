@@ -117,6 +117,7 @@ func TestPin_AutomationDefinersAreFencedAndLockedDown(t *testing.T) {
 		"a.status = 'active'",
 		"claim_generation = e.claim_generation + 1",
 		"e.claim_generation = p_claim_generation",
+		"completed_at = COALESCE(automation_enrollment_step.completed_at, EXCLUDED.completed_at)",
 		"business_id = p_business_id",
 		"tenant_root_id = p_tenant_root_id",
 		"trigger_node.list_id = v_subscriber.list_id::text",

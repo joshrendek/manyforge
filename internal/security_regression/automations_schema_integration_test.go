@@ -140,6 +140,23 @@ func TestAutomationDefinersLeaseReplayPauseAndScope(t *testing.T) {
 	if changed, err := record(generation2); err != nil || !changed {
 		t.Fatalf("current generation record = %t, err=%v", changed, err)
 	}
+	if changed, err := record(generation2); err != nil || !changed {
+		t.Fatalf("completed-node replay = %t, err=%v", changed, err)
+	}
+	var replayOutcome, replayCurrentNode string
+	var replayCompletedAt time.Time
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT s.outcome::text,s.completed_at,e.current_node_id
+		FROM automation_enrollment_step s
+		JOIN automation_enrollment e ON e.id=s.enrollment_id
+		WHERE s.enrollment_id=$1 AND s.node_id='n_trigger'`, enrollmentID,
+	).Scan(&replayOutcome, &replayCompletedAt, &replayCurrentNode); err != nil {
+		t.Fatal(err)
+	}
+	if replayOutcome != "advanced" || replayCompletedAt.IsZero() || replayCurrentNode != "n_exit" {
+		t.Fatalf("completed replay regressed state: outcome=%s completed=%v current=%s",
+			replayOutcome, replayCompletedAt, replayCurrentNode)
+	}
 	var secondNodeChanged bool
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
