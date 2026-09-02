@@ -231,6 +231,7 @@ func main() {
 	var mailingPublicH *mailing.PublicHandler
 	var mailingWebhookH *mailing.WebhookHandler
 	var mailingWorker *mailing.SendWorker
+	var automationH *automations.Handler
 	if len(cfg.MailingMasterKey) > 0 {
 		mailingSealer, err = mfcrypto.NewSealer(cfg.MailingMasterKey)
 		if err != nil {
@@ -248,13 +249,12 @@ func main() {
 			PublicBaseURL: cfg.PublicBaseURL,
 		}
 		mailingH = mailing.NewHandler(mailingSvc)
+		automationH = automations.NewHandler(&automations.Service{DB: database})
 		mailingPublicH = mailing.NewPublicHandler(mailingSvc, logger, mailingSealer, nil)
 		mailingWebhookH = mailing.NewWebhookHandler(database, mailingSealer, logger)
 	} else {
 		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled")
 	}
-	automationH := automations.NewHandler(&automations.Service{DB: database})
-
 	// manyforge-p20 telemetry: client registration (authenticated, gated by telemetry.read /
 	// telemetry.write) plus the principal-less batch ingest endpoint shared by the analytics and
 	// crash-reporting epics. Reuses the feedback sealer's master key semantics: unset ⇒ nil
