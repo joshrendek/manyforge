@@ -33,6 +33,11 @@ var tenantMergeTableInventory = map[string]string{
 	"analytics_referrer_daily":          "drain_fence_then_rewrite",
 	"approval_item":                     "drain_fence_then_rewrite",
 	"attachment":                        "external_prestage_then_rewrite",
+	"automation":                        "drain_fence_then_rewrite",
+	"automation_enrollment":             "drain_fence_then_rewrite",
+	"automation_enrollment_step":        "drain_fence_then_rewrite",
+	"automation_event":                  "drain_fence_then_rewrite",
+	"automation_version":                "drain_fence_then_rewrite",
 	"audit_entry":                       "immutable_audit_scope_exception",
 	"business":                          "hierarchy_rebuild",
 	"business_closure":                  "hierarchy_rebuild",
@@ -101,6 +106,20 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"approval_item.approval_item_business_id_tenant_root_id_fkey":                                    true,
 	"attachment.attachment_business_id_tenant_root_id_fkey":                                          true,
 	"attachment.attachment_ticket_message_id_tenant_root_id_fkey":                                    true,
+	"automation.automation_active_version_fk":                                                        true,
+	"automation.automation_business_fk":                                                              true,
+	"automation.automation_draft_version_fk":                                                         true,
+	"automation_enrollment.automation_enrollment_automation_fk":                                      true,
+	"automation_enrollment.automation_enrollment_business_fk":                                        true,
+	"automation_enrollment.automation_enrollment_subscriber_fk":                                      true,
+	"automation_enrollment.automation_enrollment_version_fk":                                         true,
+	"automation_enrollment_step.automation_step_business_fk":                                         true,
+	"automation_enrollment_step.automation_step_delivery_fk":                                         true,
+	"automation_enrollment_step.automation_step_enrollment_version_fk":                               true,
+	"automation_event.automation_event_business_fk":                                                  true,
+	"automation_event.automation_event_subscriber_fk":                                                true,
+	"automation_version.automation_version_automation_fk":                                            true,
+	"automation_version.automation_version_business_fk":                                              true,
 	"business.business_parent_id_tenant_root_id_fkey":                                                true,
 	"business_closure.business_closure_ancestor_id_tenant_root_id_fkey":                              true,
 	"business_closure.business_closure_descendant_id_tenant_root_id_fkey":                            true,
@@ -199,7 +218,7 @@ var tenantMergeRootPayloadInventory = map[string][]string{
 }
 
 // These are the non-generic guards whose root/role/owner invariants cutover
-// must preserve in addition to the common tenant_merge_write_fence on all 63
+// must preserve in addition to the common tenant_merge_write_fence on all 68
 // manifest tables.
 var tenantMergeImmutabilityInventory = map[string]string{
 	"activity_entry.activity_troot_immutable":                                             "support_tenant_root_immutable",
@@ -208,6 +227,11 @@ var tenantMergeImmutabilityInventory = map[string]string{
 	"ai_provider_credential.ai_provider_credential_troot_immutable":                       "support_tenant_root_immutable",
 	"approval_item.approval_item_troot_immutable":                                         "support_tenant_root_immutable",
 	"attachment.attachment_troot_immutable":                                               "support_tenant_root_immutable",
+	"automation.automation_troot_immutable":                                               "support_tenant_root_immutable",
+	"automation_enrollment.automation_enrollment_troot_immutable":                         "support_tenant_root_immutable",
+	"automation_enrollment_step.automation_enrollment_step_troot_immutable":               "support_tenant_root_immutable",
+	"automation_event.automation_event_troot_immutable":                                   "support_tenant_root_immutable",
+	"automation_version.automation_version_troot_immutable":                               "support_tenant_root_immutable",
 	"business.business_root_guard_trg":                                                    "business_root_guard",
 	"campaign.campaign_troot_immutable":                                                   "support_tenant_root_immutable",
 	"code_review_finding_seen.code_review_finding_seen_troot_immutable":                   "support_tenant_root_immutable",

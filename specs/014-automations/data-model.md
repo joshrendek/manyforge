@@ -12,7 +12,8 @@
 - `automation_version`: numbered JSON graph snapshot, draft/active/superseded
   lifecycle, and denormalized active trigger index.
 - `automation_enrollment`: subscriber/version pin, current node, wake and lease
-  state, retry/error state, source-event idempotency, and terminal outcome.
+  state, monotonically increasing claim generation, retry/error state,
+  source-event idempotency, and terminal outcome.
 - `automation_enrollment_step`: one idempotent node observation per enrollment,
   with outcome, timing, delivery correlation, and bounded detail.
 - `automation_event`: tenant custom event with subscriber/email resolution,
@@ -43,7 +44,9 @@ design. No x/y presentation coordinates are stored.
 - `(enrollment_id, node_id)` is unique because a valid DAG version enters a node
   at most once.
 - Active enrollments are due only when wake time has passed and their lease is
-  free or expired; paused automations and fenced tenant roots are unclaimable.
+  free or expired; each claim increments a generation that every step/failure
+  write must match, so an expired worker cannot overwrite a reclaimed lease.
+  Paused automations and fenced tenant roots are unclaimable.
 - In-flight enrollments retain their version when a new version activates.
 - Every tenant table and foreign key preserves business/root scope, uses dual
   predicates and RLS, and participates in tenant-merge inventory and fencing.
