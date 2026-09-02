@@ -21,6 +21,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding"
 	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/authz"
+	"github.com/manyforge/manyforge/internal/automations"
 	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/feedback"
 	"github.com/manyforge/manyforge/internal/githubapp"
@@ -101,6 +102,7 @@ func testHandlers() apiHandlers {
 		mailingRead:      noop,
 		mailingWrite:     noop,
 		mailingSend:      noop,
+		automations:      automations.NewHandler(&automations.Service{}),
 		telemetry:        telemetry.NewHandler(&telemetry.Service{}),
 		telemetryPublic:  &telemetry.PublicHandler{},
 		telemetryRead:    noop,
@@ -356,6 +358,11 @@ func spec013Routes(t *testing.T) map[string]bool {
 	return specRoutesFrom(t, p)
 }
 
+func spec014Routes(t *testing.T) map[string]bool {
+	t.Helper()
+	return specRoutesFrom(t, specPath("specs", "014-automations", "contracts", "openapi.yaml"))
+}
+
 // TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
 // operations exist (T082): an operation specced (in spec 001) but not served, or an
 // operation served but documented in NO contract at all. Direction 2 unions every spec
@@ -417,6 +424,9 @@ func TestOpenAPIDrift(t *testing.T) {
 		documented[op] = true
 	}
 	for op := range spec013Routes(t) {
+		documented[op] = true
+	}
+	for op := range spec014Routes(t) {
 		documented[op] = true
 	}
 	spec006 := spec006Routes(t)
