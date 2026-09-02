@@ -237,6 +237,8 @@ type Querier interface {
 	GetAgentRun(ctx context.Context, arg GetAgentRunParams) (AgentRun, error)
 	// Business-scoped read (RLS + predicate). Unknown/foreign id -> pgx.ErrNoRows -> 404.
 	GetApprovalItem(ctx context.Context, arg GetApprovalItemParams) (ApprovalItem, error)
+	GetAutomation(ctx context.Context, arg GetAutomationParams) (Automation, error)
+	GetAutomationVersion(ctx context.Context, arg GetAutomationVersionParams) (AutomationVersion, error)
 	GetBusiness(ctx context.Context, id uuid.UUID) (Business, error)
 	GetCampaign(ctx context.Context, arg GetCampaignParams) (Campaign, error)
 	GetCodeReview(ctx context.Context, arg GetCodeReviewParams) (CodeReview, error)
@@ -361,6 +363,10 @@ type Querier interface {
 	// source_id-bearing events dedupe on activity_dedup_idx; NULL-source events always insert.
 	InsertActivityEntry(ctx context.Context, arg InsertActivityEntryParams) error
 	InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error
+	// Spec 014 automation definition queries. Worker and trigger functions are invoked through
+	// raw pgx so their SECURITY DEFINER signatures remain explicit at the package boundary.
+	InsertAutomation(ctx context.Context, arg InsertAutomationParams) (Automation, error)
+	InsertAutomationVersion(ctx context.Context, arg InsertAutomationVersionParams) (AutomationVersion, error)
 	// ---- campaigns ----
 	InsertCampaign(ctx context.Context, arg InsertCampaignParams) (Campaign, error)
 	// Link a new child ($1) under parent ($2): inherit the parent's ancestor chain
@@ -568,6 +574,9 @@ type Querier interface {
 	// RLS scopes audit_entry to the caller's authorized businesses; the service
 	// additionally gates on audit.read. Projection omits new_value/old_value.
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
+	ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]AutomationVersion, error)
+	ListAutomations(ctx context.Context, arg ListAutomationsParams) ([]Automation, error)
+	ListAutomationsAfter(ctx context.Context, arg ListAutomationsAfterParams) ([]Automation, error)
 	// RLS scopes the result to businesses the caller can see.
 	ListBusinesses(ctx context.Context) ([]Business, error)
 	ListCampaignDeliveries(ctx context.Context, arg ListCampaignDeliveriesParams) ([]MailingDelivery, error)
@@ -852,6 +861,8 @@ type Querier interface {
 	UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error)
 	// Final/intermediate state write. status + token/cost totals + optional error.
 	UpdateAgentRunProgress(ctx context.Context, arg UpdateAgentRunProgressParams) (AgentRun, error)
+	UpdateAutomationDefinition(ctx context.Context, arg UpdateAutomationDefinitionParams) (Automation, error)
+	UpdateAutomationVersionGraph(ctx context.Context, arg UpdateAutomationVersionGraphParams) (AutomationVersion, error)
 	UpdateCampaign(ctx context.Context, arg UpdateCampaignParams) (Campaign, error)
 	UpdateCodeReviewResult(ctx context.Context, arg UpdateCodeReviewResultParams) (CodeReview, error)
 	// UpdateCodexOAuthTokens writes a freshly-rotated token set. Scoped to (business_id, provider);

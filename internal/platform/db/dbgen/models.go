@@ -61,6 +61,185 @@ func (ns NullAiProvider) Value() (driver.Value, error) {
 	return string(ns.AiProvider), nil
 }
 
+type AutomationEnrollmentStatus string
+
+const (
+	AutomationEnrollmentStatusActive    AutomationEnrollmentStatus = "active"
+	AutomationEnrollmentStatusCompleted AutomationEnrollmentStatus = "completed"
+	AutomationEnrollmentStatusExited    AutomationEnrollmentStatus = "exited"
+	AutomationEnrollmentStatusErrored   AutomationEnrollmentStatus = "errored"
+)
+
+func (e *AutomationEnrollmentStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AutomationEnrollmentStatus(s)
+	case string:
+		*e = AutomationEnrollmentStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AutomationEnrollmentStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAutomationEnrollmentStatus struct {
+	AutomationEnrollmentStatus AutomationEnrollmentStatus `json:"automation_enrollment_status"`
+	Valid                      bool                       `json:"valid"` // Valid is true if AutomationEnrollmentStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAutomationEnrollmentStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AutomationEnrollmentStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AutomationEnrollmentStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAutomationEnrollmentStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AutomationEnrollmentStatus), nil
+}
+
+type AutomationStatus string
+
+const (
+	AutomationStatusDraft    AutomationStatus = "draft"
+	AutomationStatusActive   AutomationStatus = "active"
+	AutomationStatusPaused   AutomationStatus = "paused"
+	AutomationStatusArchived AutomationStatus = "archived"
+)
+
+func (e *AutomationStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AutomationStatus(s)
+	case string:
+		*e = AutomationStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AutomationStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAutomationStatus struct {
+	AutomationStatus AutomationStatus `json:"automation_status"`
+	Valid            bool             `json:"valid"` // Valid is true if AutomationStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAutomationStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AutomationStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AutomationStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAutomationStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AutomationStatus), nil
+}
+
+type AutomationStepOutcome string
+
+const (
+	AutomationStepOutcomeEntered   AutomationStepOutcome = "entered"
+	AutomationStepOutcomeWaiting   AutomationStepOutcome = "waiting"
+	AutomationStepOutcomeAdvanced  AutomationStepOutcome = "advanced"
+	AutomationStepOutcomeSent      AutomationStepOutcome = "sent"
+	AutomationStepOutcomeBranchYes AutomationStepOutcome = "branch_yes"
+	AutomationStepOutcomeBranchNo  AutomationStepOutcome = "branch_no"
+	AutomationStepOutcomeExited    AutomationStepOutcome = "exited"
+	AutomationStepOutcomeError     AutomationStepOutcome = "error"
+)
+
+func (e *AutomationStepOutcome) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AutomationStepOutcome(s)
+	case string:
+		*e = AutomationStepOutcome(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AutomationStepOutcome: %T", src)
+	}
+	return nil
+}
+
+type NullAutomationStepOutcome struct {
+	AutomationStepOutcome AutomationStepOutcome `json:"automation_step_outcome"`
+	Valid                 bool                  `json:"valid"` // Valid is true if AutomationStepOutcome is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAutomationStepOutcome) Scan(value interface{}) error {
+	if value == nil {
+		ns.AutomationStepOutcome, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AutomationStepOutcome.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAutomationStepOutcome) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AutomationStepOutcome), nil
+}
+
+type AutomationVersionStatus string
+
+const (
+	AutomationVersionStatusDraft      AutomationVersionStatus = "draft"
+	AutomationVersionStatusActive     AutomationVersionStatus = "active"
+	AutomationVersionStatusSuperseded AutomationVersionStatus = "superseded"
+)
+
+func (e *AutomationVersionStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AutomationVersionStatus(s)
+	case string:
+		*e = AutomationVersionStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AutomationVersionStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAutomationVersionStatus struct {
+	AutomationVersionStatus AutomationVersionStatus `json:"automation_version_status"`
+	Valid                   bool                    `json:"valid"` // Valid is true if AutomationVersionStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAutomationVersionStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AutomationVersionStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AutomationVersionStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAutomationVersionStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AutomationVersionStatus), nil
+}
+
 type CampaignStatus string
 
 const (
@@ -1049,6 +1228,86 @@ type AuditEntry struct {
 	OldValue         []byte      `json:"old_value"`
 	NewValue         []byte      `json:"new_value"`
 	CreatedAt        time.Time   `json:"created_at"`
+}
+
+type Automation struct {
+	ID                   uuid.UUID        `json:"id"`
+	BusinessID           uuid.UUID        `json:"business_id"`
+	TenantRootID         uuid.UUID        `json:"tenant_root_id"`
+	Name                 string           `json:"name"`
+	Description          *string          `json:"description"`
+	Status               AutomationStatus `json:"status"`
+	AllowReenroll        bool             `json:"allow_reenroll"`
+	ActiveVersionID      pgtype.UUID      `json:"active_version_id"`
+	DraftVersionID       pgtype.UUID      `json:"draft_version_id"`
+	CreatedByPrincipalID pgtype.UUID      `json:"created_by_principal_id"`
+	CreatedAt            time.Time        `json:"created_at"`
+	UpdatedAt            time.Time        `json:"updated_at"`
+}
+
+type AutomationEnrollment struct {
+	ID              uuid.UUID                  `json:"id"`
+	BusinessID      uuid.UUID                  `json:"business_id"`
+	TenantRootID    uuid.UUID                  `json:"tenant_root_id"`
+	AutomationID    uuid.UUID                  `json:"automation_id"`
+	VersionID       uuid.UUID                  `json:"version_id"`
+	SubscriberID    uuid.UUID                  `json:"subscriber_id"`
+	Status          AutomationEnrollmentStatus `json:"status"`
+	CurrentNodeID   *string                    `json:"current_node_id"`
+	WakeAt          pgtype.Timestamptz         `json:"wake_at"`
+	LeaseExpiresAt  pgtype.Timestamptz         `json:"lease_expires_at"`
+	ClaimGeneration int32                      `json:"claim_generation"`
+	NodeAttempts    int32                      `json:"node_attempts"`
+	LastError       *string                    `json:"last_error"`
+	ExitReason      *string                    `json:"exit_reason"`
+	SourceEventID   pgtype.UUID                `json:"source_event_id"`
+	EnrolledAt      time.Time                  `json:"enrolled_at"`
+	FinishedAt      pgtype.Timestamptz         `json:"finished_at"`
+	UpdatedAt       time.Time                  `json:"updated_at"`
+}
+
+type AutomationEnrollmentStep struct {
+	ID           uuid.UUID             `json:"id"`
+	BusinessID   uuid.UUID             `json:"business_id"`
+	TenantRootID uuid.UUID             `json:"tenant_root_id"`
+	EnrollmentID uuid.UUID             `json:"enrollment_id"`
+	VersionID    uuid.UUID             `json:"version_id"`
+	NodeID       string                `json:"node_id"`
+	NodeKind     string                `json:"node_kind"`
+	Attempt      int32                 `json:"attempt"`
+	EnteredAt    time.Time             `json:"entered_at"`
+	CompletedAt  pgtype.Timestamptz    `json:"completed_at"`
+	Outcome      AutomationStepOutcome `json:"outcome"`
+	DeliveryID   pgtype.UUID           `json:"delivery_id"`
+	Detail       []byte                `json:"detail"`
+}
+
+type AutomationEvent struct {
+	ID             uuid.UUID   `json:"id"`
+	BusinessID     uuid.UUID   `json:"business_id"`
+	TenantRootID   uuid.UUID   `json:"tenant_root_id"`
+	Name           string      `json:"name"`
+	Email          string      `json:"email"`
+	SubscriberID   pgtype.UUID `json:"subscriber_id"`
+	OccurredAt     time.Time   `json:"occurred_at"`
+	Properties     []byte      `json:"properties"`
+	IdempotencyKey *string     `json:"idempotency_key"`
+	CreatedAt      time.Time   `json:"created_at"`
+}
+
+type AutomationVersion struct {
+	ID           uuid.UUID               `json:"id"`
+	BusinessID   uuid.UUID               `json:"business_id"`
+	TenantRootID uuid.UUID               `json:"tenant_root_id"`
+	AutomationID uuid.UUID               `json:"automation_id"`
+	Number       int32                   `json:"number"`
+	Status       AutomationVersionStatus `json:"status"`
+	Graph        []byte                  `json:"graph"`
+	TriggerKind  *string                 `json:"trigger_kind"`
+	TriggerRef   *string                 `json:"trigger_ref"`
+	ActivatedAt  pgtype.Timestamptz      `json:"activated_at"`
+	CreatedAt    time.Time               `json:"created_at"`
+	UpdatedAt    time.Time               `json:"updated_at"`
 }
 
 type Business struct {

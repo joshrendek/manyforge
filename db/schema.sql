@@ -1029,6 +1029,7 @@ CREATE TABLE list_subscriber (
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
     UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
     UNIQUE (list_id, email),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (list_id, tenant_root_id) REFERENCES mailing_list (id, tenant_root_id) ON DELETE CASCADE,
@@ -1158,6 +1159,7 @@ CREATE TABLE mailing_delivery (
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
     UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
     UNIQUE (source_kind, source_id, subscriber_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
     FOREIGN KEY (campaign_id, tenant_root_id) REFERENCES campaign(id, tenant_root_id) ON DELETE CASCADE,
@@ -1205,6 +1207,149 @@ CREATE TABLE mailing_provider_webhook_delivery (
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
     FOREIGN KEY (profile_id, tenant_root_id) REFERENCES mailing_sending_profile(id, tenant_root_id) ON DELETE CASCADE,
     CHECK (provider IN ('resend', 'ses'))
+);
+
+-- Branching drip automations (Spec 014, migrations 0128-0129).
+CREATE TYPE automation_status AS ENUM ('draft', 'active', 'paused', 'archived');
+CREATE TYPE automation_version_status AS ENUM ('draft', 'active', 'superseded');
+CREATE TYPE automation_enrollment_status AS ENUM ('active', 'completed', 'exited', 'errored');
+CREATE TYPE automation_step_outcome AS ENUM (
+    'entered', 'waiting', 'advanced', 'sent', 'branch_yes', 'branch_no', 'exited', 'error'
+);
+
+CREATE TABLE automation (
+    id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id             uuid NOT NULL,
+    tenant_root_id          uuid NOT NULL,
+    name                    text NOT NULL,
+    description             text,
+    status                  automation_status NOT NULL DEFAULT 'draft',
+    allow_reenroll          boolean NOT NULL DEFAULT false,
+    active_version_id       uuid,
+    draft_version_id        uuid,
+    created_by_principal_id uuid REFERENCES principal(id) ON DELETE SET NULL,
+    created_at              timestamptz NOT NULL DEFAULT now(),
+    updated_at              timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    CHECK (char_length(btrim(name)) BETWEEN 1 AND 200),
+    CHECK (active_version_id IS NULL OR active_version_id <> draft_version_id)
+);
+
+CREATE TABLE automation_version (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    automation_id  uuid NOT NULL,
+    number         integer NOT NULL,
+    status         automation_version_status NOT NULL DEFAULT 'draft',
+    graph          jsonb NOT NULL DEFAULT '{"nodes":[],"edges":[]}'::jsonb,
+    trigger_kind   text,
+    trigger_ref    text,
+    activated_at   timestamptz,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
+    UNIQUE (id, automation_id, business_id, tenant_root_id),
+    UNIQUE (automation_id, number),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (automation_id, business_id, tenant_root_id)
+        REFERENCES automation(id, business_id, tenant_root_id) ON DELETE CASCADE,
+    CHECK (number > 0),
+    CHECK (
+        jsonb_typeof(graph) = 'object'
+        AND jsonb_typeof(graph->'nodes') = 'array'
+        AND jsonb_typeof(graph->'edges') = 'array'
+    )
+);
+
+ALTER TABLE automation
+    ADD FOREIGN KEY (active_version_id, id, business_id, tenant_root_id)
+        REFERENCES automation_version(id, automation_id, business_id, tenant_root_id),
+    ADD FOREIGN KEY (draft_version_id, id, business_id, tenant_root_id)
+        REFERENCES automation_version(id, automation_id, business_id, tenant_root_id);
+
+CREATE TABLE automation_enrollment (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id      uuid NOT NULL,
+    tenant_root_id   uuid NOT NULL,
+    automation_id    uuid NOT NULL,
+    version_id       uuid NOT NULL,
+    subscriber_id    uuid NOT NULL,
+    status           automation_enrollment_status NOT NULL DEFAULT 'active',
+    current_node_id  text,
+    wake_at          timestamptz,
+    lease_expires_at timestamptz,
+    claim_generation integer NOT NULL DEFAULT 0,
+    node_attempts    integer NOT NULL DEFAULT 0,
+    last_error       text,
+    exit_reason      text,
+    source_event_id  uuid,
+    enrolled_at      timestamptz NOT NULL DEFAULT now(),
+    finished_at      timestamptz,
+    updated_at       timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
+    UNIQUE (id, version_id, business_id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (automation_id, business_id, tenant_root_id)
+        REFERENCES automation(id, business_id, tenant_root_id) ON DELETE CASCADE,
+    FOREIGN KEY (version_id, automation_id, business_id, tenant_root_id)
+        REFERENCES automation_version(id, automation_id, business_id, tenant_root_id),
+    FOREIGN KEY (subscriber_id, business_id, tenant_root_id)
+        REFERENCES list_subscriber(id, business_id, tenant_root_id),
+    CHECK (node_attempts >= 0),
+    CHECK (claim_generation >= 0),
+    CHECK (current_node_id IS NULL OR current_node_id ~ '^[a-z0-9_-]{1,64}$'),
+    CHECK (
+        (status = 'active' AND finished_at IS NULL)
+        OR (status <> 'active' AND finished_at IS NOT NULL)
+    )
+);
+
+CREATE TABLE automation_enrollment_step (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    enrollment_id  uuid NOT NULL,
+    version_id     uuid NOT NULL,
+    node_id        text NOT NULL,
+    node_kind      text NOT NULL,
+    attempt        integer NOT NULL DEFAULT 1,
+    entered_at     timestamptz NOT NULL DEFAULT now(),
+    completed_at   timestamptz,
+    outcome        automation_step_outcome NOT NULL DEFAULT 'entered',
+    delivery_id    uuid,
+    detail         jsonb NOT NULL DEFAULT '{}',
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (enrollment_id, node_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (enrollment_id, version_id, business_id, tenant_root_id)
+        REFERENCES automation_enrollment(id, version_id, business_id, tenant_root_id) ON DELETE CASCADE,
+    FOREIGN KEY (delivery_id, business_id, tenant_root_id)
+        REFERENCES mailing_delivery(id, business_id, tenant_root_id),
+    CHECK (node_id ~ '^[a-z0-9_-]{1,64}$'),
+    CHECK (attempt > 0)
+);
+
+CREATE TABLE automation_event (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id     uuid NOT NULL,
+    tenant_root_id  uuid NOT NULL,
+    name            text NOT NULL,
+    email           citext NOT NULL,
+    subscriber_id   uuid,
+    occurred_at     timestamptz NOT NULL DEFAULT now(),
+    properties      jsonb NOT NULL DEFAULT '{}',
+    idempotency_key text,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
+    FOREIGN KEY (subscriber_id, business_id, tenant_root_id)
+        REFERENCES list_subscriber(id, business_id, tenant_root_id)
 );
 
 -- Tenant-merge control plane (migration 0113). These tables have no app-role
