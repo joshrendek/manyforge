@@ -93,6 +93,18 @@ BEGIN
         RETURN false;
     END IF;
 
+    -- A completed node and its enrollment transition commit in the same transaction.
+    -- Replaying that node must therefore be a no-op: allowing an older entered/waiting
+    -- write would erase completion history and could move the enrollment backwards.
+    IF EXISTS (
+        SELECT 1 FROM automation_enrollment_step
+        WHERE enrollment_id = v_enrollment.id
+          AND node_id = p_node_id
+          AND completed_at IS NOT NULL
+    ) THEN
+        RETURN true;
+    END IF;
+
     INSERT INTO automation_enrollment_step (
         business_id, tenant_root_id, enrollment_id, version_id, node_id, node_kind,
         attempt, entered_at, completed_at, outcome, delivery_id, detail
@@ -106,7 +118,7 @@ BEGIN
     ON CONFLICT (enrollment_id, node_id) DO UPDATE SET
         node_kind = EXCLUDED.node_kind,
         attempt = GREATEST(automation_enrollment_step.attempt, EXCLUDED.attempt),
-        completed_at = EXCLUDED.completed_at,
+        completed_at = COALESCE(automation_enrollment_step.completed_at, EXCLUDED.completed_at),
         outcome = EXCLUDED.outcome,
         delivery_id = COALESCE(EXCLUDED.delivery_id, automation_enrollment_step.delivery_id),
         detail = EXCLUDED.detail;
