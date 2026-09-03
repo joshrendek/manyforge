@@ -65,9 +65,9 @@ func (SQLStepStore) Delivery(ctx context.Context, tx pgx.Tx, enrollmentID uuid.U
 }
 
 func (SQLStepStore) EventExists(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, email, name string, since time.Time, within *time.Duration) (bool, error) {
-	var interval any
+	var interval pgtype.Interval
 	if within != nil {
-		interval = *within
+		interval = pgtype.Interval{Microseconds: within.Microseconds(), Valid: true}
 	}
 	var exists bool
 	err := tx.QueryRow(ctx, "SELECT automation_event_exists($1,$2,$3,$4,$5)", businessID, email, name, since, interval).Scan(&exists)
