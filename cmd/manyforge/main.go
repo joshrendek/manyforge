@@ -232,6 +232,7 @@ func main() {
 	var mailingWebhookH *mailing.WebhookHandler
 	var mailingWorker *mailing.SendWorker
 	var automationH *automations.Handler
+	var automationStepper *automations.Stepper
 	if len(cfg.MailingMasterKey) > 0 {
 		mailingSealer, err = mfcrypto.NewSealer(cfg.MailingMasterKey)
 		if err != nil {
@@ -695,6 +696,18 @@ func main() {
 			Limiter: ratelimit.NewTokenBucket(cfg.MailingRateRPS, cfg.MailingRateBurst),
 			Logger:  logger,
 		}
+		automationPorts := mailing.AutomationPorts{MessageDomain: cfg.MailingMessageDomain}
+		automationStepper = &automations.Stepper{
+			DB: database,
+			Deps: automations.Deps{
+				Subscribers: automationPorts, Sender: automationPorts,
+				Engagement: automationPorts, Tagger: automationPorts,
+				Templates: automationPorts, Lists: automationPorts,
+				Steps: automations.SQLStepStore{},
+			},
+			Every: 5 * time.Second, Batch: 50, Lease: 2 * time.Minute,
+			MaxNodesPerTick: 25, MaxNodeAttempts: 5, Logger: logger,
+		}
 	}
 	// Outbound identity selection shares the same DKIM sealer as IdentityService,
 	// so it can unseal a verified custom
@@ -884,6 +897,9 @@ func main() {
 	go outboxWorker.Run(workerCtx)
 	if mailingWorker != nil {
 		go mailingWorker.Run(workerCtx)
+	}
+	if automationStepper != nil {
+		go automationStepper.Run(workerCtx)
 	}
 
 	// Spec 007 code-review worker: polls the code_review queue and runs pending jobs
