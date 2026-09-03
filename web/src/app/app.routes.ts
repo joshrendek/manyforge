@@ -182,6 +182,12 @@ export const routes: Routes = [
       import('./pages/mailing/suppression-list').then((m) => m.MailingSuppressionListComponent),
   },
   {
+    path: 'mailing/automations',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/automations/automations-list').then((m) => m.AutomationsListComponent),
+  },
+  {
     path: 'mailing/:businessId/lists/:listId',
     canActivate: [authGuard],
     loadComponent: () =>
@@ -206,6 +212,13 @@ export const routes: Routes = [
     canDeactivate: [unsavedChangesGuard],
     loadComponent: () =>
       import('./pages/mailing/campaign-editor').then((m) => m.MailingCampaignEditorComponent),
+  },
+  {
+    path: 'mailing/:businessId/automations/:automationId',
+    canActivate: [authGuard],
+    canDeactivate: [unsavedChangesGuard],
+    loadComponent: () =>
+      import('./pages/mailing/automations/automation-editor').then((m) => m.AutomationEditorComponent),
   },
   {
     path: 'credentials/connector',
