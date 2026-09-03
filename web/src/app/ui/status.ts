@@ -116,6 +116,20 @@ export function mailingDeliveryStatusTone(s: string): Tone {
   }
 }
 
+export function automationStatusTone(s: string): Tone {
+  switch (s) {
+    case 'active':
+      return 'success';
+    case 'paused':
+      return 'warn';
+    case 'archived':
+      return 'neutral';
+    case 'draft':
+    default:
+      return 'accent';
+  }
+}
+
 export function effectClassTone(e: number): Tone {
   switch (e) {
     case 1:
