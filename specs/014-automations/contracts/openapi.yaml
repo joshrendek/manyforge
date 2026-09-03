@@ -233,6 +233,14 @@ components:
         - $ref: '#/components/schemas/ExitNode'
       discriminator:
         propertyName: kind
+        mapping:
+          trigger: '#/components/schemas/TriggerNode'
+          send_email: '#/components/schemas/SendEmailNode'
+          wait: '#/components/schemas/WaitNode'
+          condition: '#/components/schemas/ConditionNode'
+          add_tag: '#/components/schemas/AddTagNode'
+          remove_tag: '#/components/schemas/RemoveTagNode'
+          exit: '#/components/schemas/ExitNode'
     NodeBase:
       type: object
       required: [id, kind, config]
@@ -303,14 +311,14 @@ components:
           required: [type, tag, list_id]
           properties:
             type: {type: string, enum: [tag_added]}
-            tag: {type: string, minLength: 1, maxLength: 64}
+            tag: {type: string, minLength: 1, maxLength: 64, pattern: '.*\S.*'}
             list_id: {type: string, format: uuid}
         - type: object
           additionalProperties: false
           required: [type, name, list_id]
           properties:
             type: {type: string, enum: [event]}
-            name: {type: string, minLength: 1, maxLength: 128}
+            name: {type: string, minLength: 1, maxLength: 128, pattern: '.*\S.*'}
             list_id: {type: string, format: uuid}
     SendEmailConfig:
       type: object
@@ -335,7 +343,7 @@ components:
             mode: {type: string, enum: [until]}
             weekday: {type: integer, minimum: 1, maximum: 7, nullable: true}
             time: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
-            timezone: {type: string}
+            timezone: {type: string, minLength: 1, description: IANA timezone name}
     ConditionConfig:
       type: object
       additionalProperties: false
@@ -355,13 +363,13 @@ components:
               properties:
                 type: {type: string, enum: [clicked_link]}
                 node_id: {type: string, pattern: '^[a-z0-9_-]{1,64}$'}
-                url: {type: string, format: uri, nullable: true}
+                url: {type: string, format: uri, pattern: '^https?://', nullable: true}
             - type: object
               additionalProperties: false
               required: [type, tag]
               properties:
                 type: {type: string, enum: [has_tag]}
-                tag: {type: string, minLength: 1, maxLength: 64}
+                tag: {type: string, minLength: 1, maxLength: 64, pattern: '.*\S.*'}
             - type: object
               additionalProperties: false
               required: [type, list_id]
@@ -373,14 +381,14 @@ components:
               required: [type, name]
               properties:
                 type: {type: string, enum: [event_received]}
-                name: {type: string, minLength: 1, maxLength: 128}
+                name: {type: string, minLength: 1, maxLength: 128, pattern: '.*\S.*'}
                 within_seconds: {type: integer, minimum: 1, maximum: 31536000, nullable: true}
     TagConfig:
       type: object
       additionalProperties: false
       required: [tag]
       properties:
-        tag: {type: string, minLength: 1, maxLength: 64}
+        tag: {type: string, minLength: 1, maxLength: 64, pattern: '.*\S.*'}
     ExitConfig:
       type: object
       additionalProperties: false
