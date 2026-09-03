@@ -29,6 +29,7 @@ var inScope013CoreOps = []string{
 func TestOpenAPIDrift013Core(t *testing.T) {
 	routes := apiRoutes(t)
 	spec := spec013Routes(t)
+	spec014 := spec014Routes(t)
 	for _, op := range inScope013CoreOps {
 		if !spec[op] {
 			t.Errorf("test bug: %q missing from 013 contract", op)
@@ -39,7 +40,7 @@ func TestOpenAPIDrift013Core(t *testing.T) {
 	}
 	var extra []string
 	for op := range routes {
-		if strings.Contains(op, "/mailing/") && !spec[op] {
+		if strings.Contains(op, "/mailing/") && !spec[op] && !spec014[op] {
 			extra = append(extra, op)
 		}
 	}
