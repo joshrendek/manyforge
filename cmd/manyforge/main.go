@@ -28,6 +28,7 @@ import (
 	"github.com/manyforge/manyforge/internal/agents/coding/sandbox/kube"
 	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/authz"
+	"github.com/manyforge/manyforge/internal/automations"
 	"github.com/manyforge/manyforge/internal/codexoauth"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/jira"
@@ -230,6 +231,7 @@ func main() {
 	var mailingPublicH *mailing.PublicHandler
 	var mailingWebhookH *mailing.WebhookHandler
 	var mailingWorker *mailing.SendWorker
+	var automationH *automations.Handler
 	if len(cfg.MailingMasterKey) > 0 {
 		mailingSealer, err = mfcrypto.NewSealer(cfg.MailingMasterKey)
 		if err != nil {
@@ -247,12 +249,12 @@ func main() {
 			PublicBaseURL: cfg.PublicBaseURL,
 		}
 		mailingH = mailing.NewHandler(mailingSvc)
+		automationH = automations.NewHandler(&automations.Service{DB: database})
 		mailingPublicH = mailing.NewPublicHandler(mailingSvc, logger, mailingSealer, nil)
 		mailingWebhookH = mailing.NewWebhookHandler(database, mailingSealer, logger)
 	} else {
 		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled")
 	}
-
 	// manyforge-p20 telemetry: client registration (authenticated, gated by telemetry.read /
 	// telemetry.write) plus the principal-less batch ingest endpoint shared by the analytics and
 	// crash-reporting epics. Reuses the feedback sealer's master key semantics: unset ⇒ nil
@@ -850,6 +852,7 @@ func main() {
 		mailingRead:      httpx.RequirePermission(database, permResolve, authz.PermMailingRead, businessIDFromPath),
 		mailingWrite:     httpx.RequirePermission(database, permResolve, authz.PermMailingWrite, businessIDFromPath),
 		mailingSend:      httpx.RequirePermission(database, permResolve, authz.PermMailingSend, businessIDFromPath),
+		automations:      automationH,
 		telemetry:        telemetryH,
 		telemetryPublic:  telemetryPublicH,
 		telemetryRead:    httpx.RequirePermission(database, permResolve, authz.PermTelemetryRead, businessIDFromPath),
@@ -1158,6 +1161,7 @@ type apiHandlers struct {
 	mailingRead    func(http.Handler) http.Handler
 	mailingWrite   func(http.Handler) http.Handler
 	mailingSend    func(http.Handler) http.Handler
+	automations    *automations.Handler
 
 	// telemetry is the manyforge-p20 authenticated client-registration handler (register, list,
 	// revoke telemetry clients under a business).
@@ -1388,6 +1392,11 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				pr.Group(func(mr chi.Router) { mr.Use(h.mailingRead); h.mailing.ReadRoutes(mr) })
 				pr.Group(func(mw chi.Router) { mw.Use(h.mailingWrite); h.mailing.WriteRoutes(mw) })
 				pr.Group(func(ms chi.Router) { ms.Use(h.mailingSend); h.mailing.SendRoutes(ms) })
+			}
+			if h.automations != nil {
+				pr.Group(func(ar chi.Router) { ar.Use(h.mailingRead); h.automations.ReadRoutes(ar) })
+				pr.Group(func(aw chi.Router) { aw.Use(h.mailingWrite); h.automations.WriteRoutes(aw) })
+				pr.Group(func(as chi.Router) { as.Use(h.mailingSend); h.automations.SendRoutes(as) })
 			}
 			// manyforge-p20 telemetry read slice: list registered clients, gated on
 			// telemetry.read. Publishable keys are returned deliberately — an operator needs
