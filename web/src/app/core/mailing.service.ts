@@ -423,6 +423,14 @@ export class MailingService {
     return this.http.get<Page<MailingTemplate>>(`${this.base(businessId)}/templates`, { params });
   }
 
+  listAllTemplates(businessId: string): Observable<MailingTemplate[]> {
+    return this.listTemplates(businessId).pipe(
+      expand((page) => (page.next_cursor ? this.listTemplates(businessId, page.next_cursor) : EMPTY)),
+      map((page) => page.items ?? []),
+      reduce((all, items) => [...all, ...items], [] as MailingTemplate[]),
+    );
+  }
+
   getTemplate(businessId: string, templateId: string): Observable<MailingTemplate> {
     return this.http.get<MailingTemplate>(`${this.base(businessId)}/templates/${templateId}`);
   }
