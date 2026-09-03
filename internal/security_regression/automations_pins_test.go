@@ -129,6 +129,63 @@ func TestPin_AutomationDefinersAreFencedAndLockedDown(t *testing.T) {
 	}
 }
 
+func TestPin_AutomationEnginePortsAreLockedDown(t *testing.T) {
+	b, err := os.ReadFile("../../migrations/0130_automation_engine_ports.up.sql")
+	if err != nil {
+		t.Fatalf("read automation engine ports migration: %v", err)
+	}
+	sql := string(b)
+	functions := []string{
+		"mailing_enqueue_delivery",
+		"mailing_automation_subscriber_snapshot",
+		"mailing_automation_active_on_list",
+		"mailing_automation_resolve_for_list",
+		"mailing_automation_add_tag",
+		"mailing_automation_remove_tag",
+		"mailing_automation_template_exists",
+		"mailing_automation_list_exists",
+		"mailing_automation_delivery_engagement",
+		"automation_step_waiting",
+	}
+	for _, function := range functions {
+		start := strings.Index(sql, "CREATE FUNCTION "+function+"(")
+		if start < 0 {
+			t.Errorf("missing engine port function %s", function)
+			continue
+		}
+		body := sql[start:]
+		end := strings.Index(body, "$$;")
+		if end < 0 || !strings.Contains(body[:end], "SECURITY DEFINER") ||
+			!strings.Contains(body[:end], "SET search_path = public") {
+			t.Errorf("function %s is not a search-path-pinned SECURITY DEFINER", function)
+		}
+		if !strings.Contains(sql, "REVOKE ALL ON FUNCTION "+function+"(") {
+			t.Errorf("function %s retains default PUBLIC execute", function)
+		}
+		if !strings.Contains(sql, "GRANT EXECUTE ON FUNCTION "+function+"(") {
+			t.Errorf("function %s is not explicitly granted to the application role", function)
+		}
+	}
+	for _, function := range []string{"mailing_automation_add_tag", "mailing_automation_remove_tag"} {
+		start := strings.Index(sql, "CREATE FUNCTION "+function+"(")
+		body := sql[start:]
+		end := strings.Index(body, "$$;")
+		if end < 0 || !strings.Contains(body[:end], "tenant_merge_root_write_allowed") {
+			t.Errorf("mutating function %s does not honor the tenant merge fence", function)
+		}
+	}
+	for _, behavior := range []string{
+		"track_opens_override", "track_clicks_override",
+		"COALESCE(d.track_opens_override, c.track_opens, t.track_opens)",
+		"s.outcome = 'waiting' AND s.completed_at IS NULL",
+		"exit_reason = CASE WHEN p_status = 'exited'",
+	} {
+		if !strings.Contains(sql, behavior) {
+			t.Errorf("automation engine port migration missing behavior pin %q", behavior)
+		}
+	}
+}
+
 func TestPin_AutomationQueriesUseDualTenantPredicates(t *testing.T) {
 	b, err := os.ReadFile("../../db/query/automations.sql")
 	if err != nil {
