@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, HostListener, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { forkJoin, map, switchMap, throwError } from 'rxjs';
+import { forkJoin, map, Observable, switchMap, throwError } from 'rxjs';
 import {
   Automation,
   AutomationGraph,
@@ -13,6 +13,8 @@ import { CurrentBusinessService } from '../../../core/current-business.service';
 import { MailingList, MailingService, MailingTemplate } from '../../../core/mailing.service';
 import { HasUnsavedChanges, protectBeforeUnload } from '../../../core/unsaved-changes.guard';
 import { Spinner } from '../../../ui/spinner/spinner';
+import { StatusPill } from '../../../ui/status-pill/status-pill';
+import { automationStatusTone } from '../../../ui/status';
 import { ToastService } from '../../../ui/toast/toast.service';
 import { AutomationCanvasComponent } from './canvas/automation-canvas';
 import { deleteNode, GraphReferences, starterGraph, validateGraph } from './canvas/graph-ops';
@@ -21,22 +23,44 @@ import { AutomationNodePanelComponent } from './canvas/node-panel';
 @Component({
   selector: 'app-automation-editor',
   standalone: true,
-  imports: [RouterLink, Spinner, AutomationCanvasComponent, AutomationNodePanelComponent],
+  imports: [RouterLink, Spinner, StatusPill, AutomationCanvasComponent, AutomationNodePanelComponent],
   template: `
     <div class="editor" data-testid="automation-editor">
       <header class="header">
         <div class="title">
           <a routerLink="/mailing/automations" class="back" data-testid="automation-back">← Automations</a>
-          <div class="title-line"><h1>{{ automation()?.name || 'Automation' }}</h1>@if (version(); as currentVersion) { <span class="version">Version {{ currentVersion.number }} · {{ currentVersion.status }}</span> }</div>
+          <div class="title-line"><h1>{{ automation()?.name || 'Automation' }}</h1>@if (automation(); as auto) { <mf-status-pill [tone]="statusTone(auto.status)" [label]="auto.status" [ariaLabel]="'Automation status'" /> }@if (version(); as currentVersion) { <span class="version">Version {{ currentVersion.number }} · {{ currentVersion.status }}</span> }</div>
         </div>
         <div class="actions">
           @if (loading()) { <mf-spinner /> }
           <span class="validation" [class.invalid]="allIssues().length" data-testid="automation-validation-count">{{ allIssues().length ? allIssues().length + ' issue(s)' : 'Graph valid' }}</span>
-          <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="automation-discard" [disabled]="!dirty() || saving()" (click)="discard()">Discard</button>
-          <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="automation-save" [disabled]="!canSave()" (click)="save()">{{ saving() ? 'Saving…' : 'Save' }}</button>
+          <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="automation-discard" [disabled]="!dirty() || saving() || acting()" (click)="discard()">Discard</button>
+          <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="automation-save" [disabled]="!canSave() || acting()" (click)="save()">{{ saving() ? 'Saving…' : 'Save' }}</button>
+          @if (automation(); as auto) {
+            @switch (auto.status) {
+              @case ('draft') {
+                <button type="button" class="mf-btn mf-btn-primary" data-testid="automation-activate" [disabled]="!canActivate()" (click)="activate()">{{ acting() === 'activate' ? 'Activating…' : 'Activate' }}</button>
+              }
+              @case ('active') {
+                <button type="button" class="mf-btn mf-btn-secondary" data-testid="automation-pause" [disabled]="!!acting()" (click)="pause()">{{ acting() === 'pause' ? 'Pausing…' : 'Pause' }}</button>
+              }
+              @case ('paused') {
+                <button type="button" class="mf-btn mf-btn-secondary" data-testid="automation-resume" [disabled]="!!acting()" (click)="resume()">{{ acting() === 'resume' ? 'Resuming…' : 'Resume' }}</button>
+              }
+            }
+            @if ((auto.status === 'active' || auto.status === 'paused') && !auto.draft_version_id) {
+              <button type="button" class="mf-btn mf-btn-ghost" data-testid="automation-edit" [disabled]="!!acting()" (click)="edit()">Edit</button>
+            }
+            @if (auto.status !== 'archived') {
+              <button type="button" class="mf-btn mf-btn-danger" data-testid="automation-archive" [disabled]="!!acting()" (click)="archive()">{{ acting() === 'archive' ? 'Archiving…' : 'Archive' }}</button>
+            }
+          }
         </div>
       </header>
       <nav class="tabs" aria-label="Automation details"><button type="button" class="tab active" data-testid="automation-tab-canvas">Canvas</button><button type="button" class="tab" data-testid="automation-tab-enrollments" disabled title="Enrollment history arrives in the next frontend slice">Enrollments</button></nav>
+      @if (editingLive()) {
+        <div class="notice" data-testid="automation-version-banner">Editing v{{ version()?.number }} — the active version stays live until you activate this draft.</div>
+      }
       @if (error()) { <div class="error" data-testid="automation-editor-error">{{ error() }}</div> }
       @if (!loading() && !lists().length) { <div class="notice" data-testid="automation-no-lists">Create an active mailing list before building this automation.</div> }
       @if (!loading() && version()) {
@@ -93,12 +117,20 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
   serverErrors = signal<AutomationIssue[]>([]);
   loading = signal(true);
   saving = signal(false);
+  acting = signal('');
   error = signal('');
   readonly clientErrors = computed(() => validateGraph(this.graph()));
   readonly allIssues = computed(() => [...this.clientErrors(), ...this.serverErrors()]);
   readonly readOnly = computed(() => this.version()?.status !== 'draft');
   readonly dirty = computed(() => !!this.savedJson() && JSON.stringify(this.graph()) !== this.savedJson());
+  readonly editingLive = computed(() => {
+    const version = this.version();
+    const automation = this.automation();
+    return !!version && version.status === 'draft' && !!automation && automation.draft_version_id === version.id && !!automation.active_version_id;
+  });
+  readonly canActivate = computed(() => !this.readOnly() && !this.dirty() && this.clientErrors().length === 0 && !this.saving() && this.acting() === '');
   readonly references: GraphReferences = {};
+  readonly statusTone = automationStatusTone;
 
   ngOnInit(): void {
     this.businessId = this.route.snapshot.paramMap.get('businessId') ?? '';
@@ -109,6 +141,9 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
       return;
     }
     this.current.set(this.businessId);
+    this.load();
+  }
+  load(): void {
     forkJoin({
       automation: this.automations.get(this.businessId, this.automationId),
       lists: this.mailing.listAllLists(this.businessId),
@@ -191,6 +226,82 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
         const issues = response.error?.issues;
         if (response.status === 422 && Array.isArray(issues)) this.serverErrors.set(issues);
         this.toast.error('Could not save automation');
+      },
+    });
+  }
+  activate(): void {
+    const version = this.version();
+    if (!version || !this.canActivate()) return;
+    this.acting.set('activate');
+    this.automations.activate(this.businessId, this.automationId, version.id).subscribe({
+      next: (automation) => {
+        this.automation.set(automation);
+        this.version.update((current) => (current && current.id === version.id ? { ...current, status: 'active' } : current));
+        this.serverErrors.set([]);
+        this.acting.set('');
+        this.toast.success('Automation activated');
+      },
+      error: (response: HttpErrorResponse) => {
+        this.acting.set('');
+        const issues = response.error?.issues;
+        if (response.status === 422 && Array.isArray(issues)) this.serverErrors.set(issues as AutomationIssue[]);
+        this.toast.error(response.status === 422 ? 'Fix the highlighted steps before activating' : 'Could not activate automation');
+      },
+    });
+  }
+  pause(): void { this.transition('pause', () => this.automations.pause(this.businessId, this.automationId), 'Automation paused'); }
+  resume(): void { this.transition('resume', () => this.automations.resume(this.businessId, this.automationId), 'Automation resumed'); }
+  edit(): void {
+    if (this.acting()) return;
+    this.acting.set('edit');
+    this.automations.createVersion(this.businessId, this.automationId).subscribe({
+      next: (version) => {
+        this.acting.set('');
+        this.automation.update((automation) => (automation ? { ...automation, draft_version_id: version.id } : automation));
+        this.version.set(version);
+        this.graph.set(version.graph);
+        this.savedJson.set(JSON.stringify(version.graph));
+        this.serverErrors.set([]);
+        this.selectedId.set(version.graph.nodes[0]?.id ?? null);
+        this.panelOpen.set(false);
+      },
+      error: (response: HttpErrorResponse) => {
+        this.acting.set('');
+        this.toast.error('Could not create a new draft version');
+        if (response.status === 409) this.load();
+      },
+    });
+  }
+  archive(): void {
+    if (this.acting()) return;
+    if (!globalThis.confirm('Archive this automation? Active enrollments will exit and unsaved draft changes will be lost.')) return;
+    this.acting.set('archive');
+    this.automations.archive(this.businessId, this.automationId).subscribe({
+      next: () => {
+        this.acting.set('');
+        this.toast.success('Automation archived');
+        this.load();
+      },
+      error: (response: HttpErrorResponse) => {
+        this.acting.set('');
+        this.toast.error('Could not archive automation');
+        if (response.status === 409) this.load();
+      },
+    });
+  }
+  private transition(action: 'pause' | 'resume', call: () => Observable<Automation>, success: string): void {
+    if (this.acting()) return;
+    this.acting.set(action);
+    call().subscribe({
+      next: (automation) => {
+        this.automation.set(automation);
+        this.acting.set('');
+        this.toast.success(success);
+      },
+      error: (response: HttpErrorResponse) => {
+        this.acting.set('');
+        this.toast.error('Could not update automation status');
+        if (response.status === 409) this.load();
       },
     });
   }
