@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/manyforge/manyforge/internal/automations"
 	"github.com/manyforge/manyforge/internal/mailing"
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
@@ -85,6 +86,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := mailing.NewPublicHandler(svc, nil, sealer, func(*http.Request) string { return "203.0.113.7" })
+	h.S2SEvents = &automations.Service{DB: tdb.App}
 	h.Now = svc.Now
 	perKey := &toggleLimiter{}
 	h.PerKey = perKey
@@ -183,12 +185,30 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		t.Fatalf("S2S subscribe status/body = %d/%s", s2s.Code, s2s.Body.String())
 	}
 	var source string
+	var apiSubscriberID uuid.UUID
 	var attestor uuid.UUID
-	if err := tdb.Super.QueryRow(ctx, `SELECT consent_source::text, consent_attested_by FROM list_subscriber WHERE list_id=$1 AND email='api@example.test'`, list.ID).Scan(&source, &attestor); err != nil {
+	if err := tdb.Super.QueryRow(ctx, `SELECT id,consent_source::text,consent_attested_by FROM list_subscriber WHERE list_id=$1 AND email='api@example.test'`, list.ID).Scan(&apiSubscriberID, &source, &attestor); err != nil {
 		t.Fatal(err)
 	}
 	if source != "api" || attestor != key.ID {
 		t.Fatalf("S2S consent source/attestor = %q/%s", source, attestor)
+	}
+	eventBody, _ := json.Marshal(map[string]any{"name": "purchased", "subscriber_id": apiSubscriberID, "idempotency_key": "s2s-event-1", "properties": map[string]any{"plan": "pro"}})
+	eventPath := "/api/v1/mailing/s2s/" + key.PublishableKey + "/events"
+	eventMAC := hmac.New(sha256.New, []byte(key.Secret))
+	_, _ = eventMAC.Write(append([]byte(ts+"."+http.MethodPost+"."+eventPath+"."), eventBody...))
+	eventHeaders := map[string]string{"X-Mailing-Timestamp": ts, "X-Mailing-Signature": hex.EncodeToString(eventMAC.Sum(nil)), "Content-Type": "application/json"}
+	s2sEvent := request(http.MethodPost, eventPath, eventBody, eventHeaders)
+	s2sEventReplay := request(http.MethodPost, eventPath, eventBody, eventHeaders)
+	if s2sEvent.Code != http.StatusCreated || s2sEventReplay.Code != http.StatusOK {
+		t.Fatalf("S2S event statuses/bodies = %d/%s replay=%d/%s", s2sEvent.Code, s2sEvent.Body.String(), s2sEventReplay.Code, s2sEventReplay.Body.String())
+	}
+	var storedEvents, eventOutbox int
+	if err := tdb.Super.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM automation_event WHERE business_id=$1 AND idempotency_key='s2s-event-1'),
+		(SELECT count(*) FROM outbox WHERE tenant_root_id=$1 AND topic='automation.event.received' AND payload->>'subscriber_id'=$2)`,
+		seed.businessID, apiSubscriberID.String()).Scan(&storedEvents, &eventOutbox); err != nil || storedEvents != 1 || eventOutbox != 1 {
+		t.Fatalf("S2S event rows/outbox=%d/%d err=%v", storedEvents, eventOutbox, err)
 	}
 	deletePath := "/api/v1/mailing/s2s/" + key.PublishableKey + "/subscribers/api%40example.test"
 	deleteMAC := hmac.New(sha256.New, []byte(key.Secret))

@@ -24,6 +24,9 @@ func (h *Handler) ReadRoutes(router chi.Router) {
 	router.Get("/businesses/{id}/mailing/automations/{aid}", h.get)
 	router.Get("/businesses/{id}/mailing/automations/{aid}/versions", h.versions)
 	router.Get("/businesses/{id}/mailing/automations/{aid}/versions/{vid}", h.version)
+	router.Get("/businesses/{id}/mailing/automations/{aid}/enrollments", h.enrollments)
+	router.Get("/businesses/{id}/mailing/automations/{aid}/enrollments/{eid}", h.enrollment)
+	router.Get("/businesses/{id}/mailing/automations/{aid}/stats", h.stats)
 }
 
 func (h *Handler) WriteRoutes(router chi.Router) {
@@ -34,6 +37,9 @@ func (h *Handler) WriteRoutes(router chi.Router) {
 	router.Post("/businesses/{id}/mailing/automations/{aid}/versions/{vid}/validate", h.validate)
 	router.Post("/businesses/{id}/mailing/automations/{aid}/pause", h.pause)
 	router.Post("/businesses/{id}/mailing/automations/{aid}/archive", h.archive)
+	router.Post("/businesses/{id}/mailing/automations/{aid}/enrollments", h.enroll)
+	router.Post("/businesses/{id}/mailing/automations/{aid}/enrollments/{eid}/exit", h.exitEnrollment)
+	router.Post("/businesses/{id}/mailing/events", h.createEvent)
 }
 
 func (h *Handler) SendRoutes(router chi.Router) {
@@ -233,4 +239,89 @@ func (h *Handler) transition(w http.ResponseWriter, request *http.Request, opera
 	}
 	value, err := operation(h.service, request.Context(), principalID, ids[0], ids[1])
 	write(w, request, http.StatusOK, value, err)
+}
+
+func (h *Handler) enrollments(w http.ResponseWriter, request *http.Request) {
+	principalID, ids, ok := requestIDs(w, request, "id", "aid")
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
+	value, err := h.service.ListEnrollments(request.Context(), principalID, ids[0], ids[1], EnrollmentFilter{
+		Status: request.URL.Query().Get("status"), NodeID: request.URL.Query().Get("node_id"),
+		Cursor: request.URL.Query().Get("cursor"), Limit: limit,
+	})
+	write(w, request, http.StatusOK, value, err)
+}
+
+func (h *Handler) enrollment(w http.ResponseWriter, request *http.Request) {
+	principalID, ids, ok := requestIDs(w, request, "id", "aid", "eid")
+	if !ok {
+		return
+	}
+	value, err := h.service.GetEnrollment(request.Context(), principalID, ids[0], ids[1], ids[2])
+	write(w, request, http.StatusOK, value, err)
+}
+
+func (h *Handler) enroll(w http.ResponseWriter, request *http.Request) {
+	principalID, ids, ok := requestIDs(w, request, "id", "aid")
+	if !ok {
+		return
+	}
+	var body struct {
+		SubscriberID uuid.UUID `json:"subscriber_id"`
+	}
+	if !httpx.DecodeJSON(w, request, &body) {
+		return
+	}
+	if body.SubscriberID == uuid.Nil {
+		write(w, request, http.StatusBadRequest, nil, validation("subscriber_id is required"))
+		return
+	}
+	value, err := h.service.Enroll(request.Context(), principalID, ids[0], ids[1], body.SubscriberID)
+	write(w, request, http.StatusCreated, value, err)
+}
+
+func (h *Handler) exitEnrollment(w http.ResponseWriter, request *http.Request) {
+	principalID, ids, ok := requestIDs(w, request, "id", "aid", "eid")
+	if !ok {
+		return
+	}
+	value, err := h.service.ExitEnrollment(request.Context(), principalID, ids[0], ids[1], ids[2])
+	write(w, request, http.StatusOK, value, err)
+}
+
+func (h *Handler) stats(w http.ResponseWriter, request *http.Request) {
+	principalID, ids, ok := requestIDs(w, request, "id", "aid")
+	if !ok {
+		return
+	}
+	var versionID *uuid.UUID
+	if raw := request.URL.Query().Get("version_id"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			write(w, request, http.StatusBadRequest, nil, validation("invalid version_id"))
+			return
+		}
+		versionID = &parsed
+	}
+	value, err := h.service.Stats(request.Context(), principalID, ids[0], ids[1], versionID)
+	write(w, request, http.StatusOK, value, err)
+}
+
+func (h *Handler) createEvent(w http.ResponseWriter, request *http.Request) {
+	principalID, ids, ok := requestIDs(w, request, "id")
+	if !ok {
+		return
+	}
+	var body EventInput
+	if !httpx.DecodeJSON(w, request, &body) {
+		return
+	}
+	value, err := h.service.CreateEvent(request.Context(), principalID, ids[0], body)
+	status := http.StatusOK
+	if value.Created {
+		status = http.StatusCreated
+	}
+	write(w, request, status, value, err)
 }

@@ -45,6 +45,11 @@ const (
 	TopicMailingSubscriberActivated     = "mailing.subscriber.activated"
 	TopicMailingSubscriberTagAdded      = "mailing.subscriber.tag_added"
 	TopicMailingSubscriberStatusChanged = "mailing.subscriber.status_changed"
+
+	// TopicAutomationEventReceived is emitted atomically when a custom automation event is
+	// first persisted. The automation trigger subscriber resolves the active list-scoped
+	// subscribers and enrolls them idempotently under the outbox event id.
+	TopicAutomationEventReceived = "automation.event.received"
 )
 
 // Event is a drained outbox row handed to subscribers.

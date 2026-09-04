@@ -231,6 +231,7 @@ func main() {
 	var mailingPublicH *mailing.PublicHandler
 	var mailingWebhookH *mailing.WebhookHandler
 	var mailingWorker *mailing.SendWorker
+	var automationSvc *automations.Service
 	var automationH *automations.Handler
 	var automationStepper *automations.Stepper
 	if len(cfg.MailingMasterKey) > 0 {
@@ -250,8 +251,10 @@ func main() {
 			PublicBaseURL: cfg.PublicBaseURL,
 		}
 		mailingH = mailing.NewHandler(mailingSvc)
-		automationH = automations.NewHandler(&automations.Service{DB: database})
+		automationSvc = &automations.Service{DB: database}
+		automationH = automations.NewHandler(automationSvc)
 		mailingPublicH = mailing.NewPublicHandler(mailingSvc, logger, mailingSealer, nil)
+		mailingPublicH.S2SEvents = automationSvc
 		mailingWebhookH = mailing.NewWebhookHandler(database, mailingSealer, logger)
 	} else {
 		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled")
@@ -697,6 +700,11 @@ func main() {
 			Logger:  logger,
 		}
 		automationPorts := mailing.AutomationPorts{MessageDomain: cfg.MailingMessageDomain}
+		automationTrigger := automations.TriggerSubscriber{Subscribers: automationPorts}
+		eventBus.Subscribe(events.TopicMailingSubscriberActivated, automationTrigger.Handle)
+		eventBus.Subscribe(events.TopicMailingSubscriberTagAdded, automationTrigger.Handle)
+		eventBus.Subscribe(events.TopicMailingSubscriberStatusChanged, automationTrigger.Handle)
+		eventBus.Subscribe(events.TopicAutomationEventReceived, automationTrigger.Handle)
 		automationStepper = &automations.Stepper{
 			DB: database,
 			Deps: automations.Deps{

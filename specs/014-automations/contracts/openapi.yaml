@@ -140,6 +140,90 @@ paths:
         '200': {description: Archived, content: {application/json: {schema: {$ref: '#/components/schemas/Automation'}}}}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/enrollments:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+    get:
+      operationId: listAutomationEnrollments
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [active, completed, exited, errored]}}
+        - {name: node_id, in: query, schema: {type: string, pattern: '^[a-z0-9_-]{1,64}$'}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Enrollment page, content: {application/json: {schema: {$ref: '#/components/schemas/EnrollmentPage'}}}}
+        '400': {$ref: '#/components/responses/Validation'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      operationId: enrollAutomationSubscriber
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [subscriber_id], properties: {subscriber_id: {type: string, format: uuid}}}}}
+      responses:
+        '201': {description: Enrolled, content: {application/json: {schema: {$ref: '#/components/schemas/Enrollment'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/enrollments/{eid}:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+      - $ref: '#/components/parameters/EnrollmentID'
+    get:
+      operationId: getAutomationEnrollment
+      responses:
+        '200': {description: Enrollment and step timeline, content: {application/json: {schema: {$ref: '#/components/schemas/EnrollmentDetail'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /businesses/{id}/mailing/automations/{aid}/enrollments/{eid}/exit:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+      - $ref: '#/components/parameters/EnrollmentID'
+    post:
+      operationId: exitAutomationEnrollment
+      responses:
+        '200': {description: Exited, content: {application/json: {schema: {$ref: '#/components/schemas/Enrollment'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /businesses/{id}/mailing/automations/{aid}/stats:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      - $ref: '#/components/parameters/AutomationID'
+    get:
+      operationId: getAutomationStats
+      parameters:
+        - {name: version_id, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Enrollment and per-node statistics, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationStats'}}}}
+        '400': {$ref: '#/components/responses/Validation'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /businesses/{id}/mailing/events:
+    parameters:
+      - $ref: '#/components/parameters/BusinessID'
+    post:
+      operationId: createAutomationEvent
+      requestBody: {$ref: '#/components/requestBodies/AutomationEvent'}
+      responses:
+        '200': {description: Idempotent replay, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationEvent'}}}}
+        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationEvent'}}}}
+        '400': {$ref: '#/components/responses/Validation'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /mailing/s2s/{key}/events:
+    parameters:
+      - $ref: '#/components/parameters/MailingKey'
+      - $ref: '#/components/parameters/MailingTimestamp'
+      - $ref: '#/components/parameters/MailingSignature'
+    post:
+      security: []
+      operationId: createAutomationEventS2S
+      requestBody: {$ref: '#/components/requestBodies/AutomationEvent'}
+      responses:
+        '200': {description: Idempotent replay, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationEvent'}}}}
+        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationEvent'}}}}
+        '400': {$ref: '#/components/responses/Validation'}
+        '401': {description: Invalid key or signature}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {description: Key rate limit exceeded}
 components:
   securitySchemes:
     bearerAuth:
@@ -150,6 +234,10 @@ components:
     BusinessID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
     AutomationID: {name: aid, in: path, required: true, schema: {type: string, format: uuid}}
     VersionID: {name: vid, in: path, required: true, schema: {type: string, format: uuid}}
+    EnrollmentID: {name: eid, in: path, required: true, schema: {type: string, format: uuid}}
+    MailingKey: {name: key, in: path, required: true, schema: {type: string}}
+    MailingTimestamp: {name: X-Mailing-Timestamp, in: header, required: true, schema: {type: string}}
+    MailingSignature: {name: X-Mailing-Signature, in: header, required: true, schema: {type: string}}
   requestBodies:
     AutomationCreate:
       required: true
@@ -172,6 +260,20 @@ components:
               name: {type: string, minLength: 1, maxLength: 200}
               description: {type: string, nullable: true, maxLength: 5000}
               allow_reenroll: {type: boolean}
+    AutomationEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: {type: string, minLength: 1, maxLength: 128}
+              email: {type: string, format: email, description: Exactly one of email or subscriber_id is required.}
+              subscriber_id: {type: string, format: uuid}
+              occurred_at: {type: string, format: date-time}
+              idempotency_key: {type: string, minLength: 1, maxLength: 200}
+              properties: {type: object, additionalProperties: true}
   schemas:
     Automation:
       type: object
@@ -195,6 +297,94 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Automation'}}
         next_cursor: {type: string, nullable: true}
+    Enrollment:
+      type: object
+      required: [id, business_id, tenant_root_id, automation_id, version_id, subscriber_id, status, node_attempts, enrolled_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        tenant_root_id: {type: string, format: uuid}
+        automation_id: {type: string, format: uuid}
+        version_id: {type: string, format: uuid}
+        subscriber_id: {type: string, format: uuid}
+        status: {type: string, enum: [active, completed, exited, errored]}
+        current_node_id: {type: string, nullable: true}
+        wake_at: {type: string, format: date-time, nullable: true}
+        node_attempts: {type: integer}
+        last_error: {type: string, nullable: true}
+        exit_reason: {type: string, nullable: true}
+        source_event_id: {type: string, format: uuid, nullable: true}
+        enrolled_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time, nullable: true}
+        updated_at: {type: string, format: date-time}
+    EnrollmentPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Enrollment'}}
+        next_cursor: {type: string, nullable: true}
+    EnrollmentStep:
+      type: object
+      required: [id, node_id, node_kind, attempt, entered_at, outcome, detail]
+      properties:
+        id: {type: string, format: uuid}
+        node_id: {type: string}
+        node_kind: {type: string}
+        attempt: {type: integer}
+        entered_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time, nullable: true}
+        outcome: {type: string, enum: [entered, waiting, advanced, sent, branch_yes, branch_no, exited, error]}
+        delivery_id: {type: string, format: uuid, nullable: true}
+        detail: {type: object, additionalProperties: true}
+    EnrollmentDetail:
+      type: object
+      required: [enrollment, steps]
+      properties:
+        enrollment: {$ref: '#/components/schemas/Enrollment'}
+        steps: {type: array, items: {$ref: '#/components/schemas/EnrollmentStep'}}
+    AutomationEvent:
+      type: object
+      required: [id, business_id, name, email, occurred_at, properties, created_at, created]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        name: {type: string}
+        email: {type: string, format: email}
+        subscriber_id: {type: string, format: uuid, nullable: true}
+        occurred_at: {type: string, format: date-time}
+        idempotency_key: {type: string, nullable: true}
+        properties: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+        created: {type: boolean}
+    NodeStats:
+      type: object
+      required: [node_id, node_kind, entered, waiting, advanced, sent, branch_yes, branch_no, exited, errors]
+      properties:
+        node_id: {type: string}
+        node_kind: {type: string}
+        entered: {type: integer, format: int64}
+        waiting: {type: integer, format: int64}
+        advanced: {type: integer, format: int64}
+        sent: {type: integer, format: int64}
+        branch_yes: {type: integer, format: int64}
+        branch_no: {type: integer, format: int64}
+        exited: {type: integer, format: int64}
+        errors: {type: integer, format: int64}
+    AutomationStats:
+      type: object
+      required: [automation_id, version_id, enrollments, nodes]
+      properties:
+        automation_id: {type: string, format: uuid}
+        version_id: {type: string, format: uuid}
+        enrollments:
+          type: object
+          required: [active, completed, exited, errored]
+          properties:
+            active: {type: integer, format: int64}
+            completed: {type: integer, format: int64}
+            exited: {type: integer, format: int64}
+            errored: {type: integer, format: int64}
+        nodes: {type: array, items: {$ref: '#/components/schemas/NodeStats'}}
     AutomationVersion:
       type: object
       required: [id, business_id, tenant_root_id, automation_id, number, status, graph, created_at, updated_at]
