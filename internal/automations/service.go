@@ -566,9 +566,9 @@ func triggerIdentity(graph Graph) (string, string, error) {
 		case "list_joined":
 			return cfg.Type, cfg.ListID.String(), nil
 		case "tag_added":
-			return cfg.Type, cfg.Tag, nil
+			return cfg.Type, strings.ToLower(strings.TrimSpace(cfg.Tag)), nil
 		case "event":
-			return cfg.Type, cfg.Name, nil
+			return cfg.Type, strings.TrimSpace(cfg.Name), nil
 		}
 	}
 	return "", "", validation("graph has no trigger")
@@ -673,6 +673,8 @@ func mapErr(err error) error {
 		return fmt.Errorf("automation: foreign key: %w", errs.ErrNotFound)
 	case errors.As(err, &pgErr) && pgErr.Code == "23514":
 		return validation("invalid value")
+	case errors.As(err, &pgErr) && pgErr.Code == "22023":
+		return validation("invalid value")
 	case errors.Is(err, errs.ErrValidation), errors.Is(err, errs.ErrConflict):
 		return err
 	default:
@@ -681,7 +683,10 @@ func mapErr(err error) error {
 }
 
 func writeAudit(ctx context.Context, tx pgx.Tx, principalID, businessID, root uuid.UUID, action string, targetID uuid.UUID, value any) error {
-	targetType := "automation"
+	return writeAuditTarget(ctx, tx, principalID, businessID, root, action, "automation", targetID, value)
+}
+
+func writeAuditTarget(ctx context.Context, tx pgx.Tx, principalID, businessID, root uuid.UUID, action, targetType string, targetID uuid.UUID, value any) error {
 	return audit.Write(ctx, tx, audit.Entry{BusinessID: &businessID, TenantRootID: &root, ActorPrincipalID: &principalID, Action: action, TargetType: &targetType, TargetID: &targetID, NewValue: value})
 }
 
@@ -696,16 +701,24 @@ func clampLimit(limit int) int {
 }
 
 func encodeCursor(at time.Time, id uuid.UUID) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(cursorKind + "|" + at.UTC().Format(time.RFC3339Nano) + "|" + id.String()))
+	return encodeTypedCursor(cursorKind, at, id)
 }
 
 func decodeCursor(value string) (time.Time, uuid.UUID, error) {
+	return decodeTypedCursor(cursorKind, value)
+}
+
+func encodeTypedCursor(kind string, at time.Time, id uuid.UUID) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(kind + "|" + at.UTC().Format(time.RFC3339Nano) + "|" + id.String()))
+}
+
+func decodeTypedCursor(kind, value string) (time.Time, uuid.UUID, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
 		return time.Time{}, uuid.Nil, validation("invalid cursor")
 	}
 	parts := strings.SplitN(string(raw), "|", 3)
-	if len(parts) != 3 || parts[0] != cursorKind {
+	if len(parts) != 3 || parts[0] != kind {
 		return time.Time{}, uuid.Nil, validation("invalid cursor")
 	}
 	at, err := time.Parse(time.RFC3339Nano, parts[1])

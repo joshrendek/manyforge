@@ -215,3 +215,48 @@ func TestPin_AutomationQueriesUseDualTenantPredicates(t *testing.T) {
 		}
 	}
 }
+
+func TestPin_AutomationTriggerDefinersAreScopedFencedAndLockedDown(t *testing.T) {
+	b, err := os.ReadFile("../../migrations/0131_automation_triggers_api.up.sql")
+	if err != nil {
+		t.Fatalf("read automation trigger migration: %v", err)
+	}
+	sql := string(b)
+	functions := []string{
+		"automation_resolve_event_subscriber",
+		"automation_ingest_event",
+		"automation_event_trigger_lists",
+	}
+	for _, function := range functions {
+		start := strings.Index(sql, "CREATE FUNCTION "+function+"(")
+		if start < 0 {
+			t.Errorf("missing trigger function %s", function)
+			continue
+		}
+		body := sql[start:]
+		end := strings.Index(body, "$$;")
+		if end < 0 || !strings.Contains(body[:end], "SECURITY DEFINER") ||
+			!strings.Contains(body[:end], "SET search_path = public") {
+			t.Errorf("function %s is not a search-path-pinned SECURITY DEFINER", function)
+		}
+		if !strings.Contains(sql, "REVOKE ALL ON FUNCTION "+function+"(") ||
+			!strings.Contains(sql, "GRANT EXECUTE ON FUNCTION "+function+"(") {
+			t.Errorf("function %s does not have explicit least-privilege execute grants", function)
+		}
+	}
+	for _, behavior := range []string{
+		"tenant_merge_root_write_allowed(p_tenant_root_id)",
+		"s.business_id = p_business_id",
+		"s.tenant_root_id = p_tenant_root_id",
+		"s.list_id = p_list_id",
+		"ON CONFLICT (business_id, idempotency_key)",
+		"'automation.event.received'",
+		"a.status = 'active'",
+		"v.status = 'active'",
+		"(p_list_id IS NULL OR l.id = p_list_id)",
+	} {
+		if !strings.Contains(sql, behavior) {
+			t.Errorf("automation trigger migration missing behavior pin %q", behavior)
+		}
+	}
+}
