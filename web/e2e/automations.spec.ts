@@ -51,3 +51,69 @@ test('automations: insert, edit, and save a graph', async ({ page }) => {
   });
   expect(graph.edges.every((edge) => Object.hasOwn(edge, 'branch'))).toBe(true);
 });
+
+test('automations: activation surfaces server validation issues, then activates after the fix', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('mf_access', 'test-token'));
+  await page.route('**/api/**', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
+  await page.route('**/api/v1/me', (route) => route.fulfill({ json: account }));
+  await page.route('**/api/v1/businesses', (route) => route.fulfill({ json: businesses }));
+  await page.route('**/api/v1/businesses/b1/mailing/lists', (route) => route.fulfill({ json: { items: [list], next_cursor: null } }));
+  await page.route('**/api/v1/businesses/b1/mailing/templates', (route) => route.fulfill({ json: { items: [template], next_cursor: null } }));
+  await page.route('**/api/v1/businesses/b1/mailing/automations/a1', (route) => route.fulfill({ json: automation }));
+  const missingTemplate = '99999999-9999-4999-8999-999999999999';
+  const brokenVersion = {
+    ...version,
+    graph: {
+      nodes: [
+        { id: 'trigger', kind: 'trigger', name: 'Trigger', config: { type: 'list_joined', list_id: list.id } },
+        { id: 'n_welcome', kind: 'send_email', name: 'Welcome', config: { template_id: missingTemplate, track_opens: true, track_clicks: true } },
+        { id: 'exit', kind: 'exit', config: {} },
+      ],
+      edges: [
+        { id: 'e1', from: 'trigger', to: 'n_welcome', branch: null },
+        { id: 'e2', from: 'n_welcome', to: 'exit', branch: null },
+      ],
+    },
+  };
+  await page.route('**/api/v1/businesses/b1/mailing/automations/a1/versions/v1', (route) => route.fulfill({ json: brokenVersion }));
+  let savedGraph: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> } | null = null;
+  await page.route('**/api/v1/businesses/b1/mailing/automations/a1/versions/v1/graph', (route) => {
+    savedGraph = route.request().postDataJSON();
+    return route.fulfill({ json: { ...brokenVersion, graph: savedGraph } });
+  });
+  let activateCalls = 0;
+  await page.route('**/api/v1/businesses/b1/mailing/automations/a1/versions/v1/activate', (route) => {
+    activateCalls += 1;
+    if (activateCalls === 1) {
+      return route.fulfill({
+        status: 422,
+        json: { code: 'AUTOMATION_INVALID', message: 'automation graph is invalid', issues: [{ code: 'template_not_found', node_id: 'n_welcome', message: `Template ${missingTemplate} was not found` }] },
+      });
+    }
+    return route.fulfill({ json: { ...automation, status: 'active', active_version_id: 'v1', draft_version_id: null } });
+  });
+
+  await page.goto('/mailing/b1/automations/a1');
+  await expect(page.getByTestId('canvas-node')).toHaveCount(3);
+  await expect(page.getByTestId('automation-validation-count')).toHaveText('Graph valid');
+
+  await page.getByTestId('automation-activate').click();
+  await expect(page.locator('[data-node-id="n_welcome"]')).toHaveAttribute('data-invalid', 'true');
+  await expect(page.getByTestId('automation-validation-count')).toHaveText('1 issue(s)');
+
+  await page.locator('[data-node-id="n_welcome"]').dblclick();
+  await expect(page.getByTestId('automation-node-panel')).toBeVisible();
+  await page.getByTestId('send-template').selectOption(template.id);
+  await page.getByTestId('automation-save').click();
+  await expect.poll(() => savedGraph).not.toBeNull();
+  expect(savedGraph).not.toBeNull();
+  const fixedNode = savedGraph.nodes.find((node) => node['id'] === 'n_welcome');
+  expect(fixedNode).toBeDefined();
+  expect(fixedNode['config']).toMatchObject({ template_id: template.id });
+  await page.getByTestId('automation-activate').click();
+  await expect(activateCalls).toBe(2);
+  await expect(page.getByTestId('automation-pause')).toBeVisible();
+  await expect(page.locator('[data-node-id="n_welcome"]')).toHaveAttribute('data-invalid', 'false');
+  await expect(page.getByTestId('automation-validation-count')).toHaveText('Graph valid');
+  await expect(page.getByText('Version 1 · active')).toBeVisible();
+});
