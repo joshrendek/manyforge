@@ -155,4 +155,24 @@ export class AutomationsService {
       graph,
     );
   }
+
+  createVersion(businessId: string, automationId: string): Observable<AutomationVersion> {
+    return this.http.post<AutomationVersion>(`${this.base(businessId)}/${automationId}/versions`, {});
+  }
+
+  activate(businessId: string, automationId: string, versionId: string): Observable<Automation> {
+    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/versions/${versionId}/activate`, {});
+  }
+
+  pause(businessId: string, automationId: string): Observable<Automation> {
+    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/pause`, {});
+  }
+
+  resume(businessId: string, automationId: string): Observable<Automation> {
+    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/resume`, {});
+  }
+
+  archive(businessId: string, automationId: string): Observable<Automation> {
+    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/archive`, {});
+  }
 }
