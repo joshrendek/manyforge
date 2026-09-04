@@ -186,16 +186,23 @@ func nullIfEmpty(v string) any {
 
 // PublicHandler serves principal-less list signup, signed S2S, and root confirmation/unsubscribe.
 type PublicHandler struct {
-	Service  *Service
-	Logger   *slog.Logger
-	Sealer   *crypto.Sealer
-	ClientIP func(*http.Request) string
-	Now      func() time.Time
-	PerKey   ratelimit.Limiter
+	Service   *Service
+	Logger    *slog.Logger
+	Sealer    *crypto.Sealer
+	S2SEvents S2SEventIngestor
+	ClientIP  func(*http.Request) string
+	Now       func() time.Time
+	PerKey    ratelimit.Limiter
 	// IngestLimit is applied inside RootRoutes because /m/* lives outside the shared /api/v1
 	// ingress group. Production supplies the same trusted-proxy-aware limiter used by that group.
 	IngestLimit func(http.Handler) http.Handler
 	maxBytes    int64
+}
+
+// S2SEventIngestor lets the mailing key verifier hand an authenticated event to the
+// automations module without creating a mailing/automations import cycle.
+type S2SEventIngestor interface {
+	IngestS2SEvent(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, []byte) (any, bool, error)
 }
 
 // NewPublicHandler builds the principal-less mailing ingress and tracking handler.
@@ -209,6 +216,7 @@ func (h *PublicHandler) PublicRoutes(r chi.Router) {
 	r.Options("/mailing/public/{key}/subscribe", h.publicPreflight)
 	r.Post("/mailing/s2s/{key}/subscribers", h.s2sSubscribe)
 	r.Delete("/mailing/s2s/{key}/subscribers/{email}", h.s2sUnsubscribe)
+	r.Post("/mailing/s2s/{key}/events", h.s2sEvent)
 }
 
 // mailingCORS is intentionally open: hosted forms may run on arbitrary tenant sites, these
@@ -426,6 +434,47 @@ func (h *PublicHandler) s2sUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *PublicHandler) s2sEvent(w http.ResponseWriter, r *http.Request) {
+	raw, ok := h.readBody(w, r)
+	if !ok {
+		return
+	}
+	if h.S2SEvents == nil {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	var result any
+	var created bool
+	authorized, err := h.withVerifiedS2S(r, raw, func(list publicListContext, tx pgx.Tx) error {
+		var ingestErr error
+		result, created, ingestErr = h.S2SEvents.IngestS2SEvent(r.Context(), tx, list.businessID, list.tenantRootID, list.listID, raw)
+		return ingestErr
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errMailingRateLimited):
+			httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
+		case errors.Is(err, errs.ErrValidation):
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		case errors.Is(err, errs.ErrNotFound):
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		default:
+			h.logger().ErrorContext(r.Context(), "mailing s2s event failed", "err", err)
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		}
+		return
+	}
+	if !authorized {
+		h.unauthorized(w)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	httpx.WriteJSON(w, status, result)
 }
 
 func (h *PublicHandler) withVerifiedS2S(r *http.Request, raw []byte, fn func(publicListContext, pgx.Tx) error) (bool, error) {

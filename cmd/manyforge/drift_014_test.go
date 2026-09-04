@@ -13,8 +13,8 @@ import (
 func TestOpenAPIDrift014(t *testing.T) {
 	routes := apiRoutes(t)
 	spec := specRoutesFrom(t, specPath("specs", "014-automations", "contracts", "openapi.yaml"))
-	if len(spec) != 13 {
-		t.Fatalf("014 contract operations = %d, want 13", len(spec))
+	if len(spec) != 20 {
+		t.Fatalf("014 contract operations = %d, want 20", len(spec))
 	}
 	for operation := range spec {
 		if !routes[operation] {

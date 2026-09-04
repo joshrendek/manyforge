@@ -199,8 +199,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.ReconciliationPlan == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 130 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/130",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 131 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/131",
 				*first.InventoryVersion, *first.SchemaVersion)
 		}
 		if *first.ReconciliationVersion != 1 ||
