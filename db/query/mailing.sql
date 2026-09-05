@@ -452,3 +452,9 @@ SELECT unnest(public.mailing_claim_changed_campaign_rollups(
     sqlc.arg('lim')::integer,
     sqlc.arg('lease_seconds')::integer
 )::uuid[])::uuid AS campaign_id;
+
+-- name: CompleteChangedCampaignRollups :one
+SELECT public.mailing_complete_changed_campaign_rollups(
+    sqlc.arg('claim_token')::uuid,
+    sqlc.arg('campaign_ids')::uuid[]
+)::integer;

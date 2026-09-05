@@ -38,6 +38,7 @@ type Querier interface {
 	// ---- bounded worker claims ----
 	ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
+	CompleteChangedCampaignRollups(ctx context.Context, arg CompleteChangedCampaignRollupsParams) (int32, error)
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
 	// sealed credential blob for the principal-less webhook handler to build the typed connector
 	// and verify the HMAC signature in Go. Returns no row if the connector does not exist or is
