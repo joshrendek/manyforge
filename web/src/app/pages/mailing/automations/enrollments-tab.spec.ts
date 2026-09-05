@@ -79,6 +79,7 @@ describe('EnrollmentsTabComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('[data-testid="enrollment-row-subscriber"]').textContent).toContain('ada@acme.test');
+    expect(fixture.nativeElement.querySelector('[data-testid="enrollments-table"]')?.getAttribute('role')).toBe('table');
     expect(fixture.nativeElement.querySelector('[data-testid="enrollment-row"] .mf-pill')?.textContent).toContain('active');
     expect(fixture.nativeElement.querySelector('[data-testid="enrollment-exit"]')).toBeTruthy();
     expect(fixture.nativeElement.querySelector('[data-testid="enrollments-empty"]')).toBeNull();
@@ -207,5 +208,51 @@ describe('EnrollmentsTabComponent', () => {
     (fixture.nativeElement.querySelector('[data-testid="enrollment-exit"]') as HTMLButtonElement).click();
     fixture.detectChanges();
     http.expectNone((req) => req.url.includes('/exit'));
+  });
+
+  it('appends the next page when Load more is clicked', () => {
+    mount(activeAutomation, listId);
+    const first = makeEnrollment('e1', '33333333-3333-4333-8333-333333333333', 'active');
+    const second = makeEnrollment('e2', '44444444-4444-4444-8444-444444444444', 'active');
+    http.expectOne((req) => req.url.includes('/enrollments')).flush({ items: [first], next_cursor: 'c1' });
+    fixture.detectChanges();
+    http.expectOne((req) => req.url.includes('/subscribers')).flush({
+      items: [makeSubscriber(first.subscriber_id, 'ada@acme.test')], next_cursor: null,
+    });
+    fixture.detectChanges();
+
+    (fixture.nativeElement.querySelector('[data-testid="enrollments-load-more"]') as HTMLButtonElement).click();
+    const more = http.expectOne((req) => req.url.includes('/enrollments'));
+    expect(more.request.params.get('cursor')).toBe('c1');
+    more.flush({ items: [second], next_cursor: null });
+    fixture.detectChanges();
+    http.expectOne((req) => req.url.includes('/subscribers')).flush({
+      items: [makeSubscriber(second.subscriber_id, 'grace@acme.test')], next_cursor: null,
+    });
+    fixture.detectChanges();
+
+    const rows = fixture.nativeElement.querySelectorAll('[data-testid="enrollment-row"]');
+    expect(rows).toHaveLength(2);
+    expect(fixture.nativeElement.querySelector('[data-testid="enrollments-load-more"]')).toBeNull();
+  });
+
+  it('shows an error state when the initial load fails', () => {
+    mount(activeAutomation, listId);
+    http.expectOne((req) => req.url.includes('/enrollments')).error(new ErrorEvent('boom'));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="enrollments-error"]')).toBeTruthy();
+  });
+
+  it('closes the enroll dialog with Escape', () => {
+    mount(activeAutomation, listId);
+    flushInitial([]);
+    (fixture.nativeElement.querySelector('[data-testid="enrollment-enroll"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="enroll-dialog-backdrop"]')).toBeTruthy();
+
+    const backdrop = fixture.nativeElement.querySelector('[data-testid="enroll-dialog-backdrop"]') as HTMLElement;
+    backdrop.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="enroll-dialog-backdrop"]')).toBeNull();
   });
 });

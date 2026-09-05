@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, Input, OnInit, inject, signal } from '@angular/core';
+import { Component, ElementRef, Input, OnInit, ViewChild, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
   Automation,
@@ -64,10 +64,10 @@ import { ToastService } from '../../../ui/toast/toast.service';
       @if (error()) {
         <p class="mf-err" data-testid="enrollments-error">{{ error() }}</p>
       }
-      <div class="mf-table" data-testid="enrollments-table">
-        <div class="mf-tr mf-th">
-          <span class="sub-col">Subscriber</span><span>Status</span><span>Current node</span
-          ><span>Next run</span><span>Enrolled</span><span>Detail</span><span>Actions</span>
+      <div class="mf-table" data-testid="enrollments-table" role="table" aria-label="Automation enrollments">
+        <div class="mf-tr mf-th" role="row">
+          <span class="sub-col" role="columnheader">Subscriber</span><span role="columnheader">Status</span><span role="columnheader">Current node</span
+          ><span role="columnheader">Next run</span><span role="columnheader">Enrolled</span><span role="columnheader">Detail</span><span role="columnheader">Actions</span>
         </div>
         @for (enrollment of enrollments(); track enrollment.id) {
           <div class="mf-tr" data-testid="enrollment-row">
@@ -123,9 +123,9 @@ import { ToastService } from '../../../ui/toast/toast.service';
       }
     </section>
     @if (dialogOpen()) {
-      <div class="dialog-backdrop" data-testid="enroll-dialog-backdrop" (click)="closeDialog()">
-        <div class="mf-card dialog" (click)="$event.stopPropagation()">
-          <h3>Enroll a subscriber</h3>
+      <div class="dialog-backdrop" data-testid="enroll-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="enroll-dialog-title" (click)="closeDialog()" (keydown)="onDialogKeydown($event)">
+        <div class="mf-card dialog" #dialogCard (click)="$event.stopPropagation()">
+          <h3 id="enroll-dialog-title">Enroll a subscriber</h3>
           <p class="hint" data-testid="enroll-dialog-hint">
             The subscriber must be active on the trigger list.
             @if (automation && automation.allow_reenroll) { Re-enrollment of existing subscribers is allowed. }
@@ -133,6 +133,7 @@ import { ToastService } from '../../../ui/toast/toast.service';
           <div class="mf-field">
             <label for="enroll-search">Search by email or name</label>
             <input
+              #dialogSearch
               id="enroll-search"
               type="search"
               class="mf-input"
@@ -189,6 +190,8 @@ export class EnrollmentsTabComponent implements OnInit {
   @Input() automation: Automation | null = null;
   @Input() triggerListId: string | null = null;
 
+  @ViewChild('dialogCard') dialogCard?: ElementRef<HTMLElement>;
+  @ViewChild('dialogSearch') dialogSearch?: ElementRef<HTMLInputElement>;
   private readonly automations = inject(AutomationsService);
   private readonly mailing = inject(MailingService);
   private readonly toast = inject(ToastService);
@@ -208,6 +211,7 @@ export class EnrollmentsTabComponent implements OnInit {
   private subscribersById = signal<Map<string, MailingSubscriber>>(new Map());
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private searchSeq = 0;
+  private lastFocused: HTMLElement | null = null;
 
   readonly canEnroll = () =>
     this.automation?.status === 'active' && !!this.triggerListId && !this.enrolling();
@@ -240,15 +244,45 @@ export class EnrollmentsTabComponent implements OnInit {
 
   openDialog(): void {
     if (!this.canEnroll()) return;
+    this.lastFocused = (document.activeElement as HTMLElement) ?? null;
     this.dialogOpen.set(true);
     this.candidates.set([]);
     this.searched.set(false);
+    setTimeout(() => this.dialogSearch?.nativeElement.focus());
   }
 
   closeDialog(): void {
     if (this.searchTimer) clearTimeout(this.searchTimer);
     this.searchTimer = null;
     this.dialogOpen.set(false);
+    const restore = this.lastFocused;
+    this.lastFocused = null;
+    restore?.focus();
+  }
+
+  onDialogKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      this.closeDialog();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const card = this.dialogCard?.nativeElement;
+    if (!card) return;
+    const focusables = Array.from(
+      card.querySelectorAll<HTMLElement>('button, input, select, [href], [tabindex]:not([tabindex="-1"])'),
+    ).filter((el) => !el.hasAttribute('disabled'));
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === card)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   scheduleSearch(event: Event): void {

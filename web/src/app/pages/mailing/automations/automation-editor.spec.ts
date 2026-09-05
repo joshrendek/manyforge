@@ -323,12 +323,27 @@ describe('AutomationEditorComponent', () => {
     http.expectNone((req) => req.url.includes('/stats'));
   });
 
+  it('does not render stats when the stats request fails', () => {
+    mount({ automation: activeAutomation, version: makeVersion('v2', 2, 'active') });
+    (fixture.nativeElement.querySelector('[data-testid="automation-stats-toggle"]') as HTMLInputElement).click();
+    fixture.detectChanges();
+    http.expectOne((req) => req.url.includes('/stats')).error(new ErrorEvent('boom'));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="node-stats"]')).toHaveLength(0);
+  });
+
   it('switches to the enrollments tab and back to the canvas', () => {
     mount({ automation: activeAutomation, version: makeVersion('v2', 2, 'active') });
     expect(fixture.nativeElement.querySelector('[data-testid="enrollments-tab"]')).toBeNull();
 
     (fixture.nativeElement.querySelector('[data-testid="automation-tab-enrollments"]') as HTMLButtonElement).click();
     fixture.detectChanges();
+    const canvasTab = fixture.nativeElement.querySelector('[data-testid="automation-tab-canvas"]') as HTMLButtonElement;
+    const enrollmentsTab = fixture.nativeElement.querySelector('[data-testid="automation-tab-enrollments"]') as HTMLButtonElement;
+    expect(canvasTab.getAttribute('role')).toBe('tab');
+    expect(enrollmentsTab.getAttribute('aria-selected')).toBe('true');
+    expect(canvasTab.getAttribute('aria-selected')).toBe('false');
+    expect(fixture.nativeElement.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby')).toBe('automation-tab-enrollments-id');
     expect(fixture.nativeElement.querySelector('[data-testid="enrollments-tab"]')).toBeTruthy();
     expect(fixture.nativeElement.querySelector('[data-testid="canvas-node"]')).toBeNull();
     http.expectOne((req) => req.url.includes('/enrollments')).flush({ items: [], next_cursor: null });

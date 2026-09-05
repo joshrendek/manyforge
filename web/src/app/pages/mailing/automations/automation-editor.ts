@@ -63,9 +63,9 @@ import { EnrollmentsTabComponent } from './enrollments-tab';
           }
         </div>
       </header>
-      <nav class="tabs" aria-label="Automation details">
-        <button type="button" class="tab" [class.active]="tab() === 'canvas'" data-testid="automation-tab-canvas" (click)="setTab('canvas')">Canvas</button>
-        <button type="button" class="tab" [class.active]="tab() === 'enrollments'" data-testid="automation-tab-enrollments" (click)="setTab('enrollments')">Enrollments</button>
+      <nav class="tabs" role="tablist" aria-label="Automation details">
+        <button type="button" role="tab" id="automation-tab-canvas-id" aria-controls="automation-panel-canvas" [attr.aria-selected]="tab() === 'canvas' ? 'true' : 'false'" class="tab" [class.active]="tab() === 'canvas'" data-testid="automation-tab-canvas" (click)="setTab('canvas')">Canvas</button>
+        <button type="button" role="tab" id="automation-tab-enrollments-id" aria-controls="automation-panel-enrollments" [attr.aria-selected]="tab() === 'enrollments' ? 'true' : 'false'" class="tab" [class.active]="tab() === 'enrollments'" data-testid="automation-tab-enrollments" (click)="setTab('enrollments')">Enrollments</button>
       </nav>
       @if (editingAlongsideLive()) {
         <div class="notice" data-testid="automation-version-banner">Editing v{{ version()?.number }} — the active version stays live until you activate this draft.</div>
@@ -75,24 +75,28 @@ import { EnrollmentsTabComponent } from './enrollments-tab';
       @if (!loading() && version()) {
         <main class="workspace" [class.workspace-enrollments]="tab() === 'enrollments'">
           @if (tab() === 'canvas') {
-            <app-automation-canvas
-              [graph]="graph()"
-              [selectedId]="selectedId()"
-              [issues]="allIssues()"
-              [readOnly]="readOnly()"
-              [references]="references"
-              [stats]="statsByNode()"
-              (graphChange)="setGraph($event)"
-              (selectedIdChange)="selectedId.set($event)"
-              (openNode)="openPanel($event)"
-            />
+            <div role="tabpanel" id="automation-panel-canvas" class="panel" aria-labelledby="automation-tab-canvas-id">
+              <app-automation-canvas
+                [graph]="graph()"
+                [selectedId]="selectedId()"
+                [issues]="allIssues()"
+                [readOnly]="readOnly()"
+                [references]="references"
+                [stats]="statsByNode()"
+                (graphChange)="setGraph($event)"
+                (selectedIdChange)="selectedId.set($event)"
+                (openNode)="openPanel($event)"
+              />
+            </div>
           } @else {
-            <app-enrollments-tab
-              [businessId]="businessId"
-              [automationId]="automationId"
-              [automation]="automation()"
-              [triggerListId]="triggerListId()"
-            />
+            <div role="tabpanel" id="automation-panel-enrollments" class="panel" aria-labelledby="automation-tab-enrollments-id">
+              <app-enrollments-tab
+                [businessId]="businessId"
+                [automationId]="automationId"
+                [automation]="automation()"
+                [triggerListId]="triggerListId()"
+              />
+            </div>
           }
           @if (panelOpen() && selectedId()) {
             <app-automation-node-panel
@@ -113,7 +117,7 @@ import { EnrollmentsTabComponent } from './enrollments-tab';
     </div>
   `,
   styles: [`
-    :host{display:block}.editor{margin:-28px;min-height:calc(100vh - 56px);display:flex;flex-direction:column;background:var(--mf-surface)}.header{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px 20px;border-bottom:1px solid var(--mf-border)}.title{min-width:0}.back{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.title-line,.actions{display:flex;align-items:center;gap:10px}.title h1{margin:3px 0 0;font-size:var(--mf-fs-xl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.version,.validation{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.validation.invalid{color:var(--mf-danger-text)}.tabs{display:flex;padding:0 20px;border-bottom:1px solid var(--mf-border)}.tab{padding:11px 14px;border:0;border-bottom:2px solid transparent;color:var(--mf-text-muted);background:transparent}.tab.active{border-bottom-color:var(--mf-accent);color:var(--mf-text);font-weight:700}.workspace{display:grid;grid-template-columns:minmax(0,1fr) auto;flex:1;min-height:0;height:calc(100vh - 145px)}.stats-toggle{display:inline-flex;align-items:center;gap:6px;font-size:var(--mf-fs-xs);color:var(--mf-text-muted);cursor:pointer}.workspace-enrollments{grid-template-columns:1fr}.workspace-enrollments app-enrollments-tab{min-height:0;overflow:auto}.error,.notice{padding:10px 20px;font-size:var(--mf-fs-sm)}.error{color:var(--mf-danger-text);background:var(--mf-danger-soft)}.notice{color:var(--mf-warn-text);background:var(--mf-warn-soft)}@media(max-width:760px){.header{align-items:flex-start;flex-direction:column}.workspace{height:700px}.actions{flex-wrap:wrap}:host ::ng-deep app-automation-node-panel .panel{width:290px}}
+    :host{display:block}.editor{margin:-28px;min-height:calc(100vh - 56px);display:flex;flex-direction:column;background:var(--mf-surface)}.header{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px 20px;border-bottom:1px solid var(--mf-border)}.title{min-width:0}.back{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.title-line,.actions{display:flex;align-items:center;gap:10px}.title h1{margin:3px 0 0;font-size:var(--mf-fs-xl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.version,.validation{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.validation.invalid{color:var(--mf-danger-text)}.tabs{display:flex;padding:0 20px;border-bottom:1px solid var(--mf-border)}.tab{padding:11px 14px;border:0;border-bottom:2px solid transparent;color:var(--mf-text-muted);background:transparent}.tab.active{border-bottom-color:var(--mf-accent);color:var(--mf-text);font-weight:700}.workspace{display:grid;grid-template-columns:minmax(0,1fr) auto;flex:1;min-height:0;height:calc(100vh - 145px)}.stats-toggle{display:inline-flex;align-items:center;gap:6px;font-size:var(--mf-fs-xs);color:var(--mf-text-muted);cursor:pointer}.workspace-enrollments{grid-template-columns:1fr}.panel{min-width:0;min-height:0;height:100%}.workspace-enrollments app-enrollments-tab{min-height:0;overflow:auto}.error,.notice{padding:10px 20px;font-size:var(--mf-fs-sm)}.error{color:var(--mf-danger-text);background:var(--mf-danger-soft)}.notice{color:var(--mf-warn-text);background:var(--mf-warn-soft)}@media(max-width:760px){.header{align-items:flex-start;flex-direction:column}.workspace{height:700px}.actions{flex-wrap:wrap}:host ::ng-deep app-automation-node-panel .panel{width:290px}}
   `],
 })
 export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {

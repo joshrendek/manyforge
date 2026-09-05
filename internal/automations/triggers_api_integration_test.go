@@ -142,8 +142,11 @@ func TestAutomationTriggersEventsEnrollmentsStatsAndGoldenScenario(t *testing.T)
 	}
 	welcomeStats := statsNode(t, stats, "welcome")
 	reminderStats := statsNode(t, stats, "reminder")
-	if welcomeStats.Sent != 2 || welcomeStats.Opened != 1 || welcomeStats.Clicked != 1 || reminderStats.Sent != 1 || reminderStats.Opened != 0 || reminderStats.Clicked != 0 {
-		t.Fatalf("node stats welcome=%+v reminder=%+v", welcomeStats, reminderStats)
+	if welcomeStats.Sent != 2 || welcomeStats.Opened != 1 || welcomeStats.Clicked != 1 {
+		t.Fatalf("welcome node stats = %+v, want sent=2 opened=1 clicked=1", welcomeStats)
+	}
+	if reminderStats.Sent != 1 || reminderStats.Opened != 0 || reminderStats.Clicked != 0 {
+		t.Fatalf("reminder node stats = %+v, want sent=1 opened=0 clicked=0", reminderStats)
 	}
 
 	eventAutomationID := activateEventFlow(ctx, t, service, seed, list.ID, "purchased")
