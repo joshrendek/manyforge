@@ -230,22 +230,40 @@ func TestMFMailFeedback001RequiresDurableFeedbackReadiness(t *testing.T) {
 	putProfile := auditSection(t, profileSource, "func (s *Service) PutSendingProfile(", "func (s *Service) DeleteSendingProfile(")
 	verifySource := auditSource(t, "../../internal/mailing/profile_delivery.go")
 	verifyProfile := auditSection(t, verifySource, "func (s *Service) VerifySendingProfile(", "func (s *Service) TestSendingProfile(")
+	typesSource := auditSource(t, "../../internal/mailing/types.go")
+	resendProvider := auditSource(t, "../../internal/mailing/provider/resend.go")
+	sesProvider := auditSource(t, "../../internal/mailing/provider/ses.go")
 	scheduleSource := auditSource(t, "../../db/query/mailing.sql")
 	schedule := auditSection(t, scheduleSource, "-- name: ScheduleCampaign", "-- name: ListCampaignDeliveries")
 	migration := auditSource(t, "../../migrations/0134_mailing_provider_feedback.up.sql")
 	ses := auditSource(t, "../../internal/mailing/webhook_ses.go")
 
 	for _, marker := range []string{
-		"resend webhook_secret is required", "validateSESFeedbackConfiguration",
-		"SESConfigurationSet", "SNSTopicARN",
+		"validateSESFeedbackConfiguration", "SESConfigurationSet", "SNSTopicARN",
 	} {
 		if !strings.Contains(putProfile, marker) {
 			t.Fatalf("provider setup does not require feedback configuration marker %q", marker)
 		}
 	}
-	for _, marker := range []string{"feedbackStatus", `"ready"`, `"pending"`} {
+	publicResend := auditSection(t, typesSource, "type ResendCredentials struct", "type resendStoredCredentials struct")
+	if strings.Contains(publicResend, "WebhookSecret") {
+		t.Fatal("tenant-facing Resend credentials accept a signing secret")
+	}
+	for _, marker := range []string{
+		"ResendWebhookProvisioner", "EnsureWebhook", "persistResendWebhookVerification",
+	} {
 		if !strings.Contains(verifyProfile, marker) {
-			t.Fatalf("profile verification is missing feedback transition marker %q", marker)
+			t.Fatalf("Resend verification is missing control-plane attestation marker %q", marker)
+		}
+	}
+	for _, marker := range []string{`"endpoint"`, `"email.bounced"`, `"email.complained"`, `"signing_secret"`} {
+		if !strings.Contains(resendProvider, marker) {
+			t.Fatalf("Resend control-plane provisioning missing marker %q", marker)
+		}
+	}
+	for _, marker := range []string{"GetConfigurationSetEventDestinations", "ExpectedTopicARN", "EventTypeBounce", "EventTypeComplaint"} {
+		if !strings.Contains(sesProvider, marker) {
+			t.Fatalf("SES route attestation missing marker %q", marker)
 		}
 	}
 	if !strings.Contains(schedule, "p.status = 'verified'") ||

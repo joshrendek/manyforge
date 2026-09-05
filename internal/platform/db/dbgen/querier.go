@@ -843,6 +843,9 @@ type Querier interface {
 	// attempts and leave these columns alone.
 	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
 	SetFeedbackPostStatus(ctx context.Context, arg SetFeedbackPostStatusParams) (FeedbackPost, error)
+	// Resend provisioning performs provider I/O before this CAS. Persist the
+	// provider-generated webhook credential and readiness atomically.
+	SetMailingResendWebhookVerification(ctx context.Context, arg SetMailingResendWebhookVerificationParams) (MailingSendingProfile, error)
 	// Verification performs provider I/O with no transaction open. The updated_at
 	// compare prevents a slow response from marking credentials verified after an
 	// operator rotated the profile concurrently.

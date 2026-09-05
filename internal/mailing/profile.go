@@ -6,12 +6,14 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
@@ -21,6 +23,13 @@ var (
 	snsAccountPattern          = regexp.MustCompile(`^[0-9]{12}$`)
 	snsTopicPattern            = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}(\.fifo)?$`)
 )
+
+type resendWebhookCleanup struct {
+	profileID uuid.UUID
+	updatedAt time.Time
+	apiKey    string
+	webhookID string
+}
 
 func (s *Service) GetSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) (SendingProfile, error) {
 	var out SendingProfile
@@ -82,16 +91,7 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		if strings.TrimSpace(in.Resend.APIKey) == "" {
 			return SendingProfile{}, validation("resend api_key is required")
 		}
-		in.Resend.WebhookSecret = strings.TrimSpace(in.Resend.WebhookSecret)
-		if in.Resend.WebhookSecret == "" {
-			return SendingProfile{}, validation("resend webhook_secret is required")
-		}
-		key, keyErr := decodeSvixSecret(in.Resend.WebhookSecret)
-		clear(key)
-		if keyErr != nil {
-			return SendingProfile{}, validation("resend webhook_secret must be a valid whsec_ secret")
-		}
-		credential, err = json.Marshal(in.Resend)
+		credential, err = json.Marshal(resendStoredCredentials{APIKey: strings.TrimSpace(in.Resend.APIKey)})
 	}
 	if in.SES != nil {
 		if strings.TrimSpace(in.SES.AccessKeyID) == "" || strings.TrimSpace(in.SES.SecretAccessKey) == "" {
@@ -103,6 +103,7 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		return SendingProfile{}, validation("invalid credentials")
 	}
 	var out SendingProfile
+	var cleanup *resendWebhookCleanup
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
@@ -113,6 +114,36 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		hasExisting := existingErr == nil
 		if existingErr != nil && !errors.Is(existingErr, pgx.ErrNoRows) {
 			return existingErr
+		}
+		if hasExisting && existing.Mode == dbgen.MailingSendModeResend && existing.SecretRef.Valid {
+			if s.Vault == nil {
+				return validation("mailing credential storage is not configured")
+			}
+			oldRaw, openErr := s.Vault.Open(ctx, tx, businessID, uuid.UUID(existing.SecretRef.Bytes))
+			if openErr != nil {
+				return openErr
+			}
+			var old resendStoredCredentials
+			decodeErr := json.Unmarshal(oldRaw, &old)
+			clear(oldRaw)
+			if decodeErr != nil || strings.TrimSpace(old.APIKey) == "" {
+				if in.Resend == nil {
+					return errors.New("mailing: stored Resend credentials are invalid")
+				}
+			} else {
+				if old.WebhookID != "" {
+					cleanup = &resendWebhookCleanup{
+						profileID: existing.ID, updatedAt: existing.UpdatedAt,
+						apiKey: old.APIKey, webhookID: old.WebhookID,
+					}
+				}
+				if in.Mode == "resend" && in.Resend == nil {
+					credential, err = json.Marshal(resendStoredCredentials{APIKey: old.APIKey})
+					if err != nil {
+						return errors.New("mailing: encode Resend credentials")
+					}
+				}
+			}
 		}
 		var domainRef, secretRef pgtype.UUID
 		if in.Mode == "relay" {
@@ -205,6 +236,9 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		out = toSendingProfile(row)
 		return nil
 	})
+	if err == nil && cleanup != nil {
+		s.cleanupResendWebhook(ctx, *cleanup)
+	}
 	if err == nil && s.Providers != nil && out.ID != uuid.Nil {
 		s.Providers.Invalidate(out.ID)
 	}
@@ -213,6 +247,7 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 
 func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) error {
 	var profileID uuid.UUID
+	var cleanup *resendWebhookCleanup
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
@@ -224,6 +259,24 @@ func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, busines
 			return err
 		}
 		profileID = row.ID
+		if row.Mode == dbgen.MailingSendModeResend && row.SecretRef.Valid && s.Vault != nil {
+			raw, openErr := s.Vault.Open(ctx, tx, businessID, uuid.UUID(row.SecretRef.Bytes))
+			if openErr != nil {
+				return openErr
+			}
+			var stored resendStoredCredentials
+			decodeErr := json.Unmarshal(raw, &stored)
+			clear(raw)
+			if decodeErr != nil {
+				return errors.New("mailing: stored Resend credentials are invalid")
+			}
+			if stored.WebhookID != "" {
+				cleanup = &resendWebhookCleanup{
+					profileID: row.ID, updatedAt: row.UpdatedAt,
+					apiKey: stored.APIKey, webhookID: stored.WebhookID,
+				}
+			}
+		}
 		if err = auditMutation(ctx, tx, principalID, businessID, root, "mailing.sending_profile.deleted", "mailing_sending_profile", row.ID, map[string]any{"mode": row.Mode}); err != nil {
 			return err
 		}
@@ -238,10 +291,32 @@ func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, busines
 		}
 		return nil
 	})
+	if err == nil && cleanup != nil {
+		s.cleanupResendWebhook(ctx, *cleanup)
+	}
 	if err == nil && s.Providers != nil && profileID != uuid.Nil {
 		s.Providers.Invalidate(profileID)
 	}
 	return mapErr(err)
+}
+
+func (s *Service) cleanupResendWebhook(ctx context.Context, cleanup resendWebhookCleanup) {
+	if s.Providers == nil || cleanup.apiKey == "" || cleanup.webhookID == "" {
+		return
+	}
+	deliverer, err := s.Providers.Resolve(ctx, mailprovider.Profile{
+		ID: cleanup.profileID, UpdatedAt: cleanup.updatedAt,
+		Mode: "resend", ResendAPIKey: cleanup.apiKey,
+	})
+	if err == nil {
+		if provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner); ok {
+			err = provisioner.DeleteWebhook(ctx, cleanup.webhookID)
+		}
+	}
+	if err != nil && s.Logger != nil {
+		s.Logger.ErrorContext(ctx, "mailing Resend webhook cleanup failed",
+			"profile_id", cleanup.profileID, "err", err)
+	}
 }
 
 func toSendingProfile(r dbgen.MailingSendingProfile) SendingProfile {

@@ -182,7 +182,12 @@ type SendingProfile struct {
 }
 
 type ResendCredentials struct {
+	APIKey string `json:"api_key"`
+}
+
+type resendStoredCredentials struct {
 	APIKey        string `json:"api_key"`
+	WebhookID     string `json:"webhook_id,omitempty"`
 	WebhookSecret string `json:"webhook_secret,omitempty"`
 }
 

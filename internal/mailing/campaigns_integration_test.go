@@ -57,7 +57,7 @@ func campaignService(t *testing.T, ctx context.Context, tdb *testdb.TestDB, seed
 	}
 	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "resend", FromEmail: "news@example.test", FromName: "News",
-		Resend: &mailing.ResendCredentials{APIKey: "re_test", WebhookSecret: integrationResendWebhookSecret},
+		Resend: &mailing.ResendCredentials{APIKey: "re_test"},
 	})
 	if err != nil {
 		t.Fatal(err)

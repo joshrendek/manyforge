@@ -148,6 +148,73 @@ func TestResendRejectsHeaderInjectionBeforeNetwork(t *testing.T) {
 	}
 }
 
+func TestResendEnsureWebhookCreatesExactFeedbackRoute(t *testing.T) {
+	var gotEndpoint string
+	var gotEvents []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost || req.URL.Path != "/webhooks" {
+			t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+		}
+		var body struct {
+			Endpoint string   `json:"endpoint"`
+			Events   []string `json:"events"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		gotEndpoint, gotEvents = body.Endpoint, body.Events
+		_, _ = io.WriteString(w, `{"object":"webhook","id":"wh_123","signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`)
+	}))
+	defer server.Close()
+	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
+	got, created, err := r.EnsureWebhook(context.Background(), "https://hub.example.test/inbound/mailing/profile-a/resend", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || got.ID != "wh_123" || got.SigningSecret == "" {
+		t.Fatalf("created webhook = %+v/%v", got, created)
+	}
+	if gotEndpoint != "https://hub.example.test/inbound/mailing/profile-a/resend" ||
+		!containsStrings(gotEvents, "email.bounced", "email.complained") {
+		t.Fatalf("create payload endpoint=%q events=%v", gotEndpoint, gotEvents)
+	}
+}
+
+func TestResendEnsureWebhookRejectsWrongExistingRoute(t *testing.T) {
+	for name, response := range map[string]string{
+		"wrong endpoint": `{"id":"wh_123","status":"enabled","endpoint":"https://attacker.test/hook","events":["email.bounced","email.complained"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`,
+		"disabled":       `{"id":"wh_123","status":"disabled","endpoint":"https://hub.example.test/inbound/mailing/profile-a/resend","events":["email.bounced","email.complained"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`,
+		"missing event":  `{"id":"wh_123","status":"enabled","endpoint":"https://hub.example.test/inbound/mailing/profile-a/resend","events":["email.bounced"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != http.MethodGet || req.URL.Path != "/webhooks/wh_123" {
+					t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+				}
+				_, _ = io.WriteString(w, response)
+			}))
+			defer server.Close()
+			r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
+			if _, _, err := r.EnsureWebhook(context.Background(), "https://hub.example.test/inbound/mailing/profile-a/resend", "wh_123"); err == nil {
+				t.Fatal("accepted wrong existing Resend feedback route")
+			}
+		})
+	}
+}
+
+func containsStrings(values []string, wants ...string) bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	for _, want := range wants {
+		if !set[want] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 	configurationChecked := false
 	eventDestinationsJSON := `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`

@@ -2,6 +2,7 @@ package mailing
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -39,13 +40,6 @@ func TestSendingProfileRequiresFeedbackConfiguration(t *testing.T) {
 		in   SendingProfileInput
 	}{
 		{
-			name: "Resend webhook secret",
-			in: SendingProfileInput{
-				Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender",
-				Resend: &ResendCredentials{APIKey: "re_test"},
-			},
-		},
-		{
 			name: "SES configuration set",
 			in: SendingProfileInput{
 				Mode: "ses", FromEmail: "sender@example.com", FromName: "Sender",
@@ -69,6 +63,12 @@ func TestSendingProfileRequiresFeedbackConfiguration(t *testing.T) {
 				t.Fatalf("PutSendingProfile error = %v, want validation", err)
 			}
 		})
+	}
+}
+
+func TestResendCredentialsDoNotAcceptTenantWebhookSecret(t *testing.T) {
+	if _, ok := reflect.TypeOf(ResendCredentials{}).FieldByName("WebhookSecret"); ok {
+		t.Fatal("tenant-facing Resend credentials expose a webhook secret")
 	}
 }
 
