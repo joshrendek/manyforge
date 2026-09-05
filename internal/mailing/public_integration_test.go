@@ -73,12 +73,14 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	}
 	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "resend", FromEmail: "updates@example.test", FromName: "Updates",
-		Resend: &mailing.ResendCredentials{APIKey: "re_test"},
+		Resend: &mailing.ResendCredentials{APIKey: "re_test", WebhookSecret: integrationResendWebhookSecret},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tdb.Super.Exec(ctx, "UPDATE mailing_sending_profile SET status='verified' WHERE id=$1", profile.ID); err != nil {
+	if _, err := tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+		SET status='verified', feedback_status='ready', feedback_error=NULL,
+		    feedback_confirmed_at=now() WHERE id=$1`, profile.ID); err != nil {
 		t.Fatal(err)
 	}
 	key, err := svc.CreateListKey(ctx, seed.principalID, seed.businessID, list.ID, nil)

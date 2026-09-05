@@ -51,14 +51,31 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	}
 	status, message := "verified", ""
 	if verifyErr != nil {
-		status, message = "error", safeProviderMessage(verifyErr)
+		status, message = "error", providerVerificationMessage(verifyErr)
+	}
+	feedbackStatus, feedbackMessage := profile.FeedbackStatus, ""
+	switch profile.Mode {
+	case "resend":
+		feedbackStatus = "ready"
+	case "relay":
+		if verifyErr == nil {
+			feedbackStatus = "ready"
+		} else {
+			feedbackStatus, feedbackMessage = "error", message
+		}
+	case "ses":
+		if feedbackStatus != "ready" {
+			feedbackStatus = "pending"
+		}
 	}
 
 	var out SendingProfile
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		row, err := dbgen.New(tx).SetMailingSendingProfileVerification(ctx, dbgen.SetMailingSendingProfileVerificationParams{
-			Status: status, VerifyError: message, ID: profile.ID,
-			TenantRootID: profile.TenantRootID, ExpectedUpdatedAt: profile.UpdatedAt,
+			Status: status, VerifyError: message,
+			FeedbackStatus: feedbackStatus, FeedbackError: feedbackMessage,
+			ID: profile.ID, TenantRootID: profile.TenantRootID,
+			ExpectedUpdatedAt: profile.UpdatedAt,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -84,12 +101,15 @@ func (s *Service) TestSendingProfile(ctx context.Context, principalID, businessI
 	if err != nil {
 		return err
 	}
+	if err := s.checkTestRecipientSuppression(ctx, principalID, businessID, to); err != nil {
+		return err
+	}
 	profile, providerProfile, err := s.loadProviderProfile(ctx, principalID, businessID)
 	if err != nil {
 		return err
 	}
-	if profile.Status != "verified" {
-		return validation("sending profile must be verified")
+	if profile.Status != "verified" || profile.FeedbackStatus != "ready" {
+		return validation("sending profile must be verified and feedback-ready")
 	}
 	if s.OutboundLimiter != nil && !s.OutboundLimiter.Allow("ob:biz:"+businessID.String()) {
 		return fmt.Errorf("mailing: outbound rate limit: %w", errs.ErrRateLimited)
@@ -201,23 +221,59 @@ func (s *Service) loadProviderProfile(ctx context.Context, principalID, business
 	p := mailprovider.Profile{
 		ID: row.ID, UpdatedAt: row.UpdatedAt, Mode: string(row.Mode), FromEmail: row.FromEmail,
 		EmailDomainID: uuidPtr(row.EmailDomainID), SESRegion: stringValue(row.SesRegion),
-		SESConfigurationSet: stringValue(row.SesConfigurationSet),
+		SESConfigurationSet: stringValue(row.SesConfigurationSet), SNSTopicARN: stringValue(row.SnsTopicArn),
 	}
 	switch row.Mode {
 	case dbgen.MailingSendModeResend:
 		var creds ResendCredentials
-		if err := json.Unmarshal(credential, &creds); err != nil {
+		if err := json.Unmarshal(credential, &creds); err != nil ||
+			strings.TrimSpace(creds.APIKey) == "" {
 			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored Resend credentials are invalid")
+		}
+		key, keyErr := decodeSvixSecret(strings.TrimSpace(creds.WebhookSecret))
+		clear(key)
+		if keyErr != nil {
+			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored Resend feedback credentials are invalid")
 		}
 		p.ResendAPIKey = creds.APIKey
 	case dbgen.MailingSendModeSes:
 		var creds SESCredentials
-		if err := json.Unmarshal(credential, &creds); err != nil {
+		if err := json.Unmarshal(credential, &creds); err != nil ||
+			strings.TrimSpace(creds.AccessKeyID) == "" || strings.TrimSpace(creds.SecretAccessKey) == "" {
 			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored SES credentials are invalid")
+		}
+		if err := validateSESFeedbackConfiguration(row.SesRegion, row.SesConfigurationSet, row.SnsTopicArn); err != nil {
+			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored SES feedback configuration is invalid")
 		}
 		p.SESAccessKeyID, p.SESSecretAccessKey = creds.AccessKeyID, creds.SecretAccessKey
 	}
 	return toSendingProfile(row), p, nil
+}
+
+func (s *Service) checkTestRecipientSuppression(ctx context.Context, principalID, businessID uuid.UUID, recipient string) error {
+	var suppressed bool
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		root, err := resolveTenantRoot(ctx, q, businessID)
+		if err != nil {
+			return err
+		}
+		value, err := q.CheckMailingTestRecipientSuppression(ctx, dbgen.CheckMailingTestRecipientSuppressionParams{
+			BusinessID: businessID, TenantRootID: root, Email: recipient,
+		})
+		suppressed = value != nil && *value
+		return err
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if suppressed {
+		return validation("test recipient is suppressed")
+	}
+	return nil
+}
+func providerVerificationMessage(_ error) string {
+	return "provider verification failed"
 }
 
 func safeProviderMessage(err error) string {

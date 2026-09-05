@@ -117,40 +117,32 @@ func TestMFMailDelivery004TickLoopsUntilCampaignFanoutCompletes(t *testing.T) {
 	}
 }
 
-// MF-MAIL-ERRACK-001 characterizes authenticated mutation failures that are
-// logged and then acknowledged as success. Invalid/unknown input may remain
-// uniform; this pin covers the distinct internal-error path that suppresses retry.
-func TestMFMailErrack001DurabilityErrorsAreAcknowledged(t *testing.T) {
-	track := auditSource(t, "../../internal/mailing/track.go")
+// MF-MAIL-ERRACK-001 requires authenticated provider persistence failures to
+// return a generic retryable response rather than a success acknowledgement.
+func TestMFMailErrack001ProviderDurabilityErrorsReturnRetryableFailure(t *testing.T) {
 	resend := auditSource(t, "../../internal/mailing/webhook_resend.go")
 	ses := auditSource(t, "../../internal/mailing/webhook_ses.go")
 	bounce := auditSource(t, "../../internal/inbox/bounce.go")
-
-	for name, source := range map[string]string{
-		"unsubscribe":  track,
-		"resend":       resend,
-		"ses":          ses,
-		"relay bounce": bounce,
-	} {
-		if !strings.Contains(source, "failed") {
-			t.Fatalf("%s path no longer exposes the expected mutation-error branch", name)
+	webhookCore := auditSource(t, "../../internal/mailing/webhook.go")
+	for name, source := range map[string]string{"resend": resend, "ses": ses} {
+		if !strings.Contains(source, "failed") || !strings.Contains(source, "retryableFailure") {
+			t.Fatalf("%s path does not preserve a retryable authenticated durability failure", name)
 		}
 	}
-	if !strings.Contains(track, "mailing unsubscribe failed") ||
-		!strings.Contains(track, "w.WriteHeader(http.StatusOK)") {
-		t.Fatal("unsubscribe no longer logs a durability error and then returns 200")
+	if !strings.Contains(webhookCore, "w.WriteHeader(http.StatusServiceUnavailable)") {
+		t.Fatal("provider retryable failure helper is not a generic 503")
 	}
 	if !strings.Contains(resend, "mailing Resend webhook apply failed") ||
-		!strings.Contains(resend, "h.authenticatedOK(w)") {
-		t.Fatal("Resend no longer logs an apply error and then returns 200")
+		!strings.Contains(resend, "h.retryableFailure(w)") {
+		t.Fatal("Resend apply errors are not returned as a generic retryable failure")
 	}
 	if !strings.Contains(ses, "mailing SES webhook apply failed") ||
-		!strings.Contains(ses, "h.authenticatedOK(w)") {
-		t.Fatal("SES no longer logs an apply error and then returns 200")
+		!strings.Contains(ses, "h.retryableFailure(w)") {
+		t.Fatal("SES apply errors are not returned as a generic retryable failure")
 	}
 	if !strings.Contains(bounce, "inbox: bounce suppression failed") ||
-		!strings.Contains(bounce, "h.writeAccepted(w)") {
-		t.Fatal("relay bounce no longer logs a suppression error and then returns 202")
+		!strings.Contains(bounce, "w.WriteHeader(http.StatusServiceUnavailable)") {
+		t.Fatal("relay bounce suppression errors are not returned as a generic retryable failure")
 	}
 }
 
@@ -231,35 +223,45 @@ func TestAutomationSendAuthz005WritePermissionReachesProviderContent(t *testing.
 	}
 }
 
-// MF-MAIL-FEEDBACK-001 characterizes outbound verification becoming send-ready
-// without an authenticated, durable provider-feedback channel.
-func TestMFMailFeedback001OutboundVerificationIgnoresFeedbackReadiness(t *testing.T) {
+// MF-MAIL-FEEDBACK-001 requires complete feedback configuration, separate
+// durable readiness, and readiness fences at admission, claim, and renewal.
+func TestMFMailFeedback001RequiresDurableFeedbackReadiness(t *testing.T) {
 	profileSource := auditSource(t, "../../internal/mailing/profile.go")
 	putProfile := auditSection(t, profileSource, "func (s *Service) PutSendingProfile(", "func (s *Service) DeleteSendingProfile(")
 	verifySource := auditSource(t, "../../internal/mailing/profile_delivery.go")
 	verifyProfile := auditSection(t, verifySource, "func (s *Service) VerifySendingProfile(", "func (s *Service) TestSendingProfile(")
 	scheduleSource := auditSource(t, "../../db/query/mailing.sql")
 	schedule := auditSection(t, scheduleSource, "-- name: ScheduleCampaign", "-- name: ListCampaignDeliveries")
-	resend := auditSource(t, "../../internal/mailing/webhook_resend.go")
+	migration := auditSource(t, "../../migrations/0134_mailing_provider_feedback.up.sql")
 	ses := auditSource(t, "../../internal/mailing/webhook_ses.go")
 
-	if !strings.Contains(putProfile, `if in.Resend.WebhookSecret != ""`) {
-		t.Fatal("expected empty Resend webhook secret to remain accepted")
+	for _, marker := range []string{
+		"resend webhook_secret is required", "validateSESFeedbackConfiguration",
+		"SESConfigurationSet", "SNSTopicARN",
+	} {
+		if !strings.Contains(putProfile, marker) {
+			t.Fatalf("provider setup does not require feedback configuration marker %q", marker)
+		}
 	}
-	if strings.Contains(putProfile, "SNSTopicARN == nil") ||
-		strings.Contains(putProfile, "SESConfigurationSet == nil") {
-		t.Fatal("feedback configuration is now required; replace this characterization with the fixed readiness invariant")
+	for _, marker := range []string{"feedbackStatus", `"ready"`, `"pending"`} {
+		if !strings.Contains(verifyProfile, marker) {
+			t.Fatalf("profile verification is missing feedback transition marker %q", marker)
+		}
 	}
-	if strings.Contains(verifyProfile, "WebhookSecret") ||
-		strings.Contains(verifyProfile, "SNSTopic") ||
-		strings.Contains(verifyProfile, "feedback") {
-		t.Fatal("outbound verification now consults feedback readiness")
+	if !strings.Contains(schedule, "p.status = 'verified'") ||
+		!strings.Contains(schedule, "p.feedback_status = 'ready'") {
+		t.Fatal("campaign admission does not require outbound verification and feedback readiness")
 	}
-	if !strings.Contains(schedule, "p.status = 'verified'") {
-		t.Fatal("campaign admission no longer relies on outbound verification status")
+	for _, marker := range []string{
+		"mailing_transition_ses_feedback", "p.feedback_status = 'ready'",
+		"mailing_claim_deliveries", "mailing_renew_delivery",
+	} {
+		if !strings.Contains(migration, marker) {
+			t.Fatalf("provider feedback migration missing readiness marker %q", marker)
+		}
 	}
-	if !strings.Contains(resend, `creds.WebhookSecret == ""`) ||
-		!strings.Contains(ses, "wc.snsTopicARN == nil") {
-		t.Fatal("expected missing feedback configuration to make inbound provider events unusable")
+	if !strings.Contains(ses, `h.SNS.Confirm(r.Context(), envelope.SubscribeURL, *wc.snsTopicARN)`) ||
+		!strings.Contains(ses, `h.transitionSESFeedback(r.Context(), wc, "ready", "")`) {
+		t.Fatal("SES confirmation is not bound to its topic and durably transitioned to ready")
 	}
 }

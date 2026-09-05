@@ -55,7 +55,9 @@ func seedWebhookFixture(ctx context.Context, t *testing.T, tdb *testdb.TestDB, s
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tdb.Super.Exec(ctx, "UPDATE mailing_sending_profile SET status='verified' WHERE id=$1", profile.ID); err != nil {
+	if _, err := tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+		SET status='verified', feedback_status='ready', feedback_error=NULL,
+		    feedback_confirmed_at=now() WHERE id=$1`, profile.ID); err != nil {
 		t.Fatal(err)
 	}
 	list, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{Name: "Webhook", DoubleOptIn: false})
@@ -188,10 +190,10 @@ func TestResendWebhookIdempotencyAndMonotonicStatus(t *testing.T) {
 	}
 }
 
-// MF-MAIL-WEBHOOK-003 characterizes the delivery-correlation race. An authentic
-// provider event that arrives before provider_message_id is persisted consumes
-// its idempotency key; a provider retry cannot apply it after correlation exists.
-func TestMFMailWebhook003EarlyEventIsPermanentlyDeduplicated(t *testing.T) {
+// MF-MAIL-WEBHOOK-003 requires an authentic event that arrives before provider
+// correlation to remain pending and be consumed atomically when completion
+// persists the provider message ID.
+func TestMFMailWebhook003EarlyEventIsReconciledAfterCorrelation(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
 	if err != nil {
@@ -201,7 +203,9 @@ func TestMFMailWebhook003EarlyEventIsPermanentlyDeduplicated(t *testing.T) {
 	seed := seedMailingTenant(ctx, t, tdb)
 	fx := seedWebhookFixture(ctx, t, tdb, seed)
 	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_delivery
-		SET provider_message_id=NULL,status='sent',updated_at=now() WHERE id=$1`, fx.deliveryID); err != nil {
+		SET provider_message_id=NULL,status='sending',claim_generation=1,
+		    lease_until=now()+interval '2 minutes',updated_at=now()
+		WHERE id=$1`, fx.deliveryID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,26 +233,42 @@ func TestMFMailWebhook003EarlyEventIsPermanentlyDeduplicated(t *testing.T) {
 	}
 
 	post()
-	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_delivery
-		SET provider_message_id='provider-race',updated_at=now() WHERE id=$1`, fx.deliveryID); err != nil {
+	var pending string
+	if err = tdb.Super.QueryRow(ctx, `SELECT processing_status
+		FROM mailing_provider_webhook_delivery
+		WHERE profile_id=$1 AND external_event_id=$2`, fx.profileID, eventID).Scan(&pending); err != nil {
 		t.Fatal(err)
+	}
+	if pending != "pending" {
+		t.Fatalf("early event status = %q, want pending", pending)
+	}
+	var completed bool
+	if err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_complete_delivery($1,$2,$3)`,
+			fx.deliveryID, 1, "provider-race").Scan(&completed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !completed {
+		t.Fatal("delivery completion lost its generation fence")
 	}
 	post()
 
-	var status string
+	var status, processing string
 	var webhooks, tracking, suppressions int
 	if err = tdb.Super.QueryRow(ctx, `SELECT
 		(SELECT status::text FROM mailing_delivery WHERE id=$1),
+		(SELECT processing_status FROM mailing_provider_webhook_delivery WHERE profile_id=$2 AND external_event_id=$3),
 		(SELECT count(*) FROM mailing_provider_webhook_delivery WHERE profile_id=$2 AND external_event_id=$3),
 		(SELECT count(*) FROM mailing_tracking_event WHERE delivery_id=$1),
 		(SELECT count(*) FROM mailing_suppression WHERE business_id=$4 AND email=$5)`,
 		fx.deliveryID, fx.profileID, eventID, seed.businessID, fx.email,
-	).Scan(&status, &webhooks, &tracking, &suppressions); err != nil {
+	).Scan(&status, &processing, &webhooks, &tracking, &suppressions); err != nil {
 		t.Fatal(err)
 	}
-	if status != "sent" || webhooks != 1 || tracking != 0 || suppressions != 0 {
-		t.Fatalf("early event state status=%q webhooks=%d tracking=%d suppressions=%d",
-			status, webhooks, tracking, suppressions)
+	if status != "bounced" || processing != "applied" || webhooks != 1 || tracking != 1 || suppressions != 1 {
+		t.Fatalf("reconciled event state status=%q processing=%q webhooks=%d tracking=%d suppressions=%d",
+			status, processing, webhooks, tracking, suppressions)
 	}
 }
 
@@ -310,15 +330,18 @@ func TestSESWebhookRejectsTopicARNMismatch(t *testing.T) {
 	fx := seedWebhookFixture(ctx, t, tdb, seed)
 	region := "us-east-1"
 	topic := "arn:aws:sns:us-east-1:123456789012:expected"
+	configSet := "campaign-events"
 	profile, err := fx.svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "ses", FromEmail: "news@example.test", FromName: "News",
-		SES:       &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
-		SESRegion: &region, SNSTopicARN: &topic,
+		SES: &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+		SESRegion: &region, SESConfigurationSet: &configSet, SNSTopicARN: &topic,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tdb.Super.Exec(ctx, "UPDATE mailing_sending_profile SET status='verified' WHERE id=$1", profile.ID); err != nil {
+	if _, err := tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+		SET status='verified', feedback_status='ready', feedback_error=NULL,
+		    feedback_confirmed_at=now() WHERE id=$1`, profile.ID); err != nil {
 		t.Fatal(err)
 	}
 	key, certPEM, roots := webhookSigningCertificate(t)
@@ -364,6 +387,130 @@ func TestSESWebhookRejectsTopicARNMismatch(t *testing.T) {
 	}
 }
 
+func TestSESSubscriptionConfirmationTransitionsDurably(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	region := "us-east-1"
+	configSet := "campaign-events"
+	topic := "arn:aws:sns:us-east-1:123456789012:confirmed-topic"
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "ses", FromEmail: "news@example.test", FromName: "News",
+		SES: &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+		SESRegion: &region, SESConfigurationSet: &configSet, SNSTopicARN: &topic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+		SET status='verified', feedback_status='pending', feedback_error=NULL,
+		    feedback_confirmed_at=NULL WHERE id=$1`, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	key, certPEM, roots := webhookSigningCertificate(t)
+	failConfirmation := true
+	h := mailing.NewWebhookHandler(tdb.App, svc.Sealer, nil)
+	h.SNS = &snsverify.Verifier{
+		Roots: roots,
+		Client: webhookDoer(func(r *http.Request) (*http.Response, error) {
+			if strings.HasSuffix(r.URL.Path, ".pem") {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(certPEM)), Header: make(http.Header)}, nil
+			}
+			if failConfirmation {
+				return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader("provider detail")), Header: make(http.Header)}, nil
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Header: make(http.Header)}, nil
+		}),
+	}
+	router := chi.NewRouter()
+	h.PublicRoutes(router)
+	envelope := snsEnvelope{
+		Type: "SubscriptionConfirmation", MessageID: "confirmation-1", TopicARN: topic,
+		Message: "confirm", Timestamp: "2026-08-30T12:00:00Z", Token: "secret-token",
+		SubscribeURL: "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=secret-token",
+		SignatureVersion: "2",
+		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-test.pem",
+	}
+	envelope.Signature = signSNSEnvelope(t, key, envelope)
+	body, _ := json.Marshal(envelope)
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+profile.ID.String()+"/ses", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := post(); w.Code != http.StatusServiceUnavailable || w.Body.Len() != 0 {
+		t.Fatalf("failed confirmation response = %d/%q, want generic 503", w.Code, w.Body.String())
+	}
+	var feedbackStatus string
+	var feedbackError *string
+	var confirmedAt *time.Time
+	if err = tdb.Super.QueryRow(ctx, `SELECT feedback_status,feedback_error,feedback_confirmed_at
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&feedbackStatus, &feedbackError, &confirmedAt); err != nil {
+		t.Fatal(err)
+	}
+	if feedbackStatus != "error" || feedbackError == nil || confirmedAt != nil {
+		t.Fatalf("failed confirmation state = %q/%v/%v", feedbackStatus, feedbackError, confirmedAt)
+	}
+
+	failConfirmation = false
+	if w := post(); w.Code != http.StatusOK {
+		t.Fatalf("successful confirmation response = %d/%q", w.Code, w.Body.String())
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT feedback_status,feedback_error,feedback_confirmed_at
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&feedbackStatus, &feedbackError, &confirmedAt); err != nil {
+		t.Fatal(err)
+	}
+	if feedbackStatus != "ready" || feedbackError != nil || confirmedAt == nil {
+		t.Fatalf("successful confirmation state = %q/%v/%v", feedbackStatus, feedbackError, confirmedAt)
+	}
+}
+
+func TestAuthenticatedWebhookPersistenceFailureReturnsRetryableResponse(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	fx := seedWebhookFixture(ctx, t, tdb, seed)
+	if _, err = tdb.Super.Exec(ctx, `CREATE FUNCTION test_provider_webhook_failure()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'sensitive persistence detail'; END $$;
+		CREATE TRIGGER test_provider_webhook_failure
+		BEFORE INSERT ON mailing_provider_webhook_delivery
+		FOR EACH ROW EXECUTE FUNCTION test_provider_webhook_failure()`); err != nil {
+		t.Fatal(err)
+	}
+	h := mailing.NewWebhookHandler(tdb.App, fx.svc.Sealer, nil)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	h.Now = func() time.Time { return now }
+	router := chi.NewRouter()
+	h.PublicRoutes(router)
+	body := []byte(fmt.Sprintf(`{"type":"email.bounced","created_at":"2026-08-30T12:00:00Z","data":{"email_id":"provider-email-1","to":[%q]}}`, fx.email))
+	ts := fmt.Sprint(now.Unix())
+	mac := hmac.New(sha256.New, bytes.Repeat([]byte{0x51}, 32))
+	mac.Write([]byte("persistence-failure." + ts + "."))
+	mac.Write(body)
+	req := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+fx.profileID.String()+"/resend", bytes.NewReader(body))
+	req.Header.Set("svix-id", "persistence-failure")
+	req.Header.Set("svix-timestamp", ts)
+	req.Header.Set("svix-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable || w.Body.Len() != 0 {
+		t.Fatalf("persistence failure response = %d/%q, want generic 503", w.Code, w.Body.String())
+	}
+}
+
 type webhookDoer func(*http.Request) (*http.Response, error)
 
 func (f webhookDoer) Do(r *http.Request) (*http.Response, error) { return f(r) }
@@ -374,6 +521,8 @@ type snsEnvelope struct {
 	TopicARN         string `json:"TopicArn"`
 	Message          string `json:"Message"`
 	Timestamp        string `json:"Timestamp"`
+	Token            string `json:"Token,omitempty"`
+	SubscribeURL     string `json:"SubscribeURL,omitempty"`
 	SignatureVersion string `json:"SignatureVersion"`
 	Signature        string `json:"Signature"`
 	SigningCertURL   string `json:"SigningCertURL"`
@@ -381,9 +530,17 @@ type snsEnvelope struct {
 
 func signSNSEnvelope(t *testing.T, key *rsa.PrivateKey, envelope snsEnvelope) string {
 	t.Helper()
-	canonical := "Message\n" + envelope.Message + "\nMessageId\n" + envelope.MessageID +
-		"\nTimestamp\n" + envelope.Timestamp + "\nTopicArn\n" + envelope.TopicARN +
-		"\nType\n" + envelope.Type + "\n"
+	var canonical string
+	if envelope.Type == "SubscriptionConfirmation" || envelope.Type == "UnsubscribeConfirmation" {
+		canonical = "Message\n" + envelope.Message + "\nMessageId\n" + envelope.MessageID +
+			"\nSubscribeURL\n" + envelope.SubscribeURL + "\nTimestamp\n" + envelope.Timestamp +
+			"\nToken\n" + envelope.Token + "\nTopicArn\n" + envelope.TopicARN +
+			"\nType\n" + envelope.Type + "\n"
+	} else {
+		canonical = "Message\n" + envelope.Message + "\nMessageId\n" + envelope.MessageID +
+			"\nTimestamp\n" + envelope.Timestamp + "\nTopicArn\n" + envelope.TopicARN +
+			"\nType\n" + envelope.Type + "\n"
+	}
 	sum := sha256.Sum256([]byte(canonical))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
 	if err != nil {

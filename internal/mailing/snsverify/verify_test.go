@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"fmt"
 	"math/big"
 	"net/http"
 	"strings"
@@ -50,7 +51,7 @@ func TestVerifyNotificationVersionsAndCertificateCache(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := v.Verify(context.Background(), raw)
+		got, err := v.Verify(context.Background(), raw, msg.TopicARN)
 		if err != nil || got.MessageID != msg.MessageID {
 			t.Fatalf("Verify(version=%s) = %#v, %v", version, got, err)
 		}
@@ -84,18 +85,18 @@ func TestVerifySubscriptionAndConfirmHostPin(t *testing.T) {
 	}
 	msg.Signature = signMessage(t, key, msg)
 	raw, _ := json.Marshal(msg)
-	got, err := v.Verify(context.Background(), raw)
+	got, err := v.Verify(context.Background(), raw, msg.TopicARN)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Confirm(context.Background(), got.SubscribeURL); err != nil || !confirmed {
+	if err := v.Confirm(context.Background(), got.SubscribeURL, msg.TopicARN); err != nil || !confirmed {
 		t.Fatalf("Confirm = %v, called=%t", err, confirmed)
 	}
 	for _, bad := range []string{
 		"http://sns.us-west-2.amazonaws.com/", "https://sns.us-west-2.amazonaws.com.evil.test/",
 		"https://sns.us-west-2.amazonaws.com:443/", "https://127.0.0.1/",
 	} {
-		if err := v.Confirm(context.Background(), bad); err == nil {
+		if err := v.Confirm(context.Background(), bad, msg.TopicARN); err == nil {
 			t.Errorf("Confirm(%q) unexpectedly succeeded", bad)
 		}
 	}
@@ -120,7 +121,7 @@ func TestVerifyRejectsTamperingAndInvalidCertificateURLs(t *testing.T) {
 	tampered := base
 	tampered.Message = "changed"
 	raw, _ := json.Marshal(tampered)
-	if _, err := v.Verify(context.Background(), raw); err == nil {
+	if _, err := v.Verify(context.Background(), raw, base.TopicARN); err == nil {
 		t.Fatal("tampered message unexpectedly verified")
 	}
 	for _, certURL := range []string{
@@ -132,29 +133,25 @@ func TestVerifyRejectsTamperingAndInvalidCertificateURLs(t *testing.T) {
 		msg.SigningCertURL = certURL
 		msg.Signature = signMessage(t, key, msg)
 		raw, _ := json.Marshal(msg)
-		if _, err := v.Verify(context.Background(), raw); err == nil {
+		if _, err := v.Verify(context.Background(), raw, base.TopicARN); err == nil {
 			t.Errorf("certificate URL %q unexpectedly accepted", certURL)
 		}
 	}
 }
 
-// MF-MAIL-WEBHOOK-002 characterizes the pre-authentication certificate fetch.
-// The forged signature is structurally valid but cryptographically invalid; the
-// verifier still performs the outbound request before it can reject the caller.
-func TestMFMailWebhook002ForgedEnvelopeFetchesCertificateBeforeAuthentication(t *testing.T) {
-	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	_, certPEM, roots := signingCertificate(t, now)
+// MF-MAIL-WEBHOOK-002 rejects a topic mismatch before any attacker-selected
+// certificate retrieval.
+func TestMFMailWebhook002TopicMismatchDoesNotFetchCertificate(t *testing.T) {
 	fetches := 0
 	v := &Verifier{
-		Roots: roots, Now: func() time.Time { return now },
 		Client: doerFunc(func(*http.Request) (*http.Response, error) {
 			fetches++
-			return response(http.StatusOK, certPEM), nil
+			return response(http.StatusInternalServerError, nil), nil
 		}),
 	}
 	msg := Message{
 		Type: "Notification", MessageID: "forged", Message: "{}",
-		TopicARN:  "arn:aws:sns:us-east-1:123456789012:mailing",
+		TopicARN:  "arn:aws:sns:us-east-1:123456789012:attacker-topic",
 		Timestamp: "2026-08-30T12:00:00Z", SignatureVersion: "2",
 		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-forged.pem",
 		Signature:      base64.StdEncoding.EncodeToString([]byte("not-an-rsa-signature")),
@@ -163,11 +160,43 @@ func TestMFMailWebhook002ForgedEnvelopeFetchesCertificateBeforeAuthentication(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = v.Verify(context.Background(), raw); err == nil {
-		t.Fatal("forged envelope unexpectedly verified")
+	expected := "arn:aws:sns:us-east-1:123456789012:expected-topic"
+	if _, err = v.Verify(context.Background(), raw, expected); err == nil {
+		t.Fatal("topic-mismatched envelope unexpectedly verified")
 	}
-	if fetches != 1 {
-		t.Fatalf("certificate fetches = %d, want one fetch before authentication", fetches)
+	if fetches != 0 {
+		t.Fatalf("certificate fetches = %d, want zero before topic binding", fetches)
+	}
+}
+
+func TestCertificateFetchBudgetBoundsUniqueForgedPaths(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	fetches := 0
+	v := &Verifier{
+		Now: func() time.Time { return now },
+		Client: doerFunc(func(*http.Request) (*http.Response, error) {
+			fetches++
+			return response(http.StatusBadGateway, nil), nil
+		}),
+	}
+	topic := "arn:aws:sns:us-east-1:123456789012:expected-topic"
+	for i := range 20 {
+		msg := Message{
+			Type: "Notification", MessageID: "forged", Message: "{}", TopicARN: topic,
+			Timestamp: "2026-08-30T12:00:00Z", SignatureVersion: "2",
+			SigningCertURL: fmt.Sprintf("https://sns.us-east-1.amazonaws.com/SimpleNotificationService-forged-%d.pem", i),
+			Signature: base64.StdEncoding.EncodeToString([]byte("not-an-rsa-signature")),
+		}
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = v.Verify(context.Background(), raw, topic); err == nil {
+			t.Fatal("forged envelope unexpectedly verified")
+		}
+	}
+	if fetches != maxCertificateFetches {
+		t.Fatalf("certificate fetches = %d, want fixed budget %d", fetches, maxCertificateFetches)
 	}
 }
 

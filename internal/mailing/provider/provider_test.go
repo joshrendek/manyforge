@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 	"github.com/aws/smithy-go"
 	smithyendpoints "github.com/aws/smithy-go/endpoints"
@@ -126,6 +128,9 @@ func TestResendHTTPError(t *testing.T) {
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != 429 || httpErr.Code != "rate_limit_exceeded" {
 		t.Fatalf("error = %#v", err)
 	}
+	if strings.Contains(err.Error(), "slow down") {
+		t.Fatalf("provider response body leaked through error: %q", err)
+	}
 }
 
 func TestResendRejectsHeaderInjectionBeforeNetwork(t *testing.T) {
@@ -144,6 +149,7 @@ func TestResendRejectsHeaderInjectionBeforeNetwork(t *testing.T) {
 }
 
 func TestSESEndpointResolverSendAndVerify(t *testing.T) {
+	configurationChecked := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -151,6 +157,9 @@ func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 			_, _ = io.WriteString(w, `{"VerifiedForSendingStatus":true}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v2/email/account":
 			_, _ = io.WriteString(w, `{"SendingEnabled":true}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v2/email/configuration-sets/campaign-events":
+			configurationChecked = true
+			_, _ = io.WriteString(w, `{}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v2/email/outbound-emails":
 			var body struct {
 				Content struct {
@@ -174,10 +183,10 @@ func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-
 	profile := Profile{
 		FromEmail: "sender@example.com", SESRegion: "us-east-1",
 		SESAccessKeyID: "AKID", SESSecretAccessKey: "secret", SESConfigurationSet: "campaign-events",
+		SNSTopicARN: "arn:aws:sns:us-east-1:123456789012:mailing-events",
 	}
 	endpointURL, err := url.Parse(server.URL)
 	if err != nil {
@@ -187,9 +196,18 @@ func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sender.Identity = stubSTSIdentity{accountID: "123456789012"}
 	if err := sender.Verify(context.Background()); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
+	if !configurationChecked {
+		t.Fatal("Verify did not validate the configured SES event configuration set")
+	}
+	sender.Identity = stubSTSIdentity{accountID: "999999999999"}
+	if err := sender.Verify(context.Background()); err == nil {
+		t.Fatal("Verify accepted an SNS topic from a different AWS account")
+	}
+	sender.Identity = stubSTSIdentity{accountID: "123456789012"}
 	result, err := sender.Send(context.Background(), notify.Mail{
 		From: "sender@example.com", To: "reader@example.net", Subject: "News",
 		BodyText: "Hello", MessageID: "delivery@example.com",
@@ -208,6 +226,12 @@ func (r testSESEndpointResolver) ResolveEndpoint(context.Context, sesv2.Endpoint
 	return smithyendpoints.Endpoint{URI: *r.url}, nil
 }
 
+
+type stubSTSIdentity struct{ accountID string }
+
+func (s stubSTSIdentity) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+	return &sts.GetCallerIdentityOutput{Account: aws.String(s.accountID)}, nil
+}
 type stubDeliverer struct{}
 
 func (stubDeliverer) Send(context.Context, notify.Mail) (SendResult, error) { return SendResult{}, nil }

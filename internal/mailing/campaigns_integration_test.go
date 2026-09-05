@@ -57,12 +57,14 @@ func campaignService(t *testing.T, ctx context.Context, tdb *testdb.TestDB, seed
 	}
 	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "resend", FromEmail: "news@example.test", FromName: "News",
-		Resend: &mailing.ResendCredentials{APIKey: "re_test"},
+		Resend: &mailing.ResendCredentials{APIKey: "re_test", WebhookSecret: integrationResendWebhookSecret},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tdb.Super.Exec(ctx, "UPDATE mailing_sending_profile SET status='verified' WHERE id=$1", profile.ID); err != nil {
+	if _, err := tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+		SET status='verified', feedback_status='ready', feedback_error=NULL,
+		    feedback_confirmed_at=now() WHERE id=$1`, profile.ID); err != nil {
 		t.Fatal(err)
 	}
 	return svc, captured

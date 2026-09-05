@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -12,6 +13,13 @@ import (
 
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+)
+
+var (
+	sesConfigurationSetPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	sesRegionPattern           = regexp.MustCompile(`^[a-z0-9-]{3,32}$`)
+	snsAccountPattern          = regexp.MustCompile(`^[0-9]{12}$`)
+	snsTopicPattern            = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}(\.fifo)?$`)
 )
 
 func (s *Service) GetSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) (SendingProfile, error) {
@@ -61,17 +69,27 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 	if in.Mode != "ses" && (in.SESRegion != nil || in.SESConfigurationSet != nil || in.SNSTopicARN != nil) {
 		return SendingProfile{}, validation("SES settings are only valid for SES mode")
 	}
+	if in.Mode == "ses" {
+		in.SESRegion = cleanOptional(in.SESRegion)
+		in.SESConfigurationSet = cleanOptional(in.SESConfigurationSet)
+		in.SNSTopicARN = cleanOptional(in.SNSTopicARN)
+		if err := validateSESFeedbackConfiguration(in.SESRegion, in.SESConfigurationSet, in.SNSTopicARN); err != nil {
+			return SendingProfile{}, err
+		}
+	}
 	var credential []byte
 	if in.Resend != nil {
 		if strings.TrimSpace(in.Resend.APIKey) == "" {
 			return SendingProfile{}, validation("resend api_key is required")
 		}
-		if in.Resend.WebhookSecret != "" {
-			key, keyErr := decodeSvixSecret(in.Resend.WebhookSecret)
-			clear(key)
-			if keyErr != nil {
-				return SendingProfile{}, validation("resend webhook_secret must be a valid whsec_ secret")
-			}
+		in.Resend.WebhookSecret = strings.TrimSpace(in.Resend.WebhookSecret)
+		if in.Resend.WebhookSecret == "" {
+			return SendingProfile{}, validation("resend webhook_secret is required")
+		}
+		key, keyErr := decodeSvixSecret(in.Resend.WebhookSecret)
+		clear(key)
+		if keyErr != nil {
+			return SendingProfile{}, validation("resend webhook_secret must be a valid whsec_ secret")
 		}
 		credential, err = json.Marshal(in.Resend)
 	}
@@ -187,10 +205,14 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		out = toSendingProfile(row)
 		return nil
 	})
+	if err == nil && s.Providers != nil && out.ID != uuid.Nil {
+		s.Providers.Invalidate(out.ID)
+	}
 	return out, mapErr(err)
 }
 
 func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) error {
+	var profileID uuid.UUID
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
@@ -201,6 +223,7 @@ func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, busines
 		if err != nil {
 			return err
 		}
+		profileID = row.ID
 		if err = auditMutation(ctx, tx, principalID, businessID, root, "mailing.sending_profile.deleted", "mailing_sending_profile", row.ID, map[string]any{"mode": row.Mode}); err != nil {
 			return err
 		}
@@ -215,6 +238,9 @@ func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, busines
 		}
 		return nil
 	})
+	if err == nil && s.Providers != nil && profileID != uuid.Nil {
+		s.Providers.Invalidate(profileID)
+	}
 	return mapErr(err)
 }
 
@@ -226,7 +252,43 @@ func toSendingProfile(r dbgen.MailingSendingProfile) SendingProfile {
 		EmailDomainID: uuidPtr(r.EmailDomainID), SESRegion: r.SesRegion,
 		SESConfigurationSet: r.SesConfigurationSet, SNSTopicARN: r.SnsTopicArn,
 		Status: r.Status, LastVerifiedAt: timePtr(r.LastVerifiedAt),
-		VerifyError: r.VerifyError, HasCredentials: r.SecretRef.Valid,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		VerifyError: r.VerifyError, FeedbackStatus: r.FeedbackStatus,
+		FeedbackError: r.FeedbackError, FeedbackConfirmedAt: timePtr(r.FeedbackConfirmedAt),
+		HasCredentials: r.SecretRef.Valid, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
+}
+
+func validateSESFeedbackConfiguration(region, configurationSet, topicARN *string) error {
+	if region == nil || !sesRegionPattern.MatchString(*region) {
+		return validation("ses_region is required and must be a valid AWS region")
+	}
+	if configurationSet == nil || !sesConfigurationSetPattern.MatchString(*configurationSet) {
+		return validation("ses_configuration_set is required and invalid")
+	}
+	if topicARN == nil {
+		return validation("sns_topic_arn is required")
+	}
+	parts := strings.Split(*topicARN, ":")
+	if len(parts) != 6 || parts[0] != "arn" || parts[2] != "sns" ||
+		parts[3] != *region || !snsAccountPattern.MatchString(parts[4]) ||
+		!snsTopicPattern.MatchString(parts[5]) {
+		return validation("sns_topic_arn must bind the SES region and AWS account")
+	}
+	switch parts[1] {
+	case "aws":
+		if strings.HasPrefix(*region, "cn-") || strings.HasPrefix(*region, "us-gov-") {
+			return validation("sns_topic_arn partition does not match ses_region")
+		}
+	case "aws-cn":
+		if !strings.HasPrefix(*region, "cn-") {
+			return validation("sns_topic_arn partition does not match ses_region")
+		}
+	case "aws-us-gov":
+		if !strings.HasPrefix(*region, "us-gov-") {
+			return validation("sns_topic_arn partition does not match ses_region")
+		}
+	default:
+		return validation("sns_topic_arn partition is unsupported")
+	}
+	return nil
 }

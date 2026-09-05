@@ -64,9 +64,11 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		h.authenticatedOK(w)
 		return
 	}
-	events := mapResendEvent(payload, body)
-	if err := h.recordAndApply(r.Context(), wc, "resend", eventID, events); err != nil {
+	events := mapResendEvent(payload)
+	if err := h.recordAndApply(r.Context(), wc, "resend", eventID, body, events); err != nil {
 		h.logger().ErrorContext(r.Context(), "mailing Resend webhook apply failed", "profile_id", profileID, "event_type", payload.Type, "err", err)
+		h.retryableFailure(w)
+		return
 	}
 	h.authenticatedOK(w)
 }
@@ -124,7 +126,7 @@ func decodeSvixSecret(secret string) ([]byte, error) {
 	return key, nil
 }
 
-func mapResendEvent(payload resendWebhook, raw json.RawMessage) []providerEvent {
+func mapResendEvent(payload resendWebhook) []providerEvent {
 	kind := ""
 	switch payload.Type {
 	case "email.delivered":
@@ -141,16 +143,16 @@ func mapResendEvent(payload resendWebhook, raw json.RawMessage) []providerEvent 
 	if payload.Data.EmailID == "" {
 		return nil
 	}
+	recipients, ok := normalizeProviderRecipients(payload.Data.To)
+	if !ok {
+		return nil
+	}
 	occurredAt := parseProviderTime(payload.CreatedAt)
-	events := make([]providerEvent, 0, len(payload.Data.To))
-	for _, recipient := range payload.Data.To {
-		recipient = strings.TrimSpace(recipient)
-		if recipient == "" {
-			continue
-		}
+	events := make([]providerEvent, 0, len(recipients))
+	for _, recipient := range recipients {
 		events = append(events, providerEvent{
-			providerMessageID: payload.Data.EmailID, recipient: recipient,
-			kind: kind, occurredAt: occurredAt, payload: raw,
+			ProviderMessageID: payload.Data.EmailID, Recipient: recipient,
+			Kind: kind, OccurredAt: occurredAt,
 		})
 	}
 	return events

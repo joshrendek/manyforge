@@ -35,6 +35,7 @@ type Querier interface {
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
 	CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsParams) ([]CampaignLinkStatsRow, error)
+	CheckMailingTestRecipientSuppression(ctx context.Context, arg CheckMailingTestRecipientSuppressionParams) (*bool, error)
 	// ---- bounded worker claims ----
 	ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error

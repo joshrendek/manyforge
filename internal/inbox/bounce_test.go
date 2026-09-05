@@ -98,15 +98,17 @@ func TestBounceValidHardBounce202(t *testing.T) {
 	}
 }
 
-// MF-MAIL-ERRACK-001 characterizes the current fail-open acknowledgement.
-// A valid authenticated bounce receives 202 even when the durable suppression
-// mutation fails, preventing a conforming sender from retrying that event.
-func TestMFMailErrack001MutationFailureIsAcknowledged(t *testing.T) {
+// MF-MAIL-ERRACK-001 requires an authenticated durability failure to receive a
+// generic retryable response so a conforming provider will retry.
+func TestMFMailErrack001MutationFailureReturnsRetryableFailure(t *testing.T) {
 	body := bounceBody(t, "lost-bounce@example.com", "hard", "msg-lost@inbound.localhost")
-	sup := &fakeSuppressor{err: errors.New("transient database failure")}
+	sup := &fakeSuppressor{err: errors.New("transient database failure containing secret detail")}
 	rec := doBounce(newBounceHandler(t, sup), body, signBounce(testBounceSecret, body))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("failed suppression status = %d, want acknowledged 202", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failed suppression status = %d, want 503", rec.Code)
+	}
+	if rec.Body.String() != "" {
+		t.Fatalf("failed suppression body = %q, want generic empty response", rec.Body.String())
 	}
 	if len(sup.calls) != 1 {
 		t.Fatalf("SuppressBounce calls = %d, want one failed mutation", len(sup.calls))

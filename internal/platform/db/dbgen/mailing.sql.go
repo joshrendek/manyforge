@@ -83,6 +83,44 @@ func (q *Queries) CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsPa
 	return items, nil
 }
 
+const checkMailingTestRecipientSuppression = `-- name: CheckMailingTestRecipientSuppression :one
+SELECT
+    NOT mailing_business_operational(
+        $1::uuid,
+        $2::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM mailing_suppression ms
+        WHERE ms.business_id = $1::uuid
+          AND ms.tenant_root_id = $2::uuid
+          AND ms.email = $3::citext
+    )
+    OR EXISTS (
+        SELECT 1 FROM email_suppression es
+        WHERE es.email = $3::citext
+    )
+    OR EXISTS (
+        SELECT 1 FROM list_subscriber s
+        WHERE s.business_id = $1::uuid
+          AND s.tenant_root_id = $2::uuid
+          AND s.email = $3::citext
+          AND s.status <> 'active'
+    ) AS suppressed
+`
+
+type CheckMailingTestRecipientSuppressionParams struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Email        string    `json:"email"`
+}
+
+func (q *Queries) CheckMailingTestRecipientSuppression(ctx context.Context, arg CheckMailingTestRecipientSuppressionParams) (*bool, error) {
+	row := q.db.QueryRow(ctx, checkMailingTestRecipientSuppression, arg.BusinessID, arg.TenantRootID, arg.Email)
+	var suppressed *bool
+	err := row.Scan(&suppressed)
+	return suppressed, err
+}
+
 const claimChangedCampaignRollups = `-- name: ClaimChangedCampaignRollups :many
 
 SELECT unnest(public.mailing_claim_changed_campaign_rollups(
@@ -2049,6 +2087,7 @@ WHERE c.id = $2
   AND l.business_id = c.business_id AND l.status = 'active'
   AND p.business_id = c.business_id AND p.tenant_root_id = c.tenant_root_id
   AND p.status = 'verified'
+  AND p.feedback_status = 'ready'
 RETURNING c.id, c.business_id, c.tenant_root_id, c.list_id, c.profile_id, c.name, c.subject, c.preheader, c.body_markdown, c.tag_filter, c.track_opens, c.track_clicks, c.status, c.scheduled_at, c.started_at, c.completed_at, c.fanout_cursor, c.fanout_done, c.recipient_count, c.sent_count, c.delivered_count, c.bounced_count, c.complained_count, c.opened_count, c.clicked_count, c.unsubscribed_count, c.failed_count, c.last_error, c.created_by, c.created_at, c.updated_at
 `
 
@@ -2109,16 +2148,25 @@ const setMailingSendingProfileVerification = `-- name: SetMailingSendingProfileV
 UPDATE mailing_sending_profile SET
     status = $1::text,
     last_verified_at = CASE WHEN $1::text = 'verified' THEN now() ELSE NULL END,
-    verify_error = NULLIF($2::text, '')
-WHERE id = $3
-  AND tenant_root_id = $4
-  AND updated_at = $5::timestamptz
+    verify_error = NULLIF($2::text, ''),
+    feedback_status = $3::text,
+    feedback_error = NULLIF($4::text, ''),
+    feedback_confirmed_at = CASE
+        WHEN $3::text = 'ready'
+            THEN COALESCE(feedback_confirmed_at, now())
+        ELSE NULL
+    END
+WHERE id = $5
+  AND tenant_root_id = $6
+  AND updated_at = $7::timestamptz
 RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type SetMailingSendingProfileVerificationParams struct {
 	Status            string    `json:"status"`
 	VerifyError       string    `json:"verify_error"`
+	FeedbackStatus    string    `json:"feedback_status"`
+	FeedbackError     string    `json:"feedback_error"`
 	ID                uuid.UUID `json:"id"`
 	TenantRootID      uuid.UUID `json:"tenant_root_id"`
 	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
@@ -2131,6 +2179,8 @@ func (q *Queries) SetMailingSendingProfileVerification(ctx context.Context, arg 
 	row := q.db.QueryRow(ctx, setMailingSendingProfileVerification,
 		arg.Status,
 		arg.VerifyError,
+		arg.FeedbackStatus,
+		arg.FeedbackError,
 		arg.ID,
 		arg.TenantRootID,
 		arg.ExpectedUpdatedAt,
@@ -2430,6 +2480,7 @@ UPDATE mailing_sending_profile SET
     ses_configuration_set = $11,
     sns_topic_arn = $12,
     status = 'unverified', last_verified_at = NULL, verify_error = NULL,
+    feedback_status = 'pending', feedback_error = NULL, feedback_confirmed_at = NULL,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
 RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
