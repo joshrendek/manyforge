@@ -2144,6 +2144,66 @@ func (q *Queries) ScheduleCampaign(ctx context.Context, arg ScheduleCampaignPara
 	return i, err
 }
 
+const setMailingResendWebhookVerification = `-- name: SetMailingResendWebhookVerification :one
+UPDATE mailing_sending_profile SET
+    secret_ref = $1::uuid,
+    status = 'verified',
+    last_verified_at = now(),
+    verify_error = NULL,
+    feedback_status = 'ready',
+    feedback_error = NULL,
+    feedback_confirmed_at = now(),
+    updated_at = now()
+WHERE id = $2
+  AND tenant_root_id = $3
+  AND updated_at = $4::timestamptz
+  AND mode = 'resend'
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+`
+
+type SetMailingResendWebhookVerificationParams struct {
+	SecretRef         uuid.UUID `json:"secret_ref"`
+	ID                uuid.UUID `json:"id"`
+	TenantRootID      uuid.UUID `json:"tenant_root_id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
+
+// Resend provisioning performs provider I/O before this CAS. Persist the
+// provider-generated webhook credential and readiness atomically.
+func (q *Queries) SetMailingResendWebhookVerification(ctx context.Context, arg SetMailingResendWebhookVerificationParams) (MailingSendingProfile, error) {
+	row := q.db.QueryRow(ctx, setMailingResendWebhookVerification,
+		arg.SecretRef,
+		arg.ID,
+		arg.TenantRootID,
+		arg.ExpectedUpdatedAt,
+	)
+	var i MailingSendingProfile
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Mode,
+		&i.FromEmail,
+		&i.FromName,
+		&i.ReplyTo,
+		&i.PostalAddress,
+		&i.EmailDomainID,
+		&i.SecretRef,
+		&i.SesRegion,
+		&i.SesConfigurationSet,
+		&i.SnsTopicArn,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.VerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
+	)
+	return i, err
+}
+
 const setMailingSendingProfileVerification = `-- name: SetMailingSendingProfileVerification :one
 UPDATE mailing_sending_profile SET
     status = $1::text,

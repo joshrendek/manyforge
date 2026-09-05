@@ -45,7 +45,7 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clear(credential)
-	var creds ResendCredentials
+	var creds resendStoredCredentials
 	if json.Unmarshal(credential, &creds) != nil || creds.WebhookSecret == "" {
 		h.logger().ErrorContext(r.Context(), "mailing Resend webhook credential is invalid", "profile_id", profileID)
 		h.unauthorized(w)
@@ -63,13 +63,6 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		h.logger().WarnContext(r.Context(), "mailing Resend webhook payload decode failed", "profile_id", profileID)
 		h.authenticatedOK(w)
 		return
-	}
-	if wc.feedbackStatus != "ready" {
-		if err := h.markResendFeedbackReady(r.Context(), wc); err != nil {
-			h.logger().ErrorContext(r.Context(), "mailing Resend feedback readiness persistence failed", "profile_id", profileID, "err", err)
-			h.retryableFailure(w)
-			return
-		}
 	}
 	events := mapResendEvent(payload)
 	if err := h.recordAndApply(r.Context(), wc, "resend", eventID, body, events); err != nil {

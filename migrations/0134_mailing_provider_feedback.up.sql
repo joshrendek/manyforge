@@ -75,30 +75,6 @@ AS $$
       AND public.tenant_merge_root_write_allowed(p.tenant_root_id);
 $$;
 
-CREATE FUNCTION mailing_mark_resend_feedback_ready(
-    p_profile_id uuid,
-    p_expected_updated_at timestamptz
-)
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog
-AS $$
-BEGIN
-    UPDATE public.mailing_sending_profile p
-    SET feedback_status = 'ready',
-        feedback_error = NULL,
-        feedback_confirmed_at = clock_timestamp()
-    WHERE p.id = p_profile_id
-      AND p.updated_at = p_expected_updated_at
-      AND p.mode = 'resend'
-      AND p.status = 'verified'
-      AND public.mailing_business_operational(p.business_id, p.tenant_root_id)
-      AND public.tenant_merge_root_write_allowed(p.tenant_root_id);
-    RETURN FOUND;
-END;
-$$;
-
 CREATE FUNCTION mailing_transition_ses_feedback(
     p_profile_id uuid,
     p_expected_updated_at timestamptz,
@@ -597,12 +573,10 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION mailing_webhook_context(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION mailing_mark_resend_feedback_ready(uuid,timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_transition_ses_feedback(uuid,timestamptz,text,text,text,text,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_apply_provider_event_internal(uuid,uuid,text,public.citext,public.mailing_track_kind,timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_apply_pending_webhook(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_process_provider_webhook(uuid,text,text,jsonb,jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mailing_webhook_context(uuid) TO manyforge_app;
-GRANT EXECUTE ON FUNCTION mailing_mark_resend_feedback_ready(uuid,timestamptz) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_transition_ses_feedback(uuid,timestamptz,text,text,text,text,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_process_provider_webhook(uuid,text,text,jsonb,jsonb) TO manyforge_app;

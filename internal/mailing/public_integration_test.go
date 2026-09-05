@@ -73,7 +73,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	}
 	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "resend", FromEmail: "updates@example.test", FromName: "Updates",
-		Resend: &mailing.ResendCredentials{APIKey: "re_test", WebhookSecret: integrationResendWebhookSecret},
+		Resend: &mailing.ResendCredentials{APIKey: "re_test"},
 	})
 	if err != nil {
 		t.Fatal(err)

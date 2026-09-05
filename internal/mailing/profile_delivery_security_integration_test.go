@@ -3,6 +3,9 @@
 package mailing_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"context"
 	"errors"
 	"os"
@@ -16,7 +19,37 @@ import (
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/notify"
 )
+
+type fakeResendProvisioner struct {
+	endpoints []string
+	deleted   []string
+	ensureErr error
+}
+
+func (f *fakeResendProvisioner) Verify(context.Context) error { return nil }
+func (f *fakeResendProvisioner) Send(context.Context, notify.Mail) (mailprovider.SendResult, error) {
+	return mailprovider.SendResult{}, nil
+}
+
+func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, existingID string) (mailprovider.ResendWebhook, bool, error) {
+	if f.ensureErr != nil {
+		return mailprovider.ResendWebhook{}, false, f.ensureErr
+	}
+	f.endpoints = append(f.endpoints, endpoint)
+	sum := sha256.Sum256([]byte(endpoint))
+	id := "wh_" + base64.RawURLEncoding.EncodeToString(sum[:12])
+	return mailprovider.ResendWebhook{
+		ID: id, SigningSecret: "whsec_" + base64.StdEncoding.EncodeToString(sum[:]),
+	}, existingID == "", nil
+}
+
+func (f *fakeResendProvisioner) DeleteWebhook(_ context.Context, id string) error {
+	f.deleted = append(f.deleted, id)
+	return nil
+}
+
 
 func TestMFMailDelivery002ProfileTestSendChecksSuppressionBeforeProviderResolution(t *testing.T) {
 	ctx := context.Background()
@@ -172,6 +205,179 @@ func TestMFMailFeedback001ClaimAndRenewRequireReadyFeedback(t *testing.T) {
 	if renewed {
 		t.Fatal("delivery renewed after feedback readiness was lost")
 	}
+}
+
+func TestMFMailFeedback001ResendProvisioningBindsUniqueProfileRoutes(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seedA := seedMailingTenant(ctx, t, tdb)
+	seedB := seedMailingTenant(ctx, t, tdb)
+	svcA, _ := campaignService(t, ctx, tdb, seedA)
+	svcB, _ := campaignService(t, ctx, tdb, seedB)
+	profileA, err := svcA.PutSendingProfile(ctx, seedA.principalID, seedA.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "a@example.test", FromName: "A",
+		Resend: &mailing.ResendCredentials{APIKey: "re_a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileB, err := svcB.PutSendingProfile(ctx, seedB.principalID, seedB.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "b@example.test", FromName: "B",
+		Resend: &mailing.ResendCredentials{APIKey: "re_b"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioner := &fakeResendProvisioner{}
+	svcA.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	svcB.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	verifiedA, err := svcA.VerifySendingProfile(ctx, seedA.principalID, seedA.businessID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedB, err := svcB.VerifySendingProfile(ctx, seedB.principalID, seedB.businessID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifiedA.FeedbackStatus != "ready" || verifiedB.FeedbackStatus != "ready" {
+		t.Fatalf("feedback readiness = %q/%q", verifiedA.FeedbackStatus, verifiedB.FeedbackStatus)
+	}
+	wantA := "https://hub.example.test/inbound/mailing/" + profileA.ID.String() + "/resend"
+	wantB := "https://hub.example.test/inbound/mailing/" + profileB.ID.String() + "/resend"
+	if len(provisioner.endpoints) != 2 || provisioner.endpoints[0] != wantA || provisioner.endpoints[1] != wantB {
+		t.Fatalf("provisioned endpoints = %v", provisioner.endpoints)
+	}
+	secretA := storedResendWebhookSecret(t, ctx, tdb, svcA, profileA.ID)
+	secretB := storedResendWebhookSecret(t, ctx, tdb, svcB, profileB.ID)
+	if secretA == "" || secretB == "" || secretA == secretB {
+		t.Fatal("provider-generated Resend signing secrets are not unique per exact profile endpoint")
+	}
+	updatedA, err := svcA.PutSendingProfile(ctx, seedA.principalID, seedA.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "a@example.test", FromName: "A updated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedA.FeedbackStatus != "pending" || len(provisioner.deleted) != 1 {
+		t.Fatalf("profile update state/deletions = %q/%v", updatedA.FeedbackStatus, provisioner.deleted)
+	}
+	if _, err = svcA.VerifySendingProfile(ctx, seedA.principalID, seedA.businessID); err != nil {
+		t.Fatal(err)
+	}
+	if err = svcA.DeleteSendingProfile(ctx, seedA.principalID, seedA.businessID); err != nil {
+		t.Fatal(err)
+	}
+	if len(provisioner.deleted) != 2 {
+		t.Fatalf("profile delete did not revoke the replacement webhook: %v", provisioner.deleted)
+	}
+}
+
+func TestMFMailFeedback001WrongResendRouteNeverReady(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	if _, err = svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "news@example.test", FromName: "News",
+		Resend: &mailing.ResendCredentials{APIKey: "re_wrong_route"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	provisioner := &fakeResendProvisioner{ensureErr: errors.New("provider: resend webhook does not match the required feedback route")}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	profile, err := svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Status != "error" || profile.FeedbackStatus != "pending" {
+		t.Fatalf("wrong Resend route verification state = %q/%q", profile.Status, profile.FeedbackStatus)
+	}
+}
+
+func TestMFMailFeedback001ResendProvisioningDBFailureNeverReady(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "news@example.test", FromName: "News",
+		Resend: &mailing.ResendCredentials{APIKey: "re_failure"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `CREATE FUNCTION test_resend_provision_failure()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.feedback_status = 'ready' THEN
+				RAISE EXCEPTION 'sensitive persistence detail';
+			END IF;
+			RETURN NEW;
+		END $$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `CREATE TRIGGER test_resend_provision_failure
+		BEFORE UPDATE ON mailing_sending_profile
+		FOR EACH ROW EXECUTE FUNCTION test_resend_provision_failure()`); err != nil {
+		t.Fatal(err)
+	}
+	provisioner := &fakeResendProvisioner{}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); err == nil {
+		t.Fatal("Resend provisioning persistence failure was acknowledged")
+	}
+	var status, feedbackStatus string
+	if err = tdb.Super.QueryRow(ctx, `SELECT status,feedback_status FROM mailing_sending_profile WHERE id=$1`,
+		profile.ID).Scan(&status, &feedbackStatus); err != nil {
+		t.Fatal(err)
+	}
+	if status == "verified" || feedbackStatus == "ready" {
+		t.Fatalf("failed provisioning state = %q/%q", status, feedbackStatus)
+	}
+	if len(provisioner.deleted) != 1 {
+		t.Fatalf("new remote webhook cleanup calls = %v", provisioner.deleted)
+	}
+}
+
+func storedResendWebhookSecret(t *testing.T, ctx context.Context, tdb *testdb.TestDB, svc *mailing.Service, profileID uuid.UUID) string {
+	t.Helper()
+	var sealed string
+	if err := tdb.Super.QueryRow(ctx, `SELECT s.sealed_value FROM secret s
+		JOIN mailing_sending_profile p ON p.secret_ref=s.id WHERE p.id=$1`, profileID).Scan(&sealed); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := svc.Sealer.Open(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(raw)
+	var stored struct {
+		WebhookSecret string `json:"webhook_secret"`
+	}
+	if err = json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	return stored.WebhookSecret
 }
 
 func TestProviderFeedbackMigrationRoundTrip(t *testing.T) {

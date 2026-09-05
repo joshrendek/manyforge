@@ -144,24 +144,6 @@ func (h *WebhookHandler) recordAndApply(ctx context.Context, wc webhookContext, 
 	})
 }
 
-
-func (h *WebhookHandler) markResendFeedbackReady(ctx context.Context, wc webhookContext) error {
-	if wc.provider != "resend" {
-		return errors.New("mailing webhook: invalid Resend profile")
-	}
-	return h.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		var changed bool
-		if err := tx.QueryRow(ctx, "SELECT mailing_mark_resend_feedback_ready($1,$2)",
-			wc.profileID, wc.updatedAt).Scan(&changed); err != nil {
-			return err
-		}
-		if !changed {
-			return errors.New("mailing webhook: Resend feedback profile changed")
-		}
-		return nil
-	})
-}
-
 func (h *WebhookHandler) transitionSESFeedback(ctx context.Context, wc webhookContext, status, message string) error {
 	if wc.snsTopicARN == nil || wc.sesRegion == nil || wc.sesConfigurationSet == nil {
 		return errors.New("mailing webhook: incomplete SES feedback configuration")

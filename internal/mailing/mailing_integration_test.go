@@ -4,8 +4,6 @@ package mailing_test
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -26,7 +24,6 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
-const integrationResendWebhookSecret = "whsec_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 
 type mailingSeed struct{ businessID, principalID uuid.UUID }
 
@@ -52,6 +49,15 @@ func (d *capturedDeliverer) Send(_ context.Context, mail notify.Mail) (mailprovi
 	d.mails = append(d.mails, mail)
 	return mailprovider.SendResult{ProviderID: "captured"}, nil
 }
+
+func (d *capturedDeliverer) EnsureWebhook(context.Context, string, string) (mailprovider.ResendWebhook, bool, error) {
+	return mailprovider.ResendWebhook{
+		ID: "wh_provider_generated",
+		SigningSecret: "whsec_MDEyMzQ1Njc4OWFiY2RlZg==",
+	}, true, nil
+}
+
+func (d *capturedDeliverer) DeleteWebhook(context.Context, string) error { return nil }
 
 func seedMailingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) mailingSeed {
 	t.Helper()
@@ -174,7 +180,7 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		t.Fatalf("listed key leaked/missed secret metadata: %+v", keys[0])
 	}
 	replyTo := "reply@example.com"
-	profileInput := mailing.SendingProfileInput{Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender", ReplyTo: &replyTo, Resend: &mailing.ResendCredentials{APIKey: "re_secret", WebhookSecret: integrationResendWebhookSecret}}
+	profileInput := mailing.SendingProfileInput{Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender", ReplyTo: &replyTo, Resend: &mailing.ResendCredentials{APIKey: "re_secret"}}
 	profile, err := svc.PutSendingProfile(ctx, a.principalID, a.businessID, profileInput)
 	if err != nil {
 		t.Fatalf("PutSendingProfile: %v", err)
@@ -231,15 +237,10 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if err != nil || unsupported.Status != "error" || unsupported.VerifyError == nil {
 		t.Fatalf("VerifySendingProfile without verifier = %+v, err=%v", unsupported, err)
 	}
-	arbitrarySecretBytes := make([]byte, 32)
-	if _, err = rand.Read(arbitrarySecretBytes); err != nil {
-		t.Fatal(err)
-	}
-	arbitraryWebhookSecret := "whsec_" + base64.StdEncoding.EncodeToString(arbitrarySecretBytes)
 	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
 		return callbackDeliverer{verify: func() error {
 			concurrent := profileInput
-			concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent", WebhookSecret: arbitraryWebhookSecret}
+			concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
 			_, updateErr := svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
 			return updateErr
 		}}, nil
@@ -247,6 +248,7 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if _, err = svc.VerifySendingProfile(ctx, a.principalID, a.businessID); !errors.Is(err, errs.ErrConflict) {
 		t.Fatalf("concurrent VerifySendingProfile error = %v", err)
 	}
+	svc.PublicBaseURL = "https://hub.example.test"
 	captured := &capturedDeliverer{}
 	svc.Providers = mailprovider.NewCache(func(_ context.Context, resolved mailprovider.Profile) (mailprovider.Deliverer, error) {
 		if resolved.ID != profile.ID || resolved.ResendAPIKey != "re_concurrent" {
@@ -255,14 +257,9 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		return captured, nil
 	}, time.Minute)
 	verified, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
-	if err != nil || verified.Status != "verified" || verified.FeedbackStatus != "pending" ||
-		verified.FeedbackConfirmedAt != nil || !captured.verified {
-		t.Fatalf("outbound verification promoted arbitrary Resend webhook secret = %+v, err=%v, called=%v", verified, err, captured.verified)
-	}
-	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
-		SET feedback_status='ready',feedback_error=NULL,feedback_confirmed_at=now()
-		WHERE id=$1`, verified.ID); err != nil {
-		t.Fatal(err)
+	if err != nil || verified.Status != "verified" || verified.FeedbackStatus != "ready" ||
+		verified.FeedbackConfirmedAt == nil || !captured.verified {
+		t.Fatalf("VerifySendingProfile with provider-controlled webhook = %+v, err=%v, called=%v", verified, err, captured.verified)
 	}
 	svc.OutboundLimiter = &toggleLimiter{deny: true}
 	if err = svc.TestSendingProfile(ctx, a.principalID, a.businessID, "reader@example.net"); !errors.Is(err, errs.ErrRateLimited) {
@@ -277,7 +274,7 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		!strings.HasPrefix(captured.mail.Subject, "[TEST]") || !strings.HasSuffix(captured.mail.MessageID, "@mailing.localhost") {
 		t.Fatalf("captured test mail = %+v", captured.mail)
 	}
-	rotated, err := svc.PutSendingProfile(ctx, a.principalID, a.businessID, mailing.SendingProfileInput{Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender", Resend: &mailing.ResendCredentials{APIKey: "re_rotated", WebhookSecret: integrationResendWebhookSecret}})
+	rotated, err := svc.PutSendingProfile(ctx, a.principalID, a.businessID, mailing.SendingProfileInput{Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender", Resend: &mailing.ResendCredentials{APIKey: "re_rotated"}})
 	if err != nil {
 		t.Fatalf("rotate profile: %v", err)
 	}

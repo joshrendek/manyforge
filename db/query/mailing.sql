@@ -278,6 +278,24 @@ WHERE id = sqlc.arg('id')
   AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
 RETURNING *;
 
+-- Resend provisioning performs provider I/O before this CAS. Persist the
+-- provider-generated webhook credential and readiness atomically.
+-- name: SetMailingResendWebhookVerification :one
+UPDATE mailing_sending_profile SET
+    secret_ref = sqlc.arg('secret_ref')::uuid,
+    status = 'verified',
+    last_verified_at = now(),
+    verify_error = NULL,
+    feedback_status = 'ready',
+    feedback_error = NULL,
+    feedback_confirmed_at = now(),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
+  AND mode = 'resend'
+RETURNING *;
+
 -- name: CheckMailingTestRecipientSuppression :one
 SELECT
     NOT mailing_business_operational(

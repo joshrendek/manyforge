@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"strings"
 
 	"github.com/manyforge/manyforge/internal/platform/notify"
@@ -22,6 +24,24 @@ type Resend struct {
 	FromEmail string
 	BaseURL   string
 	Client    *http.Client
+}
+
+type ResendWebhook struct {
+	ID            string
+	SigningSecret string
+}
+
+type ResendWebhookProvisioner interface {
+	EnsureWebhook(context.Context, string, string) (ResendWebhook, bool, error)
+	DeleteWebhook(context.Context, string) error
+}
+
+type resendWebhookResponse struct {
+	ID            string   `json:"id"`
+	SigningSecret string   `json:"signing_secret"`
+	Status        string   `json:"status"`
+	Endpoint      string   `json:"endpoint"`
+	Events        []string `json:"events"`
 }
 
 // Send validates message headers and submits a structured Resend API request.
@@ -92,6 +112,74 @@ func (r *Resend) Verify(ctx context.Context) error {
 		}
 	}
 	return fmt.Errorf("provider: resend domain %s was not found", domain)
+}
+
+func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string) (ResendWebhook, bool, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return ResendWebhook{}, false, fmt.Errorf("provider: resend webhook endpoint is required")
+	}
+	if existingID != "" {
+		var existing resendWebhookResponse
+		if err := r.do(ctx, http.MethodGet, "/webhooks/"+url.PathEscape(existingID), nil, "", &existing); err != nil {
+			return ResendWebhook{}, false, err
+		}
+		if existing.ID != existingID || existing.Status != "enabled" || existing.Endpoint != endpoint ||
+			!containsResendEvents(existing.Events, "email.bounced", "email.complained") ||
+			!validResendSigningSecret(existing.SigningSecret) {
+			return ResendWebhook{}, false, fmt.Errorf("provider: resend webhook does not match the required feedback route")
+		}
+		return ResendWebhook{ID: existing.ID, SigningSecret: existing.SigningSecret}, false, nil
+	}
+	payload := struct {
+		Endpoint string   `json:"endpoint"`
+		Events   []string `json:"events"`
+	}{
+		Endpoint: endpoint,
+		Events:   []string{"email.bounced", "email.complained"},
+	}
+	var created resendWebhookResponse
+	if err := r.do(ctx, http.MethodPost, "/webhooks", payload, "", &created); err != nil {
+		return ResendWebhook{}, false, err
+	}
+	if strings.TrimSpace(created.ID) == "" || !validResendSigningSecret(created.SigningSecret) {
+		return ResendWebhook{}, false, fmt.Errorf("provider: resend returned an invalid webhook credential")
+	}
+	return ResendWebhook{ID: created.ID, SigningSecret: created.SigningSecret}, true, nil
+}
+
+func (r *Resend) DeleteWebhook(ctx context.Context, webhookID string) error {
+	if strings.TrimSpace(webhookID) == "" {
+		return nil
+	}
+	return r.do(ctx, http.MethodDelete, "/webhooks/"+url.PathEscape(webhookID), nil, "", nil)
+}
+
+func containsResendEvents(events []string, required ...string) bool {
+	present := make(map[string]bool, len(events))
+	for _, event := range events {
+		present[event] = true
+	}
+	for _, event := range required {
+		if !present[event] {
+			return false
+		}
+	}
+	return true
+}
+
+func validResendSigningSecret(secret string) bool {
+	if !strings.HasPrefix(secret, "whsec_") {
+		return false
+	}
+	raw := strings.TrimPrefix(secret, "whsec_")
+	key, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		key, err = base64.RawStdEncoding.DecodeString(raw)
+	}
+	valid := err == nil && len(key) >= 16
+	clear(key)
+	return valid
 }
 
 func (r *Resend) do(ctx context.Context, method, path string, body any, idempotencyKey string, out any) error {
