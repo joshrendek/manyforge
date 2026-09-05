@@ -79,7 +79,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, errs.ErrUpstream):
 		WriteJSON(w, http.StatusBadGateway, ErrorBody{Code: "UPSTREAM", Message: "upstream provider error"})
 	default:
-		slog.ErrorContext(r.Context(), "unhandled error", "err", err, "path", r.URL.Path)
+		slog.ErrorContext(r.Context(), "unhandled error", "err", err, "path", SafePath(r))
 		WriteJSON(w, http.StatusInternalServerError, ErrorBody{Code: "INTERNAL", Message: "internal error"})
 	}
 }

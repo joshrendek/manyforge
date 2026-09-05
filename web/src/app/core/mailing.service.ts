@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { EMPTY, Observable, expand, map, reduce } from 'rxjs';
 import { Page } from './ticket.service';
+import { routeSegmentUUID } from './route-id';
 
 export type MailingListStatus = 'active' | 'archived';
 export type SubscriberStatus = 'pending' | 'active' | 'unsubscribed' | 'bounced' | 'complained';
@@ -245,7 +246,7 @@ export class MailingService {
   private http = inject(HttpClient);
 
   private base(businessId: string): string {
-    return `/api/v1/businesses/${businessId}/mailing`;
+    return `/api/v1/businesses/${routeSegmentUUID(businessId)}/mailing`;
   }
 
   listLists(businessId: string, cursor?: string): Observable<Page<MailingList>> {
@@ -262,7 +263,9 @@ export class MailingService {
   }
 
   getList(businessId: string, listId: string): Observable<MailingList> {
-    return this.http.get<MailingList>(`${this.base(businessId)}/lists/${listId}`);
+    return this.http.get<MailingList>(
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}`,
+    );
   }
 
   createList(
@@ -277,11 +280,16 @@ export class MailingService {
     listId: string,
     body: Partial<{ name: string; description: string | null; double_opt_in: boolean }>,
   ): Observable<MailingList> {
-    return this.http.patch<MailingList>(`${this.base(businessId)}/lists/${listId}`, body);
+    return this.http.patch<MailingList>(
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}`,
+      body,
+    );
   }
 
   archiveList(businessId: string, listId: string): Observable<void> {
-    return this.http.delete<void>(`${this.base(businessId)}/lists/${listId}`);
+    return this.http.delete<void>(
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}`,
+    );
   }
 
   listSubscribers(
@@ -296,7 +304,7 @@ export class MailingService {
     if (filters.cursor) params = params.set('cursor', filters.cursor);
     if (filters.limit != null) params = params.set('limit', String(filters.limit));
     return this.http.get<Page<MailingSubscriber>>(
-      `${this.base(businessId)}/lists/${listId}/subscribers`,
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/subscribers`,
       { params },
     );
   }
@@ -307,7 +315,7 @@ export class MailingService {
     body: CreateSubscriber,
   ): Observable<MailingSubscriber> {
     return this.http.post<MailingSubscriber>(
-      `${this.base(businessId)}/lists/${listId}/subscribers`,
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/subscribers`,
       body,
     );
   }
@@ -326,7 +334,7 @@ export class MailingService {
     }>,
   ): Observable<MailingSubscriber> {
     return this.http.patch<MailingSubscriber>(
-      `${this.base(businessId)}/lists/${listId}/subscribers/${subscriberId}`,
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/subscribers/${routeSegmentUUID(subscriberId)}`,
       body,
     );
   }
@@ -337,7 +345,7 @@ export class MailingService {
     subscriberId: string,
   ): Observable<void> {
     return this.http.delete<void>(
-      `${this.base(businessId)}/lists/${listId}/subscribers/${subscriberId}`,
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/subscribers/${routeSegmentUUID(subscriberId)}`,
     );
   }
 
@@ -348,7 +356,7 @@ export class MailingService {
     skipConfirmation = false,
   ): Observable<MailingImportResult> {
     return this.http.post<MailingImportResult>(
-      `${this.base(businessId)}/lists/${listId}/subscribers/from-contacts`,
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/subscribers/from-contacts`,
       { contact_ids: contactIds, skip_confirmation: skipConfirmation },
     );
   }
@@ -365,31 +373,39 @@ export class MailingService {
     form.append('consent_attested', String(consentAttested));
     form.append('skip_confirmation', String(skipConfirmation));
     return this.http.post<MailingImportResult>(
-      `${this.base(businessId)}/lists/${listId}/subscribers/import`,
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/subscribers/import`,
       form,
     );
   }
 
   exportSubscribers(businessId: string, listId: string): Observable<Blob> {
-    return this.http.get(`${this.base(businessId)}/lists/${listId}/subscribers/export`, {
-      responseType: 'blob',
-    });
+    return this.http.get(
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/subscribers/export`,
+      {
+        responseType: 'blob',
+      },
+    );
   }
 
   listKeys(businessId: string, listId: string): Observable<{ items: MailingListKey[] }> {
     return this.http.get<{ items: MailingListKey[] }>(
-      `${this.base(businessId)}/lists/${listId}/keys`,
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/keys`,
     );
   }
 
   createKey(businessId: string, listId: string, label?: string): Observable<MailingListKey> {
-    return this.http.post<MailingListKey>(`${this.base(businessId)}/lists/${listId}/keys`, {
-      label: label?.trim() || null,
-    });
+    return this.http.post<MailingListKey>(
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/keys`,
+      {
+        label: label?.trim() || null,
+      },
+    );
   }
 
   revokeKey(businessId: string, listId: string, keyId: string): Observable<void> {
-    return this.http.delete<void>(`${this.base(businessId)}/lists/${listId}/keys/${keyId}`);
+    return this.http.delete<void>(
+      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}/keys/${routeSegmentUUID(keyId)}`,
+    );
   }
 
   getSendingProfile(businessId: string): Observable<MailingSendingProfile> {
@@ -432,7 +448,9 @@ export class MailingService {
   }
 
   getTemplate(businessId: string, templateId: string): Observable<MailingTemplate> {
-    return this.http.get<MailingTemplate>(`${this.base(businessId)}/templates/${templateId}`);
+    return this.http.get<MailingTemplate>(
+      `${this.base(businessId)}/templates/${routeSegmentUUID(templateId)}`,
+    );
   }
 
   createTemplate(
@@ -462,13 +480,15 @@ export class MailingService {
     }>,
   ): Observable<MailingTemplate> {
     return this.http.patch<MailingTemplate>(
-      `${this.base(businessId)}/templates/${templateId}`,
+      `${this.base(businessId)}/templates/${routeSegmentUUID(templateId)}`,
       body,
     );
   }
 
   deleteTemplate(businessId: string, templateId: string): Observable<void> {
-    return this.http.delete<void>(`${this.base(businessId)}/templates/${templateId}`);
+    return this.http.delete<void>(
+      `${this.base(businessId)}/templates/${routeSegmentUUID(templateId)}`,
+    );
   }
 
   previewTemplate(businessId: string, body: MailingPreviewInput): Observable<MailingPreview> {
@@ -481,7 +501,9 @@ export class MailingService {
   }
 
   getCampaign(businessId: string, campaignId: string): Observable<MailingCampaign> {
-    return this.http.get<MailingCampaign>(`${this.base(businessId)}/campaigns/${campaignId}`);
+    return this.http.get<MailingCampaign>(
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}`,
+    );
   }
 
   createCampaign(businessId: string, body: MailingCampaignInput): Observable<MailingCampaign> {
@@ -494,13 +516,15 @@ export class MailingService {
     body: Partial<MailingCampaignInput>,
   ): Observable<MailingCampaign> {
     return this.http.patch<MailingCampaign>(
-      `${this.base(businessId)}/campaigns/${campaignId}`,
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}`,
       body,
     );
   }
 
   deleteCampaign(businessId: string, campaignId: string): Observable<void> {
-    return this.http.delete<void>(`${this.base(businessId)}/campaigns/${campaignId}`);
+    return this.http.delete<void>(
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}`,
+    );
   }
 
   previewCampaign(businessId: string, body: MailingPreviewInput): Observable<MailingPreview> {
@@ -508,9 +532,12 @@ export class MailingService {
   }
 
   testCampaign(businessId: string, campaignId: string, to: string[]): Observable<void> {
-    return this.http.post<void>(`${this.base(businessId)}/campaigns/${campaignId}/test-send`, {
-      to,
-    });
+    return this.http.post<void>(
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}/test-send`,
+      {
+        to,
+      },
+    );
   }
 
   sendCampaign(
@@ -519,21 +546,21 @@ export class MailingService {
     scheduledAt: string | null,
   ): Observable<MailingCampaign> {
     return this.http.post<MailingCampaign>(
-      `${this.base(businessId)}/campaigns/${campaignId}/send`,
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}/send`,
       { scheduled_at: scheduledAt },
     );
   }
 
   cancelCampaign(businessId: string, campaignId: string): Observable<MailingCampaign> {
     return this.http.post<MailingCampaign>(
-      `${this.base(businessId)}/campaigns/${campaignId}/cancel`,
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}/cancel`,
       {},
     );
   }
 
   getCampaignStats(businessId: string, campaignId: string): Observable<MailingCampaignStats> {
     return this.http.get<MailingCampaignStats>(
-      `${this.base(businessId)}/campaigns/${campaignId}/stats`,
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}/stats`,
     );
   }
 
@@ -547,7 +574,7 @@ export class MailingService {
     if (filters.cursor) params = params.set('cursor', filters.cursor);
     if (filters.limit != null) params = params.set('limit', String(filters.limit));
     return this.http.get<Page<MailingDelivery>>(
-      `${this.base(businessId)}/campaigns/${campaignId}/deliveries`,
+      `${this.base(businessId)}/campaigns/${routeSegmentUUID(campaignId)}/deliveries`,
       { params },
     );
   }
@@ -577,6 +604,8 @@ export class MailingService {
   }
 
   deleteSuppression(businessId: string, suppressionId: string): Observable<void> {
-    return this.http.delete<void>(`${this.base(businessId)}/suppressions/${suppressionId}`);
+    return this.http.delete<void>(
+      `${this.base(businessId)}/suppressions/${routeSegmentUUID(suppressionId)}`,
+    );
   }
 }
