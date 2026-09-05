@@ -193,7 +193,7 @@ func (s *Service) claimResendProvisioning(
 	token := uuid.New()
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		_, err := dbgen.New(tx).ClaimMailingResendProvisioning(ctx, dbgen.ClaimMailingResendProvisioningParams{
-			Token: token, ID: profile.ID, TenantRootID: profile.TenantRootID,
+			Token: token, RequireCleanup: true, ID: profile.ID, TenantRootID: profile.TenantRootID,
 			ExpectedUpdatedAt: profile.UpdatedAt,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {

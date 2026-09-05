@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -230,6 +231,44 @@ func TestResendEnsureWebhookReconcilesLostCreateResponseWithoutSecondPost(t *tes
 	}
 }
 
+func TestResendEnsureWebhookRetainsReconciliationPathAfterLostResponseAndListFailure(t *testing.T) {
+	const endpoint = "https://hub.example.test/inbound/mailing/profile-a/resend"
+	listCalls, postCalls := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/webhooks":
+			listCalls++
+			switch listCalls {
+			case 1:
+				_, _ = io.WriteString(w, `{"has_more":false,"data":[]}`)
+			case 2:
+				http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			default:
+				_, _ = io.WriteString(w, `{"has_more":false,"data":[{"id":"wh_recovered","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained"]}]}`)
+			}
+		case req.Method == http.MethodPost && req.URL.Path == "/webhooks":
+			postCalls++
+			panic(http.ErrAbortHandler)
+		case req.Method == http.MethodGet && req.URL.Path == "/webhooks/wh_recovered":
+			_, _ = io.WriteString(w, `{"id":"wh_recovered","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="} `)
+		default:
+			t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+		}
+	}))
+	defer server.Close()
+	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
+	if _, _, err := r.EnsureWebhook(context.Background(), endpoint, ""); err == nil {
+		t.Fatal("lost create response plus failed reconciliation was acknowledged")
+	}
+	got, _, err := r.EnsureWebhook(context.Background(), endpoint, "")
+	if err != nil || got.ID != "wh_recovered" {
+		t.Fatalf("durable retry reconciliation = %+v, err=%v", got, err)
+	}
+	if postCalls != 1 {
+		t.Fatalf("ambiguous create POST count = %d, want 1", postCalls)
+	}
+}
+
 func TestResendEnsureWebhookCanonicalizesDuplicateExactEndpoints(t *testing.T) {
 	const endpoint = "https://hub.example.test/inbound/mailing/profile-a/resend"
 	hooks := map[string]bool{"wh_a": true, "wh_b": true, "wh_c": true}
@@ -286,6 +325,33 @@ func TestResendEnsureWebhookRejectsWrongExistingRoute(t *testing.T) {
 	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
 	if _, _, err := r.EnsureWebhook(context.Background(), "https://hub.example.test/inbound/mailing/profile-a/resend", "wh_123"); err == nil {
 		t.Fatal("accepted or ignored wrong existing Resend feedback route cleanup failure")
+	}
+}
+
+func TestResendCleanupWebhooksDeletesAllExactEndpointHooks(t *testing.T) {
+	const endpoint = "https://hub.example.test/inbound/mailing/profile-a/resend"
+	var deleted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/webhooks":
+			_, _ = io.WriteString(w, `{"has_more":false,"data":[
+				{"id":"wh_b","endpoint":"`+endpoint+`"},
+				{"id":"wh_a","endpoint":"`+endpoint+`"},
+				{"id":"wh_other","endpoint":"https://other.example.test/resend"}]}`)
+		case req.Method == http.MethodDelete:
+			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/webhooks/"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+		}
+	}))
+	defer server.Close()
+	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
+	if err := r.CleanupWebhooks(context.Background(), endpoint, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(deleted, []string{"wh_b", "wh_a"}) {
+		t.Fatalf("deleted exact-endpoint hooks = %v", deleted)
 	}
 }
 
