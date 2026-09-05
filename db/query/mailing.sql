@@ -444,15 +444,11 @@ WHERE e.campaign_id = $1 AND e.tenant_root_id = $2
 GROUP BY e.url
 ORDER BY click_count DESC, e.url;
 
--- ---- bounded worker cursors ----
+-- ---- bounded worker claims ----
 
--- name: ListChangedCampaignRollupChanges :many
-SELECT d.campaign_id, d.updated_at AS changed_at, d.id AS change_id
-FROM mailing_delivery d
-WHERE d.campaign_id IS NOT NULL
-  AND (d.updated_at, d.id) > (
-      sqlc.arg('after_updated_at')::timestamptz,
-      sqlc.arg('after_id')::uuid
-  )
-ORDER BY d.updated_at ASC, d.id ASC
-LIMIT LEAST(GREATEST(sqlc.arg('lim')::integer, 1), 100);
+-- name: ClaimChangedCampaignRollups :many
+SELECT unnest(public.mailing_claim_changed_campaign_rollups(
+    sqlc.arg('claim_token')::uuid,
+    sqlc.arg('lim')::integer,
+    sqlc.arg('lease_seconds')::integer
+)::uuid[])::uuid AS campaign_id;

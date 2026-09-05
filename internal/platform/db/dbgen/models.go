@@ -1674,6 +1674,15 @@ type ListSubscriber struct {
 	UpdatedAt         time.Time               `json:"updated_at"`
 }
 
+type MailingCampaignRollupQueue struct {
+	CampaignID   uuid.UUID          `json:"campaign_id"`
+	BusinessID   uuid.UUID          `json:"business_id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	ChangedAt    time.Time          `json:"changed_at"`
+	ClaimToken   pgtype.UUID        `json:"claim_token"`
+	LeaseUntil   pgtype.Timestamptz `json:"lease_until"`
+}
+
 type MailingDelivery struct {
 	ID                uuid.UUID             `json:"id"`
 	BusinessID        uuid.UUID             `json:"business_id"`

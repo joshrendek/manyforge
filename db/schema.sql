@@ -985,6 +985,7 @@ CREATE TABLE mailing_list (
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
     UNIQUE (business_id, slug),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     CHECK (status IN ('active', 'archived'))
@@ -1002,9 +1003,12 @@ CREATE TABLE mailing_list_key (
     created_at      timestamptz NOT NULL DEFAULT now(),
     revoked_at      timestamptz,
     UNIQUE (id, tenant_root_id),
+    UNIQUE (id, list_id, business_id, tenant_root_id),
     UNIQUE (publishable_key),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (list_id, tenant_root_id) REFERENCES mailing_list (id, tenant_root_id) ON DELETE CASCADE,
+    FOREIGN KEY (list_id, business_id, tenant_root_id)
+        REFERENCES mailing_list (id, business_id, tenant_root_id) ON DELETE CASCADE,
     CHECK (status IN ('enabled', 'revoked'))
 );
 
@@ -1134,6 +1138,7 @@ CREATE TABLE campaign (
     created_at         timestamptz NOT NULL DEFAULT now(),
     updated_at         timestamptz NOT NULL DEFAULT now(),
     UNIQUE (id, tenant_root_id),
+    UNIQUE (id, business_id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
     FOREIGN KEY (list_id, tenant_root_id) REFERENCES mailing_list(id, tenant_root_id),
     FOREIGN KEY (profile_id, tenant_root_id) REFERENCES mailing_sending_profile(id, tenant_root_id)
@@ -1174,6 +1179,22 @@ CREATE TABLE mailing_delivery (
     ),
     CHECK (attempts >= 0),
     CHECK (claim_generation >= 0)
+);
+
+CREATE TABLE mailing_campaign_rollup_queue (
+    campaign_id    uuid PRIMARY KEY,
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    changed_at     timestamptz NOT NULL DEFAULT now(),
+    claim_token    uuid,
+    lease_until    timestamptz,
+    UNIQUE (campaign_id, business_id, tenant_root_id),
+    FOREIGN KEY (campaign_id, business_id, tenant_root_id)
+        REFERENCES campaign (id, business_id, tenant_root_id) ON DELETE CASCADE,
+    CHECK (
+        (claim_token IS NULL AND lease_until IS NULL)
+        OR (claim_token IS NOT NULL AND lease_until IS NOT NULL)
+    )
 );
 
 
@@ -1357,7 +1378,11 @@ CREATE TABLE automation_event (
     UNIQUE (id, business_id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
     FOREIGN KEY (subscriber_id, business_id, tenant_root_id)
-        REFERENCES list_subscriber(id, business_id, tenant_root_id)
+        REFERENCES list_subscriber(id, business_id, tenant_root_id),
+    FOREIGN KEY (ingress_list_id, business_id, tenant_root_id)
+        REFERENCES mailing_list(id, business_id, tenant_root_id),
+    FOREIGN KEY (ingress_key_id, ingress_list_id, business_id, tenant_root_id)
+        REFERENCES mailing_list_key(id, list_id, business_id, tenant_root_id)
 );
 
 -- Tenant-merge control plane (migration 0113). These tables have no app-role

@@ -83,6 +83,42 @@ func (q *Queries) CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsPa
 	return items, nil
 }
 
+const claimChangedCampaignRollups = `-- name: ClaimChangedCampaignRollups :many
+
+SELECT unnest(public.mailing_claim_changed_campaign_rollups(
+    $1::uuid,
+    $2::integer,
+    $3::integer
+)::uuid[])::uuid AS campaign_id
+`
+
+type ClaimChangedCampaignRollupsParams struct {
+	ClaimToken   uuid.UUID `json:"claim_token"`
+	Lim          int32     `json:"lim"`
+	LeaseSeconds int32     `json:"lease_seconds"`
+}
+
+// ---- bounded worker claims ----
+func (q *Queries) ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, claimChangedCampaignRollups, arg.ClaimToken, arg.Lim, arg.LeaseSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var campaign_id uuid.UUID
+		if err := rows.Scan(&campaign_id); err != nil {
+			return nil, err
+		}
+		items = append(items, campaign_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteCampaign = `-- name: DeleteCampaign :one
 DELETE FROM campaign
 WHERE id = $1 AND tenant_root_id = $2 AND status IN ('draft', 'cancelled')
@@ -1287,52 +1323,6 @@ func (q *Queries) ListCampaignsAfter(ctx context.Context, arg ListCampaignsAfter
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listChangedCampaignRollupChanges = `-- name: ListChangedCampaignRollupChanges :many
-
-SELECT d.campaign_id, d.updated_at AS changed_at, d.id AS change_id
-FROM mailing_delivery d
-WHERE d.campaign_id IS NOT NULL
-  AND (d.updated_at, d.id) > (
-      $1::timestamptz,
-      $2::uuid
-  )
-ORDER BY d.updated_at ASC, d.id ASC
-LIMIT LEAST(GREATEST($3::integer, 1), 100)
-`
-
-type ListChangedCampaignRollupChangesParams struct {
-	AfterUpdatedAt time.Time `json:"after_updated_at"`
-	AfterID        uuid.UUID `json:"after_id"`
-	Lim            int32     `json:"lim"`
-}
-
-type ListChangedCampaignRollupChangesRow struct {
-	CampaignID pgtype.UUID `json:"campaign_id"`
-	ChangedAt  time.Time   `json:"changed_at"`
-	ChangeID   uuid.UUID   `json:"change_id"`
-}
-
-// ---- bounded worker cursors ----
-func (q *Queries) ListChangedCampaignRollupChanges(ctx context.Context, arg ListChangedCampaignRollupChangesParams) ([]ListChangedCampaignRollupChangesRow, error) {
-	rows, err := q.db.Query(ctx, listChangedCampaignRollupChanges, arg.AfterUpdatedAt, arg.AfterID, arg.Lim)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListChangedCampaignRollupChangesRow
-	for rows.Next() {
-		var i ListChangedCampaignRollupChangesRow
-		if err := rows.Scan(&i.CampaignID, &i.ChangedAt, &i.ChangeID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
