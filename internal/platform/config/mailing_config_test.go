@@ -92,3 +92,17 @@ func TestDevelopmentAllowsMetadataOnlyMailSink(t *testing.T) {
 		t.Fatalf("Environment = %q, want development", cfg.Environment)
 	}
 }
+
+func TestProductionLoadsConfiguredOutboundSMTPTransport(t *testing.T) {
+	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
+	t.Setenv("MANYFORGE_SMTP_HOST", "smtp.example.test")
+	t.Setenv("MANYFORGE_SMTP_PORT", "2525")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Environment != "production" || cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 {
+		t.Fatalf("production SMTP config = environment %q host %q port %d",
+			cfg.Environment, cfg.SMTPHost, cfg.SMTPPort)
+	}
+}
