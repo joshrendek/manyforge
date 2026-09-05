@@ -46,7 +46,8 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clear(credential)
 	var creds resendStoredCredentials
-	if json.Unmarshal(credential, &creds) != nil || creds.WebhookSecret == "" {
+	if json.Unmarshal(credential, &creds) != nil || creds.Version != 2 ||
+		strings.TrimSpace(creds.WebhookID) == "" || creds.WebhookSecret == "" {
 		h.logger().ErrorContext(r.Context(), "mailing Resend webhook credential is invalid", "profile_id", profileID)
 		h.unauthorized(w)
 		return

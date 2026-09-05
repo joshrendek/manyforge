@@ -249,6 +249,8 @@ UPDATE mailing_sending_profile SET
     sns_topic_arn = $12,
     status = 'unverified', last_verified_at = NULL, verify_error = NULL,
     feedback_status = 'pending', feedback_error = NULL, feedback_confirmed_at = NULL,
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
 RETURNING *;
@@ -278,6 +280,35 @@ WHERE id = sqlc.arg('id')
   AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
 RETURNING *;
 
+-- name: ClaimMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = sqlc.arg('token')::uuid,
+    resend_provisioning_expires_at = now() + interval '2 minutes',
+    status = 'unverified',
+    last_verified_at = NULL,
+    verify_error = NULL,
+    feedback_status = 'pending',
+    feedback_error = NULL,
+    feedback_confirmed_at = NULL
+WHERE id = sqlc.arg('id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
+  AND mode = 'resend'
+  AND (
+      resend_provisioning_token IS NULL
+      OR resend_provisioning_expires_at <= now()
+  )
+RETURNING *;
+
+-- name: ReleaseMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL
+WHERE id = sqlc.arg('id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND resend_provisioning_token = sqlc.arg('token')::uuid
+RETURNING *;
+
 -- Resend provisioning performs provider I/O before this CAS. Persist the
 -- provider-generated webhook credential and readiness atomically.
 -- name: SetMailingResendWebhookVerification :one
@@ -285,6 +316,8 @@ UPDATE mailing_sending_profile SET
     secret_ref = sqlc.arg('secret_ref')::uuid,
     status = 'verified',
     last_verified_at = now(),
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
     verify_error = NULL,
     feedback_status = 'ready',
     feedback_error = NULL,
@@ -293,6 +326,7 @@ UPDATE mailing_sending_profile SET
 WHERE id = sqlc.arg('id')
   AND tenant_root_id = sqlc.arg('tenant_root_id')
   AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
+  AND resend_provisioning_token = sqlc.arg('token')::uuid
   AND mode = 'resend'
 RETURNING *;
 

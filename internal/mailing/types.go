@@ -186,6 +186,7 @@ type ResendCredentials struct {
 }
 
 type resendStoredCredentials struct {
+	Version       int    `json:"version"`
 	APIKey        string `json:"api_key"`
 	WebhookID     string `json:"webhook_id,omitempty"`
 	WebhookSecret string `json:"webhook_secret,omitempty"`

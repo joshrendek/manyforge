@@ -237,6 +237,7 @@ func TestMFMailFeedback001RequiresDurableFeedbackReadiness(t *testing.T) {
 	schedule := auditSection(t, scheduleSource, "-- name: ScheduleCampaign", "-- name: ListCampaignDeliveries")
 	migration := auditSource(t, "../../migrations/0134_mailing_provider_feedback.up.sql")
 	ses := auditSource(t, "../../internal/mailing/webhook_ses.go")
+	resendWebhook := auditSource(t, "../../internal/mailing/webhook_resend.go")
 
 	for _, marker := range []string{
 		"validateSESFeedbackConfiguration", "SESConfigurationSet", "SNSTopicARN",
@@ -249,6 +250,12 @@ func TestMFMailFeedback001RequiresDurableFeedbackReadiness(t *testing.T) {
 	if strings.Contains(publicResend, "WebhookSecret") {
 		t.Fatal("tenant-facing Resend credentials accept a signing secret")
 	}
+	storedResend := auditSection(t, typesSource, "type resendStoredCredentials struct", "type SESCredentials struct")
+	if !strings.Contains(storedResend, "Version") ||
+		!strings.Contains(resendWebhook, "creds.Version != 2") ||
+		!strings.Contains(resendWebhook, `strings.TrimSpace(creds.WebhookID) == ""`) {
+		t.Fatal("Resend ingestion does not require the versioned provider-provisioned credential bundle")
+	}
 	for _, marker := range []string{
 		"ResendWebhookProvisioner", "EnsureWebhook", "persistResendWebhookVerification",
 	} {
@@ -260,6 +267,24 @@ func TestMFMailFeedback001RequiresDurableFeedbackReadiness(t *testing.T) {
 		if !strings.Contains(resendProvider, marker) {
 			t.Fatalf("Resend control-plane provisioning missing marker %q", marker)
 		}
+	}
+	for _, marker := range []string{`"/webhooks?limit=100"`, "listed.HasMore", "reconcileWebhooks", "DeleteWebhook"} {
+		if !strings.Contains(resendProvider, marker) {
+			t.Fatalf("Resend control-plane reconciliation missing marker %q", marker)
+		}
+	}
+	for _, marker := range []string{"ClaimMailingResendProvisioning", "resend_provisioning_token", "resend_provisioning_expires_at"} {
+		if !strings.Contains(scheduleSource, marker) {
+			t.Fatalf("Resend provisioning lease missing marker %q", marker)
+		}
+	}
+	if !strings.Contains(migration, "WHERE mode = 'resend'") ||
+		!strings.Contains(migration, "feedback_status = 'pending'") ||
+		!strings.Contains(migration, "status = 'unverified'") {
+		t.Fatal("migration does not fail closed for legacy Resend credential bundles")
+	}
+	if !strings.Contains(putProfile, "deleteResendWebhook") {
+		t.Fatal("profile mutation does not require confirmed remote Resend cleanup")
 	}
 	for _, marker := range []string{"GetConfigurationSetEventDestinations", "ExpectedTopicARN", "EventTypeBounce", "EventTypeComplaint"} {
 		if !strings.Contains(sesProvider, marker) {

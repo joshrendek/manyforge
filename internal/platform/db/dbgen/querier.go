@@ -38,6 +38,7 @@ type Querier interface {
 	CheckMailingTestRecipientSuppression(ctx context.Context, arg CheckMailingTestRecipientSuppressionParams) (*bool, error)
 	// ---- bounded worker claims ----
 	ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error)
+	ClaimMailingResendProvisioning(ctx context.Context, arg ClaimMailingResendProvisioningParams) (MailingSendingProfile, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	CompleteChangedCampaignRollups(ctx context.Context, arg CompleteChangedCampaignRollupsParams) (int32, error)
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
@@ -789,6 +790,7 @@ type Querier interface {
 	// shape). NEVER a hard DELETE (Principle VI / FR-014). Returns tenant_root_id +
 	// redacted_at for the in-tx audit and the per-blob purge enqueue.
 	RedactTicket(ctx context.Context, arg RedactTicketParams) (RedactTicketRow, error)
+	ReleaseMailingResendProvisioning(ctx context.Context, arg ReleaseMailingResendProvisioningParams) (MailingSendingProfile, error)
 	// Restore connector_id on the re-adopted tickets' messages. Gated on external_id IS NOT NULL to
 	// satisfy ticket_message_connector_external_chk (connector_id set ⇒ external_id present); messages
 	// without an external id correctly stay native.
