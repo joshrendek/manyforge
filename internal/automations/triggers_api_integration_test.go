@@ -62,6 +62,9 @@ func TestAutomationTriggersEventsEnrollmentsStatsAndGoldenScenario(t *testing.T)
 		WHERE enrollment_id=$1 AND node_id='welcome'`, clickedEnrollment).Scan(&clickedDelivery); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = database.Super.Exec(ctx, `UPDATE mailing_delivery SET opened_at=$2 WHERE id=$1`, clickedDelivery, base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = database.Super.Exec(ctx, `INSERT INTO mailing_tracking_event
 		(business_id,tenant_root_id,delivery_id,subscriber_id,kind,url,occurred_at)
 		VALUES ($1,$1,$2,$3,'click','https://example.test/offer',$4)`, seed.businessID, clickedDelivery, clicked.ID, base.Add(2*time.Hour)); err != nil {
@@ -136,6 +139,11 @@ func TestAutomationTriggersEventsEnrollmentsStatsAndGoldenScenario(t *testing.T)
 	stats, err := service.Stats(ctx, seed.principalID, seed.businessID, automationID, &versionID)
 	if err != nil || stats.Enrollments.Completed != 2 || stats.Enrollments.Exited != 1 || len(stats.Nodes) != 7 {
 		t.Fatalf("stats=%+v err=%v", stats, err)
+	}
+	welcomeStats := statsNode(t, stats, "welcome")
+	reminderStats := statsNode(t, stats, "reminder")
+	if welcomeStats.Sent != 2 || welcomeStats.Opened != 1 || welcomeStats.Clicked != 1 || reminderStats.Sent != 1 || reminderStats.Opened != 0 || reminderStats.Clicked != 0 {
+		t.Fatalf("node stats welcome=%+v reminder=%+v", welcomeStats, reminderStats)
 	}
 
 	eventAutomationID := activateEventFlow(ctx, t, service, seed, list.ID, "purchased")
@@ -311,6 +319,17 @@ func assertEnrollmentStatus(ctx context.Context, t *testing.T, database *testdb.
 	if err := database.Super.QueryRow(ctx, `SELECT status::text FROM automation_enrollment WHERE id=$1`, enrollmentID).Scan(&got); err != nil || got != want {
 		t.Fatalf("enrollment status=%q want=%q err=%v", got, want, err)
 	}
+}
+
+func statsNode(t *testing.T, stats automations.Stats, nodeID string) automations.NodeStats {
+	t.Helper()
+	for _, node := range stats.Nodes {
+		if node.NodeID == nodeID {
+			return node
+		}
+	}
+	t.Fatalf("stats has no node %q", nodeID)
+	return automations.NodeStats{}
 }
 
 func stringPtrTest(value string) *string { return &value }

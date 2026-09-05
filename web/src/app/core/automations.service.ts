@@ -104,6 +104,49 @@ export interface AutomationIssue {
   message: string;
 }
 
+export type EnrollmentStatus = 'active' | 'completed' | 'exited' | 'errored';
+
+export interface Enrollment {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  automation_id: string;
+  version_id: string;
+  subscriber_id: string;
+  status: EnrollmentStatus;
+  current_node_id: string | null;
+  wake_at: string | null;
+  node_attempts: number;
+  last_error: string | null;
+  exit_reason: string | null;
+  source_event_id: string | null;
+  enrolled_at: string;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+export interface NodeStats {
+  node_id: string;
+  node_kind: string;
+  entered: number;
+  waiting: number;
+  advanced: number;
+  sent: number;
+  opened: number;
+  clicked: number;
+  branch_yes: number;
+  branch_no: number;
+  exited: number;
+  errors: number;
+}
+
+export interface AutomationStats {
+  automation_id: string;
+  version_id: string;
+  enrollments: { active: number; completed: number; exited: number; errored: number };
+  nodes: NodeStats[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class AutomationsService {
   private readonly http = inject(HttpClient);
@@ -174,5 +217,30 @@ export class AutomationsService {
 
   archive(businessId: string, automationId: string): Observable<Automation> {
     return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/archive`, {});
+  }
+
+  listEnrollments(
+    businessId: string,
+    automationId: string,
+    filters: { status?: EnrollmentStatus | ''; node_id?: string; cursor?: string } = {},
+  ): Observable<Page<Enrollment>> {
+    let params = new HttpParams();
+    if (filters.status) params = params.set('status', filters.status);
+    if (filters.node_id) params = params.set('node_id', filters.node_id);
+    if (filters.cursor) params = params.set('cursor', filters.cursor);
+    return this.http.get<Page<Enrollment>>(`${this.base(businessId)}/${automationId}/enrollments`, { params });
+  }
+
+  enroll(businessId: string, automationId: string, subscriberId: string): Observable<Enrollment> {
+    return this.http.post<Enrollment>(`${this.base(businessId)}/${automationId}/enrollments`, { subscriber_id: subscriberId });
+  }
+
+  exitEnrollment(businessId: string, automationId: string, enrollmentId: string): Observable<Enrollment> {
+    return this.http.post<Enrollment>(`${this.base(businessId)}/${automationId}/enrollments/${enrollmentId}/exit`, {});
+  }
+
+  stats(businessId: string, automationId: string, versionId?: string): Observable<AutomationStats> {
+    const params = versionId ? new HttpParams().set('version_id', versionId) : undefined;
+    return this.http.get<AutomationStats>(`${this.base(businessId)}/${automationId}/stats`, { params });
   }
 }

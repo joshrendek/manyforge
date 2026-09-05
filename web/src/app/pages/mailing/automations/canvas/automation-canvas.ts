@@ -4,8 +4,10 @@ import {
   AutomationIssue,
   AutomationNode,
   AutomationNodeKind,
+  NodeStats,
 } from '../../../../core/automations.service';
 import { deleteNode, GraphReferences, insertNode, summarizeNode } from './graph-ops';
+import { nodeCompletedCount } from './node-stats';
 import { GraphLayout, layoutGraph } from './layout';
 
 @Component({
@@ -77,6 +79,23 @@ import { GraphLayout, layoutGraph } from './layout';
                 <span class="kind">{{ icon(item.kind) }} {{ item.name || kindLabel(item.kind) }}</span>
                 <span class="summary">{{ summarize(item) }}</span>
               </button>
+              @if (stats) {
+                <div
+                  class="node-stats"
+                  data-testid="node-stats"
+                  [style.left.px]="placed.x"
+                  [style.top.px]="placed.y + placed.h + 4"
+                  [style.width.px]="placed.w"
+                >
+                  <span class="mf-pill mf-pill-neutral" data-testid="node-stat-entered">entered {{ statsFor(item.id)?.entered ?? 0 }}</span>
+                  <span class="mf-pill mf-pill-neutral" data-testid="node-stat-completed">completed {{ completedCount(item.id) }}</span>
+                  @if (item.kind === 'send_email') {
+                    <span class="mf-pill mf-pill-accent" data-testid="node-stat-sent">sent {{ statsFor(item.id)?.sent ?? 0 }}</span>
+                    <span class="mf-pill mf-pill-accent" data-testid="node-stat-opened">opened {{ statsFor(item.id)?.opened ?? 0 }}</span>
+                    <span class="mf-pill mf-pill-accent" data-testid="node-stat-clicked">clicked {{ statsFor(item.id)?.clicked ?? 0 }}</span>
+                  }
+                </div>
+              }
             }
           }
           @if (pickerEdgeId) {
@@ -93,7 +112,7 @@ import { GraphLayout, layoutGraph } from './layout';
     </section>
   `,
   styles: [`
-    :host{display:block;min-width:0;height:100%}.canvas-shell{position:relative;height:100%;min-height:520px;background:var(--mf-surface-inset);overflow:hidden}.controls{position:absolute;z-index:5;top:12px;left:12px;display:flex;align-items:center;gap:6px;padding:5px;border:1px solid var(--mf-border);border-radius:var(--mf-radius-sm);background:var(--mf-surface);box-shadow:var(--mf-shadow-sm);font-size:var(--mf-fs-xs)}.viewport{position:absolute;inset:0;overflow:hidden;outline:none;cursor:grab;background-image:radial-gradient(var(--mf-border) 1px,transparent 1px);background-size:20px 20px}.viewport.panning{cursor:grabbing}.world{position:absolute;transform-origin:0 0}.edges{position:absolute;inset:0;overflow:visible;pointer-events:none}.edges path{fill:none;stroke:var(--mf-border-strong);stroke-width:2}.edges text{fill:var(--mf-text-muted);font-size:12px;font-weight:700;text-anchor:middle}.node{position:absolute;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;padding:12px 14px;text-align:left;border:1px solid var(--mf-border-strong);border-radius:var(--mf-radius);color:var(--mf-text);background:var(--mf-surface);box-shadow:var(--mf-shadow-sm);cursor:pointer}.node:hover,.node[aria-selected="true"]{border-color:var(--mf-accent);box-shadow:var(--mf-ring)}.node[data-invalid="true"]{border-color:var(--mf-danger);box-shadow:0 0 0 2px var(--mf-danger-soft)}.kind{font-weight:700;font-size:var(--mf-fs-sm)}.summary{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mf-text-muted);font-size:var(--mf-fs-xs)}.edge-plus{position:absolute;z-index:2;width:26px;height:26px;padding:0;transform:translate(-50%,-50%);border:1px solid var(--mf-accent);border-radius:50%;color:var(--mf-accent-text);background:var(--mf-surface);font-size:18px;line-height:22px;cursor:pointer}.picker{position:absolute;z-index:10;width:190px;padding:10px;transform:translate(-50%,8px);border:1px solid var(--mf-border);border-radius:var(--mf-radius);background:var(--mf-surface);box-shadow:var(--mf-shadow)}.picker p{margin:0 0 6px;font-size:var(--mf-fs-xs);font-weight:700;color:var(--mf-text-muted);text-transform:uppercase}.picker-item,.picker-close{display:block;width:100%;padding:7px 8px;text-align:left;border:0;border-radius:var(--mf-radius-sm);color:var(--mf-text);background:transparent;cursor:pointer}.picker-item:hover{background:var(--mf-accent-soft)}.picker-close{margin-top:4px;color:var(--mf-text-muted)}
+    :host{display:block;min-width:0;height:100%}.canvas-shell{position:relative;height:100%;min-height:520px;background:var(--mf-surface-inset);overflow:hidden}.controls{position:absolute;z-index:5;top:12px;left:12px;display:flex;align-items:center;gap:6px;padding:5px;border:1px solid var(--mf-border);border-radius:var(--mf-radius-sm);background:var(--mf-surface);box-shadow:var(--mf-shadow-sm);font-size:var(--mf-fs-xs)}.viewport{position:absolute;inset:0;overflow:hidden;outline:none;cursor:grab;background-image:radial-gradient(var(--mf-border) 1px,transparent 1px);background-size:20px 20px}.viewport.panning{cursor:grabbing}.world{position:absolute;transform-origin:0 0}.edges{position:absolute;inset:0;overflow:visible;pointer-events:none}.edges path{fill:none;stroke:var(--mf-border-strong);stroke-width:2}.edges text{fill:var(--mf-text-muted);font-size:12px;font-weight:700;text-anchor:middle}.node{position:absolute;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;padding:12px 14px;text-align:left;border:1px solid var(--mf-border-strong);border-radius:var(--mf-radius);color:var(--mf-text);background:var(--mf-surface);box-shadow:var(--mf-shadow-sm);cursor:pointer}.node:hover,.node[aria-selected="true"]{border-color:var(--mf-accent);box-shadow:var(--mf-ring)}.node[data-invalid="true"]{border-color:var(--mf-danger);box-shadow:0 0 0 2px var(--mf-danger-soft)}.kind{font-weight:700;font-size:var(--mf-fs-sm)}.summary{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mf-text-muted);font-size:var(--mf-fs-xs)}.edge-plus{position:absolute;z-index:2;width:26px;height:26px;padding:0;transform:translate(-50%,-50%);border:1px solid var(--mf-accent);border-radius:50%;color:var(--mf-accent-text);background:var(--mf-surface);font-size:18px;line-height:22px;cursor:pointer}.picker{position:absolute;z-index:10;width:190px;padding:10px;transform:translate(-50%,8px);border:1px solid var(--mf-border);border-radius:var(--mf-radius);background:var(--mf-surface);box-shadow:var(--mf-shadow)}.picker p{margin:0 0 6px;font-size:var(--mf-fs-xs);font-weight:700;color:var(--mf-text-muted);text-transform:uppercase}.picker-item,.picker-close{display:block;width:100%;padding:7px 8px;text-align:left;border:0;border-radius:var(--mf-radius-sm);color:var(--mf-text);background:transparent;cursor:pointer}.picker-item:hover{background:var(--mf-accent-soft)}.picker-close{margin-top:4px;color:var(--mf-text-muted)}.node-stats{position:absolute;display:flex;gap:4px;pointer-events:none}.node-stats .mf-pill{font-size:10px;padding:2px 6px;white-space:nowrap}
   `],
 })
 export class AutomationCanvasComponent {
@@ -110,6 +129,7 @@ export class AutomationCanvasComponent {
   @Input() issues: AutomationIssue[] = [];
   @Input() readOnly = false;
   @Input() references: GraphReferences = {};
+  @Input() stats: Record<string, NodeStats> | null = null;
   @Output() graphChange = new EventEmitter<AutomationGraph>();
   @Output() selectedIdChange = new EventEmitter<string | null>();
   @Output() openNode = new EventEmitter<string>();
@@ -128,8 +148,10 @@ export class AutomationCanvasComponent {
   get worldTransform(): string { return `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`; }
   node(id: string): AutomationNode | undefined { return this.graph.nodes.find((node) => node.id === id); }
   isInvalid(id: string): boolean { return this.issues.some((issue) => issue.node_id === id); }
-  errorTitle(id: string): string { return this.issues.filter((issue) => issue.node_id === id).map((issue) => issue.message).join('\n'); }
+  errorTitle(id: string): string { const messages = this.issues.filter((issue) => issue.node_id === id).map((issue) => issue.message); return messages.length ? messages.join('\n') : ''; }
   kindLabel(kind: AutomationNodeKind): string { return kind.replace('_', ' ').replace(/^./, (letter) => letter.toUpperCase()); }
+  statsFor(id: string): NodeStats | undefined { return this.stats?.[id]; }
+  completedCount(id: string): number { const value = this.stats?.[id]; return value ? nodeCompletedCount(value) : 0; }
   icon(kind: AutomationNodeKind): string { return ({ trigger: '⚡', send_email: '✉', wait: '◷', condition: '◇', add_tag: '+', remove_tag: '−', exit: '■' } as Record<AutomationNodeKind, string>)[kind]; }
 
   selectNode(id: string): void {
