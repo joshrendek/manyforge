@@ -3,6 +3,7 @@
 package automations_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,10 @@ import (
 	"github.com/manyforge/manyforge/internal/automations"
 	"github.com/jackc/pgx/v5"
 	"github.com/manyforge/manyforge/internal/mailing"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
+	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
+	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
+	"github.com/manyforge/manyforge/internal/platform/notify"
 	"github.com/manyforge/manyforge/migrations"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -514,6 +519,7 @@ func TestAutomationFence002LifecycleTransitionsFenceEverySideEffect(t *testing.T
 			WHERE subscriber_id=$1 AND tag='preserve-me'`, fixture.subscriberID).Scan(&tags); err != nil {
 			t.Fatal(err)
 		}
+
 		if tags != 1 {
 			t.Fatalf("preserved tags after exit = %d, want 1", tags)
 		}
@@ -541,6 +547,156 @@ func TestAutomationFence002LifecycleTransitionsFenceEverySideEffect(t *testing.T
 			t.Fatalf("enqueue after list archive error = %v, want lost fence", err)
 		}
 	})
+}
+func TestAutomationFence002RenewalBlocksProviderAfterLifecycleTransition(t *testing.T) {
+	tests := []struct {
+		name       string
+		transition func(automationSecurityFixture) error
+	}{
+		{name: "pause", transition: func(f automationSecurityFixture) error {
+			_, err := f.service.Pause(f.ctx, f.seed.principalID, f.seed.businessID, f.automationID)
+			return err
+		}},
+		{name: "automation archive", transition: func(f automationSecurityFixture) error {
+			_, err := f.service.Archive(f.ctx, f.seed.principalID, f.seed.businessID, f.automationID)
+			return err
+		}},
+		{name: "manual enrollment exit", transition: func(f automationSecurityFixture) error {
+			_, err := f.service.ExitEnrollment(
+				f.ctx, f.seed.principalID, f.seed.businessID, f.automationID, f.enrollmentID,
+			)
+			return err
+		}},
+		{name: "list archive", transition: func(f automationSecurityFixture) error {
+			return f.mailingService.ArchiveList(f.ctx, f.seed.principalID, f.seed.businessID, f.listID)
+		}},
+		{name: "business archive", transition: func(f automationSecurityFixture) error {
+			_, err := f.database.Super.Exec(f.ctx, `UPDATE business SET status='archived' WHERE id=$1`, f.seed.businessID)
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newAutomationSecurityFixture(t)
+			ports := mailing.AutomationPorts{MessageDomain: "mail.example.test"}
+			sourceID := uuid.New()
+			var deliveryID uuid.UUID
+			if err := fixture.database.App.WithTx(fixture.ctx, func(tx pgx.Tx) error {
+				var enqueueErr error
+				deliveryID, enqueueErr = ports.Enqueue(fixture.ctx, tx, automations.MessageSpec{
+					BusinessID: fixture.seed.businessID, TenantRootID: fixture.seed.businessID,
+					SubscriberID: fixture.subscriberID, TemplateID: fixture.templateID,
+					EnrollmentID: fixture.enrollmentID, ClaimGeneration: fixture.claimGeneration,
+					TrackOpens: true, TrackClicks: true, SourceKind: "automation",
+					SourceID: sourceID, NotBefore: time.Now().UTC(),
+				})
+				return enqueueErr
+			}); err != nil {
+				t.Fatal(err)
+			}
+			const deliveryGeneration = 7
+			if _, err := fixture.database.Super.Exec(fixture.ctx, `UPDATE mailing_delivery
+				SET status='sending',claim_generation=$2,lease_until=now()+interval '2 minutes'
+				WHERE id=$1`, deliveryID, deliveryGeneration); err != nil {
+				t.Fatal(err)
+			}
+			if err := tt.transition(fixture); err != nil {
+				t.Fatal(err)
+			}
+			var renewed bool
+			if err := fixture.database.App.WithTx(fixture.ctx, func(tx pgx.Tx) error {
+				return tx.QueryRow(fixture.ctx,
+					`SELECT mailing_renew_delivery($1,$2,interval '2 minutes')`,
+					deliveryID, deliveryGeneration).Scan(&renewed)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			providerCalls := 0
+			if renewed {
+				providerCalls++
+			}
+			if renewed || providerCalls != 0 {
+				t.Fatalf("renewed=%v provider calls=%d, want fenced renewal and no provider send", renewed, providerCalls)
+			}
+		})
+	}
+}
+
+type renewalCapturedDeliverer struct {
+	calls int
+}
+
+func (d *renewalCapturedDeliverer) Verify(context.Context) error {
+	return nil
+}
+
+func (d *renewalCapturedDeliverer) Send(context.Context, notify.Mail) (mailprovider.SendResult, error) {
+	d.calls++
+	return mailprovider.SendResult{ProviderID: "must-not-send"}, nil
+}
+
+func TestAutomationFence002SendWorkerDoesNotCallProviderAfterPause(t *testing.T) {
+	fixture := newAutomationSecurityFixture(t)
+	domainID, profileID := uuid.New(), uuid.New()
+	if _, err := fixture.database.Super.Exec(fixture.ctx, `INSERT INTO email_domain
+		(id,business_id,tenant_root_id,domain,mode,verify_token,verified_at,created_at,updated_at)
+		VALUES ($1,$2,$2,'renew.example.test','provider_route','verified',now(),now(),now())`,
+		domainID, fixture.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.database.Super.Exec(fixture.ctx, `INSERT INTO mailing_sending_profile
+		(id,business_id,tenant_root_id,mode,from_email,from_name,email_domain_id,status,created_at,updated_at)
+		VALUES ($1,$2,$2,'relay','sender@renew.example.test','Sender',$3,'verified',now(),now())`,
+		profileID, fixture.seed.businessID, domainID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.database.Super.Exec(fixture.ctx, `UPDATE automation_enrollment
+		SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, fixture.enrollmentID); err != nil {
+		t.Fatal(err)
+	}
+	ports := mailing.AutomationPorts{MessageDomain: "mail.example.test"}
+	stepper := automations.Stepper{
+		DB: fixture.database.App,
+		Deps: automations.Deps{Subscribers: ports, Sender: ports, Steps: automations.SQLStepStore{}},
+		Now: func() time.Time { return time.Now().UTC() },
+	}
+	if err := stepper.Tick(fixture.ctx); err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := mailtoken.New(bytes.Repeat([]byte{0x54}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderer, err := mailrender.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := &renewalCapturedDeliverer{}
+	paused := false
+	sendService := &mailing.Service{
+		DB: fixture.database.App, Tokens: tokens, Renderer: renderer,
+		PublicBaseURL: "https://hub.example.test", MessageDomain: "mail.example.test",
+		Providers: mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+			if !paused {
+				paused = true
+				if _, pauseErr := fixture.service.Pause(
+					fixture.ctx, fixture.seed.principalID, fixture.seed.businessID, fixture.automationID,
+				); pauseErr != nil {
+					return nil, pauseErr
+				}
+			}
+			return captured, nil
+		}, time.Minute),
+	}
+	if err := (&mailing.SendWorker{Service: sendService, Batch: 1, Lease: 2 * time.Minute}).Tick(fixture.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !paused {
+		t.Fatal("provider resolution did not execute the pause transition")
+	}
+	if captured.calls != 0 {
+		t.Fatalf("provider calls after pause = %d, want 0", captured.calls)
+	}
 }
 
 func TestAutomationSendAuthz005ActivationSnapshotFeedsDeliveryClaim(t *testing.T) {

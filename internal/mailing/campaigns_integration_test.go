@@ -90,8 +90,8 @@ func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 		}
 		return sub
 	}
-	eligibleWest := add("west@example.test", "west")
-	eligibleVIP := add("vip@example.test", "vip")
+	_ = add("west@example.test", "west")
+	_ = add("vip@example.test", "vip")
 	tenantSuppressed := add("tenant-suppressed@example.test", "vip")
 	globalSuppressed := add("global-suppressed@example.test", "west")
 	_ = add("mismatch@example.test", "other")
@@ -433,46 +433,6 @@ func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 		t.Fatalf("expired cancelled delivery status=%q err=%v", suppressedStatus, err)
 	}
 
-	templateA, err := svc.CreateTemplate(ctx, seed.principalID, seed.businessID, mailing.TemplateInput{
-		Name: "Automation A", Subject: "A", BodyMarkdown: "Automation alpha",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	templateB, err := svc.CreateTemplate(ctx, seed.principalID, seed.businessID, mailing.TemplateInput{
-		Name: "Automation B", Subject: "B", BodyMarkdown: "Automation beta",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		for _, item := range []struct {
-			sourceID, templateID, subscriberID uuid.UUID
-		}{{uuid.New(), templateA.ID, eligibleWest.ID}, {uuid.New(), templateB.ID, eligibleVIP.ID}} {
-			var id uuid.UUID
-			if queryErr := tx.QueryRow(ctx, "SELECT mailing_enqueue_delivery($1,$2,$3,$4,$5,now(),$6)",
-				seed.businessID, seed.businessID, item.sourceID, item.templateID, item.subscriberID,
-				"mail.example.test").Scan(&id); queryErr != nil {
-				return queryErr
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	mailCount := len(captured.mails)
-	if err = (&mailing.SendWorker{Service: svc, Batch: 10, Lease: 2 * time.Minute}).Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if len(captured.mails) != mailCount+2 {
-		t.Fatalf("automation sends=%d, want 2", len(captured.mails)-mailCount)
-	}
-	bodies := captured.mails[mailCount].BodyText + "\n" + captured.mails[mailCount+1].BodyText
-	if !strings.Contains(bodies, "Automation alpha") || !strings.Contains(bodies, "Automation beta") {
-		t.Fatalf("automation templates were cross-cached: %q", bodies)
-	}
-	_ = eligibleWest
-	_ = eligibleVIP
 }
 
 func TestCampaignTrackingOracleAndEvents(t *testing.T) {

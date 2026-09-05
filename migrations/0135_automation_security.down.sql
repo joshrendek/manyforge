@@ -472,15 +472,58 @@ AS $$
           AND (p_within IS NULL OR e.occurred_at >= now() - GREATEST(p_within, interval '0'))
     );
 $$;
+
+CREATE OR REPLACE FUNCTION mailing_renew_delivery(
+    p_id uuid, p_generation integer, p_lease interval
+) RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    WITH changed AS (
+        UPDATE mailing_delivery SET
+            lease_until = now() + GREATEST(COALESCE(p_lease, interval '2 minutes'), interval '10 seconds'),
+            updated_at = now()
+        WHERE id = p_id AND status = 'sending' AND claim_generation = p_generation
+          AND tenant_merge_root_write_allowed(tenant_root_id)
+          AND (source_kind = 'automation' OR EXISTS (
+              SELECT 1 FROM campaign c
+              WHERE c.id = campaign_id AND c.tenant_root_id = mailing_delivery.tenant_root_id
+                AND c.status = 'sending'
+          ))
+          AND EXISTS (
+              SELECT 1 FROM list_subscriber s
+              WHERE s.id = subscriber_id AND s.tenant_root_id = mailing_delivery.tenant_root_id
+                AND s.status = 'active'
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM mailing_suppression ms
+              WHERE ms.business_id = mailing_delivery.business_id AND ms.email = mailing_delivery.email
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM email_suppression es WHERE es.email = mailing_delivery.email
+          )
+        RETURNING 1
+    )
+    SELECT EXISTS(SELECT 1 FROM changed);
+$$;
 REVOKE ALL ON FUNCTION automation_ingest_event(uuid,uuid,uuid,text,citext,uuid,timestamptz,jsonb,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION automation_event_exists(uuid,citext,text,timestamptz,interval) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mailing_renew_delivery(uuid,integer,interval) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION automation_ingest_event(uuid,uuid,uuid,text,citext,uuid,timestamptz,jsonb,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION automation_event_exists(uuid,citext,text,timestamptz,interval) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION mailing_renew_delivery(uuid,integer,interval) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text) TO manyforge_app;
+
+ALTER TABLE mailing_delivery
+    DROP CONSTRAINT mailing_delivery_automation_fence_ck,
+    DROP COLUMN automation_claim_generation,
+    DROP COLUMN automation_enrollment_id;
 
 DROP FUNCTION automation_execution_fence(uuid,integer,uuid,uuid,uuid);
