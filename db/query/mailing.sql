@@ -251,6 +251,7 @@ UPDATE mailing_sending_profile SET
     feedback_status = 'pending', feedback_error = NULL, feedback_confirmed_at = NULL,
     resend_provisioning_token = NULL,
     resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
 RETURNING *;
@@ -283,6 +284,7 @@ RETURNING *;
 -- name: ClaimMailingResendProvisioning :one
 UPDATE mailing_sending_profile SET
     resend_provisioning_token = sqlc.arg('token')::uuid,
+    resend_cleanup_required = resend_cleanup_required OR sqlc.arg('require_cleanup')::boolean,
     resend_provisioning_expires_at = now() + interval '2 minutes',
     status = 'unverified',
     last_verified_at = NULL,
@@ -318,6 +320,7 @@ UPDATE mailing_sending_profile SET
     last_verified_at = now(),
     resend_provisioning_token = NULL,
     resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
     verify_error = NULL,
     feedback_status = 'ready',
     feedback_error = NULL,

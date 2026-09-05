@@ -32,6 +32,7 @@ type resendOperationLease struct {
 	token        uuid.UUID
 	apiKey       string
 	webhookID    string
+	cleanupRequired bool
 }
 
 func (s *Service) GetSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) (SendingProfile, error) {
@@ -109,8 +110,12 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 	if err != nil {
 		return SendingProfile{}, err
 	}
-	if lease != nil && lease.webhookID != "" {
-		if err = s.deleteResendWebhook(ctx, *lease); err != nil {
+	if lease != nil && (lease.cleanupRequired || lease.webhookID != "") {
+		replacementAPIKey := ""
+		if in.Resend != nil {
+			replacementAPIKey = strings.TrimSpace(in.Resend.APIKey)
+		}
+		if err = s.cleanupResendWebhooks(ctx, *lease, replacementAPIKey); err != nil {
 			s.releaseResendMutation(ctx, principalID, *lease)
 			return SendingProfile{}, err
 		}
@@ -253,8 +258,8 @@ func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, busines
 	if err != nil {
 		return err
 	}
-	if lease != nil && lease.webhookID != "" {
-		if err = s.deleteResendWebhook(ctx, *lease); err != nil {
+	if lease != nil && (lease.cleanupRequired || lease.webhookID != "") {
+		if err = s.cleanupResendWebhooks(ctx, *lease, ""); err != nil {
 			s.releaseResendMutation(ctx, principalID, *lease)
 			return err
 		}
@@ -338,9 +343,15 @@ func (s *Service) claimResendMutation(
 		if decodeErr != nil || strings.TrimSpace(stored.APIKey) == "" {
 			return errors.New("mailing: stored Resend credentials are invalid")
 		}
+		var cleanupRequired bool
+		if err = tx.QueryRow(ctx, `SELECT resend_cleanup_required
+			FROM mailing_sending_profile WHERE id=$1 AND tenant_root_id=$2`,
+			row.ID, row.TenantRootID).Scan(&cleanupRequired); err != nil {
+			return err
+		}
 		token := uuid.New()
 		if _, err = q.ClaimMailingResendProvisioning(ctx, dbgen.ClaimMailingResendProvisioningParams{
-			Token: token, ID: row.ID, TenantRootID: row.TenantRootID,
+			Token: token, RequireCleanup: false, ID: row.ID, TenantRootID: row.TenantRootID,
 			ExpectedUpdatedAt: row.UpdatedAt,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -350,7 +361,7 @@ func (s *Service) claimResendMutation(
 		}
 		lease = &resendOperationLease{
 			profileID: row.ID, tenantRootID: row.TenantRootID, updatedAt: row.UpdatedAt,
-			token: token, apiKey: stored.APIKey,
+			token: token, apiKey: stored.APIKey, cleanupRequired: cleanupRequired,
 		}
 		if stored.Version == 2 {
 			lease.webhookID = stored.WebhookID
@@ -360,22 +371,41 @@ func (s *Service) claimResendMutation(
 	return lease, mapErr(err)
 }
 
-func (s *Service) deleteResendWebhook(ctx context.Context, lease resendOperationLease) error {
+func (s *Service) cleanupResendWebhooks(ctx context.Context, lease resendOperationLease, replacementAPIKey string) error {
 	if s.Providers == nil {
 		return errors.New("mailing: Resend webhook cleanup provider is not configured")
 	}
-	deliverer, err := s.Providers.Resolve(ctx, mailprovider.Profile{
-		ID: lease.profileID, UpdatedAt: lease.updatedAt,
-		Mode: "resend", ResendAPIKey: lease.apiKey,
-	})
-	if err != nil {
-		return err
+	baseURL := strings.TrimRight(strings.TrimSpace(s.PublicBaseURL), "/")
+	if baseURL == "" {
+		return errors.New("mailing: public base URL is required for Resend webhook cleanup")
 	}
-	provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner)
-	if !ok {
-		return errors.New("mailing: provider does not support Resend webhook cleanup")
+	endpoint := baseURL + "/inbound/mailing/" + lease.profileID.String() + "/resend"
+	keys := []string{lease.apiKey}
+	if replacementAPIKey != "" && replacementAPIKey != lease.apiKey {
+		keys = append(keys, replacementAPIKey)
 	}
-	return provisioner.DeleteWebhook(ctx, lease.webhookID)
+	var cleanupErr error
+	for _, apiKey := range keys {
+		s.Providers.Invalidate(lease.profileID)
+		deliverer, err := s.Providers.Resolve(ctx, mailprovider.Profile{
+			ID: lease.profileID, UpdatedAt: lease.updatedAt,
+			Mode: "resend", ResendAPIKey: apiKey,
+		})
+		if err != nil {
+			cleanupErr = err
+			continue
+		}
+		provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner)
+		if !ok {
+			cleanupErr = errors.New("mailing: provider does not support Resend webhook cleanup")
+			continue
+		}
+		if err = provisioner.CleanupWebhooks(ctx, endpoint, lease.webhookID); err == nil {
+			return nil
+		}
+		cleanupErr = err
+	}
+	return cleanupErr
 }
 
 func (s *Service) releaseResendMutation(

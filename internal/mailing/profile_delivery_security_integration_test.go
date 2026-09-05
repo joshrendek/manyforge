@@ -22,12 +22,14 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
-
 type fakeResendProvisioner struct {
-	endpoints []string
-	deleted   []string
-	ensureErr error
-	deleteErr error
+	endpoints        []string
+	cleanupEndpoints []string
+	ensureCalls      int
+	deleted          []string
+	ensureErr        error
+	cleanupErr       error
+	deleteErr        error
 }
 
 func (f *fakeResendProvisioner) Verify(context.Context) error { return nil }
@@ -36,6 +38,7 @@ func (f *fakeResendProvisioner) Send(context.Context, notify.Mail) (mailprovider
 }
 
 func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, existingID string) (mailprovider.ResendWebhook, bool, error) {
+	f.ensureCalls++
 	if f.ensureErr != nil {
 		return mailprovider.ResendWebhook{}, false, f.ensureErr
 	}
@@ -45,6 +48,17 @@ func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, exist
 	return mailprovider.ResendWebhook{
 		ID: id, SigningSecret: "whsec_" + base64.StdEncoding.EncodeToString(sum[:]),
 	}, existingID == "", nil
+}
+
+func (f *fakeResendProvisioner) CleanupWebhooks(_ context.Context, endpoint, existingID string) error {
+	f.cleanupEndpoints = append(f.cleanupEndpoints, endpoint)
+	if f.cleanupErr != nil {
+		return f.cleanupErr
+	}
+	if existingID != "" {
+		f.deleted = append(f.deleted, existingID)
+	}
+	return nil
 }
 
 func (f *fakeResendProvisioner) DeleteWebhook(_ context.Context, id string) error {
@@ -396,7 +410,7 @@ func TestMFMailFeedback001ResendDeleteFailureRetainsProfileAndCredentialsForRetr
 	if err = tdb.Super.QueryRow(ctx, `SELECT secret_ref FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&secretID); err != nil {
 		t.Fatal(err)
 	}
-	provisioner.deleteErr = errors.New("provider cleanup unavailable")
+	provisioner.cleanupErr = errors.New("provider cleanup unavailable")
 	if err = svc.DeleteSendingProfile(ctx, seed.principalID, seed.businessID); err == nil {
 		t.Fatal("delete acknowledged despite provider cleanup failure")
 	}
@@ -413,7 +427,7 @@ func TestMFMailFeedback001ResendDeleteFailureRetainsProfileAndCredentialsForRetr
 	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret WHERE id=$1`, secretID).Scan(&secretCount); err != nil || secretCount != 1 {
 		t.Fatalf("retained credential count = %d, err=%v", secretCount, err)
 	}
-	provisioner.deleteErr = nil
+	provisioner.cleanupErr = nil
 	if err = svc.DeleteSendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
 		t.Fatal(err)
 	}
@@ -424,8 +438,10 @@ func TestMFMailFeedback001ResendDeleteFailureRetainsProfileAndCredentialsForRetr
 	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret WHERE id=$1`, secretID).Scan(&secretCount); err != nil {
 		t.Fatal(err)
 	}
-	if profileCount != 0 || secretCount != 0 || len(provisioner.deleted) != 2 {
-		t.Fatalf("cleanup retry profile=%d secret=%d calls=%v", profileCount, secretCount, provisioner.deleted)
+	if profileCount != 0 || secretCount != 0 || len(provisioner.cleanupEndpoints) != 2 ||
+		len(provisioner.deleted) != 1 {
+		t.Fatalf("cleanup retry profile=%d secret=%d attempts=%v deleted=%v",
+			profileCount, secretCount, provisioner.cleanupEndpoints, provisioner.deleted)
 	}
 }
 
@@ -478,7 +494,158 @@ func TestMFMailFeedback001ResendProvisioningLeaseSerializesMutation(t *testing.T
 	}
 }
 
+func TestMFMailFeedback001AmbiguousResendCreatePersistsCleanupIntentForUpdate(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "intent@example.test", FromName: "Intent",
+		Resend: &mailing.ResendCredentials{APIKey: "re_intent"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioner := &fakeResendProvisioner{ensureErr: errors.New("create accepted but reconciliation failed")}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	var cleanupRequired bool
+	var token pgtype.UUID
+	if err = tdb.Super.QueryRow(ctx, `SELECT resend_cleanup_required,resend_provisioning_token
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&cleanupRequired, &token); err != nil {
+		t.Fatal(err)
+	}
+	if !cleanupRequired || token.Valid {
+		t.Fatalf("ambiguous create intent=%v token=%v", cleanupRequired, token)
+	}
+	provisioner.ensureErr = nil
+	updated, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "updated@example.test", FromName: "Updated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEndpoint := "https://hub.example.test/inbound/mailing/" + profile.ID.String() + "/resend"
+	if provisioner.ensureCalls != 1 || len(provisioner.cleanupEndpoints) != 1 ||
+		provisioner.cleanupEndpoints[0] != wantEndpoint {
+		t.Fatalf("intent recovery ensure=%d cleanup=%v", provisioner.ensureCalls, provisioner.cleanupEndpoints)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT resend_cleanup_required FROM mailing_sending_profile WHERE id=$1`,
+		profile.ID).Scan(&cleanupRequired); err != nil {
+		t.Fatal(err)
+	}
+	if cleanupRequired || updated.FeedbackStatus != "pending" {
+		t.Fatalf("completed update cleanup intent=%v feedback=%q", cleanupRequired, updated.FeedbackStatus)
+	}
+}
+
+func TestMFMailFeedback001AmbiguousResendCreateDeleteFailsClosedWithoutUsableKey(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "delete-intent@example.test", FromName: "Delete intent",
+		Resend: &mailing.ResendCredentials{APIKey: "re_delete_intent"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioner := &fakeResendProvisioner{ensureErr: errors.New("ambiguous create")}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	provisioner.cleanupErr = errors.New("API key revoked")
+	if err = svc.DeleteSendingProfile(ctx, seed.principalID, seed.businessID); err == nil {
+		t.Fatal("delete acknowledged without proving exact-endpoint cleanup")
+	}
+	var profileCount, secretCount int
+	var cleanupRequired bool
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*),bool_or(resend_cleanup_required)
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&profileCount, &cleanupRequired); err != nil {
+		t.Fatal(err)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret s JOIN mailing_sending_profile p
+		ON p.secret_ref=s.id WHERE p.id=$1`, profile.ID).Scan(&secretCount); err != nil {
+		t.Fatal(err)
+	}
+	if profileCount != 1 || secretCount != 1 || !cleanupRequired || provisioner.ensureCalls != 1 {
+		t.Fatalf("failed-closed delete profile=%d secret=%d intent=%v ensure=%d",
+			profileCount, secretCount, cleanupRequired, provisioner.ensureCalls)
+	}
+	provisioner.cleanupErr = nil
+	if err = svc.DeleteSendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	if provisioner.ensureCalls != 1 || len(provisioner.cleanupEndpoints) != 2 {
+		t.Fatalf("delete cleanup retry ensure=%d cleanup=%v", provisioner.ensureCalls, provisioner.cleanupEndpoints)
+	}
+}
+
+func TestMFMailFeedback001ReplacementResendKeyCompletesPendingCleanup(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "replacement@example.test", FromName: "Replacement",
+		Resend: &mailing.ResendCredentials{APIKey: "re_old"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldProvider := &fakeResendProvisioner{}
+	replacementProvider := &fakeResendProvisioner{}
+	svc.Providers = mailprovider.NewCache(func(_ context.Context, profile mailprovider.Profile) (mailprovider.Deliverer, error) {
+		if profile.ResendAPIKey == "re_replacement" {
+			return replacementProvider, nil
+		}
+		return oldProvider, nil
+	}, time.Minute)
+	if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	oldProvider.cleanupErr = errors.New("old API key revoked")
+	updated, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "replacement@example.test", FromName: "Replacement",
+		Resend: &mailing.ResendCredentials{APIKey: "re_replacement"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldProvider.cleanupEndpoints) != 1 || len(replacementProvider.cleanupEndpoints) != 1 {
+		t.Fatalf("replacement cleanup attempts old=%v replacement=%v",
+			oldProvider.cleanupEndpoints, replacementProvider.cleanupEndpoints)
+	}
+	bundle := loadStoredResendBundle(t, ctx, tdb, svc, profile.ID)
+	if bundle.APIKey != "re_replacement" || bundle.WebhookID != "" ||
+		updated.FeedbackStatus != "pending" {
+		t.Fatalf("replacement state api=%q webhook=%q feedback=%q",
+			bundle.APIKey, bundle.WebhookID, updated.FeedbackStatus)
+	}
+}
+
 type storedResendBundle struct {
+	APIKey        string `json:"api_key"`
 	Version       int    `json:"version"`
 	WebhookID     string `json:"webhook_id"`
 	WebhookSecret string `json:"webhook_secret"`

@@ -283,5 +283,6 @@ GRANT EXECUTE ON FUNCTION mailing_apply_provider_event(uuid,text,citext,mailing_
 
 ALTER TABLE mailing_sending_profile
     DROP CONSTRAINT mailing_resend_provisioning_lease_chk,
+    DROP COLUMN resend_cleanup_required,
     DROP COLUMN resend_provisioning_expires_at,
     DROP COLUMN resend_provisioning_token;

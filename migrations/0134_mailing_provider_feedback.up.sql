@@ -3,6 +3,7 @@
 ALTER TABLE mailing_sending_profile
     ADD COLUMN resend_provisioning_token uuid,
     ADD COLUMN resend_provisioning_expires_at timestamptz,
+    ADD COLUMN resend_cleanup_required boolean NOT NULL DEFAULT false,
     ADD CONSTRAINT mailing_resend_provisioning_lease_chk CHECK (
         (resend_provisioning_token IS NULL AND resend_provisioning_expires_at IS NULL)
         OR (resend_provisioning_token IS NOT NULL AND resend_provisioning_expires_at IS NOT NULL)
@@ -18,7 +19,8 @@ SET status = 'unverified',
     feedback_error = NULL,
     feedback_confirmed_at = NULL,
     resend_provisioning_token = NULL,
-    resend_provisioning_expires_at = NULL
+    resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false
 WHERE mode = 'resend';
 
 ALTER TABLE mailing_provider_webhook_delivery

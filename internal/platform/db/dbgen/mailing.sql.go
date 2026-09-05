@@ -160,6 +160,7 @@ func (q *Queries) ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChan
 const claimMailingResendProvisioning = `-- name: ClaimMailingResendProvisioning :one
 UPDATE mailing_sending_profile SET
     resend_provisioning_token = $1::uuid,
+    resend_cleanup_required = resend_cleanup_required OR $2::boolean,
     resend_provisioning_expires_at = now() + interval '2 minutes',
     status = 'unverified',
     last_verified_at = NULL,
@@ -167,9 +168,9 @@ UPDATE mailing_sending_profile SET
     feedback_status = 'pending',
     feedback_error = NULL,
     feedback_confirmed_at = NULL
-WHERE id = $2
-  AND tenant_root_id = $3
-  AND updated_at = $4::timestamptz
+WHERE id = $3
+  AND tenant_root_id = $4
+  AND updated_at = $5::timestamptz
   AND mode = 'resend'
   AND (
       resend_provisioning_token IS NULL
@@ -180,6 +181,7 @@ RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to
 
 type ClaimMailingResendProvisioningParams struct {
 	Token             uuid.UUID `json:"token"`
+	RequireCleanup    bool      `json:"require_cleanup"`
 	ID                uuid.UUID `json:"id"`
 	TenantRootID      uuid.UUID `json:"tenant_root_id"`
 	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
@@ -188,6 +190,7 @@ type ClaimMailingResendProvisioningParams struct {
 func (q *Queries) ClaimMailingResendProvisioning(ctx context.Context, arg ClaimMailingResendProvisioningParams) (MailingSendingProfile, error) {
 	row := q.db.QueryRow(ctx, claimMailingResendProvisioning,
 		arg.Token,
+		arg.RequireCleanup,
 		arg.ID,
 		arg.TenantRootID,
 		arg.ExpectedUpdatedAt,
@@ -2258,6 +2261,7 @@ UPDATE mailing_sending_profile SET
     last_verified_at = now(),
     resend_provisioning_token = NULL,
     resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
     verify_error = NULL,
     feedback_status = 'ready',
     feedback_error = NULL,
@@ -2655,6 +2659,7 @@ UPDATE mailing_sending_profile SET
     feedback_status = 'pending', feedback_error = NULL, feedback_confirmed_at = NULL,
     resend_provisioning_token = NULL,
     resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
 RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at

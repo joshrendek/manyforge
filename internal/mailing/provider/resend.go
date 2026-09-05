@@ -35,6 +35,7 @@ type ResendWebhook struct {
 
 type ResendWebhookProvisioner interface {
 	EnsureWebhook(context.Context, string, string) (ResendWebhook, bool, error)
+	CleanupWebhooks(context.Context, string, string) error
 	DeleteWebhook(context.Context, string) error
 }
 
@@ -189,6 +190,28 @@ func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID str
 	}
 	return ResendWebhook{ID: candidates[0].ID, SigningSecret: candidates[0].SigningSecret}, true, nil
 }
+func (r *Resend) CleanupWebhooks(ctx context.Context, endpoint, existingID string) error {
+	var listed struct {
+		HasMore bool                    `json:"has_more"`
+		Data    []resendWebhookResponse `json:"data"`
+	}
+	if err := r.do(ctx, http.MethodGet, "/webhooks?limit=100", nil, "", &listed); err != nil {
+		return err
+	}
+	if listed.HasMore || len(listed.Data) > 100 {
+		return fmt.Errorf("provider: resend webhook cleanup exceeds the bounded page")
+	}
+	for _, summary := range listed.Data {
+		if summary.Endpoint != endpoint && summary.ID != existingID {
+			continue
+		}
+		if err := r.DeleteWebhook(ctx, summary.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Resend) DeleteWebhook(ctx context.Context, webhookID string) error {
 	if strings.TrimSpace(webhookID) == "" {
 		return nil

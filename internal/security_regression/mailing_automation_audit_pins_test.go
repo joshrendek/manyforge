@@ -273,18 +273,20 @@ func TestMFMailFeedback001RequiresDurableFeedbackReadiness(t *testing.T) {
 			t.Fatalf("Resend control-plane reconciliation missing marker %q", marker)
 		}
 	}
-	for _, marker := range []string{"ClaimMailingResendProvisioning", "resend_provisioning_token", "resend_provisioning_expires_at"} {
+	for _, marker := range []string{"ClaimMailingResendProvisioning", "resend_provisioning_token", "resend_provisioning_expires_at", "resend_cleanup_required"} {
 		if !strings.Contains(scheduleSource, marker) {
-			t.Fatalf("Resend provisioning lease missing marker %q", marker)
+			t.Fatalf("Resend provisioning recovery intent missing marker %q", marker)
 		}
 	}
 	if !strings.Contains(migration, "WHERE mode = 'resend'") ||
 		!strings.Contains(migration, "feedback_status = 'pending'") ||
-		!strings.Contains(migration, "status = 'unverified'") {
+		!strings.Contains(migration, "status = 'unverified'") ||
+		!strings.Contains(migration, "resend_cleanup_required") {
 		t.Fatal("migration does not fail closed for legacy Resend credential bundles")
 	}
-	if !strings.Contains(putProfile, "deleteResendWebhook") {
-		t.Fatal("profile mutation does not require confirmed remote Resend cleanup")
+	if !strings.Contains(putProfile, "cleanupResendWebhooks") ||
+		!strings.Contains(resendProvider, "CleanupWebhooks") {
+		t.Fatal("profile mutation does not require exact-endpoint Resend cleanup")
 	}
 	for _, marker := range []string{"GetConfigurationSetEventDestinations", "ExpectedTopicARN", "EventTypeBounce", "EventTypeComplaint"} {
 		if !strings.Contains(sesProvider, marker) {
