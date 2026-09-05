@@ -138,6 +138,39 @@ func TestVerifyRejectsTamperingAndInvalidCertificateURLs(t *testing.T) {
 	}
 }
 
+// MF-MAIL-WEBHOOK-002 characterizes the pre-authentication certificate fetch.
+// The forged signature is structurally valid but cryptographically invalid; the
+// verifier still performs the outbound request before it can reject the caller.
+func TestMFMailWebhook002ForgedEnvelopeFetchesCertificateBeforeAuthentication(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	_, certPEM, roots := signingCertificate(t, now)
+	fetches := 0
+	v := &Verifier{
+		Roots: roots, Now: func() time.Time { return now },
+		Client: doerFunc(func(*http.Request) (*http.Response, error) {
+			fetches++
+			return response(http.StatusOK, certPEM), nil
+		}),
+	}
+	msg := Message{
+		Type: "Notification", MessageID: "forged", Message: "{}",
+		TopicARN:  "arn:aws:sns:us-east-1:123456789012:mailing",
+		Timestamp: "2026-08-30T12:00:00Z", SignatureVersion: "2",
+		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-forged.pem",
+		Signature:      base64.StdEncoding.EncodeToString([]byte("not-an-rsa-signature")),
+	}
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = v.Verify(context.Background(), raw); err == nil {
+		t.Fatal("forged envelope unexpectedly verified")
+	}
+	if fetches != 1 {
+		t.Fatalf("certificate fetches = %d, want one fetch before authentication", fetches)
+	}
+}
+
 func signingCertificate(t *testing.T, now time.Time) (*rsa.PrivateKey, []byte, *x509.CertPool) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)

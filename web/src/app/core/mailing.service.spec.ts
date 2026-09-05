@@ -190,4 +190,21 @@ describe('MailingService', () => {
     expect(remove.request.method).toBe('DELETE');
     remove.flush(null);
   });
+
+  // MF-WEB-013-001 characterizes the client-side path traversal. Angular route
+  // segments are decoded before service use; the browser then normalizes the
+  // raw dot segments in the authenticated request URL.
+  it('normalizes a decoded template ID into a campaign DELETE target', () => {
+    const decodedRouteID = decodeURIComponent('..%2Fcampaigns%2Fcampaign-1');
+    service.deleteTemplate('business-1', decodedRouteID).subscribe();
+
+    const request = http.expectOne(
+      '/api/v1/businesses/business-1/mailing/templates/../campaigns/campaign-1',
+    );
+    expect(request.request.method).toBe('DELETE');
+    expect(new URL(request.request.url, 'https://manyforge.test').pathname).toBe(
+      '/api/v1/businesses/business-1/mailing/campaigns/campaign-1',
+    );
+    request.flush(null);
+  });
 });
