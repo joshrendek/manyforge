@@ -198,6 +198,31 @@ func TestAutomationTriggersEventsEnrollmentsStatsAndGoldenScenario(t *testing.T)
 		t.Fatalf("foreign event subscriber error=%v", err)
 	}
 
+	t.Run("AUTOMATION-EVENT-TIME-004 future event satisfies a current window", func(t *testing.T) {
+		email := "future-condition@example.test"
+		future := time.Now().UTC().Add(24 * time.Hour)
+		if _, err := service.CreateEvent(ctx, seed.principalID, seed.businessID, automations.EventInput{
+			Name: "audit_future", Email: &email, OccurredAt: &future,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		within := time.Hour
+		exists := false
+		if err := database.App.WithTx(ctx, func(tx pgx.Tx) error {
+			var eventErr error
+			exists, eventErr = (automations.SQLStepStore{}).EventExists(
+				ctx, tx, seed.businessID, email, "audit_future",
+				time.Now().UTC().Add(-time.Minute), &within,
+			)
+			return eventErr
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatal("future-dated event did not satisfy the current one-hour window")
+		}
+	})
+
 	operationID := uuid.New()
 	if _, err = database.Super.Exec(ctx, `INSERT INTO tenant_merge_operation
 		(id,source_root_id,destination_parent_id,destination_root_id,actor_principal_id,idempotency_key,request_hash,status)

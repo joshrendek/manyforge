@@ -60,6 +60,31 @@ func TestMapResendEvent(t *testing.T) {
 	}
 }
 
+// MF-MAIL-WEBHOOK-001 characterizes the current unbounded recipient fan-out.
+// After remediation, invert this test to assert that oversized or duplicate
+// recipient arrays are rejected or bounded before database application.
+func TestMFMailWebhook001RecipientArrayIsUnboundedAndNotDeduplicated(t *testing.T) {
+	const recipients = 4096
+	raw := []byte(`{"type":"email.bounced","data":{"email_id":"email-1","to":["repeat@example.test"]}}`)
+	var payload resendWebhook
+	payload.Type = "email.bounced"
+	payload.Data.EmailID = "email-1"
+	payload.Data.To = make([]string, recipients)
+	for i := range payload.Data.To {
+		payload.Data.To[i] = "repeat@example.test"
+	}
+
+	events := mapResendEvent(payload, raw)
+	if len(events) != recipients {
+		t.Fatalf("mapped events = %d, want %d unbounded duplicate events", len(events), recipients)
+	}
+	for i := range events {
+		if events[i].recipient != "repeat@example.test" || string(events[i].payload) != string(raw) {
+			t.Fatalf("event %d = %#v", i, events[i])
+		}
+	}
+}
+
 func svixSignature(key []byte, id, timestamp string, body []byte) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(id + "." + timestamp + "."))

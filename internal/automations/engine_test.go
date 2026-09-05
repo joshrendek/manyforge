@@ -143,6 +143,30 @@ func TestAdvanceRunsEveryActionNodeTransactionally(t *testing.T) {
 	}
 }
 
+// AUTOMATION-FENCE-002 characterizes the current late-fence behavior. The
+// enqueue side effect runs before Record reports a lost generation, and Advance
+// returns nil so its caller commits the transaction containing that side effect.
+func TestAutomationFence002SideEffectPrecedesLostGenerationFence(t *testing.T) {
+	enrollment, now, steps, subscribers := engineFixture()
+	enrollment.CurrentNodeID = "send"
+	steps.recordOK = false
+	sender := &fakeSender{id: uuid.New()}
+	graph := Graph{Nodes: []Node{{
+		ID: "send", Kind: "send_email",
+		Config: json.RawMessage(`{"template_id":"` + uuid.NewString() + `","track_opens":true,"track_clicks":true}`),
+	}}}
+
+	out, err := (Engine{Deps: Deps{
+		Steps: steps, Subscribers: subscribers, Sender: sender,
+	}}).Advance(context.Background(), nil, enrollment, graph, now)
+	if err != nil || !out.LeaseLost {
+		t.Fatalf("Advance = %+v, err=%v; want nil error with lost fence", out, err)
+	}
+	if len(sender.specs) != 1 {
+		t.Fatalf("enqueued messages = %d, want side effect before lost fence", len(sender.specs))
+	}
+}
+
 func TestAdvanceWaitParksThenResumes(t *testing.T) {
 	enrollment, now, steps, subscribers := engineFixture()
 	enrollment.CurrentNodeID = "wait"

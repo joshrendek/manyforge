@@ -105,6 +105,18 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		return w
 	}
 
+	signedHeaders := func(secret, method, path string, body []byte) map[string]string {
+		t.Helper()
+		timestamp := strconv.FormatInt(svc.Now().Unix(), 10)
+		mac := hmac.New(sha256.New, []byte(secret))
+		_, _ = mac.Write(append([]byte(timestamp+"."+method+"."+path+"."), body...))
+		return map[string]string{
+			"X-Mailing-Timestamp": timestamp,
+			"X-Mailing-Signature": hex.EncodeToString(mac.Sum(nil)),
+			"Content-Type":        "application/json",
+		}
+	}
+
 	subscribeBody := []byte(`{"email":"Ada@Example.test","first_name":"Ada"}`)
 	accepted := request(http.MethodPost, "/api/v1/mailing/public/"+key.PublishableKey+"/subscribe", subscribeBody, map[string]string{"Content-Type": "application/json", "User-Agent": "mailing-test/1"})
 	if accepted.Code != http.StatusAccepted || accepted.Body.String() != "{\"accepted\":true}\n" {
@@ -174,6 +186,47 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		t.Fatalf("unsubscribe status/suppressions = %q/%d", status, suppressionCount)
 	}
 
+	t.Run("MF-MAIL-PUB-001 single opt-in resubscribe reverses unsubscribe", func(t *testing.T) {
+		singleList, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{
+			Name: "Single opt-in", DoubleOptIn: false,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		singleKey, err := svc.CreateListKey(ctx, seed.principalID, seed.businessID, singleList.ID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := []byte(`{"email":"consent-revoked@example.test"}`)
+		if w := request(http.MethodPost, "/api/v1/mailing/public/"+singleKey.PublishableKey+"/subscribe", body,
+			map[string]string{"Content-Type": "application/json"}); w.Code != http.StatusAccepted {
+			t.Fatalf("initial subscribe status/body = %d/%s", w.Code, w.Body.String())
+		}
+		var id uuid.UUID
+		if err = tdb.Super.QueryRow(ctx, `SELECT id FROM list_subscriber
+			WHERE list_id=$1 AND email='consent-revoked@example.test'`, singleList.ID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if w := request(http.MethodPost, "/m/u/"+codec.EncodeUnsubscribe(id, uuid.Nil), nil, nil); w.Code != http.StatusOK {
+			t.Fatalf("unsubscribe status/body = %d/%s", w.Code, w.Body.String())
+		}
+		if w := request(http.MethodPost, "/api/v1/mailing/public/"+singleKey.PublishableKey+"/subscribe", body,
+			map[string]string{"Content-Type": "application/json"}); w.Code != http.StatusAccepted {
+			t.Fatalf("resubscribe status/body = %d/%s", w.Code, w.Body.String())
+		}
+		var gotStatus string
+		var suppressions int
+		if err = tdb.Super.QueryRow(ctx, `SELECT s.status::text,
+			(SELECT count(*) FROM mailing_suppression ms
+			 WHERE ms.business_id=s.business_id AND ms.email=s.email)
+			FROM list_subscriber s WHERE s.id=$1`, id).Scan(&gotStatus, &suppressions); err != nil {
+			t.Fatal(err)
+		}
+		if gotStatus != "active" || suppressions != 0 {
+			t.Fatalf("resubscribe restored status=%q suppressions=%d; want active/0", gotStatus, suppressions)
+		}
+	})
+
 	s2sBody, _ := json.Marshal(map[string]any{"email": "api@example.test", "skip_confirmation": true})
 	path := "/api/v1/mailing/s2s/" + key.PublishableKey + "/subscribers"
 	ts := strconv.FormatInt(svc.Now().Unix(), 10)
@@ -210,6 +263,109 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		seed.businessID, apiSubscriberID.String()).Scan(&storedEvents, &eventOutbox); err != nil || storedEvents != 1 || eventOutbox != 1 {
 		t.Fatalf("S2S event rows/outbox=%d/%d err=%v", storedEvents, eventOutbox, err)
 	}
+
+	t.Run("AUTOMATION-S2S-REPLAY-003 signed no-key event replays", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"name": "audit_replay", "subscriber_id": apiSubscriberID,
+			"properties": map[string]any{"marker": "same-signed-request"},
+		})
+		path := "/api/v1/mailing/s2s/" + key.PublishableKey + "/events"
+		headers := signedHeaders(key.Secret, http.MethodPost, path, body)
+		first := request(http.MethodPost, path, body, headers)
+		second := request(http.MethodPost, path, body, headers)
+		if first.Code != http.StatusCreated || second.Code != http.StatusCreated {
+			t.Fatalf("no-key replay statuses first=%d/%s second=%d/%s",
+				first.Code, first.Body.String(), second.Code, second.Body.String())
+		}
+		var eventRows, outboxRows int
+		if err := tdb.Super.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM automation_event WHERE business_id=$1 AND name='audit_replay'),
+			(SELECT count(*) FROM outbox WHERE tenant_root_id=$1 AND topic='automation.event.received'
+			 AND payload->>'name'='audit_replay')`, seed.businessID).Scan(&eventRows, &outboxRows); err != nil {
+			t.Fatal(err)
+		}
+		if eventRows != 2 || outboxRows != 2 {
+			t.Fatalf("no-key replay rows/outbox = %d/%d, want 2/2", eventRows, outboxRows)
+		}
+	})
+
+	t.Run("AUTOMATION-EVENT-SCOPE-001 list key collision returns another list event", func(t *testing.T) {
+		otherList, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{
+			Name: "Other integration", DoubleOptIn: false,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherKey, err := svc.CreateListKey(ctx, seed.principalID, seed.businessID, otherList.ID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		idempotencyKey := "shared-order-1001"
+		firstBody, _ := json.Marshal(map[string]any{
+			"name": "audit_scope", "email": "list-a-secret@example.test",
+			"idempotency_key": idempotencyKey,
+			"properties":      map[string]any{"private_marker": "LIST_A_PRIVATE"},
+		})
+		firstPath := "/api/v1/mailing/s2s/" + key.PublishableKey + "/events"
+		first := request(http.MethodPost, firstPath, firstBody,
+			signedHeaders(key.Secret, http.MethodPost, firstPath, firstBody))
+		if first.Code != http.StatusCreated {
+			t.Fatalf("first scoped event status/body = %d/%s", first.Code, first.Body.String())
+		}
+		secondBody, _ := json.Marshal(map[string]any{
+			"name": "audit_scope", "email": "list-b@example.test",
+			"idempotency_key": idempotencyKey,
+			"properties":      map[string]any{"private_marker": "LIST_B_PRIVATE"},
+		})
+		secondPath := "/api/v1/mailing/s2s/" + otherKey.PublishableKey + "/events"
+		second := request(http.MethodPost, secondPath, secondBody,
+			signedHeaders(otherKey.Secret, http.MethodPost, secondPath, secondBody))
+		if second.Code != http.StatusOK {
+			t.Fatalf("colliding scoped event status/body = %d/%s", second.Code, second.Body.String())
+		}
+		if !strings.Contains(second.Body.String(), "list-a-secret@example.test") ||
+			!strings.Contains(second.Body.String(), "LIST_A_PRIVATE") ||
+			strings.Contains(second.Body.String(), "LIST_B_PRIVATE") {
+			t.Fatalf("cross-list collision response = %s", second.Body.String())
+		}
+	})
+
+	t.Run("MF-MAIL-LIFECYCLE-002 archived list still confirms pending subscriber", func(t *testing.T) {
+		archivedList, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{
+			Name: "Archive confirmation", DoubleOptIn: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		archivedKey, err := svc.CreateListKey(ctx, seed.principalID, seed.businessID, archivedList.ID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := []byte(`{"email":"pending-on-archive@example.test"}`)
+		if w := request(http.MethodPost, "/api/v1/mailing/public/"+archivedKey.PublishableKey+"/subscribe", body,
+			map[string]string{"Content-Type": "application/json"}); w.Code != http.StatusAccepted {
+			t.Fatalf("pending subscribe status/body = %d/%s", w.Code, w.Body.String())
+		}
+		start := strings.Index(captured.mail.BodyText, marker)
+		if start < 0 {
+			t.Fatalf("confirmation mail has no token: %q", captured.mail.BodyText)
+		}
+		confirmation := strings.Fields(captured.mail.BodyText[start+len(marker):])[0]
+		if err := svc.ArchiveList(ctx, seed.principalID, seed.businessID, archivedList.ID); err != nil {
+			t.Fatal(err)
+		}
+		if w := request(http.MethodPost, "/m/confirm/"+confirmation, nil, nil); w.Code != http.StatusOK {
+			t.Fatalf("confirmation after archive status/body = %d/%s", w.Code, w.Body.String())
+		}
+		var archivedStatus string
+		if err := tdb.Super.QueryRow(ctx, `SELECT status::text FROM list_subscriber
+			WHERE list_id=$1 AND email='pending-on-archive@example.test'`, archivedList.ID).Scan(&archivedStatus); err != nil {
+			t.Fatal(err)
+		}
+		if archivedStatus != "active" {
+			t.Fatalf("pending subscriber after archived-list confirmation = %q, want active", archivedStatus)
+		}
+	})
 	deletePath := "/api/v1/mailing/s2s/" + key.PublishableKey + "/subscribers/api%40example.test"
 	deleteMAC := hmac.New(sha256.New, []byte(key.Secret))
 	_, _ = deleteMAC.Write([]byte(ts + "." + http.MethodDelete + "." + deletePath + "."))
@@ -241,4 +397,40 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 	if rateLimitedS2S.Code != http.StatusTooManyRequests {
 		t.Fatalf("S2S per-key limit status/body = %d/%q", rateLimitedS2S.Code, rateLimitedS2S.Body.String())
 	}
+
+	t.Run("MF-MAIL-DB-001 archived and deleted business keeps public key live", func(t *testing.T) {
+		perKey.deny = false
+		if _, err := tdb.Super.Exec(ctx, `UPDATE business SET status='archived',updated_at=now()
+			WHERE id=$1`, seed.businessID); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			email   string
+			deleted bool
+		}{
+			{email: "after-archive@example.test"},
+			{email: "after-delete@example.test", deleted: true},
+		} {
+			if tc.deleted {
+				if _, err := tdb.Super.Exec(ctx, `UPDATE business SET deleted_at=now(),updated_at=now()
+					WHERE id=$1`, seed.businessID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			body, _ := json.Marshal(map[string]any{"email": tc.email})
+			w := request(http.MethodPost, "/api/v1/mailing/public/"+key.PublishableKey+"/subscribe", body,
+				map[string]string{"Content-Type": "application/json"})
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("public subscribe after lifecycle stop status/body = %d/%s", w.Code, w.Body.String())
+			}
+			var rows int
+			if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FROM list_subscriber
+				WHERE business_id=$1 AND email=$2`, seed.businessID, tc.email).Scan(&rows); err != nil {
+				t.Fatal(err)
+			}
+			if rows != 1 {
+				t.Fatalf("subscriber rows after lifecycle stop = %d, want public key still wrote one row", rows)
+			}
+		}
+	})
 }

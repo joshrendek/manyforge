@@ -188,6 +188,70 @@ func TestResendWebhookIdempotencyAndMonotonicStatus(t *testing.T) {
 	}
 }
 
+// MF-MAIL-WEBHOOK-003 characterizes the delivery-correlation race. An authentic
+// provider event that arrives before provider_message_id is persisted consumes
+// its idempotency key; a provider retry cannot apply it after correlation exists.
+func TestMFMailWebhook003EarlyEventIsPermanentlyDeduplicated(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	fx := seedWebhookFixture(ctx, t, tdb, seed)
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_delivery
+		SET provider_message_id=NULL,status='sent',updated_at=now() WHERE id=$1`, fx.deliveryID); err != nil {
+		t.Fatal(err)
+	}
+
+	h := mailing.NewWebhookHandler(tdb.App, fx.svc.Sealer, nil)
+	h.Now = func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }
+	router := chi.NewRouter()
+	h.PublicRoutes(router)
+	eventID := "evt-arrived-before-provider-id"
+	body := []byte(fmt.Sprintf(`{"type":"email.bounced","created_at":"2026-08-30T12:00:00Z","data":{"email_id":"provider-race","to":[%q]}}`, fx.email))
+	post := func() {
+		t.Helper()
+		ts := fmt.Sprint(h.Now().Unix())
+		mac := hmac.New(sha256.New, bytes.Repeat([]byte{0x51}, 32))
+		mac.Write([]byte(eventID + "." + ts + "."))
+		mac.Write(body)
+		req := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+fx.profileID.String()+"/resend", bytes.NewReader(body))
+		req.Header.Set("svix-id", eventID)
+		req.Header.Set("svix-timestamp", ts)
+		req.Header.Set("svix-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("webhook status = %d, body=%s", w.Code, w.Body.String())
+		}
+	}
+
+	post()
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_delivery
+		SET provider_message_id='provider-race',updated_at=now() WHERE id=$1`, fx.deliveryID); err != nil {
+		t.Fatal(err)
+	}
+	post()
+
+	var status string
+	var webhooks, tracking, suppressions int
+	if err = tdb.Super.QueryRow(ctx, `SELECT
+		(SELECT status::text FROM mailing_delivery WHERE id=$1),
+		(SELECT count(*) FROM mailing_provider_webhook_delivery WHERE profile_id=$2 AND external_event_id=$3),
+		(SELECT count(*) FROM mailing_tracking_event WHERE delivery_id=$1),
+		(SELECT count(*) FROM mailing_suppression WHERE business_id=$4 AND email=$5)`,
+		fx.deliveryID, fx.profileID, eventID, seed.businessID, fx.email,
+	).Scan(&status, &webhooks, &tracking, &suppressions); err != nil {
+		t.Fatal(err)
+	}
+	if status != "sent" || webhooks != 1 || tracking != 0 || suppressions != 0 {
+		t.Fatalf("early event state status=%q webhooks=%d tracking=%d suppressions=%d",
+			status, webhooks, tracking, suppressions)
+	}
+}
+
 func assertWebhookState(t *testing.T, ctx context.Context, tdb *testdb.TestDB, fx webhookFixture,
 	deliveryWant, subscriberWant, suppressionWant string, webhookWant, trackingWant, activityWant int) {
 	t.Helper()
