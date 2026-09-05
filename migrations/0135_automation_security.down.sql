@@ -1,0 +1,486 @@
+-- Restore the pre-security automation worker and ingress boundaries.
+
+DROP FUNCTION IF EXISTS automation_ingest_event(uuid,uuid,uuid,uuid,bytea,text,citext,uuid,timestamptz,jsonb,text);
+DROP FUNCTION IF EXISTS automation_event_exists(uuid,uuid,citext,text,timestamptz,timestamptz,interval);
+DROP FUNCTION IF EXISTS mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean,uuid,integer);
+DROP FUNCTION IF EXISTS mailing_automation_add_tag(uuid,uuid,uuid,text,uuid,integer);
+DROP FUNCTION IF EXISTS mailing_automation_remove_tag(uuid,uuid,uuid,text,uuid,integer);
+
+CREATE OR REPLACE FUNCTION automation_resolve_event_subscriber(
+    p_business_id uuid,
+    p_tenant_root_id uuid,
+    p_list_id uuid,
+    p_subscriber_id uuid
+) RETURNS TABLE(email citext)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT s.email
+    FROM list_subscriber s
+    WHERE s.id = p_subscriber_id
+      AND s.business_id = p_business_id
+      AND s.tenant_root_id = p_tenant_root_id
+      AND s.list_id = p_list_id;
+$$;
+
+CREATE FUNCTION automation_ingest_event(
+    p_business_id uuid,
+    p_tenant_root_id uuid,
+    p_list_id uuid,
+    p_name text,
+    p_email citext,
+    p_subscriber_id uuid,
+    p_occurred_at timestamptz,
+    p_properties jsonb,
+    p_idempotency_key text
+) RETURNS TABLE(
+    event_id uuid,
+    event_business_id uuid,
+    event_name text,
+    event_email citext,
+    event_subscriber_id uuid,
+    event_occurred_at timestamptz,
+    event_idempotency_key text,
+    event_properties jsonb,
+    event_created_at timestamptz,
+    was_created boolean
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_event automation_event%ROWTYPE;
+    v_list_id uuid := p_list_id;
+    v_email citext := p_email;
+BEGIN
+    IF NOT tenant_merge_root_write_allowed(p_tenant_root_id)
+       OR NOT EXISTS (
+           SELECT 1 FROM business b
+           WHERE b.id = p_business_id AND b.tenant_root_id = p_tenant_root_id
+       ) THEN
+        RETURN;
+    END IF;
+
+    IF v_list_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM mailing_list l
+        WHERE l.id = v_list_id
+          AND l.business_id = p_business_id
+          AND l.tenant_root_id = p_tenant_root_id
+          AND l.status = 'active'
+    ) THEN
+        RETURN;
+    END IF;
+
+    IF p_subscriber_id IS NOT NULL THEN
+        SELECT s.list_id, s.email INTO v_list_id, v_email
+        FROM list_subscriber s
+        WHERE s.id = p_subscriber_id
+          AND s.business_id = p_business_id
+          AND s.tenant_root_id = p_tenant_root_id
+          AND (p_list_id IS NULL OR s.list_id = p_list_id);
+        IF NOT FOUND THEN
+            RETURN;
+        END IF;
+    END IF;
+
+    INSERT INTO automation_event (
+        business_id, tenant_root_id, name, email, subscriber_id,
+        occurred_at, properties, idempotency_key
+    ) VALUES (
+        p_business_id, p_tenant_root_id, btrim(p_name), v_email, p_subscriber_id,
+        COALESCE(p_occurred_at, now()), COALESCE(p_properties, '{}'::jsonb), p_idempotency_key
+    )
+    ON CONFLICT (business_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+        DO NOTHING
+    RETURNING * INTO v_event;
+
+    was_created := FOUND;
+    IF NOT was_created THEN
+        SELECT * INTO v_event
+        FROM automation_event e
+        WHERE e.business_id = p_business_id
+          AND e.tenant_root_id = p_tenant_root_id
+          AND e.idempotency_key = p_idempotency_key;
+        IF NOT FOUND THEN
+            RETURN;
+        END IF;
+    ELSE
+        INSERT INTO outbox (tenant_root_id, topic, payload)
+        VALUES (p_tenant_root_id, 'automation.event.received', jsonb_build_object(
+            'business_id', p_business_id,
+            'tenant_root_id', p_tenant_root_id,
+            'event_id', v_event.id,
+            'name', v_event.name,
+            'email', v_event.email,
+            'subscriber_id', v_event.subscriber_id,
+            'list_id', v_list_id
+        ));
+    END IF;
+
+    event_id := v_event.id;
+    event_business_id := v_event.business_id;
+    event_name := v_event.name;
+    event_email := v_event.email;
+    event_subscriber_id := v_event.subscriber_id;
+    event_occurred_at := v_event.occurred_at;
+    event_idempotency_key := v_event.idempotency_key;
+    event_properties := v_event.properties;
+    event_created_at := v_event.created_at;
+    RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION automation_event_trigger_lists(
+    p_business_id uuid,
+    p_tenant_root_id uuid,
+    p_name text,
+    p_list_id uuid
+) RETURNS TABLE(list_id uuid)
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT DISTINCT (trigger_node.node->'config'->>'list_id')::uuid
+    FROM automation a
+    JOIN automation_version v
+      ON v.id = a.active_version_id
+     AND v.automation_id = a.id
+     AND v.business_id = a.business_id
+     AND v.tenant_root_id = a.tenant_root_id
+    CROSS JOIN LATERAL jsonb_array_elements(v.graph->'nodes') AS trigger_node(node)
+    JOIN mailing_list l
+      ON l.id = (trigger_node.node->'config'->>'list_id')::uuid
+     AND l.business_id = a.business_id
+     AND l.tenant_root_id = a.tenant_root_id
+     AND l.status = 'active'
+    WHERE a.business_id = p_business_id
+      AND a.tenant_root_id = p_tenant_root_id
+      AND a.status = 'active'
+      AND v.status = 'active'
+      AND v.trigger_kind = 'event'
+      AND v.trigger_ref = p_name
+      AND trigger_node.node->>'kind' = 'trigger'
+      AND trigger_node.node->'config'->>'type' = 'event'
+      AND (p_list_id IS NULL OR l.id = p_list_id)
+      AND tenant_merge_root_write_allowed(p_tenant_root_id);
+$$;
+
+CREATE FUNCTION mailing_enqueue_delivery(
+    p_business_id uuid, p_tenant_root_id uuid, p_source_id uuid, p_template_id uuid,
+    p_subscriber_id uuid, p_not_before timestamptz, p_message_domain text,
+    p_track_opens boolean, p_track_clicks boolean
+) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_id uuid := gen_random_uuid(); v_email citext; v_existing uuid;
+BEGIN
+    IF p_message_domain IS NULL OR lower(btrim(p_message_domain)) !~ '^[a-z0-9.-]+$' THEN
+        RAISE EXCEPTION 'invalid mailing message domain' USING ERRCODE = '22023';
+    END IF;
+    IF NOT tenant_merge_root_write_allowed(p_tenant_root_id) THEN RETURN NULL; END IF;
+    SELECT email INTO v_email FROM list_subscriber
+    WHERE id = p_subscriber_id AND business_id = p_business_id AND tenant_root_id = p_tenant_root_id;
+    IF NOT FOUND THEN RETURN NULL; END IF;
+    PERFORM 1 FROM mailing_template
+    WHERE id = p_template_id AND business_id = p_business_id AND tenant_root_id = p_tenant_root_id;
+    IF NOT FOUND THEN RETURN NULL; END IF;
+    INSERT INTO mailing_delivery (
+        id, business_id, tenant_root_id, source_kind, source_id, template_id,
+        subscriber_id, email, not_before, message_id,
+        track_opens_override, track_clicks_override
+    ) VALUES (v_id, p_business_id, p_tenant_root_id, 'automation', p_source_id,
+              p_template_id, p_subscriber_id, v_email, COALESCE(p_not_before, now()),
+              v_id::text || '@' || lower(btrim(p_message_domain)),
+              p_track_opens, p_track_clicks)
+    ON CONFLICT (source_kind, source_id, subscriber_id) DO NOTHING
+    RETURNING id INTO v_existing;
+    IF v_existing IS NULL THEN
+        SELECT id INTO v_existing FROM mailing_delivery
+        WHERE source_kind = 'automation' AND source_id = p_source_id
+          AND subscriber_id = p_subscriber_id;
+    END IF;
+    RETURN v_existing;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION mailing_claim_deliveries(p_limit integer, p_lease interval)
+RETURNS TABLE(
+    delivery_id uuid, business_id uuid, tenant_root_id uuid, source_id uuid,
+    campaign_id uuid, template_id uuid, content_updated_at timestamptz,
+    subscriber_id uuid, email citext, attempts integer, claim_generation integer, message_id text,
+    subject text, preheader text, body_markdown text, track_opens boolean,
+    track_clicks boolean, list_name text, first_name text, last_name text,
+    profile_id uuid, profile_updated_at timestamptz, profile_mode mailing_send_mode,
+    from_email citext, from_name text, reply_to citext, postal_address text,
+    email_domain_id uuid, secret_ref uuid, ses_region text, ses_configuration_set text
+)
+LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+    WITH cancelled_candidates AS (
+        SELECT d.id FROM mailing_delivery d
+        JOIN campaign c ON c.id = d.campaign_id AND c.tenant_root_id = d.tenant_root_id
+        WHERE d.status = 'sending' AND d.lease_until <= now() AND c.status = 'cancelled'
+          AND tenant_merge_root_write_allowed(d.tenant_root_id)
+        ORDER BY d.lease_until, d.id FOR UPDATE OF d SKIP LOCKED
+        LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 1000))
+    ), cancelled AS (
+        UPDATE mailing_delivery d SET status = 'cancelled', lease_until = NULL,
+            last_error = 'campaign cancelled while delivery was in flight', updated_at = now()
+        FROM cancelled_candidates x WHERE d.id = x.id RETURNING d.id
+    ), ineligible_candidates AS (
+        SELECT d.id FROM mailing_delivery d
+        JOIN list_subscriber s ON s.id = d.subscriber_id AND s.tenant_root_id = d.tenant_root_id
+        LEFT JOIN campaign c ON c.id = d.campaign_id AND c.tenant_root_id = d.tenant_root_id
+        WHERE ((d.status = 'queued' AND d.not_before <= now())
+               OR (d.status = 'sending' AND d.lease_until <= now()))
+          AND (d.source_kind = 'automation' OR c.status = 'sending')
+          AND (s.status <> 'active'
+               OR EXISTS (SELECT 1 FROM mailing_suppression ms
+                    WHERE ms.business_id = d.business_id AND ms.email = d.email)
+               OR EXISTS (SELECT 1 FROM email_suppression es WHERE es.email = d.email))
+          AND tenant_merge_root_write_allowed(d.tenant_root_id)
+        ORDER BY d.not_before, d.created_at, d.id FOR UPDATE OF d SKIP LOCKED
+        LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 1000))
+    ), suppressed AS (
+        UPDATE mailing_delivery d SET status = 'suppressed', lease_until = NULL,
+            last_error = 'subscriber became ineligible before send', updated_at = now()
+        FROM ineligible_candidates x WHERE d.id = x.id RETURNING d.id
+    ), candidates AS (
+        SELECT d.id FROM mailing_delivery d
+        JOIN list_subscriber s ON s.id = d.subscriber_id AND s.tenant_root_id = d.tenant_root_id
+        LEFT JOIN campaign c ON c.id = d.campaign_id AND c.tenant_root_id = d.tenant_root_id
+        WHERE ((d.status = 'queued' AND d.not_before <= now())
+               OR (d.status = 'sending' AND d.lease_until <= now()))
+          AND (d.source_kind = 'automation' OR c.status = 'sending')
+          AND s.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM mailing_suppression ms
+              WHERE ms.business_id = d.business_id AND ms.email = d.email)
+          AND NOT EXISTS (SELECT 1 FROM email_suppression es WHERE es.email = d.email)
+          AND tenant_merge_root_write_allowed(d.tenant_root_id)
+        ORDER BY d.not_before, d.created_at, d.id FOR UPDATE OF d SKIP LOCKED
+        LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 1000))
+    ), claimed AS (
+        UPDATE mailing_delivery d SET status = 'sending', attempts = d.attempts + 1,
+            claim_generation = d.claim_generation + 1,
+            lease_until = now() + GREATEST(COALESCE(p_lease, interval '2 minutes'), interval '10 seconds'),
+            updated_at = now()
+        FROM candidates x WHERE d.id = x.id RETURNING d.*
+    )
+    SELECT d.id, d.business_id, d.tenant_root_id, d.source_id, d.campaign_id,
+           d.template_id, COALESCE(c.updated_at, t.updated_at), d.subscriber_id,
+           d.email, d.attempts, d.claim_generation, d.message_id,
+           COALESCE(c.subject, t.subject), COALESCE(c.preheader, t.preheader),
+           COALESCE(c.body_markdown, t.body_markdown),
+           COALESCE(d.track_opens_override, c.track_opens, t.track_opens),
+           COALESCE(d.track_clicks_override, c.track_clicks, t.track_clicks),
+           l.name, s.first_name, s.last_name,
+           p.id, p.updated_at, p.mode, p.from_email, p.from_name, p.reply_to,
+           p.postal_address, p.email_domain_id, p.secret_ref, p.ses_region,
+           p.ses_configuration_set
+    FROM claimed d
+    LEFT JOIN campaign c ON c.id = d.campaign_id AND c.tenant_root_id = d.tenant_root_id
+    LEFT JOIN mailing_template t ON t.id = d.template_id AND t.tenant_root_id = d.tenant_root_id
+    JOIN list_subscriber s ON s.id = d.subscriber_id AND s.tenant_root_id = d.tenant_root_id
+    JOIN mailing_list l ON l.id = s.list_id AND l.tenant_root_id = s.tenant_root_id
+    JOIN mailing_sending_profile p ON p.tenant_root_id = d.tenant_root_id
+     AND p.business_id = d.business_id AND p.id = COALESCE(c.profile_id, p.id);
+$$;
+
+CREATE FUNCTION mailing_automation_add_tag(
+    p_business_id uuid, p_tenant_root_id uuid, p_subscriber_id uuid, p_tag text
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_subscriber list_subscriber%ROWTYPE;
+BEGIN
+    IF NOT tenant_merge_root_write_allowed(p_tenant_root_id) THEN RETURN false; END IF;
+    SELECT * INTO v_subscriber FROM list_subscriber
+    WHERE id = p_subscriber_id AND business_id = p_business_id
+      AND tenant_root_id = p_tenant_root_id;
+    IF NOT FOUND THEN RETURN false; END IF;
+    INSERT INTO subscriber_tag (business_id, tenant_root_id, list_id, subscriber_id, tag)
+    VALUES (v_subscriber.business_id, v_subscriber.tenant_root_id,
+            v_subscriber.list_id, v_subscriber.id, btrim(p_tag))
+    ON CONFLICT (subscriber_id, tag) DO NOTHING;
+    RETURN true;
+END;
+$$;
+
+CREATE FUNCTION mailing_automation_remove_tag(
+    p_business_id uuid, p_tenant_root_id uuid, p_subscriber_id uuid, p_tag text
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    IF NOT tenant_merge_root_write_allowed(p_tenant_root_id) THEN RETURN false; END IF;
+    PERFORM 1 FROM list_subscriber WHERE id = p_subscriber_id
+      AND business_id = p_business_id AND tenant_root_id = p_tenant_root_id;
+    IF NOT FOUND THEN RETURN false; END IF;
+    DELETE FROM subscriber_tag WHERE subscriber_id = p_subscriber_id
+      AND tenant_root_id = p_tenant_root_id AND tag = btrim(p_tag);
+    RETURN true;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION automation_claim_due(
+    p_now timestamptz, p_limit integer, p_lease interval
+) RETURNS TABLE(
+    enrollment_id uuid,
+    business_id uuid,
+    tenant_root_id uuid,
+    automation_id uuid,
+    version_id uuid,
+    subscriber_id uuid,
+    current_node_id text,
+    wake_at timestamptz,
+    enrolled_at timestamptz,
+    node_attempts integer,
+    claim_generation integer,
+    graph jsonb
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    WITH candidates AS (
+        SELECT e.id
+        FROM automation_enrollment e
+        JOIN automation a
+          ON a.id = e.automation_id
+         AND a.business_id = e.business_id
+         AND a.tenant_root_id = e.tenant_root_id
+        WHERE e.status = 'active'
+          AND e.wake_at <= COALESCE(p_now, now())
+          AND (e.lease_expires_at IS NULL OR e.lease_expires_at <= COALESCE(p_now, now()))
+          AND a.status = 'active'
+          AND tenant_merge_root_write_allowed(e.tenant_root_id)
+        ORDER BY e.wake_at, e.id
+        FOR UPDATE OF e SKIP LOCKED
+        LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 50), 1000))
+    ), claimed AS (
+        UPDATE automation_enrollment e
+        SET lease_expires_at = COALESCE(p_now, now())
+                               + GREATEST(COALESCE(p_lease, interval '2 minutes'), interval '10 seconds'),
+            claim_generation = e.claim_generation + 1,
+            updated_at = COALESCE(p_now, now())
+        FROM candidates c
+        WHERE e.id = c.id
+        RETURNING e.*
+    )
+    SELECT e.id, e.business_id, e.tenant_root_id, e.automation_id, e.version_id,
+           e.subscriber_id, e.current_node_id, e.wake_at, e.enrolled_at,
+           e.node_attempts, e.claim_generation, v.graph
+    FROM claimed e
+    JOIN automation_version v
+      ON v.id = e.version_id
+     AND v.automation_id = e.automation_id
+     AND v.business_id = e.business_id
+     AND v.tenant_root_id = e.tenant_root_id
+    ORDER BY e.wake_at, e.id;
+$$;
+
+CREATE OR REPLACE FUNCTION automation_record_step(
+    p_enrollment_id uuid, p_claim_generation integer, p_node_id text, p_node_kind text,
+    p_outcome automation_step_outcome, p_next_node_id text, p_wake_at timestamptz,
+    p_status automation_enrollment_status, p_delivery_id uuid, p_detail jsonb,
+    p_recorded_at timestamptz
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_enrollment automation_enrollment%ROWTYPE; v_at timestamptz := COALESCE(p_recorded_at, now());
+BEGIN
+    SELECT * INTO v_enrollment FROM automation_enrollment
+    WHERE id = p_enrollment_id AND status = 'active'
+      AND claim_generation = p_claim_generation
+      AND tenant_merge_root_write_allowed(tenant_root_id) FOR UPDATE;
+    IF NOT FOUND THEN RETURN false; END IF;
+    IF EXISTS (SELECT 1 FROM automation_enrollment_step
+        WHERE enrollment_id = v_enrollment.id AND node_id = p_node_id
+          AND completed_at IS NOT NULL) THEN RETURN true; END IF;
+    INSERT INTO automation_enrollment_step (
+        business_id, tenant_root_id, enrollment_id, version_id, node_id, node_kind,
+        attempt, entered_at, completed_at, outcome, delivery_id, detail
+    ) VALUES (
+        v_enrollment.business_id, v_enrollment.tenant_root_id, v_enrollment.id,
+        v_enrollment.version_id, p_node_id, p_node_kind, v_enrollment.node_attempts + 1,
+        v_at, CASE WHEN p_outcome IN ('entered', 'waiting') THEN NULL ELSE v_at END,
+        p_outcome, p_delivery_id, COALESCE(p_detail, '{}'::jsonb)
+    ) ON CONFLICT (enrollment_id, node_id) DO UPDATE SET
+        node_kind = EXCLUDED.node_kind,
+        attempt = GREATEST(automation_enrollment_step.attempt, EXCLUDED.attempt),
+        completed_at = COALESCE(automation_enrollment_step.completed_at, EXCLUDED.completed_at),
+        outcome = EXCLUDED.outcome,
+        delivery_id = COALESCE(EXCLUDED.delivery_id, automation_enrollment_step.delivery_id),
+        detail = EXCLUDED.detail;
+    UPDATE automation_enrollment SET
+        status = p_status,
+        current_node_id = CASE WHEN p_status = 'active' THEN COALESCE(p_next_node_id, current_node_id) ELSE NULL END,
+        wake_at = CASE WHEN p_status = 'active' THEN COALESCE(p_wake_at, v_at) ELSE NULL END,
+        lease_expires_at = NULL, node_attempts = 0, last_error = NULL,
+        exit_reason = CASE WHEN p_status = 'exited'
+                          THEN left(COALESCE(NULLIF(p_detail->>'reason', ''), 'subscriber_inactive'), 200)
+                          ELSE exit_reason END,
+        finished_at = CASE WHEN p_status = 'active' THEN NULL ELSE v_at END, updated_at = v_at
+    WHERE id = v_enrollment.id;
+    RETURN true;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION automation_exit_for_subscriber(
+    p_subscriber_id uuid, p_tenant_root_id uuid, p_reason text
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_updated integer := 0;
+BEGIN
+    IF NOT tenant_merge_root_write_allowed(p_tenant_root_id) THEN
+        RETURN 0;
+    END IF;
+    UPDATE automation_enrollment SET
+        status = 'exited',
+        current_node_id = NULL,
+        wake_at = NULL,
+        lease_expires_at = NULL,
+        exit_reason = left(COALESCE(NULLIF(p_reason, ''), 'subscriber_inactive'), 200),
+        finished_at = now(),
+        updated_at = now()
+    WHERE subscriber_id = p_subscriber_id
+      AND tenant_root_id = p_tenant_root_id
+      AND status = 'active';
+    GET DIAGNOSTICS v_updated = ROW_COUNT;
+    RETURN v_updated;
+END;
+$$;
+
+CREATE FUNCTION automation_event_exists(
+    p_business_id uuid,
+    p_email citext,
+    p_name text,
+    p_since timestamptz,
+    p_within interval
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM automation_event e
+        WHERE e.business_id = p_business_id
+          AND e.email = p_email
+          AND e.name = p_name
+          AND e.occurred_at >= COALESCE(p_since, '-infinity'::timestamptz)
+          AND (p_within IS NULL OR e.occurred_at >= now() - GREATEST(p_within, interval '0'))
+    );
+$$;
+REVOKE ALL ON FUNCTION automation_ingest_event(uuid,uuid,uuid,text,citext,uuid,timestamptz,jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION automation_event_exists(uuid,citext,text,timestamptz,interval) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION automation_ingest_event(uuid,uuid,uuid,text,citext,uuid,timestamptz,jsonb,text) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION automation_event_exists(uuid,citext,text,timestamptz,interval) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) TO manyforge_app;
+
+DROP FUNCTION automation_execution_fence(uuid,integer,uuid,uuid,uuid);

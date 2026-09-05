@@ -85,8 +85,8 @@ func TestAutomationLifecycleAndIsolation(t *testing.T) {
 		t.Fatalf("created = %+v", created)
 	}
 	firstVersionID := *created.DraftVersionID
-	versions, err := service.Versions(ctx, a.principalID, a.businessID, created.ID)
-	if err != nil || len(versions) != 1 || versions[0].Number != 1 || versions[0].Status != "draft" {
+	versions, err := service.Versions(ctx, a.principalID, a.businessID, created.ID, "", 100)
+	if err != nil || len(versions.Items) != 1 || versions.Items[0].Number != 1 || versions.Items[0].Status != "draft" {
 		t.Fatalf("Versions = %+v, err=%v", versions, err)
 	}
 	invalid, err := service.ValidateVersion(ctx, a.principalID, a.businessID, created.ID, firstVersionID)
@@ -151,10 +151,10 @@ func TestAutomationLifecycleAndIsolation(t *testing.T) {
 	if err != nil || active.ActiveVersionID == nil || *active.ActiveVersionID != draft.ID {
 		t.Fatalf("Activate v2 = %+v, err=%v", active, err)
 	}
-	versions, err = service.Versions(ctx, a.principalID, a.businessID, created.ID)
-	if err != nil || len(versions) != 2 ||
-		versions[0].Number != 2 || versions[0].Status != "active" ||
-		versions[1].Number != 1 || versions[1].Status != "superseded" {
+	versions, err = service.Versions(ctx, a.principalID, a.businessID, created.ID, "", 100)
+	if err != nil || len(versions.Items) != 2 ||
+		versions.Items[0].Number != 2 || versions.Items[0].Status != "active" ||
+		versions.Items[1].Number != 1 || versions.Items[1].Status != "superseded" {
 		t.Fatalf("bounded multi-version lifecycle = %+v, err=%v", versions, err)
 	}
 	paused, err := service.Pause(ctx, a.principalID, a.businessID, created.ID)

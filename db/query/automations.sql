@@ -54,22 +54,62 @@ SELECT * FROM automation_version
 WHERE id = $1 AND automation_id = $2
   AND business_id = $3 AND tenant_root_id = $4;
 
--- name: ListAutomationVersions :many
+-- name: LockAutomationVersion :one
 SELECT * FROM automation_version
+WHERE id = $1 AND automation_id = $2
+  AND business_id = $3 AND tenant_root_id = $4
+FOR UPDATE;
+
+-- name: ListAutomationVersions :many
+SELECT id, business_id, tenant_root_id, automation_id, number, status,
+       trigger_kind, trigger_ref, activated_at, created_at, updated_at
+FROM automation_version
 WHERE automation_id = sqlc.arg('automation_id')
   AND business_id = sqlc.arg('business_id')
   AND tenant_root_id = sqlc.arg('tenant_root_id')
 ORDER BY number DESC, id DESC
-LIMIT LEAST(GREATEST(sqlc.arg('lim')::integer, 1), 100);
+LIMIT LEAST(GREATEST(sqlc.arg('lim')::integer, 1), 101);
 
 -- name: ListAutomationVersionsAfter :many
-SELECT * FROM automation_version
+SELECT id, business_id, tenant_root_id, automation_id, number, status,
+       trigger_kind, trigger_ref, activated_at, created_at, updated_at
+FROM automation_version
 WHERE automation_id = sqlc.arg('automation_id')
   AND business_id = sqlc.arg('business_id')
   AND tenant_root_id = sqlc.arg('tenant_root_id')
   AND (number, id) < (sqlc.arg('cur_number')::integer, sqlc.arg('cur_id')::uuid)
 ORDER BY number DESC, id DESC
-LIMIT LEAST(GREATEST(sqlc.arg('lim')::integer, 1), 100);
+LIMIT LEAST(GREATEST(sqlc.arg('lim')::integer, 1), 101);
+
+-- name: PruneAutomationVersions :execrows
+WITH total AS (
+    SELECT count(*)::integer AS value
+    FROM automation_version current_version
+    WHERE current_version.automation_id = sqlc.arg('automation_id')
+      AND current_version.business_id = sqlc.arg('business_id')
+      AND current_version.tenant_root_id = sqlc.arg('tenant_root_id')
+), removable AS (
+    SELECT v.id
+    FROM automation_version v
+    WHERE v.automation_id = sqlc.arg('automation_id')
+      AND v.business_id = sqlc.arg('business_id')
+      AND v.tenant_root_id = sqlc.arg('tenant_root_id')
+      AND v.status = 'superseded'
+      AND NOT EXISTS (
+          SELECT 1 FROM automation_enrollment e WHERE e.version_id = v.id
+      )
+    ORDER BY v.number, v.id
+    LIMIT GREATEST((SELECT value FROM total) - sqlc.arg('target_count')::integer, 0)
+)
+DELETE FROM automation_version v
+USING removable r
+WHERE v.id = r.id;
+
+-- name: CountAutomationVersions :one
+SELECT count(*) FROM automation_version
+WHERE automation_id = sqlc.arg('automation_id')
+  AND business_id = sqlc.arg('business_id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id');
 
 -- name: UpdateAutomationVersionGraph :one
 UPDATE automation_version SET graph = sqlc.arg('graph'), updated_at = now()

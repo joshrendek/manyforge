@@ -9,10 +9,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ErrInvalidReference marks a runtime validation failure, such as a template
-// deleted after a version was validated. These failures are terminal because a
-// retry cannot repair the pinned graph.
-var ErrInvalidReference = errors.New("automation invalid reference")
+var (
+	// ErrInvalidReference marks a terminal runtime validation failure.
+	ErrInvalidReference = errors.New("automation invalid reference")
+	// ErrLostFence marks a stale claim. Callers must roll back the transaction
+	// so no side effect from that execution attempt can commit.
+	ErrLostFence = errors.New("automation execution fence lost")
+)
 
 type SubscriberSnapshot struct {
 	ID, BusinessID, TenantRootID, ListID uuid.UUID
@@ -29,6 +32,8 @@ type SubscriberReader interface {
 
 type MessageSpec struct {
 	BusinessID, TenantRootID, SubscriberID, TemplateID uuid.UUID
+	EnrollmentID                                       uuid.UUID
+	ClaimGeneration                                    int
 	TrackOpens, TrackClicks                            bool
 	SourceKind                                         string
 	SourceID                                           uuid.UUID
@@ -49,8 +54,8 @@ type EngagementReader interface {
 }
 
 type Tagger interface {
-	AddTag(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, string) error
-	RemoveTag(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, string) error
+	AddTag(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, int, string) error
+	RemoveTag(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, int, string) error
 }
 
 type TemplateReader interface {
@@ -90,7 +95,7 @@ type StepStore interface {
 	Fail(context.Context, pgx.Tx, StepFailure) (bool, error)
 	Waiting(context.Context, pgx.Tx, uuid.UUID, string) (bool, error)
 	Delivery(context.Context, pgx.Tx, uuid.UUID, string) (*uuid.UUID, error)
-	EventExists(context.Context, pgx.Tx, uuid.UUID, string, string, time.Time, *time.Duration) (bool, error)
+	EventExists(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, string, string, time.Time, time.Time, *time.Duration) (bool, error)
 }
 
 type Deps struct {

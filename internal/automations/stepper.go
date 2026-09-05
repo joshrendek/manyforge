@@ -64,13 +64,21 @@ func (SQLStepStore) Delivery(ctx context.Context, tx pgx.Tx, enrollmentID uuid.U
 	return &id, nil
 }
 
-func (SQLStepStore) EventExists(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, email, name string, since time.Time, within *time.Duration) (bool, error) {
+func (SQLStepStore) EventExists(
+	ctx context.Context,
+	tx pgx.Tx,
+	businessID, listID uuid.UUID,
+	email, name string,
+	since, evaluationTime time.Time,
+	within *time.Duration,
+) (bool, error) {
 	var interval pgtype.Interval
 	if within != nil {
 		interval = pgtype.Interval{Microseconds: within.Microseconds(), Valid: true}
 	}
 	var exists bool
-	err := tx.QueryRow(ctx, "SELECT automation_event_exists($1,$2,$3,$4,$5)", businessID, email, name, since, interval).Scan(&exists)
+	err := tx.QueryRow(ctx, "SELECT automation_event_exists($1,$2,$3,$4,$5,$6,$7)",
+		businessID, listID, email, name, since, evaluationTime, interval).Scan(&exists)
 	return exists, err
 }
 
@@ -141,6 +149,9 @@ func (s *Stepper) Tick(ctx context.Context) error {
 				}
 				return err
 			})
+			if errors.Is(err, ErrLostFence) {
+				continue
+			}
 			if err != nil && firstErr == nil {
 				firstErr = fmt.Errorf("advance enrollment %s: %w", enrollment.ID, err)
 			}

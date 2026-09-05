@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+
+	"github.com/go-chi/chi/v5"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
@@ -41,3 +43,26 @@ func TestWriteNotFoundIsUniform(t *testing.T) {
 		t.Fatalf("not-found responses differ: %q != %q", bodies[0], bodies[1])
 	}
 }
+
+func TestSendProducingRoutesRequireSendGroup(t *testing.T) {
+	writeRouter := chi.NewRouter()
+	sendRouter := chi.NewRouter()
+	handler := NewHandler(nil)
+	handler.WriteRoutes(writeRouter)
+	handler.SendRoutes(sendRouter)
+
+	paths := []string{
+		"/businesses/" + uuidForRoute + "/mailing/automations/" + uuidForRoute + "/enrollments",
+		"/businesses/" + uuidForRoute + "/mailing/events",
+	}
+	for _, path := range paths {
+		if writeRouter.Match(chi.NewRouteContext(), http.MethodPost, path) {
+			t.Errorf("write routes unexpectedly match send-producing path %s", path)
+		}
+		if !sendRouter.Match(chi.NewRouteContext(), http.MethodPost, path) {
+			t.Errorf("send routes do not match send-producing path %s", path)
+		}
+	}
+}
+
+const uuidForRoute = "00000000-0000-0000-0000-000000000001"
