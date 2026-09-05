@@ -143,6 +143,8 @@ type NodeStats struct {
 	Waiting   int64  `json:"waiting"`
 	Advanced  int64  `json:"advanced"`
 	Sent      int64  `json:"sent"`
+	Opened    int64  `json:"opened"`
+	Clicked   int64  `json:"clicked"`
 	BranchYes int64  `json:"branch_yes"`
 	BranchNo  int64  `json:"branch_no"`
 	Exited    int64  `json:"exited"`

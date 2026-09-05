@@ -358,7 +358,7 @@ components:
         created: {type: boolean}
     NodeStats:
       type: object
-      required: [node_id, node_kind, entered, waiting, advanced, sent, branch_yes, branch_no, exited, errors]
+      required: [node_id, node_kind, entered, waiting, advanced, sent, opened, clicked, branch_yes, branch_no, exited, errors]
       properties:
         node_id: {type: string}
         node_kind: {type: string}
@@ -366,6 +366,8 @@ components:
         waiting: {type: integer, format: int64}
         advanced: {type: integer, format: int64}
         sent: {type: integer, format: int64}
+        opened: {type: integer, format: int64}
+        clicked: {type: integer, format: int64}
         branch_yes: {type: integer, format: int64}
         branch_no: {type: integer, format: int64}
         exited: {type: integer, format: int64}

@@ -6,8 +6,10 @@ import {
   Automation,
   AutomationGraph,
   AutomationIssue,
+  AutomationStats,
   AutomationsService,
   AutomationVersion,
+  NodeStats,
 } from '../../../core/automations.service';
 import { CurrentBusinessService } from '../../../core/current-business.service';
 import { MailingList, MailingService, MailingTemplate } from '../../../core/mailing.service';
@@ -19,11 +21,12 @@ import { ToastService } from '../../../ui/toast/toast.service';
 import { AutomationCanvasComponent } from './canvas/automation-canvas';
 import { deleteNode, GraphReferences, starterGraph, validateGraph } from './canvas/graph-ops';
 import { AutomationNodePanelComponent } from './canvas/node-panel';
+import { EnrollmentsTabComponent } from './enrollments-tab';
 
 @Component({
   selector: 'app-automation-editor',
   standalone: true,
-  imports: [RouterLink, Spinner, StatusPill, AutomationCanvasComponent, AutomationNodePanelComponent],
+  imports: [RouterLink, Spinner, StatusPill, AutomationCanvasComponent, AutomationNodePanelComponent, EnrollmentsTabComponent],
   template: `
     <div class="editor" data-testid="automation-editor">
       <header class="header">
@@ -36,6 +39,9 @@ import { AutomationNodePanelComponent } from './canvas/node-panel';
           <span class="validation" [class.invalid]="allIssues().length" data-testid="automation-validation-count">{{ allIssues().length ? allIssues().length + ' issue(s)' : 'Graph valid' }}</span>
           <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="automation-discard" [disabled]="!dirty() || saving() || acting()" (click)="discard()">Discard</button>
           <button type="button" class="mf-btn mf-btn-primary mf-btn-sm" data-testid="automation-save" [disabled]="!canSave() || acting()" (click)="save()">{{ saving() ? 'Saving…' : 'Save' }}</button>
+          @if (tab() === 'canvas' && statsVisible()) {
+            <label class="stats-toggle"><input type="checkbox" data-testid="automation-stats-toggle" [checked]="statsOn()" (change)="toggleStats()" />Stats</label>
+          }
           @if (automation(); as auto) {
             @switch (auto.status) {
               @case ('draft') {
@@ -57,24 +63,41 @@ import { AutomationNodePanelComponent } from './canvas/node-panel';
           }
         </div>
       </header>
-      <nav class="tabs" aria-label="Automation details"><button type="button" class="tab active" data-testid="automation-tab-canvas">Canvas</button><button type="button" class="tab" data-testid="automation-tab-enrollments" disabled title="Enrollment history arrives in the next frontend slice">Enrollments</button></nav>
+      <nav class="tabs" role="tablist" aria-label="Automation details">
+        <button type="button" role="tab" id="automation-tab-canvas-id" aria-controls="automation-panel-canvas" [attr.aria-selected]="tab() === 'canvas' ? 'true' : 'false'" class="tab" [class.active]="tab() === 'canvas'" data-testid="automation-tab-canvas" (click)="setTab('canvas')">Canvas</button>
+        <button type="button" role="tab" id="automation-tab-enrollments-id" aria-controls="automation-panel-enrollments" [attr.aria-selected]="tab() === 'enrollments' ? 'true' : 'false'" class="tab" [class.active]="tab() === 'enrollments'" data-testid="automation-tab-enrollments" (click)="setTab('enrollments')">Enrollments</button>
+      </nav>
       @if (editingAlongsideLive()) {
         <div class="notice" data-testid="automation-version-banner">Editing v{{ version()?.number }} — the active version stays live until you activate this draft.</div>
       }
       @if (error()) { <div class="error" data-testid="automation-editor-error">{{ error() }}</div> }
       @if (!loading() && !lists().length) { <div class="notice" data-testid="automation-no-lists">Create an active mailing list before building this automation.</div> }
       @if (!loading() && version()) {
-        <main class="workspace">
-          <app-automation-canvas
-            [graph]="graph()"
-            [selectedId]="selectedId()"
-            [issues]="allIssues()"
-            [readOnly]="readOnly()"
-            [references]="references"
-            (graphChange)="setGraph($event)"
-            (selectedIdChange)="selectedId.set($event)"
-            (openNode)="openPanel($event)"
-          />
+        <main class="workspace" [class.workspace-enrollments]="tab() === 'enrollments'">
+          @if (tab() === 'canvas') {
+            <div role="tabpanel" id="automation-panel-canvas" class="panel" aria-labelledby="automation-tab-canvas-id">
+              <app-automation-canvas
+                [graph]="graph()"
+                [selectedId]="selectedId()"
+                [issues]="allIssues()"
+                [readOnly]="readOnly()"
+                [references]="references"
+                [stats]="statsByNode()"
+                (graphChange)="setGraph($event)"
+                (selectedIdChange)="selectedId.set($event)"
+                (openNode)="openPanel($event)"
+              />
+            </div>
+          } @else {
+            <div role="tabpanel" id="automation-panel-enrollments" class="panel" aria-labelledby="automation-tab-enrollments-id">
+              <app-enrollments-tab
+                [businessId]="businessId"
+                [automationId]="automationId"
+                [automation]="automation()"
+                [triggerListId]="triggerListId()"
+              />
+            </div>
+          }
           @if (panelOpen() && selectedId()) {
             <app-automation-node-panel
               [graph]="graph()"
@@ -94,7 +117,7 @@ import { AutomationNodePanelComponent } from './canvas/node-panel';
     </div>
   `,
   styles: [`
-    :host{display:block}.editor{margin:-28px;min-height:calc(100vh - 56px);display:flex;flex-direction:column;background:var(--mf-surface)}.header{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px 20px;border-bottom:1px solid var(--mf-border)}.title{min-width:0}.back{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.title-line,.actions{display:flex;align-items:center;gap:10px}.title h1{margin:3px 0 0;font-size:var(--mf-fs-xl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.version,.validation{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.validation.invalid{color:var(--mf-danger-text)}.tabs{display:flex;padding:0 20px;border-bottom:1px solid var(--mf-border)}.tab{padding:11px 14px;border:0;border-bottom:2px solid transparent;color:var(--mf-text-muted);background:transparent}.tab.active{border-bottom-color:var(--mf-accent);color:var(--mf-text);font-weight:700}.workspace{display:grid;grid-template-columns:minmax(0,1fr) auto;flex:1;min-height:0;height:calc(100vh - 145px)}.error,.notice{padding:10px 20px;font-size:var(--mf-fs-sm)}.error{color:var(--mf-danger-text);background:var(--mf-danger-soft)}.notice{color:var(--mf-warn-text);background:var(--mf-warn-soft)}@media(max-width:760px){.header{align-items:flex-start;flex-direction:column}.workspace{height:700px}.actions{flex-wrap:wrap}:host ::ng-deep app-automation-node-panel .panel{width:290px}}
+    :host{display:block}.editor{margin:-28px;min-height:calc(100vh - 56px);display:flex;flex-direction:column;background:var(--mf-surface)}.header{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px 20px;border-bottom:1px solid var(--mf-border)}.title{min-width:0}.back{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.title-line,.actions{display:flex;align-items:center;gap:10px}.title h1{margin:3px 0 0;font-size:var(--mf-fs-xl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.version,.validation{font-size:var(--mf-fs-xs);color:var(--mf-text-muted)}.validation.invalid{color:var(--mf-danger-text)}.tabs{display:flex;padding:0 20px;border-bottom:1px solid var(--mf-border)}.tab{padding:11px 14px;border:0;border-bottom:2px solid transparent;color:var(--mf-text-muted);background:transparent}.tab.active{border-bottom-color:var(--mf-accent);color:var(--mf-text);font-weight:700}.workspace{display:grid;grid-template-columns:minmax(0,1fr) auto;flex:1;min-height:0;height:calc(100vh - 145px)}.stats-toggle{display:inline-flex;align-items:center;gap:6px;font-size:var(--mf-fs-xs);color:var(--mf-text-muted);cursor:pointer}.workspace-enrollments{grid-template-columns:1fr}.panel{min-width:0;min-height:0;height:100%}.workspace-enrollments app-enrollments-tab{min-height:0;overflow:auto}.error,.notice{padding:10px 20px;font-size:var(--mf-fs-sm)}.error{color:var(--mf-danger-text);background:var(--mf-danger-soft)}.notice{color:var(--mf-warn-text);background:var(--mf-warn-soft)}@media(max-width:760px){.header{align-items:flex-start;flex-direction:column}.workspace{height:700px}.actions{flex-wrap:wrap}:host ::ng-deep app-automation-node-panel .panel{width:290px}}
   `],
 })
 export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
@@ -119,6 +142,8 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
   saving = signal(false);
   acting = signal('');
   error = signal('');
+  tab = signal<'canvas' | 'enrollments'>('canvas');
+  stats = signal<AutomationStats | null>(null);
   readonly clientErrors = computed(() => validateGraph(this.graph()));
   readonly allIssues = computed(() => [...this.clientErrors(), ...this.serverErrors()]);
   readonly readOnly = computed(() => this.version()?.status !== 'draft');
@@ -128,10 +153,57 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
     const automation = this.automation();
     return !!version && version.status === 'draft' && !!automation && automation.draft_version_id === version.id && !!automation.active_version_id;
   });
+  readonly statsByNode = computed(() => {
+    const value = this.stats();
+    if (!value || !this.statsOn() || !this.statsVisible()) return null;
+    const byNode: Record<string, NodeStats> = {};
+    for (const node of value.nodes) byNode[node.node_id] = node;
+    return byNode;
+  });
+  readonly statsVisible = computed(() => {
+    const automation = this.automation();
+    const version = this.version();
+    return !!automation && !!version && version.status !== 'draft' && automation.status !== 'archived';
+  });
+  // Manual enrollment is only offered for the displayed non-draft version; the backend
+  // validates against the active version, which is the same graph when no draft is shown.
+  readonly triggerListId = computed(() => {
+    const version = this.version();
+    if (!version || version.status === 'draft') return null;
+    for (const node of version.graph.nodes) {
+      if (node.kind !== 'trigger') continue;
+      const config = node.config as { type?: string; list_id?: string };
+      if (config.type === 'list_joined' && typeof config.list_id === 'string') return config.list_id;
+    }
+    return null;
+  });
+  readonly statsOn = signal(false);
   readonly canActivate = computed(() => !this.readOnly() && !this.dirty() && this.clientErrors().length === 0 && !this.saving() && this.acting() === '');
   readonly references: GraphReferences = {};
   readonly statusTone = automationStatusTone;
-
+  setTab(name: 'canvas' | 'enrollments'): void {
+    if (this.tab() === name) return;
+    this.tab.set(name);
+    if (name === 'enrollments') this.closePanel();
+  }
+  toggleStats(): void {
+    this.statsOn.update((value) => !value);
+    if (this.statsOn()) this.refreshStats();
+  }
+  refreshStats(): void {
+    const version = this.version();
+    const automation = this.automation();
+    if (!version || !automation || version.status === 'draft' || automation.status === 'archived') {
+      this.stats.set(null);
+      return;
+    }
+    this.automations.stats(this.businessId, this.automationId, version.id).subscribe({
+      next: (value) => {
+        if (this.version()?.id === value.version_id) this.stats.set(value);
+      },
+      error: () => this.toast.error('Could not load automation statistics'),
+    });
+  }
   ngOnInit(): void {
     this.businessId = this.route.snapshot.paramMap.get('businessId') ?? '';
     this.automationId = this.route.snapshot.paramMap.get('automationId') ?? '';
@@ -166,7 +238,6 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
         this.savedJson.set(JSON.stringify(version.graph));
         const graph = version.graph.nodes.length || !activeLists.length ? version.graph : starterGraph(activeLists[0].id);
         this.graph.set(graph);
-        this.references.listId = activeLists[0]?.id;
         this.references.templateId = templates[0]?.id;
         this.selectedId.set(graph.nodes[0]?.id ?? null);
         this.loading.set(false);
@@ -265,6 +336,8 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
         this.serverErrors.set([]);
         this.selectedId.set(version.graph.nodes[0]?.id ?? null);
         this.panelOpen.set(false);
+        this.statsOn.set(false);
+        this.stats.set(null);
       },
       error: (response: HttpErrorResponse) => {
         this.acting.set('');
