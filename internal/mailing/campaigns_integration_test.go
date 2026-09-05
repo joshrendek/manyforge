@@ -549,12 +549,12 @@ func TestCampaignTrackingOracleAndEvents(t *testing.T) {
 		count(*) FILTER (WHERE kind='click') FROM mailing_tracking_event WHERE delivery_id=$1`, deliveryID).Scan(&opens, &clicks); err != nil || opens != 1 || clicks != 1 {
 		t.Fatalf("tracking events open=%d click=%d err=%v", opens, clicks, err)
 	}
-	var opened, clicked bool
-	if err := tdb.Super.QueryRow(ctx, "SELECT opened_at IS NOT NULL,first_clicked_at IS NOT NULL FROM mailing_delivery WHERE id=$1", deliveryID).Scan(&opened, &clicked); err != nil || !opened || !clicked {
-		t.Fatalf("delivery engagement opened=%t clicked=%t err=%v", opened, clicked, err)
+	var openedAt, clickedAt time.Time
+	if err := tdb.Super.QueryRow(ctx, "SELECT opened_at,first_clicked_at FROM mailing_delivery WHERE id=$1", deliveryID).Scan(&openedAt, &clickedAt); err != nil {
+		t.Fatalf("delivery engagement timestamps: %v", err)
 	}
 
-	t.Run("MF-MAIL-TRACK-001 valid tracking capabilities append on every replay", func(t *testing.T) {
+	t.Run("MF-MAIL-TRACK-001 tracking replay is storage-idempotent", func(t *testing.T) {
 		if w := request("/m/o/" + svc.Tokens.EncodeOpen(deliveryID)); w.Code != http.StatusOK {
 			t.Fatalf("replayed open status = %d", w.Code)
 		}
@@ -567,8 +567,42 @@ func TestCampaignTrackingOracleAndEvents(t *testing.T) {
 			deliveryID).Scan(&replayedOpens, &replayedClicks); err != nil {
 			t.Fatal(err)
 		}
-		if replayedOpens != 2 || replayedClicks != 2 {
-			t.Fatalf("tracking rows after one replay open=%d click=%d, want 2/2", replayedOpens, replayedClicks)
+		if replayedOpens != 1 || replayedClicks != 1 {
+			t.Fatalf("tracking rows after replay open=%d click=%d, want 1/1", replayedOpens, replayedClicks)
+		}
+		var replayedOpenedAt, replayedClickedAt time.Time
+		if err := tdb.Super.QueryRow(ctx, `SELECT opened_at,first_clicked_at
+			FROM mailing_delivery WHERE id=$1`, deliveryID).Scan(&replayedOpenedAt, &replayedClickedAt); err != nil {
+			t.Fatal(err)
+		}
+		if !replayedOpenedAt.Equal(openedAt) || !replayedClickedAt.Equal(clickedAt) {
+			t.Fatalf("first engagement timestamps changed on replay: open=%s/%s click=%s/%s",
+				openedAt, replayedOpenedAt, clickedAt, replayedClickedAt)
+		}
+		otherClickToken, err := svc.Tokens.EncodeClick(deliveryID, "https://example.test/other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w := request("/m/c/" + otherClickToken); w.Code != http.StatusFound {
+			t.Fatalf("second-destination click status = %d", w.Code)
+		}
+		if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FILTER (WHERE kind='open'),
+			count(*) FILTER (WHERE kind='click') FROM mailing_tracking_event WHERE delivery_id=$1`,
+			deliveryID).Scan(&replayedOpens, &replayedClicks); err != nil {
+			t.Fatal(err)
+		}
+		if replayedOpens != 1 || replayedClicks != 2 {
+			t.Fatalf("destination-granular tracking rows open=%d click=%d, want 1/2",
+				replayedOpens, replayedClicks)
+		}
+		var afterOtherClick time.Time
+		if err := tdb.Super.QueryRow(ctx, `SELECT first_clicked_at FROM mailing_delivery WHERE id=$1`,
+			deliveryID).Scan(&afterOtherClick); err != nil {
+			t.Fatal(err)
+		}
+		if !afterOtherClick.Equal(clickedAt) {
+			t.Fatalf("first click timestamp changed for a second destination: got %s want %s",
+				afterOtherClick, clickedAt)
 		}
 	})
 	_ = subscriber

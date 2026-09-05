@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
+	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
 
 // Confirm activates an unexpired one-time token. Malformed and unknown tokens are deliberately
@@ -153,6 +154,8 @@ func (h *PublicHandler) confirmPage(w http.ResponseWriter, _ *http.Request) {
 func (h *PublicHandler) confirm(w http.ResponseWriter, r *http.Request) {
 	if err := h.Service.Confirm(r.Context(), chi.URLParam(r, "token")); err != nil {
 		h.logger().ErrorContext(r.Context(), "mailing confirm failed", "err", err)
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "temporarily unavailable"})
+		return
 	}
 	writeMailingPage(w, donePageHTML)
 }
@@ -164,6 +167,8 @@ func (h *PublicHandler) unsubscribePage(w http.ResponseWriter, _ *http.Request) 
 func (h *PublicHandler) unsubscribe(w http.ResponseWriter, r *http.Request) {
 	if err := h.Service.Unsubscribe(r.Context(), chi.URLParam(r, "token")); err != nil {
 		h.logger().ErrorContext(r.Context(), "mailing unsubscribe failed", "err", err)
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "temporarily unavailable"})
+		return
 	}
 	// RFC 8058 one-click callers require a success response with no token-dependent body.
 	w.Header().Set("Cache-Control", "no-store")
