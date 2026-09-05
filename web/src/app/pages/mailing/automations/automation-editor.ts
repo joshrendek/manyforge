@@ -58,7 +58,7 @@ import { AutomationNodePanelComponent } from './canvas/node-panel';
         </div>
       </header>
       <nav class="tabs" aria-label="Automation details"><button type="button" class="tab active" data-testid="automation-tab-canvas">Canvas</button><button type="button" class="tab" data-testid="automation-tab-enrollments" disabled title="Enrollment history arrives in the next frontend slice">Enrollments</button></nav>
-      @if (editingLive()) {
+      @if (editingAlongsideLive()) {
         <div class="notice" data-testid="automation-version-banner">Editing v{{ version()?.number }} — the active version stays live until you activate this draft.</div>
       }
       @if (error()) { <div class="error" data-testid="automation-editor-error">{{ error() }}</div> }
@@ -123,7 +123,7 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
   readonly allIssues = computed(() => [...this.clientErrors(), ...this.serverErrors()]);
   readonly readOnly = computed(() => this.version()?.status !== 'draft');
   readonly dirty = computed(() => !!this.savedJson() && JSON.stringify(this.graph()) !== this.savedJson());
-  readonly editingLive = computed(() => {
+  readonly editingAlongsideLive = computed(() => {
     const version = this.version();
     const automation = this.automation();
     return !!version && version.status === 'draft' && !!automation && automation.draft_version_id === version.id && !!automation.active_version_id;
@@ -246,6 +246,7 @@ export class AutomationEditorComponent implements OnInit, HasUnsavedChanges {
         const issues = response.error?.issues;
         if (response.status === 422 && Array.isArray(issues)) this.serverErrors.set(issues as AutomationIssue[]);
         this.toast.error(response.status === 422 ? 'Fix the highlighted steps before activating' : 'Could not activate automation');
+        if (response.status === 409) this.load();
       },
     });
   }
