@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -227,6 +228,12 @@ func TestMFMailLifecycle002ArchiveTerminalizesListWorkButAllowsUnsubscribe(t *te
 	}); err != nil {
 		t.Fatal(err)
 	}
+	var inFlightDeliveryID uuid.UUID
+	if err := h.tdb.Super.QueryRow(h.ctx, `UPDATE mailing_delivery
+		SET status='sending',claim_generation=7,lease_until=now()+interval '2 minutes'
+		WHERE campaign_id=$1 RETURNING id`, campaign.ID).Scan(&inFlightDeliveryID); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.svc.ArchiveList(h.ctx, h.seed.principalID, h.seed.businessID, list.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -243,6 +250,20 @@ func TestMFMailLifecycle002ArchiveTerminalizesListWorkButAllowsUnsubscribe(t *te
 	}
 	if pendingStatus != "pending" || !tokenCancelled || campaignStatus != "cancelled" || deliveryStatus != "cancelled" {
 		t.Fatalf("archive states pending=%q token_cancelled=%t campaign=%q delivery=%q", pendingStatus, tokenCancelled, campaignStatus, deliveryStatus)
+	}
+	var renewed, completed bool
+	if err := h.tdb.App.WithTx(h.ctx, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(h.ctx, `SELECT mailing_renew_delivery($1,$2,interval '2 minutes')`,
+			inFlightDeliveryID, 7).Scan(&renewed); err != nil {
+			return err
+		}
+		return tx.QueryRow(h.ctx, `SELECT mailing_complete_delivery($1,$2,$3)`,
+			inFlightDeliveryID, 7, "provider-should-not-send").Scan(&completed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if renewed || completed {
+		t.Fatalf("archived in-flight delivery renewed/completed=%t/%t, want false/false", renewed, completed)
 	}
 	if w := h.request(t, http.MethodPost, "/m/confirm/"+rawConfirmation, nil, ""); w.Code != http.StatusOK {
 		t.Fatalf("archived confirmation response = %d/%s", w.Code, w.Body.String())
@@ -278,6 +299,147 @@ func TestMFMailLifecycle002ArchiveTerminalizesListWorkButAllowsUnsubscribe(t *te
 	}
 	if err := h.tdb.Super.QueryRow(h.ctx, `SELECT status::text FROM list_subscriber WHERE id=$1`, active.ID).Scan(&pendingStatus); err != nil || pendingStatus != "unsubscribed" {
 		t.Fatalf("archived unsubscribe status=%q err=%v", pendingStatus, err)
+	}
+}
+
+func TestMFMailLifecycle002ArchiveSerializesConcurrentFanout(t *testing.T) {
+	h := newConsentSecurityHarness(t)
+	list, err := h.svc.CreateList(h.ctx, h.seed.principalID, h.seed.businessID, mailing.ListInput{
+		Name: "Concurrent archive", DoubleOptIn: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscriber, err := h.svc.CreateSubscriber(h.ctx, h.seed.principalID, h.seed.businessID, list.ID, mailing.SubscriberInput{
+		Email: "fanout-race@example.test", SkipConfirmation: true, ConsentSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	campaign, err := h.svc.CreateCampaign(h.ctx, h.seed.principalID, h.seed.businessID, mailing.CampaignInput{
+		ListID: list.ID, Name: "Concurrent archive", Subject: "Race", BodyMarkdown: "Body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	campaign, err = h.svc.SendCampaign(h.ctx, h.seed.principalID, h.seed.businessID, campaign.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE campaign SET status='sending' WHERE id=$1`, campaign.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	fanoutConn, err := pgx.Connect(h.ctx, h.tdb.AppDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fanoutConn.Close(h.ctx)
+	fanoutTx, err := fanoutConn.Begin(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fanoutTx.Rollback(h.ctx)
+	if _, err := fanoutTx.Exec(h.ctx, `SELECT set_config('manyforge.principal_id',$1,true)`,
+		h.seed.principalID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fanoutTx.Exec(h.ctx, `SELECT id FROM campaign WHERE id=$1 FOR UPDATE`, campaign.ID); err != nil {
+		t.Fatal(err)
+	}
+	var deliveryID uuid.UUID
+	if err := fanoutTx.QueryRow(h.ctx, `INSERT INTO mailing_delivery (
+		business_id,tenant_root_id,source_kind,source_id,campaign_id,subscriber_id,email,status,message_id
+	) VALUES ($1,$2,'campaign',$3,$3,$4,$5,'queued',$6) RETURNING id`,
+		h.seed.businessID, list.TenantRootID, campaign.ID, subscriber.ID, subscriber.Email,
+		"archive-race@example.test").Scan(&deliveryID); err != nil {
+		t.Fatal(err)
+	}
+
+	archiveConn, err := pgx.Connect(h.ctx, h.tdb.AppDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archiveConn.Close(h.ctx)
+	archiveTx, err := archiveConn.Begin(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archiveTx.Rollback(h.ctx)
+	if _, err := archiveTx.Exec(h.ctx, `SELECT set_config('manyforge.principal_id',$1,true)`,
+		h.seed.principalID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := archiveTx.Exec(h.ctx, `SET LOCAL application_name='mailing-archive-race'`); err != nil {
+		t.Fatal(err)
+	}
+	archiveDone := make(chan error, 1)
+	go func() {
+		var changed int
+		if queryErr := archiveTx.QueryRow(h.ctx, `SELECT mailing_archive_list($1,$2,$3)`,
+			list.ID, h.seed.businessID, list.TenantRootID).Scan(&changed); queryErr != nil {
+			archiveDone <- queryErr
+			return
+		}
+		if changed != 1 {
+			archiveDone <- fmt.Errorf("mailing_archive_list changed %d rows", changed)
+			return
+		}
+		archiveDone <- archiveTx.Commit(h.ctx)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		if err := h.tdb.Super.QueryRow(h.ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE application_name='mailing-archive-race' AND wait_event_type='Lock'
+		)`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("archive did not block on the fan-out campaign lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := fanoutTx.Commit(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-archiveDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("archive did not finish after fan-out committed")
+	}
+
+	var campaignStatus, deliveryStatus string
+	if err := h.tdb.Super.QueryRow(h.ctx, `SELECT status::text FROM campaign WHERE id=$1`,
+		campaign.ID).Scan(&campaignStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.tdb.Super.QueryRow(h.ctx, `SELECT status::text FROM mailing_delivery WHERE id=$1`,
+		deliveryID).Scan(&deliveryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if campaignStatus != "cancelled" || deliveryStatus != "cancelled" {
+		t.Fatalf("post-race lifecycle campaign=%q delivery=%q, want cancelled/cancelled",
+			campaignStatus, deliveryStatus)
+	}
+	var claimed int
+	if err := h.tdb.App.WithTx(h.ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(h.ctx, `SELECT count(*) FROM mailing_claim_deliveries(10,interval '2 minutes')
+			WHERE delivery_id=$1`, deliveryID).Scan(&claimed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if claimed != 0 {
+		t.Fatalf("archived raced delivery was claimable: %d rows", claimed)
 	}
 }
 

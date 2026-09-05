@@ -561,6 +561,22 @@ func TestCampaignTrackingOracleAndEvents(t *testing.T) {
 		if w := request("/m/c/" + clickToken); w.Code != http.StatusFound {
 			t.Fatalf("replayed click status = %d", w.Code)
 		}
+		if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+			for range 1000 {
+				var recorded bool
+				if err := tx.QueryRow(ctx, `SELECT mailing_record_track($1,$2,$3,$4,$5)`,
+					deliveryID, "open", nil, nil, "large-replay-group").Scan(&recorded); err != nil {
+					return err
+				}
+				if err := tx.QueryRow(ctx, `SELECT mailing_record_track($1,$2,$3,$4,$5)`,
+					deliveryID, "click", "https://example.test/post", nil, "large-replay-group").Scan(&recorded); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 		var replayedOpens, replayedClicks int
 		if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FILTER (WHERE kind='open'),
 			count(*) FILTER (WHERE kind='click') FROM mailing_tracking_event WHERE delivery_id=$1`,
