@@ -273,6 +273,11 @@ func TestMFMailFeedback001RequiresDurableFeedbackReadiness(t *testing.T) {
 			t.Fatalf("Resend control-plane reconciliation missing marker %q", marker)
 		}
 	}
+	if !strings.Contains(resendProvider, "requireMatch") ||
+		!strings.Contains(resendProvider, "replacement Resend key did not find") ||
+		!strings.Contains(resendProvider, "cleanup was not confirmed") {
+		t.Fatal("unbound replacement Resend key can prove cleanup without a positive match and post-delete confirmation")
+	}
 	for _, marker := range []string{"ClaimMailingResendProvisioning", "resend_provisioning_token", "resend_provisioning_expires_at", "resend_cleanup_required"} {
 		if !strings.Contains(scheduleSource, marker) {
 			t.Fatalf("Resend provisioning recovery intent missing marker %q", marker)

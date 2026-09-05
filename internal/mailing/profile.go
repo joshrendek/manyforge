@@ -385,7 +385,7 @@ func (s *Service) cleanupResendWebhooks(ctx context.Context, lease resendOperati
 		keys = append(keys, replacementAPIKey)
 	}
 	var cleanupErr error
-	for _, apiKey := range keys {
+	for index, apiKey := range keys {
 		s.Providers.Invalidate(lease.profileID)
 		deliverer, err := s.Providers.Resolve(ctx, mailprovider.Profile{
 			ID: lease.profileID, UpdatedAt: lease.updatedAt,
@@ -400,7 +400,7 @@ func (s *Service) cleanupResendWebhooks(ctx context.Context, lease resendOperati
 			cleanupErr = errors.New("mailing: provider does not support Resend webhook cleanup")
 			continue
 		}
-		if err = provisioner.CleanupWebhooks(ctx, endpoint, lease.webhookID); err == nil {
+		if err = provisioner.CleanupWebhooks(ctx, endpoint, lease.webhookID, index > 0); err == nil {
 			return nil
 		}
 		cleanupErr = err

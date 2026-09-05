@@ -28,6 +28,7 @@ type fakeResendProvisioner struct {
 	ensureCalls      int
 	deleted          []string
 	ensureErr        error
+	cleanupMatches   bool
 	cleanupErr       error
 	deleteErr        error
 }
@@ -50,17 +51,19 @@ func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, exist
 	}, existingID == "", nil
 }
 
-func (f *fakeResendProvisioner) CleanupWebhooks(_ context.Context, endpoint, existingID string) error {
+func (f *fakeResendProvisioner) CleanupWebhooks(_ context.Context, endpoint, existingID string, requireMatch bool) error {
 	f.cleanupEndpoints = append(f.cleanupEndpoints, endpoint)
 	if f.cleanupErr != nil {
 		return f.cleanupErr
 	}
-	if existingID != "" {
+	if requireMatch && !f.cleanupMatches {
+		return errors.New("replacement key did not find cleanup target")
+	}
+	if existingID != "" || f.cleanupMatches {
 		f.deleted = append(f.deleted, existingID)
 	}
 	return nil
 }
-
 func (f *fakeResendProvisioner) DeleteWebhook(_ context.Context, id string) error {
 	f.deleted = append(f.deleted, id)
 	return f.deleteErr
@@ -614,7 +617,7 @@ func TestMFMailFeedback001ReplacementResendKeyCompletesPendingCleanup(t *testing
 		t.Fatal(err)
 	}
 	oldProvider := &fakeResendProvisioner{}
-	replacementProvider := &fakeResendProvisioner{}
+	replacementProvider := &fakeResendProvisioner{cleanupMatches: true}
 	svc.Providers = mailprovider.NewCache(func(_ context.Context, profile mailprovider.Profile) (mailprovider.Deliverer, error) {
 		if profile.ResendAPIKey == "re_replacement" {
 			return replacementProvider, nil
@@ -641,6 +644,55 @@ func TestMFMailFeedback001ReplacementResendKeyCompletesPendingCleanup(t *testing
 		updated.FeedbackStatus != "pending" {
 		t.Fatalf("replacement state api=%q webhook=%q feedback=%q",
 			bundle.APIKey, bundle.WebhookID, updated.FeedbackStatus)
+	}
+}
+
+func TestMFMailFeedback001WrongAccountReplacementResendKeyCannotProveCleanup(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "wrong-account@example.test", FromName: "Wrong account",
+		Resend: &mailing.ResendCredentials{APIKey: "re_old_account"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldProvider := &fakeResendProvisioner{}
+	wrongAccountProvider := &fakeResendProvisioner{}
+	svc.Providers = mailprovider.NewCache(func(_ context.Context, profile mailprovider.Profile) (mailprovider.Deliverer, error) {
+		if profile.ResendAPIKey == "re_other_account" {
+			return wrongAccountProvider, nil
+		}
+		return oldProvider, nil
+	}, time.Minute)
+	if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	before := loadStoredResendBundle(t, ctx, tdb, svc, profile.ID)
+	oldProvider.cleanupErr = errors.New("old API key revoked")
+	if _, err = svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "wrong-account@example.test", FromName: "Wrong account",
+		Resend: &mailing.ResendCredentials{APIKey: "re_other_account"},
+	}); err == nil {
+		t.Fatal("empty wrong-account webhook list was accepted as cleanup proof")
+	}
+	after := loadStoredResendBundle(t, ctx, tdb, svc, profile.ID)
+	var cleanupRequired bool
+	var token pgtype.UUID
+	if err = tdb.Super.QueryRow(ctx, `SELECT resend_cleanup_required,resend_provisioning_token
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&cleanupRequired, &token); err != nil {
+		t.Fatal(err)
+	}
+	if after != before || cleanupRequired || token.Valid ||
+		len(wrongAccountProvider.cleanupEndpoints) != 1 || len(wrongAccountProvider.deleted) != 0 {
+		t.Fatalf("wrong-account cleanup altered state before=%+v after=%+v intent=%v token=%v cleanup=%v deleted=%v",
+			before, after, cleanupRequired, token, wrongAccountProvider.cleanupEndpoints, wrongAccountProvider.deleted)
 	}
 }
 
