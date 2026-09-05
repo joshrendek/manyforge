@@ -99,6 +99,14 @@ securityContext:
 # ---------------------------------------------------------------------------
 
 addr: ":8080"
+# Pods run as production unless an operator explicitly selects development.
+environment: production
+
+# Non-secret SMTP endpoint. Credentials remain in secrets.smtp below.
+smtp:
+  host: ""
+  port: 587
+
 
 jwt:
   issuer: manyforge
@@ -136,6 +144,9 @@ mailing:
   sendBatch: 100
   sendEvery: 2s
   lease: 2m
+  fanoutGlobal: 1000
+  fanoutPerCampaign: 250
+  rollupBatch: 100
   # Empty reuses MANYFORGE_INBOUND_SYSTEM_DOMAIN at runtime for Message-ID values.
   messageDomain: ""
 
@@ -234,9 +245,8 @@ secrets:
   migrateDatabase:
     secretName: manyforge-migrate-database
     key: url
-  # Optional — rendered only when secretName is set (opt-in). Leave unset to
-  # skip: the app degrades gracefully (outbound mail falls back to the dev
-  # LogSender; inbound webhook/bounce signature verification fail-closed).
+  # Optional SMTP credentials. The non-secret host/port live in smtp above.
+  # Leave secretName empty when the relay does not require authentication.
   smtp:
     secretName: ""
     userKey: user

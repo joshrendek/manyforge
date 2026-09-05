@@ -114,7 +114,8 @@ spec:
                   name: {{ .Values.secrets.masterKeys.secretName }}
                   key: {{ .Values.secrets.masterKeys.mailingKey }}
                   optional: true
-            # --- optional secrets — opt-in via secrets.smtp/secrets.inbound -
+            # SMTP environment/host/port come from the ConfigMap above. Only optional
+            # SMTP credentials and inbound signing secrets are sourced here.
             {{- if .Values.secrets.smtp.secretName }}
             - name: MANYFORGE_SMTP_USER
               valueFrom:

@@ -6,6 +6,9 @@ metadata:
     {{- include "manyforge.labels" . | nindent 4 }}
 data:
   MANYFORGE_ADDR: {{ .Values.addr | quote }}
+  MANYFORGE_ENVIRONMENT: {{ .Values.environment | quote }}
+  MANYFORGE_SMTP_HOST: {{ .Values.smtp.host | quote }}
+  MANYFORGE_SMTP_PORT: {{ .Values.smtp.port | quote }}
   MANYFORGE_JWT_ISSUER: {{ .Values.jwt.issuer | quote }}
   MANYFORGE_JWT_AUDIENCE: {{ .Values.jwt.audience | quote }}
   # Single source of truth for the active signing kid: .Values.jwt.activeKid.
@@ -41,6 +44,9 @@ data:
   MANYFORGE_MAILING_SEND_BATCH: {{ .Values.mailing.sendBatch | quote }}
   MANYFORGE_MAILING_SEND_EVERY: {{ .Values.mailing.sendEvery | quote }}
   MANYFORGE_MAILING_LEASE: {{ .Values.mailing.lease | quote }}
+  MANYFORGE_MAILING_FANOUT_GLOBAL: {{ .Values.mailing.fanoutGlobal | quote }}
+  MANYFORGE_MAILING_FANOUT_PER_CAMPAIGN: {{ .Values.mailing.fanoutPerCampaign | quote }}
+  MANYFORGE_MAILING_ROLLUP_BATCH: {{ .Values.mailing.rollupBatch | quote }}
   MANYFORGE_MAILING_MESSAGE_DOMAIN: {{ .Values.mailing.messageDomain | quote }}
   # Explicit trust-boundary opt-in. Enable only when Cloudflare is the sole public path to origin.
   MANYFORGE_TRUST_CF_IPCOUNTRY: {{ .Values.analytics.trustCloudflareCountryHeader | quote }}
