@@ -4,6 +4,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"crypto/ed25519"
 	"crypto/rand"
 	"testing"
@@ -18,12 +19,13 @@ import (
 type relayCaptureSender struct {
 	mail  notify.Mail
 	calls int
+	err   error
 }
 
 func (s *relayCaptureSender) Send(_ context.Context, mail notify.Mail) error {
 	s.calls++
 	s.mail = mail
-	return nil
+	return s.err
 }
 
 func TestRelayResolvesVerifiedDKIMIdentityAndFailsClosed(t *testing.T) {
@@ -76,6 +78,12 @@ func TestRelayResolvesVerifiedDKIMIdentityAndFailsClosed(t *testing.T) {
 	if capture.mail.DKIM.Domain != "mail.example.com" || capture.mail.DKIM.Selector != "mfrelay" ||
 		!privateKey.Equal(capture.mail.DKIM.PrivateKey) || result.ProviderID != "message@example.com" {
 		t.Fatalf("relay identity = %#v, result = %+v", capture.mail.DKIM, result)
+	}
+
+	capture.err = notify.ErrNotAccepted
+	result, err = relay.Send(ctx, notify.Mail{To: "reader@example.net", MessageID: "declined@example.com"})
+	if !errors.Is(err, notify.ErrNotAccepted) || result.ProviderID != "" {
+		t.Fatalf("non-accepting relay result = %+v, err = %v", result, err)
 	}
 
 	if _, err := tdb.Super.Exec(ctx, `UPDATE email_domain SET verified_at=NULL WHERE id=$1`, domainID); err != nil {

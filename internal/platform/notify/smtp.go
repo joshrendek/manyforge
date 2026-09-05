@@ -24,8 +24,8 @@ type DKIMConfig struct {
 	PrivateKey crypto.Signer // ed25519.PrivateKey or *rsa.PrivateKey
 }
 
-// SMTPConfig drives the real sender. Host == "" means "not configured" — callers
-// fall back to LogSender.
+// SMTPConfig drives the real sender. Host must be nonempty; an absent transport
+// is represented by the development-only, non-accepting LogSender.
 type SMTPConfig struct {
 	Host, Username, Password string
 	Port                     int
@@ -48,6 +48,9 @@ func NewSMTPSender(cfg SMTPConfig, suppression mailer.SuppressionChecker) *SMTPS
 // list before building the MIME payload, and optionally DKIM-signs when a key is
 // present.
 func (s *SMTPSender) Send(ctx context.Context, m Mail) error {
+	if strings.TrimSpace(s.cfg.Host) == "" {
+		return ErrNotAccepted
+	}
 	if s.suppression != nil {
 		suppressed, err := s.suppression.IsSuppressed(ctx, m.To)
 		if err != nil {
