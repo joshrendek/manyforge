@@ -1,5 +1,12 @@
 -- 0135: Automation authorization, immutable activation content, scoped events, and execution fences.
 
+ALTER TABLE mailing_delivery
+    ADD COLUMN automation_enrollment_id uuid REFERENCES automation_enrollment(id),
+    ADD COLUMN automation_claim_generation integer,
+    ADD CONSTRAINT mailing_delivery_automation_fence_ck CHECK (
+        (automation_enrollment_id IS NULL) = (automation_claim_generation IS NULL)
+    );
+
 DROP FUNCTION automation_ingest_event(uuid,uuid,uuid,text,citext,uuid,timestamptz,jsonb,text);
 
 CREATE FUNCTION automation_ingest_event(
@@ -401,11 +408,12 @@ BEGIN
     INSERT INTO mailing_delivery (
         id, business_id, tenant_root_id, source_kind, source_id, template_id,
         subscriber_id, email, not_before, message_id,
-        track_opens_override, track_clicks_override
+        track_opens_override, track_clicks_override,
+        automation_enrollment_id, automation_claim_generation
     ) VALUES (v_id, p_business_id, p_tenant_root_id, 'automation', p_source_id,
               p_template_id, p_subscriber_id, v_email, COALESCE(p_not_before, now()),
               v_id::text || '@' || lower(btrim(p_message_domain)),
-              p_track_opens, p_track_clicks)
+              p_track_opens, p_track_clicks, p_enrollment_id, p_claim_generation)
     ON CONFLICT (source_kind, source_id, subscriber_id) DO NOTHING
     RETURNING id INTO v_existing;
     IF v_existing IS NULL THEN
@@ -415,6 +423,69 @@ BEGIN
     END IF;
     RETURN v_existing;
 END;
+$$;
+
+CREATE OR REPLACE FUNCTION mailing_renew_delivery(
+    p_id uuid, p_generation integer, p_lease interval
+) RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    WITH changed AS (
+        UPDATE mailing_delivery d SET
+            lease_until = now() + GREATEST(COALESCE(p_lease, interval '2 minutes'), interval '10 seconds'),
+            updated_at = now()
+        WHERE d.id = p_id
+          AND d.status = 'sending'
+          AND d.claim_generation = p_generation
+          AND tenant_merge_root_write_allowed(d.tenant_root_id)
+          AND (
+              (d.source_kind = 'automation' AND EXISTS (
+                  SELECT 1
+                  FROM automation_enrollment e
+                  JOIN automation a
+                    ON a.id = e.automation_id
+                   AND a.business_id = e.business_id
+                   AND a.tenant_root_id = e.tenant_root_id
+                  JOIN automation_version v
+                    ON v.id = e.version_id
+                   AND v.automation_id = e.automation_id
+                   AND v.business_id = e.business_id
+                   AND v.tenant_root_id = e.tenant_root_id
+                  JOIN list_subscriber s
+                    ON s.id = e.subscriber_id
+                   AND s.business_id = e.business_id
+                   AND s.tenant_root_id = e.tenant_root_id
+                  WHERE e.id = d.automation_enrollment_id
+                    AND e.subscriber_id = d.subscriber_id
+                    AND e.claim_generation = d.automation_claim_generation
+                    AND e.status IN ('active','completed')
+                    AND a.status = 'active'
+                    AND v.content_snapshot IS NOT NULL
+                    AND v.id = e.version_id
+                    AND s.status = 'active'
+                    AND mailing_business_operational(e.business_id,e.tenant_root_id)
+                    AND mailing_list_operational(s.list_id,s.business_id,s.tenant_root_id)
+              ))
+              OR
+              (d.source_kind <> 'automation' AND EXISTS (
+                  SELECT 1 FROM campaign c
+                  WHERE c.id = d.campaign_id
+                    AND c.tenant_root_id = d.tenant_root_id
+                    AND c.status = 'sending'
+              ))
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM mailing_suppression ms
+              WHERE ms.business_id = d.business_id AND ms.email = d.email
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM email_suppression es WHERE es.email = d.email
+          )
+        RETURNING 1
+    )
+    SELECT EXISTS(SELECT 1 FROM changed);
 $$;
 
 DROP FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text);
@@ -644,10 +715,13 @@ REVOKE ALL ON FUNCTION automation_execution_fence(uuid,integer,uuid,uuid,uuid) F
 REVOKE ALL ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean,uuid,integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text,uuid,integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text,uuid,integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mailing_renew_delivery(uuid,integer,interval) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text) FROM manyforge_app;
 
 GRANT EXECUTE ON FUNCTION automation_ingest_event(uuid,uuid,uuid,uuid,bytea,text,citext,uuid,timestamptz,jsonb,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION automation_event_exists(uuid,uuid,citext,text,timestamptz,timestamptz,interval) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION automation_execution_fence(uuid,integer,uuid,uuid,uuid) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean,uuid,integer) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text,uuid,integer) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION mailing_renew_delivery(uuid,integer,interval) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text,uuid,integer) TO manyforge_app;
