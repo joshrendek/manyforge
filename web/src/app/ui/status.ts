@@ -130,6 +130,20 @@ export function automationStatusTone(s: string): Tone {
   }
 }
 
+export function enrollmentStatusTone(s: string): Tone {
+  switch (s) {
+    case 'active':
+      return 'accent';
+    case 'completed':
+      return 'success';
+    case 'errored':
+      return 'danger';
+    case 'exited':
+    default:
+      return 'neutral';
+  }
+}
+
 export function effectClassTone(e: number): Tone {
   switch (e) {
     case 1:

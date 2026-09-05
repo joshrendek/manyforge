@@ -258,13 +258,19 @@ func (s *Service) Stats(ctx context.Context, principalID, businessID, automation
 			automationID, versionID, businessID, root).Scan(&out.Enrollments.Active, &out.Enrollments.Completed, &out.Enrollments.Exited, &out.Enrollments.Errored); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT node_id,node_kind,count(*),
-			count(*) FILTER (WHERE outcome='waiting'),count(*) FILTER (WHERE outcome='advanced'),
-			count(*) FILTER (WHERE outcome='sent'),count(*) FILTER (WHERE outcome='branch_yes'),
-			count(*) FILTER (WHERE outcome='branch_no'),count(*) FILTER (WHERE outcome='exited'),
-			count(*) FILTER (WHERE outcome='error')
-			FROM automation_enrollment_step WHERE version_id=$1 AND business_id=$2 AND tenant_root_id=$3
-			GROUP BY node_id,node_kind`, versionID, businessID, root)
+		rows, err := tx.Query(ctx, `SELECT s.node_id,s.node_kind,count(*),
+			count(*) FILTER (WHERE s.outcome='waiting'),count(*) FILTER (WHERE s.outcome='advanced'),
+			count(*) FILTER (WHERE s.outcome='sent'),count(*) FILTER (WHERE d.opened_at IS NOT NULL),
+			count(*) FILTER (WHERE EXISTS(SELECT 1 FROM mailing_tracking_event e
+				WHERE e.delivery_id=s.delivery_id AND e.business_id=s.business_id
+				AND e.tenant_root_id=s.tenant_root_id AND e.kind='click' AND e.url IS NOT NULL)),
+			count(*) FILTER (WHERE s.outcome='branch_yes'),count(*) FILTER (WHERE s.outcome='branch_no'),
+			count(*) FILTER (WHERE s.outcome='exited'),count(*) FILTER (WHERE s.outcome='error')
+			FROM automation_enrollment_step s
+			LEFT JOIN mailing_delivery d ON d.id=s.delivery_id AND d.business_id=s.business_id
+				AND d.tenant_root_id=s.tenant_root_id AND d.source_kind='automation'
+			WHERE s.version_id=$1 AND s.business_id=$2 AND s.tenant_root_id=$3
+			GROUP BY s.node_id,s.node_kind`, versionID, businessID, root)
 		if err != nil {
 			return err
 		}
@@ -272,7 +278,7 @@ func (s *Service) Stats(ctx context.Context, principalID, businessID, automation
 		byNode := make(map[string]NodeStats)
 		for rows.Next() {
 			var value NodeStats
-			if err = rows.Scan(&value.NodeID, &value.NodeKind, &value.Entered, &value.Waiting, &value.Advanced, &value.Sent, &value.BranchYes, &value.BranchNo, &value.Exited, &value.Errors); err != nil {
+			if err = rows.Scan(&value.NodeID, &value.NodeKind, &value.Entered, &value.Waiting, &value.Advanced, &value.Sent, &value.Opened, &value.Clicked, &value.BranchYes, &value.BranchNo, &value.Exited, &value.Errors); err != nil {
 				return err
 			}
 			byNode[value.NodeID] = value
