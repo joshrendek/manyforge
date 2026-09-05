@@ -152,8 +152,10 @@ func TestAutomationLifecycleAndIsolation(t *testing.T) {
 		t.Fatalf("Activate v2 = %+v, err=%v", active, err)
 	}
 	versions, err = service.Versions(ctx, a.principalID, a.businessID, created.ID)
-	if err != nil || versions[0].Status != "active" || versions[1].Status != "superseded" {
-		t.Fatalf("version lifecycle = %+v, err=%v", versions, err)
+	if err != nil || len(versions) != 2 ||
+		versions[0].Number != 2 || versions[0].Status != "active" ||
+		versions[1].Number != 1 || versions[1].Status != "superseded" {
+		t.Fatalf("bounded multi-version lifecycle = %+v, err=%v", versions, err)
 	}
 	paused, err := service.Pause(ctx, a.principalID, a.businessID, created.ID)
 	if err != nil || paused.Status != "paused" {

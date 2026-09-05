@@ -1,12 +1,11 @@
 -- 0132 down: remove only Spec 015 shared security state.
--- Refuse a lossy rollback if scoped event keys can no longer satisfy the 0131
--- business-wide idempotency invariant. The migration transaction then leaves
--- every 0132 object intact for an operator to resolve deliberately.
+-- Refuse a lossy rollback if scoped event keys cannot satisfy the 0131
+-- business-wide idempotency invariant. The transaction leaves 0132 intact.
 DO $$
 BEGIN
     IF EXISTS (
         SELECT 1
-        FROM automation_event
+        FROM public.automation_event
         WHERE idempotency_key IS NOT NULL
         GROUP BY business_id, idempotency_key
         HAVING count(*) > 1
@@ -17,8 +16,15 @@ BEGIN
 END;
 $$;
 
-DROP FUNCTION mailing_changed_campaign_rollup_changes(timestamptz,uuid,integer);
-DROP INDEX mailing_delivery_rollup_changes_idx;
+DROP FUNCTION mailing_complete_changed_campaign_rollups(uuid,uuid[]);
+DROP FUNCTION mailing_claim_changed_campaign_rollups(uuid,integer,integer);
+DROP TRIGGER mailing_delivery_queue_campaign_rollup_change ON mailing_delivery;
+DROP FUNCTION mailing_queue_campaign_rollup_change();
+DELETE FROM tenant_merge_manifest WHERE table_name = 'mailing_campaign_rollup_queue';
+DROP TRIGGER tenant_merge_write_fence ON mailing_campaign_rollup_queue;
+DROP TRIGGER mailing_campaign_rollup_queue_troot_immutable ON mailing_campaign_rollup_queue;
+DROP TABLE mailing_campaign_rollup_queue;
+ALTER TABLE campaign DROP CONSTRAINT campaign_id_business_root_unique;
 
 DROP TRIGGER automation_version_content_snapshot_immutable ON automation_version;
 DROP FUNCTION automation_version_content_snapshot_immutable();
@@ -35,13 +41,17 @@ CREATE UNIQUE INDEX automation_event_idempotency_idx
     WHERE idempotency_key IS NOT NULL;
 ALTER TABLE automation_event
     DROP CONSTRAINT automation_event_ingress_key_fk,
+    DROP CONSTRAINT automation_event_ingress_list_fk,
     DROP CONSTRAINT automation_event_fingerprint_chk,
     DROP CONSTRAINT automation_event_ingress_state_chk,
     DROP COLUMN request_fingerprint,
     DROP COLUMN ingress_key_id,
     DROP COLUMN ingress_list_id;
 ALTER TABLE mailing_list_key
-    DROP CONSTRAINT mailing_list_key_ingress_scope_unique;
+    DROP CONSTRAINT mailing_list_key_ingress_scope_unique,
+    DROP CONSTRAINT mailing_list_key_list_business_fk;
+ALTER TABLE mailing_list
+    DROP CONSTRAINT mailing_list_id_business_root_unique;
 
 ALTER TABLE mailing_sending_profile
     DROP CONSTRAINT mailing_sending_profile_feedback_state_chk,

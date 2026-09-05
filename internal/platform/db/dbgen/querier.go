@@ -35,6 +35,8 @@ type Querier interface {
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
 	CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsParams) ([]CampaignLinkStatsRow, error)
+	// ---- bounded worker claims ----
+	ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
 	// sealed credential blob for the principal-less webhook handler to build the typed connector
@@ -584,8 +586,6 @@ type Querier interface {
 	ListCampaignDeliveriesAfter(ctx context.Context, arg ListCampaignDeliveriesAfterParams) ([]MailingDelivery, error)
 	ListCampaigns(ctx context.Context, arg ListCampaignsParams) ([]Campaign, error)
 	ListCampaignsAfter(ctx context.Context, arg ListCampaignsAfterParams) ([]Campaign, error)
-	// ---- bounded worker cursors ----
-	ListChangedCampaignRollupChanges(ctx context.Context, arg ListChangedCampaignRollupChangesParams) ([]ListChangedCampaignRollupChangesRow, error)
 	// ListCodeReviews returns the business's reviews newest-first for the history UI.
 	// Join repo_connector so each row shows its repo (owner/name) in one query, no O(n)
 	// per-row connector resolve. repo_connector_id is a NOT NULL FK, so this normally

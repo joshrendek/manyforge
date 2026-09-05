@@ -112,6 +112,42 @@ func assertOperationalFunctions(t *testing.T, ctx context.Context, tdb *testdb.T
 	if publicBusiness || publicList || !appBusiness || !appList {
 		t.Fatalf("helper grants public=(%t,%t) app=(%t,%t)", publicBusiness, publicList, appBusiness, appList)
 	}
+
+	shadowBusiness, shadowList := uuid.New(), uuid.New()
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE business (
+			id uuid, tenant_root_id uuid, status text, deleted_at timestamptz
+		) ON COMMIT DROP`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE mailing_list (
+			id uuid, business_id uuid, tenant_root_id uuid, status text
+		) ON COMMIT DROP`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO business VALUES ($1,$1,'active',NULL)`,
+			shadowBusiness); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO mailing_list VALUES ($1,$2,$2,'active')`,
+			shadowList, shadowBusiness); err != nil {
+			return err
+		}
+		var businessOperational, listOperational bool
+		if err := tx.QueryRow(ctx, `SELECT
+			mailing_business_operational($1,$1),
+			mailing_list_operational($2,$1,$1)`,
+			shadowBusiness, shadowList).Scan(&businessOperational, &listOperational); err != nil {
+			return err
+		}
+		if businessOperational || listOperational {
+			t.Fatalf("temporary relation shadow bypassed lifecycle: business=%t list=%t",
+				businessOperational, listOperational)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("temporary shadow regression: %v", err)
+	}
 }
 
 func testProfileFeedbackMigration(t *testing.T, ctx context.Context, tdb *testdb.TestDB) {
@@ -119,21 +155,58 @@ func testProfileFeedbackMigration(t *testing.T, ctx context.Context, tdb *testdb
 	up := readMigration(t, "../../migrations/0132_mailing_security_state.up.sql")
 	mustExec(t, ctx, tdb.Super, down)
 
+	legacyRoot, legacyChild, legacyList, legacyKey := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	seedBusiness(t, ctx, tdb, legacyRoot, "Legacy Root")
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at)
+		VALUES ($1,$2,$2,'Legacy Child','active',now(),now())`, legacyChild, legacyRoot)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id)
+		VALUES ($1,$2,1,$1),($2,$2,0,$1)`, legacyRoot, legacyChild)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_list (id,business_id,tenant_root_id,slug,name,double_opt_in,status)
+		VALUES ($1,$2,$3,'legacy-cross-business','Legacy cross-business',false,'active')`,
+		legacyList, legacyChild, legacyRoot)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_list_key (
+			id,business_id,tenant_root_id,list_id,publishable_key,sealed_secret,status
+		) VALUES ($1,$2,$2,$3,'pk_legacy_cross_business','sealed','enabled')`,
+		legacyKey, legacyRoot, legacyList)
+	assertPgCode(t, execErr(ctx, tdb.Super, up), "23503")
+	mustExec(t, ctx, tdb.Super, `DELETE FROM mailing_list_key WHERE id=$1`, legacyKey)
+	mustExec(t, ctx, tdb.Super, `DELETE FROM mailing_list WHERE id=$1`, legacyList)
+	mustExec(t, ctx, tdb.Super, `DELETE FROM business_closure WHERE tenant_root_id=$1`, legacyRoot)
+	mustExec(t, ctx, tdb.Super, `DELETE FROM business WHERE id IN ($1,$2)`, legacyChild, legacyRoot)
+
 	validRelayBusiness, invalidRelayBusiness, resendBusiness := uuid.New(), uuid.New(), uuid.New()
+	emptyRelayBusiness, missingTimeBusiness, wrongFromBusiness := uuid.New(), uuid.New(), uuid.New()
 	for id, name := range map[uuid.UUID]string{
-		validRelayBusiness: "Valid Relay", invalidRelayBusiness: "Invalid Relay", resendBusiness: "Resend",
+		validRelayBusiness:   "Valid Relay",
+		invalidRelayBusiness: "Invalid Relay",
+		resendBusiness:       "Resend",
+		emptyRelayBusiness:   "Empty Relay",
+		missingTimeBusiness:  "Missing Verification Time",
+		wrongFromBusiness:    "Wrong From Domain",
 	} {
 		seedBusiness(t, ctx, tdb, id, name)
 	}
-	validDomain, invalidDomain, secretID := uuid.New(), uuid.New(), uuid.New()
+	validDomain, invalidDomain, emptyDomain := uuid.New(), uuid.New(), uuid.New()
+	missingTimeDomain, wrongFromDomain, secretID := uuid.New(), uuid.New(), uuid.New()
 	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO email_domain (
 			id,business_id,tenant_root_id,domain,mode,verify_token,verified_at,
 			dkim_selector,dkim_public_key,dkim_private_key_ref
 		) VALUES
 			($1,$2,$2,'valid-relay.example','provider_route','verify',now(),'mail','public','vault:dkim'),
-			($3,$4,$4,'invalid-relay.example','provider_route','verify',NULL,NULL,NULL,NULL)`,
-		validDomain, validRelayBusiness, invalidDomain, invalidRelayBusiness)
+			($3,$4,$4,'invalid-relay.example','provider_route','verify',NULL,NULL,NULL,NULL),
+			($5,$6,$6,'empty-relay.example','provider_route','verify',now(),'','',''),
+			($7,$8,$8,'missing-time.example','provider_route','verify',now(),'mail','public','vault:missing-time'),
+			($9,$10,$10,'selected.example','provider_route','verify',now(),'mail','public','vault:wrong-from')`,
+		validDomain, validRelayBusiness,
+		invalidDomain, invalidRelayBusiness,
+		emptyDomain, emptyRelayBusiness,
+		missingTimeDomain, missingTimeBusiness,
+		wrongFromDomain, wrongFromBusiness)
 	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO secret (id,business_id,tenant_root_id,scope,sealed_value)
 		VALUES ($1,$2,$2,'mailing_provider','sealed')`, secretID, resendBusiness)
@@ -143,10 +216,16 @@ func testProfileFeedbackMigration(t *testing.T, ctx context.Context, tdb *testdb
 		) VALUES
 			($1,$2,$2,'relay','sender@valid-relay.example','Valid',$3,NULL,'verified',now()-interval '1 hour'),
 			($4,$5,$5,'relay','sender@invalid-relay.example','Invalid',$6,NULL,'verified',now()-interval '1 hour'),
-			($7,$8,$8,'resend','sender@resend.example','Resend',NULL,$9,'verified',now()-interval '1 hour')`,
+			($7,$8,$8,'resend','sender@resend.example','Resend',NULL,$9,'verified',now()-interval '1 hour'),
+			($10,$11,$11,'relay','sender@empty-relay.example','Empty',$12,NULL,'verified',now()-interval '1 hour'),
+			($13,$14,$14,'relay','sender@missing-time.example','Missing time',$15,NULL,'verified',NULL),
+			($16,$17,$17,'relay','sender@other.example','Wrong from',$18,NULL,'verified',now()-interval '1 hour')`,
 		uuid.New(), validRelayBusiness, validDomain,
 		uuid.New(), invalidRelayBusiness, invalidDomain,
-		uuid.New(), resendBusiness, secretID)
+		uuid.New(), resendBusiness, secretID,
+		uuid.New(), emptyRelayBusiness, emptyDomain,
+		uuid.New(), missingTimeBusiness, missingTimeDomain,
+		uuid.New(), wrongFromBusiness, wrongFromDomain)
 
 	legacyAutomation, legacyVersion := uuid.New(), uuid.New()
 	mustExec(t, ctx, tdb.Super, `
@@ -165,7 +244,10 @@ func testProfileFeedbackMigration(t *testing.T, ctx context.Context, tdb *testdb
 		SELECT business_id,feedback_status,feedback_error,feedback_confirmed_at
 		FROM mailing_sending_profile
 		WHERE business_id=ANY($1::uuid[])
-		ORDER BY business_id`, []uuid.UUID{validRelayBusiness, invalidRelayBusiness, resendBusiness})
+		ORDER BY business_id`, []uuid.UUID{
+		validRelayBusiness, invalidRelayBusiness, resendBusiness,
+		emptyRelayBusiness, missingTimeBusiness, wrongFromBusiness,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +275,10 @@ func testProfileFeedbackMigration(t *testing.T, ctx context.Context, tdb *testdb
 	if state := states[validRelayBusiness]; state.status != "ready" || state.error != nil || state.ready == nil {
 		t.Fatalf("valid relay backfill = %+v, want ready with confirmation", state)
 	}
-	for _, id := range []uuid.UUID{invalidRelayBusiness, resendBusiness} {
+	for _, id := range []uuid.UUID{
+		invalidRelayBusiness, resendBusiness, emptyRelayBusiness,
+		missingTimeBusiness, wrongFromBusiness,
+	} {
 		if state := states[id]; state.status != "pending" || state.error != nil || state.ready != nil {
 			t.Fatalf("fail-closed profile backfill %s = %+v", id, state)
 		}
@@ -250,6 +335,23 @@ func testAutomationEventIngress(t *testing.T, ctx context.Context, tdb *testdb.T
 			($1,$3,$3,$4,'pk_first','sealed-first','enabled'),
 			($2,$3,$3,$5,'pk_second','sealed-second','enabled')`,
 		firstKeyID, secondKeyID, businessID, firstListID, secondListID)
+
+	crossBusiness, crossList := uuid.New(), uuid.New()
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO business (id,parent_id,tenant_root_id,name,status,created_at,updated_at)
+		VALUES ($1,$2,$2,'Cross-business child','active',now(),now())`, crossBusiness, businessID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id)
+		VALUES ($1,$2,1,$1),($2,$2,0,$1)`, businessID, crossBusiness)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_list (id,business_id,tenant_root_id,slug,name,double_opt_in,status)
+		VALUES ($1,$2,$3,'cross-business-ingress','Cross-business ingress',false,'active')`,
+		crossList, crossBusiness, businessID)
+	assertPgCode(t, execErr(ctx, tdb.Super, `
+		INSERT INTO mailing_list_key (
+			id,business_id,tenant_root_id,list_id,publishable_key,sealed_secret,status
+		) VALUES ($1,$2,$2,$3,'pk_cross_business_new','sealed','enabled')`,
+		uuid.New(), businessID, crossList), "23503")
 
 	fingerprintA := bytes.Repeat([]byte{0x11}, 32)
 	fingerprintB := bytes.Repeat([]byte{0x22}, 32)
@@ -396,71 +498,162 @@ func testBoundedKeysetContracts(t *testing.T, ctx context.Context, tdb *testdb.T
 		t.Fatal("version keyset page overlapped or moved backward")
 	}
 
-	subscriberIDs := make([]uuid.UUID, 105)
-	for i := range subscriberIDs {
-		subscriberIDs[i] = uuid.New()
-	}
+	subscriberID := uuid.New()
 	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO list_subscriber (
 			id,business_id,tenant_root_id,list_id,email,status,consent_source,consent_attested_by
-		)
-		SELECT id,$1,$1,$2,('rollup-'||ord||'@example.test')::citext,'active','manual',$3
-		FROM unnest($4::uuid[]) WITH ORDINALITY AS u(id,ord)`, businessID, listID, uuid.New(), subscriberIDs)
-	campaignID := uuid.New()
+		) VALUES ($1,$2,$2,$3,'rollup@example.test','active','manual',$4)`,
+		subscriberID, businessID, listID, uuid.New())
+	campaignIDs := make([]uuid.UUID, 105)
+	for i := range campaignIDs {
+		campaignIDs[i] = uuid.New()
+	}
 	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO campaign (
 			id,business_id,tenant_root_id,list_id,name,subject,body_markdown,status,fanout_done
-		) VALUES ($1,$2,$2,$3,'Changed rollup','Subject','Body','sending',true)`, campaignID, businessID, listID)
+		)
+		SELECT id,$1,$1,$2,'Changed rollup '||ord,'Subject','Body','sending',true
+		FROM unnest($3::uuid[]) WITH ORDINALITY AS u(id,ord)`,
+		businessID, listID, campaignIDs)
 	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO mailing_delivery (
 			id,business_id,tenant_root_id,source_kind,source_id,campaign_id,
 			subscriber_id,email,status,message_id,updated_at
 		)
-		SELECT gen_random_uuid(),$1,$1,'campaign',$2,$2,s.id,s.email,'sent',
-			s.id::text||'@message.example',
-			timestamptz '2026-09-05 00:00:00+00' + row_number() OVER (ORDER BY s.id) * interval '1 microsecond'
-		FROM list_subscriber s WHERE s.list_id=$3 AND s.id=ANY($4::uuid[])`,
-		businessID, campaignID, listID, subscriberIDs)
+		SELECT gen_random_uuid(),$1,$1,'campaign',c.id,c.id,$2,'rollup@example.test','sent',
+			c.id::text||'@message.example',
+			timestamptz '2026-09-05 00:00:00+00' + row_number() OVER (ORDER BY c.id) * interval '1 microsecond'
+		FROM campaign c WHERE c.id=ANY($3::uuid[])`,
+		businessID, subscriberID, campaignIDs)
 
-	var definerCount int64
-	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT count(*)
-			FROM mailing_changed_campaign_rollup_changes($1,$2,$3)`,
-			time.Unix(0, 0).UTC(), uuid.Nil, 1000).Scan(&definerCount)
-	}); err != nil {
-		t.Fatalf("call bounded rollup definer: %v", err)
+	claim := func(token uuid.UUID, limit int32) []uuid.UUID {
+		t.Helper()
+		var values reflect.Value
+		if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `
+				CREATE TEMP TABLE mailing_campaign_rollup_queue (
+					campaign_id uuid
+				) ON COMMIT DROP`); err != nil {
+				return err
+			}
+			values = callGeneratedMany(t, ctx, dbgen.New(tx), "ClaimChangedCampaignRollups", map[string]any{
+				"ClaimToken": token, "Lim": limit, "LeaseSeconds": int32(60),
+			})
+			return nil
+		}); err != nil {
+			t.Fatalf("claim changed campaign rollups: %v", err)
+		}
+		return reflectedUUIDs(t, values)
 	}
-	if definerCount != 100 {
-		t.Fatalf("bounded rollup definer returned %d rows, want hard cap 100", definerCount)
+	complete := func(token uuid.UUID, ids []uuid.UUID) int {
+		t.Helper()
+		var completed int
+		if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx,
+				`SELECT mailing_complete_changed_campaign_rollups($1,$2)`,
+				token, ids).Scan(&completed)
+		}); err != nil {
+			t.Fatalf("complete changed campaign rollups: %v", err)
+		}
+		return completed
 	}
-	var publicExecute, appExecute bool
+
+	firstClaimToken := uuid.New()
+	firstClaims := claim(firstClaimToken, 1000)
+	if len(firstClaims) != 100 {
+		t.Fatalf("ClaimChangedCampaignRollups returned %d rows for limit 1000, want hard cap 100", len(firstClaims))
+	}
+	secondClaimToken := uuid.New()
+	secondClaims := claim(secondClaimToken, 1000)
+	if len(secondClaims) != 5 {
+		t.Fatalf("second bounded queue claim returned %d rows, want 5", len(secondClaims))
+	}
+	if complete(firstClaimToken, firstClaims) != 100 || complete(secondClaimToken, secondClaims) != 5 {
+		t.Fatal("claimed rollup rows were not durably acknowledged")
+	}
+
+	var publicClaim, appClaim, publicComplete, appComplete bool
 	if err := tdb.Super.QueryRow(ctx, `SELECT
 		has_function_privilege('public',
-			'mailing_changed_campaign_rollup_changes(timestamptz,uuid,integer)','EXECUTE'),
+			'mailing_claim_changed_campaign_rollups(uuid,integer,integer)','EXECUTE'),
 		has_function_privilege('manyforge_app',
-			'mailing_changed_campaign_rollup_changes(timestamptz,uuid,integer)','EXECUTE')`,
-	).Scan(&publicExecute, &appExecute); err != nil {
+			'mailing_claim_changed_campaign_rollups(uuid,integer,integer)','EXECUTE'),
+		has_function_privilege('public',
+			'mailing_complete_changed_campaign_rollups(uuid,uuid[])','EXECUTE'),
+		has_function_privilege('manyforge_app',
+			'mailing_complete_changed_campaign_rollups(uuid,uuid[])','EXECUTE')`,
+	).Scan(&publicClaim, &appClaim, &publicComplete, &appComplete); err != nil {
 		t.Fatal(err)
 	}
-	if publicExecute || !appExecute {
-		t.Fatalf("rollup definer grants public=%t app=%t", publicExecute, appExecute)
+	if publicClaim || !appClaim || publicComplete || !appComplete {
+		t.Fatalf("queue definer grants claim=(%t,%t) complete=(%t,%t)",
+			publicClaim, appClaim, publicComplete, appComplete)
 	}
 
-	changes := callGeneratedMany(t, ctx, q, "ListChangedCampaignRollupChanges", map[string]any{
-		"AfterUpdatedAt": time.Unix(0, 0).UTC(), "AfterID": uuid.Nil, "Lim": int32(1000),
-	})
-	if changes.Len() != 100 {
-		t.Fatalf("ListChangedCampaignRollupChanges returned %d rows for limit 1000, want hard cap 100", changes.Len())
+	otherBusiness, otherList := uuid.New(), uuid.New()
+	seedBusiness(t, ctx, tdb, otherBusiness, "Other rollup root")
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_list (id,business_id,tenant_root_id,slug,name,double_opt_in,status)
+		VALUES ($1,$2,$2,'other-rollup','Other rollup',false,'active')`, otherList, otherBusiness)
+	insertCampaignDelivery := func(root, list uuid.UUID, suffix string) (uuid.UUID, uuid.UUID) {
+		t.Helper()
+		subscriber, campaign, delivery := uuid.New(), uuid.New(), uuid.New()
+		email := "rollup-" + suffix + "@example.test"
+		mustExec(t, ctx, tdb.Super, `
+			INSERT INTO list_subscriber (
+				id,business_id,tenant_root_id,list_id,email,status,consent_source,consent_attested_by
+			) VALUES ($1,$2,$2,$3,$4,'active','manual',$5)`,
+			subscriber, root, list, email, uuid.New())
+		mustExec(t, ctx, tdb.Super, `
+			INSERT INTO campaign (
+				id,business_id,tenant_root_id,list_id,name,subject,body_markdown,status,fanout_done
+			) VALUES ($1,$2,$2,$3,$4,'Subject','Body','sending',true)`,
+			campaign, root, list, "Fence "+suffix)
+		mustExec(t, ctx, tdb.Super, `
+			INSERT INTO mailing_delivery (
+				id,business_id,tenant_root_id,source_kind,source_id,campaign_id,
+				subscriber_id,email,status,message_id
+			) VALUES ($1,$2,$2,'campaign',$3,$3,$4,$5,'sent',$6)`,
+			delivery, root, campaign, subscriber, email, delivery.String()+"@message.example")
+		return campaign, delivery
 	}
-	lastChange := indirect(changes.Index(changes.Len() - 1))
-	changedAt := lastChange.FieldByName("ChangedAt").Interface().(time.Time)
-	changeID := lastChange.FieldByName("ChangeID").Interface().(uuid.UUID)
-	remaining := callGeneratedMany(t, ctx, q, "ListChangedCampaignRollupChanges", map[string]any{
-		"AfterUpdatedAt": changedAt, "AfterID": changeID, "Lim": int32(1000),
-	})
-	if remaining.Len() != 5 {
-		t.Fatalf("changed-rollup keyset page returned %d rows, want 5", remaining.Len())
+	fencedCampaign, fencedDelivery := insertCampaignDelivery(businessID, listID, "fenced")
+	allowedCampaign, _ := insertCampaignDelivery(otherBusiness, otherList, "allowed")
+
+	operationID := uuid.New()
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO tenant_merge_operation (
+			id,source_root_id,destination_parent_id,destination_root_id,
+			actor_principal_id,idempotency_key,request_hash,status
+		) VALUES ($1,$2,$3,$3,$4,'rollup-fence',$5,'ready')`,
+		operationID, businessID, otherBusiness, uuid.New(), bytes.Repeat([]byte{1}, 32))
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO tenant_merge_fence (operation_id,root_id,root_role)
+		VALUES ($1,$2,'source')`, operationID, businessID)
+
+	allowedToken := uuid.New()
+	allowedClaims := claim(allowedToken, 100)
+	if len(allowedClaims) != 1 || allowedClaims[0] != allowedCampaign {
+		t.Fatalf("claim with fenced root = %v, want only %s", allowedClaims, allowedCampaign)
+	}
+	if complete(allowedToken, allowedClaims) != 1 {
+		t.Fatal("allowed campaign claim was not completed")
+	}
+	mustExec(t, ctx, tdb.Super, `DELETE FROM tenant_merge_fence WHERE operation_id=$1`, operationID)
+
+	fencedToken := uuid.New()
+	fencedClaims := claim(fencedToken, 100)
+	if len(fencedClaims) != 1 || fencedClaims[0] != fencedCampaign {
+		t.Fatalf("unfenced claim = %v, want pending campaign %s", fencedClaims, fencedCampaign)
+	}
+	mustExec(t, ctx, tdb.Super, `UPDATE mailing_delivery SET updated_at=now() WHERE id=$1`, fencedDelivery)
+	if complete(fencedToken, fencedClaims) != 0 {
+		t.Fatal("stale claim deleted a campaign changed during its lease")
+	}
+	reclaimToken := uuid.New()
+	reclaimed := claim(reclaimToken, 100)
+	if len(reclaimed) != 1 || reclaimed[0] != fencedCampaign {
+		t.Fatalf("campaign changed during claim was lost: %v", reclaimed)
 	}
 }
 
@@ -496,6 +689,27 @@ func callGeneratedMany(t *testing.T, ctx context.Context, q *dbgen.Queries, meth
 		t.Fatalf("generated query %s: %v", methodName, result[1].Interface())
 	}
 	return result[0]
+}
+
+func reflectedUUIDs(t *testing.T, values reflect.Value) []uuid.UUID {
+	t.Helper()
+	ids := make([]uuid.UUID, values.Len())
+	for i := range values.Len() {
+		value := indirect(values.Index(i))
+		if value.Type() == reflect.TypeOf(uuid.UUID{}) {
+			ids[i] = value.Interface().(uuid.UUID)
+			continue
+		}
+		if value.Kind() == reflect.Struct {
+			field := value.FieldByName("CampaignID")
+			if field.IsValid() && field.Type() == reflect.TypeOf(uuid.UUID{}) {
+				ids[i] = field.Interface().(uuid.UUID)
+				continue
+			}
+		}
+		t.Fatalf("generated claim row %d has unsupported type %s", i, value.Type())
+	}
+	return ids
 }
 
 func indirect(value reflect.Value) reflect.Value {

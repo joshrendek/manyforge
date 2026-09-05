@@ -191,7 +191,12 @@ func (s *Service) Versions(ctx context.Context, principalID, businessID, automat
 		if _, err = q.GetAutomation(ctx, dbgen.GetAutomationParams{ID: automationID, BusinessID: businessID, TenantRootID: root}); err != nil {
 			return err
 		}
-		rows, err := q.ListAutomationVersions(ctx, dbgen.ListAutomationVersionsParams{AutomationID: automationID, BusinessID: businessID, TenantRootID: root})
+		rows, err := q.ListAutomationVersions(ctx, dbgen.ListAutomationVersionsParams{
+			AutomationID: automationID,
+			BusinessID:   businessID,
+			TenantRootID: root,
+			Lim:          100,
+		})
 		if err != nil {
 			return err
 		}
