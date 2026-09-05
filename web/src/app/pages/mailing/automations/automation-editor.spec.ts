@@ -66,12 +66,16 @@ describe('AutomationEditorComponent', () => {
     const version = overrides.version ?? makeVersion('v1', 1, 'draft', { nodes: [], edges: [] });
     fixture = TestBed.createComponent(AutomationEditorComponent);
     fixture.detectChanges();
+    flushReload(automation, version);
+    fixture.detectChanges();
+    return fixture.componentInstance;
+  }
+
+  function flushReload(automation: Automation, version: AutomationVersion): void {
     http.expectOne('/api/v1/businesses/b1/mailing/automations/a1').flush(automation);
     http.expectOne('/api/v1/businesses/b1/mailing/lists').flush({ items: [list], next_cursor: null });
     http.expectOne('/api/v1/businesses/b1/mailing/templates').flush({ items: [template], next_cursor: null });
     http.expectOne(`/api/v1/businesses/b1/mailing/automations/a1/versions/${version.id}`).flush(version);
-    fixture.detectChanges();
-    return fixture.componentInstance;
   }
 
   it('turns an empty draft into an unsaved trigger-to-exit starter', () => {
@@ -150,7 +154,7 @@ describe('AutomationEditorComponent', () => {
     request.flush(makeVersion('v3', 3, 'draft'), { status: 201, statusText: 'Created' });
     fixture.detectChanges();
     expect(component.version()!.id).toBe('v3');
-    expect(component.editingLive()).toBe(true);
+    expect(component.editingAlongsideLive()).toBe(true);
     expect(component.readOnly()).toBe(false);
     const banner = fixture.nativeElement.querySelector('[data-testid="automation-version-banner"]');
     expect(banner.textContent).toContain('stays live');
@@ -205,5 +209,64 @@ describe('AutomationEditorComponent', () => {
     (fixture.nativeElement.querySelector('[data-testid="automation-archive"]') as HTMLButtonElement).click();
     fixture.detectChanges();
     http.expectNone('/api/v1/businesses/b1/mailing/automations/a1/archive');
+  });
+
+  it('reloads when activation hits a lifecycle conflict', () => {
+    const component = mount({ version: makeVersion('v1', 1, 'draft') });
+    (fixture.nativeElement.querySelector('[data-testid="automation-activate"]') as HTMLButtonElement).click();
+    http.expectOne('/api/v1/businesses/b1/mailing/automations/a1/versions/v1/activate')
+      .flush({ code: 'CONFLICT', message: 'lifecycle conflict' }, { status: 409, statusText: 'Conflict' });
+    flushReload(draftAutomation, makeVersion('v1', 1, 'draft'));
+    fixture.detectChanges();
+    expect(component.automation()!.status).toBe('draft');
+    expect(component.version()!.status).toBe('draft');
+    expect(component.serverErrors()).toEqual([]);
+  });
+
+  it('reloads when pausing hits a lifecycle conflict', () => {
+    const component = mount({ automation: activeAutomation, version: makeVersion('v2', 2, 'active') });
+    (fixture.nativeElement.querySelector('[data-testid="automation-pause"]') as HTMLButtonElement).click();
+    http.expectOne('/api/v1/businesses/b1/mailing/automations/a1/pause')
+      .flush({ code: 'CONFLICT', message: 'lifecycle conflict' }, { status: 409, statusText: 'Conflict' });
+    flushReload(activeAutomation, makeVersion('v2', 2, 'active'));
+    fixture.detectChanges();
+    expect(component.automation()!.status).toBe('active');
+  });
+
+  it('reloads when creating a draft hits a conflict', () => {
+    const component = mount({ automation: activeAutomation, version: makeVersion('v2', 2, 'active') });
+    (fixture.nativeElement.querySelector('[data-testid="automation-edit"]') as HTMLButtonElement).click();
+    http.expectOne('/api/v1/businesses/b1/mailing/automations/a1/versions')
+      .flush({ code: 'CONFLICT', message: 'lifecycle conflict' }, { status: 409, statusText: 'Conflict' });
+    flushReload(activeAutomation, makeVersion('v2', 2, 'active'));
+    fixture.detectChanges();
+    expect(component.version()!.id).toBe('v2');
+    expect(component.readOnly()).toBe(true);
+  });
+
+  it('reloads when archiving hits a conflict', () => {
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
+    const component = mount({ automation: activeAutomation, version: makeVersion('v2', 2, 'active') });
+    (fixture.nativeElement.querySelector('[data-testid="automation-archive"]') as HTMLButtonElement).click();
+    http.expectOne('/api/v1/businesses/b1/mailing/automations/a1/archive')
+      .flush({ code: 'CONFLICT', message: 'lifecycle conflict' }, { status: 409, statusText: 'Conflict' });
+    flushReload(activeAutomation, makeVersion('v2', 2, 'active'));
+    fixture.detectChanges();
+    expect(component.automation()!.status).toBe('active');
+  });
+
+  it('discards unsaved changes and clears server errors', () => {
+    const component = mount({ version: makeVersion('v1', 1, 'draft') });
+    const saved = JSON.stringify(component.graph());
+    const current = component.graph();
+    component.setGraph({ ...current, nodes: current.nodes.map((node) => (node.id === 'n_welcome' ? { ...node, name: 'Renamed' } : node)) });
+    component.serverErrors.set([{ code: 'template_not_found', node_id: 'n_welcome', message: 'Template not found' }]);
+    expect(component.hasUnsavedChanges()).toBe(true);
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('[data-testid="automation-discard"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(JSON.stringify(component.graph())).toBe(saved);
+    expect(component.hasUnsavedChanges()).toBe(false);
+    expect(component.serverErrors()).toEqual([]);
   });
 });
