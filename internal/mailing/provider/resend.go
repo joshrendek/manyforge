@@ -138,7 +138,7 @@ func (r *Resend) do(ctx context.Context, method, path string, body any, idempote
 			StatusCode    int `json:"statusCode"`
 		}
 		_ = json.Unmarshal(raw, &detail)
-		return &HTTPError{StatusCode: resp.StatusCode, Code: detail.Name, Message: detail.Message}
+		return &HTTPError{StatusCode: resp.StatusCode, Code: detail.Name}
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {

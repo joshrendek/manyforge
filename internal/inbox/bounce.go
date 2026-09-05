@@ -98,9 +98,8 @@ type bouncePayload struct {
 // ALL outcomes return a uniform 202 (no recipient/message existence oracle). So a
 // soft bounce, a parse error, an unknown recipient, and a missing/unmatched message
 // are byte-identical to a matching hard bounce — an authenticated caller cannot probe
-// which recipients are real customers or which Message-IDs exist. An unexpected
-// suppression error is logged server-side and still answered 202 (a provider retry is
-// harmless: SuppressBounce is idempotent). security: MF-002-BOUNCE-NO-ORACLE.
+// suppression error is logged server-side and returns a generic 503 so the
+// authenticated provider retries the idempotent mutation.
 func (h *BounceHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	// Count every call (received), regardless of outcome.
 	h.Metrics.Inc(observability.MetricIngestReceived)
@@ -141,9 +140,10 @@ func (h *BounceHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	//    hard bounce with no recipient, is a no-op — still 202.
 	if strings.EqualFold(p.Type, "hard") && p.Recipient != "" {
 		if serr := h.sup.SuppressBounce(r.Context(), p.Recipient, p.MessageID); serr != nil {
-			// Log server-side (wrapped) and still ack 202: never echo the error, and a
-			// provider retry against the idempotent SuppressBounce is harmless.
 			h.logger.ErrorContext(r.Context(), "inbox: bounce suppression failed", "err", serr)
+			h.Metrics.Inc(observability.MetricIngestRejected)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
 		}
 	}
 

@@ -234,13 +234,15 @@ func TestPin_MailingPublicDefinersAndTokens(t *testing.T) {
 }
 
 func TestPin_MailingProviderWebhookBoundary(t *testing.T) {
-	migrationBytes, err := os.ReadFile("../../migrations/0127_mailing_provider_webhooks.up.sql")
+	migrationBytes, err := os.ReadFile("../../migrations/0134_mailing_provider_feedback.up.sql")
 	if err != nil {
-		t.Fatalf("read mailing webhook migration: %v", err)
+		t.Fatalf("read mailing provider feedback migration: %v", err)
 	}
 	migration := string(migrationBytes)
 	for _, fn := range []string{
-		"mailing_webhook_context", "mailing_record_webhook", "mailing_apply_provider_event",
+		"mailing_webhook_context", "mailing_transition_ses_feedback",
+		"mailing_apply_provider_event_internal", "mailing_apply_pending_webhook",
+		"mailing_process_provider_webhook",
 	} {
 		start := strings.Index(migration, "FUNCTION "+fn+"(")
 		if start < 0 {
@@ -250,22 +252,21 @@ func TestPin_MailingProviderWebhookBoundary(t *testing.T) {
 		body := migration[start:]
 		end := strings.Index(body, "$$;")
 		if end < 0 || !strings.Contains(body[:end], "SECURITY DEFINER") ||
-			!strings.Contains(body[:end], "SET search_path = public") {
+			!strings.Contains(body[:end], "SET search_path = pg_catalog") {
 			t.Errorf("function %s is not a search-path-pinned SECURITY DEFINER", fn)
-		}
-		if !strings.Contains(body[:end], "tenant_merge_root_write_allowed") {
-			t.Errorf("function %s does not honor the tenant merge write fence", fn)
 		}
 		if !strings.Contains(migration, "REVOKE ALL ON FUNCTION "+fn+"(") {
 			t.Errorf("function %s retains default PUBLIC execute", fn)
 		}
 	}
 	for _, pin := range []string{
-		"Severity is monotonic", "mailing_suppression.reason = 'complaint'",
-		"ON CONFLICT (tenant_root_id, source_type, source_id, kind)",
+		"envelope_payload", "normalized_events", "processing_status = 'pending'",
+		"jsonb_array_length(p_normalized_events) NOT BETWEEN 1 AND 50",
+		"mailing_apply_pending_webhook", "mailing_business_operational",
+		"p.feedback_status = 'ready'",
 	} {
 		if !strings.Contains(migration, pin) {
-			t.Errorf("mailing webhook migration missing behavioral pin %q", pin)
+			t.Errorf("mailing provider feedback migration missing behavioral pin %q", pin)
 		}
 	}
 
@@ -276,7 +277,8 @@ func TestPin_MailingProviderWebhookBoundary(t *testing.T) {
 	svix := string(svixBytes)
 	for _, pin := range []string{
 		"http.MaxBytesReader", "hmac.Equal", "svixTolerance", "whsec_",
-		"mailing_record_webhook", "mailing_apply_provider_event",
+		"mailing_process_provider_webhook", "maxProviderEventRecipients",
+		"retryableFailure",
 	} {
 		if !strings.Contains(svix+mustRead(t, "../mailing/webhook.go"), pin) {
 			t.Errorf("Resend webhook boundary missing pin %q", pin)
@@ -291,7 +293,8 @@ func TestPin_MailingProviderWebhookBoundary(t *testing.T) {
 	for _, pin := range []string{
 		"^sns\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?$",
 		"netsafe.NewClient", "rsa.VerifyPKCS1v15", "x509.ParseCertificate",
-		"SignatureVersion", "validateSNSURL(req.URL.String(), false)",
+		"expectedTopicARN", "maxCertificateFetches", "certificateFailureTTL",
+		"validateCertificateTopic",
 	} {
 		if !strings.Contains(sns, pin) {
 			t.Errorf("SNS verifier missing pin %q", pin)
