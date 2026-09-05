@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,6 +71,31 @@ func campaignService(t *testing.T, ctx context.Context, tdb *testdb.TestDB, seed
 	return svc, captured
 }
 
+func seedMailingWriteOnlyPrincipal(ctx context.Context, t *testing.T, database *testdb.TestDB, businessID uuid.UUID) uuid.UUID {
+	t.Helper()
+	principalID, accountID, roleID := uuid.New(), uuid.New(), uuid.New()
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO account (id,email,display_name,status,created_at,updated_at,email_verified_at)
+			VALUES ($1,$2,'Mailing Writer','active',now(),now(),now())`, []any{accountID, "mailing-writer-" + principalID.String() + "@x.test"}},
+		{`INSERT INTO principal (id,kind,account_id,created_at) VALUES ($1,'human',$2,now())`, []any{principalID, accountID}},
+		{`INSERT INTO role (id,tenant_root_id,key,name,is_locked,created_at)
+			VALUES ($1,$2,$3,'Mailing Writer',false,now())`, []any{roleID, businessID, "mailing-writer-" + roleID.String()}},
+		{`INSERT INTO role_permission (role_id,permission_key) VALUES
+			($1,'mailing.read'),($1,'mailing.write')`, []any{roleID}},
+		{`INSERT INTO membership (principal_id,business_id,tenant_root_id,role_id,granted_at)
+			VALUES ($1,$2,$2,$3,now())`, []any{principalID, businessID, roleID}},
+	}
+	for _, statement := range statements {
+		if _, err := database.Super.Exec(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("seed mailing write-only principal: %v", err)
+		}
+	}
+	return principalID
+}
+
 func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
@@ -121,7 +147,7 @@ func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 	if err != nil || campaign.Subject != updatedSubject {
 		t.Fatalf("update draft campaign = %#v, err=%v", campaign, err)
 	}
-	if err = svc.TestCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, []string{"preview@example.test"}); err != nil {
+	if err = svc.TestCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, mailing.CampaignTestInput{Recipients: []string{"preview@example.test"}}); err != nil {
 		t.Fatalf("test campaign: %v", err)
 	}
 	if captured.mail.To != "preview@example.test" || captured.mail.Subject != "[TEST] "+updatedSubject ||
@@ -129,7 +155,7 @@ func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 		t.Fatalf("campaign test mail = %+v", captured.mail)
 	}
 
-	t.Run("MF-MAIL-DELIVERY-002 test send bypasses tenant and global suppressions", func(t *testing.T) {
+	t.Run("MF-MAIL-DELIVERY-002 test send rejects tenant and global suppressions", func(t *testing.T) {
 		tenantSuppressedTest := "test-tenant-suppressed@example.test"
 		globalSuppressedTest := "test-global-suppressed@example.test"
 		if _, err := svc.CreateSuppression(ctx, seed.principalID, seed.businessID, tenantSuppressedTest, "manual"); err != nil {
@@ -139,15 +165,59 @@ func TestCampaignFanoutLeaseAndRateDeferral(t *testing.T) {
 			VALUES($1,'hard_bounce',now())`, globalSuppressedTest); err != nil {
 			t.Fatal(err)
 		}
-		before := len(captured.mails)
-		if err := svc.TestCampaign(ctx, seed.principalID, seed.businessID, campaign.ID,
-			[]string{tenantSuppressedTest, globalSuppressedTest}); err != nil {
-			t.Fatalf("suppressed campaign test-send error = %v", err)
+		for _, recipient := range []string{tenantSuppressedTest, globalSuppressedTest} {
+			before := len(captured.mails)
+			err := svc.TestCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, mailing.CampaignTestInput{Recipients: []string{recipient}})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("suppressed campaign test-send error = %v, want validation", err)
+			}
+			if len(captured.mails) != before {
+				t.Fatalf("suppressed recipient %q was sent: %+v", recipient, captured.mails[before:])
+			}
 		}
-		if len(captured.mails) != before+2 ||
-			captured.mails[before].To != tenantSuppressedTest ||
-			captured.mails[before+1].To != globalSuppressedTest {
-			t.Fatalf("suppressed test sends = %+v", captured.mails[before:])
+	})
+	t.Run("suppression override requires reason, send permission, and durable audit", func(t *testing.T) {
+		recipient := "test-override-suppressed@example.test"
+		if _, err := svc.CreateSuppression(ctx, seed.principalID, seed.businessID, recipient, "manual"); err != nil {
+			t.Fatal(err)
+		}
+		before := len(captured.mails)
+		err := svc.TestCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, mailing.CampaignTestInput{
+			Recipients: []string{recipient}, OverrideSuppression: true,
+		})
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Fatalf("empty override reason error = %v, want validation", err)
+		}
+		writeOnly := seedMailingWriteOnlyPrincipal(ctx, t, tdb, seed.businessID)
+		err = svc.TestCampaign(ctx, writeOnly, seed.businessID, campaign.ID, mailing.CampaignTestInput{
+			Recipients: []string{recipient}, OverrideSuppression: true, OverrideReason: "approved deliverability check",
+		})
+		if !errors.Is(err, errs.ErrNotFound) {
+			t.Fatalf("write-only override error = %v, want uniform not found", err)
+		}
+		if len(captured.mails) != before {
+			t.Fatalf("unauthorized override sent mail: %+v", captured.mails[before:])
+		}
+		err = svc.TestCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, mailing.CampaignTestInput{
+			Recipients: []string{recipient}, OverrideSuppression: true, OverrideReason: "approved deliverability check",
+		})
+		if err != nil {
+			t.Fatalf("authorized override: %v", err)
+		}
+		if len(captured.mails) != before+1 || captured.mails[before].To != recipient {
+			t.Fatalf("authorized override sends = %+v", captured.mails[before:])
+		}
+		var audits int
+		if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM audit_entry
+			WHERE business_id=$1 AND actor_principal_id=$2
+			  AND action='mailing.campaign.test_suppression_overridden'
+			  AND target_id=$3
+			  AND new_value->>'reason'='approved deliverability check'`,
+			seed.businessID, seed.principalID, campaign.ID).Scan(&audits); err != nil {
+			t.Fatal(err)
+		}
+		if audits != 1 {
+			t.Fatalf("override audit rows = %d, want 1", audits)
 		}
 	})
 	if _, err = svc.CancelCampaign(ctx, seed.principalID, seed.businessID, campaign.ID); !errors.Is(err, errs.ErrConflict) {
@@ -586,10 +656,72 @@ func TestCampaignTrackingOracleAndEvents(t *testing.T) {
 	_ = subscriber
 }
 
-// MF-MAIL-ROLLUP-001 characterizes the global historical rollup. Once a
-// campaign reaches sent, every later worker tick still aggregates its complete
-// delivery history and rewrites the campaign row.
-func TestMFMailRollup001HistoricalCampaignRollupNeverBecomesCold(t *testing.T) {
+func TestMFMailDelivery004TickBoundsFanoutAndRotatesCampaigns(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	list, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{
+		Name: "Fair fanout", DoubleOptIn: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 5 {
+		if _, err = svc.CreateSubscriber(ctx, seed.principalID, seed.businessID, list.ID, mailing.SubscriberInput{
+			Email: fmt.Sprintf("fanout-%d@example.test", i), SkipConfirmation: true, ConsentSource: "manual",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	campaignIDs := make([]uuid.UUID, 0, 3)
+	for i := range 3 {
+		campaign, createErr := svc.CreateCampaign(ctx, seed.principalID, seed.businessID, mailing.CampaignInput{
+			ListID: list.ID, Name: fmt.Sprintf("Fair %d", i), Subject: "Fair", BodyMarkdown: "Body",
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, createErr = svc.SendCampaign(ctx, seed.principalID, seed.businessID, campaign.ID, nil); createErr != nil {
+			t.Fatal(createErr)
+		}
+		campaignIDs = append(campaignIDs, campaign.ID)
+	}
+	worker := &mailing.SendWorker{
+		Service: svc, FanoutGlobal: 4, FanoutPerCampaign: 2, Batch: 1, RollupBatch: 10,
+	}
+	if err = worker.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var total, hottest, touched int
+	if err = tdb.Super.QueryRow(ctx, `SELECT COALESCE(sum(n),0),COALESCE(max(n),0),count(*)
+		FROM (SELECT campaign_id,count(*)::integer n FROM mailing_delivery
+		      WHERE campaign_id=ANY($1::uuid[]) GROUP BY campaign_id) x`,
+		campaignIDs).Scan(&total, &hottest, &touched); err != nil {
+		t.Fatal(err)
+	}
+	if total > 4 || hottest > 2 || touched != 2 {
+		t.Fatalf("first tick fanout total=%d hottest=%d campaigns=%d, want <=4, <=2, 2", total, hottest, touched)
+	}
+	if err = worker.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(DISTINCT campaign_id) FROM mailing_delivery
+		WHERE campaign_id=ANY($1::uuid[])`, campaignIDs).Scan(&touched); err != nil {
+		t.Fatal(err)
+	}
+	if touched != 3 {
+		t.Fatalf("campaigns reached after two ticks = %d, want 3", touched)
+	}
+}
+
+// MF-MAIL-ROLLUP-001 requires terminal campaigns to become cold after their
+// exact changed-campaign claim is rolled up and token-bound completion succeeds.
+func TestMFMailRollup001HistoricalCampaignRollupBecomesCold(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
 	if err != nil {
@@ -632,28 +764,55 @@ func TestMFMailRollup001HistoricalCampaignRollupNeverBecomesCold(t *testing.T) {
 	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_delivery SET status='sent' WHERE campaign_id=$1`, campaign.ID); err != nil {
 		t.Fatal(err)
 	}
-	rollup := func() int {
-		t.Helper()
-		var changed int
-		if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `SELECT mailing_rollup_campaigns()`).Scan(&changed)
-		}); err != nil {
-			t.Fatal(err)
-		}
-		return changed
-	}
-	if changed := rollup(); changed != 1 {
-		t.Fatalf("first rollup changed %d campaigns, want 1", changed)
-	}
-	var status string
-	if err = tdb.Super.QueryRow(ctx, `SELECT status::text FROM campaign WHERE id=$1`, campaign.ID).Scan(&status); err != nil {
+	claimToken := uuid.New()
+	var claimed []uuid.UUID
+	if err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_claim_changed_campaign_rollups($1,10,60)`,
+			claimToken).Scan(&claimed)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if status != "sent" {
-		t.Fatalf("campaign status after first rollup = %q", status)
+	if len(claimed) != 1 || claimed[0] != campaign.ID {
+		t.Fatalf("claimed rollups = %v, want [%s]", claimed, campaign.ID)
 	}
-	if changed := rollup(); changed != 1 {
-		t.Fatalf("second rollup changed %d historical campaigns, want 1", changed)
+	var changed bool
+	if err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_rollup_changed_campaign($1)`, campaign.ID).Scan(&changed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("first changed-campaign rollup did not update campaign")
+	}
+	var wrongTokenCompletion int
+	if err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_complete_changed_campaign_rollups($1,$2)`,
+			uuid.New(), claimed).Scan(&wrongTokenCompletion)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if wrongTokenCompletion != 0 {
+		t.Fatalf("wrong-token completion removed %d rollups", wrongTokenCompletion)
+	}
+	var completed int
+	if err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_complete_changed_campaign_rollups($1,$2)`,
+			claimToken, claimed).Scan(&completed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if completed != 1 {
+		t.Fatalf("completed rollups = %d, want 1", completed)
+	}
+	var second []uuid.UUID
+	if err = tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_claim_changed_campaign_rollups($1,10,60)`,
+			uuid.New()).Scan(&second)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("historical campaign remained hot: %v", second)
 	}
 }
 

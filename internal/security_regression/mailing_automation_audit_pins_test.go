@@ -73,14 +73,12 @@ func TestMFAuto002VersionHistoryResponseHasNoBound(t *testing.T) {
 	}
 }
 
-// MF-MAIL-DELIVERY-003 characterizes the production-reachable SMTP fallback:
-// main wires LogSender when the host is absent, and LogSender returns success
-// after writing recipient and body capability data to logs.
-func TestMFMailDelivery003UnsetSMTPLogsCapabilityAndReportsSuccess(t *testing.T) {
+// MF-MAIL-DELIVERY-003 requires the development log sink to emit only
+// non-capability metadata and to report that no provider accepted the message.
+func TestMFMailDelivery003UnsetSMTPIsNonAcceptingAndCapabilitySafe(t *testing.T) {
 	mainSource := auditSource(t, "../../cmd/manyforge/main.go")
-	if !strings.Contains(mainSource, "sender = notify.LogSender") ||
-		!strings.Contains(mainSource, "MANYFORGE_SMTP_HOST unset") {
-		t.Fatal("expected SMTP-unset LogSender fallback was not found")
+	if !strings.Contains(mainSource, "cfg.Environment == \"development\"") {
+		t.Fatal("SMTP-unset fallback is not restricted to explicit development mode")
 	}
 
 	var logs bytes.Buffer
@@ -89,31 +87,28 @@ func TestMFMailDelivery003UnsetSMTPLogsCapabilityAndReportsSuccess(t *testing.T)
 		From: "news@example.test", To: "recipient@example.test", Subject: "Campaign",
 		BodyText: "unsubscribe: https://manyforge.test/m/u/audit-capability-token",
 	})
-	if err != nil {
-		t.Fatalf("LogSender returned an error: %v", err)
+	if err == nil {
+		t.Fatal("LogSender reported provider acceptance")
 	}
-	for _, secret := range []string{"recipient@example.test", "audit-capability-token"} {
-		if !strings.Contains(logs.String(), secret) {
-			t.Fatalf("LogSender output did not contain %q: %s", secret, logs.String())
+	for _, secret := range []string{"news@example.test", "recipient@example.test", "Campaign", "audit-capability-token"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Fatalf("LogSender output leaked %q: %s", secret, logs.String())
 		}
 	}
 }
 
-// MF-MAIL-DELIVERY-004 characterizes the unbounded outer fan-out loop. One Tick
-// drains each claimed campaign completely instead of honoring one batch budget.
-func TestMFMailDelivery004TickLoopsUntilCampaignFanoutCompletes(t *testing.T) {
+// MF-MAIL-DELIVERY-004 requires one Tick to process each claimed campaign at
+// most once under explicit global and per-campaign row budgets.
+func TestMFMailDelivery004TickHasGlobalAndPerCampaignFanoutBounds(t *testing.T) {
 	source := auditSource(t, "../../internal/mailing/sendworker.go")
 	tick := auditSection(t, source, "func (w *SendWorker) Tick", "func (w *SendWorker) claimCampaigns")
-	for _, marker := range []string{
-		"for _, campaignID := range campaignIDs",
-		"for {",
-		"done, err := w.fanout",
-		"if done {",
-		"break",
-	} {
-		if !strings.Contains(tick, marker) {
-			t.Fatalf("Tick no longer contains unbounded fan-out marker %q", marker)
+	for _, marker := range []string{"fanoutGlobalBudget", "fanoutPerCampaignBudget"} {
+		if !strings.Contains(source, marker) {
+			t.Fatalf("worker is missing explicit fan-out bound %q", marker)
 		}
+	}
+	if strings.Contains(tick, "for {") {
+		t.Fatal("Tick still contains an unbounded campaign fan-out loop")
 	}
 }
 

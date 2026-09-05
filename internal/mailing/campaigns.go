@@ -8,10 +8,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/manyforge/manyforge/internal/authz"
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -22,6 +24,14 @@ const (
 	campaignCursorKind = "mailing-campaign"
 	deliveryCursorKind = "mailing-delivery"
 )
+
+// CampaignTestInput describes a live campaign test send. Suppression bypass is
+// deliberately explicit and separately authorized at the service boundary.
+type CampaignTestInput struct {
+	Recipients          []string
+	OverrideSuppression bool
+	OverrideReason      string
+}
 
 var messageDomainPattern = regexp.MustCompile(`^[a-z0-9.-]+$`)
 
@@ -387,28 +397,70 @@ func (s *Service) ListCampaignDeliveries(ctx context.Context, principalID, busin
 	return out, mapErr(err)
 }
 
-func (s *Service) TestCampaign(ctx context.Context, principalID, businessID, campaignID uuid.UUID, recipients []string) error {
-	if len(recipients) == 0 || len(recipients) > 5 {
+func (s *Service) TestCampaign(ctx context.Context, principalID, businessID, campaignID uuid.UUID, in CampaignTestInput) error {
+	if len(in.Recipients) == 0 || len(in.Recipients) > 5 {
 		return validation("test-send requires between 1 and 5 recipients")
 	}
-	clean := make([]string, len(recipients))
-	for i, recipient := range recipients {
+	reason := strings.TrimSpace(in.OverrideReason)
+	if in.OverrideSuppression && (reason == "" || utf8.RuneCountInString(reason) > 2000) {
+		return validation("suppression override reason is required and must not exceed 2000 characters")
+	}
+	clean := make([]string, len(in.Recipients))
+	for i, recipient := range in.Recipients {
 		var err error
 		clean[i], err = normalizeEmail(recipient)
 		if err != nil {
 			return err
 		}
 	}
+	var suppressionErr error
+	suppressedCount := 0
+	for _, recipient := range clean {
+		if err := s.checkTestRecipientSuppression(ctx, principalID, businessID, recipient); err != nil {
+			if !errors.Is(err, errs.ErrValidation) {
+				return err
+			}
+			suppressedCount++
+			if suppressionErr == nil {
+				suppressionErr = err
+			}
+		}
+	}
+	if suppressionErr != nil && !in.OverrideSuppression {
+		return suppressionErr
+	}
 	campaign, err := s.GetCampaign(ctx, principalID, businessID, campaignID)
 	if err != nil {
 		return err
+	}
+	if in.OverrideSuppression {
+		err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+			q := dbgen.New(tx)
+			root, err := resolveTenantRoot(ctx, q, businessID)
+			if err != nil {
+				return err
+			}
+			permissions, err := authz.Resolve(ctx, tx, principalID, businessID)
+			if err != nil {
+				return err
+			}
+			if !permissions.Has("mailing.send") {
+				return errs.ErrNotFound
+			}
+			return auditMutation(ctx, tx, principalID, businessID, root,
+				"mailing.campaign.test_suppression_overridden", "campaign", campaignID,
+				map[string]any{"reason": reason, "recipient_count": len(clean), "suppressed_count": suppressedCount})
+		})
+		if err != nil {
+			return mapErr(err)
+		}
 	}
 	profile, providerProfile, err := s.loadProviderProfile(ctx, principalID, businessID)
 	if err != nil {
 		return err
 	}
-	if profile.Status != "verified" {
-		return validation("sending profile must be verified")
+	if profile.Status != "verified" || profile.FeedbackStatus != "ready" {
+		return validation("sending profile must be verified and feedback-ready")
 	}
 	if s.Providers == nil || s.Renderer == nil {
 		return errors.New("mailing: delivery is not configured")

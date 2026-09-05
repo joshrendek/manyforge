@@ -177,7 +177,9 @@ type campaignSendBody struct {
 	ScheduledAt *time.Time `json:"scheduled_at"`
 }
 type campaignTestBody struct {
-	To []string `json:"to"`
+	To                  []string `json:"to"`
+	OverrideSuppression bool     `json:"override_suppression"`
+	OverrideReason      string   `json:"override_reason"`
 }
 
 func requestIDs(w http.ResponseWriter, r *http.Request, names ...string) (uuid.UUID, []uuid.UUID, bool) {
@@ -730,7 +732,9 @@ func (h *Handler) testCampaign(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &b) {
 		return
 	}
-	if err := h.svc.TestCampaign(r.Context(), pid, ids[0], ids[1], b.To); err != nil {
+	if err := h.svc.TestCampaign(r.Context(), pid, ids[0], ids[1], CampaignTestInput{
+		Recipients: b.To, OverrideSuppression: b.OverrideSuppression, OverrideReason: b.OverrideReason,
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
