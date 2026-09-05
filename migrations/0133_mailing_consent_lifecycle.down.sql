@@ -267,5 +267,4 @@ BEGIN
 END;
 $$;
 
-DROP INDEX IF EXISTS mailing_tracking_event_engagement_unique;
-ALTER TABLE mailing_tracking_event DROP COLUMN IF EXISTS destination_fingerprint;
+DROP TABLE IF EXISTS mailing_tracking_engagement_dedupe;

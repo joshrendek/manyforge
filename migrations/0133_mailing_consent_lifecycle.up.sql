@@ -381,6 +381,16 @@ BEGIN
       AND tenant_root_id = p_tenant_root_id
       AND status = 'pending';
 
+    -- Lock and cancel campaign rows before sweeping deliveries. Fan-out holds
+    -- the same campaign row lock while inserting, so this ordering prevents a
+    -- newly committed delivery from falling between the two lifecycle fences.
+    UPDATE public.campaign
+    SET status = 'cancelled', updated_at = now()
+    WHERE list_id = p_list_id
+      AND business_id = p_business_id
+      AND tenant_root_id = p_tenant_root_id
+      AND status IN ('draft', 'scheduled', 'sending');
+
     UPDATE public.mailing_delivery d
     SET status = 'cancelled',
         lease_until = NULL,
@@ -395,13 +405,6 @@ BEGIN
       AND d.tenant_root_id = p_tenant_root_id
       AND d.status IN ('queued', 'sending');
 
-    UPDATE public.campaign
-    SET status = 'cancelled', updated_at = now()
-    WHERE list_id = p_list_id
-      AND business_id = p_business_id
-      AND tenant_root_id = p_tenant_root_id
-      AND status IN ('draft', 'scheduled', 'sending');
-
     RETURN 1;
 END;
 $$;
@@ -409,26 +412,23 @@ $$;
 REVOKE ALL ON FUNCTION mailing_archive_list(uuid,uuid,uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mailing_archive_list(uuid,uuid,uuid) TO manyforge_app;
 
--- Open/click detail is retained once per delivery, kind, and signed destination.
--- Existing duplicate history is collapsed before the uniqueness invariant lands.
-ALTER TABLE mailing_tracking_event
-    ADD COLUMN destination_fingerprint bytea;
+-- New engagement writes use an empty side table as their serialization point.
+-- Migration cost is independent of attacker-amplifiable legacy tracking volume:
+-- no historical tracking row is scanned, rewritten, deduplicated, or indexed.
+CREATE TABLE mailing_tracking_engagement_dedupe (
+    delivery_id             uuid NOT NULL REFERENCES mailing_delivery(id) ON DELETE CASCADE,
+    kind                    mailing_track_kind NOT NULL,
+    destination_fingerprint bytea NOT NULL,
+    created_at              timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (delivery_id, kind, destination_fingerprint),
+    CONSTRAINT mailing_tracking_engagement_dedupe_kind_chk
+        CHECK (kind IN ('open', 'click')),
+    CONSTRAINT mailing_tracking_engagement_dedupe_fingerprint_chk
+        CHECK (octet_length(destination_fingerprint) = 32)
+);
 
-UPDATE mailing_tracking_event
-SET destination_fingerprint = public.digest(COALESCE(url, ''), 'sha256')
-WHERE kind IN ('open', 'click');
-
-DELETE FROM mailing_tracking_event newer
-USING mailing_tracking_event first
-WHERE newer.kind IN ('open', 'click')
-  AND first.kind = newer.kind
-  AND first.delivery_id = newer.delivery_id
-  AND first.destination_fingerprint = newer.destination_fingerprint
-  AND (first.occurred_at, first.created_at, first.id) < (newer.occurred_at, newer.created_at, newer.id);
-
-CREATE UNIQUE INDEX mailing_tracking_event_engagement_unique
-    ON mailing_tracking_event (delivery_id, kind, destination_fingerprint)
-    WHERE delivery_id IS NOT NULL AND kind IN ('open', 'click');
+REVOKE ALL ON TABLE mailing_tracking_engagement_dedupe FROM PUBLIC;
+REVOKE ALL ON TABLE mailing_tracking_engagement_dedupe FROM manyforge_app;
 
 CREATE OR REPLACE FUNCTION mailing_record_track(
     p_delivery_id uuid, p_kind mailing_track_kind, p_url text, p_ip inet, p_ua text
@@ -451,24 +451,31 @@ BEGIN
     END IF;
 
     v_fingerprint := public.digest(COALESCE(p_url, ''), 'sha256');
+    INSERT INTO public.mailing_tracking_engagement_dedupe (
+        delivery_id, kind, destination_fingerprint
+    ) VALUES (
+        v_delivery.id, p_kind, v_fingerprint
+    )
+    ON CONFLICT (delivery_id, kind, destination_fingerprint) DO NOTHING;
+    GET DIAGNOSTICS v_inserted = ROW_COUNT;
+    IF v_inserted = 0 THEN
+        RETURN true;
+    END IF;
+
     INSERT INTO public.mailing_tracking_event (
         business_id, tenant_root_id, campaign_id, delivery_id, subscriber_id,
-        kind, url, destination_fingerprint, ip, user_agent, occurred_at
+        kind, url, ip, user_agent, occurred_at
     ) VALUES (
         v_delivery.business_id, v_delivery.tenant_root_id, v_delivery.campaign_id,
-        v_delivery.id, v_delivery.subscriber_id, p_kind, p_url, v_fingerprint,
-        p_ip, left(COALESCE(p_ua, ''), 1000), v_now
-    )
-    ON CONFLICT (delivery_id, kind, destination_fingerprint)
-        WHERE delivery_id IS NOT NULL AND kind IN ('open', 'click')
-    DO NOTHING;
-    GET DIAGNOSTICS v_inserted = ROW_COUNT;
+        v_delivery.id, v_delivery.subscriber_id, p_kind, p_url, p_ip,
+        left(COALESCE(p_ua, ''), 1000), v_now
+    );
 
-    IF v_inserted = 1 AND p_kind = 'open' THEN
+    IF p_kind = 'open' THEN
         UPDATE public.mailing_delivery
         SET opened_at = LEAST(COALESCE(opened_at, v_now), v_now), updated_at = v_now
         WHERE id = v_delivery.id;
-    ELSIF v_inserted = 1 THEN
+    ELSE
         UPDATE public.mailing_delivery
         SET first_clicked_at = LEAST(COALESCE(first_clicked_at, v_now), v_now), updated_at = v_now
         WHERE id = v_delivery.id;
