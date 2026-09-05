@@ -269,4 +269,75 @@ describe('AutomationEditorComponent', () => {
     expect(component.hasUnsavedChanges()).toBe(false);
     expect(component.serverErrors()).toEqual([]);
   });
+
+  it('hides the stats toggle for draft versions', () => {
+    mount();
+    expect(fixture.nativeElement.querySelector('[data-testid="automation-stats-toggle"]')).toBeNull();
+  });
+
+  it('hides the stats toggle for archived automations', () => {
+    mount({ automation: { ...activeAutomation, status: 'archived' }, version: makeVersion('v2', 2, 'active') });
+    expect(fixture.nativeElement.querySelector('[data-testid="automation-stats-toggle"]')).toBeNull();
+  });
+
+  it('loads and shows per-node stats when the stats toggle is turned on', () => {
+    mount({ automation: activeAutomation, version: makeVersion('v2', 2, 'active') });
+    const toggle = fixture.nativeElement.querySelector('[data-testid="automation-stats-toggle"]') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="node-stats"]')).toHaveLength(0);
+
+    toggle.click();
+    fixture.detectChanges();
+    const request = http.expectOne((req) => req.url.includes('/stats'));
+    expect(request.request.method).toBe('GET');
+    request.flush({
+      automation_id: 'a1', version_id: 'v2',
+      enrollments: { active: 1, completed: 1, exited: 0, errored: 0 },
+      nodes: [
+        { node_id: 'trigger', node_kind: 'trigger', entered: 2, waiting: 0, advanced: 2, sent: 0, opened: 0, clicked: 0, branch_yes: 0, branch_no: 0, exited: 0, errors: 0 },
+        { node_id: 'n_welcome', node_kind: 'send_email', entered: 2, waiting: 0, advanced: 1, sent: 2, opened: 1, clicked: 1, branch_yes: 0, branch_no: 0, exited: 0, errors: 0 },
+        { node_id: 'exit', node_kind: 'exit', entered: 1, waiting: 0, advanced: 0, sent: 0, opened: 0, clicked: 0, branch_yes: 0, branch_no: 0, exited: 1, errors: 0 },
+      ],
+    });
+    fixture.detectChanges();
+    const rows = fixture.nativeElement.querySelectorAll('[data-testid="node-stats"]');
+    expect(rows).toHaveLength(3);
+    // The stats bar is the direct sibling of its node button.
+    const triggerStats = fixture.nativeElement.querySelector('[data-node-id="trigger"] + [data-testid="node-stats"]');
+    expect(triggerStats?.querySelector('[data-testid="node-stat-entered"]')?.textContent).toContain('2');
+    expect(triggerStats?.querySelector('[data-testid="node-stat-completed"]')?.textContent).toContain('2');
+    const welcomeStats = fixture.nativeElement.querySelector('[data-node-id="n_welcome"] + [data-testid="node-stats"]');
+    expect(welcomeStats?.querySelector('[data-testid="node-stat-completed"]')?.textContent).toContain('3');
+    expect(welcomeStats?.querySelector('[data-testid="node-stat-sent"]')?.textContent).toContain('2');
+    expect(welcomeStats?.querySelector('[data-testid="node-stat-opened"]')?.textContent).toContain('1');
+    expect(welcomeStats?.querySelector('[data-testid="node-stat-clicked"]')?.textContent).toContain('1');
+    // non-send nodes do not show sent/opened/clicked
+    expect(triggerStats?.querySelector('[data-testid="node-stat-sent"]')).toBeNull();
+    expect(triggerStats?.querySelector('[data-testid="node-stat-opened"]')).toBeNull();
+    expect(triggerStats?.querySelector('[data-testid="node-stat-clicked"]')).toBeNull();
+
+    // Toggling off hides the overlay without another request
+    toggle.click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="node-stats"]')).toHaveLength(0);
+    http.expectNone((req) => req.url.includes('/stats'));
+  });
+
+  it('switches to the enrollments tab and back to the canvas', () => {
+    mount({ automation: activeAutomation, version: makeVersion('v2', 2, 'active') });
+    expect(fixture.nativeElement.querySelector('[data-testid="enrollments-tab"]')).toBeNull();
+
+    (fixture.nativeElement.querySelector('[data-testid="automation-tab-enrollments"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="enrollments-tab"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="canvas-node"]')).toBeNull();
+    http.expectOne((req) => req.url.includes('/enrollments')).flush({ items: [], next_cursor: null });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="enrollments-empty"]')).toBeTruthy();
+
+    (fixture.nativeElement.querySelector('[data-testid="automation-tab-canvas"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="enrollments-tab"]')).toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="canvas-node"]')).toHaveLength(3);
+  });
 });
