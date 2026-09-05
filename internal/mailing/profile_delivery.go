@@ -56,7 +56,9 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	feedbackStatus, feedbackMessage := profile.FeedbackStatus, ""
 	switch profile.Mode {
 	case "resend":
-		feedbackStatus = "ready"
+		if feedbackStatus != "ready" {
+			feedbackStatus = "pending"
+		}
 	case "relay":
 		if verifyErr == nil {
 			feedbackStatus = "ready"

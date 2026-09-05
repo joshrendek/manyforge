@@ -4,6 +4,8 @@ package mailing_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -229,10 +231,15 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if err != nil || unsupported.Status != "error" || unsupported.VerifyError == nil {
 		t.Fatalf("VerifySendingProfile without verifier = %+v, err=%v", unsupported, err)
 	}
+	arbitrarySecretBytes := make([]byte, 32)
+	if _, err = rand.Read(arbitrarySecretBytes); err != nil {
+		t.Fatal(err)
+	}
+	arbitraryWebhookSecret := "whsec_" + base64.StdEncoding.EncodeToString(arbitrarySecretBytes)
 	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
 		return callbackDeliverer{verify: func() error {
 			concurrent := profileInput
-			concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent", WebhookSecret: integrationResendWebhookSecret}
+			concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent", WebhookSecret: arbitraryWebhookSecret}
 			_, updateErr := svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
 			return updateErr
 		}}, nil
@@ -248,8 +255,14 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		return captured, nil
 	}, time.Minute)
 	verified, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
-	if err != nil || verified.Status != "verified" || verified.FeedbackStatus != "ready" || verified.FeedbackConfirmedAt == nil || !captured.verified {
-		t.Fatalf("VerifySendingProfile = %+v, err=%v, called=%v", verified, err, captured.verified)
+	if err != nil || verified.Status != "verified" || verified.FeedbackStatus != "pending" ||
+		verified.FeedbackConfirmedAt != nil || !captured.verified {
+		t.Fatalf("outbound verification promoted arbitrary Resend webhook secret = %+v, err=%v, called=%v", verified, err, captured.verified)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+		SET feedback_status='ready',feedback_error=NULL,feedback_confirmed_at=now()
+		WHERE id=$1`, verified.ID); err != nil {
+		t.Fatal(err)
 	}
 	svc.OutboundLimiter = &toggleLimiter{deny: true}
 	if err = svc.TestSendingProfile(ctx, a.principalID, a.businessID, "reader@example.net"); !errors.Is(err, errs.ErrRateLimited) {

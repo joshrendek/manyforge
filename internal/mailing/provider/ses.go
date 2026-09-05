@@ -22,6 +22,7 @@ type SESAPI interface {
 	GetEmailIdentity(context.Context, *sesv2.GetEmailIdentityInput, ...func(*sesv2.Options)) (*sesv2.GetEmailIdentityOutput, error)
 	GetAccount(context.Context, *sesv2.GetAccountInput, ...func(*sesv2.Options)) (*sesv2.GetAccountOutput, error)
 	GetConfigurationSet(context.Context, *sesv2.GetConfigurationSetInput, ...func(*sesv2.Options)) (*sesv2.GetConfigurationSetOutput, error)
+	GetConfigurationSetEventDestinations(context.Context, *sesv2.GetConfigurationSetEventDestinationsInput, ...func(*sesv2.Options)) (*sesv2.GetConfigurationSetEventDestinationsOutput, error)
 }
 
 type STSAPI interface {
@@ -35,6 +36,7 @@ type SES struct {
 	FromEmail         string
 	ConfigurationSet  string
 	ExpectedAccountID string
+	ExpectedTopicARN   string
 }
 
 type sesRequestError struct {
@@ -70,7 +72,7 @@ func NewSES(ctx context.Context, profile Profile, endpoint sesv2.EndpointResolve
 			options.EndpointResolverV2 = endpoint
 		}
 	})
-	expectedAccountID := ""
+	expectedAccountID, expectedTopicARN := "", ""
 	if topicARN := strings.TrimSpace(profile.SNSTopicARN); topicARN != "" {
 		parts := strings.SplitN(topicARN, ":", 6)
 		if len(parts) != 6 || parts[2] != "sns" || parts[3] != profile.SESRegion ||
@@ -78,11 +80,12 @@ func NewSES(ctx context.Context, profile Profile, endpoint sesv2.EndpointResolve
 			return nil, fmt.Errorf("provider: SES SNS topic ARN does not match the configured region and account")
 		}
 		expectedAccountID = parts[4]
+		expectedTopicARN = topicARN
 	}
 	return &SES{
 		Client: client, Identity: sts.NewFromConfig(cfg),
 		FromEmail: profile.FromEmail, ConfigurationSet: profile.SESConfigurationSet,
-		ExpectedAccountID: expectedAccountID,
+		ExpectedAccountID: expectedAccountID, ExpectedTopicARN: expectedTopicARN,
 	}, nil
 }
 
@@ -135,6 +138,18 @@ func (s *SES) Verify(ctx context.Context) error {
 	}); err != nil {
 		return &sesRequestError{operation: "configuration-set verification", cause: err}
 	}
+	if s.ExpectedTopicARN != "" {
+		destinations, err := s.Client.GetConfigurationSetEventDestinations(ctx,
+			&sesv2.GetConfigurationSetEventDestinationsInput{
+				ConfigurationSetName: aws.String(s.ConfigurationSet),
+			})
+		if err != nil {
+			return &sesRequestError{operation: "event-destination verification", cause: err}
+		}
+		if !hasRequiredSESFeedbackDestination(destinations.EventDestinations, s.ExpectedTopicARN) {
+			return fmt.Errorf("provider: SES configuration set has no enabled bounce and complaint destination for the configured SNS topic")
+		}
+	}
 	if s.ExpectedAccountID != "" {
 		identity, err := s.Identity.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 		if err != nil {
@@ -145,4 +160,22 @@ func (s *SES) Verify(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func hasRequiredSESFeedbackDestination(destinations []types.EventDestination, expectedTopicARN string) bool {
+	for _, destination := range destinations {
+		if !destination.Enabled || destination.SnsDestination == nil ||
+			aws.ToString(destination.SnsDestination.TopicArn) != expectedTopicARN {
+			continue
+		}
+		hasBounce, hasComplaint := false, false
+		for _, eventType := range destination.MatchingEventTypes {
+			hasBounce = hasBounce || eventType == types.EventTypeBounce
+			hasComplaint = hasComplaint || eventType == types.EventTypeComplaint
+		}
+		if hasBounce && hasComplaint {
+			return true
+		}
+	}
+	return false
 }

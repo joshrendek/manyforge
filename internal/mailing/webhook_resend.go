@@ -64,6 +64,13 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		h.authenticatedOK(w)
 		return
 	}
+	if wc.feedbackStatus != "ready" {
+		if err := h.markResendFeedbackReady(r.Context(), wc); err != nil {
+			h.logger().ErrorContext(r.Context(), "mailing Resend feedback readiness persistence failed", "profile_id", profileID, "err", err)
+			h.retryableFailure(w)
+			return
+		}
+	}
 	events := mapResendEvent(payload)
 	if err := h.recordAndApply(r.Context(), wc, "resend", eventID, body, events); err != nil {
 		h.logger().ErrorContext(r.Context(), "mailing Resend webhook apply failed", "profile_id", profileID, "event_type", payload.Type, "err", err)

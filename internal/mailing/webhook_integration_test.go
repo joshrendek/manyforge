@@ -114,6 +114,121 @@ func seedWebhookFixture(ctx context.Context, t *testing.T, tdb *testdb.TestDB, s
 	}
 }
 
+func TestResendSignedChallengeDurablyMarksFeedbackReady(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	webhookKey := bytes.Repeat([]byte{0x62}, 32)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "news@example.test", FromName: "News",
+		Resend: &mailing.ResendCredentials{
+			APIKey: "re_test", WebhookSecret: "whsec_" + base64.StdEncoding.EncodeToString(webhookKey),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile SET status='verified' WHERE id=$1`, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	h := mailing.NewWebhookHandler(tdb.App, svc.Sealer, nil)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	h.Now = func() time.Time { return now }
+	router := chi.NewRouter()
+	h.PublicRoutes(router)
+	body := []byte(`{"type":"endpoint.validation"}`)
+	ts := fmt.Sprint(now.Unix())
+	mac := hmac.New(sha256.New, webhookKey)
+	mac.Write([]byte("challenge." + ts + "."))
+	mac.Write(body)
+	req := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+profile.ID.String()+"/resend", bytes.NewReader(body))
+	req.Header.Set("svix-id", "challenge")
+	req.Header.Set("svix-timestamp", ts)
+	req.Header.Set("svix-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("signed challenge status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var status string
+	var confirmedAt *time.Time
+	if err = tdb.Super.QueryRow(ctx, `SELECT feedback_status,feedback_confirmed_at
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&status, &confirmedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "ready" || confirmedAt == nil {
+		t.Fatalf("signed challenge feedback state = %q/%v", status, confirmedAt)
+	}
+}
+
+func TestResendFeedbackReadinessPersistenceFailureReturnsRetryableResponse(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	webhookKey := bytes.Repeat([]byte{0x63}, 32)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "news@example.test", FromName: "News",
+		Resend: &mailing.ResendCredentials{
+			APIKey: "re_test", WebhookSecret: "whsec_" + base64.StdEncoding.EncodeToString(webhookKey),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile SET status='verified' WHERE id=$1`, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `CREATE FUNCTION test_resend_feedback_ready_failure()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.feedback_status = 'ready' AND OLD.feedback_status <> 'ready' THEN
+				RAISE EXCEPTION 'sensitive readiness persistence detail';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER test_resend_feedback_ready_failure
+		BEFORE UPDATE ON mailing_sending_profile
+		FOR EACH ROW EXECUTE FUNCTION test_resend_feedback_ready_failure()`); err != nil {
+		t.Fatal(err)
+	}
+	h := mailing.NewWebhookHandler(tdb.App, svc.Sealer, nil)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	h.Now = func() time.Time { return now }
+	router := chi.NewRouter()
+	h.PublicRoutes(router)
+	body := []byte(`{"type":"endpoint.validation"}`)
+	ts := fmt.Sprint(now.Unix())
+	mac := hmac.New(sha256.New, webhookKey)
+	mac.Write([]byte("challenge-failure." + ts + "."))
+	mac.Write(body)
+	req := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+profile.ID.String()+"/resend", bytes.NewReader(body))
+	req.Header.Set("svix-id", "challenge-failure")
+	req.Header.Set("svix-timestamp", ts)
+	req.Header.Set("svix-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable || w.Body.Len() != 0 {
+		t.Fatalf("readiness persistence failure response = %d/%q, want generic 503", w.Code, w.Body.String())
+	}
+	var status string
+	if err = tdb.Super.QueryRow(ctx, `SELECT feedback_status FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		t.Fatalf("feedback status after persistence failure = %q, want pending", status)
+	}
+}
+
 func TestResendWebhookIdempotencyAndMonotonicStatus(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
