@@ -338,6 +338,24 @@ func TestAutomationSecurityMigrationRoundTrip(t *testing.T) {
 		t.Fatalf("start testdb: %v", err)
 	}
 	defer database.Close(ctx)
+	seed := seedTenant(ctx, t, database)
+	mailingService := &mailing.Service{DB: database.App}
+	list, err := mailingService.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{Name: "Legacy migration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := mailingService.CreateTemplate(ctx, seed.principalID, seed.businessID, mailing.TemplateInput{
+		Name: "Legacy migration", Subject: "Legacy", BodyMarkdown: "Legacy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscriber, err := mailingService.CreateSubscriber(ctx, seed.principalID, seed.businessID, list.ID, mailing.SubscriberInput{
+		Email: "legacy@example.test", SkipConfirmation: true, ConsentSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	down, err := migrations.FS.ReadFile("0135_automation_security.down.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -345,12 +363,28 @@ func TestAutomationSecurityMigrationRoundTrip(t *testing.T) {
 	if _, err = database.Super.Exec(ctx, string(down)); err != nil {
 		t.Fatalf("apply down migration: %v", err)
 	}
+	var legacyDeliveryID uuid.UUID
+	if err = database.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_enqueue_delivery($1,$1,$2,$3,$4,now(),$5)`,
+			seed.businessID, uuid.New(), template.ID, subscriber.ID, "mail.example.test").Scan(&legacyDeliveryID)
+	}); err != nil {
+		t.Fatalf("insert legacy automation delivery: %v", err)
+	}
 	up, err := migrations.FS.ReadFile("0135_automation_security.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.Super.Exec(ctx, string(up)); err != nil {
 		t.Fatalf("reapply up migration: %v", err)
+	}
+	var legacyStatus string
+	var legacyEnrollmentID *uuid.UUID
+	if err = database.Super.QueryRow(ctx, `SELECT status::text,automation_enrollment_id
+		FROM mailing_delivery WHERE id=$1`, legacyDeliveryID).Scan(&legacyStatus, &legacyEnrollmentID); err != nil {
+		t.Fatal(err)
+	}
+	if legacyStatus != "cancelled" || legacyEnrollmentID != nil {
+		t.Fatalf("legacy automation delivery status/fence = %q/%v, want cancelled/nil", legacyStatus, legacyEnrollmentID)
 	}
 }
 
@@ -696,6 +730,97 @@ func TestAutomationFence002SendWorkerDoesNotCallProviderAfterPause(t *testing.T)
 	}
 	if captured.calls != 0 {
 		t.Fatalf("provider calls after pause = %d, want 0", captured.calls)
+	}
+}
+
+func TestAutomationFence002DeliveryFenceIsImmutableAndConflictBound(t *testing.T) {
+	fixture := newAutomationSecurityFixture(t)
+	ports := mailing.AutomationPorts{MessageDomain: "mail.example.test"}
+	sourceID := uuid.New()
+	var deliveryID uuid.UUID
+	if err := fixture.database.App.WithTx(fixture.ctx, func(tx pgx.Tx) error {
+		var enqueueErr error
+		deliveryID, enqueueErr = ports.Enqueue(fixture.ctx, tx, automations.MessageSpec{
+			BusinessID: fixture.seed.businessID, TenantRootID: fixture.seed.businessID,
+			SubscriberID: fixture.subscriberID, TemplateID: fixture.templateID,
+			EnrollmentID: fixture.enrollmentID, ClaimGeneration: fixture.claimGeneration,
+			TrackOpens: true, TrackClicks: true, SourceKind: "automation",
+			SourceID: sourceID, NotBefore: time.Now().UTC(),
+		})
+		return enqueueErr
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mutationErr := fixture.database.App.WithPrincipal(
+		fixture.ctx, fixture.seed.principalID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(fixture.ctx, `UPDATE mailing_delivery
+				SET automation_claim_generation=automation_claim_generation+1 WHERE id=$1`, deliveryID)
+			return err
+		},
+	)
+	if mutationErr == nil {
+		t.Fatal("app role could mutate automation delivery fence columns after enqueue")
+	}
+	rawInsertErr := fixture.database.App.WithPrincipal(
+		fixture.ctx, fixture.seed.principalID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(fixture.ctx, `INSERT INTO mailing_delivery
+				(id,business_id,tenant_root_id,source_kind,source_id,template_id,subscriber_id,
+				 email,not_before,message_id,automation_enrollment_id,automation_version_id,
+				 automation_claim_generation)
+				VALUES ($1,$2,$2,'automation',$3,$4,$5,'forged@example.test',now(),$6,$7,$8,$9)`,
+				uuid.New(), fixture.seed.businessID, uuid.New(), fixture.templateID,
+				fixture.subscriberID, uuid.NewString()+"@mail.example.test",
+				fixture.enrollmentID, fixture.versionID, fixture.claimGeneration)
+			return err
+		},
+	)
+	if rawInsertErr == nil {
+		t.Fatal("app role could forge a raw automation delivery")
+	}
+	if _, err := fixture.database.Super.Exec(fixture.ctx, `UPDATE automation_enrollment
+		SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, fixture.enrollmentID); err != nil {
+		t.Fatal(err)
+	}
+	var renewedGeneration int
+	if err := fixture.database.App.WithTx(fixture.ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(fixture.ctx, `SELECT claim_generation
+			FROM automation_claim_due(now(),1,interval '2 minutes')`).Scan(&renewedGeneration)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := fixture.database.App.WithTx(fixture.ctx, func(tx pgx.Tx) error {
+		_, enqueueErr := ports.Enqueue(fixture.ctx, tx, automations.MessageSpec{
+			BusinessID: fixture.seed.businessID, TenantRootID: fixture.seed.businessID,
+			SubscriberID: fixture.subscriberID, TemplateID: fixture.templateID,
+			EnrollmentID: fixture.enrollmentID, ClaimGeneration: renewedGeneration,
+			TrackOpens: true, TrackClicks: true, SourceKind: "automation",
+			SourceID: sourceID, NotBefore: time.Now().UTC(),
+		})
+		return enqueueErr
+	})
+	if !errors.Is(err, automations.ErrLostFence) {
+		t.Fatalf("enqueue conflict with a different generation error = %v, want lost fence", err)
+	}
+	const deliveryGeneration = 11
+	if _, err := fixture.database.Super.Exec(fixture.ctx, `UPDATE mailing_delivery
+		SET status='sending',claim_generation=$2,lease_until=now()+interval '2 minutes'
+		WHERE id=$1`, deliveryID, deliveryGeneration); err != nil {
+		t.Fatal(err)
+	}
+	var renewed bool
+	if err := fixture.database.App.WithTx(fixture.ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(fixture.ctx,
+			`SELECT mailing_renew_delivery($1,$2,interval '2 minutes')`,
+			deliveryID, deliveryGeneration).Scan(&renewed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	providerCalls := 0
+	if renewed {
+		providerCalls++
+	}
+	if renewed || providerCalls != 0 {
+		t.Fatalf("mismatched delivery renewed=%v provider calls=%d, want no renewal or provider call", renewed, providerCalls)
 	}
 }
 

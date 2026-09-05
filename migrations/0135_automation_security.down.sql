@@ -521,9 +521,17 @@ GRANT EXECUTE ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) TO 
 GRANT EXECUTE ON FUNCTION mailing_renew_delivery(uuid,integer,interval) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text) TO manyforge_app;
 
+DROP TRIGGER mailing_delivery_automation_fence_guard ON mailing_delivery;
+DROP FUNCTION mailing_delivery_automation_fence_guard();
+
 ALTER TABLE mailing_delivery
-    DROP CONSTRAINT mailing_delivery_automation_fence_ck,
+    DROP CONSTRAINT mailing_delivery_automation_sendable_fence_ck,
+    DROP CONSTRAINT mailing_delivery_automation_source_fence_ck,
+    DROP CONSTRAINT mailing_delivery_automation_fence_pair_ck,
     DROP COLUMN automation_claim_generation,
+    DROP COLUMN automation_version_id,
     DROP COLUMN automation_enrollment_id;
+
+GRANT INSERT ON TABLE mailing_delivery TO manyforge_app;
 
 DROP FUNCTION automation_execution_fence(uuid,integer,uuid,uuid,uuid);
