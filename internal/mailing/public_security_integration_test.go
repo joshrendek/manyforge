@@ -310,10 +310,9 @@ func TestMFMailLifecycle002ArchiveSerializesConcurrentFanout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	subscriber, err := h.svc.CreateSubscriber(h.ctx, h.seed.principalID, h.seed.businessID, list.ID, mailing.SubscriberInput{
+	if _, err = h.svc.CreateSubscriber(h.ctx, h.seed.principalID, h.seed.businessID, list.ID, mailing.SubscriberInput{
 		Email: "fanout-race@example.test", SkipConfirmation: true, ConsentSource: "manual",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	campaign, err := h.svc.CreateCampaign(h.ctx, h.seed.principalID, h.seed.businessID, mailing.CampaignInput{
@@ -347,12 +346,19 @@ func TestMFMailLifecycle002ArchiveSerializesConcurrentFanout(t *testing.T) {
 	if _, err := fanoutTx.Exec(h.ctx, `SELECT id FROM campaign WHERE id=$1 FOR UPDATE`, campaign.ID); err != nil {
 		t.Fatal(err)
 	}
+	var inserted int
+	var done bool
+	if err := fanoutTx.QueryRow(h.ctx, `SELECT inserted_count,fanout_done
+		FROM mailing_fanout_batch($1,1,$2)`, campaign.ID, "mail.example.test").
+		Scan(&inserted, &done); err != nil {
+		t.Fatal(err)
+	}
+	if inserted != 1 {
+		t.Fatalf("fanout inserted=%d done=%v, want one delivery", inserted, done)
+	}
 	var deliveryID uuid.UUID
-	if err := fanoutTx.QueryRow(h.ctx, `INSERT INTO mailing_delivery (
-		business_id,tenant_root_id,source_kind,source_id,campaign_id,subscriber_id,email,status,message_id
-	) VALUES ($1,$2,'campaign',$3,$3,$4,$5,'queued',$6) RETURNING id`,
-		h.seed.businessID, list.TenantRootID, campaign.ID, subscriber.ID, subscriber.Email,
-		"archive-race@example.test").Scan(&deliveryID); err != nil {
+	if err := fanoutTx.QueryRow(h.ctx, `SELECT id FROM mailing_delivery
+		WHERE campaign_id=$1 AND source_kind='campaign'`, campaign.ID).Scan(&deliveryID); err != nil {
 		t.Fatal(err)
 	}
 
