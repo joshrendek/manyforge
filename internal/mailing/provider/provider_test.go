@@ -331,13 +331,20 @@ func TestResendEnsureWebhookRejectsWrongExistingRoute(t *testing.T) {
 func TestResendCleanupWebhooksDeletesAllExactEndpointHooks(t *testing.T) {
 	const endpoint = "https://hub.example.test/inbound/mailing/profile-a/resend"
 	var deleted []string
+	listCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/webhooks":
-			_, _ = io.WriteString(w, `{"has_more":false,"data":[
-				{"id":"wh_b","endpoint":"`+endpoint+`"},
-				{"id":"wh_a","endpoint":"`+endpoint+`"},
-				{"id":"wh_other","endpoint":"https://other.example.test/resend"}]}`)
+			listCalls++
+			if len(deleted) == 0 {
+				_, _ = io.WriteString(w, `{"has_more":false,"data":[
+					{"id":"wh_b","endpoint":"`+endpoint+`"},
+					{"id":"wh_a","endpoint":"`+endpoint+`"},
+					{"id":"wh_other","endpoint":"https://other.example.test/resend"}]}`)
+			} else {
+				_, _ = io.WriteString(w, `{"has_more":false,"data":[
+					{"id":"wh_other","endpoint":"https://other.example.test/resend"}]}`)
+			}
 		case req.Method == http.MethodDelete:
 			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/webhooks/"))
 			w.WriteHeader(http.StatusNoContent)
@@ -347,11 +354,30 @@ func TestResendCleanupWebhooksDeletesAllExactEndpointHooks(t *testing.T) {
 	}))
 	defer server.Close()
 	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
-	if err := r.CleanupWebhooks(context.Background(), endpoint, ""); err != nil {
+	if err := r.CleanupWebhooks(context.Background(), endpoint, "", true); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(deleted, []string{"wh_b", "wh_a"}) {
-		t.Fatalf("deleted exact-endpoint hooks = %v", deleted)
+	if !slices.Equal(deleted, []string{"wh_b", "wh_a"}) || listCalls != 2 {
+		t.Fatalf("replacement cleanup deleted=%v list_calls=%d", deleted, listCalls)
+	}
+}
+
+func TestResendCleanupWebhooksRejectsEmptyReplacementAccount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet || req.URL.Path != "/webhooks" {
+			t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"has_more":false,"data":[]}`)
+	}))
+	defer server.Close()
+	r := &Resend{APIKey: "re_other_account", BaseURL: server.URL, Client: server.Client()}
+	if err := r.CleanupWebhooks(context.Background(),
+		"https://hub.example.test/inbound/mailing/profile-a/resend", "wh_expected", true); err == nil {
+		t.Fatal("empty replacement-account list accepted as cleanup proof")
+	}
+	if err := r.CleanupWebhooks(context.Background(),
+		"https://hub.example.test/inbound/mailing/profile-a/resend", "", false); err != nil {
+		t.Fatalf("retained account-bound key could not prove exact-endpoint absence: %v", err)
 	}
 }
 

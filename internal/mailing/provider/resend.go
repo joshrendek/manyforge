@@ -35,7 +35,7 @@ type ResendWebhook struct {
 
 type ResendWebhookProvisioner interface {
 	EnsureWebhook(context.Context, string, string) (ResendWebhook, bool, error)
-	CleanupWebhooks(context.Context, string, string) error
+	CleanupWebhooks(context.Context, string, string, bool) error
 	DeleteWebhook(context.Context, string) error
 }
 
@@ -190,26 +190,50 @@ func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID str
 	}
 	return ResendWebhook{ID: candidates[0].ID, SigningSecret: candidates[0].SigningSecret}, true, nil
 }
-func (r *Resend) CleanupWebhooks(ctx context.Context, endpoint, existingID string) error {
+func (r *Resend) CleanupWebhooks(ctx context.Context, endpoint, existingID string, requireMatch bool) error {
+	matches, err := r.listCleanupMatches(ctx, endpoint, existingID)
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		if requireMatch {
+			return fmt.Errorf("provider: replacement Resend key did not find the webhook cleanup target")
+		}
+		return nil
+	}
+	for _, match := range matches {
+		if err := r.DeleteWebhook(ctx, match.ID); err != nil {
+			return err
+		}
+	}
+	remaining, err := r.listCleanupMatches(ctx, endpoint, existingID)
+	if err != nil {
+		return err
+	}
+	if len(remaining) != 0 {
+		return fmt.Errorf("provider: Resend webhook cleanup was not confirmed")
+	}
+	return nil
+}
+
+func (r *Resend) listCleanupMatches(ctx context.Context, endpoint, existingID string) ([]resendWebhookResponse, error) {
 	var listed struct {
 		HasMore bool                    `json:"has_more"`
 		Data    []resendWebhookResponse `json:"data"`
 	}
 	if err := r.do(ctx, http.MethodGet, "/webhooks?limit=100", nil, "", &listed); err != nil {
-		return err
+		return nil, err
 	}
 	if listed.HasMore || len(listed.Data) > 100 {
-		return fmt.Errorf("provider: resend webhook cleanup exceeds the bounded page")
+		return nil, fmt.Errorf("provider: resend webhook cleanup exceeds the bounded page")
 	}
+	matches := make([]resendWebhookResponse, 0)
 	for _, summary := range listed.Data {
-		if summary.Endpoint != endpoint && summary.ID != existingID {
-			continue
-		}
-		if err := r.DeleteWebhook(ctx, summary.ID); err != nil {
-			return err
+		if summary.Endpoint == endpoint || summary.ID == existingID {
+			matches = append(matches, summary)
 		}
 	}
-	return nil
+	return matches, nil
 }
 
 func (r *Resend) DeleteWebhook(ctx context.Context, webhookID string) error {
