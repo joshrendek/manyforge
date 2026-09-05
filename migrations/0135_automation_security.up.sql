@@ -2,10 +2,105 @@
 
 ALTER TABLE mailing_delivery
     ADD COLUMN automation_enrollment_id uuid REFERENCES automation_enrollment(id),
-    ADD COLUMN automation_claim_generation integer,
-    ADD CONSTRAINT mailing_delivery_automation_fence_ck CHECK (
-        (automation_enrollment_id IS NULL) = (automation_claim_generation IS NULL)
+    ADD COLUMN automation_version_id uuid REFERENCES automation_version(id),
+    ADD COLUMN automation_claim_generation integer;
+
+UPDATE mailing_delivery
+SET status = 'cancelled',
+    lease_until = NULL,
+    last_error = 'legacy automation delivery lacked a trustworthy execution fence',
+    updated_at = now()
+WHERE source_kind = 'automation'
+  AND status IN ('queued','sending');
+
+ALTER TABLE mailing_delivery
+    ADD CONSTRAINT mailing_delivery_automation_fence_pair_ck CHECK (
+        (automation_enrollment_id IS NULL
+         AND automation_version_id IS NULL
+         AND automation_claim_generation IS NULL)
+        OR
+        (automation_enrollment_id IS NOT NULL
+         AND automation_version_id IS NOT NULL
+         AND automation_claim_generation IS NOT NULL)
+    ),
+    ADD CONSTRAINT mailing_delivery_automation_source_fence_ck CHECK (
+        source_kind = 'automation'
+        OR automation_enrollment_id IS NULL
+    ),
+    ADD CONSTRAINT mailing_delivery_automation_sendable_fence_ck CHECK (
+        source_kind <> 'automation'
+        OR status NOT IN ('queued','sending')
+        OR automation_enrollment_id IS NOT NULL
     );
+
+CREATE FUNCTION mailing_delivery_automation_fence_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND (
+        NEW.business_id IS DISTINCT FROM OLD.business_id
+        OR NEW.tenant_root_id IS DISTINCT FROM OLD.tenant_root_id
+        OR NEW.source_kind IS DISTINCT FROM OLD.source_kind
+        OR NEW.source_id IS DISTINCT FROM OLD.source_id
+        OR NEW.template_id IS DISTINCT FROM OLD.template_id
+        OR NEW.subscriber_id IS DISTINCT FROM OLD.subscriber_id
+        OR NEW.automation_enrollment_id IS DISTINCT FROM OLD.automation_enrollment_id
+        OR NEW.automation_version_id IS DISTINCT FROM OLD.automation_version_id
+        OR NEW.automation_claim_generation IS DISTINCT FROM OLD.automation_claim_generation
+    ) THEN
+        RAISE EXCEPTION 'mailing delivery authorization identity is immutable' USING ERRCODE = '23514';
+    END IF;
+
+    IF TG_OP = 'INSERT'
+       AND NEW.source_kind = 'automation'
+       AND NEW.status IN ('queued','sending')
+       AND NOT EXISTS (
+           SELECT 1
+           FROM automation_enrollment e
+           JOIN automation a
+             ON a.id = e.automation_id
+            AND a.business_id = e.business_id
+            AND a.tenant_root_id = e.tenant_root_id
+           JOIN automation_version v
+             ON v.id = e.version_id
+            AND v.automation_id = e.automation_id
+            AND v.business_id = e.business_id
+            AND v.tenant_root_id = e.tenant_root_id
+           JOIN list_subscriber s
+             ON s.id = e.subscriber_id
+            AND s.business_id = e.business_id
+            AND s.tenant_root_id = e.tenant_root_id
+           WHERE e.id = NEW.automation_enrollment_id
+             AND e.version_id = NEW.automation_version_id
+             AND e.claim_generation = NEW.automation_claim_generation
+             AND e.status = 'active'
+             AND e.business_id = NEW.business_id
+             AND e.tenant_root_id = NEW.tenant_root_id
+             AND e.subscriber_id = NEW.subscriber_id
+             AND a.status = 'active'
+             AND v.content_snapshot->'templates' ? NEW.template_id::text
+             AND s.status = 'active'
+             AND mailing_business_operational(e.business_id,e.tenant_root_id)
+             AND mailing_list_operational(s.list_id,s.business_id,s.tenant_root_id)
+             AND tenant_merge_root_write_allowed(e.tenant_root_id)
+       ) THEN
+        RAISE EXCEPTION 'invalid automation delivery execution fence' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER mailing_delivery_automation_fence_guard
+BEFORE INSERT OR UPDATE OF business_id, tenant_root_id, source_kind, source_id, template_id,
+    subscriber_id, automation_enrollment_id, automation_version_id, automation_claim_generation
+ON mailing_delivery
+FOR EACH ROW EXECUTE FUNCTION mailing_delivery_automation_fence_guard();
+
+REVOKE ALL ON FUNCTION mailing_delivery_automation_fence_guard() FROM PUBLIC;
+REVOKE INSERT ON TABLE mailing_delivery FROM manyforge_app;
 
 DROP FUNCTION automation_ingest_event(uuid,uuid,uuid,text,citext,uuid,timestamptz,jsonb,text);
 
@@ -388,7 +483,7 @@ CREATE FUNCTION mailing_enqueue_delivery(
     p_track_opens boolean, p_track_clicks boolean,
     p_enrollment_id uuid, p_claim_generation integer
 ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_id uuid := gen_random_uuid(); v_email citext; v_existing uuid;
+DECLARE v_id uuid := gen_random_uuid(); v_email citext; v_version_id uuid; v_existing uuid;
 BEGIN
     IF p_message_domain IS NULL OR lower(btrim(p_message_domain)) !~ '^[a-z0-9.-]+$' THEN
         RAISE EXCEPTION 'invalid mailing message domain' USING ERRCODE = '22023';
@@ -396,7 +491,7 @@ BEGIN
     IF NOT automation_execution_fence(
         p_enrollment_id, p_claim_generation, p_business_id, p_tenant_root_id, p_subscriber_id
     ) THEN RETURN NULL; END IF;
-    SELECT s.email INTO v_email
+    SELECT s.email, v.id INTO v_email, v_version_id
     FROM list_subscriber s
     JOIN automation_enrollment e ON e.id = p_enrollment_id
     JOIN automation_version v ON v.id = e.version_id
@@ -409,17 +504,24 @@ BEGIN
         id, business_id, tenant_root_id, source_kind, source_id, template_id,
         subscriber_id, email, not_before, message_id,
         track_opens_override, track_clicks_override,
-        automation_enrollment_id, automation_claim_generation
+        automation_enrollment_id, automation_version_id, automation_claim_generation
     ) VALUES (v_id, p_business_id, p_tenant_root_id, 'automation', p_source_id,
               p_template_id, p_subscriber_id, v_email, COALESCE(p_not_before, now()),
               v_id::text || '@' || lower(btrim(p_message_domain)),
-              p_track_opens, p_track_clicks, p_enrollment_id, p_claim_generation)
+              p_track_opens, p_track_clicks, p_enrollment_id, v_version_id, p_claim_generation)
     ON CONFLICT (source_kind, source_id, subscriber_id) DO NOTHING
     RETURNING id INTO v_existing;
     IF v_existing IS NULL THEN
         SELECT id INTO v_existing FROM mailing_delivery
-        WHERE source_kind = 'automation' AND source_id = p_source_id
-          AND subscriber_id = p_subscriber_id;
+        WHERE business_id = p_business_id
+          AND tenant_root_id = p_tenant_root_id
+          AND source_kind = 'automation'
+          AND source_id = p_source_id
+          AND subscriber_id = p_subscriber_id
+          AND template_id = p_template_id
+          AND automation_enrollment_id = p_enrollment_id
+          AND automation_version_id = v_version_id
+          AND automation_claim_generation = p_claim_generation;
     END IF;
     RETURN v_existing;
 END;
@@ -459,10 +561,13 @@ AS $$
                    AND s.tenant_root_id = e.tenant_root_id
                   WHERE e.id = d.automation_enrollment_id
                     AND e.subscriber_id = d.subscriber_id
+                    AND e.version_id = d.automation_version_id
+                    AND e.business_id = d.business_id
+                    AND e.tenant_root_id = d.tenant_root_id
                     AND e.claim_generation = d.automation_claim_generation
                     AND e.status IN ('active','completed')
                     AND a.status = 'active'
-                    AND v.content_snapshot IS NOT NULL
+                    AND v.content_snapshot->'templates' ? d.template_id::text
                     AND v.id = e.version_id
                     AND s.status = 'active'
                     AND mailing_business_operational(e.business_id,e.tenant_root_id)
