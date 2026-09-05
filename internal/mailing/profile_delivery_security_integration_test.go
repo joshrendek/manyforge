@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/google/uuid"
 
 	"github.com/manyforge/manyforge/internal/mailing"
@@ -26,6 +27,7 @@ type fakeResendProvisioner struct {
 	endpoints []string
 	deleted   []string
 	ensureErr error
+	deleteErr error
 }
 
 func (f *fakeResendProvisioner) Verify(context.Context) error { return nil }
@@ -47,7 +49,7 @@ func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, exist
 
 func (f *fakeResendProvisioner) DeleteWebhook(_ context.Context, id string) error {
 	f.deleted = append(f.deleted, id)
-	return nil
+	return f.deleteErr
 }
 
 
@@ -354,12 +356,135 @@ func TestMFMailFeedback001ResendProvisioningDBFailureNeverReady(t *testing.T) {
 	if status == "verified" || feedbackStatus == "ready" {
 		t.Fatalf("failed provisioning state = %q/%q", status, feedbackStatus)
 	}
-	if len(provisioner.deleted) != 1 {
-		t.Fatalf("new remote webhook cleanup calls = %v", provisioner.deleted)
+	if len(provisioner.deleted) != 0 {
+		t.Fatalf("persistence ambiguity must retain the remotely provisioned webhook: %v", provisioner.deleted)
+	}
+	if _, err = tdb.Super.Exec(ctx, `DROP TRIGGER test_resend_provision_failure ON mailing_sending_profile;
+		DROP FUNCTION test_resend_provision_failure()`); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID)
+	if err != nil || recovered.FeedbackStatus != "ready" {
+		t.Fatalf("provisioning reconciliation retry = %+v, err=%v", recovered, err)
 	}
 }
 
-func storedResendWebhookSecret(t *testing.T, ctx context.Context, tdb *testdb.TestDB, svc *mailing.Service, profileID uuid.UUID) string {
+func TestMFMailFeedback001ResendDeleteFailureRetainsProfileAndCredentialsForRetry(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "retain@example.test", FromName: "Retain",
+		Resend: &mailing.ResendCredentials{APIKey: "re_retain"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioner := &fakeResendProvisioner{}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	var secretID uuid.UUID
+	if err = tdb.Super.QueryRow(ctx, `SELECT secret_ref FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&secretID); err != nil {
+		t.Fatal(err)
+	}
+	provisioner.deleteErr = errors.New("provider cleanup unavailable")
+	if err = svc.DeleteSendingProfile(ctx, seed.principalID, seed.businessID); err == nil {
+		t.Fatal("delete acknowledged despite provider cleanup failure")
+	}
+	var status, feedbackStatus string
+	var lease pgtype.UUID
+	if err = tdb.Super.QueryRow(ctx, `SELECT status,feedback_status,resend_provisioning_token
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&status, &feedbackStatus, &lease); err != nil {
+		t.Fatal(err)
+	}
+	if status != "unverified" || feedbackStatus != "pending" || lease.Valid {
+		t.Fatalf("retained profile state = %q/%q lease=%v", status, feedbackStatus, lease)
+	}
+	var secretCount int
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret WHERE id=$1`, secretID).Scan(&secretCount); err != nil || secretCount != 1 {
+		t.Fatalf("retained credential count = %d, err=%v", secretCount, err)
+	}
+	provisioner.deleteErr = nil
+	if err = svc.DeleteSendingProfile(ctx, seed.principalID, seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	var profileCount int
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&profileCount); err != nil {
+		t.Fatal(err)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret WHERE id=$1`, secretID).Scan(&secretCount); err != nil {
+		t.Fatal(err)
+	}
+	if profileCount != 0 || secretCount != 0 || len(provisioner.deleted) != 2 {
+		t.Fatalf("cleanup retry profile=%d secret=%d calls=%v", profileCount, secretCount, provisioner.deleted)
+	}
+}
+
+func TestMFMailFeedback001ResendProvisioningLeaseSerializesMutation(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "lease@example.test", FromName: "Lease",
+		Resend: &mailing.ResendCredentials{APIKey: "re_lease"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := uuid.New()
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile SET
+		resend_provisioning_token=$1,resend_provisioning_expires_at=now()+interval '2 minutes'
+		WHERE id=$2`, held, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	provisioner := &fakeResendProvisioner{}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	if _, err = svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "changed@example.test", FromName: "Changed",
+	}); err == nil {
+		t.Fatal("profile mutation bypassed active Resend provisioning lease")
+	}
+	if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); err == nil {
+		t.Fatal("verification bypassed active Resend provisioning lease")
+	}
+	if len(provisioner.endpoints) != 0 || len(provisioner.deleted) != 0 {
+		t.Fatalf("remote side effects while lease held: ensure=%v delete=%v", provisioner.endpoints, provisioner.deleted)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+		SET resend_provisioning_expires_at=now()-interval '1 second' WHERE id=$1`, profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "changed@example.test", FromName: "Changed",
+	})
+	if err != nil || updated.FromEmail != "changed@example.test" {
+		t.Fatalf("expired lease mutation = %+v, err=%v", updated, err)
+	}
+}
+
+type storedResendBundle struct {
+	Version       int    `json:"version"`
+	WebhookID     string `json:"webhook_id"`
+	WebhookSecret string `json:"webhook_secret"`
+}
+
+func loadStoredResendBundle(t *testing.T, ctx context.Context, tdb *testdb.TestDB, svc *mailing.Service, profileID uuid.UUID) storedResendBundle {
 	t.Helper()
 	var sealed string
 	if err := tdb.Super.QueryRow(ctx, `SELECT s.sealed_value FROM secret s
@@ -371,13 +496,16 @@ func storedResendWebhookSecret(t *testing.T, ctx context.Context, tdb *testdb.Te
 		t.Fatal(err)
 	}
 	defer clear(raw)
-	var stored struct {
-		WebhookSecret string `json:"webhook_secret"`
-	}
+	var stored storedResendBundle
 	if err = json.Unmarshal(raw, &stored); err != nil {
 		t.Fatal(err)
 	}
-	return stored.WebhookSecret
+	return stored
+}
+
+func storedResendWebhookSecret(t *testing.T, ctx context.Context, tdb *testdb.TestDB, svc *mailing.Service, profileID uuid.UUID) string {
+	t.Helper()
+	return loadStoredResendBundle(t, ctx, tdb, svc, profileID).WebhookSecret
 }
 
 func TestProviderFeedbackMigrationRoundTrip(t *testing.T) {
@@ -387,6 +515,12 @@ func TestProviderFeedbackMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tdb.Close(ctx)
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	legacy, err := svc.GetSendingProfile(ctx, seed.principalID, seed.businessID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	down, err := os.ReadFile("../../migrations/0134_mailing_provider_feedback.down.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -400,5 +534,13 @@ func TestProviderFeedbackMigrationRoundTrip(t *testing.T) {
 	}
 	if _, err = tdb.Super.Exec(ctx, string(up)); err != nil {
 		t.Fatalf("0134 up migration after rollback: %v", err)
+	}
+	var status, feedbackStatus string
+	if err = tdb.Super.QueryRow(ctx, `SELECT status,feedback_status
+		FROM mailing_sending_profile WHERE id=$1`, legacy.ID).Scan(&status, &feedbackStatus); err != nil {
+		t.Fatal(err)
+	}
+	if status != "unverified" || feedbackStatus != "pending" {
+		t.Fatalf("legacy Resend migration state = %q/%q", status, feedbackStatus)
 	}
 }

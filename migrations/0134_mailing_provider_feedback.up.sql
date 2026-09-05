@@ -1,5 +1,26 @@
 -- 0134: Durable provider feedback and bounded authenticated webhook processing.
 
+ALTER TABLE mailing_sending_profile
+    ADD COLUMN resend_provisioning_token uuid,
+    ADD COLUMN resend_provisioning_expires_at timestamptz,
+    ADD CONSTRAINT mailing_resend_provisioning_lease_chk CHECK (
+        (resend_provisioning_token IS NULL AND resend_provisioning_expires_at IS NULL)
+        OR (resend_provisioning_token IS NOT NULL AND resend_provisioning_expires_at IS NOT NULL)
+    );
+
+-- All pre-0134 Resend secrets were supplied by tenants and are not provider
+-- attestations. Fail closed until control-plane provisioning writes a v2 bundle.
+UPDATE mailing_sending_profile
+SET status = 'unverified',
+    last_verified_at = NULL,
+    verify_error = NULL,
+    feedback_status = 'pending',
+    feedback_error = NULL,
+    feedback_confirmed_at = NULL,
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL
+WHERE mode = 'resend';
+
 ALTER TABLE mailing_provider_webhook_delivery
     ADD COLUMN envelope_payload jsonb,
     ADD COLUMN normalized_events jsonb,

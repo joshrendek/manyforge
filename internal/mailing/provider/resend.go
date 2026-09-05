@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/mail"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/manyforge/manyforge/internal/platform/notify"
@@ -119,17 +121,8 @@ func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string)
 	if endpoint == "" {
 		return ResendWebhook{}, false, fmt.Errorf("provider: resend webhook endpoint is required")
 	}
-	if existingID != "" {
-		var existing resendWebhookResponse
-		if err := r.do(ctx, http.MethodGet, "/webhooks/"+url.PathEscape(existingID), nil, "", &existing); err != nil {
-			return ResendWebhook{}, false, err
-		}
-		if existing.ID != existingID || existing.Status != "enabled" || existing.Endpoint != endpoint ||
-			!containsResendEvents(existing.Events, "email.bounced", "email.complained") ||
-			!validResendSigningSecret(existing.SigningSecret) {
-			return ResendWebhook{}, false, fmt.Errorf("provider: resend webhook does not match the required feedback route")
-		}
-		return ResendWebhook{ID: existing.ID, SigningSecret: existing.SigningSecret}, false, nil
+	if webhook, found, err := r.reconcileWebhooks(ctx, endpoint, existingID); err != nil || found {
+		return webhook, false, err
 	}
 	payload := struct {
 		Endpoint string   `json:"endpoint"`
@@ -139,20 +132,73 @@ func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string)
 		Events:   []string{"email.bounced", "email.complained"},
 	}
 	var created resendWebhookResponse
-	if err := r.do(ctx, http.MethodPost, "/webhooks", payload, "", &created); err != nil {
-		return ResendWebhook{}, false, err
+	createErr := r.do(ctx, http.MethodPost, "/webhooks", payload, "", &created)
+	webhook, found, reconcileErr := r.reconcileWebhooks(ctx, endpoint, created.ID)
+	if reconcileErr != nil {
+		return ResendWebhook{}, false, reconcileErr
 	}
-	if strings.TrimSpace(created.ID) == "" || !validResendSigningSecret(created.SigningSecret) {
-		return ResendWebhook{}, false, fmt.Errorf("provider: resend returned an invalid webhook credential")
+	if found {
+		return webhook, true, nil
 	}
-	return ResendWebhook{ID: created.ID, SigningSecret: created.SigningSecret}, true, nil
+	if createErr != nil {
+		return ResendWebhook{}, false, createErr
+	}
+	return ResendWebhook{}, false, fmt.Errorf("provider: resend created webhook was not visible during reconciliation")
 }
 
+func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID string) (ResendWebhook, bool, error) {
+	var listed struct {
+		HasMore bool                    `json:"has_more"`
+		Data    []resendWebhookResponse `json:"data"`
+	}
+	if err := r.do(ctx, http.MethodGet, "/webhooks?limit=100", nil, "", &listed); err != nil {
+		return ResendWebhook{}, false, err
+	}
+	if listed.HasMore || len(listed.Data) > 100 {
+		return ResendWebhook{}, false, fmt.Errorf("provider: resend webhook reconciliation exceeds the bounded page")
+	}
+	candidates := make([]resendWebhookResponse, 0, 1)
+	for _, summary := range listed.Data {
+		if summary.Endpoint != endpoint && summary.ID != existingID {
+			continue
+		}
+		var detail resendWebhookResponse
+		if err := r.do(ctx, http.MethodGet, "/webhooks/"+url.PathEscape(summary.ID), nil, "", &detail); err != nil {
+			return ResendWebhook{}, false, err
+		}
+		valid := detail.ID == summary.ID && detail.Status == "enabled" &&
+			detail.Endpoint == endpoint &&
+			containsResendEvents(detail.Events, "email.bounced", "email.complained") &&
+			validResendSigningSecret(detail.SigningSecret)
+		if !valid {
+			if err := r.DeleteWebhook(ctx, summary.ID); err != nil {
+				return ResendWebhook{}, false, err
+			}
+			continue
+		}
+		candidates = append(candidates, detail)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+	if len(candidates) == 0 {
+		return ResendWebhook{}, false, nil
+	}
+	for _, duplicate := range candidates[1:] {
+		if err := r.DeleteWebhook(ctx, duplicate.ID); err != nil {
+			return ResendWebhook{}, false, err
+		}
+	}
+	return ResendWebhook{ID: candidates[0].ID, SigningSecret: candidates[0].SigningSecret}, true, nil
+}
 func (r *Resend) DeleteWebhook(ctx context.Context, webhookID string) error {
 	if strings.TrimSpace(webhookID) == "" {
 		return nil
 	}
-	return r.do(ctx, http.MethodDelete, "/webhooks/"+url.PathEscape(webhookID), nil, "", nil)
+	err := r.do(ctx, http.MethodDelete, "/webhooks/"+url.PathEscape(webhookID), nil, "", nil)
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
 }
 
 func containsResendEvents(events []string, required ...string) bool {

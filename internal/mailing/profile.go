@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -24,11 +25,13 @@ var (
 	snsTopicPattern            = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}(\.fifo)?$`)
 )
 
-type resendWebhookCleanup struct {
-	profileID uuid.UUID
-	updatedAt time.Time
-	apiKey    string
-	webhookID string
+type resendOperationLease struct {
+	profileID    uuid.UUID
+	tenantRootID uuid.UUID
+	updatedAt    time.Time
+	token        uuid.UUID
+	apiKey       string
+	webhookID    string
 }
 
 func (s *Service) GetSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) (SendingProfile, error) {
@@ -102,8 +105,17 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 	if err != nil {
 		return SendingProfile{}, validation("invalid credentials")
 	}
+	lease, err := s.claimResendMutation(ctx, principalID, businessID)
+	if err != nil {
+		return SendingProfile{}, err
+	}
+	if lease != nil && lease.webhookID != "" {
+		if err = s.deleteResendWebhook(ctx, *lease); err != nil {
+			s.releaseResendMutation(ctx, principalID, *lease)
+			return SendingProfile{}, err
+		}
+	}
 	var out SendingProfile
-	var cleanup *resendWebhookCleanup
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
@@ -115,34 +127,25 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		if existingErr != nil && !errors.Is(existingErr, pgx.ErrNoRows) {
 			return existingErr
 		}
-		if hasExisting && existing.Mode == dbgen.MailingSendModeResend && existing.SecretRef.Valid {
-			if s.Vault == nil {
-				return validation("mailing credential storage is not configured")
+		if lease != nil {
+			if !hasExisting || existing.ID != lease.profileID {
+				return fmt.Errorf("mailing: profile changed during Resend cleanup: %w", errs.ErrConflict)
 			}
-			oldRaw, openErr := s.Vault.Open(ctx, tx, businessID, uuid.UUID(existing.SecretRef.Bytes))
-			if openErr != nil {
-				return openErr
+			var heldToken uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT resend_provisioning_token
+				FROM mailing_sending_profile WHERE id=$1 AND tenant_root_id=$2 FOR UPDATE`,
+				lease.profileID, lease.tenantRootID).Scan(&heldToken); err != nil || heldToken != lease.token {
+				return fmt.Errorf("mailing: Resend cleanup lease lost: %w", errs.ErrConflict)
 			}
-			var old resendStoredCredentials
-			decodeErr := json.Unmarshal(oldRaw, &old)
-			clear(oldRaw)
-			if decodeErr != nil || strings.TrimSpace(old.APIKey) == "" {
-				if in.Resend == nil {
-					return errors.New("mailing: stored Resend credentials are invalid")
-				}
-			} else {
-				if old.WebhookID != "" {
-					cleanup = &resendWebhookCleanup{
-						profileID: existing.ID, updatedAt: existing.UpdatedAt,
-						apiKey: old.APIKey, webhookID: old.WebhookID,
-					}
-				}
-				if in.Mode == "resend" && in.Resend == nil {
-					credential, err = json.Marshal(resendStoredCredentials{APIKey: old.APIKey})
-					if err != nil {
-						return errors.New("mailing: encode Resend credentials")
-					}
-				}
+		}
+		if hasExisting && existing.Mode == dbgen.MailingSendModeResend &&
+			in.Mode == "resend" && in.Resend == nil {
+			if lease == nil || strings.TrimSpace(lease.apiKey) == "" {
+				return errors.New("mailing: stored Resend credentials are invalid")
+			}
+			credential, err = json.Marshal(resendStoredCredentials{APIKey: lease.apiKey})
+			if err != nil {
+				return errors.New("mailing: encode Resend credentials")
 			}
 		}
 		var domainRef, secretRef pgtype.UUID
@@ -236,8 +239,8 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		out = toSendingProfile(row)
 		return nil
 	})
-	if err == nil && cleanup != nil {
-		s.cleanupResendWebhook(ctx, *cleanup)
+	if err != nil && lease != nil {
+		s.releaseResendMutation(ctx, principalID, *lease)
 	}
 	if err == nil && s.Providers != nil && out.ID != uuid.Nil {
 		s.Providers.Invalidate(out.ID)
@@ -246,53 +249,56 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 }
 
 func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) error {
+	lease, err := s.claimResendMutation(ctx, principalID, businessID)
+	if err != nil {
+		return err
+	}
+	if lease != nil && lease.webhookID != "" {
+		if err = s.deleteResendWebhook(ctx, *lease); err != nil {
+			s.releaseResendMutation(ctx, principalID, *lease)
+			return err
+		}
+	}
 	var profileID uuid.UUID
-	var cleanup *resendWebhookCleanup
-	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
 		if err != nil {
 			return err
 		}
-		row, err := q.DeleteMailingSendingProfile(ctx, dbgen.DeleteMailingSendingProfileParams{BusinessID: businessID, TenantRootID: root})
+		if lease != nil {
+			var heldToken uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT resend_provisioning_token
+				FROM mailing_sending_profile WHERE id=$1 AND tenant_root_id=$2 FOR UPDATE`,
+				lease.profileID, lease.tenantRootID).Scan(&heldToken); err != nil || heldToken != lease.token {
+				return fmt.Errorf("mailing: Resend cleanup lease lost: %w", errs.ErrConflict)
+			}
+		}
+		row, err := q.DeleteMailingSendingProfile(ctx, dbgen.DeleteMailingSendingProfileParams{
+			BusinessID: businessID, TenantRootID: root,
+		})
 		if err != nil {
 			return err
 		}
 		profileID = row.ID
-		if row.Mode == dbgen.MailingSendModeResend && row.SecretRef.Valid && s.Vault != nil {
-			raw, openErr := s.Vault.Open(ctx, tx, businessID, uuid.UUID(row.SecretRef.Bytes))
-			if openErr != nil {
-				return openErr
-			}
-			var stored resendStoredCredentials
-			decodeErr := json.Unmarshal(raw, &stored)
-			clear(raw)
-			if decodeErr != nil {
-				return errors.New("mailing: stored Resend credentials are invalid")
-			}
-			if stored.WebhookID != "" {
-				cleanup = &resendWebhookCleanup{
-					profileID: row.ID, updatedAt: row.UpdatedAt,
-					apiKey: stored.APIKey, webhookID: stored.WebhookID,
-				}
-			}
-		}
-		if err = auditMutation(ctx, tx, principalID, businessID, root, "mailing.sending_profile.deleted", "mailing_sending_profile", row.ID, map[string]any{"mode": row.Mode}); err != nil {
+		if err = auditMutation(ctx, tx, principalID, businessID, root,
+			"mailing.sending_profile.deleted", "mailing_sending_profile", row.ID,
+			map[string]any{"mode": row.Mode}); err != nil {
 			return err
 		}
 		if row.SecretRef.Valid {
 			if s.Vault == nil {
 				return validation("mailing credential storage is not configured")
 			}
-			id := uuid.UUID(row.SecretRef.Bytes)
-			if err = s.Vault.Delete(ctx, tx, businessID, id); err != nil && !errors.Is(err, errs.ErrNotFound) {
+			if err = s.Vault.Delete(ctx, tx, businessID, uuid.UUID(row.SecretRef.Bytes)); err != nil &&
+				!errors.Is(err, errs.ErrNotFound) {
 				return err
 			}
 		}
 		return nil
 	})
-	if err == nil && cleanup != nil {
-		s.cleanupResendWebhook(ctx, *cleanup)
+	if err != nil && lease != nil {
+		s.releaseResendMutation(ctx, principalID, *lease)
 	}
 	if err == nil && s.Providers != nil && profileID != uuid.Nil {
 		s.Providers.Invalidate(profileID)
@@ -300,23 +306,87 @@ func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, busines
 	return mapErr(err)
 }
 
-func (s *Service) cleanupResendWebhook(ctx context.Context, cleanup resendWebhookCleanup) {
-	if s.Providers == nil || cleanup.apiKey == "" || cleanup.webhookID == "" {
-		return
+func (s *Service) claimResendMutation(
+	ctx context.Context, principalID, businessID uuid.UUID,
+) (*resendOperationLease, error) {
+	var lease *resendOperationLease
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		root, err := resolveTenantRoot(ctx, q, businessID)
+		if err != nil {
+			return err
+		}
+		row, err := q.GetMailingSendingProfile(ctx, dbgen.GetMailingSendingProfileParams{
+			BusinessID: businessID, TenantRootID: root,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil || row.Mode != dbgen.MailingSendModeResend {
+			return err
+		}
+		if s.Vault == nil || !row.SecretRef.Valid {
+			return validation("mailing credential storage is not configured")
+		}
+		raw, err := s.Vault.Open(ctx, tx, businessID, uuid.UUID(row.SecretRef.Bytes))
+		if err != nil {
+			return err
+		}
+		var stored resendStoredCredentials
+		decodeErr := json.Unmarshal(raw, &stored)
+		clear(raw)
+		if decodeErr != nil || strings.TrimSpace(stored.APIKey) == "" {
+			return errors.New("mailing: stored Resend credentials are invalid")
+		}
+		token := uuid.New()
+		if _, err = q.ClaimMailingResendProvisioning(ctx, dbgen.ClaimMailingResendProvisioningParams{
+			Token: token, ID: row.ID, TenantRootID: row.TenantRootID,
+			ExpectedUpdatedAt: row.UpdatedAt,
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("mailing: Resend profile operation already in progress: %w", errs.ErrConflict)
+			}
+			return err
+		}
+		lease = &resendOperationLease{
+			profileID: row.ID, tenantRootID: row.TenantRootID, updatedAt: row.UpdatedAt,
+			token: token, apiKey: stored.APIKey,
+		}
+		if stored.Version == 2 {
+			lease.webhookID = stored.WebhookID
+		}
+		return nil
+	})
+	return lease, mapErr(err)
+}
+
+func (s *Service) deleteResendWebhook(ctx context.Context, lease resendOperationLease) error {
+	if s.Providers == nil {
+		return errors.New("mailing: Resend webhook cleanup provider is not configured")
 	}
 	deliverer, err := s.Providers.Resolve(ctx, mailprovider.Profile{
-		ID: cleanup.profileID, UpdatedAt: cleanup.updatedAt,
-		Mode: "resend", ResendAPIKey: cleanup.apiKey,
+		ID: lease.profileID, UpdatedAt: lease.updatedAt,
+		Mode: "resend", ResendAPIKey: lease.apiKey,
 	})
-	if err == nil {
-		if provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner); ok {
-			err = provisioner.DeleteWebhook(ctx, cleanup.webhookID)
-		}
+	if err != nil {
+		return err
 	}
-	if err != nil && s.Logger != nil {
-		s.Logger.ErrorContext(ctx, "mailing Resend webhook cleanup failed",
-			"profile_id", cleanup.profileID, "err", err)
+	provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner)
+	if !ok {
+		return errors.New("mailing: provider does not support Resend webhook cleanup")
 	}
+	return provisioner.DeleteWebhook(ctx, lease.webhookID)
+}
+
+func (s *Service) releaseResendMutation(
+	ctx context.Context, principalID uuid.UUID, lease resendOperationLease,
+) {
+	_ = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		_, err := dbgen.New(tx).ReleaseMailingResendProvisioning(ctx, dbgen.ReleaseMailingResendProvisioningParams{
+			ID: lease.profileID, TenantRootID: lease.tenantRootID, Token: lease.token,
+		})
+		return err
+	})
 }
 
 func toSendingProfile(r dbgen.MailingSendingProfile) SendingProfile {

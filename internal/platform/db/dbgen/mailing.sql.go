@@ -157,6 +157,68 @@ func (q *Queries) ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChan
 	return items, nil
 }
 
+const claimMailingResendProvisioning = `-- name: ClaimMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = $1::uuid,
+    resend_provisioning_expires_at = now() + interval '2 minutes',
+    status = 'unverified',
+    last_verified_at = NULL,
+    verify_error = NULL,
+    feedback_status = 'pending',
+    feedback_error = NULL,
+    feedback_confirmed_at = NULL
+WHERE id = $2
+  AND tenant_root_id = $3
+  AND updated_at = $4::timestamptz
+  AND mode = 'resend'
+  AND (
+      resend_provisioning_token IS NULL
+      OR resend_provisioning_expires_at <= now()
+  )
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+`
+
+type ClaimMailingResendProvisioningParams struct {
+	Token             uuid.UUID `json:"token"`
+	ID                uuid.UUID `json:"id"`
+	TenantRootID      uuid.UUID `json:"tenant_root_id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
+
+func (q *Queries) ClaimMailingResendProvisioning(ctx context.Context, arg ClaimMailingResendProvisioningParams) (MailingSendingProfile, error) {
+	row := q.db.QueryRow(ctx, claimMailingResendProvisioning,
+		arg.Token,
+		arg.ID,
+		arg.TenantRootID,
+		arg.ExpectedUpdatedAt,
+	)
+	var i MailingSendingProfile
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Mode,
+		&i.FromEmail,
+		&i.FromName,
+		&i.ReplyTo,
+		&i.PostalAddress,
+		&i.EmailDomainID,
+		&i.SecretRef,
+		&i.SesRegion,
+		&i.SesConfigurationSet,
+		&i.SnsTopicArn,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.VerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
+	)
+	return i, err
+}
+
 const completeChangedCampaignRollups = `-- name: CompleteChangedCampaignRollups :one
 SELECT public.mailing_complete_changed_campaign_rollups(
     $1::uuid,
@@ -2038,6 +2100,51 @@ func (q *Queries) ListSubscribersForExportAfter(ctx context.Context, arg ListSub
 	return items, nil
 }
 
+const releaseMailingResendProvisioning = `-- name: ReleaseMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL
+WHERE id = $1
+  AND tenant_root_id = $2
+  AND resend_provisioning_token = $3::uuid
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+`
+
+type ReleaseMailingResendProvisioningParams struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Token        uuid.UUID `json:"token"`
+}
+
+func (q *Queries) ReleaseMailingResendProvisioning(ctx context.Context, arg ReleaseMailingResendProvisioningParams) (MailingSendingProfile, error) {
+	row := q.db.QueryRow(ctx, releaseMailingResendProvisioning, arg.ID, arg.TenantRootID, arg.Token)
+	var i MailingSendingProfile
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Mode,
+		&i.FromEmail,
+		&i.FromName,
+		&i.ReplyTo,
+		&i.PostalAddress,
+		&i.EmailDomainID,
+		&i.SecretRef,
+		&i.SesRegion,
+		&i.SesConfigurationSet,
+		&i.SnsTopicArn,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.VerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
+	)
+	return i, err
+}
+
 const revokeMailingListKey = `-- name: RevokeMailingListKey :one
 UPDATE mailing_list_key SET status = 'revoked', revoked_at = now()
 WHERE id = $1 AND tenant_root_id = $2 AND status = 'enabled'
@@ -2149,6 +2256,8 @@ UPDATE mailing_sending_profile SET
     secret_ref = $1::uuid,
     status = 'verified',
     last_verified_at = now(),
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
     verify_error = NULL,
     feedback_status = 'ready',
     feedback_error = NULL,
@@ -2157,6 +2266,7 @@ UPDATE mailing_sending_profile SET
 WHERE id = $2
   AND tenant_root_id = $3
   AND updated_at = $4::timestamptz
+  AND resend_provisioning_token = $5::uuid
   AND mode = 'resend'
 RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
@@ -2166,6 +2276,7 @@ type SetMailingResendWebhookVerificationParams struct {
 	ID                uuid.UUID `json:"id"`
 	TenantRootID      uuid.UUID `json:"tenant_root_id"`
 	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+	Token             uuid.UUID `json:"token"`
 }
 
 // Resend provisioning performs provider I/O before this CAS. Persist the
@@ -2176,6 +2287,7 @@ func (q *Queries) SetMailingResendWebhookVerification(ctx context.Context, arg S
 		arg.ID,
 		arg.TenantRootID,
 		arg.ExpectedUpdatedAt,
+		arg.Token,
 	)
 	var i MailingSendingProfile
 	err := row.Scan(
@@ -2541,6 +2653,8 @@ UPDATE mailing_sending_profile SET
     sns_topic_arn = $12,
     status = 'unverified', last_verified_at = NULL, verify_error = NULL,
     feedback_status = 'pending', feedback_error = NULL, feedback_confirmed_at = NULL,
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
 RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at

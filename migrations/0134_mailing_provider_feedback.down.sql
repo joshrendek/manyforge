@@ -280,3 +280,8 @@ REVOKE ALL ON FUNCTION mailing_apply_provider_event(uuid,text,citext,mailing_tra
 GRANT EXECUTE ON FUNCTION mailing_webhook_context(uuid) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_record_webhook(uuid,text,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_apply_provider_event(uuid,text,citext,mailing_track_kind,timestamptz,jsonb) TO manyforge_app;
+
+ALTER TABLE mailing_sending_profile
+    DROP CONSTRAINT mailing_resend_provisioning_lease_chk,
+    DROP COLUMN resend_provisioning_expires_at,
+    DROP COLUMN resend_provisioning_token;

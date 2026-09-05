@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/mailing"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	"github.com/manyforge/manyforge/internal/mailing/snsverify"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 )
@@ -56,7 +57,7 @@ func seedWebhookFixture(ctx context.Context, t *testing.T, tdb *testdb.TestDB, s
 		t.Fatal(err)
 	}
 	storedCredential, err := svc.Sealer.Seal([]byte(fmt.Sprintf(
-		`{"api_key":"re_test","webhook_id":"wh_fixture","webhook_secret":%q}`, secret)))
+		`{"version":2,"api_key":"re_test","webhook_id":"wh_fixture","webhook_secret":%q}`, secret)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +125,85 @@ func seedWebhookFixture(ctx context.Context, t *testing.T, tdb *testdb.TestDB, s
 	}
 }
 
+
+func TestLegacyResendSecretCannotAuthenticateAcrossProfilesAndUpgradesThroughProvisioning(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	seedA := seedMailingTenant(ctx, t, tdb)
+	seedB := seedMailingTenant(ctx, t, tdb)
+	svcA, _ := campaignService(t, ctx, tdb, seedA)
+	svcB, _ := campaignService(t, ctx, tdb, seedB)
+	legacyKey := bytes.Repeat([]byte{0x41}, 32)
+	legacySecret := "whsec_" + base64.StdEncoding.EncodeToString(legacyKey)
+	installLegacy := func(svc *mailing.Service, seed mailingSeed, from string) mailing.SendingProfile {
+		t.Helper()
+		profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+			Mode: "resend", FromEmail: from, FromName: "Legacy",
+			Resend: &mailing.ResendCredentials{APIKey: "re_legacy"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy, err := svc.Sealer.Seal([]byte(`{"api_key":"re_legacy","webhook_secret":"` + legacySecret + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tdb.Super.Exec(ctx, `UPDATE secret SET sealed_value=$1
+			WHERE id=(SELECT secret_ref FROM mailing_sending_profile WHERE id=$2)`, legacy, profile.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile
+			SET status='verified',feedback_status='ready',feedback_confirmed_at=now() WHERE id=$1`, profile.ID); err != nil {
+			t.Fatal(err)
+		}
+		return profile
+	}
+	_ = installLegacy(svcA, seedA, "a@example.test")
+	profileB := installLegacy(svcB, seedB, "b@example.test")
+
+	h := mailing.NewWebhookHandler(tdb.App, svcB.Sealer, nil)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	h.Now = func() time.Time { return now }
+	router := chi.NewRouter()
+	h.PublicRoutes(router)
+	body := []byte(`{"type":"email.bounced","data":{"email_id":"forged","to":["victim@example.test"]}}`)
+	ts := fmt.Sprint(now.Unix())
+	mac := hmac.New(sha256.New, legacyKey)
+	mac.Write([]byte("legacy-cross-profile." + ts + "."))
+	mac.Write(body)
+	req := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+profileB.ID.String()+"/resend", bytes.NewReader(body))
+	req.Header.Set("svix-id", "legacy-cross-profile")
+	req.Header.Set("svix-timestamp", ts)
+	req.Header.Set("svix-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("legacy cross-profile secret status = %d, want 401", w.Code)
+	}
+	var envelopes int
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM mailing_provider_webhook_delivery
+		WHERE profile_id=$1`, profileB.ID).Scan(&envelopes); err != nil || envelopes != 0 {
+		t.Fatalf("legacy secret envelopes = %d, err=%v", envelopes, err)
+	}
+
+	provisioner := &fakeResendProvisioner{}
+	svcB.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+	upgraded, err := svcB.VerifySendingProfile(ctx, seedB.principalID, seedB.businessID)
+	if err != nil || upgraded.FeedbackStatus != "ready" {
+		t.Fatalf("legacy profile upgrade = %+v, err=%v", upgraded, err)
+	}
+	bundle := loadStoredResendBundle(t, ctx, tdb, svcB, profileB.ID)
+	if bundle.Version != 2 || bundle.WebhookID == "" || bundle.WebhookSecret == "" || bundle.WebhookSecret == legacySecret {
+		t.Fatalf("legacy bundle upgrade = version=%d webhook_id=%q secret_replaced=%v",
+			bundle.Version, bundle.WebhookID, bundle.WebhookSecret != legacySecret)
+	}
+}
 
 func TestResendWebhookIdempotencyAndMonotonicStatus(t *testing.T) {
 	ctx := context.Background()
