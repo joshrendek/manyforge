@@ -24,10 +24,11 @@
 
 ## Execution Order
 
-1. Task 1 runs alone and establishes the generated SQL/schema contract.
-2. Tasks 2, 3, 5, and 6 run in parallel from Task 1's commit with disjoint production-file ownership.
-3. Task 4 starts after Task 2 so it can migrate the S2S event portion of `public.go` onto the final automation event contract without a concurrent edit.
-4. Task 7 integrates all local commits and is the sole owner of shared audit-pin cleanup and final generation.
+1. Tasks 1 and 6 run in parallel because the SQL foundation and capability/client slice have no shared files or interfaces.
+2. Tasks 2 and 3 run in parallel from Task 1's commit with disjoint production-file ownership.
+3. Task 5 starts after Task 3 so campaign test-send suppression reuses Task 3's single eligibility helper instead of adding a competing suppression path.
+4. Task 4 starts after Task 2 so it can migrate the S2S event portion of `public.go` onto the final automation event contract without a concurrent edit.
+5. Task 7 integrates all local commits and is the sole owner of shared audit-pin cleanup and final generation.
 
 ---
 
@@ -47,7 +48,7 @@
 - Adds `mailing_sending_profile.feedback_status` constrained to `pending|ready|error`, `feedback_error`, and `feedback_confirmed_at`.
 - Adds immutable `automation_event.ingress_list_id`, `ingress_key_id`, and `request_fingerprint bytea`; uniqueness includes ingress scope.
 - Adds `automation_version.content_snapshot jsonb` for activated send-email content.
-- Adds bounded keyset queries for automation versions and changed campaign rollups.
+- Adds bounded keyset queries for automation versions and a durable changed-campaign rollup queue that retains merge-fenced work.
 
 - [ ] **Step 1: Add failing integration tests** proving archived/deleted businesses and archived lists fail the operational functions, new profiles default to `pending`, event scope/fingerprint is stored, and version queries require a bounded limit.
 - [ ] **Step 2: Run the focused integration package** and record RED failures caused by missing migration objects.
@@ -170,7 +171,7 @@
 **Interfaces:**
 - Consumes Task 1 operational/feedback state and Task 3 cache invalidation.
 - One tick has explicit global and per-campaign fan-out budgets and never loops one campaign to completion.
-- Rollup consumes a changed-delivery cursor/watermark and updates only affected campaigns.
+- Rollup claims a bounded durable changed-campaign queue; merge-fenced entries remain pending until eligible.
 - Production transport absence fails startup; development LogSender returns a non-accepted result and logs metadata only.
 
 - [ ] **Step 1: Invert the content-cache branch of MF-MAIL-DELIVERY-001, campaign-test branch of MF-MAIL-DELIVERY-002, MF-MAIL-DELIVERY-003, MF-MAIL-DELIVERY-004, and MF-MAIL-ROLLUP-001** into safe tests.
