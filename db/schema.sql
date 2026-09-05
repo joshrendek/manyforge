@@ -958,6 +958,9 @@ CREATE TABLE mailing_sending_profile (
     verify_error          text,
     created_at            timestamptz NOT NULL DEFAULT now(),
     updated_at            timestamptz NOT NULL DEFAULT now(),
+    feedback_status      text NOT NULL DEFAULT 'pending',
+    feedback_error       text,
+    feedback_confirmed_at timestamptz,
     UNIQUE (id, tenant_root_id),
     UNIQUE (business_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
@@ -1173,6 +1176,7 @@ CREATE TABLE mailing_delivery (
     CHECK (claim_generation >= 0)
 );
 
+
 CREATE TABLE mailing_tracking_event (
     id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id      uuid NOT NULL,
@@ -1250,6 +1254,7 @@ CREATE TABLE automation_version (
     activated_at   timestamptz,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
+    content_snapshot jsonb,
     UNIQUE (id, tenant_root_id),
     UNIQUE (id, business_id, tenant_root_id),
     UNIQUE (id, automation_id, business_id, tenant_root_id),
@@ -1345,6 +1350,9 @@ CREATE TABLE automation_event (
     properties      jsonb NOT NULL DEFAULT '{}',
     idempotency_key text,
     created_at      timestamptz NOT NULL DEFAULT now(),
+    ingress_list_id    uuid,
+    ingress_key_id     uuid,
+    request_fingerprint bytea,
     UNIQUE (id, tenant_root_id),
     UNIQUE (id, business_id, tenant_root_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),

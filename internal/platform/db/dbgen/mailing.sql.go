@@ -136,7 +136,7 @@ func (q *Queries) DeleteCampaign(ctx context.Context, arg DeleteCampaignParams) 
 const deleteMailingSendingProfile = `-- name: DeleteMailingSendingProfile :one
 DELETE FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type DeleteMailingSendingProfileParams struct {
@@ -166,6 +166,9 @@ func (q *Queries) DeleteMailingSendingProfile(ctx context.Context, arg DeleteMai
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -402,7 +405,7 @@ func (q *Queries) GetMailingList(ctx context.Context, arg GetMailingListParams) 
 
 const getMailingSendingProfile = `-- name: GetMailingSendingProfile :one
 
-SELECT id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at FROM mailing_sending_profile
+SELECT id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
 `
 
@@ -434,6 +437,9 @@ func (q *Queries) GetMailingSendingProfile(ctx context.Context, arg GetMailingSe
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -726,7 +732,7 @@ INSERT INTO mailing_sending_profile (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
     'unverified', now(), now()
 )
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type InsertMailingSendingProfileParams struct {
@@ -781,6 +787,9 @@ func (q *Queries) InsertMailingSendingProfile(ctx context.Context, arg InsertMai
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -1278,6 +1287,52 @@ func (q *Queries) ListCampaignsAfter(ctx context.Context, arg ListCampaignsAfter
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChangedCampaignRollupChanges = `-- name: ListChangedCampaignRollupChanges :many
+
+SELECT d.campaign_id, d.updated_at AS changed_at, d.id AS change_id
+FROM mailing_delivery d
+WHERE d.campaign_id IS NOT NULL
+  AND (d.updated_at, d.id) > (
+      $1::timestamptz,
+      $2::uuid
+  )
+ORDER BY d.updated_at ASC, d.id ASC
+LIMIT LEAST(GREATEST($3::integer, 1), 100)
+`
+
+type ListChangedCampaignRollupChangesParams struct {
+	AfterUpdatedAt time.Time `json:"after_updated_at"`
+	AfterID        uuid.UUID `json:"after_id"`
+	Lim            int32     `json:"lim"`
+}
+
+type ListChangedCampaignRollupChangesRow struct {
+	CampaignID pgtype.UUID `json:"campaign_id"`
+	ChangedAt  time.Time   `json:"changed_at"`
+	ChangeID   uuid.UUID   `json:"change_id"`
+}
+
+// ---- bounded worker cursors ----
+func (q *Queries) ListChangedCampaignRollupChanges(ctx context.Context, arg ListChangedCampaignRollupChangesParams) ([]ListChangedCampaignRollupChangesRow, error) {
+	rows, err := q.db.Query(ctx, listChangedCampaignRollupChanges, arg.AfterUpdatedAt, arg.AfterID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChangedCampaignRollupChangesRow
+	for rows.Next() {
+		var i ListChangedCampaignRollupChangesRow
+		if err := rows.Scan(&i.CampaignID, &i.ChangedAt, &i.ChangeID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2049,7 +2104,7 @@ UPDATE mailing_sending_profile SET
 WHERE id = $3
   AND tenant_root_id = $4
   AND updated_at = $5::timestamptz
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type SetMailingSendingProfileVerificationParams struct {
@@ -2091,6 +2146,9 @@ func (q *Queries) SetMailingSendingProfileVerification(ctx context.Context, arg 
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -2365,7 +2423,7 @@ UPDATE mailing_sending_profile SET
     status = 'unverified', last_verified_at = NULL, verify_error = NULL,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type UpdateMailingSendingProfileParams struct {
@@ -2418,6 +2476,9 @@ func (q *Queries) UpdateMailingSendingProfile(ctx context.Context, arg UpdateMai
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }

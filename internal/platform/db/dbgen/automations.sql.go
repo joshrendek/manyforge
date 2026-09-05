@@ -45,7 +45,7 @@ func (q *Queries) GetAutomation(ctx context.Context, arg GetAutomationParams) (A
 }
 
 const getAutomationVersion = `-- name: GetAutomationVersion :one
-SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at FROM automation_version
+SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot FROM automation_version
 WHERE id = $1 AND automation_id = $2
   AND business_id = $3 AND tenant_root_id = $4
 `
@@ -78,6 +78,7 @@ func (q *Queries) GetAutomationVersion(ctx context.Context, arg GetAutomationVer
 		&i.ActivatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ContentSnapshot,
 	)
 	return i, err
 }
@@ -140,7 +141,7 @@ INSERT INTO automation_version (
 ) VALUES (
     $1, $2, $3, $4, $5, 'draft', $6, now(), now()
 )
-RETURNING id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot
 `
 
 type InsertAutomationVersionParams struct {
@@ -175,24 +176,34 @@ func (q *Queries) InsertAutomationVersion(ctx context.Context, arg InsertAutomat
 		&i.ActivatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ContentSnapshot,
 	)
 	return i, err
 }
 
 const listAutomationVersions = `-- name: ListAutomationVersions :many
-SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at FROM automation_version
-WHERE automation_id = $1 AND business_id = $2 AND tenant_root_id = $3
+SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot FROM automation_version
+WHERE automation_id = $1
+  AND business_id = $2
+  AND tenant_root_id = $3
 ORDER BY number DESC, id DESC
+LIMIT LEAST(GREATEST($4::integer, 1), 100)
 `
 
 type ListAutomationVersionsParams struct {
 	AutomationID uuid.UUID `json:"automation_id"`
 	BusinessID   uuid.UUID `json:"business_id"`
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Lim          int32     `json:"lim"`
 }
 
 func (q *Queries) ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]AutomationVersion, error) {
-	rows, err := q.db.Query(ctx, listAutomationVersions, arg.AutomationID, arg.BusinessID, arg.TenantRootID)
+	rows, err := q.db.Query(ctx, listAutomationVersions,
+		arg.AutomationID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +224,67 @@ func (q *Queries) ListAutomationVersions(ctx context.Context, arg ListAutomation
 			&i.ActivatedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ContentSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAutomationVersionsAfter = `-- name: ListAutomationVersionsAfter :many
+SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot FROM automation_version
+WHERE automation_id = $1
+  AND business_id = $2
+  AND tenant_root_id = $3
+  AND (number, id) < ($4::integer, $5::uuid)
+ORDER BY number DESC, id DESC
+LIMIT LEAST(GREATEST($6::integer, 1), 100)
+`
+
+type ListAutomationVersionsAfterParams struct {
+	AutomationID uuid.UUID `json:"automation_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	CurNumber    int32     `json:"cur_number"`
+	CurID        uuid.UUID `json:"cur_id"`
+	Lim          int32     `json:"lim"`
+}
+
+func (q *Queries) ListAutomationVersionsAfter(ctx context.Context, arg ListAutomationVersionsAfterParams) ([]AutomationVersion, error) {
+	rows, err := q.db.Query(ctx, listAutomationVersionsAfter,
+		arg.AutomationID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.CurNumber,
+		arg.CurID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutomationVersion
+	for rows.Next() {
+		var i AutomationVersion
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.TenantRootID,
+			&i.AutomationID,
+			&i.Number,
+			&i.Status,
+			&i.Graph,
+			&i.TriggerKind,
+			&i.TriggerRef,
+			&i.ActivatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ContentSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -382,7 +454,7 @@ WHERE id = $2
   AND business_id = $4
   AND tenant_root_id = $5
   AND status = 'draft'
-RETURNING id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot
 `
 
 type UpdateAutomationVersionGraphParams struct {
@@ -415,6 +487,7 @@ func (q *Queries) UpdateAutomationVersionGraph(ctx context.Context, arg UpdateAu
 		&i.ActivatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ContentSnapshot,
 	)
 	return i, err
 }
