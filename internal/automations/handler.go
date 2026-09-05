@@ -37,14 +37,14 @@ func (h *Handler) WriteRoutes(router chi.Router) {
 	router.Post("/businesses/{id}/mailing/automations/{aid}/versions/{vid}/validate", h.validate)
 	router.Post("/businesses/{id}/mailing/automations/{aid}/pause", h.pause)
 	router.Post("/businesses/{id}/mailing/automations/{aid}/archive", h.archive)
-	router.Post("/businesses/{id}/mailing/automations/{aid}/enrollments", h.enroll)
 	router.Post("/businesses/{id}/mailing/automations/{aid}/enrollments/{eid}/exit", h.exitEnrollment)
-	router.Post("/businesses/{id}/mailing/events", h.createEvent)
 }
 
 func (h *Handler) SendRoutes(router chi.Router) {
 	router.Post("/businesses/{id}/mailing/automations/{aid}/versions/{vid}/activate", h.activate)
 	router.Post("/businesses/{id}/mailing/automations/{aid}/resume", h.resume)
+	router.Post("/businesses/{id}/mailing/automations/{aid}/enrollments", h.enroll)
+	router.Post("/businesses/{id}/mailing/events", h.createEvent)
 }
 
 type nullableString struct {
@@ -167,8 +167,9 @@ func (h *Handler) versions(w http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	value, err := h.service.Versions(request.Context(), principalID, ids[0], ids[1])
-	write(w, request, http.StatusOK, map[string]any{"items": value}, err)
+	limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
+	value, err := h.service.Versions(request.Context(), principalID, ids[0], ids[1], request.URL.Query().Get("cursor"), limit)
+	write(w, request, http.StatusOK, value, err)
 }
 
 func (h *Handler) version(w http.ResponseWriter, request *http.Request) {

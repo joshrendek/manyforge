@@ -13,6 +13,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAutomationVersions = `-- name: CountAutomationVersions :one
+SELECT count(*) FROM automation_version
+WHERE automation_id = $1
+  AND business_id = $2
+  AND tenant_root_id = $3
+`
+
+type CountAutomationVersionsParams struct {
+	AutomationID uuid.UUID `json:"automation_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+func (q *Queries) CountAutomationVersions(ctx context.Context, arg CountAutomationVersionsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAutomationVersions, arg.AutomationID, arg.BusinessID, arg.TenantRootID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getAutomation = `-- name: GetAutomation :one
 SELECT id, business_id, tenant_root_id, name, description, status, allow_reenroll, active_version_id, draft_version_id, created_by_principal_id, created_at, updated_at FROM automation
 WHERE id = $1 AND business_id = $2 AND tenant_root_id = $3
@@ -182,12 +202,14 @@ func (q *Queries) InsertAutomationVersion(ctx context.Context, arg InsertAutomat
 }
 
 const listAutomationVersions = `-- name: ListAutomationVersions :many
-SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot FROM automation_version
+SELECT id, business_id, tenant_root_id, automation_id, number, status,
+       trigger_kind, trigger_ref, activated_at, created_at, updated_at
+FROM automation_version
 WHERE automation_id = $1
   AND business_id = $2
   AND tenant_root_id = $3
 ORDER BY number DESC, id DESC
-LIMIT LEAST(GREATEST($4::integer, 1), 100)
+LIMIT LEAST(GREATEST($4::integer, 1), 101)
 `
 
 type ListAutomationVersionsParams struct {
@@ -197,7 +219,21 @@ type ListAutomationVersionsParams struct {
 	Lim          int32     `json:"lim"`
 }
 
-func (q *Queries) ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]AutomationVersion, error) {
+type ListAutomationVersionsRow struct {
+	ID           uuid.UUID               `json:"id"`
+	BusinessID   uuid.UUID               `json:"business_id"`
+	TenantRootID uuid.UUID               `json:"tenant_root_id"`
+	AutomationID uuid.UUID               `json:"automation_id"`
+	Number       int32                   `json:"number"`
+	Status       AutomationVersionStatus `json:"status"`
+	TriggerKind  *string                 `json:"trigger_kind"`
+	TriggerRef   *string                 `json:"trigger_ref"`
+	ActivatedAt  pgtype.Timestamptz      `json:"activated_at"`
+	CreatedAt    time.Time               `json:"created_at"`
+	UpdatedAt    time.Time               `json:"updated_at"`
+}
+
+func (q *Queries) ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]ListAutomationVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listAutomationVersions,
 		arg.AutomationID,
 		arg.BusinessID,
@@ -208,9 +244,9 @@ func (q *Queries) ListAutomationVersions(ctx context.Context, arg ListAutomation
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AutomationVersion
+	var items []ListAutomationVersionsRow
 	for rows.Next() {
-		var i AutomationVersion
+		var i ListAutomationVersionsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.BusinessID,
@@ -218,13 +254,11 @@ func (q *Queries) ListAutomationVersions(ctx context.Context, arg ListAutomation
 			&i.AutomationID,
 			&i.Number,
 			&i.Status,
-			&i.Graph,
 			&i.TriggerKind,
 			&i.TriggerRef,
 			&i.ActivatedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.ContentSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -237,13 +271,15 @@ func (q *Queries) ListAutomationVersions(ctx context.Context, arg ListAutomation
 }
 
 const listAutomationVersionsAfter = `-- name: ListAutomationVersionsAfter :many
-SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot FROM automation_version
+SELECT id, business_id, tenant_root_id, automation_id, number, status,
+       trigger_kind, trigger_ref, activated_at, created_at, updated_at
+FROM automation_version
 WHERE automation_id = $1
   AND business_id = $2
   AND tenant_root_id = $3
   AND (number, id) < ($4::integer, $5::uuid)
 ORDER BY number DESC, id DESC
-LIMIT LEAST(GREATEST($6::integer, 1), 100)
+LIMIT LEAST(GREATEST($6::integer, 1), 101)
 `
 
 type ListAutomationVersionsAfterParams struct {
@@ -255,7 +291,21 @@ type ListAutomationVersionsAfterParams struct {
 	Lim          int32     `json:"lim"`
 }
 
-func (q *Queries) ListAutomationVersionsAfter(ctx context.Context, arg ListAutomationVersionsAfterParams) ([]AutomationVersion, error) {
+type ListAutomationVersionsAfterRow struct {
+	ID           uuid.UUID               `json:"id"`
+	BusinessID   uuid.UUID               `json:"business_id"`
+	TenantRootID uuid.UUID               `json:"tenant_root_id"`
+	AutomationID uuid.UUID               `json:"automation_id"`
+	Number       int32                   `json:"number"`
+	Status       AutomationVersionStatus `json:"status"`
+	TriggerKind  *string                 `json:"trigger_kind"`
+	TriggerRef   *string                 `json:"trigger_ref"`
+	ActivatedAt  pgtype.Timestamptz      `json:"activated_at"`
+	CreatedAt    time.Time               `json:"created_at"`
+	UpdatedAt    time.Time               `json:"updated_at"`
+}
+
+func (q *Queries) ListAutomationVersionsAfter(ctx context.Context, arg ListAutomationVersionsAfterParams) ([]ListAutomationVersionsAfterRow, error) {
 	rows, err := q.db.Query(ctx, listAutomationVersionsAfter,
 		arg.AutomationID,
 		arg.BusinessID,
@@ -268,9 +318,9 @@ func (q *Queries) ListAutomationVersionsAfter(ctx context.Context, arg ListAutom
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AutomationVersion
+	var items []ListAutomationVersionsAfterRow
 	for rows.Next() {
-		var i AutomationVersion
+		var i ListAutomationVersionsAfterRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.BusinessID,
@@ -278,13 +328,11 @@ func (q *Queries) ListAutomationVersionsAfter(ctx context.Context, arg ListAutom
 			&i.AutomationID,
 			&i.Number,
 			&i.Status,
-			&i.Graph,
 			&i.TriggerKind,
 			&i.TriggerRef,
 			&i.ActivatedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.ContentSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -396,6 +444,91 @@ func (q *Queries) ListAutomationsAfter(ctx context.Context, arg ListAutomationsA
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAutomationVersion = `-- name: LockAutomationVersion :one
+SELECT id, business_id, tenant_root_id, automation_id, number, status, graph, trigger_kind, trigger_ref, activated_at, created_at, updated_at, content_snapshot FROM automation_version
+WHERE id = $1 AND automation_id = $2
+  AND business_id = $3 AND tenant_root_id = $4
+FOR UPDATE
+`
+
+type LockAutomationVersionParams struct {
+	ID           uuid.UUID `json:"id"`
+	AutomationID uuid.UUID `json:"automation_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+func (q *Queries) LockAutomationVersion(ctx context.Context, arg LockAutomationVersionParams) (AutomationVersion, error) {
+	row := q.db.QueryRow(ctx, lockAutomationVersion,
+		arg.ID,
+		arg.AutomationID,
+		arg.BusinessID,
+		arg.TenantRootID,
+	)
+	var i AutomationVersion
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.AutomationID,
+		&i.Number,
+		&i.Status,
+		&i.Graph,
+		&i.TriggerKind,
+		&i.TriggerRef,
+		&i.ActivatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentSnapshot,
+	)
+	return i, err
+}
+
+const pruneAutomationVersions = `-- name: PruneAutomationVersions :execrows
+WITH total AS (
+    SELECT count(*)::integer AS value
+    FROM automation_version current_version
+    WHERE current_version.automation_id = $1
+      AND current_version.business_id = $2
+      AND current_version.tenant_root_id = $3
+), removable AS (
+    SELECT v.id
+    FROM automation_version v
+    WHERE v.automation_id = $1
+      AND v.business_id = $2
+      AND v.tenant_root_id = $3
+      AND v.status = 'superseded'
+      AND NOT EXISTS (
+          SELECT 1 FROM automation_enrollment e WHERE e.version_id = v.id
+      )
+    ORDER BY v.number, v.id
+    LIMIT GREATEST((SELECT value FROM total) - $4::integer, 0)
+)
+DELETE FROM automation_version v
+USING removable r
+WHERE v.id = r.id
+`
+
+type PruneAutomationVersionsParams struct {
+	AutomationID uuid.UUID `json:"automation_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	TargetCount  int32     `json:"target_count"`
+}
+
+func (q *Queries) PruneAutomationVersions(ctx context.Context, arg PruneAutomationVersionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneAutomationVersions,
+		arg.AutomationID,
+		arg.BusinessID,
+		arg.TenantRootID,
+		arg.TargetCount,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateAutomationDefinition = `-- name: UpdateAutomationDefinition :one

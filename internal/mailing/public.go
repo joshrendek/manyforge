@@ -214,7 +214,7 @@ type PublicHandler struct {
 // S2SEventIngestor lets the mailing key verifier hand an authenticated event to the
 // automations module without creating a mailing/automations import cycle.
 type S2SEventIngestor interface {
-	IngestS2SEvent(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, []byte) (any, bool, error)
+	IngestS2SEvent(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, []byte) (any, bool, error)
 }
 
 // NewPublicHandler builds the principal-less mailing ingress and tracking handler.
@@ -461,7 +461,9 @@ func (h *PublicHandler) s2sEvent(w http.ResponseWriter, r *http.Request) {
 	var created bool
 	authorized, err := h.withVerifiedS2S(r, raw, func(list publicListContext, tx pgx.Tx) error {
 		var ingestErr error
-		result, created, ingestErr = h.S2SEvents.IngestS2SEvent(r.Context(), tx, list.businessID, list.tenantRootID, list.listID, raw)
+		result, created, ingestErr = h.S2SEvents.IngestS2SEvent(
+			r.Context(), tx, list.businessID, list.tenantRootID, list.listID, list.keyID, raw,
+		)
 		return ingestErr
 	})
 	if err != nil {
@@ -472,6 +474,8 @@ func (h *PublicHandler) s2sEvent(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		case errors.Is(err, errs.ErrNotFound):
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		case errors.Is(err, errs.ErrConflict):
+			httpx.WriteJSON(w, http.StatusConflict, map[string]string{"error": "conflict"})
 		default:
 			h.logger().ErrorContext(r.Context(), "mailing s2s event failed", "err", err)
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})

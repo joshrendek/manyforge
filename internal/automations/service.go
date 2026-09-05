@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/platform/audit"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -21,9 +23,12 @@ import (
 )
 
 const (
-	defaultPageSize = 50
-	maxPageSize     = 100
-	cursorKind      = "automation"
+	defaultPageSize      = 50
+	maxPageSize          = 100
+	maxAutomationVersions = 100
+	maxContentSnapshotBytes = 1048576
+	cursorKind           = "automation"
+	versionCursorKind    = "automation-version"
 )
 
 var emptyGraph = Graph{Nodes: []Node{}, Edges: []Edge{}}
@@ -180,8 +185,9 @@ func (s *Service) Update(ctx context.Context, principalID, businessID, automatio
 	return out, mapErr(err)
 }
 
-func (s *Service) Versions(ctx context.Context, principalID, businessID, automationID uuid.UUID) ([]Version, error) {
-	var out []Version
+func (s *Service) Versions(ctx context.Context, principalID, businessID, automationID uuid.UUID, cursor string, limit int) (Page[VersionSummary], error) {
+	limit = clampLimit(limit)
+	var out Page[VersionSummary]
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
@@ -191,22 +197,49 @@ func (s *Service) Versions(ctx context.Context, principalID, businessID, automat
 		if _, err = q.GetAutomation(ctx, dbgen.GetAutomationParams{ID: automationID, BusinessID: businessID, TenantRootID: root}); err != nil {
 			return err
 		}
-		rows, err := q.ListAutomationVersions(ctx, dbgen.ListAutomationVersionsParams{
-			AutomationID: automationID,
-			BusinessID:   businessID,
-			TenantRootID: root,
-			Lim:          100,
-		})
-		if err != nil {
-			return err
-		}
-		out = make([]Version, 0, len(rows))
-		for _, row := range rows {
-			version, err := toVersion(row)
-			if err != nil {
-				return err
+		if cursor == "" {
+			rows, listErr := q.ListAutomationVersions(ctx, dbgen.ListAutomationVersionsParams{
+				AutomationID: automationID, BusinessID: businessID, TenantRootID: root, Lim: int32(limit + 1),
+			})
+			if listErr != nil {
+				return listErr
 			}
-			out = append(out, version)
+			out.Items = make([]VersionSummary, 0, min(len(rows), limit))
+			for index, row := range rows {
+				if index == limit {
+					next := encodeVersionCursor(rows[index-1].Number, rows[index-1].ID)
+					out.NextCursor = &next
+					break
+				}
+				out.Items = append(out.Items, versionSummary(
+					row.ID, row.BusinessID, row.TenantRootID, row.AutomationID, row.Number,
+					row.Status, row.TriggerKind, row.TriggerRef, row.ActivatedAt, row.CreatedAt, row.UpdatedAt,
+				))
+			}
+			return nil
+		}
+		number, id, decodeErr := decodeVersionCursor(cursor)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		rows, listErr := q.ListAutomationVersionsAfter(ctx, dbgen.ListAutomationVersionsAfterParams{
+			AutomationID: automationID, BusinessID: businessID, TenantRootID: root,
+			CurNumber: number, CurID: id, Lim: int32(limit + 1),
+		})
+		if listErr != nil {
+			return listErr
+		}
+		out.Items = make([]VersionSummary, 0, min(len(rows), limit))
+		for index, row := range rows {
+			if index == limit {
+				next := encodeVersionCursor(rows[index-1].Number, rows[index-1].ID)
+				out.NextCursor = &next
+				break
+			}
+			out.Items = append(out.Items, versionSummary(
+				row.ID, row.BusinessID, row.TenantRootID, row.AutomationID, row.Number,
+				row.Status, row.TriggerKind, row.TriggerRef, row.ActivatedAt, row.CreatedAt, row.UpdatedAt,
+			))
 		}
 		return nil
 	})
@@ -244,6 +277,21 @@ func (s *Service) CloneVersion(ctx context.Context, principalID, businessID, aut
 			return err
 		}
 		if automation.Status == dbgen.AutomationStatusArchived || automation.DraftVersionID.Valid || !automation.ActiveVersionID.Valid {
+			return errs.ErrConflict
+		}
+		if _, err = q.PruneAutomationVersions(ctx, dbgen.PruneAutomationVersionsParams{
+			AutomationID: automationID, BusinessID: businessID, TenantRootID: root,
+			TargetCount: maxAutomationVersions - 1,
+		}); err != nil {
+			return err
+		}
+		versionCount, err := q.CountAutomationVersions(ctx, dbgen.CountAutomationVersionsParams{
+			AutomationID: automationID, BusinessID: businessID, TenantRootID: root,
+		})
+		if err != nil {
+			return err
+		}
+		if versionCount >= maxAutomationVersions {
 			return errs.ErrConflict
 		}
 		active, err := q.GetAutomationVersion(ctx, dbgen.GetAutomationVersionParams{ID: uuid.UUID(automation.ActiveVersionID.Bytes), AutomationID: automationID, BusinessID: businessID, TenantRootID: root})
@@ -298,6 +346,9 @@ func (s *Service) PutGraph(ctx context.Context, principalID, businessID, automat
 			return errs.ErrConflict
 		}
 		row, err := q.UpdateAutomationVersionGraph(ctx, dbgen.UpdateAutomationVersionGraphParams{Graph: raw, ID: versionID, AutomationID: automationID, BusinessID: businessID, TenantRootID: root})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.ErrConflict
+		}
 		if err != nil {
 			return err
 		}
@@ -340,11 +391,14 @@ func (s *Service) Activate(ctx context.Context, principalID, businessID, automat
 		if err != nil {
 			return err
 		}
+		if err = requirePermission(ctx, tx, principalID, businessID, root, "mailing.send"); err != nil {
+			return err
+		}
 		automation, err := lockAutomation(ctx, tx, q, businessID, root, automationID)
 		if err != nil {
 			return err
 		}
-		version, err := q.GetAutomationVersion(ctx, dbgen.GetAutomationVersionParams{ID: versionID, AutomationID: automationID, BusinessID: businessID, TenantRootID: root})
+		version, err := q.LockAutomationVersion(ctx, dbgen.LockAutomationVersionParams{ID: versionID, AutomationID: automationID, BusinessID: businessID, TenantRootID: root})
 		if err != nil {
 			return err
 		}
@@ -366,6 +420,10 @@ func (s *Service) Activate(ctx context.Context, principalID, businessID, automat
 		if err != nil {
 			return err
 		}
+		contentSnapshot, err := snapshotVersionContent(ctx, tx, businessID, root, graph)
+		if err != nil {
+			return err
+		}
 		if automation.ActiveVersionID.Valid {
 			if tag, execErr := tx.Exec(ctx, `UPDATE automation_version SET status='superseded',updated_at=now()
 				WHERE id=$1 AND automation_id=$2 AND business_id=$3 AND tenant_root_id=$4 AND status='active'`, uuid.UUID(automation.ActiveVersionID.Bytes), automationID, businessID, root); execErr != nil || tag.RowsAffected() != 1 {
@@ -375,8 +433,11 @@ func (s *Service) Activate(ctx context.Context, principalID, businessID, automat
 				return errs.ErrConflict
 			}
 		}
-		if tag, execErr := tx.Exec(ctx, `UPDATE automation_version SET status='active',trigger_kind=$1,trigger_ref=$2,activated_at=now(),updated_at=now()
-			WHERE id=$3 AND automation_id=$4 AND business_id=$5 AND tenant_root_id=$6 AND status='draft'`, triggerKind, triggerRef, versionID, automationID, businessID, root); execErr != nil || tag.RowsAffected() != 1 {
+		if tag, execErr := tx.Exec(ctx, `UPDATE automation_version
+			SET status='active',trigger_kind=$1,trigger_ref=$2,content_snapshot=$3::jsonb,
+			    activated_at=now(),updated_at=now()
+			WHERE id=$4 AND automation_id=$5 AND business_id=$6 AND tenant_root_id=$7 AND status='draft'`,
+			triggerKind, triggerRef, contentSnapshot, versionID, automationID, businessID, root); execErr != nil || tag.RowsAffected() != 1 {
 			if execErr != nil {
 				return execErr
 			}
@@ -403,11 +464,11 @@ func (s *Service) Activate(ctx context.Context, principalID, businessID, automat
 }
 
 func (s *Service) Pause(ctx context.Context, principalID, businessID, automationID uuid.UUID) (Automation, error) {
-	return s.transition(ctx, principalID, businessID, automationID, "active", "paused", "automation.paused")
+	return s.transition(ctx, principalID, businessID, automationID, "active", "paused", "automation.paused", "")
 }
 
 func (s *Service) Resume(ctx context.Context, principalID, businessID, automationID uuid.UUID) (Automation, error) {
-	return s.transition(ctx, principalID, businessID, automationID, "paused", "active", "automation.resumed")
+	return s.transition(ctx, principalID, businessID, automationID, "paused", "active", "automation.resumed", "mailing.send")
 }
 
 func (s *Service) Archive(ctx context.Context, principalID, businessID, automationID uuid.UUID) (Automation, error) {
@@ -428,7 +489,9 @@ func (s *Service) Archive(ctx context.Context, principalID, businessID, automati
 			}
 			return errs.ErrConflict
 		}
-		if _, err = tx.Exec(ctx, `UPDATE automation_enrollment SET status='exited',exit_reason='archived',finished_at=now(),lease_expires_at=NULL,updated_at=now()
+		if _, err = tx.Exec(ctx, `UPDATE automation_enrollment SET status='exited',
+			current_node_id=NULL,wake_at=NULL,exit_reason='archived',finished_at=now(),
+			lease_expires_at=NULL,claim_generation=claim_generation+1,updated_at=now()
 			WHERE automation_id=$1 AND business_id=$2 AND tenant_root_id=$3 AND status='active'`, automationID, businessID, root); err != nil {
 			return err
 		}
@@ -445,13 +508,18 @@ func (s *Service) Archive(ctx context.Context, principalID, businessID, automati
 	return out, mapErr(err)
 }
 
-func (s *Service) transition(ctx context.Context, principalID, businessID, automationID uuid.UUID, from, to, action string) (Automation, error) {
+func (s *Service) transition(ctx context.Context, principalID, businessID, automationID uuid.UUID, from, to, action, permission string) (Automation, error) {
 	var out Automation
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
 		if err != nil {
 			return err
+		}
+		if permission != "" {
+			if err = requirePermission(ctx, tx, principalID, businessID, root, permission); err != nil {
+				return err
+			}
 		}
 		if _, err = lockAutomation(ctx, tx, q, businessID, root, automationID); err != nil {
 			return err
@@ -462,6 +530,14 @@ func (s *Service) transition(ctx context.Context, principalID, businessID, autom
 				return execErr
 			}
 			return errs.ErrConflict
+		}
+		if to == "paused" {
+			if _, err = tx.Exec(ctx, `UPDATE automation_enrollment
+				SET lease_expires_at=NULL,claim_generation=claim_generation+1,updated_at=now()
+				WHERE automation_id=$1 AND business_id=$2 AND tenant_root_id=$3 AND status='active'`,
+				automationID, businessID, root); err != nil {
+				return err
+			}
 		}
 		if err = writeAudit(ctx, tx, principalID, businessID, root, action, automationID, map[string]any{}); err != nil {
 			return err
@@ -484,6 +560,24 @@ func lockAutomation(ctx context.Context, tx pgx.Tx, q *dbgen.Queries, businessID
 	return q.GetAutomation(ctx, dbgen.GetAutomationParams{ID: id, BusinessID: businessID, TenantRootID: root})
 }
 
+func requirePermission(ctx context.Context, tx pgx.Tx, principalID, businessID, root uuid.UUID, permission string) error {
+	var operational bool
+	if err := tx.QueryRow(ctx, `SELECT mailing_business_operational($1,$2)`, businessID, root).Scan(&operational); err != nil {
+		return err
+	}
+	if !operational {
+		return errs.ErrNotFound
+	}
+	permissions, err := authz.Resolve(ctx, tx, principalID, businessID)
+	if err != nil {
+		return err
+	}
+	if !permissions.Has(permission) {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
 func validateInTenant(ctx context.Context, tx pgx.Tx, businessID, root uuid.UUID, graph Graph) (ValidationResult, error) {
 	listIDs, templateIDs := graphReferenceIDs(graph)
 	refs := References{Lists: map[uuid.UUID]bool{}, Templates: map[uuid.UUID]bool{}}
@@ -495,6 +589,53 @@ func validateInTenant(ctx context.Context, tx pgx.Tx, businessID, root uuid.UUID
 	}
 	issues := Validate(graph, refs)
 	return ValidationResult{Valid: len(issues) == 0, Issues: issues}, nil
+}
+
+type activationContentSnapshot struct {
+	Templates map[string]activationTemplateSnapshot `json:"templates"`
+}
+
+type activationTemplateSnapshot struct {
+	Subject      string  `json:"subject"`
+	Preheader    *string `json:"preheader"`
+	BodyMarkdown string  `json:"body_markdown"`
+}
+
+func snapshotVersionContent(ctx context.Context, tx pgx.Tx, businessID, root uuid.UUID, graph Graph) ([]byte, error) {
+	_, templateIDs := graphReferenceIDs(graph)
+	snapshot := activationContentSnapshot{Templates: make(map[string]activationTemplateSnapshot, len(templateIDs))}
+	if len(templateIDs) > 0 {
+		rows, err := tx.Query(ctx, `SELECT id,subject,preheader,body_markdown
+			FROM mailing_template
+			WHERE business_id=$1 AND tenant_root_id=$2 AND id=ANY($3::uuid[])
+			ORDER BY id FOR SHARE`, businessID, root, templateIDs)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id uuid.UUID
+			var subject, body string
+			var preheader pgtype.Text
+			if err = rows.Scan(&id, &subject, &preheader, &body); err != nil {
+				return nil, err
+			}
+			snapshot.Templates[id.String()] = activationTemplateSnapshot{
+				Subject: subject, Preheader: textPtr(preheader), BodyMarkdown: body,
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxContentSnapshotBytes {
+		return nil, validation("referenced template content exceeds the activation snapshot limit")
+	}
+	return raw, nil
 }
 
 func graphReferenceIDs(graph Graph) ([]uuid.UUID, []uuid.UUID) {
@@ -629,6 +770,21 @@ func timePtr(value pgtype.Timestamptz) *time.Time {
 	return &value.Time
 }
 
+func versionSummary(
+	id, businessID, tenantRootID, automationID uuid.UUID,
+	number int32,
+	status dbgen.AutomationVersionStatus,
+	triggerKind, triggerRef *string,
+	activatedAt pgtype.Timestamptz,
+	createdAt, updatedAt time.Time,
+) VersionSummary {
+	return VersionSummary{
+		ID: id, BusinessID: businessID, TenantRootID: tenantRootID, AutomationID: automationID,
+		Number: number, Status: string(status), TriggerKind: triggerKind, TriggerRef: triggerRef,
+		ActivatedAt: timePtr(activatedAt), CreatedAt: createdAt, UpdatedAt: updatedAt,
+	}
+}
+
 func resolveTenantRoot(ctx context.Context, q *dbgen.Queries, businessID uuid.UUID) (uuid.UUID, error) {
 	business, err := q.GetBusiness(ctx, businessID)
 	if err != nil {
@@ -735,4 +891,29 @@ func decodeTypedCursor(kind, value string) (time.Time, uuid.UUID, error) {
 		return time.Time{}, uuid.Nil, validation("invalid cursor")
 	}
 	return at, id, nil
+}
+
+func encodeVersionCursor(number int32, id uuid.UUID) string {
+	value := versionCursorKind + "|" + strconv.FormatInt(int64(number), 10) + "|" + id.String()
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+func decodeVersionCursor(value string) (int32, uuid.UUID, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return 0, uuid.Nil, validation("invalid cursor")
+	}
+	parts := strings.SplitN(string(raw), "|", 3)
+	if len(parts) != 3 || parts[0] != versionCursorKind {
+		return 0, uuid.Nil, validation("invalid cursor")
+	}
+	number, err := strconv.ParseInt(parts[1], 10, 32)
+	if err != nil || number <= 0 {
+		return 0, uuid.Nil, validation("invalid cursor")
+	}
+	id, err := uuid.Parse(parts[2])
+	if err != nil {
+		return 0, uuid.Nil, validation("invalid cursor")
+	}
+	return int32(number), id, nil
 }

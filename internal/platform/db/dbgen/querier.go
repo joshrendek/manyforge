@@ -52,6 +52,7 @@ type Querier interface {
 	// the caller in this business. Used to validate a review fallback chain: count != len(ids)
 	// ⇒ an unknown/foreign agent id ⇒ reject (no existence oracle; RLS scopes visibility).
 	CountAgentsInBusiness(ctx context.Context, arg CountAgentsInBusinessParams) (int64, error)
+	CountAutomationVersions(ctx context.Context, arg CountAutomationVersionsParams) (int64, error)
 	// Direct Owners (locked role) whose membership is AT this business. At the tenant
 	// root this is the last-Owner count guarded by FR-014/FR-024.
 	CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error)
@@ -577,8 +578,8 @@ type Querier interface {
 	// RLS scopes audit_entry to the caller's authorized businesses; the service
 	// additionally gates on audit.read. Projection omits new_value/old_value.
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
-	ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]AutomationVersion, error)
-	ListAutomationVersionsAfter(ctx context.Context, arg ListAutomationVersionsAfterParams) ([]AutomationVersion, error)
+	ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]ListAutomationVersionsRow, error)
+	ListAutomationVersionsAfter(ctx context.Context, arg ListAutomationVersionsAfterParams) ([]ListAutomationVersionsAfterRow, error)
 	ListAutomations(ctx context.Context, arg ListAutomationsParams) ([]Automation, error)
 	ListAutomationsAfter(ctx context.Context, arg ListAutomationsAfterParams) ([]Automation, error)
 	// RLS scopes the result to businesses the caller can see.
@@ -741,6 +742,7 @@ type Querier interface {
 	// Run-path: the discovery loop reads this under the AGENT principal (RLS scopes it to the
 	// agent's business) to classify discovered tools.
 	ListToolPoliciesByServer(ctx context.Context, mcpServerID uuid.UUID) ([]ListToolPoliciesByServerRow, error)
+	LockAutomationVersion(ctx context.Context, arg LockAutomationVersionParams) (AutomationVersion, error)
 	// Idempotency claim: flip approved -> executed iff still approved. Zero rows means a
 	// prior delivery already executed it (or it was denied) -> the executor skips.
 	MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExecutedParams) (ApprovalItem, error)
@@ -765,6 +767,7 @@ type Querier interface {
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).
 	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
+	PruneAutomationVersions(ctx context.Context, arg PruneAutomationVersionsParams) (int64, error)
 	// ReadCodexCredential is the lazy fast-path read (no lock): if the access token is still fresh
 	// the caller returns it without a network refresh.
 	ReadCodexCredential(ctx context.Context, businessID uuid.UUID) (ReadCodexCredentialRow, error)

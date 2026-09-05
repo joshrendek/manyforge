@@ -54,16 +54,16 @@ func (p AutomationPorts) Enqueue(ctx context.Context, tx pgx.Tx, spec automation
 		return uuid.Nil, fmt.Errorf("unsupported message source %q: %w", spec.SourceKind, automations.ErrInvalidReference)
 	}
 	var value pgtype.UUID
-	err := tx.QueryRow(ctx, "SELECT mailing_enqueue_delivery($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+	err := tx.QueryRow(ctx, "SELECT mailing_enqueue_delivery($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
 		spec.BusinessID, spec.TenantRootID, spec.SourceID, spec.TemplateID,
 		spec.SubscriberID, spec.NotBefore, safeMessageDomain(p.MessageDomain),
-		spec.TrackOpens, spec.TrackClicks,
+		spec.TrackOpens, spec.TrackClicks, spec.EnrollmentID, spec.ClaimGeneration,
 	).Scan(&value)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if !value.Valid {
-		return uuid.Nil, fmt.Errorf("subscriber or template was not found: %w", automations.ErrInvalidReference)
+		return uuid.Nil, automations.ErrLostFence
 	}
 	return uuid.UUID(value.Bytes), nil
 }
@@ -80,20 +80,34 @@ func (p AutomationPorts) Engagement(ctx context.Context, tx pgx.Tx, deliveryID u
 	return engagement, nil
 }
 
-func (p AutomationPorts) AddTag(ctx context.Context, tx pgx.Tx, businessID, tenantRootID, subscriberID uuid.UUID, tag string) error {
+func (p AutomationPorts) AddTag(
+	ctx context.Context,
+	tx pgx.Tx,
+	businessID, tenantRootID, subscriberID, enrollmentID uuid.UUID,
+	claimGeneration int,
+	tag string,
+) error {
 	var changed bool
-	err := tx.QueryRow(ctx, "SELECT mailing_automation_add_tag($1,$2,$3,$4)", businessID, tenantRootID, subscriberID, strings.TrimSpace(tag)).Scan(&changed)
+	err := tx.QueryRow(ctx, "SELECT mailing_automation_add_tag($1,$2,$3,$4,$5,$6)",
+		businessID, tenantRootID, subscriberID, strings.TrimSpace(tag), enrollmentID, claimGeneration).Scan(&changed)
 	if err == nil && !changed {
-		return fmt.Errorf("subscriber was not found: %w", automations.ErrInvalidReference)
+		return automations.ErrLostFence
 	}
 	return err
 }
 
-func (p AutomationPorts) RemoveTag(ctx context.Context, tx pgx.Tx, businessID, tenantRootID, subscriberID uuid.UUID, tag string) error {
-	var found bool
-	err := tx.QueryRow(ctx, "SELECT mailing_automation_remove_tag($1,$2,$3,$4)", businessID, tenantRootID, subscriberID, strings.TrimSpace(tag)).Scan(&found)
-	if err == nil && !found {
-		return fmt.Errorf("subscriber was not found: %w", automations.ErrInvalidReference)
+func (p AutomationPorts) RemoveTag(
+	ctx context.Context,
+	tx pgx.Tx,
+	businessID, tenantRootID, subscriberID, enrollmentID uuid.UUID,
+	claimGeneration int,
+	tag string,
+) error {
+	var changed bool
+	err := tx.QueryRow(ctx, "SELECT mailing_automation_remove_tag($1,$2,$3,$4,$5,$6)",
+		businessID, tenantRootID, subscriberID, strings.TrimSpace(tag), enrollmentID, claimGeneration).Scan(&changed)
+	if err == nil && !changed {
+		return automations.ErrLostFence
 	}
 	return err
 }

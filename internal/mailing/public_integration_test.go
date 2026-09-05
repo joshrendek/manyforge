@@ -284,7 +284,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		t.Fatalf("S2S event rows/outbox=%d/%d err=%v", storedEvents, eventOutbox, err)
 	}
 
-	t.Run("AUTOMATION-S2S-REPLAY-003 signed no-key event replays", func(t *testing.T) {
+	t.Run("AUTOMATION-S2S-REPLAY-003 rejects signed events without an idempotency key", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
 			"name": "audit_replay", "subscriber_id": apiSubscriberID,
 			"properties": map[string]any{"marker": "same-signed-request"},
@@ -293,7 +293,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		headers := signedHeaders(key.Secret, http.MethodPost, path, body)
 		first := request(http.MethodPost, path, body, headers)
 		second := request(http.MethodPost, path, body, headers)
-		if first.Code != http.StatusCreated || second.Code != http.StatusCreated {
+		if first.Code != http.StatusBadRequest || second.Code != http.StatusBadRequest {
 			t.Fatalf("no-key replay statuses first=%d/%s second=%d/%s",
 				first.Code, first.Body.String(), second.Code, second.Body.String())
 		}
@@ -304,12 +304,12 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 			 AND payload->>'name'='audit_replay')`, seed.businessID).Scan(&eventRows, &outboxRows); err != nil {
 			t.Fatal(err)
 		}
-		if eventRows != 2 || outboxRows != 2 {
-			t.Fatalf("no-key replay rows/outbox = %d/%d, want 2/2", eventRows, outboxRows)
+		if eventRows != 0 || outboxRows != 0 {
+			t.Fatalf("no-key replay rows/outbox = %d/%d, want 0/0", eventRows, outboxRows)
 		}
 	})
 
-	t.Run("AUTOMATION-EVENT-SCOPE-001 list key collision returns another list event", func(t *testing.T) {
+	t.Run("AUTOMATION-EVENT-SCOPE-001 scopes the same idempotency key to each list key", func(t *testing.T) {
 		otherList, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{
 			Name: "Other integration", DoubleOptIn: false,
 		})
@@ -340,13 +340,37 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		secondPath := "/api/v1/mailing/s2s/" + otherKey.PublishableKey + "/events"
 		second := request(http.MethodPost, secondPath, secondBody,
 			signedHeaders(otherKey.Secret, http.MethodPost, secondPath, secondBody))
-		if second.Code != http.StatusOK {
-			t.Fatalf("colliding scoped event status/body = %d/%s", second.Code, second.Body.String())
+		if second.Code != http.StatusCreated {
+			t.Fatalf("second scoped event status/body = %d/%s", second.Code, second.Body.String())
 		}
-		if !strings.Contains(second.Body.String(), "list-a-secret@example.test") ||
-			!strings.Contains(second.Body.String(), "LIST_A_PRIVATE") ||
-			strings.Contains(second.Body.String(), "LIST_B_PRIVATE") {
-			t.Fatalf("cross-list collision response = %s", second.Body.String())
+		if strings.Contains(second.Body.String(), "list-a-secret@example.test") ||
+			strings.Contains(second.Body.String(), "LIST_A_PRIVATE") ||
+			!strings.Contains(second.Body.String(), "LIST_B_PRIVATE") {
+			t.Fatalf("second scope response = %s", second.Body.String())
+		}
+		var scopedRows int
+		if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FROM automation_event
+			WHERE business_id=$1 AND idempotency_key=$2
+			  AND ingress_list_id IN ($3,$4) AND ingress_key_id IN ($5,$6)`,
+			seed.businessID, idempotencyKey, list.ID, otherList.ID, key.ID, otherKey.ID).Scan(&scopedRows); err != nil {
+			t.Fatal(err)
+		}
+		if scopedRows != 2 {
+			t.Fatalf("scoped event rows = %d, want 2", scopedRows)
+		}
+
+		collisionBody, _ := json.Marshal(map[string]any{
+			"name": "audit_scope", "email": "changed@example.test",
+			"idempotency_key": idempotencyKey,
+			"properties":      map[string]any{"private_marker": "CHANGED"},
+		})
+		collision := request(http.MethodPost, firstPath, collisionBody,
+			signedHeaders(key.Secret, http.MethodPost, firstPath, collisionBody))
+		if collision.Code != http.StatusConflict {
+			t.Fatalf("same-scope collision status/body = %d/%s", collision.Code, collision.Body.String())
+		}
+		if strings.Contains(collision.Body.String(), "list-a-secret@example.test") {
+			t.Fatalf("collision disclosed stored event: %s", collision.Body.String())
 		}
 	})
 

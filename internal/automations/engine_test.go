@@ -45,7 +45,7 @@ func (f *fakeSteps) Delivery(_ context.Context, _ pgx.Tx, _ uuid.UUID, nodeID st
 	}
 	return &id, nil
 }
-func (f *fakeSteps) EventExists(context.Context, pgx.Tx, uuid.UUID, string, string, time.Time, *time.Duration) (bool, error) {
+func (f *fakeSteps) EventExists(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, string, string, time.Time, time.Time, *time.Duration) (bool, error) {
 	return f.event, nil
 }
 
@@ -84,11 +84,11 @@ func (f fakeEngagement) Engagement(context.Context, pgx.Tx, uuid.UUID) (Engageme
 
 type fakeTagger struct{ added, removed []string }
 
-func (f *fakeTagger) AddTag(_ context.Context, _ pgx.Tx, _, _, _ uuid.UUID, tag string) error {
+func (f *fakeTagger) AddTag(_ context.Context, _ pgx.Tx, _, _, _, _ uuid.UUID, _ int, tag string) error {
 	f.added = append(f.added, tag)
 	return nil
 }
-func (f *fakeTagger) RemoveTag(_ context.Context, _ pgx.Tx, _, _, _ uuid.UUID, tag string) error {
+func (f *fakeTagger) RemoveTag(_ context.Context, _ pgx.Tx, _, _, _, _ uuid.UUID, _ int, tag string) error {
 	f.removed = append(f.removed, tag)
 	return nil
 }
@@ -143,10 +143,9 @@ func TestAdvanceRunsEveryActionNodeTransactionally(t *testing.T) {
 	}
 }
 
-// AUTOMATION-FENCE-002 characterizes the current late-fence behavior. The
-// enqueue side effect runs before Record reports a lost generation, and Advance
-// returns nil so its caller commits the transaction containing that side effect.
-func TestAutomationFence002SideEffectPrecedesLostGenerationFence(t *testing.T) {
+// AUTOMATION-FENCE-002 requires a lost generation fence to abort the
+// transaction rather than commit a side effect followed by a successful no-op.
+func TestAutomationFence002LostGenerationAbortsAdvance(t *testing.T) {
 	enrollment, now, steps, subscribers := engineFixture()
 	enrollment.CurrentNodeID = "send"
 	steps.recordOK = false
@@ -159,11 +158,11 @@ func TestAutomationFence002SideEffectPrecedesLostGenerationFence(t *testing.T) {
 	out, err := (Engine{Deps: Deps{
 		Steps: steps, Subscribers: subscribers, Sender: sender,
 	}}).Advance(context.Background(), nil, enrollment, graph, now)
-	if err != nil || !out.LeaseLost {
-		t.Fatalf("Advance = %+v, err=%v; want nil error with lost fence", out, err)
+	if !errors.Is(err, ErrLostFence) {
+		t.Fatalf("Advance = %+v, err=%v; want typed lost-fence failure", out, err)
 	}
 	if len(sender.specs) != 1 {
-		t.Fatalf("enqueued messages = %d, want side effect before lost fence", len(sender.specs))
+		t.Fatalf("fake enqueue calls = %d, want one call whose transaction is rolled back", len(sender.specs))
 	}
 }
 
