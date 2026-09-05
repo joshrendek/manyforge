@@ -150,6 +150,7 @@ func TestResendRejectsHeaderInjectionBeforeNetwork(t *testing.T) {
 
 func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 	configurationChecked := false
+	eventDestinationsJSON := `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -160,6 +161,8 @@ func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v2/email/configuration-sets/campaign-events":
 			configurationChecked = true
 			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v2/email/configuration-sets/campaign-events/event-destinations":
+			_, _ = io.WriteString(w, eventDestinationsJSON)
 		case r.Method == http.MethodPost && r.URL.Path == "/v2/email/outbound-emails":
 			var body struct {
 				Content struct {
@@ -203,6 +206,21 @@ func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 	if !configurationChecked {
 		t.Fatal("Verify did not validate the configured SES event configuration set")
 	}
+	for name, response := range map[string]string{
+		"no destination":   `{"EventDestinations":[]}`,
+		"disabled":         `{"EventDestinations":[{"Name":"feedback","Enabled":false,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
+		"wrong topic":      `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:other"}}]}`,
+		"missing bounce":   `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
+		"missing complaint": `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			eventDestinationsJSON = response
+			if err := sender.Verify(context.Background()); err == nil {
+				t.Fatal("Verify accepted an SES configuration set without the required feedback route")
+			}
+		})
+	}
+	eventDestinationsJSON = `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`
 	sender.Identity = stubSTSIdentity{accountID: "999999999999"}
 	if err := sender.Verify(context.Background()); err == nil {
 		t.Fatal("Verify accepted an SNS topic from a different AWS account")
