@@ -80,6 +80,18 @@ func resolvePublicList(ctx context.Context, tx pgx.Tx, key string) (publicListCo
 	return out, err == nil, err
 }
 
+func resolveUnsubscribeList(ctx context.Context, tx pgx.Tx, key string) (publicListContext, bool, error) {
+	var out publicListContext
+	err := tx.QueryRow(ctx, `
+		SELECT list_id, business_id, tenant_root_id, double_opt_in, key_id, sealed_secret
+		FROM mailing_unsubscribe_list($1)`, key,
+	).Scan(&out.listID, &out.businessID, &out.tenantRootID, &out.doubleOptIn, &out.keyID, &out.sealedSecret)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return publicListContext{}, false, nil
+	}
+	return out, err == nil, err
+}
+
 // subscribeResolved performs the mutation in the caller's transaction. S2S uses this after
 // verifying the request against the key resolved in that same transaction, closing the
 // verify/revoke race between authentication and use.
@@ -97,7 +109,7 @@ func (s *Service) subscribeResolved(ctx context.Context, tx pgx.Tx, list publicL
 	var rawConfirmation string
 	var hash []byte
 	var expires *time.Time
-	if list.doubleOptIn && !in.SkipConfirmation {
+	if !s2s || (list.doubleOptIn && !in.SkipConfirmation) {
 		if s.Tokens == nil {
 			return PublicSubscriptionResult{}, "", "", errors.New("mailing: token codec unavailable")
 		}
@@ -404,7 +416,7 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PublicHandler) s2sUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	authorized, err := h.withVerifiedS2S(r, nil, func(list publicListContext, tx pgx.Tx) error {
+	authorized, err := h.withVerifiedS2SResolver(r, nil, resolveUnsubscribeList, func(list publicListContext, tx pgx.Tx) error {
 		rawEmail, err := url.PathUnescape(chi.URLParam(r, "email"))
 		if err != nil {
 			return validation("invalid email")
@@ -426,7 +438,7 @@ func (h *PublicHandler) s2sUnsubscribe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger().ErrorContext(r.Context(), "mailing s2s unsubscribe failed", "err", err)
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "temporarily unavailable"})
 		return
 	}
 	if !authorized {
@@ -477,10 +489,21 @@ func (h *PublicHandler) s2sEvent(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, status, result)
 }
 
+type publicListResolver func(context.Context, pgx.Tx, string) (publicListContext, bool, error)
+
 func (h *PublicHandler) withVerifiedS2S(r *http.Request, raw []byte, fn func(publicListContext, pgx.Tx) error) (bool, error) {
+	return h.withVerifiedS2SResolver(r, raw, resolvePublicList, fn)
+}
+
+func (h *PublicHandler) withVerifiedS2SResolver(
+	r *http.Request,
+	raw []byte,
+	resolve publicListResolver,
+	fn func(publicListContext, pgx.Tx) error,
+) (bool, error) {
 	var authorized bool
 	err := h.Service.DB.WithTx(r.Context(), func(tx pgx.Tx) error {
-		list, found, err := resolvePublicList(r.Context(), tx, chi.URLParam(r, "key"))
+		list, found, err := resolve(r.Context(), tx, chi.URLParam(r, "key"))
 		if err != nil || !found || list.sealedSecret == nil || h.Sealer == nil {
 			return err
 		}

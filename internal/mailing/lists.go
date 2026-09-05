@@ -151,8 +151,13 @@ func (s *Service) ArchiveList(ctx context.Context, principalID, businessID, list
 		if _, err := loadList(ctx, q, businessID, root, listID); err != nil {
 			return err
 		}
-		if _, err := q.ArchiveMailingList(ctx, dbgen.ArchiveMailingListParams{ID: listID, TenantRootID: root}); err != nil {
+		var changed int
+		if err := tx.QueryRow(ctx, `SELECT mailing_archive_list($1,$2,$3)`,
+			listID, businessID, root).Scan(&changed); err != nil {
 			return err
+		}
+		if changed != 1 {
+			return pgx.ErrNoRows
 		}
 		return auditMutation(ctx, tx, principalID, businessID, root, "mailing.list.archived", "mailing_list", listID, map[string]any{})
 	})

@@ -186,7 +186,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		t.Fatalf("unsubscribe status/suppressions = %q/%d", status, suppressionCount)
 	}
 
-	t.Run("MF-MAIL-PUB-001 single opt-in resubscribe reverses unsubscribe", func(t *testing.T) {
+	t.Run("MF-MAIL-PUB-001 anonymous resubscribe requires mailbox confirmation", func(t *testing.T) {
 		singleList, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{
 			Name: "Single opt-in", DoubleOptIn: false,
 		})
@@ -216,6 +216,26 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		}
 		var gotStatus string
 		var suppressions int
+		var hasConfirmation bool
+		if err = tdb.Super.QueryRow(ctx, `SELECT s.status::text,
+			(SELECT count(*) FROM mailing_suppression ms
+			 WHERE ms.business_id=s.business_id AND ms.email=s.email),
+			s.confirm_token_hash IS NOT NULL
+			FROM list_subscriber s WHERE s.id=$1`, id).Scan(&gotStatus, &suppressions, &hasConfirmation); err != nil {
+			t.Fatal(err)
+		}
+		if gotStatus != "pending" || suppressions != 1 || !hasConfirmation {
+			t.Fatalf("resubscribe status/suppressions/confirmation=%q/%d/%t; want pending/1/true",
+				gotStatus, suppressions, hasConfirmation)
+		}
+		start := strings.Index(captured.mail.BodyText, marker)
+		if start < 0 {
+			t.Fatalf("reactivation mail has no confirmation link: %q", captured.mail.BodyText)
+		}
+		reactivationToken := strings.Fields(captured.mail.BodyText[start+len(marker):])[0]
+		if w := request(http.MethodPost, "/m/confirm/"+reactivationToken, nil, nil); w.Code != http.StatusOK {
+			t.Fatalf("reactivation confirmation status/body = %d/%s", w.Code, w.Body.String())
+		}
 		if err = tdb.Super.QueryRow(ctx, `SELECT s.status::text,
 			(SELECT count(*) FROM mailing_suppression ms
 			 WHERE ms.business_id=s.business_id AND ms.email=s.email)
@@ -223,7 +243,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 			t.Fatal(err)
 		}
 		if gotStatus != "active" || suppressions != 0 {
-			t.Fatalf("resubscribe restored status=%q suppressions=%d; want active/0", gotStatus, suppressions)
+			t.Fatalf("confirmed reactivation status/suppressions=%q/%d; want active/0", gotStatus, suppressions)
 		}
 	})
 
@@ -330,7 +350,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		}
 	})
 
-	t.Run("MF-MAIL-LIFECYCLE-002 archived list still confirms pending subscriber", func(t *testing.T) {
+	t.Run("MF-MAIL-LIFECYCLE-002 archive cancels pending confirmation", func(t *testing.T) {
 		archivedList, err := svc.CreateList(ctx, seed.principalID, seed.businessID, mailing.ListInput{
 			Name: "Archive confirmation", DoubleOptIn: true,
 		})
@@ -358,12 +378,16 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 			t.Fatalf("confirmation after archive status/body = %d/%s", w.Code, w.Body.String())
 		}
 		var archivedStatus string
-		if err := tdb.Super.QueryRow(ctx, `SELECT status::text FROM list_subscriber
-			WHERE list_id=$1 AND email='pending-on-archive@example.test'`, archivedList.ID).Scan(&archivedStatus); err != nil {
+		var confirmationCancelled bool
+		if err := tdb.Super.QueryRow(ctx, `SELECT status::text, confirm_token_hash IS NULL
+			FROM list_subscriber
+			WHERE list_id=$1 AND email='pending-on-archive@example.test'`, archivedList.ID).
+			Scan(&archivedStatus, &confirmationCancelled); err != nil {
 			t.Fatal(err)
 		}
-		if archivedStatus != "active" {
-			t.Fatalf("pending subscriber after archived-list confirmation = %q, want active", archivedStatus)
+		if archivedStatus != "pending" || !confirmationCancelled {
+			t.Fatalf("pending subscriber after archive status/cancelled=%q/%t, want pending/true",
+				archivedStatus, confirmationCancelled)
 		}
 	})
 	deletePath := "/api/v1/mailing/s2s/" + key.PublishableKey + "/subscribers/api%40example.test"
@@ -398,7 +422,7 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 		t.Fatalf("S2S per-key limit status/body = %d/%q", rateLimitedS2S.Code, rateLimitedS2S.Body.String())
 	}
 
-	t.Run("MF-MAIL-DB-001 archived and deleted business keeps public key live", func(t *testing.T) {
+	t.Run("MF-MAIL-DB-001 archived and deleted business disables public key", func(t *testing.T) {
 		perKey.deny = false
 		if _, err := tdb.Super.Exec(ctx, `UPDATE business SET status='archived',updated_at=now()
 			WHERE id=$1`, seed.businessID); err != nil {
@@ -428,8 +452,8 @@ func TestPublicDoubleOptInConfirmUnsubscribeAndS2S(t *testing.T) {
 				WHERE business_id=$1 AND email=$2`, seed.businessID, tc.email).Scan(&rows); err != nil {
 				t.Fatal(err)
 			}
-			if rows != 1 {
-				t.Fatalf("subscriber rows after lifecycle stop = %d, want public key still wrote one row", rows)
+			if rows != 0 {
+				t.Fatalf("subscriber rows after lifecycle stop = %d, want 0", rows)
 			}
 		}
 	})
