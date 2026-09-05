@@ -19,7 +19,7 @@ $$;
 DROP FUNCTION mailing_complete_changed_campaign_rollups(uuid,uuid[]);
 DROP FUNCTION mailing_claim_changed_campaign_rollups(uuid,integer,integer);
 DROP TRIGGER mailing_delivery_queue_campaign_rollup_change ON mailing_delivery;
-DROP FUNCTION mailing_queue_campaign_rollup_change();
+DROP FUNCTION public.mailing_queue_campaign_rollup_change();
 DELETE FROM tenant_merge_manifest WHERE table_name = 'mailing_campaign_rollup_queue';
 DROP TRIGGER tenant_merge_write_fence ON mailing_campaign_rollup_queue;
 DROP TRIGGER mailing_campaign_rollup_queue_troot_immutable ON mailing_campaign_rollup_queue;

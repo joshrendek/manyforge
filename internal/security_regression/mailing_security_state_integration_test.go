@@ -53,6 +53,88 @@ func TestMailingSecurityStateIntegration(t *testing.T) {
 	})
 }
 
+func TestMailingRollupQueueAppMutation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatalf("start testdb: %v", err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+
+	businessID, listID := uuid.New(), uuid.New()
+	accountID, principalID := uuid.New(), uuid.New()
+	seedBusiness(t, ctx, tdb, businessID, "RLS Rollup Co")
+	var ownerRoleID uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'`,
+	).Scan(&ownerRoleID); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO account (
+			id,email,email_verified_at,display_name,status,created_at,updated_at
+		) VALUES ($1,$2,now(),'Rollup Owner','active',now(),now())`,
+		accountID, "rollup-"+accountID.String()+"@example.test")
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO principal (id,kind,account_id,created_at)
+		VALUES ($1,'human',$2,now())`, principalID, accountID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO membership (
+			principal_id,business_id,tenant_root_id,role_id,granted_at
+		) VALUES ($1,$2,$2,$3,now())`, principalID, businessID, ownerRoleID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_list (
+			id,business_id,tenant_root_id,slug,name,double_opt_in,status
+		) VALUES ($1,$2,$2,'rls-rollup','RLS Rollup',false,'active')`,
+		listID, businessID)
+	subscriberID, campaignID, deliveryID := uuid.New(), uuid.New(), uuid.New()
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO list_subscriber (
+			id,business_id,tenant_root_id,list_id,email,status,consent_source,consent_attested_by
+		) VALUES ($1,$2,$2,$3,'rls-rollup@example.test','active','manual',$4)`,
+		subscriberID, businessID, listID, principalID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO campaign (
+			id,business_id,tenant_root_id,list_id,name,subject,body_markdown,status,fanout_done
+		) VALUES ($1,$2,$2,$3,'RLS changed','Subject','Body','sending',true)`,
+		campaignID, businessID, listID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_delivery (
+			id,business_id,tenant_root_id,source_kind,source_id,campaign_id,
+			subscriber_id,email,status,message_id
+		) VALUES ($1,$2,$2,'campaign',$3,$3,$4,'rls-rollup@example.test','sent',$5)`,
+		deliveryID, businessID, campaignID, subscriberID,
+		deliveryID.String()+"@message.example")
+	mustExec(t, ctx, tdb.Super,
+		`DELETE FROM mailing_campaign_rollup_queue WHERE campaign_id=$1`, campaignID)
+
+	if err := tdb.App.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE mailing_delivery
+			SET last_error='authorized app mutation',updated_at=now()
+			WHERE id=$1 AND tenant_root_id=$2`, deliveryID, businessID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			t.Fatalf("authorized app delivery update affected %d rows", tag.RowsAffected())
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("authorized app delivery mutation: %v", err)
+	}
+	var queued int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT count(*) FROM mailing_campaign_rollup_queue WHERE campaign_id=$1`,
+		campaignID).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if queued != 1 {
+		t.Fatalf("authorized app delivery mutation queued %d campaigns, want 1", queued)
+	}
+}
+
 func assertOperationalFunctions(t *testing.T, ctx context.Context, tdb *testdb.TestDB, businessID, listID uuid.UUID) {
 	t.Helper()
 	callBusiness := func(id, root uuid.UUID) bool {
@@ -547,15 +629,16 @@ func testBoundedKeysetContracts(t *testing.T, ctx context.Context, tdb *testdb.T
 	}
 	complete := func(token uuid.UUID, ids []uuid.UUID) int {
 		t.Helper()
-		var completed int
+		var result reflect.Value
 		if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx,
-				`SELECT mailing_complete_changed_campaign_rollups($1,$2)`,
-				token, ids).Scan(&completed)
+			result = callGeneratedMany(t, ctx, dbgen.New(tx), "CompleteChangedCampaignRollups", map[string]any{
+				"ClaimToken": token, "CampaignIds": ids,
+			})
+			return nil
 		}); err != nil {
 			t.Fatalf("complete changed campaign rollups: %v", err)
 		}
-		return completed
+		return int(result.Int())
 	}
 
 	firstClaimToken := uuid.New()

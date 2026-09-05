@@ -217,9 +217,10 @@ CREATE TRIGGER tenant_merge_write_fence
 INSERT INTO tenant_merge_manifest (table_name, module, strategy, inventory_version)
 VALUES ('mailing_campaign_rollup_queue', 'mailing', 'drain_fence_then_rewrite', 1);
 
-CREATE FUNCTION mailing_queue_campaign_rollup_change()
+CREATE FUNCTION public.mailing_queue_campaign_rollup_change()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
 DECLARE
@@ -262,6 +263,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+REVOKE ALL ON FUNCTION public.mailing_queue_campaign_rollup_change() FROM PUBLIC;
 
 INSERT INTO mailing_campaign_rollup_queue (
     campaign_id, business_id, tenant_root_id, changed_at
@@ -279,7 +281,7 @@ ON CONFLICT (campaign_id) DO UPDATE SET
 
 CREATE TRIGGER mailing_delivery_queue_campaign_rollup_change
     AFTER INSERT OR UPDATE OR DELETE ON mailing_delivery
-    FOR EACH ROW EXECUTE FUNCTION mailing_queue_campaign_rollup_change();
+    FOR EACH ROW EXECUTE FUNCTION public.mailing_queue_campaign_rollup_change();
 
 CREATE FUNCTION mailing_claim_changed_campaign_rollups(
     p_claim_token uuid,

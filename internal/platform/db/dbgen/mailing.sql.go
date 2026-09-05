@@ -119,6 +119,25 @@ func (q *Queries) ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChan
 	return items, nil
 }
 
+const completeChangedCampaignRollups = `-- name: CompleteChangedCampaignRollups :one
+SELECT public.mailing_complete_changed_campaign_rollups(
+    $1::uuid,
+    $2::uuid[]
+)::integer
+`
+
+type CompleteChangedCampaignRollupsParams struct {
+	ClaimToken  uuid.UUID   `json:"claim_token"`
+	CampaignIds []uuid.UUID `json:"campaign_ids"`
+}
+
+func (q *Queries) CompleteChangedCampaignRollups(ctx context.Context, arg CompleteChangedCampaignRollupsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, completeChangedCampaignRollups, arg.ClaimToken, arg.CampaignIds)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteCampaign = `-- name: DeleteCampaign :one
 DELETE FROM campaign
 WHERE id = $1 AND tenant_root_id = $2 AND status IN ('draft', 'cancelled')
