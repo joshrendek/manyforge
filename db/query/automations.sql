@@ -56,8 +56,20 @@ WHERE id = $1 AND automation_id = $2
 
 -- name: ListAutomationVersions :many
 SELECT * FROM automation_version
-WHERE automation_id = $1 AND business_id = $2 AND tenant_root_id = $3
-ORDER BY number DESC, id DESC;
+WHERE automation_id = sqlc.arg('automation_id')
+  AND business_id = sqlc.arg('business_id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+ORDER BY number DESC, id DESC
+LIMIT LEAST(GREATEST(sqlc.arg('lim')::integer, 1), 100);
+
+-- name: ListAutomationVersionsAfter :many
+SELECT * FROM automation_version
+WHERE automation_id = sqlc.arg('automation_id')
+  AND business_id = sqlc.arg('business_id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND (number, id) < (sqlc.arg('cur_number')::integer, sqlc.arg('cur_id')::uuid)
+ORDER BY number DESC, id DESC
+LIMIT LEAST(GREATEST(sqlc.arg('lim')::integer, 1), 100);
 
 -- name: UpdateAutomationVersionGraph :one
 UPDATE automation_version SET graph = sqlc.arg('graph'), updated_at = now()

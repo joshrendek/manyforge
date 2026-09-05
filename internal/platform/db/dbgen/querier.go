@@ -575,6 +575,7 @@ type Querier interface {
 	// additionally gates on audit.read. Projection omits new_value/old_value.
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]AutomationVersion, error)
+	ListAutomationVersionsAfter(ctx context.Context, arg ListAutomationVersionsAfterParams) ([]AutomationVersion, error)
 	ListAutomations(ctx context.Context, arg ListAutomationsParams) ([]Automation, error)
 	ListAutomationsAfter(ctx context.Context, arg ListAutomationsAfterParams) ([]Automation, error)
 	// RLS scopes the result to businesses the caller can see.
@@ -583,6 +584,8 @@ type Querier interface {
 	ListCampaignDeliveriesAfter(ctx context.Context, arg ListCampaignDeliveriesAfterParams) ([]MailingDelivery, error)
 	ListCampaigns(ctx context.Context, arg ListCampaignsParams) ([]Campaign, error)
 	ListCampaignsAfter(ctx context.Context, arg ListCampaignsAfterParams) ([]Campaign, error)
+	// ---- bounded worker cursors ----
+	ListChangedCampaignRollupChanges(ctx context.Context, arg ListChangedCampaignRollupChangesParams) ([]ListChangedCampaignRollupChangesRow, error)
 	// ListCodeReviews returns the business's reviews newest-first for the history UI.
 	// Join repo_connector so each row shows its repo (owner/name) in one query, no O(n)
 	// per-row connector resolve. repo_connector_id is a NOT NULL FK, so this normally
