@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { Page } from './ticket.service';
+import { routeSegmentUUID } from './route-id';
 
 export type AutomationStatus = 'draft' | 'active' | 'paused' | 'archived';
 export type AutomationVersionStatus = 'draft' | 'active' | 'superseded';
@@ -152,7 +153,7 @@ export class AutomationsService {
   private readonly http = inject(HttpClient);
 
   private base(businessId: string): string {
-    return `/api/v1/businesses/${businessId}/mailing/automations`;
+    return `/api/v1/businesses/${routeSegmentUUID(businessId)}/mailing/automations`;
   }
 
   list(businessId: string, cursor?: string): Observable<Page<Automation>> {
@@ -161,7 +162,9 @@ export class AutomationsService {
   }
 
   get(businessId: string, automationId: string): Observable<Automation> {
-    return this.http.get<Automation>(`${this.base(businessId)}/${automationId}`);
+    return this.http.get<Automation>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}`,
+    );
   }
 
   create(
@@ -173,7 +176,7 @@ export class AutomationsService {
 
   versions(businessId: string, automationId: string): Observable<{ items: AutomationVersion[] }> {
     return this.http.get<{ items: AutomationVersion[] }>(
-      `${this.base(businessId)}/${automationId}/versions`,
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/versions`,
     );
   }
 
@@ -183,7 +186,7 @@ export class AutomationsService {
     versionId: string,
   ): Observable<AutomationVersion> {
     return this.http.get<AutomationVersion>(
-      `${this.base(businessId)}/${automationId}/versions/${versionId}`,
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/versions/${routeSegmentUUID(versionId)}`,
     );
   }
 
@@ -194,29 +197,44 @@ export class AutomationsService {
     graph: AutomationGraph,
   ): Observable<AutomationVersion> {
     return this.http.put<AutomationVersion>(
-      `${this.base(businessId)}/${automationId}/versions/${versionId}/graph`,
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/versions/${routeSegmentUUID(versionId)}/graph`,
       graph,
     );
   }
 
   createVersion(businessId: string, automationId: string): Observable<AutomationVersion> {
-    return this.http.post<AutomationVersion>(`${this.base(businessId)}/${automationId}/versions`, {});
+    return this.http.post<AutomationVersion>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/versions`,
+      {},
+    );
   }
 
   activate(businessId: string, automationId: string, versionId: string): Observable<Automation> {
-    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/versions/${versionId}/activate`, {});
+    return this.http.post<Automation>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/versions/${routeSegmentUUID(versionId)}/activate`,
+      {},
+    );
   }
 
   pause(businessId: string, automationId: string): Observable<Automation> {
-    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/pause`, {});
+    return this.http.post<Automation>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/pause`,
+      {},
+    );
   }
 
   resume(businessId: string, automationId: string): Observable<Automation> {
-    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/resume`, {});
+    return this.http.post<Automation>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/resume`,
+      {},
+    );
   }
 
   archive(businessId: string, automationId: string): Observable<Automation> {
-    return this.http.post<Automation>(`${this.base(businessId)}/${automationId}/archive`, {});
+    return this.http.post<Automation>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/archive`,
+      {},
+    );
   }
 
   listEnrollments(
@@ -228,19 +246,31 @@ export class AutomationsService {
     if (filters.status) params = params.set('status', filters.status);
     if (filters.node_id) params = params.set('node_id', filters.node_id);
     if (filters.cursor) params = params.set('cursor', filters.cursor);
-    return this.http.get<Page<Enrollment>>(`${this.base(businessId)}/${automationId}/enrollments`, { params });
+    return this.http.get<Page<Enrollment>>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/enrollments`,
+      { params },
+    );
   }
 
   enroll(businessId: string, automationId: string, subscriberId: string): Observable<Enrollment> {
-    return this.http.post<Enrollment>(`${this.base(businessId)}/${automationId}/enrollments`, { subscriber_id: subscriberId });
+    return this.http.post<Enrollment>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/enrollments`,
+      { subscriber_id: subscriberId },
+    );
   }
 
   exitEnrollment(businessId: string, automationId: string, enrollmentId: string): Observable<Enrollment> {
-    return this.http.post<Enrollment>(`${this.base(businessId)}/${automationId}/enrollments/${enrollmentId}/exit`, {});
+    return this.http.post<Enrollment>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/enrollments/${routeSegmentUUID(enrollmentId)}/exit`,
+      {},
+    );
   }
 
   stats(businessId: string, automationId: string, versionId?: string): Observable<AutomationStats> {
     const params = versionId ? new HttpParams().set('version_id', versionId) : undefined;
-    return this.http.get<AutomationStats>(`${this.base(businessId)}/${automationId}/stats`, { params });
+    return this.http.get<AutomationStats>(
+      `${this.base(businessId)}/${routeSegmentUUID(automationId)}/stats`,
+      { params },
+    );
   }
 }

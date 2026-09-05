@@ -115,3 +115,23 @@ func TestDecodeJSONAtCapDecodes(t *testing.T) {
 		t.Fatalf("DecodeJSON: want ok=true for under-cap body, got false (status %d)", rec.Code)
 	}
 }
+
+func TestWriteErrorUsesSafePathForUnmatchedSensitivePath(t *testing.T) {
+	const sentinel = "MF_CAPABILITY_SENTINEL"
+
+	logs := captureDefaultLogs(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/m/c/"+sentinel+"/decoded-tail", nil)
+
+	WriteError(rec, req, errors.New("boom"))
+
+	if rec.Code != 500 {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if strings.Contains(logs.String(), sentinel) {
+		t.Fatalf("error log disclosed sentinel %q: %s", sentinel, logs.String())
+	}
+	if !strings.Contains(logs.String(), "/m/c/{token}") {
+		t.Fatalf("error log missing redacted path: %s", logs.String())
+	}
+}
