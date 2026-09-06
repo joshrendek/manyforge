@@ -1,9 +1,19 @@
 import { expect, test } from '@playwright/test';
 
+const ACCOUNT_ID = '11111111-1111-4111-8111-111111111111';
+const BUSINESS_ID = '22222222-2222-4222-8222-222222222222';
+const PROFILE_ID = '33333333-3333-4333-8333-333333333333';
+const LIST_ID = '44444444-4444-4444-8444-444444444444';
+const CAMPAIGN_ID = '55555555-5555-4555-8555-555555555555';
+const SUBSCRIBER_ID = '66666666-6666-4666-8666-666666666666';
+const SUPPRESSION_ID = '77777777-7777-4777-8777-777777777777';
+const CREATED_SUPPRESSION_ID = '88888888-8888-4888-8888-888888888888';
+const DELIVERY_ID = '99999999-9999-4999-8999-999999999999';
+
 const profile = {
-  id: 'p1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: PROFILE_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   mode: 'resend',
   from_email: 'news@acme.test',
   from_name: 'Acme News',
@@ -21,7 +31,7 @@ const profile = {
   updated_at: '2026-08-30T12:00:00Z',
 };
 const account = {
-  id: 'u1',
+  id: ACCOUNT_ID,
   email: 'operator@acme.test',
   display_name: 'Operator',
   email_verified: true,
@@ -30,9 +40,9 @@ const account = {
 const businesses = {
   items: [
     {
-      id: 'b1',
+      id: BUSINESS_ID,
       parent_id: null,
-      tenant_root_id: 'b1',
+      tenant_root_id: BUSINESS_ID,
       name: 'Acme',
       status: 'active',
       is_tenant_root: true,
@@ -41,9 +51,9 @@ const businesses = {
   next_cursor: null,
 };
 const list = {
-  id: 'l1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: LIST_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   slug: 'product-news',
   name: 'Product news',
   description: null,
@@ -55,11 +65,11 @@ const list = {
 
 function draftCampaign() {
   return {
-    id: 'c1',
-    business_id: 'b1',
-    tenant_root_id: 'b1',
-    list_id: 'l1',
-    profile_id: 'p1',
+    id: CAMPAIGN_ID,
+    business_id: BUSINESS_ID,
+    tenant_root_id: BUSINESS_ID,
+    list_id: LIST_ID,
+    profile_id: PROFILE_ID,
     name: 'September update',
     subject: '',
     preheader: null,
@@ -102,13 +112,13 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
   let testRecipients: string[] = [];
   let sendCount = 0;
 
-  await page.route('**/api/v1/businesses/b1/mailing/lists', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/lists`, (route) =>
     route.fulfill({ json: { items: [list], next_cursor: null } }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/sending-profile', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/sending-profile`, (route) =>
     route.fulfill({ json: profile }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns`, (route) => {
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON() as Record<string, unknown>;
       campaign = { ...campaign, name: String(body['name']), list_id: String(body['list_id']) };
@@ -116,13 +126,13 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
     }
     return route.fulfill({ json: { items: [], next_cursor: null } });
   });
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}`, (route) => {
     if (route.request().method() === 'PATCH') {
       campaign = { ...campaign, ...(route.request().postDataJSON() as typeof campaign) };
     }
     return route.fulfill({ json: campaign });
   });
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns/preview', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/preview`, (route) => {
     const body = route.request().postDataJSON() as { body_markdown: string };
     return route.fulfill({
       json: {
@@ -131,11 +141,11 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
       },
     });
   });
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1/test-send', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/test-send`, (route) => {
     testRecipients = (route.request().postDataJSON() as { to: string[] }).to;
     return route.fulfill({ status: 204 });
   });
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1/send', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/send`, (route) => {
     sendCount++;
     campaign = { ...campaign, status: 'sending' };
     return route.fulfill({ json: campaign });
@@ -144,7 +154,7 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
   await page.goto('/mailing/campaigns');
   await page.getByTestId('mailing-campaign-name').fill('September update');
   await page.getByTestId('mailing-campaign-create').click();
-  await expect(page).toHaveURL(/\/mailing\/b1\/campaigns\/c1$/);
+  await expect(page).toHaveURL(new RegExp(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}$`));
 
   await page.getByTestId('mailing-content-subject').fill('What is new');
   await page.getByTestId('mailing-content-body').fill('Hello ');
@@ -153,7 +163,7 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
 
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByTestId('campaign-editor-back').click();
-  await expect(page).toHaveURL(/\/mailing\/b1\/campaigns\/c1$/);
+  await expect(page).toHaveURL(new RegExp(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}$`));
 
   const frame = page.getByTestId('mailing-preview-frame');
   await expect
@@ -198,9 +208,9 @@ test('campaigns: inspect stats and manage the suppression list through real navi
   };
   let suppressions = [
     {
-      id: 'sup1',
-      business_id: 'b1',
-      tenant_root_id: 'b1',
+      id: SUPPRESSION_ID,
+      business_id: BUSINESS_ID,
+      tenant_root_id: BUSINESS_ID,
       email: 'blocked@example.com',
       reason: 'bounce',
       source: 'resend',
@@ -208,19 +218,19 @@ test('campaigns: inspect stats and manage the suppression list through real navi
     },
   ];
 
-  await page.route('**/api/v1/businesses/b1/mailing/lists', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/lists`, (route) =>
     route.fulfill({ json: { items: [list], next_cursor: null } }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/sending-profile', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/sending-profile`, (route) =>
     route.fulfill({ json: profile }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns`, (route) =>
     route.fulfill({ json: { items: [sentCampaign], next_cursor: null } }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}`, (route) =>
     route.fulfill({ json: sentCampaign }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1/stats', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/stats`, (route) =>
     route.fulfill({
       json: {
         campaign: sentCampaign,
@@ -228,14 +238,14 @@ test('campaigns: inspect stats and manage the suppression list through real navi
       },
     }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/campaigns/c1/deliveries**', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/deliveries**`, (route) =>
     route.fulfill({
       json: {
         items: [
           {
-            id: 'd1',
-            campaign_id: 'c1',
-            subscriber_id: 's1',
+            id: DELIVERY_ID,
+            campaign_id: CAMPAIGN_ID,
+            subscriber_id: SUBSCRIBER_ID,
             email: 'ada@example.com',
             status: 'delivered',
             attempts: 1,
@@ -253,14 +263,14 @@ test('campaigns: inspect stats and manage the suppression list through real navi
       },
     }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/suppressions**', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/suppressions**`, (route) => {
     const method = route.request().method();
     const url = new URL(route.request().url());
     if (method === 'POST') {
       const body = route.request().postDataJSON() as { email: string; reason: string };
       const created = {
         ...suppressions[0],
-        id: 'sup2',
+        id: CREATED_SUPPRESSION_ID,
         email: body.email,
         reason: body.reason,
         source: 'manual',
@@ -278,9 +288,9 @@ test('campaigns: inspect stats and manage the suppression list through real navi
 
   await page.goto('/mailing/campaigns');
   await page.getByTestId('mailing-campaign-open').click();
-  await expect(page).toHaveURL(/\/mailing\/b1\/campaigns\/c1$/);
+  await expect(page).toHaveURL(new RegExp(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}$`));
   await page.getByTestId('campaign-view-stats').click();
-  await expect(page).toHaveURL(/\/mailing\/b1\/campaigns\/c1\/stats$/);
+  await expect(page).toHaveURL(new RegExp(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}/stats$`));
   await expect(page.getByTestId('stat-delivered')).toHaveText('96');
   await expect(page.getByTestId('campaign-link-row')).toContainText('example.com/docs');
   await expect(page.getByTestId('campaign-delivery-row')).toContainText('ada@example.com');
