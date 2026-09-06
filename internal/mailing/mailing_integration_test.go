@@ -210,10 +210,7 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		t.Fatalf("Preview = %+v, err=%v", preview, err)
 	}
 	var secretID uuid.UUID
-	var validCredential string
-	if err = tdb.Super.QueryRow(ctx, `SELECT p.secret_ref, s.sealed_value
-		FROM mailing_sending_profile p JOIN secret s ON s.id=p.secret_ref
-		WHERE p.id=$1`, profile.ID).Scan(&secretID, &validCredential); err != nil {
+	if err = tdb.Super.QueryRow(ctx, `SELECT secret_ref FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&secretID); err != nil {
 		t.Fatal(err)
 	}
 	corruptCredential, err := sealer.Seal([]byte("{"))
@@ -226,9 +223,18 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if _, err = svc.VerifySendingProfile(ctx, a.principalID, a.businessID); err == nil || !strings.Contains(err.Error(), "stored Resend credentials are invalid") {
 		t.Fatalf("VerifySendingProfile with corrupt credentials error = %v", err)
 	}
-	if _, err = tdb.Super.Exec(ctx, `UPDATE secret SET sealed_value=$1, updated_at=now() WHERE id=$2`, validCredential, secretID); err != nil {
-		t.Fatalf("restore valid profile credential fixture: %v", err)
+	recoveryProvider := &fakeResendProvisioner{cleanupMatches: true}
+	svc.PublicBaseURL = "https://hub.example.test"
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return recoveryProvider, nil
+	}, time.Minute)
+	if _, err = svc.PutSendingProfile(ctx, a.principalID, a.businessID, profileInput); err != nil {
+		t.Fatalf("repair profile credentials: %v", err)
 	}
+	if len(recoveryProvider.cleanupRequireMatch) != 1 || !recoveryProvider.cleanupRequireMatch[0] {
+		t.Fatalf("corrupt credential repair cleanup proof = %v, want require_match", recoveryProvider.cleanupRequireMatch)
+	}
+	svc.Providers = nil
 	degraded, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
 	if err != nil || degraded.Status != "error" || degraded.VerifyError == nil {
 		t.Fatalf("VerifySendingProfile without providers = %+v, err=%v", degraded, err)
