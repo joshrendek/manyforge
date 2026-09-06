@@ -199,36 +199,46 @@ func TestMFMailConfirmSend001ConfirmationDeliveryRequiresFinalEligibility(t *tes
 		t.Fatalf("suppressed S2S confirmation deliveries = %d, want %d", got, beforeS2S)
 	}
 
-	postMutationList, postMutationKey := h.createPublicList(t, "Archived after subscribe", true)
-	const postMutationEmail = "archived-after-subscribe@example.test"
-	if _, err := h.tdb.Super.Exec(h.ctx, `CREATE FUNCTION test_archive_confirmation_list()
-		RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.email = 'archived-after-subscribe@example.test' THEN
-				UPDATE mailing_list SET status='archived' WHERE id=NEW.list_id;
-			END IF;
-			RETURN NEW;
-		END;
-		$$`); err != nil {
+	postCommitList, postCommitKey := h.createPublicList(t, "Archived after commit", true)
+	const postCommitEmail = "archived-after-commit@example.test"
+	configuredProviders := h.svc.Providers
+	h.svc.Providers = nil
+	assertAcceptedWithoutDelivery(postCommitKey.PublishableKey, postCommitEmail)
+	h.svc.Providers = configuredProviders
+	var tokenHash []byte
+	if err := h.tdb.Super.QueryRow(h.ctx, `SELECT confirm_token_hash FROM list_subscriber
+		WHERE list_id=$1 AND email=$2`, postCommitList.ID, postCommitEmail).Scan(&tokenHash); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.tdb.Super.Exec(h.ctx, `CREATE TRIGGER test_archive_confirmation_list
-		AFTER INSERT ON list_subscriber FOR EACH ROW
-		EXECUTE FUNCTION test_archive_confirmation_list()`); err != nil {
+	eligibilityProviders := &countingConfirmationProviders{
+		resolve: configuredProviders.Resolve, invalidate: configuredProviders.Invalidate,
+	}
+	h.svc.Providers = eligibilityProviders
+	confirmationEligible := func() int {
+		t.Helper()
+		var count int
+		if err := h.tdb.App.WithTx(h.ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(h.ctx, `SELECT count(*) FROM mailing_confirmation_send_context($1,$2,$3,$4)`,
+				h.seed.businessID, postCommitList.ID, postCommitEmail, tokenHash).Scan(&count)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	if got := confirmationEligible(); got != 1 {
+		t.Fatalf("active-list confirmation contexts = %d, want 1", got)
+	}
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE mailing_list SET status='archived' WHERE id=$1`,
+		postCommitList.ID); err != nil {
 		t.Fatal(err)
 	}
-	assertAcceptedWithoutDelivery(postMutationKey.PublishableKey, postMutationEmail)
-	var postMutationStatus string
-	if err := h.tdb.Super.QueryRow(h.ctx, `SELECT status FROM mailing_list WHERE id=$1`,
-		postMutationList.ID).Scan(&postMutationStatus); err != nil || postMutationStatus != "archived" {
-		t.Fatalf("post-subscribe list status = %q, err=%v", postMutationStatus, err)
+	if got := confirmationEligible(); got != 0 {
+		t.Fatalf("archived-list confirmation contexts = %d, want 0", got)
 	}
-	if _, err := h.tdb.Super.Exec(h.ctx, `DROP TRIGGER test_archive_confirmation_list ON list_subscriber`); err != nil {
-		t.Fatal(err)
+	if eligibilityProviders.calls != 0 {
+		t.Fatalf("provider resolution calls during final eligibility checks = %d, want 0", eligibilityProviders.calls)
 	}
-	if _, err := h.tdb.Super.Exec(h.ctx, `DROP FUNCTION test_archive_confirmation_list()`); err != nil {
-		t.Fatal(err)
-	}
+	h.svc.Providers = configuredProviders
 
 	list, inactiveListKey := h.createPublicList(t, "Inactive list", true)
 	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE mailing_list SET status='archived' WHERE id=$1`, list.ID); err != nil {
