@@ -1,5 +1,6 @@
 -- Roll back 0133 consent, lifecycle, and tracking changes.
 
+DROP FUNCTION IF EXISTS mailing_confirmation_send_context(uuid,uuid,citext,bytea);
 DROP FUNCTION IF EXISTS mailing_archive_list(uuid,uuid,uuid);
 DROP FUNCTION IF EXISTS mailing_unsubscribe_list(text);
 

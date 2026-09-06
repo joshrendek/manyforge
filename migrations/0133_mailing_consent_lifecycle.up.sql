@@ -58,6 +58,79 @@ $$;
 REVOKE ALL ON FUNCTION mailing_unsubscribe_list(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mailing_unsubscribe_list(text) TO manyforge_app;
 
+-- Confirmation delivery rechecks the complete, current send boundary after the
+-- public subscription transaction commits. The token hash binds the check to
+-- the exact pending confirmation being delivered.
+CREATE FUNCTION mailing_confirmation_send_context(
+    p_business_id uuid,
+    p_list_id uuid,
+    p_email citext,
+    p_confirm_token_hash bytea
+)
+RETURNS TABLE(
+    profile_id uuid,
+    updated_at timestamptz,
+    mode mailing_send_mode,
+    from_email citext,
+    from_name text,
+    reply_to citext,
+    postal_address text,
+    email_domain_id uuid,
+    secret_ref uuid,
+    credential_sealed text,
+    ses_region text,
+    ses_configuration_set text
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+    SELECT p.id, p.updated_at, p.mode, p.from_email, p.from_name, p.reply_to,
+           p.postal_address, p.email_domain_id, p.secret_ref, credential.sealed_value,
+           p.ses_region, p.ses_configuration_set
+    FROM public.list_subscriber subscriber
+    JOIN public.mailing_list list
+      ON list.id = subscriber.list_id
+     AND list.business_id = subscriber.business_id
+     AND list.tenant_root_id = subscriber.tenant_root_id
+    JOIN public.business business
+      ON business.id = subscriber.business_id
+     AND business.tenant_root_id = subscriber.tenant_root_id
+    JOIN public.mailing_sending_profile p
+      ON p.business_id = subscriber.business_id
+     AND p.tenant_root_id = subscriber.tenant_root_id
+    LEFT JOIN public.secret credential
+      ON credential.id = p.secret_ref
+     AND credential.tenant_root_id = p.tenant_root_id
+    WHERE subscriber.business_id = p_business_id
+      AND subscriber.list_id = p_list_id
+      AND subscriber.email = p_email
+      AND subscriber.status = 'pending'
+      AND subscriber.confirm_token_hash = p_confirm_token_hash
+      AND subscriber.confirm_expires_at > now()
+      AND list.status = 'active'
+      AND business.status = 'active'
+      AND business.deleted_at IS NULL
+      AND public.tenant_merge_root_write_allowed(subscriber.tenant_root_id)
+      AND p.status = 'verified'
+      AND p.feedback_status = 'ready'
+      AND NOT EXISTS (
+          SELECT 1
+          FROM public.email_suppression global_suppression
+          WHERE global_suppression.email = subscriber.email
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM public.mailing_suppression business_suppression
+          WHERE business_suppression.business_id = subscriber.business_id
+            AND business_suppression.email = subscriber.email
+            AND business_suppression.reason <> 'unsubscribe'
+      );
+$$;
+
+REVOKE ALL ON FUNCTION mailing_confirmation_send_context(uuid,uuid,citext,bytea) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mailing_confirmation_send_context(uuid,uuid,citext,bytea) TO manyforge_app;
+
 -- Anonymous public reactivation always becomes pending, even on a single-opt-in
 -- list. Its unsubscribe suppression remains until the mailbox proves control by
 -- consuming the fresh confirmation token. Authenticated S2S behavior is retained.

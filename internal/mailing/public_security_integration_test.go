@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/manyforge/manyforge/internal/mailing"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 )
 
@@ -33,6 +34,30 @@ type consentSecurityHarness struct {
 	svc      *mailing.Service
 	captured *capturedDeliverer
 	router   *chi.Mux
+}
+
+type countingConfirmationProviders struct {
+	resolve    func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error)
+	invalidate func(uuid.UUID)
+	calls      int
+}
+
+func (p *countingConfirmationProviders) Resolve(ctx context.Context, profile mailprovider.Profile) (mailprovider.Deliverer, error) {
+	p.calls++
+	return p.resolve(ctx, profile)
+}
+
+func (p *countingConfirmationProviders) Invalidate(profileID uuid.UUID) {
+	p.invalidate(profileID)
+}
+
+type recordingDenyLimiter struct {
+	keys []string
+}
+
+func (l *recordingDenyLimiter) Allow(key string) bool {
+	l.keys = append(l.keys, key)
+	return false
 }
 
 func newConsentSecurityHarness(t *testing.T) *consentSecurityHarness {
@@ -77,6 +102,174 @@ func confirmationToken(t *testing.T, body string) string {
 		t.Fatalf("confirmation message has no link: %q", body)
 	}
 	return strings.Fields(body[start+len(marker):])[0]
+}
+
+func (h *consentSecurityHarness) createPublicList(t *testing.T, name string, doubleOptIn bool) (mailing.List, mailing.ListKey) {
+	t.Helper()
+	list, err := h.svc.CreateList(h.ctx, h.seed.principalID, h.seed.businessID, mailing.ListInput{
+		Name: name, DoubleOptIn: doubleOptIn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := h.svc.CreateListKey(h.ctx, h.seed.principalID, h.seed.businessID, list.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list, key
+}
+
+func TestMFMailConfirmSend001ConfirmationDeliveryRequiresFinalEligibility(t *testing.T) {
+	h := newConsentSecurityHarness(t)
+	assertAcceptedWithoutDelivery := func(key, email string) {
+		t.Helper()
+		before := len(h.captured.mails)
+		w := h.subscribe(t, key, email)
+		if w.Code != http.StatusAccepted || w.Body.String() != "{\"accepted\":true}\n" {
+			t.Fatalf("subscribe status/body = %d/%s", w.Code, w.Body.String())
+		}
+		if got := len(h.captured.mails); got != before {
+			t.Fatalf("confirmation deliveries = %d, want %d", got, before)
+		}
+	}
+
+	_, feedbackKey := h.createPublicList(t, "Feedback pending", true)
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE mailing_sending_profile
+		SET feedback_status='pending',feedback_confirmed_at=NULL WHERE business_id=$1`, h.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptedWithoutDelivery(feedbackKey.PublishableKey, "feedback-pending@example.test")
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE mailing_sending_profile
+		SET feedback_status='ready',feedback_confirmed_at=now() WHERE business_id=$1`, h.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, globalKey := h.createPublicList(t, "Global suppression", true)
+	const globallySuppressed = "globally-suppressed@example.test"
+	if _, err := h.tdb.Super.Exec(h.ctx, `INSERT INTO email_suppression(email,reason)
+		VALUES($1,'hard_bounce')`, globallySuppressed); err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptedWithoutDelivery(globalKey.PublishableKey, globallySuppressed)
+
+	for _, reason := range []string{"bounce", "complaint"} {
+		list, key := h.createPublicList(t, "Business "+reason+" suppression", true)
+		email := reason + "-suppressed@example.test"
+		if _, err := h.tdb.Super.Exec(h.ctx, `INSERT INTO mailing_suppression(
+			business_id,tenant_root_id,email,reason,source
+		) VALUES($1,$1,$2,$3,'provider')`, h.seed.businessID, email, reason); err != nil {
+			t.Fatal(err)
+		}
+		assertAcceptedWithoutDelivery(key.PublishableKey, email)
+		var pending bool
+		if err := h.tdb.Super.QueryRow(h.ctx, `SELECT status='pending' FROM list_subscriber
+			WHERE list_id=$1 AND email=$2`, list.ID, email).Scan(&pending); err != nil || !pending {
+			t.Fatalf("%s-suppressed subscriber pending = %t, err=%v", reason, pending, err)
+		}
+	}
+
+	postMutationList, postMutationKey := h.createPublicList(t, "Archived after subscribe", true)
+	const postMutationEmail = "archived-after-subscribe@example.test"
+	if _, err := h.tdb.Super.Exec(h.ctx, `CREATE FUNCTION test_archive_confirmation_list()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.email = 'archived-after-subscribe@example.test' THEN
+				UPDATE mailing_list SET status='archived' WHERE id=NEW.list_id;
+			END IF;
+			RETURN NEW;
+		END;
+		$$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.tdb.Super.Exec(h.ctx, `CREATE TRIGGER test_archive_confirmation_list
+		AFTER INSERT ON list_subscriber FOR EACH ROW
+		EXECUTE FUNCTION test_archive_confirmation_list()`); err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptedWithoutDelivery(postMutationKey.PublishableKey, postMutationEmail)
+	var postMutationStatus string
+	if err := h.tdb.Super.QueryRow(h.ctx, `SELECT status FROM mailing_list WHERE id=$1`,
+		postMutationList.ID).Scan(&postMutationStatus); err != nil || postMutationStatus != "archived" {
+		t.Fatalf("post-subscribe list status = %q, err=%v", postMutationStatus, err)
+	}
+	if _, err := h.tdb.Super.Exec(h.ctx, `DROP TRIGGER test_archive_confirmation_list ON list_subscriber`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.tdb.Super.Exec(h.ctx, `DROP FUNCTION test_archive_confirmation_list()`); err != nil {
+		t.Fatal(err)
+	}
+
+	list, inactiveListKey := h.createPublicList(t, "Inactive list", true)
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE mailing_list SET status='archived' WHERE id=$1`, list.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptedWithoutDelivery(inactiveListKey.PublishableKey, "inactive-list@example.test")
+
+	_, inactiveBusinessKey := h.createPublicList(t, "Inactive business", true)
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE business SET status='archived' WHERE id=$1`, h.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptedWithoutDelivery(inactiveBusinessKey.PublishableKey, "inactive-business@example.test")
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE business SET status='active' WHERE id=$1`, h.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, deletedBusinessKey := h.createPublicList(t, "Deleted business", true)
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE business SET deleted_at=now() WHERE id=$1`, h.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptedWithoutDelivery(deletedBusinessKey.PublishableKey, "deleted-business@example.test")
+	if _, err := h.tdb.Super.Exec(h.ctx, `UPDATE business SET deleted_at=NULL WHERE id=$1`, h.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+
+	reactivationList, reactivationKey := h.createPublicList(t, "Unsubscribe reactivation", false)
+	const reactivationEmail = "unsubscribe-reactivation@example.test"
+	if w := h.subscribe(t, reactivationKey.PublishableKey, reactivationEmail); w.Code != http.StatusAccepted {
+		t.Fatalf("initial reactivation subscribe status/body = %d/%s", w.Code, w.Body.String())
+	}
+	var subscriberID uuid.UUID
+	if err := h.tdb.Super.QueryRow(h.ctx, `SELECT id FROM list_subscriber WHERE list_id=$1 AND email=$2`,
+		reactivationList.ID, reactivationEmail).Scan(&subscriberID); err != nil {
+		t.Fatal(err)
+	}
+	if w := h.request(t, http.MethodPost, "/m/u/"+h.svc.Tokens.EncodeUnsubscribe(subscriberID, uuid.Nil), nil, ""); w.Code != http.StatusOK {
+		t.Fatalf("reactivation unsubscribe status/body = %d/%s", w.Code, w.Body.String())
+	}
+	beforeReactivation := len(h.captured.mails)
+	if w := h.subscribe(t, reactivationKey.PublishableKey, reactivationEmail); w.Code != http.StatusAccepted {
+		t.Fatalf("reactivation subscribe status/body = %d/%s", w.Code, w.Body.String())
+	}
+	if got := len(h.captured.mails); got != beforeReactivation+1 {
+		t.Fatalf("unsubscribe reactivation deliveries = %d, want %d", got, beforeReactivation+1)
+	}
+
+	_, limitedKey := h.createPublicList(t, "Outbound limited", true)
+	delegate := h.svc.Providers
+	counting := &countingConfirmationProviders{resolve: delegate.Resolve, invalidate: delegate.Invalidate}
+	h.svc.Providers = counting
+	limiter := &recordingDenyLimiter{}
+	h.svc.OutboundLimiter = limiter
+	assertAcceptedWithoutDelivery(limitedKey.PublishableKey, "outbound-limited@example.test")
+	beforeLimitedForm := len(h.captured.mails)
+	form := h.request(t, http.MethodPost,
+		"/api/v1/mailing/public/"+limitedKey.PublishableKey+"/subscribe",
+		[]byte("email=outbound-limited-form%40example.test"), "application/x-www-form-urlencoded")
+	wantLocation := "/m/s/" + limitedKey.PublishableKey + "?state=check-inbox"
+	if form.Code != http.StatusSeeOther || form.Header().Get("Location") != wantLocation {
+		t.Fatalf("limited form status/location = %d/%q, want %d/%q",
+			form.Code, form.Header().Get("Location"), http.StatusSeeOther, wantLocation)
+	}
+	if got := len(h.captured.mails); got != beforeLimitedForm {
+		t.Fatalf("limited form confirmation deliveries = %d, want %d", got, beforeLimitedForm)
+	}
+	wantKey := "ob:biz:" + h.seed.businessID.String()
+	if counting.calls != 0 {
+		t.Fatalf("provider resolution calls after outbound denial = %d, want 0", counting.calls)
+	}
+	if len(limiter.keys) != 2 || limiter.keys[0] != wantKey || limiter.keys[1] != wantKey {
+		t.Fatalf("outbound limiter keys = %v, want [%q %q]", limiter.keys, wantKey, wantKey)
+	}
 }
 
 func TestMFMailPub001PublicReactivationRequiresMailboxConfirmation(t *testing.T) {
