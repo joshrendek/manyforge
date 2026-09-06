@@ -2,7 +2,7 @@
 
 **Spec:** 015
 
-**Status:** Approved for local implementation; private until coordinated disclosure
+**Status:** Implemented and verified locally; private until coordinated disclosure
 
 **Canonical evidence:** [`SCAN.md`](../../SCAN.md)
 
@@ -151,6 +151,20 @@ capability handling at every ingress and final side-effect boundary.
   fragment inputs for every dynamic mailing/automation method.
 - Run `make test`, `make sec-test`, `make int-test`, `make lint`, the full Angular
   suite, and the approved Semgrep rules before completion.
+
+## Local Completion Evidence
+
+- Forward migrations `0132`–`0136` implement the shared security state,
+  consent/lifecycle, provider-feedback, automation-integrity, and bounded
+  delivery contracts without modifying shipped migrations `0124`–`0131`.
+- All 23 baseline findings and the additional whole-branch review gaps are
+  closed by automated regressions. The final security re-review found no
+  remaining Critical, Important, or definite security Minor issue in the
+  remediated surfaces.
+- `make test`, `make sec-test`, serial `make int-test`, `make lint`, the full
+  Angular suite (81 files, 532 tests), focused race/rollback tests, and the
+  approved private Semgrep run all completed successfully.
+- No code, report, branch, or scan artifact has been pushed or published.
 
 ## Out of Scope
 
