@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 )
 
@@ -62,6 +65,7 @@ var tenantMergeTableInventory = map[string]string{
 	"inbound_address":                   "tenant_reconciliation",
 	"invitation":                        "direct_root_rewrite",
 	"list_subscriber":                   "drain_fence_then_rewrite",
+	"mailing_campaign_rollup_queue":     "drain_fence_then_rewrite",
 	"mailing_list":                      "drain_fence_then_rewrite",
 	"mailing_list_key":                  "drain_fence_then_rewrite",
 	"mailing_delivery":                  "drain_fence_then_rewrite",
@@ -116,6 +120,8 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"automation_enrollment_step.automation_step_business_fk":                                         true,
 	"automation_enrollment_step.automation_step_delivery_fk":                                         true,
 	"automation_enrollment_step.automation_step_enrollment_version_fk":                               true,
+	"automation_event.automation_event_ingress_key_fk":                                              true,
+	"automation_event.automation_event_ingress_list_fk":                                             true,
 	"automation_event.automation_event_business_fk":                                                  true,
 	"automation_event.automation_event_subscriber_fk":                                                true,
 	"automation_version.automation_version_automation_fk":                                            true,
@@ -153,8 +159,10 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"list_subscriber.list_subscriber_business_fk":                                                    true,
 	"list_subscriber.list_subscriber_contact_fk":                                                     true,
 	"list_subscriber.list_subscriber_list_fk":                                                        true,
+	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_campaign_fk":                        true,
 	"mailing_list.mailing_list_business_fk":                                                          true,
 	"mailing_list_key.mailing_list_key_business_fk":                                                  true,
+	"mailing_list_key.mailing_list_key_list_business_fk":                                            true,
 	"mailing_list_key.mailing_list_key_list_fk":                                                      true,
 	"mailing_delivery.mailing_delivery_business_fk":                                                  true,
 	"mailing_delivery.mailing_delivery_campaign_fk":                                                  true,
@@ -218,7 +226,7 @@ var tenantMergeRootPayloadInventory = map[string][]string{
 }
 
 // These are the non-generic guards whose root/role/owner invariants cutover
-// must preserve in addition to the common tenant_merge_write_fence on all 68
+// must preserve in addition to the common tenant_merge_write_fence on all 69
 // manifest tables.
 var tenantMergeImmutabilityInventory = map[string]string{
 	"activity_entry.activity_troot_immutable":                                             "support_tenant_root_immutable",
@@ -251,7 +259,11 @@ var tenantMergeImmutabilityInventory = map[string]string{
 	"inbound_address.inbound_address_troot_immutable":                                     "support_tenant_root_immutable",
 	"list_subscriber.list_subscriber_troot_immutable":                                     "support_tenant_root_immutable",
 	"mailing_list.mailing_list_troot_immutable":                                           "support_tenant_root_immutable",
+	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_cancel_claim_on_root_change":         "mailing_campaign_rollup_queue_cancel_claim_on_root_change",
+	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_troot_immutable":                     "support_tenant_root_immutable",
 	"mailing_list_key.mailing_list_key_troot_immutable":                                   "support_tenant_root_immutable",
+	"mailing_delivery.mailing_delivery_automation_fence_guard":                                      "mailing_delivery_automation_fence_guard",
+	"mailing_delivery.mailing_delivery_queue_campaign_rollup_change":                                "mailing_queue_campaign_rollup_change",
 	"mailing_delivery.mailing_delivery_troot_immutable":                                   "support_tenant_root_immutable",
 	"mailing_provider_webhook_delivery.mailing_provider_webhook_delivery_troot_immutable": "support_tenant_root_immutable",
 	"mailing_sending_profile.mailing_sending_profile_troot_immutable":                     "support_tenant_root_immutable",
@@ -473,6 +485,24 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 				table, enabled, policies, wantPolicy)
 		}
 	}
+
+	var appHasDirectQueueAccess bool
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT has_table_privilege(
+			'manyforge_app', 'mailing_campaign_rollup_queue', 'SELECT'
+		) OR has_table_privilege(
+			'manyforge_app', 'mailing_campaign_rollup_queue', 'INSERT'
+		) OR has_table_privilege(
+			'manyforge_app', 'mailing_campaign_rollup_queue', 'UPDATE'
+		) OR has_table_privilege(
+			'manyforge_app', 'mailing_campaign_rollup_queue', 'DELETE'
+		)`,
+	).Scan(&appHasDirectQueueAccess); err != nil {
+		t.Fatalf("inspect mailing campaign rollup queue grants: %v", err)
+	}
+	if appHasDirectQueueAccess {
+		t.Error("mailing campaign rollup queue must remain security-definer-only")
+	}
 	if err := rlsRows.Err(); err != nil {
 		t.Fatalf("iterate tenant-merge RLS policies: %v", err)
 	}
@@ -673,6 +703,7 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 		!strings.Contains(cutoverDefinition, "'statement_timeout', '60s'") {
 		t.Error("tenant_merge_cutover timeout settings drifted from the published capacity policy")
 	}
+	assertRollupQueueMergeRewrite(t, ctx, tdb)
 
 	var guardedTables int
 	if err := tdb.Super.QueryRow(ctx, `
@@ -838,5 +869,186 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 			t.Errorf("partition function %s is not serialized with merge fencing",
 				signature)
 		}
+	}
+}
+
+func assertRollupQueueMergeRewrite(
+	t *testing.T,
+	ctx context.Context,
+	tdb *testdb.TestDB,
+) {
+	t.Helper()
+
+	accountID := uuid.New()
+	actorID := uuid.New()
+	sourceRootID := uuid.New()
+	destinationRootID := uuid.New()
+	listID := uuid.New()
+	campaignID := uuid.New()
+	claimToken := uuid.New()
+
+	var ownerRoleID uuid.UUID
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT id
+		FROM role
+		WHERE tenant_root_id IS NULL
+		  AND key = 'owner'
+		  AND is_locked`,
+	).Scan(&ownerRoleID); err != nil {
+		t.Fatalf("find built-in owner role: %v", err)
+	}
+
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO account (
+			id, email, email_verified_at, display_name, status, created_at, updated_at
+		) VALUES ($1, $2, now(), 'Merge Queue Owner', 'active', now(), now())`,
+		accountID, "merge-queue-"+accountID.String()+"@example.test")
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO principal (id, kind, account_id, created_at)
+		VALUES ($1, 'human', $2, now())`,
+		actorID, accountID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO business (
+			id, parent_id, tenant_root_id, name, status, created_at, updated_at
+		) VALUES
+			($1, NULL, $1, 'Merge Queue Source', 'active', now(), now()),
+			($2, NULL, $2, 'Merge Queue Destination', 'active', now(), now())`,
+		sourceRootID, destinationRootID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO business_closure (
+			ancestor_id, descendant_id, depth, tenant_root_id
+		) VALUES
+			($1, $1, 0, $1),
+			($2, $2, 0, $2)`,
+		sourceRootID, destinationRootID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO membership (
+			principal_id, business_id, tenant_root_id, role_id, granted_at
+		) VALUES
+			($1, $2, $2, $4, now()),
+			($1, $3, $3, $4, now())`,
+		actorID, sourceRootID, destinationRootID, ownerRoleID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_list (
+			id, business_id, tenant_root_id, slug, name, double_opt_in, status
+		) VALUES ($1, $2, $2, 'merge-queue', 'Merge Queue', false, 'active')`,
+		listID, sourceRootID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO campaign (
+			id, business_id, tenant_root_id, list_id, name, subject,
+			body_markdown, status
+		) VALUES (
+			$1, $2, $2, $3, 'Merge Queue Campaign', 'Subject',
+			'Body', 'draft'
+		)`,
+		campaignID, sourceRootID, listID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_campaign_rollup_queue (
+			campaign_id, business_id, tenant_root_id, claim_token, lease_until
+		) VALUES ($1, $2, $2, $3, now() + interval '5 minutes')`,
+		campaignID, sourceRootID, claimToken)
+
+	var operationID uuid.UUID
+	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT (value->>'id')::uuid
+			FROM tenant_merge_create($1, $2, $3, $4) AS created(value)`,
+			actorID, sourceRootID, destinationRootID,
+			"rollup-queue-"+campaignID.String(),
+		).Scan(&operationID)
+	}); err != nil {
+		t.Fatalf("create queue merge operation: %v", err)
+	}
+
+	var status string
+	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT value->>'status'
+			FROM tenant_merge_preflight($1, $2) AS result(value)`,
+			actorID, operationID,
+		).Scan(&status)
+	}); err != nil {
+		t.Fatalf("preflight queue merge: %v", err)
+	}
+	if status != "ready" {
+		t.Fatalf("queue merge preflight status = %q, want ready", status)
+	}
+
+	mustExec(t, ctx, tdb.Super, `
+		UPDATE tenant_merge_operation
+		SET confirmed_at = now(),
+		    confirmation_method = 'password_and_typed_names',
+		    confirmation_hash = repeat('a', 64),
+		    confirmation_preflight_generation = preflight_generation
+		WHERE id = $1`,
+		operationID)
+
+	var resultCount int
+	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT count(*)
+			FROM tenant_merge_begin_fence($1, $2)`,
+			actorID, operationID,
+		).Scan(&resultCount)
+	}); err != nil {
+		t.Fatalf("fence queue merge: %v", err)
+	}
+	var fenceCount int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT status, (
+			SELECT count(*) FROM tenant_merge_fence WHERE operation_id = $1
+		)
+		FROM tenant_merge_operation
+		WHERE id = $1`,
+		operationID,
+	).Scan(&status, &fenceCount); err != nil {
+		t.Fatalf("inspect fenced queue merge: %v", err)
+	}
+	if resultCount != 1 || status != "ready" || fenceCount != 2 {
+		t.Fatalf(
+			"fenced queue merge result/status/fences = %d/%q/%d, want 1/ready/2",
+			resultCount, status, fenceCount,
+		)
+	}
+
+	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT count(*)
+			FROM tenant_merge_cutover($1)`,
+			operationID,
+		).Scan(&resultCount)
+	}); err != nil {
+		t.Fatalf("cut over queue merge: %v", err)
+	}
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT status
+		FROM tenant_merge_operation
+		WHERE id = $1`,
+		operationID,
+	).Scan(&status); err != nil {
+		t.Fatalf("inspect queue merge cutover: %v", err)
+	}
+	if resultCount != 1 || status != "succeeded" {
+		t.Fatalf(
+			"queue merge cutover result/status = %d/%q, want 1/succeeded",
+			resultCount, status,
+		)
+	}
+
+	var rewrittenRoot uuid.UUID
+	var claimCleared, leaseCleared bool
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT tenant_root_id, claim_token IS NULL, lease_until IS NULL
+		FROM mailing_campaign_rollup_queue
+		WHERE campaign_id = $1`,
+		campaignID,
+	).Scan(&rewrittenRoot, &claimCleared, &leaseCleared); err != nil {
+		t.Fatalf("inspect rewritten rollup queue row: %v", err)
+	}
+	if rewrittenRoot != destinationRootID || !claimCleared || !leaseCleared {
+		t.Errorf(
+			"rewritten rollup queue root/claim/lease = %s/%t/%t, want %s/true/true",
+			rewrittenRoot, claimCleared, leaseCleared, destinationRootID,
+		)
 	}
 }

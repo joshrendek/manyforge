@@ -207,7 +207,31 @@ CREATE TABLE mailing_campaign_rollup_queue (
 CREATE INDEX mailing_campaign_rollup_queue_pending_idx
     ON mailing_campaign_rollup_queue (changed_at, campaign_id);
 REVOKE ALL ON mailing_campaign_rollup_queue FROM PUBLIC;
+REVOKE ALL ON mailing_campaign_rollup_queue FROM manyforge_app;
+ALTER TABLE mailing_campaign_rollup_queue ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mailing_campaign_rollup_queue_rls
+    ON mailing_campaign_rollup_queue FOR ALL
+    USING (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())))
+    WITH CHECK (business_id IN (SELECT business_id FROM authorized_businesses(current_principal())));
 
+CREATE FUNCTION mailing_campaign_rollup_queue_cancel_claim_on_root_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF OLD.tenant_root_id IS DISTINCT FROM NEW.tenant_root_id THEN
+        NEW.claim_token := NULL;
+        NEW.lease_until := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION mailing_campaign_rollup_queue_cancel_claim_on_root_change() FROM PUBLIC;
+
+CREATE TRIGGER mailing_campaign_rollup_queue_cancel_claim_on_root_change
+    BEFORE UPDATE OF tenant_root_id ON mailing_campaign_rollup_queue
+    FOR EACH ROW EXECUTE FUNCTION mailing_campaign_rollup_queue_cancel_claim_on_root_change();
 CREATE TRIGGER mailing_campaign_rollup_queue_troot_immutable
     BEFORE UPDATE ON mailing_campaign_rollup_queue
     FOR EACH ROW EXECUTE FUNCTION support_tenant_root_immutable();

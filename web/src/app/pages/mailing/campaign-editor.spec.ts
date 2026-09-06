@@ -17,10 +17,17 @@ class PreviewStub {
   @Input() postalAddress: string | null = null;
 }
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const LIST_ID = '22222222-2222-4222-8222-222222222222';
+const PROFILE_ID = '33333333-3333-4333-8333-333333333333';
+const CAMPAIGN_ID = '44444444-4444-4444-8444-444444444444';
+const BASE = `/api/v1/businesses/${BUSINESS_ID}/mailing`;
+const CAMPAIGN_URL = `${BASE}/campaigns/${CAMPAIGN_ID}`;
+
 const list = {
-  id: 'l1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: LIST_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   slug: 'news',
   name: 'News',
   description: null,
@@ -30,9 +37,9 @@ const list = {
   updated_at: '',
 };
 const profile = {
-  id: 'p1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: PROFILE_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   mode: 'resend',
   from_email: 'news@acme.test',
   from_name: 'Acme',
@@ -50,11 +57,11 @@ const profile = {
   updated_at: '',
 };
 const campaign = {
-  id: 'c1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
-  list_id: 'l1',
-  profile_id: 'p1',
+  id: CAMPAIGN_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
+  list_id: LIST_ID,
+  profile_id: PROFILE_ID,
   name: 'Product update',
   subject: 'What is new',
   preheader: null,
@@ -95,7 +102,7 @@ describe('MailingCampaignEditorComponent', () => {
         {
           provide: ActivatedRoute,
           useValue: {
-            snapshot: { paramMap: convertToParamMap({ businessId: 'b1', campaignId: 'c1' }) },
+            snapshot: { paramMap: convertToParamMap({ businessId: BUSINESS_ID, campaignId: CAMPAIGN_ID }) },
           },
         },
       ],
@@ -119,12 +126,12 @@ describe('MailingCampaignEditorComponent', () => {
   ): ComponentFixture<MailingCampaignEditorComponent> {
     fixture = TestBed.createComponent(MailingCampaignEditorComponent);
     fixture.detectChanges();
-    http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1').flush(campaignResponse);
-    http.expectOne('/api/v1/businesses/b1/mailing/lists').flush({
+    http.expectOne(CAMPAIGN_URL).flush(campaignResponse);
+    http.expectOne(`${BASE}/lists`).flush({
       items: [list],
       next_cursor: null,
     });
-    http.expectOne('/api/v1/businesses/b1/mailing/sending-profile').flush(profileResponse);
+    http.expectOne(`${BASE}/sending-profile`).flush(profileResponse);
     fixture.detectChanges();
     return fixture;
   }
@@ -135,7 +142,7 @@ describe('MailingCampaignEditorComponent', () => {
     editor.componentInstance.name = 'Renamed';
     expect(editor.componentInstance.hasUnsavedChanges()).toBe(true);
     editor.componentInstance.save();
-    const request = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1');
+    const request = http.expectOne(CAMPAIGN_URL);
     expect(request.request.method).toBe('PATCH');
     expect(request.request.body).toMatchObject({ name: 'Renamed', body_markdown: '# Hello' });
     request.flush({ ...campaign, name: 'Renamed' });
@@ -162,7 +169,7 @@ describe('MailingCampaignEditorComponent', () => {
       ).readOnly,
     ).toBe(true);
     http
-      .expectOne('/api/v1/businesses/b1/mailing/campaigns/c1')
+      .expectOne(CAMPAIGN_URL)
       .flush({ ...campaign, name: 'Renamed' });
   });
 
@@ -174,10 +181,10 @@ describe('MailingCampaignEditorComponent', () => {
     }));
     editor.componentInstance.testRecipients = 'ada@example.com, ADA@example.com, grace@example.com';
     editor.componentInstance.sendTest();
-    const patch = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1');
+    const patch = http.expectOne(CAMPAIGN_URL);
     expect(patch.request.body.body_markdown).toBe('# Updated');
     patch.flush({ ...campaign, body_markdown: '# Updated' });
-    const send = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/test-send');
+    const send = http.expectOne(`${CAMPAIGN_URL}/test-send`);
     expect(send.request.body).toEqual({ to: ['ada@example.com', 'grace@example.com'] });
     send.flush(null);
   });
@@ -185,10 +192,10 @@ describe('MailingCampaignEditorComponent', () => {
   it('requires inline confirmation and then saves before sending now', () => {
     const editor = mount();
     editor.componentInstance.beginSendConfirmation();
-    http.expectNone('/api/v1/businesses/b1/mailing/campaigns/c1/send');
+    http.expectNone(`${CAMPAIGN_URL}/send`);
     editor.componentInstance.sendNow();
-    http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1').flush(campaign);
-    const send = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/send');
+    http.expectOne(CAMPAIGN_URL).flush(campaign);
+    const send = http.expectOne(`${CAMPAIGN_URL}/send`);
     expect(send.request.body).toEqual({ scheduled_at: null });
     send.flush({ ...campaign, status: 'sending' });
     expect(editor.componentInstance.campaign()?.status).toBe('sending');
@@ -199,8 +206,8 @@ describe('MailingCampaignEditorComponent', () => {
     editor.componentInstance.beginSendConfirmation();
     editor.componentInstance.tagFilter = ['different-audience'];
     editor.componentInstance.sendNow();
-    http.expectNone('/api/v1/businesses/b1/mailing/campaigns/c1');
-    http.expectNone('/api/v1/businesses/b1/mailing/campaigns/c1/send');
+    http.expectNone(CAMPAIGN_URL);
+    http.expectNone(`${CAMPAIGN_URL}/send`);
     expect(editor.componentInstance.confirmSend()).toBe(false);
   });
 
@@ -209,8 +216,8 @@ describe('MailingCampaignEditorComponent', () => {
     const local = '2030-09-01T12:30';
     editor.componentInstance.scheduleAt = local;
     editor.componentInstance.schedule();
-    http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1').flush(campaign);
-    const send = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/send');
+    http.expectOne(CAMPAIGN_URL).flush(campaign);
+    const send = http.expectOne(`${CAMPAIGN_URL}/send`);
     expect(send.request.body).toEqual({ scheduled_at: new Date(local).toISOString() });
     send.flush({ ...campaign, status: 'scheduled', scheduled_at: new Date(local).toISOString() });
     expect(editor.componentInstance.campaign()?.status).toBe('scheduled');
@@ -241,7 +248,7 @@ describe('MailingCampaignEditorComponent', () => {
       scheduled_at: '2026-09-01T12:00:00Z',
     });
     editor.componentInstance.cancel();
-    const cancel = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/cancel');
+    const cancel = http.expectOne(`${CAMPAIGN_URL}/cancel`);
     cancel.flush({ ...campaign, status: 'cancelled' });
     expect(editor.componentInstance.campaign()?.status).toBe('cancelled');
   });
@@ -251,6 +258,6 @@ describe('MailingCampaignEditorComponent', () => {
     const link = editor.nativeElement.querySelector(
       '[data-testid="campaign-view-stats"]',
     ) as HTMLAnchorElement;
-    expect(link.getAttribute('href')).toBe('/mailing/b1/campaigns/c1/stats');
+    expect(link.getAttribute('href')).toBe(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}/stats`);
   });
 });

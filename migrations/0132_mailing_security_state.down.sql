@@ -22,6 +22,9 @@ DROP TRIGGER mailing_delivery_queue_campaign_rollup_change ON mailing_delivery;
 DROP FUNCTION public.mailing_queue_campaign_rollup_change();
 DELETE FROM tenant_merge_manifest WHERE table_name = 'mailing_campaign_rollup_queue';
 DROP TRIGGER tenant_merge_write_fence ON mailing_campaign_rollup_queue;
+DROP TRIGGER mailing_campaign_rollup_queue_cancel_claim_on_root_change
+    ON mailing_campaign_rollup_queue;
+DROP FUNCTION mailing_campaign_rollup_queue_cancel_claim_on_root_change();
 DROP TRIGGER mailing_campaign_rollup_queue_troot_immutable ON mailing_campaign_rollup_queue;
 DROP TABLE mailing_campaign_rollup_queue;
 ALTER TABLE campaign DROP CONSTRAINT campaign_id_business_root_unique;

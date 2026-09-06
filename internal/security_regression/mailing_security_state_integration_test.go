@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/manyforge/manyforge/internal/automations"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 )
@@ -558,17 +559,47 @@ func testBoundedKeysetContracts(t *testing.T, ctx context.Context, tdb *testdb.T
 		)
 		SELECT gen_random_uuid(),$1,$1,$2,n,'draft','{"nodes":[],"edges":[]}',now(),now()
 		FROM generate_series(1,105) AS n`, businessID, automationID)
+	accountID, principalID := uuid.New(), uuid.New()
+	var ownerRoleID uuid.UUID
+	if err := tdb.Super.QueryRow(ctx,
+		`SELECT id FROM role WHERE tenant_root_id IS NULL AND key='owner'`,
+	).Scan(&ownerRoleID); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO account (
+			id,email,email_verified_at,display_name,status,created_at,updated_at
+		) VALUES ($1,$2,now(),'Pagination Owner','active',now(),now())`,
+		accountID, "pagination-"+accountID.String()+"@example.test")
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO principal (id,kind,account_id,created_at)
+		VALUES ($1,'human',$2,now())`, principalID, accountID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO membership (
+			principal_id,business_id,tenant_root_id,role_id,granted_at
+		) VALUES ($1,$2,$2,$3,now())`, principalID, businessID, ownerRoleID)
+
+	service := &automations.Service{DB: tdb.App}
+	visible, err := service.Versions(ctx, principalID, businessID, automationID, "", 1000)
+	if err != nil {
+		t.Fatalf("list automation versions through service: %v", err)
+	}
+	if len(visible.Items) != 100 || visible.NextCursor == nil {
+		t.Fatalf("version service page = %d rows cursor=%v, want hard cap 100 with cursor",
+			len(visible.Items), visible.NextCursor)
+	}
 
 	q := dbgen.New(tdb.Super)
-	first := callGeneratedMany(t, ctx, q, "ListAutomationVersions", map[string]any{
+	internalFirst := callGeneratedMany(t, ctx, q, "ListAutomationVersions", map[string]any{
 		"AutomationID": automationID, "BusinessID": businessID, "TenantRootID": businessID, "Lim": int32(1000),
 	})
-	if first.Len() != 100 {
-		t.Fatalf("ListAutomationVersions returned %d rows for limit 1000, want hard cap 100", first.Len())
+	if internalFirst.Len() < len(visible.Items) || internalFirst.Len() > len(visible.Items)+1 {
+		t.Fatalf("ListAutomationVersions returned %d rows behind a %d-row service page, want at most one internal pagination sentinel",
+			internalFirst.Len(), len(visible.Items))
 	}
-	lastVersion := first.Index(first.Len() - 1)
-	cursorNumber := int32(indirect(lastVersion).FieldByName("Number").Int())
-	cursorID := indirect(lastVersion).FieldByName("ID").Interface().(uuid.UUID)
+	lastVersion := visible.Items[len(visible.Items)-1]
+	cursorNumber := lastVersion.Number
+	cursorID := lastVersion.ID
 	second := callGeneratedMany(t, ctx, q, "ListAutomationVersionsAfter", map[string]any{
 		"AutomationID": automationID, "BusinessID": businessID, "TenantRootID": businessID,
 		"CurNumber": cursorNumber, "CurID": cursorID, "Lim": int32(1000),
