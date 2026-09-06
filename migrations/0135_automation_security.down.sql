@@ -652,6 +652,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION automation_event_exists(uuid,citext,text,timestamptz,interval) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_renew_delivery(uuid,integer,interval) TO manyforge_app;
