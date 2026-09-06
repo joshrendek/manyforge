@@ -1734,37 +1734,45 @@ type MailingListKey struct {
 }
 
 type MailingProviderWebhookDelivery struct {
-	ID              uuid.UUID `json:"id"`
-	BusinessID      uuid.UUID `json:"business_id"`
-	TenantRootID    uuid.UUID `json:"tenant_root_id"`
-	ProfileID       uuid.UUID `json:"profile_id"`
-	Provider        string    `json:"provider"`
-	ExternalEventID string    `json:"external_event_id"`
-	ReceivedAt      time.Time `json:"received_at"`
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	TenantRootID     uuid.UUID          `json:"tenant_root_id"`
+	ProfileID        uuid.UUID          `json:"profile_id"`
+	Provider         string             `json:"provider"`
+	ExternalEventID  string             `json:"external_event_id"`
+	ReceivedAt       time.Time          `json:"received_at"`
+	EnvelopePayload  []byte             `json:"envelope_payload"`
+	NormalizedEvents []byte             `json:"normalized_events"`
+	ProcessingStatus string             `json:"processing_status"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	AppliedAt        pgtype.Timestamptz `json:"applied_at"`
 }
 
 type MailingSendingProfile struct {
-	ID                  uuid.UUID          `json:"id"`
-	BusinessID          uuid.UUID          `json:"business_id"`
-	TenantRootID        uuid.UUID          `json:"tenant_root_id"`
-	Mode                MailingSendMode    `json:"mode"`
-	FromEmail           string             `json:"from_email"`
-	FromName            string             `json:"from_name"`
-	ReplyTo             *string            `json:"reply_to"`
-	PostalAddress       *string            `json:"postal_address"`
-	EmailDomainID       pgtype.UUID        `json:"email_domain_id"`
-	SecretRef           pgtype.UUID        `json:"secret_ref"`
-	SesRegion           *string            `json:"ses_region"`
-	SesConfigurationSet *string            `json:"ses_configuration_set"`
-	SnsTopicArn         *string            `json:"sns_topic_arn"`
-	Status              string             `json:"status"`
-	LastVerifiedAt      pgtype.Timestamptz `json:"last_verified_at"`
-	VerifyError         *string            `json:"verify_error"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
-	FeedbackStatus      string             `json:"feedback_status"`
-	FeedbackError       *string            `json:"feedback_error"`
-	FeedbackConfirmedAt pgtype.Timestamptz `json:"feedback_confirmed_at"`
+	ID                          uuid.UUID          `json:"id"`
+	BusinessID                  uuid.UUID          `json:"business_id"`
+	TenantRootID                uuid.UUID          `json:"tenant_root_id"`
+	Mode                        MailingSendMode    `json:"mode"`
+	FromEmail                   string             `json:"from_email"`
+	FromName                    string             `json:"from_name"`
+	ReplyTo                     *string            `json:"reply_to"`
+	PostalAddress               *string            `json:"postal_address"`
+	EmailDomainID               pgtype.UUID        `json:"email_domain_id"`
+	SecretRef                   pgtype.UUID        `json:"secret_ref"`
+	SesRegion                   *string            `json:"ses_region"`
+	SesConfigurationSet         *string            `json:"ses_configuration_set"`
+	SnsTopicArn                 *string            `json:"sns_topic_arn"`
+	ResendProvisioningToken     pgtype.UUID        `json:"resend_provisioning_token"`
+	ResendProvisioningExpiresAt pgtype.Timestamptz `json:"resend_provisioning_expires_at"`
+	ResendCleanupRequired       bool               `json:"resend_cleanup_required"`
+	Status                      string             `json:"status"`
+	LastVerifiedAt              pgtype.Timestamptz `json:"last_verified_at"`
+	VerifyError                 *string            `json:"verify_error"`
+	CreatedAt                   time.Time          `json:"created_at"`
+	UpdatedAt                   time.Time          `json:"updated_at"`
+	FeedbackStatus              string             `json:"feedback_status"`
+	FeedbackError               *string            `json:"feedback_error"`
+	FeedbackConfirmedAt         pgtype.Timestamptz `json:"feedback_confirmed_at"`
 }
 
 type MailingSuppression struct {

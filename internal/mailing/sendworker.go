@@ -1,8 +1,8 @@
 package mailing
 
 import (
-	"context"
 	"container/list"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,9 +71,9 @@ type workerProfile struct {
 }
 
 type compiledCacheKey struct {
-	contentKind                        string
-	contentID, profileID               uuid.UUID
-	contentVersion, profileVersion     int64
+	contentKind                    string
+	contentID, profileID           uuid.UUID
+	contentVersion, profileVersion int64
 }
 
 type compiledCacheEntry struct {
@@ -495,7 +495,7 @@ func (w *SendWorker) compile(d claimedDelivery, p workerProfile) (mailrender.Com
 	key := compiledCacheKey{
 		contentKind: contentKind, contentID: contentID,
 		contentVersion: d.ContentUpdatedAt.UnixNano(),
-		profileID: p.provider.ID, profileVersion: p.provider.UpdatedAt.UnixNano(),
+		profileID:      p.provider.ID, profileVersion: p.provider.UpdatedAt.UnixNano(),
 	}
 	cache := w.compiledCache()
 	if cached, ok := cache.get(key); ok {
@@ -512,10 +512,6 @@ func (w *SendWorker) compile(d claimedDelivery, p workerProfile) (mailrender.Com
 
 func (w *SendWorker) resolveProfile(ctx context.Context, profileID uuid.UUID) (workerProfile, error) {
 	return w.Service.resolveSystemProfile(ctx, profileID, false)
-}
-
-func (s *Service) resolveBusinessProfile(ctx context.Context, businessID uuid.UUID) (workerProfile, error) {
-	return s.resolveSystemProfile(ctx, businessID, true)
 }
 
 func (s *Service) resolveSystemProfile(ctx context.Context, id uuid.UUID, byBusiness bool) (workerProfile, error) {

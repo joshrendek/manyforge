@@ -176,7 +176,7 @@ WHERE id = $3
       resend_provisioning_token IS NULL
       OR resend_provisioning_expires_at <= now()
   )
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type ClaimMailingResendProvisioningParams struct {
@@ -210,6 +210,9 @@ func (q *Queries) ClaimMailingResendProvisioning(ctx context.Context, arg ClaimM
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
@@ -294,7 +297,7 @@ func (q *Queries) DeleteCampaign(ctx context.Context, arg DeleteCampaignParams) 
 const deleteMailingSendingProfile = `-- name: DeleteMailingSendingProfile :one
 DELETE FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type DeleteMailingSendingProfileParams struct {
@@ -319,6 +322,9 @@ func (q *Queries) DeleteMailingSendingProfile(ctx context.Context, arg DeleteMai
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
@@ -563,7 +569,7 @@ func (q *Queries) GetMailingList(ctx context.Context, arg GetMailingListParams) 
 
 const getMailingSendingProfile = `-- name: GetMailingSendingProfile :one
 
-SELECT id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at FROM mailing_sending_profile
+SELECT id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
 `
 
@@ -590,6 +596,9 @@ func (q *Queries) GetMailingSendingProfile(ctx context.Context, arg GetMailingSe
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
@@ -890,7 +899,7 @@ INSERT INTO mailing_sending_profile (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
     'unverified', now(), now()
 )
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type InsertMailingSendingProfileParams struct {
@@ -940,6 +949,9 @@ func (q *Queries) InsertMailingSendingProfile(ctx context.Context, arg InsertMai
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
@@ -2110,7 +2122,7 @@ UPDATE mailing_sending_profile SET
 WHERE id = $1
   AND tenant_root_id = $2
   AND resend_provisioning_token = $3::uuid
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type ReleaseMailingResendProvisioningParams struct {
@@ -2136,6 +2148,9 @@ func (q *Queries) ReleaseMailingResendProvisioning(ctx context.Context, arg Rele
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
@@ -2272,7 +2287,7 @@ WHERE id = $2
   AND updated_at = $4::timestamptz
   AND resend_provisioning_token = $5::uuid
   AND mode = 'resend'
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type SetMailingResendWebhookVerificationParams struct {
@@ -2308,6 +2323,9 @@ func (q *Queries) SetMailingResendWebhookVerification(ctx context.Context, arg S
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
@@ -2335,7 +2353,7 @@ UPDATE mailing_sending_profile SET
 WHERE id = $5
   AND tenant_root_id = $6
   AND updated_at = $7::timestamptz
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type SetMailingSendingProfileVerificationParams struct {
@@ -2376,6 +2394,9 @@ func (q *Queries) SetMailingSendingProfileVerification(ctx context.Context, arg 
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
@@ -2662,7 +2683,7 @@ UPDATE mailing_sending_profile SET
     resend_cleanup_required = false,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type UpdateMailingSendingProfileParams struct {
@@ -2710,6 +2731,9 @@ func (q *Queries) UpdateMailingSendingProfile(ctx context.Context, arg UpdateMai
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
