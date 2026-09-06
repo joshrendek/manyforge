@@ -1,8 +1,12 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AutomationGraph, AutomationsService } from './automations.service';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
+import {
+  AutomationGraph,
+  AutomationVersionSummary,
+  AutomationsService,
+} from './automations.service';
 
 const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
 const AUTOMATION_ID = '88888888-8888-4888-8888-888888888888';
@@ -39,6 +43,44 @@ describe('AutomationsService', () => {
     create.flush({});
   });
 
+  it('forwards version pagination and returns graph-free summaries with the next cursor', () => {
+    const summary: AutomationVersionSummary = {
+      id: VERSION_ID,
+      business_id: BUSINESS_ID,
+      tenant_root_id: '22222222-2222-4222-8222-222222222222',
+      automation_id: AUTOMATION_ID,
+      number: 2,
+      status: 'active',
+      trigger_kind: 'list_joined',
+      trigger_ref: '33333333-3333-4333-8333-333333333333',
+      activated_at: '2026-09-05T12:00:00Z',
+      created_at: '2026-09-04T12:00:00Z',
+      updated_at: '2026-09-05T12:00:00Z',
+    };
+    let items: AutomationVersionSummary[] = [];
+    let nextCursor: string | null | undefined;
+
+    service.versions(BUSINESS_ID, AUTOMATION_ID, 'version cursor/+?', 25).subscribe((page) => {
+      expectTypeOf(page.items).toEqualTypeOf<AutomationVersionSummary[]>();
+      expectTypeOf(page.next_cursor).toEqualTypeOf<string | null>();
+      items = page.items;
+      nextCursor = page.next_cursor;
+    });
+
+    const request = http.expectOne(
+      (candidate) =>
+        candidate.url === `${BASE}/${AUTOMATION_ID}/versions` &&
+        candidate.params.get('cursor') === 'version cursor/+?' &&
+        candidate.params.get('limit') === '25',
+    );
+    expect(request.request.method).toBe('GET');
+    request.flush({ items: [summary], next_cursor: 'next-version' });
+
+    expect(items).toEqual([summary]);
+    expect(nextCursor).toBe('next-version');
+    expectTypeOf<AutomationVersionSummary>().not.toHaveProperty('graph');
+  });
+
   it('puts the graph itself as the request body', () => {
     const graph: AutomationGraph = { nodes: [], edges: [] };
     service.putGraph(BUSINESS_ID, AUTOMATION_ID, VERSION_ID, graph).subscribe();
@@ -54,6 +96,7 @@ describe('AutomationsService', () => {
       () => service.list(invalid),
       () => service.get(BUSINESS_ID, invalid),
       () => service.version(BUSINESS_ID, AUTOMATION_ID, invalid),
+      () => service.versions(BUSINESS_ID, invalid),
       () => service.exitEnrollment(BUSINESS_ID, AUTOMATION_ID, invalid),
     ];
 

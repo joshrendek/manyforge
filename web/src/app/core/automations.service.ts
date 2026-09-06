@@ -98,6 +98,20 @@ export interface AutomationVersion {
   updated_at: string;
 }
 
+export interface AutomationVersionSummary {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  automation_id: string;
+  number: number;
+  status: AutomationVersionStatus;
+  trigger_kind: string | null;
+  trigger_ref: string | null;
+  activated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AutomationIssue {
   code: string;
   node_id?: string;
@@ -174,9 +188,18 @@ export class AutomationsService {
     return this.http.post<Automation>(this.base(businessId), input);
   }
 
-  versions(businessId: string, automationId: string): Observable<{ items: AutomationVersion[] }> {
-    return this.http.get<{ items: AutomationVersion[] }>(
+  versions(
+    businessId: string,
+    automationId: string,
+    cursor?: string,
+    limit?: number,
+  ): Observable<Page<AutomationVersionSummary>> {
+    let params = new HttpParams();
+    if (cursor) params = params.set('cursor', cursor);
+    if (limit != null) params = params.set('limit', String(limit));
+    return this.http.get<Page<AutomationVersionSummary>>(
       `${this.base(businessId)}/${routeSegmentUUID(automationId)}/versions`,
+      { params },
     );
   }
 
