@@ -27,12 +27,17 @@ ALTER TABLE mailing_provider_webhook_delivery
     ADD COLUMN envelope_payload jsonb,
     ADD COLUMN normalized_events jsonb,
     ADD COLUMN processing_status text,
+    ADD COLUMN expires_at timestamptz,
     ADD COLUMN applied_at timestamptz;
 
 UPDATE mailing_provider_webhook_delivery
 SET envelope_payload = '{}'::jsonb,
     normalized_events = '[]'::jsonb,
     processing_status = 'applied',
+    expires_at = received_at + CASE provider
+        WHEN 'ses' THEN interval '25 days'
+        ELSE interval '7 days'
+    END,
     applied_at = received_at;
 
 ALTER TABLE mailing_provider_webhook_delivery
@@ -40,6 +45,7 @@ ALTER TABLE mailing_provider_webhook_delivery
     ALTER COLUMN normalized_events SET NOT NULL,
     ALTER COLUMN processing_status SET NOT NULL,
     ALTER COLUMN processing_status SET DEFAULT 'pending',
+    ALTER COLUMN expires_at SET NOT NULL,
     ADD CONSTRAINT mailing_provider_webhook_payload_chk CHECK (
         jsonb_typeof(envelope_payload) = 'object'
         AND octet_length(envelope_payload::text) <= 262144
@@ -55,7 +61,13 @@ ALTER TABLE mailing_provider_webhook_delivery
     );
 
 CREATE INDEX mailing_provider_webhook_pending_idx
-    ON mailing_provider_webhook_delivery (profile_id, received_at, id)
+    ON mailing_provider_webhook_delivery (profile_id, expires_at, received_at, id)
+    WHERE processing_status = 'pending';
+CREATE INDEX mailing_provider_webhook_expiry_idx
+    ON mailing_provider_webhook_delivery (profile_id, expires_at, id);
+CREATE INDEX mailing_provider_webhook_pending_correlation_idx
+    ON mailing_provider_webhook_delivery
+    USING gin (normalized_events jsonb_path_ops)
     WHERE processing_status = 'pending';
 
 DROP FUNCTION mailing_record_webhook(uuid,text,text);
@@ -269,6 +281,11 @@ BEGIN
     IF NOT FOUND OR v_webhook.processing_status = 'applied' THEN
         RETURN FOUND;
     END IF;
+    IF v_webhook.expires_at <= clock_timestamp() THEN
+        DELETE FROM public.mailing_provider_webhook_delivery
+        WHERE id = v_webhook.id;
+        RETURN false;
+    END IF;
 
     IF EXISTS (
         SELECT 1
@@ -330,6 +347,10 @@ DECLARE
     v_profile public.mailing_sending_profile%ROWTYPE;
     v_webhook_id uuid;
     v_applied boolean;
+    v_inserted boolean;
+    v_pending_rows integer;
+    v_pending_bytes bigint;
+    v_now timestamptz := clock_timestamp();
 BEGIN
     IF p_event_id IS NULL OR btrim(p_event_id) = '' OR length(p_event_id) > 500
        OR p_provider NOT IN ('resend', 'ses')
@@ -352,30 +373,58 @@ BEGIN
         RETURN 'ignored';
     END IF;
 
+    -- Serialize admission and accounting for one profile. This makes the row
+    -- and byte budgets exact even when many authentic envelopes arrive at once.
     SELECT * INTO v_profile
     FROM public.mailing_sending_profile p
     WHERE p.id = p_profile_id
       AND p.status = 'verified'
       AND p.mode::text = p_provider
       AND public.mailing_business_operational(p.business_id, p.tenant_root_id)
-      AND public.tenant_merge_root_write_allowed(p.tenant_root_id);
+      AND public.tenant_merge_root_write_allowed(p.tenant_root_id)
+    FOR UPDATE OF p;
     IF NOT FOUND THEN
         RETURN 'ignored';
     END IF;
 
+    -- An expired idempotency record for this event must not shadow a provider
+    -- retry. General expiry cleanup remains fixed work per accepted request.
+    DELETE FROM public.mailing_provider_webhook_delivery
+    WHERE profile_id = p_profile_id
+      AND external_event_id = p_event_id
+      AND expires_at <= v_now;
+    DELETE FROM public.mailing_provider_webhook_delivery
+    WHERE id IN (
+        SELECT expired.id
+        FROM public.mailing_provider_webhook_delivery expired
+        WHERE expired.profile_id = p_profile_id
+          AND expired.expires_at <= v_now
+        ORDER BY expired.expires_at, expired.id
+        FOR UPDATE SKIP LOCKED
+        LIMIT 256
+    );
+
     INSERT INTO public.mailing_provider_webhook_delivery (
         business_id, tenant_root_id, profile_id, provider, external_event_id,
-        envelope_payload, normalized_events, processing_status
+        envelope_payload, normalized_events, processing_status, expires_at
     ) VALUES (
         v_profile.business_id, v_profile.tenant_root_id, v_profile.id, p_provider,
-        p_event_id, p_envelope_payload, p_normalized_events, 'pending'
+        p_event_id, p_envelope_payload, p_normalized_events, 'pending',
+        v_now + CASE p_provider
+            -- SNS retries HTTP deliveries for substantially longer than Resend.
+            WHEN 'ses' THEN interval '25 days'
+            ELSE interval '7 days'
+        END
     ) ON CONFLICT (profile_id, external_event_id) DO NOTHING
     RETURNING id INTO v_webhook_id;
+    v_inserted := FOUND;
 
-    IF v_webhook_id IS NULL THEN
+    IF NOT v_inserted THEN
         SELECT id INTO v_webhook_id
         FROM public.mailing_provider_webhook_delivery
-        WHERE profile_id = p_profile_id AND external_event_id = p_event_id;
+        WHERE profile_id = p_profile_id
+          AND external_event_id = p_event_id
+          AND expires_at > v_now;
         IF NOT FOUND THEN
             RETURN 'ignored';
         END IF;
@@ -384,6 +433,24 @@ BEGIN
     v_applied := public.mailing_apply_pending_webhook(v_webhook_id);
     IF v_applied THEN
         RETURN 'applied';
+    END IF;
+
+    IF v_inserted THEN
+        SELECT count(*),
+               COALESCE(sum(
+                   octet_length(envelope_payload::text)
+                   + octet_length(normalized_events::text)
+               ), 0)
+        INTO v_pending_rows, v_pending_bytes
+        FROM public.mailing_provider_webhook_delivery
+        WHERE profile_id = p_profile_id
+          AND processing_status = 'pending'
+          AND expires_at > v_now;
+        IF v_pending_rows > 256 OR v_pending_bytes > 8388608 THEN
+            DELETE FROM public.mailing_provider_webhook_delivery
+            WHERE id = v_webhook_id;
+            RETURN 'full';
+        END IF;
     END IF;
     RETURN 'pending';
 END;
@@ -415,6 +482,20 @@ BEGIN
         RETURN false;
     END IF;
 
+    DELETE FROM public.mailing_provider_webhook_delivery
+    WHERE id IN (
+        SELECT w.id
+        FROM public.mailing_provider_webhook_delivery w
+        JOIN public.mailing_sending_profile p
+          ON p.id = w.profile_id
+         AND p.business_id = v_delivery.business_id
+         AND p.tenant_root_id = v_delivery.tenant_root_id
+        WHERE w.expires_at <= clock_timestamp()
+        ORDER BY w.expires_at, w.id
+        FOR UPDATE OF w SKIP LOCKED
+        LIMIT 256
+    );
+
     FOR v_webhook_id IN
         SELECT w.id
         FROM public.mailing_provider_webhook_delivery w
@@ -423,9 +504,10 @@ BEGIN
          AND p.business_id = v_delivery.business_id
          AND p.tenant_root_id = v_delivery.tenant_root_id
         WHERE w.processing_status = 'pending'
+          AND w.expires_at > clock_timestamp()
           AND w.normalized_events @> jsonb_build_array(jsonb_build_object(
               'provider_message_id', p_provider_message_id,
-              'recipient', v_delivery.email::text
+              'recipient', lower(v_delivery.email::text)
           ))
         ORDER BY w.received_at, w.id
         FOR UPDATE OF w SKIP LOCKED

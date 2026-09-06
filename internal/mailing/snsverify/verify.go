@@ -27,13 +27,15 @@ import (
 )
 
 const (
-	maxCertificateBytes   = 64 << 10
-	certificateCacheTTL   = 24 * time.Hour
-	certificateFailureTTL = time.Minute
-	certificateFetchWindow = time.Minute
-	maxCertificateKeys    = 32
-	maxCertificateFailures = 64
-	maxCertificateFetches  = 8
+	maxCertificateBytes              = 64 << 10
+	certificateCacheTTL              = 24 * time.Hour
+	certificateFailureTTL            = time.Minute
+	certificateFetchWindow           = time.Minute
+	maxCertificateKeys               = 32
+	maxCertificateFailures           = 64
+	maxCertificateFetches            = 8
+	maxConcurrentCertificateFetches  = 8
+	maxConcurrentFetchesPerTopic     = 1
 )
 
 var (
@@ -66,6 +68,13 @@ type cachedKey struct {
 	expiresAt time.Time
 }
 
+type topicFetchState struct {
+	failures    map[string]time.Time
+	fetchWindow time.Time
+	fetches     int
+	inFlight    int
+}
+
 // Verifier validates SNS envelopes and confirms signed subscriptions. Client,
 // Roots, and Now are injectable for deterministic tests.
 type Verifier struct {
@@ -73,11 +82,10 @@ type Verifier struct {
 	Roots  *x509.CertPool
 	Now    func() time.Time
 
-	mu          sync.Mutex
-	cache       map[string]cachedKey
-	failures    map[string]time.Time
-	fetchWindow time.Time
-	fetches     int
+	mu         sync.Mutex
+	cache      map[string]cachedKey
+	topics     map[string]*topicFetchState
+	fetchSlots chan struct{}
 }
 // New returns a verifier using a guarded outbound client.
 func New() *Verifier {
@@ -87,7 +95,8 @@ func New() *Verifier {
 	}
 	return &Verifier{
 		Client: client, Now: time.Now,
-		cache: make(map[string]cachedKey), failures: make(map[string]time.Time),
+		cache: make(map[string]cachedKey), topics: make(map[string]*topicFetchState),
+		fetchSlots: make(chan struct{}, maxConcurrentCertificateFetches),
 	}
 }
 
@@ -124,7 +133,7 @@ func (v *Verifier) Verify(ctx context.Context, raw []byte, expectedTopicARN stri
 	default:
 		return Message{}, errors.New("sns: unsupported signature version")
 	}
-	key, err := v.signingKey(ctx, msg.SigningCertURL)
+	key, err := v.signingKey(ctx, msg.SigningCertURL, expectedTopicARN)
 	if err != nil {
 		return Message{}, err
 	}
@@ -156,7 +165,7 @@ func (v *Verifier) Confirm(ctx context.Context, rawURL, expectedTopicARN string)
 	return nil
 }
 
-func (v *Verifier) signingKey(ctx context.Context, rawURL string) (*rsa.PublicKey, error) {
+func (v *Verifier) signingKey(ctx context.Context, rawURL, expectedTopicARN string) (*rsa.PublicKey, error) {
 	if err := validateSNSURL(rawURL, true); err != nil {
 		return nil, err
 	}
@@ -165,60 +174,95 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL string) (*rsa.PublicKe
 	if v.cache == nil {
 		v.cache = make(map[string]cachedKey)
 	}
-	if v.failures == nil {
-		v.failures = make(map[string]time.Time)
+	if v.topics == nil {
+		v.topics = make(map[string]*topicFetchState)
+	}
+	if v.fetchSlots == nil {
+		v.fetchSlots = make(chan struct{}, maxConcurrentCertificateFetches)
 	}
 	for key, entry := range v.cache {
 		if !now.Before(entry.expiresAt) {
 			delete(v.cache, key)
 		}
 	}
-	for key, expiresAt := range v.failures {
+	state := v.topics[expectedTopicARN]
+	if state == nil {
+		state = &topicFetchState{failures: make(map[string]time.Time)}
+		v.topics[expectedTopicARN] = state
+	}
+	for key, expiresAt := range state.failures {
 		if !now.Before(expiresAt) {
-			delete(v.failures, key)
+			delete(state.failures, key)
 		}
 	}
 	if entry, ok := v.cache[rawURL]; ok {
 		v.mu.Unlock()
 		return entry.key, nil
 	}
-	if _, failed := v.failures[rawURL]; failed {
+	if _, failed := state.failures[rawURL]; failed {
 		v.mu.Unlock()
 		return nil, errors.New("sns: signing certificate temporarily unavailable")
 	}
-	if v.fetchWindow.IsZero() || !now.Before(v.fetchWindow.Add(certificateFetchWindow)) {
-		v.fetchWindow, v.fetches = now, 0
+	if state.fetchWindow.IsZero() || !now.Before(state.fetchWindow.Add(certificateFetchWindow)) {
+		state.fetchWindow, state.fetches = now, 0
 	}
-	if v.fetches >= maxCertificateFetches {
+	if state.fetches >= maxCertificateFetches {
 		v.mu.Unlock()
 		return nil, errors.New("sns: signing certificate fetch budget exhausted")
 	}
-	v.fetches++
+	if state.inFlight >= maxConcurrentFetchesPerTopic {
+		v.mu.Unlock()
+		return nil, errors.New("sns: signing certificate fetch already in progress")
+	}
+	state.inFlight++
+	slots := v.fetchSlots
+	v.mu.Unlock()
+
+	select {
+	case slots <- struct{}{}:
+	case <-ctx.Done():
+		v.finishCertificateReservation(expectedTopicARN)
+		return nil, errors.New("sns: signing certificate fetch capacity wait canceled")
+	}
+	defer v.finishCertificateFetch(expectedTopicARN, slots)
+
+	// A different topic may have populated the shared trusted-certificate cache
+	// while this fair global slot was queued.
+	now = v.now()
+	v.mu.Lock()
+	if entry, ok := v.cache[rawURL]; ok && now.Before(entry.expiresAt) {
+		v.mu.Unlock()
+		return entry.key, nil
+	}
+	if state.fetchWindow.IsZero() || !now.Before(state.fetchWindow.Add(certificateFetchWindow)) {
+		state.fetchWindow, state.fetches = now, 0
+	}
+	state.fetches++
 	v.mu.Unlock()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		v.rememberFailure(rawURL, now)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: invalid certificate URL")
 	}
 	resp, err := v.client().Do(req)
 	if err != nil {
-		v.rememberFailure(rawURL, now)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: fetch signing certificate failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		v.rememberFailure(rawURL, now)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: signing certificate unavailable")
 	}
 	pemBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxCertificateBytes+1))
 	if err != nil || len(pemBytes) > maxCertificateBytes {
-		v.rememberFailure(rawURL, now)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: invalid signing certificate response")
 	}
 	certs, err := parseCertificates(pemBytes)
 	if err != nil {
-		v.rememberFailure(rawURL, now)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, err
 	}
 	leaf := certs[0]
@@ -230,12 +274,12 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL string) (*rsa.PublicKe
 		Roots: v.Roots, Intermediates: intermediates,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}, CurrentTime: now,
 	}); err != nil {
-		v.rememberFailure(rawURL, now)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: signing certificate is not trusted")
 	}
 	key, ok := leaf.PublicKey.(*rsa.PublicKey)
 	if !ok || key.N.BitLen() < 2048 {
-		v.rememberFailure(rawURL, now)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: signing certificate has invalid RSA key")
 	}
 	expires := now.Add(certificateCacheTTL)
@@ -253,28 +297,49 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL string) (*rsa.PublicKe
 		}
 		delete(v.cache, evict)
 	}
-	delete(v.failures, rawURL)
+	delete(state.failures, rawURL)
 	v.cache[rawURL] = cachedKey{key: key, expiresAt: expires}
 	v.mu.Unlock()
 	return key, nil
 }
 
-func (v *Verifier) rememberFailure(rawURL string, now time.Time) {
+func (v *Verifier) finishCertificateReservation(expectedTopicARN string) {
 	v.mu.Lock()
-	if v.failures == nil {
-		v.failures = make(map[string]time.Time)
+	if state := v.topics[expectedTopicARN]; state != nil && state.inFlight > 0 {
+		state.inFlight--
 	}
-	for len(v.failures) >= maxCertificateFailures {
+	v.mu.Unlock()
+}
+
+func (v *Verifier) finishCertificateFetch(expectedTopicARN string, slots chan struct{}) {
+	<-slots
+	v.finishCertificateReservation(expectedTopicARN)
+}
+
+func (v *Verifier) rememberFailure(expectedTopicARN, rawURL string, now time.Time) {
+	v.mu.Lock()
+	if v.topics == nil {
+		v.topics = make(map[string]*topicFetchState)
+	}
+	state := v.topics[expectedTopicARN]
+	if state == nil {
+		state = &topicFetchState{failures: make(map[string]time.Time)}
+		v.topics[expectedTopicARN] = state
+	}
+	if state.failures == nil {
+		state.failures = make(map[string]time.Time)
+	}
+	for len(state.failures) >= maxCertificateFailures {
 		var evict string
 		var earliest time.Time
-		for candidate, expiresAt := range v.failures {
+		for candidate, expiresAt := range state.failures {
 			if evict == "" || expiresAt.Before(earliest) {
 				evict, earliest = candidate, expiresAt
 			}
 		}
-		delete(v.failures, evict)
+		delete(state.failures, evict)
 	}
-	v.failures[rawURL] = now.Add(certificateFailureTTL)
+	state.failures[rawURL] = now.Add(certificateFailureTTL)
 	v.mu.Unlock()
 }
 

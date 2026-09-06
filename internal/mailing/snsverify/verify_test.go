@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -197,6 +198,159 @@ func TestCertificateFetchBudgetBoundsUniqueForgedPaths(t *testing.T) {
 	}
 	if fetches != maxCertificateFetches {
 		t.Fatalf("certificate fetches = %d, want fixed budget %d", fetches, maxCertificateFetches)
+	}
+}
+
+// MF-MAIL-SNS-BUDGET-005 partitions miss and negative-cache budgets by the
+// configured topic so one profile cannot starve another profile's first fetch.
+func TestMFMailSNSBudget005PartitionsCertificateMissesByExpectedTopic(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	key, certPEM, roots := signingCertificate(t, now)
+	sharedURL := "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-shared.pem"
+	fetches := 0
+	sharedFetches := 0
+	v := &Verifier{
+		Roots: roots, Now: func() time.Time { return now },
+		Client: doerFunc(func(r *http.Request) (*http.Response, error) {
+			fetches++
+			if r.URL.String() == sharedURL {
+				sharedFetches++
+				if sharedFetches > 1 {
+					return response(http.StatusOK, certPEM), nil
+				}
+			}
+			return response(http.StatusBadGateway, nil), nil
+		}),
+	}
+	topicA := "arn:aws:sns:us-east-1:111111111111:tenant-a"
+	for i := range maxCertificateFetches {
+		certURL := sharedURL
+		if i > 0 {
+			certURL = fmt.Sprintf(
+				"https://sns.us-east-1.amazonaws.com/SimpleNotificationService-tenant-a-%d.pem", i)
+		}
+		msg := Message{
+			Type: "Notification", MessageID: fmt.Sprintf("forged-%d", i),
+			Message: "{}", TopicARN: topicA, Timestamp: "2026-08-30T12:00:00Z",
+			SignatureVersion: "2", SigningCertURL: certURL,
+			Signature: base64.StdEncoding.EncodeToString([]byte("not-an-rsa-signature")),
+		}
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = v.Verify(context.Background(), raw, topicA); err == nil {
+			t.Fatal("tenant A forged envelope unexpectedly verified")
+		}
+	}
+
+	topicB := "arn:aws:sns:us-east-1:222222222222:tenant-b"
+	msgB := Message{
+		Type: "Notification", MessageID: "authentic-b", Message: "{}",
+		TopicARN: topicB, Timestamp: "2026-08-30T12:00:00Z",
+		SignatureVersion: "2", SigningCertURL: sharedURL,
+	}
+	msgB.Signature = signMessage(t, key, msgB)
+	rawB, err := json.Marshal(msgB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = v.Verify(context.Background(), rawB, topicB); err != nil {
+		t.Fatalf("tenant B first authentic certificate fetch was starved: %v", err)
+	}
+	if fetches != maxCertificateFetches+1 || sharedFetches != 2 {
+		t.Fatalf("partitioned fetches=%d shared=%d, want %d/2",
+			fetches, sharedFetches, maxCertificateFetches+1)
+	}
+}
+
+func TestCertificateFetchesUseFairGlobalInflightCeiling(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	key, certPEM, roots := signingCertificate(t, now)
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	started := make(chan struct{}, maxConcurrentCertificateFetches)
+	release := make(chan struct{})
+	v := &Verifier{
+		Roots: roots, Now: func() time.Time { return now },
+		Client: doerFunc(func(r *http.Request) (*http.Response, error) {
+			current := active.Add(1)
+			defer active.Add(-1)
+			for {
+				observed := maxActive.Load()
+				if current <= observed || maxActive.CompareAndSwap(observed, current) {
+					break
+				}
+			}
+			if strings.HasSuffix(r.URL.Path, "-authentic.pem") {
+				return response(http.StatusOK, certPEM), nil
+			}
+			started <- struct{}{}
+			select {
+			case <-release:
+				return response(http.StatusBadGateway, nil), nil
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		}),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	forgedDone := make(chan error, maxConcurrentCertificateFetches)
+	for i := range maxConcurrentCertificateFetches {
+		topic := fmt.Sprintf("arn:aws:sns:us-east-1:%012d:forged", i+1)
+		msg := Message{
+			Type: "Notification", MessageID: fmt.Sprintf("forged-%d", i),
+			Message: "{}", TopicARN: topic, Timestamp: "2026-08-30T12:00:00Z",
+			SignatureVersion: "2",
+			SigningCertURL: fmt.Sprintf(
+				"https://sns.us-east-1.amazonaws.com/SimpleNotificationService-forged-%d.pem", i),
+			Signature: base64.StdEncoding.EncodeToString([]byte("not-an-rsa-signature")),
+		}
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			_, verifyErr := v.Verify(ctx, raw, topic)
+			forgedDone <- verifyErr
+		}()
+		<-started
+	}
+
+	topicB := "arn:aws:sns:us-east-1:999999999999:authentic"
+	msgB := Message{
+		Type: "Notification", MessageID: "authentic", Message: "{}",
+		TopicARN: topicB, Timestamp: "2026-08-30T12:00:00Z",
+		SignatureVersion: "2",
+		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-authentic.pem",
+	}
+	msgB.Signature = signMessage(t, key, msgB)
+	rawB, err := json.Marshal(msgB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticDone := make(chan error, 1)
+	go func() {
+		_, verifyErr := v.Verify(ctx, rawB, topicB)
+		authenticDone <- verifyErr
+	}()
+
+	release <- struct{}{}
+	if err = <-authenticDone; err != nil {
+		t.Fatalf("authentic topic did not receive the next fair fetch slot: %v", err)
+	}
+	for range maxConcurrentCertificateFetches - 1 {
+		release <- struct{}{}
+	}
+	for range maxConcurrentCertificateFetches {
+		if err = <-forgedDone; err == nil {
+			t.Fatal("forged envelope unexpectedly verified")
+		}
+	}
+	if got := maxActive.Load(); got != maxConcurrentCertificateFetches {
+		t.Fatalf("maximum concurrent certificate fetches = %d, want %d",
+			got, maxConcurrentCertificateFetches)
 	}
 }
 
