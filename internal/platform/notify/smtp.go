@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/smtp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/emersion/go-msgauth/dkim"
@@ -42,6 +44,10 @@ type SMTPSender struct {
 // suppression checker.
 func NewSMTPSender(cfg SMTPConfig, suppression mailer.SuppressionChecker) *SMTPSender {
 	return &SMTPSender{cfg: cfg, suppression: suppression}
+}
+
+func smtpAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // Send dispatches m via the configured SMTP relay. It gates on the suppression
@@ -87,7 +93,7 @@ func (s *SMTPSender) Send(ctx context.Context, m Mail) error {
 	if s.cfg.Username != "" {
 		auth = smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 	}
-	return smtp.SendMail(fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port), auth, from, []string{m.To}, raw)
+	return smtp.SendMail(smtpAddress(s.cfg.Host, s.cfg.Port), auth, from, []string{m.To}, raw)
 }
 
 // BuildMIME renders an RFC 822 message. Pure (no network) so it is unit-tested.

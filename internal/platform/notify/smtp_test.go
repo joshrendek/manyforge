@@ -10,6 +10,26 @@ import (
 	"testing"
 )
 
+func TestSMTPAddress(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{name: "hostname", host: "smtp.example.com", want: "smtp.example.com:587"},
+		{name: "IPv4 literal", host: "192.0.2.10", want: "192.0.2.10:587"},
+		{name: "raw IPv6 literal", host: "2001:db8::10", want: "[2001:db8::10]:587"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := smtpAddress(tt.host, 587); got != tt.want {
+				t.Errorf("smtpAddress(%q, 587) = %q, want %q", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildMIMEHasThreadingHeaders(t *testing.T) {
 	m := Mail{
 		From: "support@inbound.localhost", To: "ada@example.com", Subject: "Re: login broken",
