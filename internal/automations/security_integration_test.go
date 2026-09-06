@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -582,6 +583,113 @@ func TestAutomationFence002LifecycleTransitionsFenceEverySideEffect(t *testing.T
 		}
 	})
 }
+
+func TestMFAutoEnrollLifecycle006DelayedEventCannotEnrollAfterArchive(t *testing.T) {
+	for _, archive := range []string{"mailing list", "business"} {
+		t.Run(archive, func(t *testing.T) {
+			fixture := newAutomationSecurityFixture(t)
+			subscriber, err := fixture.mailingService.CreateSubscriber(
+				fixture.ctx,
+				fixture.seed.principalID,
+				fixture.seed.businessID,
+				fixture.listID,
+				mailing.SubscriberInput{
+					Email:            "delayed-" + uuid.NewString() + "@example.test",
+					SkipConfirmation: true,
+					ConsentSource:    "manual",
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sourceEventID uuid.UUID
+			if err = fixture.database.Super.QueryRow(fixture.ctx, `
+				SELECT id
+				FROM outbox
+				WHERE topic = 'mailing.subscriber.activated'
+				  AND payload->>'subscriber_id' = $1::text
+				ORDER BY created_at DESC
+				LIMIT 1`,
+				subscriber.ID,
+			).Scan(&sourceEventID); err != nil {
+				t.Fatal(err)
+			}
+
+			switch archive {
+			case "mailing list":
+				err = fixture.mailingService.ArchiveList(
+					fixture.ctx,
+					fixture.seed.principalID,
+					fixture.seed.businessID,
+					fixture.listID,
+				)
+			case "business":
+				_, err = fixture.database.Super.Exec(fixture.ctx, `
+					UPDATE business
+					SET status = 'archived'
+					WHERE id = $1`,
+					fixture.seed.businessID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var inserted int
+			if err = fixture.database.App.WithTx(fixture.ctx, func(tx pgx.Tx) error {
+				return tx.QueryRow(fixture.ctx, `
+					SELECT automation_enroll_for_trigger(
+						$1, $1, 'list_joined', $2, $3, $4, now()
+					)`,
+					fixture.seed.businessID,
+					fixture.listID.String(),
+					subscriber.ID,
+					sourceEventID,
+				).Scan(&inserted)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if inserted != 0 {
+				t.Fatalf("enrollments created after %s archive = %d, want 0",
+					archive, inserted)
+			}
+
+			var enrollments int
+			if err = fixture.database.Super.QueryRow(fixture.ctx, `
+				SELECT count(*)
+				FROM automation_enrollment
+				WHERE source_event_id = $1`,
+				sourceEventID,
+			).Scan(&enrollments); err != nil {
+				t.Fatal(err)
+			}
+			if enrollments != 0 {
+				t.Fatalf("stored enrollments after %s archive = %d, want 0",
+					archive, enrollments)
+			}
+
+			if archive == "mailing list" {
+				var definition string
+				if err = fixture.database.Super.QueryRow(fixture.ctx, `
+					SELECT pg_get_functiondef(
+						'automation_enroll_for_trigger(uuid,uuid,text,text,uuid,uuid,timestamptz)'::regprocedure
+					)`,
+				).Scan(&definition); err != nil {
+					t.Fatal(err)
+				}
+				for _, predicate := range []string{
+					"mailing_business_operational",
+					"mailing_list_operational",
+					"v.content_snapshot IS NOT NULL",
+				} {
+					if !strings.Contains(definition, predicate) {
+						t.Errorf("automation enrollment lifecycle guard omits %q", predicate)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestAutomationFence002RenewalBlocksProviderAfterLifecycleTransition(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -679,8 +787,10 @@ func TestAutomationFence002SendWorkerDoesNotCallProviderAfterPause(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := fixture.database.Super.Exec(fixture.ctx, `INSERT INTO mailing_sending_profile
-		(id,business_id,tenant_root_id,mode,from_email,from_name,email_domain_id,status,created_at,updated_at)
-		VALUES ($1,$2,$2,'relay','sender@renew.example.test','Sender',$3,'verified',now(),now())`,
+		(id,business_id,tenant_root_id,mode,from_email,from_name,email_domain_id,status,
+		 feedback_status,feedback_error,feedback_confirmed_at,created_at,updated_at)
+		VALUES ($1,$2,$2,'relay','sender@renew.example.test','Sender',$3,'verified',
+		        'ready',NULL,now(),now(),now())`,
 		profileID, fixture.seed.businessID, domainID); err != nil {
 		t.Fatal(err)
 	}
@@ -841,8 +951,10 @@ func TestAutomationSendAuthz005ActivationSnapshotFeedsDeliveryClaim(t *testing.T
 		t.Fatal(err)
 	}
 	if _, err := fixture.database.Super.Exec(fixture.ctx, `INSERT INTO mailing_sending_profile
-		(id,business_id,tenant_root_id,mode,from_email,from_name,email_domain_id,status,created_at,updated_at)
-		VALUES ($1,$2,$2,'relay','sender@example.test','Sender',$3,'verified',now(),now())`,
+		(id,business_id,tenant_root_id,mode,from_email,from_name,email_domain_id,status,
+		 feedback_status,feedback_error,feedback_confirmed_at,created_at,updated_at)
+		VALUES ($1,$2,$2,'relay','sender@example.test','Sender',$3,'verified',
+		        'ready',NULL,now(),now(),now())`,
 		profileID, fixture.seed.businessID, domainID); err != nil {
 		t.Fatal(err)
 	}

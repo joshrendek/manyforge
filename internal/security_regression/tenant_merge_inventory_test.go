@@ -222,7 +222,14 @@ var tenantMergeRLSPolicyNameExceptions = map[string]string{
 // Root-bearing JSON is supported only through these reviewed envelope/topic
 // pairs. Preflight rejects any other nested tenant_root_id occurrence.
 var tenantMergeRootPayloadInventory = map[string][]string{
-	"outbox": {"business.created", "agent.action.approved"},
+	"outbox": {
+		"business.created",
+		"agent.action.approved",
+		"mailing.subscriber.activated",
+		"mailing.subscriber.tag_added",
+		"mailing.subscriber.status_changed",
+		"automation.event.received",
+	},
 }
 
 // These are the non-generic guards whose root/role/owner invariants cutover
@@ -265,6 +272,7 @@ var tenantMergeImmutabilityInventory = map[string]string{
 	"mailing_delivery.mailing_delivery_automation_fence_guard":                                      "mailing_delivery_automation_fence_guard",
 	"mailing_delivery.mailing_delivery_queue_campaign_rollup_change":                                "mailing_queue_campaign_rollup_change",
 	"mailing_delivery.mailing_delivery_troot_immutable":                                   "support_tenant_root_immutable",
+	"outbox.tenant_merge_event_outbox_root_rewrite":                                      "tenant_merge_event_outbox_root_rewrite",
 	"mailing_provider_webhook_delivery.mailing_provider_webhook_delivery_troot_immutable": "support_tenant_root_immutable",
 	"mailing_sending_profile.mailing_sending_profile_troot_immutable":                     "support_tenant_root_immutable",
 	"mailing_suppression.mailing_suppression_troot_immutable":                             "support_tenant_root_immutable",
@@ -571,26 +579,32 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 		if !catalog[table] {
 			t.Errorf("root-bearing payload inventory refers to unclassified table %q", table)
 		}
-		for _, signature := range []string{
-			"tenant_merge_preflight_inventory_v1(uuid,uuid)",
-			"tenant_merge_cutover(uuid)",
+		var preflightDefinition, cutoverDefinition, outboxRewriteDefinition string
+		for signature, destination := range map[string]*string{
+			"tenant_merge_preflight_inventory_v1(uuid,uuid)": &preflightDefinition,
+			"tenant_merge_cutover(uuid)":                     &cutoverDefinition,
+			"tenant_merge_event_outbox_root_rewrite()":        &outboxRewriteDefinition,
 		} {
-			var definition string
 			if err := tdb.Super.QueryRow(ctx,
 				"SELECT pg_get_functiondef($1::regprocedure)", signature,
-			).Scan(&definition); err != nil {
+			).Scan(destination); err != nil {
 				t.Fatalf("inspect root-bearing payload consumer %s: %v", signature, err)
 			}
-			for _, topic := range topics {
-				if !strings.Contains(definition, "'"+topic+"'") {
-					t.Errorf("%s does not represent %s root-bearing payload topic %q",
-						signature, table, topic)
-				}
+		}
+		for _, topic := range topics {
+			if !strings.Contains(preflightDefinition, "'"+topic+"'") {
+				t.Errorf("tenant_merge_preflight_inventory_v1 does not represent %s root-bearing payload topic %q",
+					table, topic)
 			}
-			if !strings.Contains(definition, "tenant_root_id") {
-				t.Errorf("%s does not inspect or rewrite the tenant_root_id payload field",
-					signature)
+			if !strings.Contains(cutoverDefinition+outboxRewriteDefinition, "'"+topic+"'") {
+				t.Errorf("tenant merge cutover path does not rewrite %s root-bearing payload topic %q",
+					table, topic)
 			}
+		}
+		if !strings.Contains(preflightDefinition, "tenant_root_id") ||
+			!strings.Contains(cutoverDefinition+outboxRewriteDefinition, "tenant_root_id") {
+			t.Errorf("tenant merge does not inspect and rewrite the %s tenant_root_id payload field",
+				table)
 		}
 	}
 
@@ -603,6 +617,7 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 		"tenant_merge_confirm(uuid,uuid,text,text,text)":                            true,
 		"tenant_merge_cutover(uuid)":                                                true,
 		"tenant_merge_release_fence(uuid,uuid)":                                     true,
+		"tenant_merge_event_outbox_root_rewrite()":                                  false,
 		"tenant_merge_root_rewrite_allowed(oid,uuid,uuid)":                          false,
 		"tenant_merge_root_write_allowed(uuid)":                                     true,
 		"tenant_merge_jsonb_hash(jsonb)":                                            false,
@@ -703,7 +718,9 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 		!strings.Contains(cutoverDefinition, "'statement_timeout', '60s'") {
 		t.Error("tenant_merge_cutover timeout settings drifted from the published capacity policy")
 	}
-	assertRollupQueueMergeRewrite(t, ctx, tdb)
+	t.Run("MF-TENANT-MERGE-OUTBOX-001-and-MF-TENANT-MERGE-DELIVERY-FENCE-002", func(t *testing.T) {
+		assertMailingTenantMergeRewrite(t, ctx, tdb)
+	})
 
 	var guardedTables int
 	if err := tdb.Super.QueryRow(ctx, `
@@ -872,7 +889,7 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	}
 }
 
-func assertRollupQueueMergeRewrite(
+func assertMailingTenantMergeRewrite(
 	t *testing.T,
 	ctx context.Context,
 	tdb *testdb.TestDB,
@@ -884,7 +901,9 @@ func assertRollupQueueMergeRewrite(
 	sourceRootID := uuid.New()
 	destinationRootID := uuid.New()
 	listID := uuid.New()
+	subscriberID := uuid.New()
 	campaignID := uuid.New()
+	deliveryID := uuid.New()
 	claimToken := uuid.New()
 
 	var ownerRoleID uuid.UUID
@@ -934,6 +953,15 @@ func assertRollupQueueMergeRewrite(
 		) VALUES ($1, $2, $2, 'merge-queue', 'Merge Queue', false, 'active')`,
 		listID, sourceRootID)
 	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO list_subscriber (
+			id, business_id, tenant_root_id, list_id, email, status,
+			consent_source, confirmed_at
+		) VALUES (
+			$1, $2, $2, $3, 'merge-delivery@example.test', 'active',
+			'public_form', now()
+		)`,
+		subscriberID, sourceRootID, listID)
+	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO campaign (
 			id, business_id, tenant_root_id, list_id, name, subject,
 			body_markdown, status
@@ -943,10 +971,71 @@ func assertRollupQueueMergeRewrite(
 		)`,
 		campaignID, sourceRootID, listID)
 	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO mailing_delivery (
+			id, business_id, tenant_root_id, source_kind, source_id, campaign_id,
+			subscriber_id, email, status, message_id
+		) VALUES (
+			$1, $2, $2, 'campaign', $3, $3,
+			$4, 'merge-delivery@example.test', 'sent', $5
+		)`,
+		deliveryID, sourceRootID, campaignID, subscriberID,
+		"merge-delivery-"+deliveryID.String())
+	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO mailing_campaign_rollup_queue (
 			campaign_id, business_id, tenant_root_id, claim_token, lease_until
-		) VALUES ($1, $2, $2, $3, now() + interval '5 minutes')`,
+		) VALUES ($1, $2, $2, $3, now() + interval '5 minutes')
+		ON CONFLICT (campaign_id) DO UPDATE SET
+			claim_token = EXCLUDED.claim_token,
+			lease_until = EXCLUDED.lease_until`,
 		campaignID, sourceRootID, claimToken)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO outbox (tenant_root_id, topic, payload)
+		SELECT $1, topic, jsonb_build_object(
+			'tenant_root_id', $1::text,
+			'merge_probe', $2::text
+		)
+		FROM unnest(ARRAY[
+			'mailing.subscriber.activated',
+			'mailing.subscriber.tag_added',
+			'mailing.subscriber.status_changed',
+			'automation.event.received'
+		]) AS topic`,
+		sourceRootID, campaignID)
+	mustExec(t, ctx, tdb.Super, `
+		INSERT INTO outbox (tenant_root_id, topic, payload)
+		VALUES (
+			$1,
+			'automation.event.received',
+			jsonb_build_object('merge_contract_probe', $2::text)
+		)`,
+		sourceRootID, campaignID)
+
+	rewriteErr := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE outbox
+			SET tenant_root_id = $1
+			WHERE payload->>'merge_probe' = $2::text`,
+			destinationRootID, campaignID)
+		return err
+	})
+	if rewriteErr == nil || !strings.Contains(rewriteErr.Error(), "outbox tenant_root_id is immutable") {
+		t.Fatalf("ordinary outbox root rewrite error = %v, want tenant-root immutability failure",
+			rewriteErr)
+	}
+
+	rewriteErr = tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE mailing_delivery
+			SET tenant_root_id = $1
+			WHERE id = $2`,
+			destinationRootID, deliveryID)
+		return err
+	})
+	if rewriteErr == nil ||
+		!strings.Contains(rewriteErr.Error(), "mailing delivery authorization identity is immutable") {
+		t.Fatalf("ordinary delivery root rewrite error = %v, want authorization identity immutability failure",
+			rewriteErr)
+	}
 
 	var operationID uuid.UUID
 	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
@@ -968,10 +1057,29 @@ func assertRollupQueueMergeRewrite(
 			actorID, operationID,
 		).Scan(&status)
 	}); err != nil {
-		t.Fatalf("preflight queue merge: %v", err)
+		t.Fatalf("preflight malformed mailing event merge: %v", err)
+	}
+	if status != "preflight_required" {
+		t.Fatalf("malformed mailing event preflight status = %q, want preflight_required", status)
+	}
+
+	mustExec(t, ctx, tdb.Super, `
+		UPDATE outbox
+		SET payload = payload || jsonb_build_object('tenant_root_id', $1::text)
+		WHERE payload->>'merge_contract_probe' = $2::text`,
+		sourceRootID, campaignID)
+
+	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT value->>'status'
+			FROM tenant_merge_preflight($1, $2) AS result(value)`,
+			actorID, operationID,
+		).Scan(&status)
+	}); err != nil {
+		t.Fatalf("preflight mailing merge: %v", err)
 	}
 	if status != "ready" {
-		t.Fatalf("queue merge preflight status = %q, want ready", status)
+		t.Fatalf("mailing merge preflight status = %q, want ready", status)
 	}
 
 	mustExec(t, ctx, tdb.Super, `
@@ -1009,6 +1117,42 @@ func assertRollupQueueMergeRewrite(
 			"fenced queue merge result/status/fences = %d/%q/%d, want 1/ready/2",
 			resultCount, status, fenceCount,
 		)
+	}
+
+	mergeTx, err := tdb.Super.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin authorized root rewrite probe: %v", err)
+	}
+	if _, err = mergeTx.Exec(ctx, `
+		UPDATE tenant_merge_operation
+		SET status = 'running'
+		WHERE id = $1`,
+		operationID,
+	); err != nil {
+		_ = mergeTx.Rollback(ctx)
+		t.Fatalf("mark root rewrite probe running: %v", err)
+	}
+	if _, err = mergeTx.Exec(ctx, `
+		SELECT set_config('manyforge.tenant_merge_operation', $1::text, true)`,
+		operationID,
+	); err != nil {
+		_ = mergeTx.Rollback(ctx)
+		t.Fatalf("authorize root rewrite probe: %v", err)
+	}
+	_, identityErr := mergeTx.Exec(ctx, `
+		UPDATE mailing_delivery
+		SET tenant_root_id = $1,
+		    source_id = $2
+		WHERE id = $3`,
+		destinationRootID, uuid.New(), deliveryID)
+	if identityErr == nil ||
+		!strings.Contains(identityErr.Error(), "mailing delivery authorization identity is immutable") {
+		_ = mergeTx.Rollback(ctx)
+		t.Fatalf("authorized root plus identity rewrite error = %v, want identity immutability failure",
+			identityErr)
+	}
+	if err = mergeTx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback authorized root rewrite probe: %v", err)
 	}
 
 	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
@@ -1050,5 +1194,44 @@ func assertRollupQueueMergeRewrite(
 			"rewritten rollup queue root/claim/lease = %s/%t/%t, want %s/true/true",
 			rewrittenRoot, claimCleared, leaseCleared, destinationRootID,
 		)
+	}
+
+	var deliveryRoot uuid.UUID
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT tenant_root_id
+		FROM mailing_delivery
+		WHERE id = $1`,
+		deliveryID,
+	).Scan(&deliveryRoot); err != nil {
+		t.Fatalf("inspect rewritten mailing delivery: %v", err)
+	}
+	if deliveryRoot != destinationRootID {
+		t.Errorf("rewritten mailing delivery root = %s, want %s",
+			deliveryRoot, destinationRootID)
+	}
+
+	var rewrittenOutbox, sourceOutbox int
+	if err := tdb.Super.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (
+				WHERE tenant_root_id = $1
+				  AND payload->>'tenant_root_id' = $1::text
+			),
+			count(*) FILTER (
+				WHERE tenant_root_id = $2
+				   OR payload->>'tenant_root_id' = $2::text
+			)
+		FROM outbox
+		WHERE COALESCE(
+			payload->>'merge_probe',
+			payload->>'merge_contract_probe'
+		) = $3::text`,
+		destinationRootID, sourceRootID, campaignID,
+	).Scan(&rewrittenOutbox, &sourceOutbox); err != nil {
+		t.Fatalf("inspect rewritten mailing/automation outbox rows: %v", err)
+	}
+	if rewrittenOutbox != 5 || sourceOutbox != 0 {
+		t.Errorf("rewritten/source mailing outbox rows = %d/%d, want 5/0",
+			rewrittenOutbox, sourceOutbox)
 	}
 }
