@@ -94,6 +94,22 @@ func (h *consentSecurityHarness) subscribe(t *testing.T, key, email string) *htt
 		[]byte(`{"email":"`+email+`"}`), "application/json")
 }
 
+func (h *consentSecurityHarness) s2sSubscribe(t *testing.T, key mailing.ListKey, email string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := []byte(`{"email":"` + email + `"}`)
+	path := "/api/v1/mailing/s2s/" + key.PublishableKey + "/subscribers"
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(key.Secret))
+	_, _ = mac.Write(append([]byte(timestamp+"."+http.MethodPost+"."+path+"."), body...))
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mailing-Timestamp", timestamp)
+	req.Header.Set("X-Mailing-Signature", hex.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	h.router.ServeHTTP(w, req)
+	return w
+}
+
 func confirmationToken(t *testing.T, body string) string {
 	t.Helper()
 	const marker = "/m/confirm/"
@@ -166,6 +182,21 @@ func TestMFMailConfirmSend001ConfirmationDeliveryRequiresFinalEligibility(t *tes
 			WHERE list_id=$1 AND email=$2`, list.ID, email).Scan(&pending); err != nil || !pending {
 			t.Fatalf("%s-suppressed subscriber pending = %t, err=%v", reason, pending, err)
 		}
+	}
+
+	_, s2sKey := h.createPublicList(t, "S2S suppressed confirmation", true)
+	const s2sSuppressed = "s2s-complaint-suppressed@example.test"
+	if _, err := h.tdb.Super.Exec(h.ctx, `INSERT INTO mailing_suppression(
+		business_id,tenant_root_id,email,reason,source
+	) VALUES($1,$1,$2,'complaint','provider')`, h.seed.businessID, s2sSuppressed); err != nil {
+		t.Fatal(err)
+	}
+	beforeS2S := len(h.captured.mails)
+	if w := h.s2sSubscribe(t, s2sKey, s2sSuppressed); w.Code != http.StatusCreated {
+		t.Fatalf("suppressed S2S subscribe status/body = %d/%s", w.Code, w.Body.String())
+	}
+	if got := len(h.captured.mails); got != beforeS2S {
+		t.Fatalf("suppressed S2S confirmation deliveries = %d, want %d", got, beforeS2S)
 	}
 
 	postMutationList, postMutationKey := h.createPublicList(t, "Archived after subscribe", true)
