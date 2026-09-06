@@ -33,12 +33,6 @@ type capturedDeliverer struct {
 	mails    []notify.Mail
 }
 
-type callbackDeliverer struct{ verify func() error }
-
-func (d callbackDeliverer) Verify(context.Context) error { return d.verify() }
-func (d callbackDeliverer) Send(context.Context, notify.Mail) (mailprovider.SendResult, error) {
-	return mailprovider.SendResult{}, nil
-}
 
 func (d *capturedDeliverer) Verify(context.Context) error {
 	d.verified = true
@@ -246,13 +240,15 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if err != nil || unsupported.Status != "error" || unsupported.VerifyError == nil {
 		t.Fatalf("VerifySendingProfile without verifier = %+v, err=%v", unsupported, err)
 	}
+	concurrentProvider := &fakeResendProvisioner{cleanupMatches: true}
+	concurrentProvider.verify = func() error {
+		concurrent := profileInput
+		concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
+		_, updateErr := svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
+		return updateErr
+	}
 	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
-		return callbackDeliverer{verify: func() error {
-			concurrent := profileInput
-			concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
-			_, updateErr := svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
-			return updateErr
-		}}, nil
+		return concurrentProvider, nil
 	}, time.Minute)
 	if _, err = svc.VerifySendingProfile(ctx, a.principalID, a.businessID); !errors.Is(err, errs.ErrConflict) {
 		t.Fatalf("concurrent VerifySendingProfile error = %v", err)
