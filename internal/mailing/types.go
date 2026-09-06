@@ -46,6 +46,7 @@ type Service struct {
 	Tokens    *mailtoken.Codec
 	Providers interface {
 		Resolve(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error)
+		Invalidate(uuid.UUID)
 	}
 	Renderer        *mailrender.Renderer
 	OutboundLimiter ratelimit.Limiter
@@ -172,13 +173,22 @@ type SendingProfile struct {
 	Status              string     `json:"status"`
 	LastVerifiedAt      *time.Time `json:"last_verified_at"`
 	VerifyError         *string    `json:"verify_error"`
+	FeedbackStatus      string     `json:"feedback_status"`
+	FeedbackError       *string    `json:"feedback_error"`
+	FeedbackConfirmedAt *time.Time `json:"feedback_confirmed_at"`
 	HasCredentials      bool       `json:"has_credentials"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type ResendCredentials struct {
+	APIKey string `json:"api_key"`
+}
+
+type resendStoredCredentials struct {
+	Version       int    `json:"version"`
 	APIKey        string `json:"api_key"`
+	WebhookID     string `json:"webhook_id,omitempty"`
 	WebhookSecret string `json:"webhook_secret,omitempty"`
 }
 

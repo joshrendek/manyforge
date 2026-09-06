@@ -52,7 +52,7 @@ func TestAutomationDefinersLeaseReplayPauseAndScope(t *testing.T) {
 		  VALUES ($2,$1,$1,'Welcome','draft',false)`, []any{businessID, automationID}},
 		{`INSERT INTO automation_version (
 			id,business_id,tenant_root_id,automation_id,number,status,graph,
-			trigger_kind,trigger_ref,activated_at
+			trigger_kind,trigger_ref,activated_at,content_snapshot
 		  ) VALUES (
 			$3,$1,$1,$2,1,'active',
 			jsonb_build_object(
@@ -62,7 +62,7 @@ func TestAutomationDefinersLeaseReplayPauseAndScope(t *testing.T) {
 				),
 				'edges', '[{"id":"e1","from":"n_trigger","to":"n_exit","branch":null}]'::jsonb
 			),
-			'list_joined',$4::text,now()
+			'list_joined',$4::text,now(),'{"templates":{}}'::jsonb
 		  )`, []any{businessID, automationID, versionID, listID.String()}},
 		{`UPDATE automation SET status='active',active_version_id=$2,updated_at=now()
 		  WHERE id=$1`, []any{automationID, versionID}},

@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/smtp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/emersion/go-msgauth/dkim"
@@ -24,8 +26,8 @@ type DKIMConfig struct {
 	PrivateKey crypto.Signer // ed25519.PrivateKey or *rsa.PrivateKey
 }
 
-// SMTPConfig drives the real sender. Host == "" means "not configured" — callers
-// fall back to LogSender.
+// SMTPConfig drives the real sender. Host must be nonempty; an absent transport
+// is represented by the development-only, non-accepting LogSender.
 type SMTPConfig struct {
 	Host, Username, Password string
 	Port                     int
@@ -44,10 +46,17 @@ func NewSMTPSender(cfg SMTPConfig, suppression mailer.SuppressionChecker) *SMTPS
 	return &SMTPSender{cfg: cfg, suppression: suppression}
 }
 
+func smtpAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
 // Send dispatches m via the configured SMTP relay. It gates on the suppression
 // list before building the MIME payload, and optionally DKIM-signs when a key is
 // present.
 func (s *SMTPSender) Send(ctx context.Context, m Mail) error {
+	if strings.TrimSpace(s.cfg.Host) == "" {
+		return ErrNotAccepted
+	}
 	if s.suppression != nil {
 		suppressed, err := s.suppression.IsSuppressed(ctx, m.To)
 		if err != nil {
@@ -84,7 +93,7 @@ func (s *SMTPSender) Send(ctx context.Context, m Mail) error {
 	if s.cfg.Username != "" {
 		auth = smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 	}
-	return smtp.SendMail(fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port), auth, from, []string{m.To}, raw)
+	return smtp.SendMail(smtpAddress(s.cfg.Host, s.cfg.Port), auth, from, []string{m.To}, raw)
 }
 
 // BuildMIME renders an RFC 822 message. Pure (no network) so it is unit-tested.

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -94,6 +95,23 @@ func TestBounceValidHardBounce202(t *testing.T) {
 	}
 	if got := sup.calls[0]; got.recipient != "bounced@example.com" || got.messageID != "msg-1@inbound.localhost" {
 		t.Errorf("SuppressBounce got %+v, want {bounced@example.com msg-1@inbound.localhost}", got)
+	}
+}
+
+// MF-MAIL-ERRACK-001 requires an authenticated durability failure to receive a
+// generic retryable response so a conforming provider will retry.
+func TestMFMailErrack001MutationFailureReturnsRetryableFailure(t *testing.T) {
+	body := bounceBody(t, "lost-bounce@example.com", "hard", "msg-lost@inbound.localhost")
+	sup := &fakeSuppressor{err: errors.New("transient database failure containing secret detail")}
+	rec := doBounce(newBounceHandler(t, sup), body, signBounce(testBounceSecret, body))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failed suppression status = %d, want 503", rec.Code)
+	}
+	if rec.Body.String() != "" {
+		t.Fatalf("failed suppression body = %q, want generic empty response", rec.Body.String())
+	}
+	if len(sup.calls) != 1 {
+		t.Fatalf("SuppressBounce calls = %d, want one failed mutation", len(sup.calls))
 	}
 }
 

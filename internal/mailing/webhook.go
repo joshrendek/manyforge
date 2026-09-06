@@ -19,7 +19,10 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
 
-const maxProviderWebhookBytes int64 = 256 << 10
+const (
+	maxProviderWebhookBytes    int64 = 256 << 10
+	maxProviderEventRecipients       = 50
+)
 
 var errWebhookUnauthorized = errors.New("mailing webhook: unauthorized")
 
@@ -50,18 +53,21 @@ func (h *WebhookHandler) PublicRoutes(r chi.Router) {
 }
 
 type webhookContext struct {
-	profileID        uuid.UUID
-	provider         string
-	credentialSealed *string
-	snsTopicARN      *string
+	profileID           uuid.UUID
+	provider            string
+	credentialSealed    *string
+	snsTopicARN         *string
+	sesRegion           *string
+	sesConfigurationSet *string
+	feedbackStatus      string
+	updatedAt           time.Time
 }
 
 type providerEvent struct {
-	providerMessageID string
-	recipient         string
-	kind              string
-	occurredAt        *time.Time
-	payload           json.RawMessage
+	ProviderMessageID string     `json:"provider_message_id"`
+	Recipient         string     `json:"recipient"`
+	Kind              string     `json:"kind"`
+	OccurredAt        *time.Time `json:"occurred_at,omitempty"`
 }
 
 func (h *WebhookHandler) profileID(r *http.Request) (uuid.UUID, error) {
@@ -100,9 +106,11 @@ func (h *WebhookHandler) loadContext(ctx context.Context, profileID uuid.UUID) (
 	}
 	err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
-			SELECT profile_id, provider, credential_sealed, sns_topic_arn
+			SELECT profile_id, provider, credential_sealed, sns_topic_arn,
+			       ses_region, ses_configuration_set, feedback_status, updated_at
 			FROM mailing_webhook_context($1)`, profileID).Scan(
 			&out.profileID, &out.provider, &out.credentialSealed, &out.snsTopicARN,
+			&out.sesRegion, &out.sesConfigurationSet, &out.feedbackStatus, &out.updatedAt,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errWebhookUnauthorized
@@ -118,29 +126,70 @@ func (h *WebhookHandler) loadContext(ctx context.Context, profileID uuid.UUID) (
 	return out, nil
 }
 
-// recordAndApply deduplicates and applies an authenticated event atomically.
-func (h *WebhookHandler) recordAndApply(ctx context.Context, wc webhookContext, provider, eventID string, events []providerEvent) error {
+// recordAndApply persists one authenticated provider envelope and atomically
+// applies all bounded normalized recipient events. Unmatched events remain
+// pending for reconciliation when provider correlation is stored.
+func (h *WebhookHandler) recordAndApply(ctx context.Context, wc webhookContext, provider, eventID string, payload json.RawMessage, events []providerEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	normalized, err := json.Marshal(events)
+	if err != nil {
+		return err
+	}
+	var outcome string
+	if err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, "SELECT mailing_process_provider_webhook($1,$2,$3,$4,$5)",
+			wc.profileID, provider, eventID, payload, normalized).Scan(&outcome)
+	}); err != nil {
+		return err
+	}
+	if outcome == "full" {
+		return errors.New("mailing webhook: pending feedback quota exhausted")
+	}
+	return nil
+}
+
+func (h *WebhookHandler) transitionSESFeedback(ctx context.Context, wc webhookContext, status, message string) error {
+	if wc.snsTopicARN == nil || wc.sesRegion == nil || wc.sesConfigurationSet == nil {
+		return errors.New("mailing webhook: incomplete SES feedback configuration")
+	}
 	return h.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		var accepted bool
-		if err := tx.QueryRow(ctx, "SELECT mailing_record_webhook($1,$2,$3)",
-			wc.profileID, provider, eventID).Scan(&accepted); err != nil {
+		var changed bool
+		if err := tx.QueryRow(ctx, `SELECT mailing_transition_ses_feedback(
+			$1,$2,$3,$4,$5,$6,$7
+		)`, wc.profileID, wc.updatedAt, *wc.sesRegion, *wc.snsTopicARN,
+			*wc.sesConfigurationSet, status, message).Scan(&changed); err != nil {
 			return err
 		}
-		if !accepted {
-			return nil
-		}
-		for _, event := range events {
-			var applied bool
-			if err := tx.QueryRow(ctx,
-				"SELECT mailing_apply_provider_event($1,$2,$3,$4,$5,$6)",
-				wc.profileID, event.providerMessageID, event.recipient, event.kind,
-				event.occurredAt, event.payload,
-			).Scan(&applied); err != nil {
-				return err
-			}
+		if !changed {
+			return errors.New("mailing webhook: SES feedback transition lost profile version")
 		}
 		return nil
 	})
+}
+func normalizeProviderRecipients(recipients []string) ([]string, bool) {
+	if len(recipients) == 0 || len(recipients) > maxProviderEventRecipients {
+		return nil, false
+	}
+	seen := make(map[string]struct{}, len(recipients))
+	out := make([]string, 0, len(recipients))
+	for _, recipient := range recipients {
+		normalized, err := normalizeEmail(recipient)
+		if err != nil {
+			return nil, false
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out, len(out) > 0
+}
+
+func (h *WebhookHandler) retryableFailure(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusServiceUnavailable)
 }
 
 func (h *WebhookHandler) unauthorized(w http.ResponseWriter) {

@@ -11,12 +11,12 @@ func TestMapSESEvent(t *testing.T) {
 	bounce.Bounce.BouncedRecipients = append(bounce.Bounce.BouncedRecipients, struct {
 		Email string `json:"emailAddress"`
 	}{Email: "reader@example.test"})
-	events := mapSESEvent(bounce, []byte(`{"notificationType":"Bounce"}`))
-	if len(events) != 1 || events[0].kind != "bounce" || events[0].recipient != "reader@example.test" {
+	events := mapSESEvent(bounce)
+	if len(events) != 1 || events[0].Kind != "bounce" || events[0].Recipient != "reader@example.test" {
 		t.Fatalf("permanent bounce events = %#v", events)
 	}
 	bounce.Bounce.BounceType = "Transient"
-	if got := mapSESEvent(bounce, nil); len(got) != 0 {
+	if got := mapSESEvent(bounce); len(got) != 0 {
 		t.Fatalf("transient bounce mapped to %#v", got)
 	}
 
@@ -24,8 +24,8 @@ func TestMapSESEvent(t *testing.T) {
 	delivered.EventType = "Delivery"
 	delivered.Mail.MessageID = "ses-2"
 	delivered.Delivery.Recipients = []string{"reader@example.test"}
-	events = mapSESEvent(delivered, nil)
-	if len(events) != 1 || events[0].kind != "delivered" {
+	events = mapSESEvent(delivered)
+	if len(events) != 1 || events[0].Kind != "delivered" {
 		t.Fatalf("delivery events = %#v", events)
 	}
 }

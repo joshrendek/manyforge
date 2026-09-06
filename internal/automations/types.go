@@ -37,6 +37,20 @@ type Version struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
+type VersionSummary struct {
+	ID           uuid.UUID  `json:"id"`
+	BusinessID   uuid.UUID  `json:"business_id"`
+	TenantRootID uuid.UUID  `json:"tenant_root_id"`
+	AutomationID uuid.UUID  `json:"automation_id"`
+	Number       int32      `json:"number"`
+	Status       string     `json:"status"`
+	TriggerKind  *string    `json:"trigger_kind"`
+	TriggerRef   *string    `json:"trigger_ref"`
+	ActivatedAt  *time.Time `json:"activated_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
 type Page[T any] struct {
 	Items      []T     `json:"items"`
 	NextCursor *string `json:"next_cursor"`

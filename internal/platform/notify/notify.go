@@ -71,23 +71,27 @@ type Mail struct {
 	DKIM *DKIMConfig
 }
 
-// ErrSuppressed is returned when the recipient is hard-bounced/suppressed (FR-013).
-var ErrSuppressed = errors.New("recipient suppressed")
+var (
+	// ErrSuppressed is returned when the recipient is hard-bounced/suppressed.
+	ErrSuppressed = errors.New("recipient suppressed")
+	// ErrNotAccepted marks development or disabled transports that performed no send.
+	ErrNotAccepted = errors.New("outbound message was not accepted")
+)
 
 // Sender dispatches threaded outbound mail, refusing suppressed recipients.
 type Sender interface {
 	Send(ctx context.Context, m Mail) error
 }
 
-// LogSender is the dev default: it logs the full threaded message (so reply/
-// notification flows are completable without a real MTA) and honors suppression.
-// Production wires a real SMTP+DKIM sender behind the same interface (US2/US4).
+// LogSender is the development-only sink. It records non-content metadata,
+// honors suppression, and always returns ErrNotAccepted so no caller can mark
+// a message delivered by a provider.
 type LogSender struct {
 	Logger      *slog.Logger
 	Suppression mailer.SuppressionChecker // optional; nil skips the check
 }
 
-// Send logs the message after a suppression check.
+// Send records safe metadata after a suppression check and reports non-acceptance.
 func (s LogSender) Send(ctx context.Context, m Mail) error {
 	if s.Suppression != nil {
 		suppressed, err := s.Suppression.IsSuppressed(ctx, m.To)
@@ -102,9 +106,11 @@ func (s LogSender) Send(ctx context.Context, m Mail) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	logger.InfoContext(ctx, "dev mailer: would send threaded reply",
-		"from", m.From, "to", m.To, "subject", m.Subject,
-		"message_id", m.MessageID, "in_reply_to", m.InReplyTo, "reply_to", m.ReplyTo,
-		"body", m.BodyText)
-	return nil
+	logger.InfoContext(ctx, "development mail sink declined outbound message",
+		"message_id", m.MessageID,
+		"threaded", m.InReplyTo != "",
+		"has_reply_to", m.ReplyTo != "",
+		"has_text", m.BodyText != "",
+		"has_html", m.BodyHTML != "")
+	return ErrNotAccepted
 }

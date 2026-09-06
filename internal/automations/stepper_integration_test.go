@@ -124,7 +124,10 @@ func TestAutomationStepperAtomicDeliveryCrashReplay(t *testing.T) {
 			return err
 		}
 		within := 5 * time.Minute
-		eventExists, err := (automations.SQLStepStore{}).EventExists(ctx, tx, seed.businessID, subscriber.Email, "checkout", now.Add(-time.Hour), &within)
+		eventExists, err := (automations.SQLStepStore{}).EventExists(
+			ctx, tx, seed.businessID, list.ID, subscriber.Email, "checkout",
+			now.Add(-time.Hour), now, &within,
+		)
 		if err != nil {
 			return err
 		}

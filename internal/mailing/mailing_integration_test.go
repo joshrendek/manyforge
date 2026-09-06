@@ -24,6 +24,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
+
 type mailingSeed struct{ businessID, principalID uuid.UUID }
 
 type capturedDeliverer struct {
@@ -32,12 +33,6 @@ type capturedDeliverer struct {
 	mails    []notify.Mail
 }
 
-type callbackDeliverer struct{ verify func() error }
-
-func (d callbackDeliverer) Verify(context.Context) error { return d.verify() }
-func (d callbackDeliverer) Send(context.Context, notify.Mail) (mailprovider.SendResult, error) {
-	return mailprovider.SendResult{}, nil
-}
 
 func (d *capturedDeliverer) Verify(context.Context) error {
 	d.verified = true
@@ -48,6 +43,19 @@ func (d *capturedDeliverer) Send(_ context.Context, mail notify.Mail) (mailprovi
 	d.mails = append(d.mails, mail)
 	return mailprovider.SendResult{ProviderID: "captured"}, nil
 }
+
+func (d *capturedDeliverer) EnsureWebhook(context.Context, string, string) (mailprovider.ResendWebhook, bool, error) {
+	return mailprovider.ResendWebhook{
+		ID: "wh_provider_generated",
+		SigningSecret: "whsec_MDEyMzQ1Njc4OWFiY2RlZg==",
+	}, true, nil
+}
+
+func (d *capturedDeliverer) CleanupWebhooks(context.Context, string, string, bool) error {
+	return nil
+}
+
+func (d *capturedDeliverer) DeleteWebhook(context.Context, string) error { return nil }
 
 func seedMailingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) mailingSeed {
 	t.Helper()
@@ -213,9 +221,18 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if _, err = svc.VerifySendingProfile(ctx, a.principalID, a.businessID); err == nil || !strings.Contains(err.Error(), "stored Resend credentials are invalid") {
 		t.Fatalf("VerifySendingProfile with corrupt credentials error = %v", err)
 	}
+	recoveryProvider := &fakeResendProvisioner{cleanupMatches: true}
+	svc.PublicBaseURL = "https://hub.example.test"
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return recoveryProvider, nil
+	}, time.Minute)
 	if _, err = svc.PutSendingProfile(ctx, a.principalID, a.businessID, profileInput); err != nil {
 		t.Fatalf("repair profile credentials: %v", err)
 	}
+	if len(recoveryProvider.cleanupRequireMatch) != 1 || !recoveryProvider.cleanupRequireMatch[0] {
+		t.Fatalf("corrupt credential repair cleanup proof = %v, want require_match", recoveryProvider.cleanupRequireMatch)
+	}
+	svc.Providers = nil
 	degraded, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
 	if err != nil || degraded.Status != "error" || degraded.VerifyError == nil {
 		t.Fatalf("VerifySendingProfile without providers = %+v, err=%v", degraded, err)
@@ -227,17 +244,30 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if err != nil || unsupported.Status != "error" || unsupported.VerifyError == nil {
 		t.Fatalf("VerifySendingProfile without verifier = %+v, err=%v", unsupported, err)
 	}
-	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
-		return callbackDeliverer{verify: func() error {
-			concurrent := profileInput
-			concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
-			_, updateErr := svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
-			return updateErr
-		}}, nil
-	}, time.Minute)
-	if _, err = svc.VerifySendingProfile(ctx, a.principalID, a.businessID); !errors.Is(err, errs.ErrConflict) {
-		t.Fatalf("concurrent VerifySendingProfile error = %v", err)
+	concurrentProvider := &fakeResendProvisioner{cleanupMatches: true}
+	var concurrentUpdateErr error
+	concurrentProvider.verify = func() error {
+		concurrent := profileInput
+		concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
+		_, concurrentUpdateErr = svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
+		return concurrentUpdateErr
 	}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return concurrentProvider, nil
+	}, time.Minute)
+	blocked, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
+	if err != nil || blocked.Status != "error" || blocked.VerifyError == nil {
+		t.Fatalf("VerifySendingProfile with concurrent update = %+v, err=%v", blocked, err)
+	}
+	if !errors.Is(concurrentUpdateErr, errs.ErrConflict) || blocked.FromEmail != profile.FromEmail {
+		t.Fatalf("concurrent update was not lease-blocked: update_err=%v profile=%+v", concurrentUpdateErr, blocked)
+	}
+	concurrent := profileInput
+	concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
+	if _, err = svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent); err != nil {
+		t.Fatalf("update after verification lease release: %v", err)
+	}
+	svc.PublicBaseURL = "https://hub.example.test"
 	captured := &capturedDeliverer{}
 	svc.Providers = mailprovider.NewCache(func(_ context.Context, resolved mailprovider.Profile) (mailprovider.Deliverer, error) {
 		if resolved.ID != profile.ID || resolved.ResendAPIKey != "re_concurrent" {
@@ -246,8 +276,9 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		return captured, nil
 	}, time.Minute)
 	verified, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
-	if err != nil || verified.Status != "verified" || !captured.verified {
-		t.Fatalf("VerifySendingProfile = %+v, err=%v, called=%v", verified, err, captured.verified)
+	if err != nil || verified.Status != "verified" || verified.FeedbackStatus != "ready" ||
+		verified.FeedbackConfirmedAt == nil || !captured.verified {
+		t.Fatalf("VerifySendingProfile with provider-controlled webhook = %+v, err=%v, called=%v", verified, err, captured.verified)
 	}
 	svc.OutboundLimiter = &toggleLimiter{deny: true}
 	if err = svc.TestSendingProfile(ctx, a.principalID, a.businessID, "reader@example.net"); !errors.Is(err, errs.ErrRateLimited) {
@@ -262,8 +293,12 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		!strings.HasPrefix(captured.mail.Subject, "[TEST]") || !strings.HasSuffix(captured.mail.MessageID, "@mailing.localhost") {
 		t.Fatalf("captured test mail = %+v", captured.mail)
 	}
-	if _, err = svc.PutSendingProfile(ctx, a.principalID, a.businessID, mailing.SendingProfileInput{Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender", Resend: &mailing.ResendCredentials{APIKey: "re_rotated"}}); err != nil {
+	rotated, err := svc.PutSendingProfile(ctx, a.principalID, a.businessID, mailing.SendingProfileInput{Mode: "resend", FromEmail: "sender@example.com", FromName: "Sender", Resend: &mailing.ResendCredentials{APIKey: "re_rotated"}})
+	if err != nil {
 		t.Fatalf("rotate profile: %v", err)
+	}
+	if rotated.FeedbackStatus != "pending" || rotated.FeedbackConfirmedAt != nil {
+		t.Fatalf("rotated profile feedback state = %+v, want pending reset", rotated)
 	}
 	var secretCount int
 	if err = tdb.Super.QueryRow(ctx, "SELECT count(*) FROM secret WHERE business_id=$1 AND scope='mailing'", a.businessID).Scan(&secretCount); err != nil || secretCount != 1 {

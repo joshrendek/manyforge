@@ -27,9 +27,21 @@ import (
 )
 
 const (
-	maxCertificateBytes = 64 << 10
-	certificateCacheTTL = 24 * time.Hour
+	maxCertificateBytes             = 64 << 10
+	certificateCacheTTL             = 24 * time.Hour
+	certificateFailureTTL           = time.Minute
+	certificateFetchWindow          = time.Minute
+	maxCertificateKeys              = 32
+	maxCertificateFailures          = 64
+	maxCertificateFetches           = 8
+	maxConcurrentCertificateFetches = 8
+	maxConcurrentFetchesPerTopic    = 1
+	maxTopicFetchStates             = 64
+	topicStateIdleTTL               = certificateFailureTTL
 )
+
+// ErrTopicStateCapacity indicates that every bounded topic state is active.
+var ErrTopicStateCapacity = errors.New("sns: topic state capacity exhausted")
 
 var (
 	snsHostPattern  = regexp.MustCompile(`^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$`)
@@ -61,6 +73,14 @@ type cachedKey struct {
 	expiresAt time.Time
 }
 
+type topicFetchState struct {
+	failures    map[string]time.Time
+	fetchWindow time.Time
+	fetches     int
+	inFlight    int
+	lastUsed    time.Time
+}
+
 // Verifier validates SNS envelopes and confirms signed subscriptions. Client,
 // Roots, and Now are injectable for deterministic tests.
 type Verifier struct {
@@ -68,8 +88,10 @@ type Verifier struct {
 	Roots  *x509.CertPool
 	Now    func() time.Time
 
-	mu    sync.Mutex
-	cache map[string]cachedKey
+	mu         sync.Mutex
+	cache      map[string]cachedKey
+	topics     map[string]*topicFetchState
+	fetchSlots chan struct{}
 }
 
 // New returns a verifier using a guarded outbound client.
@@ -78,14 +100,25 @@ func New() *Verifier {
 	client.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
 		return validateSNSURL(req.URL.String(), false)
 	}
-	return &Verifier{Client: client, Now: time.Now, cache: make(map[string]cachedKey)}
+	return &Verifier{
+		Client: client, Now: time.Now,
+		cache: make(map[string]cachedKey), topics: make(map[string]*topicFetchState),
+		fetchSlots: make(chan struct{}, maxConcurrentCertificateFetches),
+	}
 }
 
-// Verify parses raw as an SNS envelope and verifies its RSA signature.
-func (v *Verifier) Verify(ctx context.Context, raw []byte) (Message, error) {
+// Verify parses raw as an SNS envelope, binds it to the configured topic before
+// certificate retrieval, and verifies its RSA signature.
+func (v *Verifier) Verify(ctx context.Context, raw []byte, expectedTopicARN string) (Message, error) {
 	var msg Message
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return Message{}, errors.New("sns: invalid envelope")
+	}
+	if expectedTopicARN == "" || msg.TopicARN != expectedTopicARN {
+		return Message{}, errors.New("sns: topic mismatch")
+	}
+	if err := validateCertificateTopic(msg.SigningCertURL, expectedTopicARN); err != nil {
+		return Message{}, err
 	}
 	canonical, err := canonicalString(msg)
 	if err != nil {
@@ -107,7 +140,7 @@ func (v *Verifier) Verify(ctx context.Context, raw []byte) (Message, error) {
 	default:
 		return Message{}, errors.New("sns: unsupported signature version")
 	}
-	key, err := v.signingKey(ctx, msg.SigningCertURL)
+	key, err := v.signingKey(ctx, msg.SigningCertURL, expectedTopicARN)
 	if err != nil {
 		return Message{}, err
 	}
@@ -118,9 +151,9 @@ func (v *Verifier) Verify(ctx context.Context, raw []byte) (Message, error) {
 }
 
 // Confirm follows a signed SubscriptionConfirmation URL after applying the same
-// HTTPS and SNS-host constraints as certificate retrieval.
-func (v *Verifier) Confirm(ctx context.Context, rawURL string) error {
-	if err := validateSNSURL(rawURL, false); err != nil {
+// HTTPS, SNS-host, and topic-region constraints as certificate retrieval.
+func (v *Verifier) Confirm(ctx context.Context, rawURL, expectedTopicARN string) error {
+	if err := validateConfirmationTopic(rawURL, expectedTopicARN); err != nil {
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -129,8 +162,6 @@ func (v *Verifier) Confirm(ctx context.Context, rawURL string) error {
 	}
 	resp, err := v.client().Do(req)
 	if err != nil {
-		// net/http errors include the full request URL. SubscribeURL contains the
-		// confirmation token, so never return or log that error verbatim.
 		return errors.New("sns: confirm subscription request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -141,36 +172,110 @@ func (v *Verifier) Confirm(ctx context.Context, rawURL string) error {
 	return nil
 }
 
-func (v *Verifier) signingKey(ctx context.Context, rawURL string) (*rsa.PublicKey, error) {
+func (v *Verifier) signingKey(ctx context.Context, rawURL, expectedTopicARN string) (*rsa.PublicKey, error) {
 	if err := validateSNSURL(rawURL, true); err != nil {
 		return nil, err
 	}
 	now := v.now()
 	v.mu.Lock()
-	entry, ok := v.cache[rawURL]
-	v.mu.Unlock()
-	if ok && now.Before(entry.expiresAt) {
+	if v.cache == nil {
+		v.cache = make(map[string]cachedKey)
+	}
+	if v.topics == nil {
+		v.topics = make(map[string]*topicFetchState)
+	}
+	if v.fetchSlots == nil {
+		v.fetchSlots = make(chan struct{}, maxConcurrentCertificateFetches)
+	}
+	for key, entry := range v.cache {
+		if !now.Before(entry.expiresAt) {
+			delete(v.cache, key)
+		}
+	}
+	v.expireIdleTopicStatesLocked(now)
+	if entry, ok := v.cache[rawURL]; ok {
+		if state := v.topics[expectedTopicARN]; state != nil {
+			state.lastUsed = now
+		}
+		v.mu.Unlock()
 		return entry.key, nil
 	}
+	state, err := v.topicStateLocked(expectedTopicARN, now)
+	if err != nil {
+		v.mu.Unlock()
+		return nil, err
+	}
+	for key, expiresAt := range state.failures {
+		if !now.Before(expiresAt) {
+			delete(state.failures, key)
+		}
+	}
+	if _, failed := state.failures[rawURL]; failed {
+		v.mu.Unlock()
+		return nil, errors.New("sns: signing certificate temporarily unavailable")
+	}
+	if state.fetchWindow.IsZero() || !now.Before(state.fetchWindow.Add(certificateFetchWindow)) {
+		state.fetchWindow, state.fetches = now, 0
+	}
+	if state.fetches >= maxCertificateFetches {
+		v.mu.Unlock()
+		return nil, errors.New("sns: signing certificate fetch budget exhausted")
+	}
+	if state.inFlight >= maxConcurrentFetchesPerTopic {
+		v.mu.Unlock()
+		return nil, errors.New("sns: signing certificate fetch already in progress")
+	}
+	state.inFlight++
+	slots := v.fetchSlots
+	v.mu.Unlock()
+
+	select {
+	case slots <- struct{}{}:
+	case <-ctx.Done():
+		v.finishCertificateReservation(expectedTopicARN)
+		return nil, errors.New("sns: signing certificate fetch capacity wait canceled")
+	}
+	defer v.finishCertificateFetch(expectedTopicARN, slots)
+
+	// A different topic may have populated the shared trusted-certificate cache
+	// while this fair global slot was queued.
+	now = v.now()
+	v.mu.Lock()
+	if entry, ok := v.cache[rawURL]; ok && now.Before(entry.expiresAt) {
+		state.lastUsed = now
+		v.mu.Unlock()
+		return entry.key, nil
+	}
+	state.lastUsed = now
+	if state.fetchWindow.IsZero() || !now.Before(state.fetchWindow.Add(certificateFetchWindow)) {
+		state.fetchWindow, state.fetches = now, 0
+	}
+	state.fetches++
+	v.mu.Unlock()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: invalid certificate URL")
 	}
 	resp, err := v.client().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sns: fetch signing certificate: %w", err)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
+		return nil, errors.New("sns: fetch signing certificate failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sns: fetch signing certificate: status %d", resp.StatusCode)
+		v.rememberFailure(expectedTopicARN, rawURL, now)
+		return nil, errors.New("sns: signing certificate unavailable")
 	}
 	pemBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxCertificateBytes+1))
 	if err != nil || len(pemBytes) > maxCertificateBytes {
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: invalid signing certificate response")
 	}
 	certs, err := parseCertificates(pemBytes)
 	if err != nil {
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, err
 	}
 	leaf := certs[0]
@@ -180,13 +285,14 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL string) (*rsa.PublicKe
 	}
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots: v.Roots, Intermediates: intermediates,
-		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		CurrentTime: now,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}, CurrentTime: now,
 	}); err != nil {
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: signing certificate is not trusted")
 	}
 	key, ok := leaf.PublicKey.(*rsa.PublicKey)
 	if !ok || key.N.BitLen() < 2048 {
+		v.rememberFailure(expectedTopicARN, rawURL, now)
 		return nil, errors.New("sns: signing certificate has invalid RSA key")
 	}
 	expires := now.Add(certificateCacheTTL)
@@ -194,12 +300,104 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL string) (*rsa.PublicKe
 		expires = leaf.NotAfter
 	}
 	v.mu.Lock()
-	if v.cache == nil {
-		v.cache = make(map[string]cachedKey)
+	for len(v.cache) >= maxCertificateKeys {
+		var evict string
+		var earliest time.Time
+		for candidate, entry := range v.cache {
+			if evict == "" || entry.expiresAt.Before(earliest) {
+				evict, earliest = candidate, entry.expiresAt
+			}
+		}
+		delete(v.cache, evict)
 	}
+	delete(state.failures, rawURL)
 	v.cache[rawURL] = cachedKey{key: key, expiresAt: expires}
 	v.mu.Unlock()
 	return key, nil
+}
+
+func (v *Verifier) expireIdleTopicStatesLocked(now time.Time) {
+	for topic, state := range v.topics {
+		if state == nil ||
+			(state.inFlight == 0 && !now.Before(state.lastUsed.Add(topicStateIdleTTL))) {
+			delete(v.topics, topic)
+		}
+	}
+}
+
+func (v *Verifier) topicStateLocked(expectedTopicARN string, now time.Time) (*topicFetchState, error) {
+	if state := v.topics[expectedTopicARN]; state != nil {
+		if state.failures == nil {
+			state.failures = make(map[string]time.Time)
+		}
+		state.lastUsed = now
+		return state, nil
+	}
+
+	for len(v.topics) >= maxTopicFetchStates {
+		var evict string
+		var oldest time.Time
+		for topic, state := range v.topics {
+			if state.inFlight != 0 {
+				continue
+			}
+			if evict == "" || state.lastUsed.Before(oldest) ||
+				(state.lastUsed.Equal(oldest) && topic < evict) {
+				evict, oldest = topic, state.lastUsed
+			}
+		}
+		if evict == "" {
+			return nil, ErrTopicStateCapacity
+		}
+		delete(v.topics, evict)
+	}
+
+	state := &topicFetchState{
+		failures: make(map[string]time.Time),
+		lastUsed: now,
+	}
+	v.topics[expectedTopicARN] = state
+	return state, nil
+}
+
+func (v *Verifier) finishCertificateReservation(expectedTopicARN string) {
+	now := v.now()
+	v.mu.Lock()
+	if state := v.topics[expectedTopicARN]; state != nil && state.inFlight > 0 {
+		state.inFlight--
+		state.lastUsed = now
+	}
+	v.mu.Unlock()
+}
+
+func (v *Verifier) finishCertificateFetch(expectedTopicARN string, slots chan struct{}) {
+	<-slots
+	v.finishCertificateReservation(expectedTopicARN)
+}
+
+func (v *Verifier) rememberFailure(expectedTopicARN, rawURL string, now time.Time) {
+	v.mu.Lock()
+	state := v.topics[expectedTopicARN]
+	if state == nil {
+		v.mu.Unlock()
+		return
+	}
+	if state.failures == nil {
+		state.failures = make(map[string]time.Time)
+	}
+	for len(state.failures) >= maxCertificateFailures {
+		var evict string
+		var earliest time.Time
+		for candidate, expiresAt := range state.failures {
+			if evict == "" || expiresAt.Before(earliest) {
+				evict, earliest = candidate, expiresAt
+			}
+		}
+		delete(state.failures, evict)
+	}
+	state.failures[rawURL] = now.Add(certificateFailureTTL)
+	state.lastUsed = now
+	v.mu.Unlock()
 }
 
 func (v *Verifier) client() httpDoer {
@@ -252,6 +450,38 @@ func validateSNSURL(raw string, certificate bool) error {
 	}
 	if certificate && (!certPathPattern.MatchString(u.EscapedPath()) || u.RawQuery != "") {
 		return errors.New("sns: certificate URL path is not allowed")
+	}
+	return nil
+}
+
+func validateCertificateTopic(rawURL, topicARN string) error {
+	if err := validateSNSURL(rawURL, true); err != nil {
+		return err
+	}
+	return validateURLTopicRegion(rawURL, topicARN)
+}
+
+func validateConfirmationTopic(rawURL, topicARN string) error {
+	if err := validateSNSURL(rawURL, false); err != nil {
+		return err
+	}
+	return validateURLTopicRegion(rawURL, topicARN)
+}
+
+func validateURLTopicRegion(rawURL, topicARN string) error {
+	parts := strings.Split(topicARN, ":")
+	if len(parts) != 6 || parts[0] != "arn" || parts[2] != "sns" || parts[3] == "" {
+		return errors.New("sns: invalid expected topic")
+	}
+	host := "sns." + parts[3] + ".amazonaws.com"
+	if parts[1] == "aws-cn" {
+		host += ".cn"
+	} else if parts[1] != "aws" && parts[1] != "aws-us-gov" {
+		return errors.New("sns: invalid expected topic partition")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || !strings.EqualFold(u.Hostname(), host) {
+		return errors.New("sns: URL region does not match topic")
 	}
 	return nil
 }

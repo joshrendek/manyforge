@@ -5,18 +5,23 @@ import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MailingSuppressionListComponent } from './suppression-list';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const SUPPRESSION_ID = '22222222-2222-4222-8222-222222222222';
+const SECOND_SUPPRESSION_ID = '33333333-3333-4333-8333-333333333333';
+const SUPPRESSIONS_URL = `/api/v1/businesses/${BUSINESS_ID}/mailing/suppressions`;
+
 const business = {
-  id: 'b1',
+  id: BUSINESS_ID,
   parent_id: null,
-  tenant_root_id: 'b1',
+  tenant_root_id: BUSINESS_ID,
   name: 'Acme',
   status: 'active',
   is_tenant_root: true,
 };
 const suppression = {
-  id: 'sup1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: SUPPRESSION_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   email: 'blocked@example.com',
   reason: 'bounce' as const,
   source: 'resend',
@@ -47,7 +52,7 @@ describe('MailingSuppressionListComponent', () => {
   function flushList(items = [suppression], nextCursor: string | null = null): void {
     const request = http.expectOne(
       (candidate) =>
-        candidate.url === '/api/v1/businesses/b1/mailing/suppressions' &&
+        candidate.url === SUPPRESSIONS_URL &&
         candidate.params.get('limit') === '50',
     );
     request.flush({ items, next_cursor: nextCursor });
@@ -58,10 +63,10 @@ describe('MailingSuppressionListComponent', () => {
     flushList();
     fixture.componentInstance.newEmail = 'manual@example.com';
     fixture.componentInstance.create();
-    const request = http.expectOne('/api/v1/businesses/b1/mailing/suppressions');
+    const request = http.expectOne(SUPPRESSIONS_URL);
     expect(request.request.method).toBe('POST');
     expect(request.request.body).toEqual({ email: 'manual@example.com', reason: 'manual' });
-    request.flush({ ...suppression, id: 'sup2', email: 'manual@example.com', reason: 'manual' });
+    request.flush({ ...suppression, id: SECOND_SUPPRESSION_ID, email: 'manual@example.com', reason: 'manual' });
 
     expect(fixture.componentInstance.items().map((item) => item.email)).toEqual([
       'manual@example.com',
@@ -71,9 +76,9 @@ describe('MailingSuppressionListComponent', () => {
 
   it('requires inline confirmation before removing a suppression', () => {
     flushList();
-    fixture.componentInstance.pendingDelete.set('sup1');
+    fixture.componentInstance.pendingDelete.set(SUPPRESSION_ID);
     fixture.componentInstance.remove(suppression);
-    const request = http.expectOne('/api/v1/businesses/b1/mailing/suppressions/sup1');
+    const request = http.expectOne(`${SUPPRESSIONS_URL}/${SUPPRESSION_ID}`);
     expect(request.request.method).toBe('DELETE');
     request.flush(null);
     expect(fixture.componentInstance.items()).toEqual([]);
@@ -85,13 +90,16 @@ describe('MailingSuppressionListComponent', () => {
     fixture.componentInstance.loadMore();
     const request = http.expectOne(
       (candidate) =>
-        candidate.url === '/api/v1/businesses/b1/mailing/suppressions' &&
+        candidate.url === SUPPRESSIONS_URL &&
         candidate.params.get('cursor') === 'next',
     );
     request.flush({
-      items: [{ ...suppression, id: 'sup2', email: 'second@example.com' }],
+      items: [{ ...suppression, id: SECOND_SUPPRESSION_ID, email: 'second@example.com' }],
       next_cursor: null,
     });
-    expect(fixture.componentInstance.items().map((item) => item.id)).toEqual(['sup1', 'sup2']);
+    expect(fixture.componentInstance.items().map((item) => item.id)).toEqual([
+      SUPPRESSION_ID,
+      SECOND_SUPPRESSION_ID,
+    ]);
   });
 });

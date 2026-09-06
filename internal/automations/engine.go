@@ -102,9 +102,13 @@ func (e Engine) Advance(ctx context.Context, tx pgx.Tx, enrollment Enrollment, g
 			deliveryID, err := e.Deps.Sender.Enqueue(ctx, tx, MessageSpec{
 				BusinessID: enrollment.BusinessID, TenantRootID: enrollment.TenantRootID,
 				SubscriberID: enrollment.SubscriberID, TemplateID: cfg.TemplateID,
+				EnrollmentID: enrollment.ID, ClaimGeneration: enrollment.ClaimGeneration,
 				TrackOpens: *cfg.TrackOpens, TrackClicks: *cfg.TrackClicks,
 				SourceKind: "automation", SourceID: stepSourceID(enrollment.ID, node.ID), NotBefore: now,
 			})
+			if errors.Is(err, ErrLostFence) {
+				return out, err
+			}
 			if err != nil {
 				return e.fail(ctx, tx, enrollment, out, err, now)
 			}
@@ -127,7 +131,7 @@ func (e Engine) Advance(ctx context.Context, tx pgx.Tx, enrollment Enrollment, g
 			}
 			record.Outcome = "advanced"
 		case "condition":
-			yes, err := e.evaluateCondition(ctx, tx, enrollment, node.Config)
+			yes, err := e.evaluateCondition(ctx, tx, enrollment, node.Config, now)
 			if err != nil {
 				return e.fail(ctx, tx, enrollment, out, err, now)
 			}
@@ -163,10 +167,20 @@ func (e Engine) Advance(ctx context.Context, tx pgx.Tx, enrollment Enrollment, g
 					record.Detail["reason"] = snapshot.Status
 					return e.recordAndStop(ctx, tx, record, out)
 				}
-				if err := e.Deps.Tagger.AddTag(ctx, tx, enrollment.BusinessID, enrollment.TenantRootID, enrollment.SubscriberID, cfg.Tag); err != nil {
+				if err := e.Deps.Tagger.AddTag(
+					ctx, tx, enrollment.BusinessID, enrollment.TenantRootID, enrollment.SubscriberID,
+					enrollment.ID, enrollment.ClaimGeneration, cfg.Tag,
+				); errors.Is(err, ErrLostFence) {
+					return out, err
+				} else if err != nil {
 					return e.fail(ctx, tx, enrollment, out, err, now)
 				}
-			} else if err := e.Deps.Tagger.RemoveTag(ctx, tx, enrollment.BusinessID, enrollment.TenantRootID, enrollment.SubscriberID, cfg.Tag); err != nil {
+			} else if err := e.Deps.Tagger.RemoveTag(
+				ctx, tx, enrollment.BusinessID, enrollment.TenantRootID, enrollment.SubscriberID,
+				enrollment.ID, enrollment.ClaimGeneration, cfg.Tag,
+			); errors.Is(err, ErrLostFence) {
+				return out, err
+			} else if err != nil {
 				return e.fail(ctx, tx, enrollment, out, err, now)
 			}
 			record.Outcome = "advanced"
@@ -182,7 +196,7 @@ func (e Engine) Advance(ctx context.Context, tx pgx.Tx, enrollment Enrollment, g
 		}
 		if !changed {
 			out.LeaseLost = true
-			return out, nil
+			return out, ErrLostFence
 		}
 		if record.Status != "active" {
 			out.Status = record.Status
@@ -204,7 +218,7 @@ func (e Engine) recordAndStop(ctx context.Context, tx pgx.Tx, record StepRecord,
 	}
 	if !changed {
 		out.LeaseLost = true
-		return out, nil
+		return out, ErrLostFence
 	}
 	out.Status = record.Status
 	return out, nil
@@ -226,7 +240,7 @@ func (e Engine) fail(ctx context.Context, tx pgx.Tx, enrollment Enrollment, out 
 	}
 	if !changed {
 		out.LeaseLost = true
-		return out, nil
+		return out, ErrLostFence
 	}
 	out.LastError = cause.Error()
 	if terminal {
@@ -242,7 +256,7 @@ func (e Engine) snapshot(ctx context.Context, tx pgx.Tx, subscriberID uuid.UUID)
 	return e.Deps.Subscribers.Snapshot(ctx, tx, subscriberID)
 }
 
-func (e Engine) evaluateCondition(ctx context.Context, tx pgx.Tx, enrollment Enrollment, raw json.RawMessage) (bool, error) {
+func (e Engine) evaluateCondition(ctx context.Context, tx pgx.Tx, enrollment Enrollment, raw json.RawMessage, evaluationTime time.Time) (bool, error) {
 	var cfg struct {
 		Predicate json.RawMessage `json:"predicate"`
 	}
@@ -334,7 +348,10 @@ func (e Engine) evaluateCondition(ctx context.Context, tx pgx.Tx, enrollment Enr
 			d := time.Duration(*predicate.WithinSeconds) * time.Second
 			within = &d
 		}
-		return e.Deps.Steps.EventExists(ctx, tx, enrollment.BusinessID, snapshot.Email, predicate.Name, enrollment.EnrolledAt, within)
+		return e.Deps.Steps.EventExists(
+			ctx, tx, enrollment.BusinessID, snapshot.ListID, snapshot.Email, predicate.Name,
+			enrollment.EnrolledAt, evaluationTime, within,
+		)
 	default:
 		return false, fmt.Errorf("unknown condition predicate %q: %w", kind.Type, ErrInvalidReference)
 	}

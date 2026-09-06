@@ -4,6 +4,10 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ContactsPickerComponent } from './contacts-picker';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const LIST_ID = '22222222-2222-4222-8222-222222222222';
+const CONTACT_ID = '33333333-3333-4333-8333-333333333333';
+
 describe('ContactsPickerComponent', () => {
   let http: HttpTestingController;
   let fixture: ComponentFixture<ContactsPickerComponent>;
@@ -14,14 +18,14 @@ describe('ContactsPickerComponent', () => {
     });
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(ContactsPickerComponent);
-    fixture.componentRef.setInput('businessId', 'b1');
-    fixture.componentRef.setInput('listId', 'l1');
+    fixture.componentRef.setInput('businessId', BUSINESS_ID);
+    fixture.componentRef.setInput('listId', LIST_ID);
     fixture.detectChanges();
-    http.expectOne('/api/v1/businesses/b1/contacts').flush({
+    http.expectOne(`/api/v1/businesses/${BUSINESS_ID}/contacts`).flush({
       items: [
         {
-          id: 'c1',
-          tenant_root_id: 'b1',
+          id: CONTACT_ID,
+          tenant_root_id: BUSINESS_ID,
           primary_email: 'ada@example.com',
           display_name: 'Ada',
           created_at: '',
@@ -41,9 +45,9 @@ describe('ContactsPickerComponent', () => {
     fixture.detectChanges();
     fixture.componentInstance.addSelected();
     const request = http.expectOne(
-      '/api/v1/businesses/b1/mailing/lists/l1/subscribers/from-contacts',
+      `/api/v1/businesses/${BUSINESS_ID}/mailing/lists/${LIST_ID}/subscribers/from-contacts`,
     );
-    expect(request.request.body).toEqual({ contact_ids: ['c1'], skip_confirmation: false });
+    expect(request.request.body).toEqual({ contact_ids: [CONTACT_ID], skip_confirmation: false });
     request.flush({ imported: 1, skipped: 0, errors: [] });
   });
 });

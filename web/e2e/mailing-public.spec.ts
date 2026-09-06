@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
 
+const ACCOUNT_ID = '11111111-1111-4111-8111-111111111111';
+const BUSINESS_ID = '22222222-2222-4222-8222-222222222222';
+const PROFILE_ID = '33333333-3333-4333-8333-333333333333';
+
 const profile = {
-  id: 'sp1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: PROFILE_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   mode: 'resend',
   from_email: 'news@example.test',
   from_name: 'Acme News',
@@ -29,7 +33,7 @@ async function shellRoutes(page: import('@playwright/test').Page) {
   await page.route('**/api/v1/me', (route) =>
     route.fulfill({
       json: {
-        id: 'u1',
+        id: ACCOUNT_ID,
         email: 'operator@acme.test',
         display_name: 'Operator',
         email_verified: true,
@@ -42,9 +46,9 @@ async function shellRoutes(page: import('@playwright/test').Page) {
       json: {
         items: [
           {
-            id: 'b1',
+            id: BUSINESS_ID,
             parent_id: null,
-            tenant_root_id: 'b1',
+            tenant_root_id: BUSINESS_ID,
             name: 'Acme',
             status: 'active',
             is_tenant_root: true,
@@ -58,10 +62,10 @@ async function shellRoutes(page: import('@playwright/test').Page) {
 test('sending profile keeps credentials write-only and supports verification', async ({ page }) => {
   await shellRoutes(page);
   let currentProfile = { ...profile };
-  await page.route('**/api/v1/businesses/b1/email-domains**', (route) =>
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/email-domains**`, (route) =>
     route.fulfill({ json: { items: [], next_cursor: null } }),
   );
-  await page.route('**/api/v1/businesses/b1/mailing/sending-profile', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/sending-profile`, (route) => {
     if (route.request().method() === 'PUT') {
       currentProfile = {
         ...currentProfile,
@@ -72,7 +76,7 @@ test('sending profile keeps credentials write-only and supports verification', a
     }
     return route.fulfill({ json: currentProfile });
   });
-  await page.route('**/api/v1/businesses/b1/mailing/sending-profile/verify', (route) => {
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/sending-profile/verify`, (route) => {
     currentProfile = { ...currentProfile, status: 'verified' };
     return route.fulfill({ json: currentProfile });
   });

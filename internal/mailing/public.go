@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
+	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
@@ -80,6 +81,18 @@ func resolvePublicList(ctx context.Context, tx pgx.Tx, key string) (publicListCo
 	return out, err == nil, err
 }
 
+func resolveUnsubscribeList(ctx context.Context, tx pgx.Tx, key string) (publicListContext, bool, error) {
+	var out publicListContext
+	err := tx.QueryRow(ctx, `
+		SELECT list_id, business_id, tenant_root_id, double_opt_in, key_id, sealed_secret
+		FROM mailing_unsubscribe_list($1)`, key,
+	).Scan(&out.listID, &out.businessID, &out.tenantRootID, &out.doubleOptIn, &out.keyID, &out.sealedSecret)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return publicListContext{}, false, nil
+	}
+	return out, err == nil, err
+}
+
 // subscribeResolved performs the mutation in the caller's transaction. S2S uses this after
 // verifying the request against the key resolved in that same transaction, closing the
 // verify/revoke race between authentication and use.
@@ -97,7 +110,7 @@ func (s *Service) subscribeResolved(ctx context.Context, tx pgx.Tx, list publicL
 	var rawConfirmation string
 	var hash []byte
 	var expires *time.Time
-	if list.doubleOptIn && !in.SkipConfirmation {
+	if !s2s || (list.doubleOptIn && !in.SkipConfirmation) {
 		if s.Tokens == nil {
 			return PublicSubscriptionResult{}, "", "", errors.New("mailing: token codec unavailable")
 		}
@@ -135,7 +148,7 @@ func (s *Service) subscribeResolved(ctx context.Context, tx pgx.Tx, list publicL
 	return out, rawConfirmation, email, nil
 }
 
-func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, email, raw string) {
+func (s *Service) sendConfirmation(ctx context.Context, businessID, listID uuid.UUID, email, raw string) {
 	logger := s.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -144,10 +157,20 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, em
 		logger.ErrorContext(ctx, "mailing confirmation send failed", "err", "delivery is not configured")
 		return
 	}
-	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
-	profile, err := s.resolveBusinessProfile(ctx, businessID)
+	tokenHash, err := mailtoken.HashConfirmation(raw)
+	if err != nil {
+		logger.ErrorContext(ctx, "mailing confirmation token validation failed", "err", err)
+		return
+	}
+	profile, eligible, err := s.resolveConfirmationProfile(ctx, businessID, listID, email, tokenHash)
 	if err != nil {
 		logger.ErrorContext(ctx, "mailing confirmation profile resolution failed", "err", err)
+		return
+	}
+	if !eligible {
+		return
+	}
+	if s.OutboundLimiter != nil && !s.OutboundLimiter.Allow("ob:biz:"+businessID.String()) {
 		return
 	}
 	deliverer, err := s.Providers.Resolve(ctx, profile.provider)
@@ -155,6 +178,7 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, em
 		logger.ErrorContext(ctx, "mailing confirmation provider resolution failed", "err", err)
 		return
 	}
+	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
 	rendered, err := s.Renderer.RenderInput(mailrender.Input{
 		BodyMarkdown: "# Confirm your subscription\n\n[Confirm your subscription](" + link + ")",
 		FromName:     profile.fromName, PostalAddress: stringValue(profile.postalAddress),
@@ -174,6 +198,65 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, em
 	if err != nil {
 		logger.ErrorContext(ctx, "mailing confirmation send failed", "err", err)
 	}
+}
+
+func (s *Service) resolveConfirmationProfile(
+	ctx context.Context,
+	businessID, listID uuid.UUID,
+	email string,
+	tokenHash []byte,
+) (workerProfile, bool, error) {
+	var profile workerProfile
+	var mode, fromEmail string
+	var updated time.Time
+	var emailDomainID, secretRef *uuid.UUID
+	var sealed, sesRegion, sesConfig *string
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT profile_id, updated_at, mode::text, from_email::text,
+			from_name, reply_to::text, postal_address, email_domain_id, secret_ref,
+			credential_sealed, ses_region, ses_configuration_set
+			FROM mailing_confirmation_send_context($1,$2,$3,$4)`,
+			businessID, listID, email, tokenHash,
+		).Scan(
+			&profile.provider.ID, &updated, &mode, &fromEmail, &profile.fromName, &profile.replyTo,
+			&profile.postalAddress, &emailDomainID, &secretRef, &sealed, &sesRegion, &sesConfig)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return workerProfile{}, false, nil
+	}
+	if err != nil {
+		return workerProfile{}, false, err
+	}
+	profile.provider.UpdatedAt, profile.provider.Mode, profile.provider.FromEmail = updated, mode, fromEmail
+	profile.provider.EmailDomainID = emailDomainID
+	profile.provider.SESRegion = stringValue(sesRegion)
+	profile.provider.SESConfigurationSet = stringValue(sesConfig)
+	if secretRef != nil {
+		if sealed == nil || s.Sealer == nil {
+			return workerProfile{}, false, errors.New("mailing profile credential is unavailable")
+		}
+		credential, err := s.Sealer.Open(*sealed)
+		if err != nil {
+			return workerProfile{}, false, errors.New("mailing profile credential could not be opened")
+		}
+		defer clear(credential)
+		switch mode {
+		case "resend":
+			var creds ResendCredentials
+			if err := json.Unmarshal(credential, &creds); err != nil {
+				return workerProfile{}, false, errors.New("mailing stored Resend credentials are invalid")
+			}
+			profile.provider.ResendAPIKey = creds.APIKey
+		case "ses":
+			var creds SESCredentials
+			if err := json.Unmarshal(credential, &creds); err != nil {
+				return workerProfile{}, false, errors.New("mailing stored SES credentials are invalid")
+			}
+			profile.provider.SESAccessKeyID = creds.AccessKeyID
+			profile.provider.SESSecretAccessKey = creds.SecretAccessKey
+		}
+	}
+	return profile, true, nil
 }
 
 func nullIfEmpty(v string) any {
@@ -202,7 +285,7 @@ type PublicHandler struct {
 // S2SEventIngestor lets the mailing key verifier hand an authenticated event to the
 // automations module without creating a mailing/automations import cycle.
 type S2SEventIngestor interface {
-	IngestS2SEvent(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, []byte) (any, bool, error)
+	IngestS2SEvent(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, []byte) (any, bool, error)
 }
 
 // NewPublicHandler builds the principal-less mailing ingress and tracking handler.
@@ -323,7 +406,7 @@ func (h *PublicHandler) publicSubscribe(w http.ResponseWriter, r *http.Request) 
 func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in PublicSubscriptionInput) (PublicSubscriptionResult, error) {
 	var result PublicSubscriptionResult
 	var rawConfirmation, email string
-	var confirmationBusinessID uuid.UUID
+	var confirmationBusinessID, confirmationListID uuid.UUID
 	err := h.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		list, found, err := resolvePublicList(ctx, tx, key)
 		if err != nil || !found {
@@ -333,6 +416,7 @@ func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in Publ
 			return errMailingRateLimited
 		}
 		confirmationBusinessID = list.businessID
+		confirmationListID = list.listID
 		result, rawConfirmation, email, err = h.Service.subscribeResolved(ctx, tx, list, in, false)
 		return err
 	})
@@ -340,7 +424,7 @@ func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in Publ
 		return PublicSubscriptionResult{}, err
 	}
 	if result.Status == "pending" && rawConfirmation != "" {
-		h.Service.sendConfirmation(ctx, confirmationBusinessID, email, rawConfirmation)
+		h.Service.sendConfirmation(ctx, confirmationBusinessID, confirmationListID, email, rawConfirmation)
 	}
 	return result, nil
 }
@@ -364,10 +448,11 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	var result PublicSubscriptionResult
 	var rawConfirmation, email string
-	var confirmationBusinessID uuid.UUID
+	var confirmationBusinessID, confirmationListID uuid.UUID
 	authorized, err := h.withVerifiedS2S(r, raw, func(list publicListContext, tx pgx.Tx) error {
 		var subErr error
 		confirmationBusinessID = list.businessID
+		confirmationListID = list.listID
 		result, rawConfirmation, email, subErr = h.Service.subscribeResolved(r.Context(), tx, list, PublicSubscriptionInput{
 			Email: body.Email, FirstName: body.FirstName, LastName: body.LastName,
 			Attributes: body.Attributes, SkipConfirmation: body.SkipConfirmation,
@@ -394,7 +479,7 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 	if result.Status == "pending" && rawConfirmation != "" {
 		// The signed S2S path resolves the same verified business profile as public signup.
 		// Send failure is intentionally logged only; subscription response semantics stay stable.
-		h.Service.sendConfirmation(r.Context(), confirmationBusinessID, email, rawConfirmation)
+		h.Service.sendConfirmation(r.Context(), confirmationBusinessID, confirmationListID, email, rawConfirmation)
 	}
 	status := http.StatusOK
 	if result.Created {
@@ -404,7 +489,7 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PublicHandler) s2sUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	authorized, err := h.withVerifiedS2S(r, nil, func(list publicListContext, tx pgx.Tx) error {
+	authorized, err := h.withVerifiedS2SResolver(r, nil, resolveUnsubscribeList, func(list publicListContext, tx pgx.Tx) error {
 		rawEmail, err := url.PathUnescape(chi.URLParam(r, "email"))
 		if err != nil {
 			return validation("invalid email")
@@ -426,7 +511,7 @@ func (h *PublicHandler) s2sUnsubscribe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger().ErrorContext(r.Context(), "mailing s2s unsubscribe failed", "err", err)
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "temporarily unavailable"})
 		return
 	}
 	if !authorized {
@@ -449,7 +534,9 @@ func (h *PublicHandler) s2sEvent(w http.ResponseWriter, r *http.Request) {
 	var created bool
 	authorized, err := h.withVerifiedS2S(r, raw, func(list publicListContext, tx pgx.Tx) error {
 		var ingestErr error
-		result, created, ingestErr = h.S2SEvents.IngestS2SEvent(r.Context(), tx, list.businessID, list.tenantRootID, list.listID, raw)
+		result, created, ingestErr = h.S2SEvents.IngestS2SEvent(
+			r.Context(), tx, list.businessID, list.tenantRootID, list.listID, list.keyID, raw,
+		)
 		return ingestErr
 	})
 	if err != nil {
@@ -460,6 +547,8 @@ func (h *PublicHandler) s2sEvent(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		case errors.Is(err, errs.ErrNotFound):
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		case errors.Is(err, errs.ErrConflict):
+			httpx.WriteJSON(w, http.StatusConflict, map[string]string{"error": "conflict"})
 		default:
 			h.logger().ErrorContext(r.Context(), "mailing s2s event failed", "err", err)
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -477,10 +566,21 @@ func (h *PublicHandler) s2sEvent(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, status, result)
 }
 
+type publicListResolver func(context.Context, pgx.Tx, string) (publicListContext, bool, error)
+
 func (h *PublicHandler) withVerifiedS2S(r *http.Request, raw []byte, fn func(publicListContext, pgx.Tx) error) (bool, error) {
+	return h.withVerifiedS2SResolver(r, raw, resolvePublicList, fn)
+}
+
+func (h *PublicHandler) withVerifiedS2SResolver(
+	r *http.Request,
+	raw []byte,
+	resolve publicListResolver,
+	fn func(publicListContext, pgx.Tx) error,
+) (bool, error) {
 	var authorized bool
 	err := h.Service.DB.WithTx(r.Context(), func(tx pgx.Tx) error {
-		list, found, err := resolvePublicList(r.Context(), tx, chi.URLParam(r, "key"))
+		list, found, err := resolve(r.Context(), tx, chi.URLParam(r, "key"))
 		if err != nil || !found || list.sealedSecret == nil || h.Sealer == nil {
 			return err
 		}

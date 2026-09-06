@@ -48,16 +48,43 @@ func (h *WebhookHandler) handleSES(w http.ResponseWriter, r *http.Request) {
 		h.unauthorized(w)
 		return
 	}
-	envelope, err := h.SNS.Verify(r.Context(), body)
-	if err != nil || envelope.TopicARN != *wc.snsTopicARN {
+	envelope, err := h.SNS.Verify(r.Context(), body, *wc.snsTopicARN)
+	if err != nil {
 		h.unauthorized(w)
 		return
 	}
 
 	switch envelope.Type {
 	case "SubscriptionConfirmation":
-		if err := h.SNS.Confirm(r.Context(), envelope.SubscribeURL); err != nil {
+		if wc.feedbackStatus == "ready" {
+			h.authenticatedOK(w)
+			return
+		}
+		if err := h.transitionSESFeedback(r.Context(), wc, "pending", ""); err != nil {
+			h.logger().ErrorContext(r.Context(), "mailing SNS feedback pending transition failed", "profile_id", profileID, "err", err)
+			h.retryableFailure(w)
+			return
+		}
+		if err := h.SNS.Confirm(r.Context(), envelope.SubscribeURL, *wc.snsTopicARN); err != nil {
+			if transitionErr := h.transitionSESFeedback(r.Context(), wc, "error", "subscription confirmation failed"); transitionErr != nil {
+				h.logger().ErrorContext(r.Context(), "mailing SNS feedback error transition failed", "profile_id", profileID, "err", transitionErr)
+			}
 			h.logger().ErrorContext(r.Context(), "mailing SNS subscription confirmation failed", "profile_id", profileID, "err", err)
+			h.retryableFailure(w)
+			return
+		}
+		if err := h.transitionSESFeedback(r.Context(), wc, "ready", ""); err != nil {
+			h.logger().ErrorContext(r.Context(), "mailing SNS feedback ready transition failed", "profile_id", profileID, "err", err)
+			h.retryableFailure(w)
+			return
+		}
+		h.authenticatedOK(w)
+		return
+	case "UnsubscribeConfirmation":
+		if err := h.transitionSESFeedback(r.Context(), wc, "error", "provider subscription removed"); err != nil {
+			h.logger().ErrorContext(r.Context(), "mailing SNS unsubscribe transition failed", "profile_id", profileID, "err", err)
+			h.retryableFailure(w)
+			return
 		}
 		h.authenticatedOK(w)
 		return
@@ -74,14 +101,16 @@ func (h *WebhookHandler) handleSES(w http.ResponseWriter, r *http.Request) {
 		h.authenticatedOK(w)
 		return
 	}
-	events := mapSESEvent(payload, json.RawMessage(envelope.Message))
-	if err := h.recordAndApply(r.Context(), wc, "ses", envelope.MessageID, events); err != nil {
+	events := mapSESEvent(payload)
+	if err := h.recordAndApply(r.Context(), wc, "ses", envelope.MessageID, body, events); err != nil {
 		h.logger().ErrorContext(r.Context(), "mailing SES webhook apply failed", "profile_id", profileID, "event_type", sesEventType(payload), "err", err)
+		h.retryableFailure(w)
+		return
 	}
 	h.authenticatedOK(w)
 }
 
-func mapSESEvent(payload sesWebhook, raw json.RawMessage) []providerEvent {
+func mapSESEvent(payload sesWebhook) []providerEvent {
 	if payload.Mail.MessageID == "" {
 		return nil
 	}
@@ -106,19 +135,19 @@ func mapSESEvent(payload sesWebhook, raw json.RawMessage) []providerEvent {
 	default:
 		return nil
 	}
+	recipients, ok := normalizeProviderRecipients(recipients)
+	if !ok {
+		return nil
+	}
 	if timestamp == "" {
 		timestamp = payload.Mail.Timestamp
 	}
 	occurredAt := parseProviderTime(timestamp)
 	events := make([]providerEvent, 0, len(recipients))
 	for _, recipient := range recipients {
-		recipient = strings.TrimSpace(recipient)
-		if recipient == "" {
-			continue
-		}
 		events = append(events, providerEvent{
-			providerMessageID: payload.Mail.MessageID, recipient: recipient,
-			kind: kind, occurredAt: occurredAt, payload: raw,
+			ProviderMessageID: payload.Mail.MessageID, Recipient: recipient,
+			Kind: kind, OccurredAt: occurredAt,
 		})
 	}
 	return events

@@ -248,6 +248,10 @@ UPDATE mailing_sending_profile SET
     ses_configuration_set = $11,
     sns_topic_arn = $12,
     status = 'unverified', last_verified_at = NULL, verify_error = NULL,
+    feedback_status = 'pending', feedback_error = NULL, feedback_confirmed_at = NULL,
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
 RETURNING *;
@@ -264,11 +268,94 @@ RETURNING *;
 UPDATE mailing_sending_profile SET
     status = sqlc.arg('status')::text,
     last_verified_at = CASE WHEN sqlc.arg('status')::text = 'verified' THEN now() ELSE NULL END,
-    verify_error = NULLIF(sqlc.arg('verify_error')::text, '')
+    verify_error = NULLIF(sqlc.arg('verify_error')::text, ''),
+    feedback_status = sqlc.arg('feedback_status')::text,
+    feedback_error = NULLIF(sqlc.arg('feedback_error')::text, ''),
+    feedback_confirmed_at = CASE
+        WHEN sqlc.arg('feedback_status')::text = 'ready'
+            THEN COALESCE(feedback_confirmed_at, now())
+        ELSE NULL
+    END
 WHERE id = sqlc.arg('id')
   AND tenant_root_id = sqlc.arg('tenant_root_id')
   AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
 RETURNING *;
+
+-- name: ClaimMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = sqlc.arg('token')::uuid,
+    resend_cleanup_required = resend_cleanup_required OR sqlc.arg('require_cleanup')::boolean,
+    resend_provisioning_expires_at = now() + interval '2 minutes',
+    status = 'unverified',
+    last_verified_at = NULL,
+    verify_error = NULL,
+    feedback_status = 'pending',
+    feedback_error = NULL,
+    feedback_confirmed_at = NULL
+WHERE id = sqlc.arg('id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
+  AND mode = 'resend'
+  AND (
+      resend_provisioning_token IS NULL
+      OR resend_provisioning_expires_at <= now()
+  )
+RETURNING *;
+
+-- name: ReleaseMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL
+WHERE id = sqlc.arg('id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND resend_provisioning_token = sqlc.arg('token')::uuid
+RETURNING *;
+
+-- Resend provisioning performs provider I/O before this CAS. Persist the
+-- provider-generated webhook credential and readiness atomically.
+-- name: SetMailingResendWebhookVerification :one
+UPDATE mailing_sending_profile SET
+    secret_ref = sqlc.arg('secret_ref')::uuid,
+    status = 'verified',
+    last_verified_at = now(),
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
+    verify_error = NULL,
+    feedback_status = 'ready',
+    feedback_error = NULL,
+    feedback_confirmed_at = now(),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND tenant_root_id = sqlc.arg('tenant_root_id')
+  AND updated_at = sqlc.arg('expected_updated_at')::timestamptz
+  AND resend_provisioning_token = sqlc.arg('token')::uuid
+  AND mode = 'resend'
+RETURNING *;
+
+-- name: CheckMailingTestRecipientSuppression :one
+SELECT
+    NOT mailing_business_operational(
+        sqlc.arg('business_id')::uuid,
+        sqlc.arg('tenant_root_id')::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM mailing_suppression ms
+        WHERE ms.business_id = sqlc.arg('business_id')::uuid
+          AND ms.tenant_root_id = sqlc.arg('tenant_root_id')::uuid
+          AND ms.email = sqlc.arg('email')::citext
+    )
+    OR EXISTS (
+        SELECT 1 FROM email_suppression es
+        WHERE es.email = sqlc.arg('email')::citext
+    )
+    OR EXISTS (
+        SELECT 1 FROM list_subscriber s
+        WHERE s.business_id = sqlc.arg('business_id')::uuid
+          AND s.tenant_root_id = sqlc.arg('tenant_root_id')::uuid
+          AND s.email = sqlc.arg('email')::citext
+          AND s.status <> 'active'
+    ) AS suppressed;
 
 -- ---- templates ----
 
@@ -416,6 +503,7 @@ WHERE c.id = sqlc.arg('id')
   AND l.business_id = c.business_id AND l.status = 'active'
   AND p.business_id = c.business_id AND p.tenant_root_id = c.tenant_root_id
   AND p.status = 'verified'
+  AND p.feedback_status = 'ready'
 RETURNING c.*;
 
 -- name: ListCampaignDeliveries :many
@@ -443,3 +531,18 @@ WHERE e.campaign_id = $1 AND e.tenant_root_id = $2
   AND e.kind = 'click' AND e.url IS NOT NULL
 GROUP BY e.url
 ORDER BY click_count DESC, e.url;
+
+-- ---- bounded worker claims ----
+
+-- name: ClaimChangedCampaignRollups :many
+SELECT unnest(public.mailing_claim_changed_campaign_rollups(
+    sqlc.arg('claim_token')::uuid,
+    sqlc.arg('lim')::integer,
+    sqlc.arg('lease_seconds')::integer
+)::uuid[])::uuid AS campaign_id;
+
+-- name: CompleteChangedCampaignRollups :one
+SELECT public.mailing_complete_changed_campaign_rollups(
+    sqlc.arg('claim_token')::uuid,
+    sqlc.arg('campaign_ids')::uuid[]
+)::integer;

@@ -392,6 +392,7 @@ func TestSandboxMode(t *testing.T) {
 	t.Run("defaults to kube in-cluster", func(t *testing.T) {
 		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
 		t.Setenv("MANYFORGE_SANDBOX_MODE", "")
+		t.Setenv("MANYFORGE_SMTP_HOST", "smtp.example.test")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load: %v", err)
@@ -416,6 +417,7 @@ func TestSandboxMode(t *testing.T) {
 	t.Run("explicit value is honored", func(t *testing.T) {
 		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
 		t.Setenv("MANYFORGE_SANDBOX_MODE", "off")
+		t.Setenv("MANYFORGE_SMTP_HOST", "smtp.example.test")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load: %v", err)

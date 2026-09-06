@@ -4,6 +4,9 @@ import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MailingPreviewPaneComponent } from './preview-pane';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const BASE = `/api/v1/businesses/${BUSINESS_ID}/mailing`;
+
 describe('MailingPreviewPaneComponent', () => {
   let http: HttpTestingController;
 
@@ -22,7 +25,7 @@ describe('MailingPreviewPaneComponent', () => {
 
   it('debounces 400 ms and ignores a stale preview response', () => {
     const fixture = TestBed.createComponent(MailingPreviewPaneComponent);
-    fixture.componentRef.setInput('businessId', 'b1');
+    fixture.componentRef.setInput('businessId', BUSINESS_ID);
     fixture.componentRef.setInput('kind', 'campaigns');
     fixture.componentRef.setInput('content', {
       subject: 'One',
@@ -34,9 +37,9 @@ describe('MailingPreviewPaneComponent', () => {
     fixture.componentRef.setInput('fromName', 'Acme');
     fixture.detectChanges();
     vi.advanceTimersByTime(399);
-    http.expectNone('/api/v1/businesses/b1/mailing/campaigns/preview');
+    http.expectNone(`${BASE}/campaigns/preview`);
     vi.advanceTimersByTime(1);
-    const first = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/preview');
+    const first = http.expectOne(`${BASE}/campaigns/preview`);
 
     fixture.componentRef.setInput('content', {
       ...fixture.componentInstance.content,
@@ -44,7 +47,7 @@ describe('MailingPreviewPaneComponent', () => {
     });
     fixture.detectChanges();
     vi.advanceTimersByTime(400);
-    const second = http.expectOne('/api/v1/businesses/b1/mailing/campaigns/preview');
+    const second = http.expectOne(`${BASE}/campaigns/preview`);
     expect(second.request.body).toMatchObject({
       body_markdown: '# Second',
       preheader: 'Before',
@@ -61,7 +64,7 @@ describe('MailingPreviewPaneComponent', () => {
 
   it('uses the template preview endpoint and renders plain text mode', () => {
     const fixture = TestBed.createComponent(MailingPreviewPaneComponent);
-    fixture.componentRef.setInput('businessId', 'b1');
+    fixture.componentRef.setInput('businessId', BUSINESS_ID);
     fixture.componentRef.setInput('kind', 'templates');
     fixture.componentRef.setInput('content', {
       subject: '',
@@ -72,7 +75,7 @@ describe('MailingPreviewPaneComponent', () => {
     });
     fixture.detectChanges();
     vi.advanceTimersByTime(400);
-    http.expectOne('/api/v1/businesses/b1/mailing/templates/preview').flush({
+    http.expectOne(`${BASE}/templates/preview`).flush({
       html: '<p>Hi</p>',
       text: 'Hi',
     });

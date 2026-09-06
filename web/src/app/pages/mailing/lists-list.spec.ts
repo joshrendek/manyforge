@@ -5,12 +5,17 @@ import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MailingListsListComponent } from './lists-list';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const LIST_ID = '22222222-2222-4222-8222-222222222222';
+const NEW_LIST_ID = '33333333-3333-4333-8333-333333333333';
+const LISTS_URL = `/api/v1/businesses/${BUSINESS_ID}/mailing/lists`;
+
 const businesses = {
   items: [
     {
-      id: 'b1',
+      id: BUSINESS_ID,
       parent_id: null,
-      tenant_root_id: 'b1',
+      tenant_root_id: BUSINESS_ID,
       name: 'Acme',
       status: 'active',
       is_tenant_root: true,
@@ -19,9 +24,9 @@ const businesses = {
   next_cursor: null,
 };
 const list = {
-  id: 'l1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: LIST_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   slug: 'updates',
   name: 'Updates',
   description: null,
@@ -51,7 +56,7 @@ describe('MailingListsListComponent', () => {
     fixture.detectChanges();
     http.expectOne('/api/v1/businesses').flush(businesses);
     fixture.detectChanges();
-    http.expectOne('/api/v1/businesses/b1/mailing/lists').flush({
+    http.expectOne(LISTS_URL).flush({
       items: [list],
       next_cursor: null,
     });
@@ -65,17 +70,17 @@ describe('MailingListsListComponent', () => {
       '[data-testid="mailing-list-open"]',
     ) as HTMLAnchorElement;
     expect(link.textContent).toContain('Updates');
-    expect(link.getAttribute('href')).toBe('/mailing/b1/lists/l1');
+    expect(link.getAttribute('href')).toBe(`/mailing/${BUSINESS_ID}/lists/${LIST_ID}`);
   });
 
   it('creates a double-opt-in list and reloads', () => {
     const fixture = mount();
     fixture.componentInstance.newName = 'Newsletter';
     fixture.componentInstance.create();
-    const request = http.expectOne('/api/v1/businesses/b1/mailing/lists');
+    const request = http.expectOne(LISTS_URL);
     expect(request.request.body).toEqual({ name: 'Newsletter', double_opt_in: true });
-    request.flush({ ...list, id: 'l2', name: 'Newsletter', slug: 'newsletter' });
-    http.expectOne('/api/v1/businesses/b1/mailing/lists').flush({
+    request.flush({ ...list, id: NEW_LIST_ID, name: 'Newsletter', slug: 'newsletter' });
+    http.expectOne(LISTS_URL).flush({
       items: [list],
       next_cursor: null,
     });
