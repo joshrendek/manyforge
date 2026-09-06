@@ -254,7 +254,17 @@ func TestResendWebhookIdempotencyAndMonotonicStatus(t *testing.T) {
 	if w := post("evt-bounce-late", "email.bounced"); w.Code != http.StatusOK {
 		t.Fatalf("late bounce status = %d", w.Code)
 	}
-	assertWebhookState(t, ctx, tdb, fx, "complained", "complained", "complaint", 4, 4, 3)
+	var rotatedBounceRows int
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*)
+		FROM mailing_provider_webhook_delivery
+		WHERE profile_id=$1 AND external_event_id='evt-bounce-late'`, fx.profileID,
+	).Scan(&rotatedBounceRows); err != nil {
+		t.Fatal(err)
+	}
+	if rotatedBounceRows != 0 {
+		t.Fatalf("rotated applied bounce retained envelopes = %d, want 0", rotatedBounceRows)
+	}
+	assertWebhookState(t, ctx, tdb, fx, "complained", "complained", "complaint", 3, 3, 3)
 
 	bad := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+fx.profileID.String()+"/resend", strings.NewReader(`{}`))
 	bad.Header.Set("svix-id", "bad")
@@ -526,6 +536,219 @@ func TestMFMailWebhookPending004BoundsAuthenticatedUnmatchedEnvelopes(t *testing
 	}
 	if !lookupIndex {
 		t.Fatal("pending normalized correlation index is missing")
+	}
+}
+
+// MF-MAIL-WEBHOOK-RESOURCE-005 accounts for applied and pending envelopes
+// before correlation side effects and reclaims expired rows after readiness loss.
+func TestMFMailWebhookResource005BoundsAllRetainedEnvelopes(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+	now := time.Unix(1_800_000_000, 0).UTC()
+
+	post := func(t *testing.T, router http.Handler, fx webhookFixture, eventID, padding string) int {
+		t.Helper()
+		body := []byte(fmt.Sprintf(
+			`{"type":"email.bounced","created_at":"2026-08-30T12:00:00Z","data":{"email_id":"provider-email-1","to":[%q]},"padding":%q}`,
+			fx.email, padding,
+		))
+		timestamp := fmt.Sprint(now.Unix())
+		mac := hmac.New(sha256.New, bytes.Repeat([]byte{0x51}, 32))
+		mac.Write([]byte(eventID + "." + timestamp + "."))
+		mac.Write(body)
+		req := httptest.NewRequest(http.MethodPost,
+			"/inbound/mailing/"+fx.profileID.String()+"/resend", bytes.NewReader(body))
+		req.Header.Set("svix-id", eventID)
+		req.Header.Set("svix-timestamp", timestamp)
+		req.Header.Set("svix-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	seedRows := seedMailingTenant(ctx, t, tdb)
+	fxRows := seedWebhookFixture(ctx, t, tdb, seedRows)
+	hRows := mailing.NewWebhookHandler(tdb.App, fxRows.svc.Sealer, nil)
+	hRows.Now = func() time.Time { return now }
+	routerRows := chi.NewRouter()
+	hRows.PublicRoutes(routerRows)
+	if _, err = tdb.Super.Exec(ctx, `
+		INSERT INTO mailing_provider_webhook_delivery (
+			business_id,tenant_root_id,profile_id,provider,external_event_id,
+			envelope_payload,normalized_events,processing_status,expires_at,applied_at
+		)
+		SELECT p.business_id,p.tenant_root_id,p.id,'resend','retained-applied-' || g,
+		       jsonb_build_object('seed',g),'[]'::jsonb,'applied',
+		       clock_timestamp()+interval '7 days',clock_timestamp()
+		FROM mailing_sending_profile p CROSS JOIN generate_series(1,255) g
+		WHERE p.id=$1`, fxRows.profileID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `
+		INSERT INTO mailing_provider_webhook_delivery (
+			business_id,tenant_root_id,profile_id,provider,external_event_id,
+			envelope_payload,normalized_events,processing_status,expires_at
+		)
+		SELECT p.business_id,p.tenant_root_id,p.id,'resend','retained-pending',
+		       '{}'::jsonb,jsonb_build_array(jsonb_build_object(
+		           'provider_message_id','unmatched-budget',
+		           'recipient',$2,
+		           'kind','bounce'
+		       )),'pending',clock_timestamp()+interval '7 days'
+		FROM mailing_sending_profile p WHERE p.id=$1`, fxRows.profileID, fxRows.email); err != nil {
+		t.Fatal(err)
+	}
+	if status := post(t, routerRows, fxRows, "correlated-row-overflow", ""); status != http.StatusServiceUnavailable {
+		t.Fatalf("applied+pending row overflow status = %d, want %d", status, http.StatusServiceUnavailable)
+	}
+	var retainedRows, rejectedRows, trackingRows int
+	var deliveryStatus string
+	if err = tdb.Super.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM mailing_provider_webhook_delivery WHERE profile_id=$1),
+			(SELECT count(*) FROM mailing_provider_webhook_delivery
+			 WHERE profile_id=$1 AND external_event_id='correlated-row-overflow'),
+			(SELECT count(*) FROM mailing_tracking_event WHERE delivery_id=$2),
+			(SELECT status::text FROM mailing_delivery WHERE id=$2)`,
+		fxRows.profileID, fxRows.deliveryID,
+	).Scan(&retainedRows, &rejectedRows, &trackingRows, &deliveryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if retainedRows != 256 || rejectedRows != 0 || trackingRows != 0 || deliveryStatus != "sent" {
+		t.Fatalf("row overflow retained=%d rejected=%d tracking=%d delivery=%q",
+			retainedRows, rejectedRows, trackingRows, deliveryStatus)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_provider_webhook_delivery
+		SET expires_at=clock_timestamp()-interval '1 second'
+		WHERE profile_id=$1 AND external_event_id='retained-applied-1'`, fxRows.profileID); err != nil {
+		t.Fatal(err)
+	}
+	if status := post(t, routerRows, fxRows, "correlated-row-overflow", ""); status != http.StatusOK {
+		t.Fatalf("correlated event after row expiry status = %d, want %d", status, http.StatusOK)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM mailing_provider_webhook_delivery WHERE profile_id=$1),
+			(SELECT count(*) FROM mailing_provider_webhook_delivery
+			 WHERE profile_id=$1 AND external_event_id='correlated-row-overflow'),
+			(SELECT count(*) FROM mailing_tracking_event WHERE delivery_id=$2),
+			(SELECT status::text FROM mailing_delivery WHERE id=$2)`,
+		fxRows.profileID, fxRows.deliveryID,
+	).Scan(&retainedRows, &rejectedRows, &trackingRows, &deliveryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if retainedRows != 256 || rejectedRows != 1 || trackingRows != 1 || deliveryStatus != "bounced" {
+		t.Fatalf("reclaimed row admission retained=%d admitted=%d tracking=%d delivery=%q",
+			retainedRows, rejectedRows, trackingRows, deliveryStatus)
+	}
+
+	seedBytes := seedMailingTenant(ctx, t, tdb)
+	fxBytes := seedWebhookFixture(ctx, t, tdb, seedBytes)
+	hBytes := mailing.NewWebhookHandler(tdb.App, fxBytes.svc.Sealer, nil)
+	hBytes.Now = func() time.Time { return now }
+	routerBytes := chi.NewRouter()
+	hBytes.PublicRoutes(routerBytes)
+	if _, err = tdb.Super.Exec(ctx, `
+		INSERT INTO mailing_provider_webhook_delivery (
+			business_id,tenant_root_id,profile_id,provider,external_event_id,
+			envelope_payload,normalized_events,processing_status,expires_at,applied_at
+		)
+		SELECT p.business_id,p.tenant_root_id,p.id,'resend','retained-byte-' || g,
+		       jsonb_build_object('padding',repeat('x',250000),'seed',g),
+		       '[]'::jsonb,'applied',clock_timestamp()+interval '7 days',clock_timestamp()
+		FROM mailing_sending_profile p CROSS JOIN generate_series(1,33) g
+		WHERE p.id=$1`, fxBytes.profileID); err != nil {
+		t.Fatal(err)
+	}
+	var retainedBytes int64
+	if err = tdb.Super.QueryRow(ctx, `SELECT COALESCE(sum(
+			octet_length(envelope_payload::text)+octet_length(normalized_events::text)
+		),0) FROM mailing_provider_webhook_delivery WHERE profile_id=$1`,
+		fxBytes.profileID).Scan(&retainedBytes); err != nil {
+		t.Fatal(err)
+	}
+	if retainedBytes >= 8<<20 {
+		t.Fatalf("byte fixture already exceeds quota: %d", retainedBytes)
+	}
+	largePadding := strings.Repeat("x", 240<<10)
+	if status := post(t, routerBytes, fxBytes, "correlated-byte-overflow", largePadding); status != http.StatusServiceUnavailable {
+		t.Fatalf("applied byte overflow status = %d, want %d", status, http.StatusServiceUnavailable)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM mailing_provider_webhook_delivery
+			 WHERE profile_id=$1 AND external_event_id='correlated-byte-overflow'),
+			(SELECT count(*) FROM mailing_tracking_event WHERE delivery_id=$2)`,
+		fxBytes.profileID, fxBytes.deliveryID,
+	).Scan(&rejectedRows, &trackingRows); err != nil {
+		t.Fatal(err)
+	}
+	if rejectedRows != 0 || trackingRows != 0 {
+		t.Fatalf("byte overflow retained=%d tracking=%d, want no side effects", rejectedRows, trackingRows)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_provider_webhook_delivery
+		SET expires_at=clock_timestamp()-interval '1 second'
+		WHERE profile_id=$1 AND external_event_id='retained-byte-1'`, fxBytes.profileID); err != nil {
+		t.Fatal(err)
+	}
+	if status := post(t, routerBytes, fxBytes, "correlated-byte-overflow", largePadding); status != http.StatusOK {
+		t.Fatalf("correlated event after byte expiry status = %d, want %d", status, http.StatusOK)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM mailing_provider_webhook_delivery
+			 WHERE profile_id=$1 AND external_event_id='correlated-byte-overflow'),
+			(SELECT count(*) FROM mailing_tracking_event WHERE delivery_id=$2)`,
+		fxBytes.profileID, fxBytes.deliveryID,
+	).Scan(&rejectedRows, &trackingRows); err != nil {
+		t.Fatal(err)
+	}
+	if rejectedRows != 1 || trackingRows != 1 {
+		t.Fatalf("reclaimed byte admission retained=%d tracking=%d", rejectedRows, trackingRows)
+	}
+
+	seedExpired := seedMailingTenant(ctx, t, tdb)
+	fxExpired := seedWebhookFixture(ctx, t, tdb, seedExpired)
+	hExpired := mailing.NewWebhookHandler(tdb.App, fxExpired.svc.Sealer, nil)
+	hExpired.Now = func() time.Time { return now }
+	routerExpired := chi.NewRouter()
+	hExpired.PublicRoutes(routerExpired)
+	if _, err = tdb.Super.Exec(ctx, `
+		INSERT INTO mailing_provider_webhook_delivery (
+			business_id,tenant_root_id,profile_id,provider,external_event_id,
+			envelope_payload,normalized_events,processing_status,expires_at,applied_at
+		)
+		SELECT p.business_id,p.tenant_root_id,p.id,'resend','expired-inactive-' || g,
+		       '{}'::jsonb,'[]'::jsonb,'applied',
+		       clock_timestamp()-interval '1 second',clock_timestamp()-interval '1 day'
+		FROM mailing_sending_profile p CROSS JOIN generate_series(1,300) g
+		WHERE p.id=$1`, fxExpired.profileID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx,
+		`UPDATE mailing_sending_profile SET status='unverified' WHERE id=$1`,
+		fxExpired.profileID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx,
+		`UPDATE business SET status='archived',updated_at=clock_timestamp() WHERE id=$1`,
+		seedExpired.businessID); err != nil {
+		t.Fatal(err)
+	}
+	if status := post(t, routerExpired, fxExpired, "inactive-expiry-cleanup", ""); status != http.StatusOK {
+		t.Fatalf("authenticated inactive cleanup status = %d, want %d", status, http.StatusOK)
+	}
+	var expiredRemaining, inactiveEventRows int
+	if err = tdb.Super.QueryRow(ctx, `SELECT
+			count(*) FILTER (WHERE external_event_id LIKE 'expired-inactive-%'),
+			count(*) FILTER (WHERE external_event_id='inactive-expiry-cleanup')
+			FROM mailing_provider_webhook_delivery WHERE profile_id=$1`, fxExpired.profileID,
+	).Scan(&expiredRemaining, &inactiveEventRows); err != nil {
+		t.Fatal(err)
+	}
+	if expiredRemaining != 44 || inactiveEventRows != 0 {
+		t.Fatalf("inactive expiry cleanup remaining=%d new_event=%d, want 44/0",
+			expiredRemaining, inactiveEventRows)
 	}
 }
 
