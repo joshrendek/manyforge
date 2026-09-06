@@ -1,5 +1,110 @@
 -- 0135: Automation authorization, immutable activation content, scoped events, and execution fences.
 
+-- Extend the canonical preflight's reviewed outbox topic and payload-root
+-- contract without modifying the shipped tenant-merge migrations.
+DO $migration$
+DECLARE
+    v_definition text;
+    v_rewritten text;
+BEGIN
+    SELECT pg_get_functiondef(
+        'tenant_merge_preflight_inventory_v1(uuid,uuid)'::regprocedure
+    ) INTO v_definition;
+
+    v_rewritten := replace(
+        v_definition,
+        $old$'business.created', 'ticket.replied', 'ticket.created',
+          'message.received', 'attachment.purge', 'agent.action.approved',
+          'connector.inbound.sync'$old$,
+        $new$'business.created', 'ticket.replied', 'ticket.created',
+          'message.received', 'attachment.purge', 'agent.action.approved',
+          'connector.inbound.sync',
+          'mailing.subscriber.activated', 'mailing.subscriber.tag_added',
+          'mailing.subscriber.status_changed', 'automation.event.received'$new$
+    );
+    IF v_rewritten = v_definition THEN
+        RAISE EXCEPTION 'tenant merge preflight outbox topic allowlist patch did not apply';
+    END IF;
+    v_definition := v_rewritten;
+
+    v_rewritten := replace(
+        v_definition,
+        $old$AND jsonb_path_exists(payload, '$.**.tenant_root_id')
+      AND (
+          topic NOT IN ('business.created', 'agent.action.approved')
+          OR payload->>'tenant_root_id' IS DISTINCT FROM operation.source_root_id::text
+      );$old$,
+        $new$AND (
+          (
+              topic IN (
+                  'business.created', 'agent.action.approved',
+                  'mailing.subscriber.activated', 'mailing.subscriber.tag_added',
+                  'mailing.subscriber.status_changed', 'automation.event.received'
+              )
+              AND payload->>'tenant_root_id' IS DISTINCT FROM operation.source_root_id::text
+          )
+          OR (
+              topic NOT IN (
+                  'business.created', 'agent.action.approved',
+                  'mailing.subscriber.activated', 'mailing.subscriber.tag_added',
+                  'mailing.subscriber.status_changed', 'automation.event.received'
+              )
+              AND jsonb_path_exists(payload, '$.**.tenant_root_id')
+          )
+      );$new$
+    );
+    IF v_rewritten = v_definition THEN
+        RAISE EXCEPTION 'tenant merge preflight outbox payload contract patch did not apply';
+    END IF;
+
+    EXECUTE v_rewritten;
+END;
+$migration$;
+
+-- The shipped cutover already updates outbox. Extend that canonical statement
+-- with a trigger that may rewrite reviewed mailing/automation payload roots
+-- only under the same owner-and-operation authorization as relational roots.
+CREATE FUNCTION tenant_merge_event_outbox_root_rewrite()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND NEW.tenant_root_id IS DISTINCT FROM OLD.tenant_root_id THEN
+        IF NOT tenant_merge_root_rewrite_allowed(
+            TG_RELID, OLD.tenant_root_id, NEW.tenant_root_id
+        ) THEN
+            RAISE EXCEPTION 'outbox tenant_root_id is immutable';
+        END IF;
+
+        IF OLD.topic IN (
+            'mailing.subscriber.activated',
+            'mailing.subscriber.tag_added',
+            'mailing.subscriber.status_changed',
+            'automation.event.received'
+        ) THEN
+            IF NEW.payload IS DISTINCT FROM OLD.payload
+               OR OLD.payload->>'tenant_root_id' IS DISTINCT FROM OLD.tenant_root_id::text THEN
+                RAISE EXCEPTION 'invalid tenant-scoped mailing or automation outbox payload';
+            END IF;
+            NEW.payload := jsonb_set(
+                NEW.payload,
+                '{tenant_root_id}',
+                to_jsonb(NEW.tenant_root_id::text),
+                false
+            );
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION tenant_merge_event_outbox_root_rewrite() FROM PUBLIC;
+
+CREATE TRIGGER tenant_merge_event_outbox_root_rewrite
+BEFORE UPDATE OF tenant_root_id ON outbox
+FOR EACH ROW EXECUTE FUNCTION tenant_merge_event_outbox_root_rewrite();
+
 ALTER TABLE mailing_delivery
     ADD COLUMN automation_enrollment_id uuid REFERENCES automation_enrollment(id),
     ADD COLUMN automation_version_id uuid REFERENCES automation_version(id),
@@ -40,18 +145,24 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-    IF TG_OP = 'UPDATE' AND (
-        NEW.business_id IS DISTINCT FROM OLD.business_id
-        OR NEW.tenant_root_id IS DISTINCT FROM OLD.tenant_root_id
-        OR NEW.source_kind IS DISTINCT FROM OLD.source_kind
-        OR NEW.source_id IS DISTINCT FROM OLD.source_id
-        OR NEW.template_id IS DISTINCT FROM OLD.template_id
-        OR NEW.subscriber_id IS DISTINCT FROM OLD.subscriber_id
-        OR NEW.automation_enrollment_id IS DISTINCT FROM OLD.automation_enrollment_id
-        OR NEW.automation_version_id IS DISTINCT FROM OLD.automation_version_id
-        OR NEW.automation_claim_generation IS DISTINCT FROM OLD.automation_claim_generation
-    ) THEN
-        RAISE EXCEPTION 'mailing delivery authorization identity is immutable' USING ERRCODE = '23514';
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.business_id IS DISTINCT FROM OLD.business_id
+           OR NEW.source_kind IS DISTINCT FROM OLD.source_kind
+           OR NEW.source_id IS DISTINCT FROM OLD.source_id
+           OR NEW.template_id IS DISTINCT FROM OLD.template_id
+           OR NEW.subscriber_id IS DISTINCT FROM OLD.subscriber_id
+           OR NEW.automation_enrollment_id IS DISTINCT FROM OLD.automation_enrollment_id
+           OR NEW.automation_version_id IS DISTINCT FROM OLD.automation_version_id
+           OR NEW.automation_claim_generation IS DISTINCT FROM OLD.automation_claim_generation THEN
+            RAISE EXCEPTION 'mailing delivery authorization identity is immutable' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.tenant_root_id IS DISTINCT FROM OLD.tenant_root_id
+           AND NOT tenant_merge_root_rewrite_allowed(
+               TG_RELID, OLD.tenant_root_id, NEW.tenant_root_id
+           ) THEN
+            RAISE EXCEPTION 'mailing delivery authorization identity is immutable' USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     IF TG_OP = 'INSERT'
@@ -652,6 +763,85 @@ BEGIN
       AND status = 'active';
     GET DIAGNOSTICS v_updated = ROW_COUNT;
     RETURN v_updated;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION automation_enroll_for_trigger(
+    p_business_id uuid,
+    p_tenant_root_id uuid,
+    p_trigger_kind text,
+    p_trigger_ref text,
+    p_subscriber_id uuid,
+    p_source_event_id uuid,
+    p_now timestamptz
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_subscriber list_subscriber%ROWTYPE;
+    v_inserted integer := 0;
+    v_now timestamptz := COALESCE(p_now, now());
+BEGIN
+    IF NOT tenant_merge_root_write_allowed(p_tenant_root_id) THEN
+        RETURN 0;
+    END IF;
+
+    SELECT * INTO v_subscriber
+    FROM list_subscriber
+    WHERE id = p_subscriber_id
+      AND business_id = p_business_id
+      AND tenant_root_id = p_tenant_root_id
+      AND status = 'active';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'subscriber is not active in the requested business and tenant root'
+            USING ERRCODE = '22023';
+    END IF;
+
+    INSERT INTO automation_enrollment (
+        business_id, tenant_root_id, automation_id, version_id, subscriber_id,
+        status, current_node_id, wake_at, source_event_id, enrolled_at, updated_at
+    )
+    SELECT a.business_id, a.tenant_root_id, a.id, v.id, v_subscriber.id,
+           'active', trigger_node.id, v_now, p_source_event_id, v_now, v_now
+    FROM automation a
+    JOIN automation_version v
+      ON v.id = a.active_version_id
+     AND v.automation_id = a.id
+     AND v.business_id = a.business_id
+     AND v.tenant_root_id = a.tenant_root_id
+    CROSS JOIN LATERAL (
+        SELECT node->>'id' AS id, node->'config'->>'list_id' AS list_id
+        FROM jsonb_array_elements(v.graph->'nodes') node
+        WHERE node->>'kind' = 'trigger'
+          AND node->>'id' ~ '^[a-z0-9_-]{1,64}$'
+        LIMIT 1
+    ) trigger_node
+    WHERE a.business_id = p_business_id
+      AND a.tenant_root_id = p_tenant_root_id
+      AND a.status = 'active'
+      AND v.status = 'active'
+      AND v.content_snapshot IS NOT NULL
+      AND v.trigger_kind = p_trigger_kind
+      AND v.trigger_ref = p_trigger_ref
+      AND trigger_node.list_id = v_subscriber.list_id::text
+      AND mailing_business_operational(a.business_id, a.tenant_root_id)
+      AND mailing_list_operational(
+          v_subscriber.list_id, a.business_id, a.tenant_root_id
+      )
+      AND (
+          a.allow_reenroll
+          OR NOT EXISTS (
+              SELECT 1 FROM automation_enrollment prior
+              WHERE prior.automation_id = a.id
+                AND prior.subscriber_id = v_subscriber.id
+          )
+      )
+    ON CONFLICT DO NOTHING;
+
+    GET DIAGNOSTICS v_inserted = ROW_COUNT;
+    RETURN v_inserted;
 END;
 $$;
 

@@ -1,5 +1,67 @@
 -- Restore the pre-security automation worker and ingress boundaries.
 
+DROP TRIGGER tenant_merge_event_outbox_root_rewrite ON outbox;
+DROP FUNCTION tenant_merge_event_outbox_root_rewrite();
+
+DO $migration$
+DECLARE
+    v_definition text;
+    v_rewritten text;
+BEGIN
+    SELECT pg_get_functiondef(
+        'tenant_merge_preflight_inventory_v1(uuid,uuid)'::regprocedure
+    ) INTO v_definition;
+
+    v_rewritten := replace(
+        v_definition,
+        $new$'business.created', 'ticket.replied', 'ticket.created',
+          'message.received', 'attachment.purge', 'agent.action.approved',
+          'connector.inbound.sync',
+          'mailing.subscriber.activated', 'mailing.subscriber.tag_added',
+          'mailing.subscriber.status_changed', 'automation.event.received'$new$,
+        $old$'business.created', 'ticket.replied', 'ticket.created',
+          'message.received', 'attachment.purge', 'agent.action.approved',
+          'connector.inbound.sync'$old$
+    );
+    IF v_rewritten = v_definition THEN
+        RAISE EXCEPTION 'tenant merge preflight outbox topic allowlist rollback did not apply';
+    END IF;
+    v_definition := v_rewritten;
+
+    v_rewritten := replace(
+        v_definition,
+        $new$AND (
+          (
+              topic IN (
+                  'business.created', 'agent.action.approved',
+                  'mailing.subscriber.activated', 'mailing.subscriber.tag_added',
+                  'mailing.subscriber.status_changed', 'automation.event.received'
+              )
+              AND payload->>'tenant_root_id' IS DISTINCT FROM operation.source_root_id::text
+          )
+          OR (
+              topic NOT IN (
+                  'business.created', 'agent.action.approved',
+                  'mailing.subscriber.activated', 'mailing.subscriber.tag_added',
+                  'mailing.subscriber.status_changed', 'automation.event.received'
+              )
+              AND jsonb_path_exists(payload, '$.**.tenant_root_id')
+          )
+      );$new$,
+        $old$AND jsonb_path_exists(payload, '$.**.tenant_root_id')
+      AND (
+          topic NOT IN ('business.created', 'agent.action.approved')
+          OR payload->>'tenant_root_id' IS DISTINCT FROM operation.source_root_id::text
+      );$old$
+    );
+    IF v_rewritten = v_definition THEN
+        RAISE EXCEPTION 'tenant merge preflight outbox payload contract rollback did not apply';
+    END IF;
+
+    EXECUTE v_rewritten;
+END;
+$migration$;
+
 DROP FUNCTION IF EXISTS automation_ingest_event(uuid,uuid,uuid,uuid,bytea,text,citext,uuid,timestamptz,jsonb,text);
 DROP FUNCTION IF EXISTS automation_event_exists(uuid,uuid,citext,text,timestamptz,timestamptz,interval);
 DROP FUNCTION IF EXISTS mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean,uuid,integer);
@@ -514,12 +576,85 @@ REVOKE ALL ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text) FROM PUBL
 REVOKE ALL ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_renew_delivery(uuid,integer,interval) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION automation_ingest_event(uuid,uuid,uuid,text,citext,uuid,timestamptz,jsonb,text) TO manyforge_app;
+CREATE OR REPLACE FUNCTION automation_enroll_for_trigger(
+    p_business_id uuid,
+    p_tenant_root_id uuid,
+    p_trigger_kind text,
+    p_trigger_ref text,
+    p_subscriber_id uuid,
+    p_source_event_id uuid,
+    p_now timestamptz
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_subscriber list_subscriber%ROWTYPE;
+    v_inserted integer := 0;
+    v_now timestamptz := COALESCE(p_now, now());
+BEGIN
+    IF NOT tenant_merge_root_write_allowed(p_tenant_root_id) THEN
+        RETURN 0;
+    END IF;
+
+    SELECT * INTO v_subscriber
+    FROM list_subscriber
+    WHERE id = p_subscriber_id
+      AND business_id = p_business_id
+      AND tenant_root_id = p_tenant_root_id
+      AND status = 'active';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'subscriber is not active in the requested business and tenant root'
+            USING ERRCODE = '22023';
+    END IF;
+
+    INSERT INTO automation_enrollment (
+        business_id, tenant_root_id, automation_id, version_id, subscriber_id,
+        status, current_node_id, wake_at, source_event_id, enrolled_at, updated_at
+    )
+    SELECT a.business_id, a.tenant_root_id, a.id, v.id, v_subscriber.id,
+           'active', trigger_node.id, v_now, p_source_event_id, v_now, v_now
+    FROM automation a
+    JOIN automation_version v
+      ON v.id = a.active_version_id
+     AND v.automation_id = a.id
+     AND v.business_id = a.business_id
+     AND v.tenant_root_id = a.tenant_root_id
+    CROSS JOIN LATERAL (
+        SELECT node->>'id' AS id, node->'config'->>'list_id' AS list_id
+        FROM jsonb_array_elements(v.graph->'nodes') node
+        WHERE node->>'kind' = 'trigger'
+          AND node->>'id' ~ '^[a-z0-9_-]{1,64}$'
+        LIMIT 1
+    ) trigger_node
+    WHERE a.business_id = p_business_id
+      AND a.tenant_root_id = p_tenant_root_id
+      AND a.status = 'active'
+      AND v.status = 'active'
+      AND v.trigger_kind = p_trigger_kind
+      AND v.trigger_ref = p_trigger_ref
+      AND trigger_node.list_id = v_subscriber.list_id::text
+      AND (
+          a.allow_reenroll
+          OR NOT EXISTS (
+              SELECT 1 FROM automation_enrollment prior
+              WHERE prior.automation_id = a.id
+                AND prior.subscriber_id = v_subscriber.id
+          )
+      )
+    ON CONFLICT DO NOTHING;
+
+    GET DIAGNOSTICS v_inserted = ROW_COUNT;
+    RETURN v_inserted;
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION automation_event_exists(uuid,citext,text,timestamptz,interval) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text,boolean,boolean) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_add_tag(uuid,uuid,uuid,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_automation_remove_tag(uuid,uuid,uuid,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_renew_delivery(uuid,integer,interval) TO manyforge_app;
-GRANT EXECUTE ON FUNCTION mailing_enqueue_delivery(uuid,uuid,uuid,uuid,uuid,timestamptz,text) TO manyforge_app;
 
 DROP TRIGGER mailing_delivery_automation_fence_guard ON mailing_delivery;
 DROP FUNCTION mailing_delivery_automation_fence_guard();
