@@ -51,6 +51,10 @@ func (d *capturedDeliverer) EnsureWebhook(context.Context, string, string) (mail
 	}, true, nil
 }
 
+func (d *capturedDeliverer) CleanupWebhooks(context.Context, string, string, bool) error {
+	return nil
+}
+
 func (d *capturedDeliverer) DeleteWebhook(context.Context, string) error { return nil }
 
 func seedMailingTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) mailingSeed {
