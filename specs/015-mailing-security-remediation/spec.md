@@ -4,7 +4,7 @@
 
 **Status:** Implemented and verified locally; private until coordinated disclosure
 
-**Canonical evidence:** [`SCAN.md`](../../SCAN.md)
+**Completion evidence:** automated regressions and closed Beads issue `manyforge-yvql`
 
 ## Problem
 
@@ -138,7 +138,7 @@ capability handling at every ingress and final side-effect boundary.
 
 ## Test Plan
 
-- Invert every `MF-*` and `AUTOMATION-*` characterization from `SCAN.md` into a
+- Invert every baseline `MF-*` and `AUTOMATION-*` characterization into a
   safe regression assertion after its fix.
 - Add DB-backed tests for archived/deleted lifecycle predicates, reactivation,
   feedback readiness, early webhook correlation, event fingerprints, final

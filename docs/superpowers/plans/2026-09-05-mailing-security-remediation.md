@@ -211,21 +211,21 @@
 
 **Files:**
 - Modify: `internal/security_regression/mailing_automation_audit_pins_test.go`
-- Modify: every audit characterization file named in `SCAN.md`
-- Modify: `SCAN.md`
+- Modify: every audit characterization file identified by the private audit ledger
+- Delete before PR review: the private audit ledger after every finding is closed
 - Modify: `specs/015-mailing-security-remediation/spec.md` status only after verification
 - Modify: generated sqlc files from `make generate`
 
 **Interfaces:**
 - Consumes all prior task commits.
-- Produces one coherent migration chain, generated query API, green safe regressions, and updated private remediation ledger.
+- Produces one coherent migration chain, generated query API, green safe regressions, and verified closure records in Spec 015 and Beads.
 
 - [ ] **Step 1: Cherry-pick domain commits in task order** and resolve generated-code conflicts by discarding generated hunks, then run `make generate` once.
 - [ ] **Step 2: Replace source-level vulnerable-state pins** with observable safe regressions or delete them when a stronger behavioral test covers the same ID.
-- [ ] **Step 3: Run each finding-specific command from `SCAN.md`** and require GREEN safe assertions.
+- [ ] **Step 3: Run each finding-specific command from the private audit ledger** and require GREEN safe assertions.
 - [ ] **Step 4: Run `make test`, `make sec-test`, `make int-test`, and `make lint`**; fix every failure before continuing.
 - [ ] **Step 5: Run `cd web && npm test -- --watch=false`** and require all files/tests green.
 - [ ] **Step 6: Run the approved Semgrep OSS rulesets** and triage every new alert.
 - [ ] **Step 7: Dispatch a whole-branch security/code review** covering cross-task migration order, final provider fences, tenant/list predicates, error shapes, and test fidelity; address every load-bearing finding.
-- [ ] **Step 8: Update `SCAN.md`** with fixed status and exact verification output; mark Spec 015 implemented locally.
-- [ ] **Step 9: Commit locally** with message `fix(security): complete mailing remediation` and do not push.
+- [ ] **Step 8: Remove the private audit ledger** after every finding is fixed, all verification passes, and Spec 015 records completion.
+- [ ] **Step 9: Commit locally** with message `fix(security): complete mailing remediation`; leave the branch ready for an explicitly authorized push and PR.
