@@ -23,6 +23,7 @@ var mailingMessageDomainPattern = regexp.MustCompile(`^[a-z0-9.-]+$`)
 
 // Config holds runtime configuration.
 type Config struct {
+	Environment      string        // development or production; production requires a real outbound transport
 	Addr             string        // HTTP listen address
 	DatabaseURL      string        // PostgreSQL DSN for the app role (non-superuser, non-BYPASSRLS)
 	AccessTokenTTL   time.Duration // EdDSA access-token lifetime
@@ -61,10 +62,9 @@ type Config struct {
 	OutboundRateRPS   float64 // per-business outbound send refill rate (FR-020)
 	OutboundRateBurst float64 // per-business outbound send burst allowance
 
-	// Outbound SMTP relay (US2/T039). SMTPHost empty ⇒ the notify worker uses the
-	// dev LogSender (logs the threaded reply, honors suppression) instead of a real
-	// MTA, so reply flows are completable without an outbound relay configured.
-	SMTPHost string // outbound relay host; empty ⇒ LogSender
+	// Outbound SMTP relay. An empty host is permitted only in development, where
+	// LogSender is metadata-only and always reports non-acceptance.
+	SMTPHost string
 	SMTPPort int    // outbound relay port (default 587)
 	SMTPUser string // SMTP AUTH username; empty ⇒ no auth
 	SMTPPass string // SMTP AUTH password
@@ -124,11 +124,14 @@ type Config struct {
 	// MANYFORGE_MAILING_MASTER_KEY is optional at boot and must decode to 32 bytes when set.
 	MailingMasterKey     []byte
 	MailingRateRPS       float64
-	MailingRateBurst     float64
-	MailingSendBatch     int
-	MailingSendEvery     time.Duration
-	MailingLease         time.Duration
-	MailingMessageDomain string
+	MailingRateBurst        float64
+	MailingSendBatch        int
+	MailingSendEvery        time.Duration
+	MailingLease            time.Duration
+	MailingFanoutGlobal     int
+	MailingFanoutPerCampaign int
+	MailingRollupBatch      int
+	MailingMessageDomain    string
 
 	// InstanceOperatorPrincipal gates instance setup routes (GitHub App manifest
 	// creation, etc.). MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL (UUID). uuid.Nil when
@@ -206,10 +209,11 @@ type Config struct {
 	SandboxPullSecret string
 }
 
-// Load reads configuration from the environment, applying safe local-dev
-// defaults. It errors only on malformed values.
+// Load reads configuration from the environment, applying safe local defaults
+// and rejecting production configurations without an outbound transport.
 func Load() (Config, error) {
 	cfg := Config{
+		Environment:          env("MANYFORGE_ENVIRONMENT", defaultEnvironment()),
 		Addr:                 env("MANYFORGE_ADDR", ":8080"),
 		DatabaseURL:          os.Getenv("MANYFORGE_DATABASE_URL"),
 		TrustedProxyCIDR:     os.Getenv("MANYFORGE_TRUSTED_PROXY_CIDR"),
@@ -218,6 +222,11 @@ func Load() (Config, error) {
 		JWTAudience:          env("MANYFORGE_JWT_AUDIENCE", "manyforge-api"),
 		JWTActiveKID:         env("MANYFORGE_JWT_ACTIVE_KID", ""),
 		JWTVerifyKeys:        env("MANYFORGE_JWT_VERIFY_KEYS", ""),
+	}
+	switch cfg.Environment {
+	case "development", "production":
+	default:
+		return Config{}, fmt.Errorf("MANYFORGE_ENVIRONMENT: must be development or production")
 	}
 
 	ttl, err := envDuration("MANYFORGE_ACCESS_TOKEN_TTL", 15*time.Minute)
@@ -311,13 +320,16 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_RATE_BURST: %w", err)
 	}
 
-	// Outbound SMTP relay (US2). Host empty ⇒ LogSender; port defaults to submission.
-	cfg.SMTPHost = os.Getenv("MANYFORGE_SMTP_HOST")
+	// Outbound SMTP relay. Production cannot boot without a real transport.
+	cfg.SMTPHost = strings.TrimSpace(os.Getenv("MANYFORGE_SMTP_HOST"))
 	if cfg.SMTPPort, err = envInt("MANYFORGE_SMTP_PORT", 587); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_SMTP_PORT: %w", err)
 	}
 	cfg.SMTPUser = os.Getenv("MANYFORGE_SMTP_USER")
 	cfg.SMTPPass = os.Getenv("MANYFORGE_SMTP_PASS")
+	if cfg.Environment == "production" && cfg.SMTPHost == "" {
+		return Config{}, fmt.Errorf("MANYFORGE_SMTP_HOST: required in production")
+	}
 
 	// Optional system DKIM. The private key can be supplied inline (…_PEM) or via a
 	// file path (…_PEM_PATH); a malformed path is a hard config error so a configured
@@ -399,6 +411,17 @@ func Load() (Config, error) {
 	}
 	if cfg.MailingLease, err = envDuration("MANYFORGE_MAILING_LEASE", 2*time.Minute); err != nil || cfg.MailingLease <= 0 {
 		return Config{}, fmt.Errorf("MANYFORGE_MAILING_LEASE: must be a positive duration")
+	}
+	if cfg.MailingFanoutGlobal, err = envInt("MANYFORGE_MAILING_FANOUT_GLOBAL", 1000); err != nil || cfg.MailingFanoutGlobal <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_FANOUT_GLOBAL: must be a positive integer")
+	}
+	if cfg.MailingFanoutPerCampaign, err = envInt("MANYFORGE_MAILING_FANOUT_PER_CAMPAIGN", 250); err != nil ||
+		cfg.MailingFanoutPerCampaign <= 0 || cfg.MailingFanoutPerCampaign > cfg.MailingFanoutGlobal {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_FANOUT_PER_CAMPAIGN: must be positive and no greater than the global budget")
+	}
+	if cfg.MailingRollupBatch, err = envInt("MANYFORGE_MAILING_ROLLUP_BATCH", 100); err != nil ||
+		cfg.MailingRollupBatch <= 0 || cfg.MailingRollupBatch > 100 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_ROLLUP_BATCH: must be between 1 and 100")
 	}
 	cfg.MailingMessageDomain = strings.ToLower(strings.TrimSpace(env("MANYFORGE_MAILING_MESSAGE_DOMAIN", cfg.InboundSystemDomain)))
 	if !mailingMessageDomainPattern.MatchString(cfg.MailingMessageDomain) {
@@ -492,6 +515,13 @@ func defaultSandboxMode() string {
 		return "kube"
 	}
 	return "docker"
+}
+
+func defaultEnvironment() string {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return "production"
+	}
+	return "development"
 }
 
 func envInt(key string, def int) (int, error) {

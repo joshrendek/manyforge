@@ -4,15 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
+	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
+
+var (
+	sesConfigurationSetPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	sesRegionPattern           = regexp.MustCompile(`^[a-z0-9-]{3,32}$`)
+	snsAccountPattern          = regexp.MustCompile(`^[0-9]{12}$`)
+	snsTopicPattern            = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}(\.fifo)?$`)
+)
+
+type resendOperationLease struct {
+	profileID    uuid.UUID
+	tenantRootID uuid.UUID
+	updatedAt    time.Time
+	token        uuid.UUID
+	apiKey       string
+	webhookID    string
+	cleanupRequired bool
+}
 
 func (s *Service) GetSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) (SendingProfile, error) {
 	var out SendingProfile
@@ -61,19 +82,22 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 	if in.Mode != "ses" && (in.SESRegion != nil || in.SESConfigurationSet != nil || in.SNSTopicARN != nil) {
 		return SendingProfile{}, validation("SES settings are only valid for SES mode")
 	}
+	if in.Mode == "ses" {
+		in.SESRegion = cleanOptional(in.SESRegion)
+		in.SESConfigurationSet = cleanOptional(in.SESConfigurationSet)
+		in.SNSTopicARN = cleanOptional(in.SNSTopicARN)
+		if err := validateSESFeedbackConfiguration(in.SESRegion, in.SESConfigurationSet, in.SNSTopicARN); err != nil {
+			return SendingProfile{}, err
+		}
+	}
 	var credential []byte
+	replacementAPIKey := ""
 	if in.Resend != nil {
-		if strings.TrimSpace(in.Resend.APIKey) == "" {
+		replacementAPIKey = strings.TrimSpace(in.Resend.APIKey)
+		if replacementAPIKey == "" {
 			return SendingProfile{}, validation("resend api_key is required")
 		}
-		if in.Resend.WebhookSecret != "" {
-			key, keyErr := decodeSvixSecret(in.Resend.WebhookSecret)
-			clear(key)
-			if keyErr != nil {
-				return SendingProfile{}, validation("resend webhook_secret must be a valid whsec_ secret")
-			}
-		}
-		credential, err = json.Marshal(in.Resend)
+		credential, err = json.Marshal(resendStoredCredentials{APIKey: replacementAPIKey})
 	}
 	if in.SES != nil {
 		if strings.TrimSpace(in.SES.AccessKeyID) == "" || strings.TrimSpace(in.SES.SecretAccessKey) == "" {
@@ -83,6 +107,16 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 	}
 	if err != nil {
 		return SendingProfile{}, validation("invalid credentials")
+	}
+	lease, err := s.claimResendMutation(ctx, principalID, businessID, replacementAPIKey)
+	if err != nil {
+		return SendingProfile{}, err
+	}
+	if lease != nil && (lease.cleanupRequired || lease.webhookID != "") {
+		if err = s.cleanupResendWebhooks(ctx, *lease, replacementAPIKey); err != nil {
+			s.releaseResendMutation(ctx, principalID, *lease)
+			return SendingProfile{}, err
+		}
 	}
 	var out SendingProfile
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -95,6 +129,27 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		hasExisting := existingErr == nil
 		if existingErr != nil && !errors.Is(existingErr, pgx.ErrNoRows) {
 			return existingErr
+		}
+		if lease != nil {
+			if !hasExisting || existing.ID != lease.profileID {
+				return fmt.Errorf("mailing: profile changed during Resend cleanup: %w", errs.ErrConflict)
+			}
+			var heldToken uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT resend_provisioning_token
+				FROM mailing_sending_profile WHERE id=$1 AND tenant_root_id=$2 FOR UPDATE`,
+				lease.profileID, lease.tenantRootID).Scan(&heldToken); err != nil || heldToken != lease.token {
+				return fmt.Errorf("mailing: Resend cleanup lease lost: %w", errs.ErrConflict)
+			}
+		}
+		if hasExisting && existing.Mode == dbgen.MailingSendModeResend &&
+			in.Mode == "resend" && in.Resend == nil {
+			if lease == nil || strings.TrimSpace(lease.apiKey) == "" {
+				return errors.New("mailing: stored Resend credentials are invalid")
+			}
+			credential, err = json.Marshal(resendStoredCredentials{APIKey: lease.apiKey})
+			if err != nil {
+				return errors.New("mailing: encode Resend credentials")
+			}
 		}
 		var domainRef, secretRef pgtype.UUID
 		if in.Mode == "relay" {
@@ -187,35 +242,192 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		out = toSendingProfile(row)
 		return nil
 	})
+	if err != nil && lease != nil {
+		s.releaseResendMutation(ctx, principalID, *lease)
+	}
+	if err == nil && s.Providers != nil && out.ID != uuid.Nil {
+		s.Providers.Invalidate(out.ID)
+	}
 	return out, mapErr(err)
 }
 
 func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) error {
-	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+	lease, err := s.claimResendMutation(ctx, principalID, businessID, "")
+	if err != nil {
+		return err
+	}
+	if lease != nil && (lease.cleanupRequired || lease.webhookID != "") {
+		if err = s.cleanupResendWebhooks(ctx, *lease, ""); err != nil {
+			s.releaseResendMutation(ctx, principalID, *lease)
+			return err
+		}
+	}
+	var profileID uuid.UUID
+	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
 		if err != nil {
 			return err
 		}
-		row, err := q.DeleteMailingSendingProfile(ctx, dbgen.DeleteMailingSendingProfileParams{BusinessID: businessID, TenantRootID: root})
+		if lease != nil {
+			var heldToken uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT resend_provisioning_token
+				FROM mailing_sending_profile WHERE id=$1 AND tenant_root_id=$2 FOR UPDATE`,
+				lease.profileID, lease.tenantRootID).Scan(&heldToken); err != nil || heldToken != lease.token {
+				return fmt.Errorf("mailing: Resend cleanup lease lost: %w", errs.ErrConflict)
+			}
+		}
+		row, err := q.DeleteMailingSendingProfile(ctx, dbgen.DeleteMailingSendingProfileParams{
+			BusinessID: businessID, TenantRootID: root,
+		})
 		if err != nil {
 			return err
 		}
-		if err = auditMutation(ctx, tx, principalID, businessID, root, "mailing.sending_profile.deleted", "mailing_sending_profile", row.ID, map[string]any{"mode": row.Mode}); err != nil {
+		profileID = row.ID
+		if err = auditMutation(ctx, tx, principalID, businessID, root,
+			"mailing.sending_profile.deleted", "mailing_sending_profile", row.ID,
+			map[string]any{"mode": row.Mode}); err != nil {
 			return err
 		}
 		if row.SecretRef.Valid {
 			if s.Vault == nil {
 				return validation("mailing credential storage is not configured")
 			}
-			id := uuid.UUID(row.SecretRef.Bytes)
-			if err = s.Vault.Delete(ctx, tx, businessID, id); err != nil && !errors.Is(err, errs.ErrNotFound) {
+			if err = s.Vault.Delete(ctx, tx, businessID, uuid.UUID(row.SecretRef.Bytes)); err != nil &&
+				!errors.Is(err, errs.ErrNotFound) {
 				return err
 			}
 		}
 		return nil
 	})
+	if err != nil && lease != nil {
+		s.releaseResendMutation(ctx, principalID, *lease)
+	}
+	if err == nil && s.Providers != nil && profileID != uuid.Nil {
+		s.Providers.Invalidate(profileID)
+	}
 	return mapErr(err)
+}
+
+func (s *Service) claimResendMutation(
+	ctx context.Context, principalID, businessID uuid.UUID, replacementAPIKey string,
+) (*resendOperationLease, error) {
+	var lease *resendOperationLease
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		root, err := resolveTenantRoot(ctx, q, businessID)
+		if err != nil {
+			return err
+		}
+		row, err := q.GetMailingSendingProfile(ctx, dbgen.GetMailingSendingProfileParams{
+			BusinessID: businessID, TenantRootID: root,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil || row.Mode != dbgen.MailingSendModeResend {
+			return err
+		}
+		if s.Vault == nil || !row.SecretRef.Valid {
+			return validation("mailing credential storage is not configured")
+		}
+		raw, err := s.Vault.Open(ctx, tx, businessID, uuid.UUID(row.SecretRef.Bytes))
+		if err != nil {
+			return err
+		}
+		var stored resendStoredCredentials
+		decodeErr := json.Unmarshal(raw, &stored)
+		clear(raw)
+		stored.APIKey = strings.TrimSpace(stored.APIKey)
+		storedCredentialValid := decodeErr == nil && stored.APIKey != ""
+		if !storedCredentialValid {
+			stored = resendStoredCredentials{}
+			if replacementAPIKey == "" {
+				return errors.New("mailing: stored Resend credentials are invalid")
+			}
+		}
+		var cleanupRequired bool
+		if err = tx.QueryRow(ctx, `SELECT resend_cleanup_required
+			FROM mailing_sending_profile WHERE id=$1 AND tenant_root_id=$2`,
+			row.ID, row.TenantRootID).Scan(&cleanupRequired); err != nil {
+			return err
+		}
+		token := uuid.New()
+		if _, err = q.ClaimMailingResendProvisioning(ctx, dbgen.ClaimMailingResendProvisioningParams{
+			Token: token, RequireCleanup: false, ID: row.ID, TenantRootID: row.TenantRootID,
+			ExpectedUpdatedAt: row.UpdatedAt,
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("mailing: Resend profile operation already in progress: %w", errs.ErrConflict)
+			}
+			return err
+		}
+		lease = &resendOperationLease{
+			profileID: row.ID, tenantRootID: row.TenantRootID, updatedAt: row.UpdatedAt,
+			token: token, apiKey: stored.APIKey,
+			cleanupRequired: cleanupRequired || !storedCredentialValid,
+		}
+		if stored.Version == 2 {
+			lease.webhookID = stored.WebhookID
+		}
+		return nil
+	})
+	return lease, mapErr(err)
+}
+
+func (s *Service) cleanupResendWebhooks(ctx context.Context, lease resendOperationLease, replacementAPIKey string) error {
+	if s.Providers == nil {
+		return errors.New("mailing: Resend webhook cleanup provider is not configured")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(s.PublicBaseURL), "/")
+	if baseURL == "" {
+		return errors.New("mailing: public base URL is required for Resend webhook cleanup")
+	}
+	endpoint := baseURL + "/inbound/mailing/" + lease.profileID.String() + "/resend"
+	type cleanupAttempt struct {
+		apiKey       string
+		requireMatch bool
+	}
+	attempts := make([]cleanupAttempt, 0, 2)
+	if lease.apiKey != "" {
+		attempts = append(attempts, cleanupAttempt{apiKey: lease.apiKey})
+	}
+	if replacementAPIKey != "" && replacementAPIKey != lease.apiKey {
+		attempts = append(attempts, cleanupAttempt{apiKey: replacementAPIKey, requireMatch: true})
+	}
+	var cleanupErr error
+	for _, attempt := range attempts {
+		s.Providers.Invalidate(lease.profileID)
+		deliverer, err := s.Providers.Resolve(ctx, mailprovider.Profile{
+			ID: lease.profileID, UpdatedAt: lease.updatedAt,
+			Mode: "resend", ResendAPIKey: attempt.apiKey,
+		})
+		if err != nil {
+			cleanupErr = err
+			continue
+		}
+		provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner)
+		if !ok {
+			cleanupErr = errors.New("mailing: provider does not support Resend webhook cleanup")
+			continue
+		}
+		if err = provisioner.CleanupWebhooks(ctx, endpoint, lease.webhookID, attempt.requireMatch); err == nil {
+			return nil
+		}
+		cleanupErr = err
+	}
+	return cleanupErr
+}
+
+func (s *Service) releaseResendMutation(
+	ctx context.Context, principalID uuid.UUID, lease resendOperationLease,
+) {
+	_ = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		_, err := dbgen.New(tx).ReleaseMailingResendProvisioning(ctx, dbgen.ReleaseMailingResendProvisioningParams{
+			ID: lease.profileID, TenantRootID: lease.tenantRootID, Token: lease.token,
+		})
+		return err
+	})
 }
 
 func toSendingProfile(r dbgen.MailingSendingProfile) SendingProfile {
@@ -226,7 +438,43 @@ func toSendingProfile(r dbgen.MailingSendingProfile) SendingProfile {
 		EmailDomainID: uuidPtr(r.EmailDomainID), SESRegion: r.SesRegion,
 		SESConfigurationSet: r.SesConfigurationSet, SNSTopicARN: r.SnsTopicArn,
 		Status: r.Status, LastVerifiedAt: timePtr(r.LastVerifiedAt),
-		VerifyError: r.VerifyError, HasCredentials: r.SecretRef.Valid,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		VerifyError: r.VerifyError, FeedbackStatus: r.FeedbackStatus,
+		FeedbackError: r.FeedbackError, FeedbackConfirmedAt: timePtr(r.FeedbackConfirmedAt),
+		HasCredentials: r.SecretRef.Valid, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
+}
+
+func validateSESFeedbackConfiguration(region, configurationSet, topicARN *string) error {
+	if region == nil || !sesRegionPattern.MatchString(*region) {
+		return validation("ses_region is required and must be a valid AWS region")
+	}
+	if configurationSet == nil || !sesConfigurationSetPattern.MatchString(*configurationSet) {
+		return validation("ses_configuration_set is required and invalid")
+	}
+	if topicARN == nil {
+		return validation("sns_topic_arn is required")
+	}
+	parts := strings.Split(*topicARN, ":")
+	if len(parts) != 6 || parts[0] != "arn" || parts[2] != "sns" ||
+		parts[3] != *region || !snsAccountPattern.MatchString(parts[4]) ||
+		!snsTopicPattern.MatchString(parts[5]) {
+		return validation("sns_topic_arn must bind the SES region and AWS account")
+	}
+	switch parts[1] {
+	case "aws":
+		if strings.HasPrefix(*region, "cn-") || strings.HasPrefix(*region, "us-gov-") {
+			return validation("sns_topic_arn partition does not match ses_region")
+		}
+	case "aws-cn":
+		if !strings.HasPrefix(*region, "cn-") {
+			return validation("sns_topic_arn partition does not match ses_region")
+		}
+	case "aws-us-gov":
+		if !strings.HasPrefix(*region, "us-gov-") {
+			return validation("sns_topic_arn partition does not match ses_region")
+		}
+	default:
+		return validation("sns_topic_arn partition is unsupported")
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package mailing
 
 import (
+	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,7 +22,16 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 
-const fanoutBatchSize = 1000
+const (
+	fanoutGlobalBudget         = 1000
+	fanoutPerCampaignBudget    = 250
+	rollupCampaignBudget       = 100
+	rollupLeaseSeconds         = 60
+	compiledCacheMaxEntries    = 128
+	compiledCacheMaxBytes      = 8 << 20
+	compiledCacheTTL           = 15 * time.Minute
+	providerWebhookPruneBudget = 256
+)
 
 // SendWorker drains scheduled campaigns and the shared mailing delivery queue. Claims and
 // writebacks use short transactions. In particular, no transaction is held while rendering,
@@ -29,15 +39,19 @@ const fanoutBatchSize = 1000
 // at-least-once: a crash after provider acceptance but before completion causes a retry after
 // Lease; providers receive the stable delivery ID as their idempotency key where supported.
 type SendWorker struct {
-	Service *Service
-	Batch   int
-	Lease   time.Duration
-	Every   time.Duration
-	Limiter interface{ Allow(string) bool }
-	Logger  *slog.Logger
-	Now     func() time.Time
+	Service           *Service
+	Batch             int
+	Lease             time.Duration
+	Every             time.Duration
+	FanoutGlobal      int
+	FanoutPerCampaign int
+	RollupBatch       int
+	Limiter           interface{ Allow(string) bool }
+	Logger            *slog.Logger
+	Now               func() time.Time
 
-	compiled sync.Map // immutable campaign or versioned template/profile key -> mailrender.Compiled
+	compiledMu sync.Mutex
+	compiled   *compiledContentCache
 }
 
 type claimedDelivery struct {
@@ -55,6 +69,133 @@ type workerProfile struct {
 	provider               mailprovider.Profile
 	fromName               string
 	replyTo, postalAddress *string
+}
+
+type compiledCacheKey struct {
+	contentKind                    string
+	contentID, profileID           uuid.UUID
+	contentVersion, profileVersion int64
+}
+
+type compiledCacheEntry struct {
+	key       compiledCacheKey
+	value     mailrender.Compiled
+	bytes     int
+	expiresAt time.Time
+}
+
+type compiledContentCache struct {
+	mu                   sync.Mutex
+	entries              map[compiledCacheKey]*list.Element
+	lru                  *list.List
+	bytes                int
+	maxEntries, maxBytes int
+	ttl                  time.Duration
+	now                  func() time.Time
+}
+
+func newCompiledContentCache(maxEntries, maxBytes int, ttl time.Duration, now func() time.Time) *compiledContentCache {
+	return &compiledContentCache{
+		entries: make(map[compiledCacheKey]*list.Element), lru: list.New(),
+		maxEntries: maxEntries, maxBytes: maxBytes, ttl: ttl, now: now,
+	}
+}
+
+func (c *compiledContentCache) get(key compiledCacheKey) (mailrender.Compiled, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	element, ok := c.entries[key]
+	if !ok {
+		return mailrender.Compiled{}, false
+	}
+	entry := element.Value.(*compiledCacheEntry)
+	if !c.now().Before(entry.expiresAt) {
+		c.remove(element)
+		return mailrender.Compiled{}, false
+	}
+	c.lru.MoveToFront(element)
+	return entry.value, true
+}
+
+func (c *compiledContentCache) put(key compiledCacheKey, value mailrender.Compiled) {
+	size := len(value.HTML)
+	if size > c.maxBytes {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.evictExpired(c.now())
+	if existing := c.entries[key]; existing != nil {
+		c.remove(existing)
+	}
+	for existingKey, element := range c.entries {
+		if (existingKey.contentKind == key.contentKind && existingKey.contentID == key.contentID &&
+			existingKey.contentVersion != key.contentVersion) ||
+			(existingKey.profileID == key.profileID && existingKey.profileVersion != key.profileVersion) {
+			c.remove(element)
+		}
+	}
+	entry := &compiledCacheEntry{
+		key: key, value: value, bytes: size, expiresAt: c.now().Add(c.ttl),
+	}
+	c.entries[key] = c.lru.PushFront(entry)
+	c.bytes += size
+	for len(c.entries) > c.maxEntries || c.bytes > c.maxBytes {
+		c.remove(c.lru.Back())
+	}
+}
+
+func (c *compiledContentCache) invalidateContent(contentID uuid.UUID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, element := range c.entries {
+		if key.contentID == contentID {
+			c.remove(element)
+		}
+	}
+}
+
+func (c *compiledContentCache) stats() (int, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.evictExpired(c.now())
+	return len(c.entries), c.bytes
+}
+
+func (c *compiledContentCache) evictExpired(now time.Time) {
+	for element := c.lru.Back(); element != nil; {
+		previous := element.Prev()
+		if !now.Before(element.Value.(*compiledCacheEntry).expiresAt) {
+			c.remove(element)
+		}
+		element = previous
+	}
+}
+
+func (c *compiledContentCache) remove(element *list.Element) {
+	if element == nil {
+		return
+	}
+	entry := element.Value.(*compiledCacheEntry)
+	delete(c.entries, entry.key)
+	c.bytes -= entry.bytes
+	c.lru.Remove(element)
+}
+
+func (w *SendWorker) compiledCache() *compiledContentCache {
+	w.compiledMu.Lock()
+	defer w.compiledMu.Unlock()
+	if w.compiled == nil {
+		w.compiled = newCompiledContentCache(
+			compiledCacheMaxEntries, compiledCacheMaxBytes, compiledCacheTTL, w.now,
+		)
+	}
+	return w.compiled
+}
+
+// InvalidateCompiledContent removes every cached immutable version for contentID.
+func (w *SendWorker) InvalidateCompiledContent(contentID uuid.UUID) {
+	w.compiledCache().invalidateContent(contentID)
 }
 
 func (w *SendWorker) Run(ctx context.Context) {
@@ -87,19 +228,43 @@ func (w *SendWorker) Tick(ctx context.Context) error {
 	if w == nil || w.Service == nil || w.Service.DB == nil {
 		return errors.New("mailing worker is not configured")
 	}
-	campaignIDs, err := w.claimCampaigns(ctx, 10)
+	if err := w.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		var pruned int
+		return tx.QueryRow(ctx,
+			"SELECT mailing_prune_expired_provider_webhooks($1)",
+			providerWebhookPruneBudget,
+		).Scan(&pruned)
+	}); err != nil {
+		return fmt.Errorf("prune expired provider webhooks: %w", err)
+	}
+	globalBudget := w.FanoutGlobal
+	if globalBudget <= 0 {
+		globalBudget = fanoutGlobalBudget
+	}
+	perCampaignBudget := w.FanoutPerCampaign
+	if perCampaignBudget <= 0 {
+		perCampaignBudget = fanoutPerCampaignBudget
+	}
+	if perCampaignBudget > globalBudget {
+		perCampaignBudget = globalBudget
+	}
+	campaignLimit := (globalBudget + perCampaignBudget - 1) / perCampaignBudget
+	campaignIDs, err := w.claimCampaigns(ctx, campaignLimit)
 	if err != nil {
 		return err
 	}
+	remaining := globalBudget
 	for _, campaignID := range campaignIDs {
-		for {
-			done, err := w.fanout(ctx, campaignID)
-			if err != nil {
-				return fmt.Errorf("fan out campaign %s: %w", campaignID, err)
-			}
-			if done {
-				break
-			}
+		batch := perCampaignBudget
+		if batch > remaining {
+			batch = remaining
+		}
+		if _, err := w.fanout(ctx, campaignID, batch); err != nil {
+			return fmt.Errorf("fan out campaign %s: %w", campaignID, err)
+		}
+		remaining -= batch
+		if remaining == 0 {
+			break
 		}
 	}
 	deliveries, err := w.claimDeliveries(ctx)
@@ -109,10 +274,7 @@ func (w *SendWorker) Tick(ctx context.Context) error {
 	for i := range deliveries {
 		w.deliver(ctx, deliveries[i])
 	}
-	return w.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, "SELECT mailing_rollup_campaigns()")
-		return err
-	})
+	return w.rollupChangedCampaigns(ctx)
 }
 
 func (w *SendWorker) claimCampaigns(ctx context.Context, limit int) ([]uuid.UUID, error) {
@@ -135,16 +297,60 @@ func (w *SendWorker) claimCampaigns(ctx context.Context, limit int) ([]uuid.UUID
 	return ids, err
 }
 
-func (w *SendWorker) fanout(ctx context.Context, campaignID uuid.UUID) (bool, error) {
+func (w *SendWorker) fanout(ctx context.Context, campaignID uuid.UUID, batch int) (bool, error) {
 	done := false
 	err := w.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		var inserted int
 		return tx.QueryRow(ctx,
 			"SELECT inserted_count, fanout_done FROM mailing_fanout_batch($1,$2,$3)",
-			campaignID, fanoutBatchSize, safeMessageDomain(w.Service.MessageDomain),
+			campaignID, batch, safeMessageDomain(w.Service.MessageDomain),
 		).Scan(&inserted, &done)
 	})
 	return done, err
+}
+
+func (w *SendWorker) rollupChangedCampaigns(ctx context.Context) error {
+	limit := w.RollupBatch
+	if limit <= 0 || limit > rollupCampaignBudget {
+		limit = rollupCampaignBudget
+	}
+	token := uuid.New()
+	var campaignIDs []uuid.UUID
+	if err := w.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			"SELECT mailing_claim_changed_campaign_rollups($1,$2,$3)",
+			token, limit, rollupLeaseSeconds,
+		).Scan(&campaignIDs)
+	}); err != nil {
+		return fmt.Errorf("claim changed campaign rollups: %w", err)
+	}
+	processed := make([]uuid.UUID, 0, len(campaignIDs))
+	var rollupErr error
+	for _, campaignID := range campaignIDs {
+		var ok bool
+		err := w.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, "SELECT mailing_rollup_changed_campaign($1)", campaignID).Scan(&ok)
+		})
+		if err != nil {
+			rollupErr = fmt.Errorf("roll up campaign %s: %w", campaignID, err)
+			break
+		}
+		if ok {
+			processed = append(processed, campaignID)
+		}
+	}
+	if len(processed) > 0 {
+		if err := w.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
+			var completed int
+			return tx.QueryRow(ctx,
+				"SELECT mailing_complete_changed_campaign_rollups($1,$2)",
+				token, processed,
+			).Scan(&completed)
+		}); err != nil {
+			return fmt.Errorf("complete changed campaign rollups: %w", err)
+		}
+	}
+	return rollupErr
 }
 
 func (w *SendWorker) claimDeliveries(ctx context.Context) ([]claimedDelivery, error) {
@@ -296,26 +502,26 @@ func (w *SendWorker) compile(d claimedDelivery, p workerProfile) (mailrender.Com
 		contentID = *d.TemplateID
 		contentKind = "template"
 	}
-	key := fmt.Sprintf("%s:%s:%d:profile:%s:%d", contentKind, contentID,
-		d.ContentUpdatedAt.UnixNano(), p.provider.ID, p.provider.UpdatedAt.UnixNano())
-	if cached, ok := w.compiled.Load(key); ok {
-		return cached.(mailrender.Compiled), nil
+	key := compiledCacheKey{
+		contentKind: contentKind, contentID: contentID,
+		contentVersion: d.ContentUpdatedAt.UnixNano(),
+		profileID:      p.provider.ID, profileVersion: p.provider.UpdatedAt.UnixNano(),
+	}
+	cache := w.compiledCache()
+	if cached, ok := cache.get(key); ok {
+		return cached, nil
 	}
 	compiled, err := w.Service.Renderer.Compile(mailrender.Input{BodyMarkdown: d.BodyMarkdown,
 		FromName: p.fromName, Preheader: stringValue(d.Preheader),
 		PostalAddress: stringValue(p.postalAddress)})
 	if err == nil {
-		w.compiled.Store(key, compiled)
+		cache.put(key, compiled)
 	}
 	return compiled, err
 }
 
 func (w *SendWorker) resolveProfile(ctx context.Context, profileID uuid.UUID) (workerProfile, error) {
 	return w.Service.resolveSystemProfile(ctx, profileID, false)
-}
-
-func (s *Service) resolveBusinessProfile(ctx context.Context, businessID uuid.UUID) (workerProfile, error) {
-	return s.resolveSystemProfile(ctx, businessID, true)
 }
 
 func (s *Service) resolveSystemProfile(ctx context.Context, id uuid.UUID, byBusiness bool) (workerProfile, error) {

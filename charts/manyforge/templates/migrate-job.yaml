@@ -31,6 +31,15 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           env:
+            # Pre-install hooks cannot rely on the release ConfigMap existing yet.
+            # Supply the production transport boundary directly so config.Load can
+            # dispatch the migrate subcommand without weakening fail-closed startup.
+            - name: MANYFORGE_ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: MANYFORGE_SMTP_HOST
+              value: {{ .Values.smtp.host | quote }}
+            - name: MANYFORGE_SMTP_PORT
+              value: {{ .Values.smtp.port | quote }}
             # Owner-role DSN — distinct from the app's non-superuser DSN
             # (secrets.database) since migrations need DDL privileges the app
             # role should not have.

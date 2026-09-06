@@ -5,12 +5,18 @@ import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/route
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MailingCampaignStatsComponent } from './campaign-stats';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const CAMPAIGN_ID = '22222222-2222-4222-8222-222222222222';
+const LIST_ID = '33333333-3333-4333-8333-333333333333';
+const PROFILE_ID = '44444444-4444-4444-8444-444444444444';
+const CAMPAIGN_URL = `/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}`;
+
 const campaign = {
-  id: 'c1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
-  list_id: 'l1',
-  profile_id: 'p1',
+  id: CAMPAIGN_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
+  list_id: LIST_ID,
+  profile_id: PROFILE_ID,
   name: 'September update',
   subject: 'What is new',
   preheader: null,
@@ -39,7 +45,7 @@ const campaign = {
 
 const delivery = {
   id: 'd1',
-  campaign_id: 'c1',
+  campaign_id: CAMPAIGN_ID,
   subscriber_id: 's1',
   email: 'ada@example.com',
   status: 'delivered',
@@ -67,7 +73,7 @@ describe('MailingCampaignStatsComponent', () => {
         {
           provide: ActivatedRoute,
           useValue: {
-            snapshot: { paramMap: convertToParamMap({ businessId: 'b1', campaignId: 'c1' }) },
+            snapshot: { paramMap: convertToParamMap({ businessId: BUSINESS_ID, campaignId: CAMPAIGN_ID }) },
           },
         },
       ],
@@ -83,13 +89,13 @@ describe('MailingCampaignStatsComponent', () => {
   });
 
   function flushInitial(nextCursor: string | null = 'next'): void {
-    http.expectOne('/api/v1/businesses/b1/mailing/campaigns/c1/stats').flush({
+    http.expectOne(`${CAMPAIGN_URL}/stats`).flush({
       campaign,
       links: [{ url: 'https://example.com/docs', click_count: 30, unique_click_count: 24 }],
     });
     const deliveries = http.expectOne(
       (request) =>
-        request.url === '/api/v1/businesses/b1/mailing/campaigns/c1/deliveries' &&
+        request.url === `${CAMPAIGN_URL}/deliveries` &&
         request.params.get('limit') === '50' &&
         !request.params.has('status'),
     );
@@ -114,7 +120,7 @@ describe('MailingCampaignStatsComponent', () => {
     fixture.componentInstance.loadMore();
     const next = http.expectOne(
       (request) =>
-        request.url === '/api/v1/businesses/b1/mailing/campaigns/c1/deliveries' &&
+        request.url === `${CAMPAIGN_URL}/deliveries` &&
         request.params.get('cursor') === 'next',
     );
     next.flush({
@@ -126,7 +132,7 @@ describe('MailingCampaignStatsComponent', () => {
     fixture.componentInstance.setDeliveryStatus('bounced');
     const filtered = http.expectOne(
       (request) =>
-        request.url === '/api/v1/businesses/b1/mailing/campaigns/c1/deliveries' &&
+        request.url === `${CAMPAIGN_URL}/deliveries` &&
         request.params.get('status') === 'bounced' &&
         !request.params.has('cursor'),
     );

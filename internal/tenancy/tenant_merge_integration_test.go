@@ -199,8 +199,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.ReconciliationPlan == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 131 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/131",
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != 136 {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/136",
 				*first.InventoryVersion, *first.SchemaVersion)
 		}
 		if *first.ReconciliationVersion != 1 ||
@@ -211,9 +211,9 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 				first.ReconciliationVersion, first.ReconciliationHash,
 				first.ReconciliationPlan)
 		}
-		if len(first.ReconciliationPlan.Tables) != 68 ||
+		if len(first.ReconciliationPlan.Tables) != 69 ||
 			len(first.ReconciliationPlan.Policies) != 8 {
-			t.Errorf("reconciliation plan tables/policies = %d/%d, want 68/8",
+			t.Errorf("reconciliation plan tables/policies = %d/%d, want 69/8",
 				len(first.ReconciliationPlan.Tables),
 				len(first.ReconciliationPlan.Policies))
 		}
@@ -222,8 +222,8 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Errorf("reconciliation access rule = %q",
 				first.ReconciliationPlan.Access.ScopeRule)
 		}
-		if len(first.TableMetrics) != 68 {
-			t.Errorf("table metrics = %d, want 68", len(first.TableMetrics))
+		if len(first.TableMetrics) != 69 {
+			t.Errorf("table metrics = %d, want 69", len(first.TableMetrics))
 		}
 		if metric := first.TableMetrics["business"]; metric.ContentDigest == "" ||
 			metric.StableIDDigest == "" {

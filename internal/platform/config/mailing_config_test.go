@@ -31,7 +31,9 @@ func TestMailingConfigDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("Load defaults: %v", err)
 	}
 	if cfg.MailingRateRPS != 10 || cfg.MailingRateBurst != 50 || cfg.MailingSendBatch != 100 ||
-		cfg.MailingSendEvery != 2*time.Second || cfg.MailingLease != 2*time.Minute || cfg.MailingMessageDomain != cfg.InboundSystemDomain {
+		cfg.MailingSendEvery != 2*time.Second || cfg.MailingLease != 2*time.Minute ||
+		cfg.MailingFanoutGlobal != 1000 || cfg.MailingFanoutPerCampaign != 250 ||
+		cfg.MailingRollupBatch != 100 || cfg.MailingMessageDomain != cfg.InboundSystemDomain {
 		t.Fatalf("mailing defaults = %#v", cfg)
 	}
 	t.Setenv("MANYFORGE_MAILING_RATE_RPS", "4.5")
@@ -68,5 +70,39 @@ func TestMailingMasterKeyRejectsWrongLength(t *testing.T) {
 	t.Setenv("MANYFORGE_MAILING_MASTER_KEY", base64.StdEncoding.EncodeToString(make([]byte, 31)))
 	if _, err := Load(); err == nil {
 		t.Fatal("expected invalid key error")
+	}
+}
+
+func TestProductionRequiresOutboundSMTPTransport(t *testing.T) {
+	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
+	t.Setenv("MANYFORGE_SMTP_HOST", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected production without outbound SMTP to fail")
+	}
+}
+
+func TestDevelopmentAllowsMetadataOnlyMailSink(t *testing.T) {
+	t.Setenv("MANYFORGE_ENVIRONMENT", "development")
+	t.Setenv("MANYFORGE_SMTP_HOST", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Environment != "development" {
+		t.Fatalf("Environment = %q, want development", cfg.Environment)
+	}
+}
+
+func TestProductionLoadsConfiguredOutboundSMTPTransport(t *testing.T) {
+	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
+	t.Setenv("MANYFORGE_SMTP_HOST", "smtp.example.test")
+	t.Setenv("MANYFORGE_SMTP_PORT", "2525")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Environment != "production" || cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 {
+		t.Fatalf("production SMTP config = environment %q host %q port %d",
+			cfg.Environment, cfg.SMTPHost, cfg.SMTPPort)
 	}
 }

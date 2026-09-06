@@ -41,7 +41,9 @@ type Profile struct {
 	EmailDomainID       *uuid.UUID
 	SESRegion           string
 	SESConfigurationSet string
+	SNSTopicARN        string
 	ResendAPIKey        string
+	ResendWebhookID     string
 	SESAccessKeyID      string
 	SESSecretAccessKey  string
 }

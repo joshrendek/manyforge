@@ -50,13 +50,37 @@ func TestMapResendEvent(t *testing.T) {
 	payload.CreatedAt = "2026-08-30T12:34:56.123Z"
 	payload.Data.EmailID = "email-1"
 	payload.Data.To = []string{"one@example.test", "two@example.test"}
-	events := mapResendEvent(payload, []byte(`{"type":"email.bounced"}`))
-	if len(events) != 2 || events[0].kind != "bounce" || events[0].providerMessageID != "email-1" || events[0].occurredAt == nil {
+	events := mapResendEvent(payload)
+	if len(events) != 2 || events[0].Kind != "bounce" || events[0].ProviderMessageID != "email-1" || events[0].OccurredAt == nil {
 		t.Fatalf("events = %#v", events)
 	}
 	payload.Type = "email.delivery_delayed"
-	if got := mapResendEvent(payload, nil); len(got) != 0 {
+	if got := mapResendEvent(payload); len(got) != 0 {
 		t.Fatalf("delivery_delayed mapped to %#v", got)
+	}
+}
+
+// MF-MAIL-WEBHOOK-001 requires recipient cardinality rejection before mapping
+// and case-insensitive normalization/deduplication within accepted envelopes.
+func TestMFMailWebhook001RecipientArrayIsBoundedAndDeduplicated(t *testing.T) {
+	var oversized resendWebhook
+	oversized.Type = "email.bounced"
+	oversized.Data.EmailID = "email-1"
+	oversized.Data.To = make([]string, maxProviderEventRecipients+1)
+	for i := range oversized.Data.To {
+		oversized.Data.To[i] = fmt.Sprintf("reader-%d@example.test", i)
+	}
+	if events := mapResendEvent(oversized); len(events) != 0 {
+		t.Fatalf("oversized recipient array mapped %d events, want rejection", len(events))
+	}
+
+	var duplicates resendWebhook
+	duplicates.Type = "email.bounced"
+	duplicates.Data.EmailID = "email-1"
+	duplicates.Data.To = []string{" Reader@Example.Test ", "reader@example.test"}
+	events := mapResendEvent(duplicates)
+	if len(events) != 1 || events[0].Recipient != "reader@example.test" {
+		t.Fatalf("deduplicated events = %#v, want one normalized recipient", events)
 	}
 }
 

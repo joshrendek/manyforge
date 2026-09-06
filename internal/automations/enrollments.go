@@ -133,6 +133,9 @@ func (s *Service) Enroll(ctx context.Context, principalID, businessID, automatio
 		if err != nil {
 			return err
 		}
+		if err = requirePermission(ctx, tx, principalID, businessID, root, "mailing.send"); err != nil {
+			return err
+		}
 		automation, err := lockAutomation(ctx, tx, q, businessID, root, automationID)
 		if err != nil {
 			return err
@@ -156,7 +159,9 @@ func (s *Service) Enroll(ctx context.Context, principalID, businessID, automatio
 		var subscriberList uuid.UUID
 		var subscriberStatus string
 		if err = tx.QueryRow(ctx, `SELECT list_id,status::text FROM list_subscriber
-			WHERE id=$1 AND business_id=$2 AND tenant_root_id=$3`, subscriberID, businessID, root).Scan(&subscriberList, &subscriberStatus); err != nil {
+			WHERE id=$1 AND business_id=$2 AND tenant_root_id=$3
+			  AND mailing_list_operational(list_id,business_id,tenant_root_id)`,
+			subscriberID, businessID, root).Scan(&subscriberList, &subscriberStatus); err != nil {
 			return err
 		}
 		if subscriberList != listID || subscriberStatus != "active" {
@@ -197,7 +202,8 @@ func (s *Service) ExitEnrollment(ctx context.Context, principalID, businessID, a
 			return err
 		}
 		row := tx.QueryRow(ctx, `UPDATE automation_enrollment SET status='exited',current_node_id=NULL,
-			wake_at=NULL,lease_expires_at=NULL,exit_reason='manual',finished_at=now(),updated_at=now()
+			wake_at=NULL,lease_expires_at=NULL,claim_generation=claim_generation+1,
+			exit_reason='manual',finished_at=now(),updated_at=now()
 			WHERE id=$1 AND automation_id=$2 AND business_id=$3 AND tenant_root_id=$4 AND status='active'
 			RETURNING id,business_id,tenant_root_id,automation_id,version_id,subscriber_id,status::text,
 			current_node_id,wake_at,node_attempts,last_error,exit_reason,source_event_id,enrolled_at,finished_at,updated_at`,

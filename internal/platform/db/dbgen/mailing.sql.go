@@ -83,6 +83,167 @@ func (q *Queries) CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsPa
 	return items, nil
 }
 
+const checkMailingTestRecipientSuppression = `-- name: CheckMailingTestRecipientSuppression :one
+SELECT
+    NOT mailing_business_operational(
+        $1::uuid,
+        $2::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM mailing_suppression ms
+        WHERE ms.business_id = $1::uuid
+          AND ms.tenant_root_id = $2::uuid
+          AND ms.email = $3::citext
+    )
+    OR EXISTS (
+        SELECT 1 FROM email_suppression es
+        WHERE es.email = $3::citext
+    )
+    OR EXISTS (
+        SELECT 1 FROM list_subscriber s
+        WHERE s.business_id = $1::uuid
+          AND s.tenant_root_id = $2::uuid
+          AND s.email = $3::citext
+          AND s.status <> 'active'
+    ) AS suppressed
+`
+
+type CheckMailingTestRecipientSuppressionParams struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Email        string    `json:"email"`
+}
+
+func (q *Queries) CheckMailingTestRecipientSuppression(ctx context.Context, arg CheckMailingTestRecipientSuppressionParams) (*bool, error) {
+	row := q.db.QueryRow(ctx, checkMailingTestRecipientSuppression, arg.BusinessID, arg.TenantRootID, arg.Email)
+	var suppressed *bool
+	err := row.Scan(&suppressed)
+	return suppressed, err
+}
+
+const claimChangedCampaignRollups = `-- name: ClaimChangedCampaignRollups :many
+
+SELECT unnest(public.mailing_claim_changed_campaign_rollups(
+    $1::uuid,
+    $2::integer,
+    $3::integer
+)::uuid[])::uuid AS campaign_id
+`
+
+type ClaimChangedCampaignRollupsParams struct {
+	ClaimToken   uuid.UUID `json:"claim_token"`
+	Lim          int32     `json:"lim"`
+	LeaseSeconds int32     `json:"lease_seconds"`
+}
+
+// ---- bounded worker claims ----
+func (q *Queries) ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, claimChangedCampaignRollups, arg.ClaimToken, arg.Lim, arg.LeaseSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var campaign_id uuid.UUID
+		if err := rows.Scan(&campaign_id); err != nil {
+			return nil, err
+		}
+		items = append(items, campaign_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimMailingResendProvisioning = `-- name: ClaimMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = $1::uuid,
+    resend_cleanup_required = resend_cleanup_required OR $2::boolean,
+    resend_provisioning_expires_at = now() + interval '2 minutes',
+    status = 'unverified',
+    last_verified_at = NULL,
+    verify_error = NULL,
+    feedback_status = 'pending',
+    feedback_error = NULL,
+    feedback_confirmed_at = NULL
+WHERE id = $3
+  AND tenant_root_id = $4
+  AND updated_at = $5::timestamptz
+  AND mode = 'resend'
+  AND (
+      resend_provisioning_token IS NULL
+      OR resend_provisioning_expires_at <= now()
+  )
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+`
+
+type ClaimMailingResendProvisioningParams struct {
+	Token             uuid.UUID `json:"token"`
+	RequireCleanup    bool      `json:"require_cleanup"`
+	ID                uuid.UUID `json:"id"`
+	TenantRootID      uuid.UUID `json:"tenant_root_id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
+
+func (q *Queries) ClaimMailingResendProvisioning(ctx context.Context, arg ClaimMailingResendProvisioningParams) (MailingSendingProfile, error) {
+	row := q.db.QueryRow(ctx, claimMailingResendProvisioning,
+		arg.Token,
+		arg.RequireCleanup,
+		arg.ID,
+		arg.TenantRootID,
+		arg.ExpectedUpdatedAt,
+	)
+	var i MailingSendingProfile
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Mode,
+		&i.FromEmail,
+		&i.FromName,
+		&i.ReplyTo,
+		&i.PostalAddress,
+		&i.EmailDomainID,
+		&i.SecretRef,
+		&i.SesRegion,
+		&i.SesConfigurationSet,
+		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.VerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
+	)
+	return i, err
+}
+
+const completeChangedCampaignRollups = `-- name: CompleteChangedCampaignRollups :one
+SELECT public.mailing_complete_changed_campaign_rollups(
+    $1::uuid,
+    $2::uuid[]
+)::integer
+`
+
+type CompleteChangedCampaignRollupsParams struct {
+	ClaimToken  uuid.UUID   `json:"claim_token"`
+	CampaignIds []uuid.UUID `json:"campaign_ids"`
+}
+
+func (q *Queries) CompleteChangedCampaignRollups(ctx context.Context, arg CompleteChangedCampaignRollupsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, completeChangedCampaignRollups, arg.ClaimToken, arg.CampaignIds)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteCampaign = `-- name: DeleteCampaign :one
 DELETE FROM campaign
 WHERE id = $1 AND tenant_root_id = $2 AND status IN ('draft', 'cancelled')
@@ -136,7 +297,7 @@ func (q *Queries) DeleteCampaign(ctx context.Context, arg DeleteCampaignParams) 
 const deleteMailingSendingProfile = `-- name: DeleteMailingSendingProfile :one
 DELETE FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type DeleteMailingSendingProfileParams struct {
@@ -161,11 +322,17 @@ func (q *Queries) DeleteMailingSendingProfile(ctx context.Context, arg DeleteMai
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -402,7 +569,7 @@ func (q *Queries) GetMailingList(ctx context.Context, arg GetMailingListParams) 
 
 const getMailingSendingProfile = `-- name: GetMailingSendingProfile :one
 
-SELECT id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at FROM mailing_sending_profile
+SELECT id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at FROM mailing_sending_profile
 WHERE business_id = $1 AND tenant_root_id = $2
 `
 
@@ -429,11 +596,17 @@ func (q *Queries) GetMailingSendingProfile(ctx context.Context, arg GetMailingSe
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -726,7 +899,7 @@ INSERT INTO mailing_sending_profile (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
     'unverified', now(), now()
 )
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type InsertMailingSendingProfileParams struct {
@@ -776,11 +949,17 @@ func (q *Queries) InsertMailingSendingProfile(ctx context.Context, arg InsertMai
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -1936,6 +2115,54 @@ func (q *Queries) ListSubscribersForExportAfter(ctx context.Context, arg ListSub
 	return items, nil
 }
 
+const releaseMailingResendProvisioning = `-- name: ReleaseMailingResendProvisioning :one
+UPDATE mailing_sending_profile SET
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL
+WHERE id = $1
+  AND tenant_root_id = $2
+  AND resend_provisioning_token = $3::uuid
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+`
+
+type ReleaseMailingResendProvisioningParams struct {
+	ID           uuid.UUID `json:"id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	Token        uuid.UUID `json:"token"`
+}
+
+func (q *Queries) ReleaseMailingResendProvisioning(ctx context.Context, arg ReleaseMailingResendProvisioningParams) (MailingSendingProfile, error) {
+	row := q.db.QueryRow(ctx, releaseMailingResendProvisioning, arg.ID, arg.TenantRootID, arg.Token)
+	var i MailingSendingProfile
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Mode,
+		&i.FromEmail,
+		&i.FromName,
+		&i.ReplyTo,
+		&i.PostalAddress,
+		&i.EmailDomainID,
+		&i.SecretRef,
+		&i.SesRegion,
+		&i.SesConfigurationSet,
+		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.VerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
+	)
+	return i, err
+}
+
 const revokeMailingListKey = `-- name: RevokeMailingListKey :one
 UPDATE mailing_list_key SET status = 'revoked', revoked_at = now()
 WHERE id = $1 AND tenant_root_id = $2 AND status = 'enabled'
@@ -1985,6 +2212,7 @@ WHERE c.id = $2
   AND l.business_id = c.business_id AND l.status = 'active'
   AND p.business_id = c.business_id AND p.tenant_root_id = c.tenant_root_id
   AND p.status = 'verified'
+  AND p.feedback_status = 'ready'
 RETURNING c.id, c.business_id, c.tenant_root_id, c.list_id, c.profile_id, c.name, c.subject, c.preheader, c.body_markdown, c.tag_filter, c.track_opens, c.track_clicks, c.status, c.scheduled_at, c.started_at, c.completed_at, c.fanout_cursor, c.fanout_done, c.recipient_count, c.sent_count, c.delivered_count, c.bounced_count, c.complained_count, c.opened_count, c.clicked_count, c.unsubscribed_count, c.failed_count, c.last_error, c.created_by, c.created_at, c.updated_at
 `
 
@@ -2041,20 +2269,98 @@ func (q *Queries) ScheduleCampaign(ctx context.Context, arg ScheduleCampaignPara
 	return i, err
 }
 
+const setMailingResendWebhookVerification = `-- name: SetMailingResendWebhookVerification :one
+UPDATE mailing_sending_profile SET
+    secret_ref = $1::uuid,
+    status = 'verified',
+    last_verified_at = now(),
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
+    verify_error = NULL,
+    feedback_status = 'ready',
+    feedback_error = NULL,
+    feedback_confirmed_at = now(),
+    updated_at = now()
+WHERE id = $2
+  AND tenant_root_id = $3
+  AND updated_at = $4::timestamptz
+  AND resend_provisioning_token = $5::uuid
+  AND mode = 'resend'
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
+`
+
+type SetMailingResendWebhookVerificationParams struct {
+	SecretRef         uuid.UUID `json:"secret_ref"`
+	ID                uuid.UUID `json:"id"`
+	TenantRootID      uuid.UUID `json:"tenant_root_id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+	Token             uuid.UUID `json:"token"`
+}
+
+// Resend provisioning performs provider I/O before this CAS. Persist the
+// provider-generated webhook credential and readiness atomically.
+func (q *Queries) SetMailingResendWebhookVerification(ctx context.Context, arg SetMailingResendWebhookVerificationParams) (MailingSendingProfile, error) {
+	row := q.db.QueryRow(ctx, setMailingResendWebhookVerification,
+		arg.SecretRef,
+		arg.ID,
+		arg.TenantRootID,
+		arg.ExpectedUpdatedAt,
+		arg.Token,
+	)
+	var i MailingSendingProfile
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Mode,
+		&i.FromEmail,
+		&i.FromName,
+		&i.ReplyTo,
+		&i.PostalAddress,
+		&i.EmailDomainID,
+		&i.SecretRef,
+		&i.SesRegion,
+		&i.SesConfigurationSet,
+		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.VerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
+	)
+	return i, err
+}
+
 const setMailingSendingProfileVerification = `-- name: SetMailingSendingProfileVerification :one
 UPDATE mailing_sending_profile SET
     status = $1::text,
     last_verified_at = CASE WHEN $1::text = 'verified' THEN now() ELSE NULL END,
-    verify_error = NULLIF($2::text, '')
-WHERE id = $3
-  AND tenant_root_id = $4
-  AND updated_at = $5::timestamptz
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+    verify_error = NULLIF($2::text, ''),
+    feedback_status = $3::text,
+    feedback_error = NULLIF($4::text, ''),
+    feedback_confirmed_at = CASE
+        WHEN $3::text = 'ready'
+            THEN COALESCE(feedback_confirmed_at, now())
+        ELSE NULL
+    END
+WHERE id = $5
+  AND tenant_root_id = $6
+  AND updated_at = $7::timestamptz
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type SetMailingSendingProfileVerificationParams struct {
 	Status            string    `json:"status"`
 	VerifyError       string    `json:"verify_error"`
+	FeedbackStatus    string    `json:"feedback_status"`
+	FeedbackError     string    `json:"feedback_error"`
 	ID                uuid.UUID `json:"id"`
 	TenantRootID      uuid.UUID `json:"tenant_root_id"`
 	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
@@ -2067,6 +2373,8 @@ func (q *Queries) SetMailingSendingProfileVerification(ctx context.Context, arg 
 	row := q.db.QueryRow(ctx, setMailingSendingProfileVerification,
 		arg.Status,
 		arg.VerifyError,
+		arg.FeedbackStatus,
+		arg.FeedbackError,
 		arg.ID,
 		arg.TenantRootID,
 		arg.ExpectedUpdatedAt,
@@ -2086,11 +2394,17 @@ func (q *Queries) SetMailingSendingProfileVerification(ctx context.Context, arg 
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }
@@ -2363,9 +2677,13 @@ UPDATE mailing_sending_profile SET
     ses_configuration_set = $11,
     sns_topic_arn = $12,
     status = 'unverified', last_verified_at = NULL, verify_error = NULL,
+    feedback_status = 'pending', feedback_error = NULL, feedback_confirmed_at = NULL,
+    resend_provisioning_token = NULL,
+    resend_provisioning_expires_at = NULL,
+    resend_cleanup_required = false,
     updated_at = now()
 WHERE business_id = $1 AND tenant_root_id = $2
-RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, status, last_verified_at, verify_error, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, mode, from_email, from_name, reply_to, postal_address, email_domain_id, secret_ref, ses_region, ses_configuration_set, sns_topic_arn, resend_provisioning_token, resend_provisioning_expires_at, resend_cleanup_required, status, last_verified_at, verify_error, created_at, updated_at, feedback_status, feedback_error, feedback_confirmed_at
 `
 
 type UpdateMailingSendingProfileParams struct {
@@ -2413,11 +2731,17 @@ func (q *Queries) UpdateMailingSendingProfile(ctx context.Context, arg UpdateMai
 		&i.SesRegion,
 		&i.SesConfigurationSet,
 		&i.SnsTopicArn,
+		&i.ResendProvisioningToken,
+		&i.ResendProvisioningExpiresAt,
+		&i.ResendCleanupRequired,
 		&i.Status,
 		&i.LastVerifiedAt,
 		&i.VerifyError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FeedbackStatus,
+		&i.FeedbackError,
+		&i.FeedbackConfirmedAt,
 	)
 	return i, err
 }

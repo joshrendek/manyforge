@@ -654,13 +654,9 @@ func main() {
 	}, logger)
 	eventBus.Subscribe(events.TopicBusinessCreated, inboxProvisioner.Handle)
 
-	// US2 outbound send worker (T039): drains ticket.replied → builds the threaded
-	// Mail (From/Reply-To on the business's system inbound address) → dispatches via
-	// the Sender → records delivery_state. Registered BEFORE the worker starts so no
-	// reply event is drained without a handler. Sender selection: a configured SMTP
-	// relay (MANYFORGE_SMTP_HOST) uses the real SMTPSender (optionally DKIM-signed);
-	// otherwise the dev LogSender logs the threaded reply. Both honor the suppression
-	// list. The handler is idempotent (skips a message already 'sent').
+	// Outbound mail uses a real SMTP transport whenever configured. The
+	// metadata-only LogSender is restricted to development and reports every
+	// message as non-accepted; production without SMTP is a startup error.
 	var sender notify.Sender
 	if cfg.SMTPHost != "" {
 		dkimCfg, derr := dkimConfigFromCfg(cfg)
@@ -675,9 +671,12 @@ func main() {
 			DKIM: dkimCfg, // nil ⇒ unsigned (the locked default when no DKIM key is configured)
 		}, notify.DBSuppression{DB: database})
 		logger.Info("outbound mail via SMTP relay", "host", cfg.SMTPHost, "dkim", dkimCfg != nil)
-	} else {
+	} else if cfg.Environment == "development" {
 		sender = notify.LogSender{Logger: logger, Suppression: notify.DBSuppression{DB: database}}
-		logger.Warn("MANYFORGE_SMTP_HOST unset; outbound replies are logged, not sent (dev LogSender)")
+		logger.Warn("MANYFORGE_SMTP_HOST unset; development mail sink is non-accepting")
+	} else {
+		logger.Error("outbound SMTP transport is required outside development")
+		os.Exit(1)
 	}
 	if mailingSvc != nil {
 		renderer, renderErr := mailrender.New()
@@ -695,9 +694,12 @@ func main() {
 		mailingSvc.MessageDomain = cfg.MailingMessageDomain
 		mailingWorker = &mailing.SendWorker{
 			Service: mailingSvc, Batch: cfg.MailingSendBatch, Lease: cfg.MailingLease,
-			Every:   cfg.MailingSendEvery,
+			Every: cfg.MailingSendEvery,
+			FanoutGlobal: cfg.MailingFanoutGlobal,
+			FanoutPerCampaign: cfg.MailingFanoutPerCampaign,
+			RollupBatch: cfg.MailingRollupBatch,
 			Limiter: ratelimit.NewTokenBucket(cfg.MailingRateRPS, cfg.MailingRateBurst),
-			Logger:  logger,
+			Logger: logger,
 		}
 		automationPorts := mailing.AutomationPorts{MessageDomain: cfg.MailingMessageDomain}
 		automationTrigger := automations.TriggerSubscriber{Subscribers: automationPorts}

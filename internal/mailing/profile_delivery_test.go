@@ -2,6 +2,7 @@ package mailing
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -30,6 +31,54 @@ func TestSendingProfileRejectsInvalidFromName(t *testing.T) {
 		}
 	}
 }
+func TestSendingProfileRequiresFeedbackConfiguration(t *testing.T) {
+	region := "us-east-1"
+	configSet := "campaign-events"
+	topic := "arn:aws:sns:us-west-2:123456789012:mailing-events"
+	tests := []struct {
+		name string
+		in   SendingProfileInput
+	}{
+		{
+			name: "SES configuration set",
+			in: SendingProfileInput{
+				Mode: "ses", FromEmail: "sender@example.com", FromName: "Sender",
+				SES: &SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+				SESRegion: &region, SNSTopicARN: &topic,
+			},
+		},
+		{
+			name: "SES topic region binding",
+			in: SendingProfileInput{
+				Mode: "ses", FromEmail: "sender@example.com", FromName: "Sender",
+				SES: &SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+				SESRegion: &region, SESConfigurationSet: &configSet, SNSTopicARN: &topic,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (&Service{}).PutSendingProfile(t.Context(), uuid.New(), uuid.New(), tt.in)
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("PutSendingProfile error = %v, want validation", err)
+			}
+		})
+	}
+}
+
+func TestResendCredentialsDoNotAcceptTenantWebhookSecret(t *testing.T) {
+	if _, ok := reflect.TypeOf(ResendCredentials{}).FieldByName("WebhookSecret"); ok {
+		t.Fatal("tenant-facing Resend credentials expose a webhook secret")
+	}
+}
+
+func TestProviderVerificationMessageIsGeneric(t *testing.T) {
+	got := providerVerificationMessage(errors.New("upstream response includes tenant secret"))
+	if got != "provider verification failed" {
+		t.Fatalf("providerVerificationMessage = %q", got)
+	}
+}
+
 
 func TestSafeProviderMessageTruncatesByRune(t *testing.T) {
 	message := strings.Repeat("é", 501)

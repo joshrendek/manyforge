@@ -1283,31 +1283,35 @@ type AutomationEnrollmentStep struct {
 }
 
 type AutomationEvent struct {
-	ID             uuid.UUID   `json:"id"`
-	BusinessID     uuid.UUID   `json:"business_id"`
-	TenantRootID   uuid.UUID   `json:"tenant_root_id"`
-	Name           string      `json:"name"`
-	Email          string      `json:"email"`
-	SubscriberID   pgtype.UUID `json:"subscriber_id"`
-	OccurredAt     time.Time   `json:"occurred_at"`
-	Properties     []byte      `json:"properties"`
-	IdempotencyKey *string     `json:"idempotency_key"`
-	CreatedAt      time.Time   `json:"created_at"`
+	ID                 uuid.UUID   `json:"id"`
+	BusinessID         uuid.UUID   `json:"business_id"`
+	TenantRootID       uuid.UUID   `json:"tenant_root_id"`
+	Name               string      `json:"name"`
+	Email              string      `json:"email"`
+	SubscriberID       pgtype.UUID `json:"subscriber_id"`
+	OccurredAt         time.Time   `json:"occurred_at"`
+	Properties         []byte      `json:"properties"`
+	IdempotencyKey     *string     `json:"idempotency_key"`
+	CreatedAt          time.Time   `json:"created_at"`
+	IngressListID      pgtype.UUID `json:"ingress_list_id"`
+	IngressKeyID       pgtype.UUID `json:"ingress_key_id"`
+	RequestFingerprint []byte      `json:"request_fingerprint"`
 }
 
 type AutomationVersion struct {
-	ID           uuid.UUID               `json:"id"`
-	BusinessID   uuid.UUID               `json:"business_id"`
-	TenantRootID uuid.UUID               `json:"tenant_root_id"`
-	AutomationID uuid.UUID               `json:"automation_id"`
-	Number       int32                   `json:"number"`
-	Status       AutomationVersionStatus `json:"status"`
-	Graph        []byte                  `json:"graph"`
-	TriggerKind  *string                 `json:"trigger_kind"`
-	TriggerRef   *string                 `json:"trigger_ref"`
-	ActivatedAt  pgtype.Timestamptz      `json:"activated_at"`
-	CreatedAt    time.Time               `json:"created_at"`
-	UpdatedAt    time.Time               `json:"updated_at"`
+	ID              uuid.UUID               `json:"id"`
+	BusinessID      uuid.UUID               `json:"business_id"`
+	TenantRootID    uuid.UUID               `json:"tenant_root_id"`
+	AutomationID    uuid.UUID               `json:"automation_id"`
+	Number          int32                   `json:"number"`
+	Status          AutomationVersionStatus `json:"status"`
+	Graph           []byte                  `json:"graph"`
+	TriggerKind     *string                 `json:"trigger_kind"`
+	TriggerRef      *string                 `json:"trigger_ref"`
+	ActivatedAt     pgtype.Timestamptz      `json:"activated_at"`
+	CreatedAt       time.Time               `json:"created_at"`
+	UpdatedAt       time.Time               `json:"updated_at"`
+	ContentSnapshot []byte                  `json:"content_snapshot"`
 }
 
 type Business struct {
@@ -1670,6 +1674,15 @@ type ListSubscriber struct {
 	UpdatedAt         time.Time               `json:"updated_at"`
 }
 
+type MailingCampaignRollupQueue struct {
+	CampaignID   uuid.UUID          `json:"campaign_id"`
+	BusinessID   uuid.UUID          `json:"business_id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	ChangedAt    time.Time          `json:"changed_at"`
+	ClaimToken   pgtype.UUID        `json:"claim_token"`
+	LeaseUntil   pgtype.Timestamptz `json:"lease_until"`
+}
+
 type MailingDelivery struct {
 	ID                uuid.UUID             `json:"id"`
 	BusinessID        uuid.UUID             `json:"business_id"`
@@ -1721,34 +1734,45 @@ type MailingListKey struct {
 }
 
 type MailingProviderWebhookDelivery struct {
-	ID              uuid.UUID `json:"id"`
-	BusinessID      uuid.UUID `json:"business_id"`
-	TenantRootID    uuid.UUID `json:"tenant_root_id"`
-	ProfileID       uuid.UUID `json:"profile_id"`
-	Provider        string    `json:"provider"`
-	ExternalEventID string    `json:"external_event_id"`
-	ReceivedAt      time.Time `json:"received_at"`
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	TenantRootID     uuid.UUID          `json:"tenant_root_id"`
+	ProfileID        uuid.UUID          `json:"profile_id"`
+	Provider         string             `json:"provider"`
+	ExternalEventID  string             `json:"external_event_id"`
+	ReceivedAt       time.Time          `json:"received_at"`
+	EnvelopePayload  []byte             `json:"envelope_payload"`
+	NormalizedEvents []byte             `json:"normalized_events"`
+	ProcessingStatus string             `json:"processing_status"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	AppliedAt        pgtype.Timestamptz `json:"applied_at"`
 }
 
 type MailingSendingProfile struct {
-	ID                  uuid.UUID          `json:"id"`
-	BusinessID          uuid.UUID          `json:"business_id"`
-	TenantRootID        uuid.UUID          `json:"tenant_root_id"`
-	Mode                MailingSendMode    `json:"mode"`
-	FromEmail           string             `json:"from_email"`
-	FromName            string             `json:"from_name"`
-	ReplyTo             *string            `json:"reply_to"`
-	PostalAddress       *string            `json:"postal_address"`
-	EmailDomainID       pgtype.UUID        `json:"email_domain_id"`
-	SecretRef           pgtype.UUID        `json:"secret_ref"`
-	SesRegion           *string            `json:"ses_region"`
-	SesConfigurationSet *string            `json:"ses_configuration_set"`
-	SnsTopicArn         *string            `json:"sns_topic_arn"`
-	Status              string             `json:"status"`
-	LastVerifiedAt      pgtype.Timestamptz `json:"last_verified_at"`
-	VerifyError         *string            `json:"verify_error"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
+	ID                          uuid.UUID          `json:"id"`
+	BusinessID                  uuid.UUID          `json:"business_id"`
+	TenantRootID                uuid.UUID          `json:"tenant_root_id"`
+	Mode                        MailingSendMode    `json:"mode"`
+	FromEmail                   string             `json:"from_email"`
+	FromName                    string             `json:"from_name"`
+	ReplyTo                     *string            `json:"reply_to"`
+	PostalAddress               *string            `json:"postal_address"`
+	EmailDomainID               pgtype.UUID        `json:"email_domain_id"`
+	SecretRef                   pgtype.UUID        `json:"secret_ref"`
+	SesRegion                   *string            `json:"ses_region"`
+	SesConfigurationSet         *string            `json:"ses_configuration_set"`
+	SnsTopicArn                 *string            `json:"sns_topic_arn"`
+	ResendProvisioningToken     pgtype.UUID        `json:"resend_provisioning_token"`
+	ResendProvisioningExpiresAt pgtype.Timestamptz `json:"resend_provisioning_expires_at"`
+	ResendCleanupRequired       bool               `json:"resend_cleanup_required"`
+	Status                      string             `json:"status"`
+	LastVerifiedAt              pgtype.Timestamptz `json:"last_verified_at"`
+	VerifyError                 *string            `json:"verify_error"`
+	CreatedAt                   time.Time          `json:"created_at"`
+	UpdatedAt                   time.Time          `json:"updated_at"`
+	FeedbackStatus              string             `json:"feedback_status"`
+	FeedbackError               *string            `json:"feedback_error"`
+	FeedbackConfirmedAt         pgtype.Timestamptz `json:"feedback_confirmed_at"`
 }
 
 type MailingSuppression struct {

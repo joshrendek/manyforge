@@ -198,6 +198,39 @@ func TestAutomationTriggersEventsEnrollmentsStatsAndGoldenScenario(t *testing.T)
 		t.Fatalf("foreign event subscriber error=%v", err)
 	}
 
+	t.Run("AUTOMATION-EVENT-TIME-004 rejects future events and excludes not-yet-occurred events", func(t *testing.T) {
+		email := "future-condition@example.test"
+		future := time.Now().UTC().Add(24 * time.Hour)
+		if _, err := service.CreateEvent(ctx, seed.principalID, seed.businessID, automations.EventInput{
+			Name: "audit_future", Email: &email, OccurredAt: &future,
+		}); !errors.Is(err, errs.ErrValidation) {
+			t.Fatalf("future event error = %v, want validation", err)
+		}
+
+		nearFuture := time.Now().UTC().Add(time.Minute)
+		if _, err := database.Super.Exec(ctx, `INSERT INTO automation_event
+			(business_id,tenant_root_id,name,email,occurred_at,properties)
+			VALUES ($1,$1,'audit_future',$2,$3,'{}')`,
+			seed.businessID, email, nearFuture); err != nil {
+			t.Fatal(err)
+		}
+		within := time.Hour
+		exists := true
+		if err := database.App.WithTx(ctx, func(tx pgx.Tx) error {
+			var eventErr error
+			exists, eventErr = (automations.SQLStepStore{}).EventExists(
+				ctx, tx, seed.businessID, list.ID, email, "audit_future",
+				time.Now().UTC().Add(-time.Minute), time.Now().UTC(), &within,
+			)
+			return eventErr
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Fatal("future-dated event satisfied a condition before its occurrence time")
+		}
+	})
+
 	operationID := uuid.New()
 	if _, err = database.Super.Exec(ctx, `INSERT INTO tenant_merge_operation
 		(id,source_root_id,destination_parent_id,destination_root_id,actor_principal_id,idempotency_key,request_hash,status)

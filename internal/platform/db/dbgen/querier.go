@@ -35,7 +35,12 @@ type Querier interface {
 	// new message; runs in the same tx as the message insert.
 	BumpTicketActivity(ctx context.Context, arg BumpTicketActivityParams) error
 	CampaignLinkStats(ctx context.Context, arg CampaignLinkStatsParams) ([]CampaignLinkStatsRow, error)
+	CheckMailingTestRecipientSuppression(ctx context.Context, arg CheckMailingTestRecipientSuppressionParams) (*bool, error)
+	// ---- bounded worker claims ----
+	ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error)
+	ClaimMailingResendProvisioning(ctx context.Context, arg ClaimMailingResendProvisioningParams) (MailingSendingProfile, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
+	CompleteChangedCampaignRollups(ctx context.Context, arg CompleteChangedCampaignRollupsParams) (int32, error)
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
 	// sealed credential blob for the principal-less webhook handler to build the typed connector
 	// and verify the HMAC signature in Go. Returns no row if the connector does not exist or is
@@ -49,6 +54,7 @@ type Querier interface {
 	// the caller in this business. Used to validate a review fallback chain: count != len(ids)
 	// ⇒ an unknown/foreign agent id ⇒ reject (no existence oracle; RLS scopes visibility).
 	CountAgentsInBusiness(ctx context.Context, arg CountAgentsInBusinessParams) (int64, error)
+	CountAutomationVersions(ctx context.Context, arg CountAutomationVersionsParams) (int64, error)
 	// Direct Owners (locked role) whose membership is AT this business. At the tenant
 	// root this is the last-Owner count guarded by FR-014/FR-024.
 	CountDirectOwners(ctx context.Context, businessID uuid.UUID) (int64, error)
@@ -574,7 +580,8 @@ type Querier interface {
 	// RLS scopes audit_entry to the caller's authorized businesses; the service
 	// additionally gates on audit.read. Projection omits new_value/old_value.
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
-	ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]AutomationVersion, error)
+	ListAutomationVersions(ctx context.Context, arg ListAutomationVersionsParams) ([]ListAutomationVersionsRow, error)
+	ListAutomationVersionsAfter(ctx context.Context, arg ListAutomationVersionsAfterParams) ([]ListAutomationVersionsAfterRow, error)
 	ListAutomations(ctx context.Context, arg ListAutomationsParams) ([]Automation, error)
 	ListAutomationsAfter(ctx context.Context, arg ListAutomationsAfterParams) ([]Automation, error)
 	// RLS scopes the result to businesses the caller can see.
@@ -737,6 +744,7 @@ type Querier interface {
 	// Run-path: the discovery loop reads this under the AGENT principal (RLS scopes it to the
 	// agent's business) to classify discovered tools.
 	ListToolPoliciesByServer(ctx context.Context, mcpServerID uuid.UUID) ([]ListToolPoliciesByServerRow, error)
+	LockAutomationVersion(ctx context.Context, arg LockAutomationVersionParams) (AutomationVersion, error)
 	// Idempotency claim: flip approved -> executed iff still approved. Zero rows means a
 	// prior delivery already executed it (or it was denied) -> the executor skips.
 	MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExecutedParams) (ApprovalItem, error)
@@ -761,6 +769,7 @@ type Querier interface {
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).
 	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
+	PruneAutomationVersions(ctx context.Context, arg PruneAutomationVersionsParams) (int64, error)
 	// ReadCodexCredential is the lazy fast-path read (no lock): if the access token is still fresh
 	// the caller returns it without a network refresh.
 	ReadCodexCredential(ctx context.Context, businessID uuid.UUID) (ReadCodexCredentialRow, error)
@@ -781,6 +790,7 @@ type Querier interface {
 	// shape). NEVER a hard DELETE (Principle VI / FR-014). Returns tenant_root_id +
 	// redacted_at for the in-tx audit and the per-blob purge enqueue.
 	RedactTicket(ctx context.Context, arg RedactTicketParams) (RedactTicketRow, error)
+	ReleaseMailingResendProvisioning(ctx context.Context, arg ReleaseMailingResendProvisioningParams) (MailingSendingProfile, error)
 	// Restore connector_id on the re-adopted tickets' messages. Gated on external_id IS NOT NULL to
 	// satisfy ticket_message_connector_external_chk (connector_id set ⇒ external_id present); messages
 	// without an external id correctly stay native.
@@ -835,6 +845,9 @@ type Querier interface {
 	// attempts and leave these columns alone.
 	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
 	SetFeedbackPostStatus(ctx context.Context, arg SetFeedbackPostStatusParams) (FeedbackPost, error)
+	// Resend provisioning performs provider I/O before this CAS. Persist the
+	// provider-generated webhook credential and readiness atomically.
+	SetMailingResendWebhookVerification(ctx context.Context, arg SetMailingResendWebhookVerificationParams) (MailingSendingProfile, error)
 	// Verification performs provider I/O with no transaction open. The updated_at
 	// compare prevents a slow response from marking credentials verified after an
 	// operator rotated the profile concurrently.

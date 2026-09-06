@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/manyforge/manyforge/internal/authz"
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -32,13 +33,23 @@ type PreviewInput struct {
 // held open, then records either verified or error. Provider verification
 // failures are an expected result and return the updated profile with HTTP 200.
 func (s *Service) VerifySendingProfile(ctx context.Context, principalID, businessID uuid.UUID) (SendingProfile, error) {
+	if err := s.authorizeSendingProfileVerification(ctx, principalID, businessID); err != nil {
+		return SendingProfile{}, err
+	}
 	profile, providerProfile, err := s.loadProviderProfile(ctx, principalID, businessID)
 	if err != nil {
 		return SendingProfile{}, err
 	}
+	var resendProvisioningToken uuid.UUID
+	if profile.Mode == "resend" {
+		resendProvisioningToken, err = s.claimResendProvisioning(ctx, principalID, profile)
+		if err != nil {
+			return SendingProfile{}, err
+		}
+	}
+	var deliverer mailprovider.Deliverer
 	verifyErr := errors.New("provider resolution is not configured")
 	if s.Providers != nil {
-		var deliverer mailprovider.Deliverer
 		deliverer, verifyErr = s.Providers.Resolve(ctx, providerProfile)
 		if verifyErr == nil {
 			verifier, ok := deliverer.(mailprovider.Verifier)
@@ -49,16 +60,61 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 			}
 		}
 	}
+	if verifyErr == nil && profile.Mode == "resend" {
+		provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner)
+		if !ok {
+			verifyErr = errors.New("provider does not support Resend webhook provisioning")
+		} else if baseURL := strings.TrimRight(strings.TrimSpace(s.PublicBaseURL), "/"); baseURL == "" {
+			verifyErr = errors.New("mailing public base URL is not configured")
+		} else {
+			endpoint := baseURL + "/inbound/mailing/" + profile.ID.String() + "/resend"
+			webhook, _, provisionErr := provisioner.EnsureWebhook(ctx, endpoint, providerProfile.ResendWebhookID)
+			if provisionErr != nil {
+				verifyErr = provisionErr
+			} else {
+				out, persistErr := s.persistResendWebhookVerification(
+					ctx, principalID, businessID, profile, providerProfile.ResendAPIKey,
+					webhook, resendProvisioningToken)
+				if persistErr != nil {
+					s.releaseResendProvisioning(ctx, principalID, profile, resendProvisioningToken)
+				}
+				return out, persistErr
+			}
+		}
+	}
+	if resendProvisioningToken != uuid.Nil {
+		s.releaseResendProvisioning(ctx, principalID, profile, resendProvisioningToken)
+	}
 	status, message := "verified", ""
 	if verifyErr != nil {
-		status, message = "error", safeProviderMessage(verifyErr)
+		status, message = "error", providerVerificationMessage(verifyErr)
+	}
+	feedbackStatus, feedbackMessage := profile.FeedbackStatus, ""
+	switch profile.Mode {
+	case "resend":
+		feedbackStatus = "pending"
+	case "relay":
+		if verifyErr == nil {
+			feedbackStatus = "ready"
+		} else {
+			feedbackStatus, feedbackMessage = "error", message
+		}
+	case "ses":
+		if feedbackStatus != "ready" {
+			feedbackStatus = "pending"
+		}
 	}
 
 	var out SendingProfile
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		if err := requireSendingProfileVerification(ctx, tx, principalID, businessID, profile.TenantRootID); err != nil {
+			return err
+		}
 		row, err := dbgen.New(tx).SetMailingSendingProfileVerification(ctx, dbgen.SetMailingSendingProfileVerificationParams{
-			Status: status, VerifyError: message, ID: profile.ID,
-			TenantRootID: profile.TenantRootID, ExpectedUpdatedAt: profile.UpdatedAt,
+			Status: status, VerifyError: message,
+			FeedbackStatus: feedbackStatus, FeedbackError: feedbackMessage,
+			ID: profile.ID, TenantRootID: profile.TenantRootID,
+			ExpectedUpdatedAt: profile.UpdatedAt,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -77,19 +133,157 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	return out, mapErr(err)
 }
 
-// TestSendingProfile sends a live sample message through a verified profile and
+
+func (s *Service) persistResendWebhookVerification(
+	ctx context.Context,
+	principalID, businessID uuid.UUID,
+	profile SendingProfile,
+	apiKey string,
+	webhook mailprovider.ResendWebhook,
+	provisioningToken uuid.UUID,
+) (SendingProfile, error) {
+	if s.Vault == nil {
+		return SendingProfile{}, validation("mailing credential storage is not configured")
+	}
+	raw, err := json.Marshal(resendStoredCredentials{
+		Version: 2, APIKey: apiKey, WebhookID: webhook.ID, WebhookSecret: webhook.SigningSecret,
+	})
+	if err != nil {
+		return SendingProfile{}, errors.New("mailing: encode Resend webhook credential")
+	}
+	defer clear(raw)
+	var out SendingProfile
+	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		if err := requireSendingProfileVerification(ctx, tx, principalID, businessID, profile.TenantRootID); err != nil {
+			return err
+		}
+		q := dbgen.New(tx)
+		current, err := q.GetMailingSendingProfile(ctx, dbgen.GetMailingSendingProfileParams{
+			BusinessID: businessID, TenantRootID: profile.TenantRootID,
+		})
+		if err != nil {
+			return err
+		}
+		newSecretID, err := s.Vault.Put(ctx, tx, businessID, "mailing", raw)
+		if err != nil {
+			return err
+		}
+		row, err := q.SetMailingResendWebhookVerification(ctx, dbgen.SetMailingResendWebhookVerificationParams{
+			SecretRef: newSecretID, ID: profile.ID, TenantRootID: profile.TenantRootID,
+			ExpectedUpdatedAt: profile.UpdatedAt, Token: provisioningToken,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("mailing: profile changed during Resend webhook provisioning: %w", errs.ErrConflict)
+			}
+			return err
+		}
+		if current.SecretRef.Valid {
+			if err := s.Vault.Delete(ctx, tx, businessID, uuid.UUID(current.SecretRef.Bytes)); err != nil &&
+				!errors.Is(err, errs.ErrNotFound) {
+				return err
+			}
+		}
+		if err := auditMutation(ctx, tx, principalID, businessID, profile.TenantRootID,
+			"mailing.sending_profile.verified", "mailing_sending_profile", profile.ID,
+			map[string]any{"mode": profile.Mode, "status": "verified", "feedback_status": "ready"}); err != nil {
+			return err
+		}
+		out = toSendingProfile(row)
+		return nil
+	})
+	if err == nil && s.Providers != nil {
+		s.Providers.Invalidate(profile.ID)
+	}
+	return out, mapErr(err)
+}
+func (s *Service) claimResendProvisioning(
+	ctx context.Context, principalID uuid.UUID, profile SendingProfile,
+) (uuid.UUID, error) {
+	token := uuid.New()
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		if err := requireSendingProfileVerification(ctx, tx, principalID, profile.BusinessID, profile.TenantRootID); err != nil {
+			return err
+		}
+		_, err := dbgen.New(tx).ClaimMailingResendProvisioning(ctx, dbgen.ClaimMailingResendProvisioningParams{
+			Token: token, RequireCleanup: true, ID: profile.ID, TenantRootID: profile.TenantRootID,
+			ExpectedUpdatedAt: profile.UpdatedAt,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("mailing: Resend provisioning already in progress: %w", errs.ErrConflict)
+		}
+		return err
+	})
+	if err != nil {
+		return uuid.Nil, mapErr(err)
+	}
+	return token, nil
+}
+
+func (s *Service) releaseResendProvisioning(
+	ctx context.Context, principalID uuid.UUID, profile SendingProfile, token uuid.UUID,
+) {
+	if token == uuid.Nil {
+		return
+	}
+	_ = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		_, err := dbgen.New(tx).ReleaseMailingResendProvisioning(ctx, dbgen.ReleaseMailingResendProvisioningParams{
+			ID: profile.ID, TenantRootID: profile.TenantRootID, Token: token,
+		})
+		return err
+	})
+}
+
+func (s *Service) authorizeSendingProfileVerification(
+	ctx context.Context, principalID, businessID uuid.UUID,
+) error {
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		root, err := resolveTenantRoot(ctx, dbgen.New(tx), businessID)
+		if err != nil {
+			return err
+		}
+		return requireSendingProfileVerification(ctx, tx, principalID, businessID, root)
+	})
+	return mapErr(err)
+}
+
+func requireSendingProfileVerification(
+	ctx context.Context,
+	tx pgx.Tx,
+	principalID, businessID, tenantRootID uuid.UUID,
+) error {
+	var operational bool
+	if err := tx.QueryRow(ctx, `SELECT mailing_business_operational($1,$2)`, businessID, tenantRootID).Scan(&operational); err != nil {
+		return err
+	}
+	if !operational {
+		return errs.ErrNotFound
+	}
+	permissions, err := authz.Resolve(ctx, tx, principalID, businessID)
+	if err != nil {
+		return err
+	}
+	if !permissions.Has(authz.PermMailingSend) {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
 // charges the business outbound limiter before contacting the provider.
 func (s *Service) TestSendingProfile(ctx context.Context, principalID, businessID uuid.UUID, recipient string) error {
 	to, err := normalizeEmail(recipient)
 	if err != nil {
 		return err
 	}
+	if err := s.checkTestRecipientSuppression(ctx, principalID, businessID, to); err != nil {
+		return err
+	}
 	profile, providerProfile, err := s.loadProviderProfile(ctx, principalID, businessID)
 	if err != nil {
 		return err
 	}
-	if profile.Status != "verified" {
-		return validation("sending profile must be verified")
+	if profile.Status != "verified" || profile.FeedbackStatus != "ready" {
+		return validation("sending profile must be verified and feedback-ready")
 	}
 	if s.OutboundLimiter != nil && !s.OutboundLimiter.Allow("ob:biz:"+businessID.String()) {
 		return fmt.Errorf("mailing: outbound rate limit: %w", errs.ErrRateLimited)
@@ -201,23 +395,62 @@ func (s *Service) loadProviderProfile(ctx context.Context, principalID, business
 	p := mailprovider.Profile{
 		ID: row.ID, UpdatedAt: row.UpdatedAt, Mode: string(row.Mode), FromEmail: row.FromEmail,
 		EmailDomainID: uuidPtr(row.EmailDomainID), SESRegion: stringValue(row.SesRegion),
-		SESConfigurationSet: stringValue(row.SesConfigurationSet),
+		SESConfigurationSet: stringValue(row.SesConfigurationSet), SNSTopicARN: stringValue(row.SnsTopicArn),
 	}
 	switch row.Mode {
 	case dbgen.MailingSendModeResend:
-		var creds ResendCredentials
-		if err := json.Unmarshal(credential, &creds); err != nil {
+		var creds resendStoredCredentials
+		if err := json.Unmarshal(credential, &creds); err != nil ||
+			strings.TrimSpace(creds.APIKey) == "" {
 			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored Resend credentials are invalid")
+		}
+		if creds.Version == 2 {
+			key, keyErr := decodeSvixSecret(strings.TrimSpace(creds.WebhookSecret))
+			clear(key)
+			if keyErr != nil || strings.TrimSpace(creds.WebhookID) == "" {
+				return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored Resend feedback credentials are invalid")
+			}
+			p.ResendWebhookID = creds.WebhookID
 		}
 		p.ResendAPIKey = creds.APIKey
 	case dbgen.MailingSendModeSes:
 		var creds SESCredentials
-		if err := json.Unmarshal(credential, &creds); err != nil {
+		if err := json.Unmarshal(credential, &creds); err != nil ||
+			strings.TrimSpace(creds.AccessKeyID) == "" || strings.TrimSpace(creds.SecretAccessKey) == "" {
 			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored SES credentials are invalid")
+		}
+		if err := validateSESFeedbackConfiguration(row.SesRegion, row.SesConfigurationSet, row.SnsTopicArn); err != nil {
+			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored SES feedback configuration is invalid")
 		}
 		p.SESAccessKeyID, p.SESSecretAccessKey = creds.AccessKeyID, creds.SecretAccessKey
 	}
 	return toSendingProfile(row), p, nil
+}
+
+func (s *Service) checkTestRecipientSuppression(ctx context.Context, principalID, businessID uuid.UUID, recipient string) error {
+	var suppressed bool
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		root, err := resolveTenantRoot(ctx, q, businessID)
+		if err != nil {
+			return err
+		}
+		value, err := q.CheckMailingTestRecipientSuppression(ctx, dbgen.CheckMailingTestRecipientSuppressionParams{
+			BusinessID: businessID, TenantRootID: root, Email: recipient,
+		})
+		suppressed = value != nil && *value
+		return err
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if suppressed {
+		return validation("test recipient is suppressed")
+	}
+	return nil
+}
+func providerVerificationMessage(_ error) string {
+	return "provider verification failed"
 }
 
 func safeProviderMessage(err error) string {

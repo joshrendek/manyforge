@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -32,6 +33,16 @@ func TestPrepareEventValidation(t *testing.T) {
 		if _, _, err = prepareEvent(test); !errors.Is(err, errs.ErrValidation) {
 			t.Errorf("prepareEvent(%+v) error=%v", test, err)
 		}
+	}
+}
+
+func TestAutomationEventTime004RejectsExcessiveFutureTimestamp(t *testing.T) {
+	email := "future@example.test"
+	future := time.Now().UTC().Add(24 * time.Hour)
+	if _, _, err := prepareEvent(EventInput{
+		Name: "future", Email: &email, OccurredAt: &future,
+	}); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("prepareEvent future timestamp error = %v, want validation", err)
 	}
 }
 

@@ -45,7 +45,7 @@ func (f *fakeSteps) Delivery(_ context.Context, _ pgx.Tx, _ uuid.UUID, nodeID st
 	}
 	return &id, nil
 }
-func (f *fakeSteps) EventExists(context.Context, pgx.Tx, uuid.UUID, string, string, time.Time, *time.Duration) (bool, error) {
+func (f *fakeSteps) EventExists(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, string, string, time.Time, time.Time, *time.Duration) (bool, error) {
 	return f.event, nil
 }
 
@@ -84,11 +84,11 @@ func (f fakeEngagement) Engagement(context.Context, pgx.Tx, uuid.UUID) (Engageme
 
 type fakeTagger struct{ added, removed []string }
 
-func (f *fakeTagger) AddTag(_ context.Context, _ pgx.Tx, _, _, _ uuid.UUID, tag string) error {
+func (f *fakeTagger) AddTag(_ context.Context, _ pgx.Tx, _, _, _, _ uuid.UUID, _ int, tag string) error {
 	f.added = append(f.added, tag)
 	return nil
 }
-func (f *fakeTagger) RemoveTag(_ context.Context, _ pgx.Tx, _, _, _ uuid.UUID, tag string) error {
+func (f *fakeTagger) RemoveTag(_ context.Context, _ pgx.Tx, _, _, _, _ uuid.UUID, _ int, tag string) error {
 	f.removed = append(f.removed, tag)
 	return nil
 }
@@ -140,6 +140,29 @@ func TestAdvanceRunsEveryActionNodeTransactionally(t *testing.T) {
 	}
 	if steps.records[1].DeliveryID == nil || *steps.records[1].DeliveryID != deliveryID {
 		t.Fatalf("send record = %+v", steps.records[1])
+	}
+}
+
+// AUTOMATION-FENCE-002 requires a lost generation fence to abort the
+// transaction rather than commit a side effect followed by a successful no-op.
+func TestAutomationFence002LostGenerationAbortsAdvance(t *testing.T) {
+	enrollment, now, steps, subscribers := engineFixture()
+	enrollment.CurrentNodeID = "send"
+	steps.recordOK = false
+	sender := &fakeSender{id: uuid.New()}
+	graph := Graph{Nodes: []Node{{
+		ID: "send", Kind: "send_email",
+		Config: json.RawMessage(`{"template_id":"` + uuid.NewString() + `","track_opens":true,"track_clicks":true}`),
+	}}}
+
+	out, err := (Engine{Deps: Deps{
+		Steps: steps, Subscribers: subscribers, Sender: sender,
+	}}).Advance(context.Background(), nil, enrollment, graph, now)
+	if !errors.Is(err, ErrLostFence) {
+		t.Fatalf("Advance = %+v, err=%v; want typed lost-fence failure", out, err)
+	}
+	if len(sender.specs) != 1 {
+		t.Fatalf("fake enqueue calls = %d, want one call whose transaction is rolled back", len(sender.specs))
 	}
 }
 
