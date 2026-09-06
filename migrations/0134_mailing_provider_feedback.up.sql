@@ -104,9 +104,7 @@ AS $$
       ON s.id = p.secret_ref
      AND s.tenant_root_id = p.tenant_root_id
     WHERE p.id = p_profile_id
-      AND p.status = 'verified'
       AND p.mode IN ('resend', 'ses')
-      AND public.mailing_business_operational(p.business_id, p.tenant_root_id)
       AND public.tenant_merge_root_write_allowed(p.tenant_root_id);
 $$;
 
@@ -184,6 +182,18 @@ BEGIN
     FOR UPDATE OF d;
     IF NOT FOUND THEN
         RETURN false;
+    END IF;
+
+    -- A provider fact is canonical once it resolves to a delivery and kind.
+    -- The delivery lock serializes this check with concurrent reconciliation.
+    IF EXISTS (
+        SELECT 1
+        FROM public.mailing_tracking_event event
+        WHERE event.delivery_id = v_delivery.id
+          AND event.kind = p_kind
+          AND event.provider_payload ? 'provider_webhook_id'
+    ) THEN
+        RETURN true;
     END IF;
 
     v_status := CASE p_kind
@@ -324,6 +334,18 @@ BEGIN
         END IF;
     END LOOP;
 
+    -- If every fact was already applied by another envelope, discard this
+    -- rotated provider event ID instead of retaining a semantic duplicate.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.mailing_tracking_event event
+        WHERE event.provider_payload->>'provider_webhook_id' = v_webhook.id::text
+    ) THEN
+        DELETE FROM public.mailing_provider_webhook_delivery
+        WHERE id = v_webhook.id;
+        RETURN true;
+    END IF;
+
     UPDATE public.mailing_provider_webhook_delivery
     SET processing_status = 'applied', applied_at = clock_timestamp()
     WHERE id = v_webhook.id AND processing_status = 'pending';
@@ -348,8 +370,8 @@ DECLARE
     v_webhook_id uuid;
     v_applied boolean;
     v_inserted boolean;
-    v_pending_rows integer;
-    v_pending_bytes bigint;
+    v_retained_rows bigint;
+    v_retained_bytes bigint;
     v_now timestamptz := clock_timestamp();
 BEGIN
     IF p_event_id IS NULL OR btrim(p_event_id) = '' OR length(p_event_id) > 500
@@ -373,22 +395,20 @@ BEGIN
         RETURN 'ignored';
     END IF;
 
-    -- Serialize admission and accounting for one profile. This makes the row
-    -- and byte budgets exact even when many authentic envelopes arrive at once.
+    -- Serialize admission and accounting for one identified profile. Provider
+    -- authentication has already happened before this function is called.
     SELECT * INTO v_profile
     FROM public.mailing_sending_profile p
     WHERE p.id = p_profile_id
-      AND p.status = 'verified'
       AND p.mode::text = p_provider
-      AND public.mailing_business_operational(p.business_id, p.tenant_root_id)
       AND public.tenant_merge_root_write_allowed(p.tenant_root_id)
     FOR UPDATE OF p;
     IF NOT FOUND THEN
         RETURN 'ignored';
     END IF;
 
-    -- An expired idempotency record for this event must not shadow a provider
-    -- retry. General expiry cleanup remains fixed work per accepted request.
+    -- Expiry reclamation is fixed work and does not depend on whether the
+    -- authenticated profile remains verified or operational.
     DELETE FROM public.mailing_provider_webhook_delivery
     WHERE profile_id = p_profile_id
       AND external_event_id = p_event_id
@@ -403,6 +423,39 @@ BEGIN
         FOR UPDATE SKIP LOCKED
         LIMIT 256
     );
+
+    IF v_profile.status <> 'verified'
+       OR NOT public.mailing_business_operational(
+           v_profile.business_id, v_profile.tenant_root_id
+       ) THEN
+        RETURN 'ignored';
+    END IF;
+
+    -- Do not retain a rotated provider event ID when every normalized fact was
+    -- already applied to its canonical delivery and kind.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(p_normalized_events) event
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM public.mailing_delivery d
+            LEFT JOIN public.campaign c
+              ON c.id = d.campaign_id
+             AND c.tenant_root_id = d.tenant_root_id
+            JOIN public.mailing_tracking_event tracked
+              ON tracked.delivery_id = d.id
+             AND tracked.kind = (event->>'kind')::public.mailing_track_kind
+             AND tracked.provider_payload ? 'provider_webhook_id'
+            WHERE d.business_id = v_profile.business_id
+              AND d.tenant_root_id = v_profile.tenant_root_id
+              AND (d.campaign_id IS NULL OR c.profile_id = v_profile.id)
+              AND d.provider_message_id = event->>'provider_message_id'
+              AND d.email = (event->>'recipient')::public.citext
+              AND public.tenant_merge_root_write_allowed(d.tenant_root_id)
+        )
+    ) THEN
+        RETURN 'applied';
+    END IF;
 
     INSERT INTO public.mailing_provider_webhook_delivery (
         business_id, tenant_root_id, profile_id, provider, external_event_id,
@@ -430,27 +483,26 @@ BEGIN
         END IF;
     END IF;
 
+    SELECT count(*),
+           COALESCE(sum(
+               octet_length(envelope_payload::text)
+               + octet_length(normalized_events::text)
+           ), 0)
+    INTO v_retained_rows, v_retained_bytes
+    FROM public.mailing_provider_webhook_delivery
+    WHERE profile_id = p_profile_id
+      AND expires_at > v_now;
+    IF v_retained_rows > 256 OR v_retained_bytes > 8388608 THEN
+        IF v_inserted THEN
+            DELETE FROM public.mailing_provider_webhook_delivery
+            WHERE id = v_webhook_id;
+        END IF;
+        RETURN 'full';
+    END IF;
+
     v_applied := public.mailing_apply_pending_webhook(v_webhook_id);
     IF v_applied THEN
         RETURN 'applied';
-    END IF;
-
-    IF v_inserted THEN
-        SELECT count(*),
-               COALESCE(sum(
-                   octet_length(envelope_payload::text)
-                   + octet_length(normalized_events::text)
-               ), 0)
-        INTO v_pending_rows, v_pending_bytes
-        FROM public.mailing_provider_webhook_delivery
-        WHERE profile_id = p_profile_id
-          AND processing_status = 'pending'
-          AND expires_at > v_now;
-        IF v_pending_rows > 256 OR v_pending_bytes > 8388608 THEN
-            DELETE FROM public.mailing_provider_webhook_delivery
-            WHERE id = v_webhook_id;
-            RETURN 'full';
-        END IF;
     END IF;
     RETURN 'pending';
 END;
