@@ -241,17 +241,27 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 		t.Fatalf("VerifySendingProfile without verifier = %+v, err=%v", unsupported, err)
 	}
 	concurrentProvider := &fakeResendProvisioner{cleanupMatches: true}
+	var concurrentUpdateErr error
 	concurrentProvider.verify = func() error {
 		concurrent := profileInput
 		concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
-		_, updateErr := svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
-		return updateErr
+		_, concurrentUpdateErr = svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent)
+		return concurrentUpdateErr
 	}
 	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
 		return concurrentProvider, nil
 	}, time.Minute)
-	if _, err = svc.VerifySendingProfile(ctx, a.principalID, a.businessID); !errors.Is(err, errs.ErrConflict) {
-		t.Fatalf("concurrent VerifySendingProfile error = %v", err)
+	blocked, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
+	if err != nil || blocked.Status != "error" || blocked.VerifyError == nil {
+		t.Fatalf("VerifySendingProfile with concurrent update = %+v, err=%v", blocked, err)
+	}
+	if !errors.Is(concurrentUpdateErr, errs.ErrConflict) || blocked.FromEmail != profile.FromEmail {
+		t.Fatalf("concurrent update was not lease-blocked: update_err=%v profile=%+v", concurrentUpdateErr, blocked)
+	}
+	concurrent := profileInput
+	concurrent.Resend = &mailing.ResendCredentials{APIKey: "re_concurrent"}
+	if _, err = svc.PutSendingProfile(ctx, a.principalID, a.businessID, concurrent); err != nil {
+		t.Fatalf("update after verification lease release: %v", err)
 	}
 	svc.PublicBaseURL = "https://hub.example.test"
 	captured := &capturedDeliverer{}
