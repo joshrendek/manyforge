@@ -3,7 +3,7 @@
 DROP FUNCTION mailing_prune_expired_provider_webhooks(integer);
 DROP FUNCTION mailing_process_provider_webhook(uuid,text,text,jsonb,jsonb);
 DROP FUNCTION mailing_apply_pending_webhook(uuid);
-DROP FUNCTION mailing_apply_provider_event_internal(uuid,uuid,text,citext,mailing_track_kind,timestamptz);
+DROP FUNCTION mailing_apply_provider_event_internal(uuid,uuid,text,text,citext,mailing_track_kind,timestamptz);
 DROP FUNCTION mailing_transition_ses_feedback(uuid,timestamptz,text,text,text,text,text);
 DROP FUNCTION mailing_webhook_context(uuid);
 
@@ -266,6 +266,7 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
 $$;
 
 DROP INDEX mailing_provider_webhook_expiry_global_idx;
+DROP INDEX mailing_tracking_provider_event_idx;
 DROP INDEX mailing_provider_webhook_pending_correlation_idx;
 DROP INDEX mailing_provider_webhook_expiry_idx;
 DROP INDEX mailing_provider_webhook_pending_idx;

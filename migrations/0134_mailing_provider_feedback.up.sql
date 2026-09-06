@@ -71,6 +71,13 @@ CREATE INDEX mailing_provider_webhook_pending_correlation_idx
     ON mailing_provider_webhook_delivery
     USING gin (normalized_events jsonb_path_ops)
     WHERE processing_status = 'pending';
+CREATE INDEX mailing_tracking_provider_event_idx
+    ON mailing_tracking_event (
+        (provider_payload->>'provider_profile_id'),
+        (provider_payload->>'external_event_id')
+    )
+    WHERE provider_payload ? 'provider_profile_id'
+      AND provider_payload ? 'external_event_id';
 
 CREATE FUNCTION mailing_prune_expired_provider_webhooks(p_limit integer)
 RETURNS integer
@@ -181,6 +188,7 @@ $$;
 CREATE FUNCTION mailing_apply_provider_event_internal(
     p_webhook_id uuid,
     p_profile_id uuid,
+    p_external_event_id text,
     p_provider_message_id text,
     p_recipient public.citext,
     p_kind public.mailing_track_kind,
@@ -249,7 +257,11 @@ BEGIN
     ) VALUES (
         v_delivery.business_id, v_delivery.tenant_root_id, v_delivery.campaign_id,
         v_delivery.id, v_delivery.subscriber_id, p_kind,
-        jsonb_build_object('provider_webhook_id', p_webhook_id),
+        jsonb_build_object(
+            'provider_webhook_id', p_webhook_id,
+            'provider_profile_id', p_profile_id,
+            'external_event_id', p_external_event_id
+        ),
         COALESCE(p_occurred_at, clock_timestamp())
     );
 
@@ -353,6 +365,7 @@ BEGIN
         v_applied := public.mailing_apply_provider_event_internal(
             v_webhook.id,
             v_webhook.profile_id,
+            v_webhook.external_event_id,
             v_event->>'provider_message_id',
             (v_event->>'recipient')::public.citext,
             (v_event->>'kind')::public.mailing_track_kind,
@@ -447,6 +460,19 @@ BEGIN
            v_profile.business_id, v_profile.tenant_root_id
        ) THEN
         RETURN 'ignored';
+    END IF;
+
+    -- Preserve exact provider event-ID idempotency after the raw envelope is
+    -- discarded. The partial expression index keeps this compact lookup fixed.
+    IF EXISTS (
+        SELECT 1
+        FROM public.mailing_tracking_event tracked
+        WHERE tracked.provider_payload ? 'provider_profile_id'
+          AND tracked.provider_payload ? 'external_event_id'
+          AND tracked.provider_payload->>'provider_profile_id' = p_profile_id::text
+          AND tracked.provider_payload->>'external_event_id' = p_event_id
+    ) THEN
+        RETURN 'applied';
     END IF;
 
     -- Do not retain a rotated provider event ID when every normalized fact was
@@ -751,7 +777,7 @@ $$;
 REVOKE ALL ON FUNCTION mailing_prune_expired_provider_webhooks(integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_webhook_context(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_transition_ses_feedback(uuid,timestamptz,text,text,text,text,text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION mailing_apply_provider_event_internal(uuid,uuid,text,public.citext,public.mailing_track_kind,timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION mailing_apply_provider_event_internal(uuid,uuid,text,text,public.citext,public.mailing_track_kind,timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_apply_pending_webhook(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_process_provider_webhook(uuid,text,text,jsonb,jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mailing_prune_expired_provider_webhooks(integer) TO manyforge_app;

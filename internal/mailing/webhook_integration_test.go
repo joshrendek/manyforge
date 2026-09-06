@@ -126,7 +126,6 @@ func seedWebhookFixture(ctx context.Context, t *testing.T, tdb *testdb.TestDB, s
 	}
 }
 
-
 func TestLegacyResendSecretCannotAuthenticateAcrossProfilesAndUpgradesThroughProvisioning(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
@@ -240,8 +239,8 @@ func TestResendWebhookIdempotencyAndMonotonicStatus(t *testing.T) {
 	if w := post("evt-bounce", "email.bounced"); w.Code != http.StatusOK {
 		t.Fatalf("bounce status = %d, body=%s", w.Code, w.Body.String())
 	}
-	if w := post("evt-bounce", "email.bounced"); w.Code != http.StatusOK {
-		t.Fatalf("bounce replay status = %d", w.Code)
+	if w := post("evt-bounce", "email.delivered"); w.Code != http.StatusOK {
+		t.Fatalf("same-ID payload mutation status = %d", w.Code)
 	}
 	if w := post("evt-delivered-late", "email.delivered"); w.Code != http.StatusOK {
 		t.Fatalf("late delivery status = %d", w.Code)
@@ -595,7 +594,7 @@ func TestMFMailWebhookResource005BoundsPendingAndPrunesExpired(t *testing.T) {
 		SELECT p.business_id,p.tenant_root_id,p.id,'resend','retained-pending-' || g,
 		       '{}'::jsonb,jsonb_build_array(jsonb_build_object(
 		           'provider_message_id','unmatched-budget-' || g,
-		           'recipient',$2,
+		           'recipient',$2::text,
 		           'kind','bounce'
 		       )),'pending',clock_timestamp()+interval '7 days'
 		FROM mailing_sending_profile p CROSS JOIN generate_series(1,256) g
@@ -914,7 +913,7 @@ func TestSESWebhookRejectsTopicARNMismatch(t *testing.T) {
 	}, time.Minute)
 	profile, err := fx.svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "ses", FromEmail: "news@example.test", FromName: "News",
-		SES: &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+		SES:       &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
 		SESRegion: &region, SESConfigurationSet: &configSet, SNSTopicARN: &topic,
 	})
 	if err != nil {
@@ -982,7 +981,7 @@ func TestSESSubscriptionConfirmationTransitionsDurably(t *testing.T) {
 	topic := "arn:aws:sns:us-east-1:123456789012:confirmed-topic"
 	profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "ses", FromEmail: "news@example.test", FromName: "News",
-		SES: &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+		SES:       &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
 		SESRegion: &region, SESConfigurationSet: &configSet, SNSTopicARN: &topic,
 	})
 	if err != nil {
@@ -1014,9 +1013,9 @@ func TestSESSubscriptionConfirmationTransitionsDurably(t *testing.T) {
 	envelope := snsEnvelope{
 		Type: "SubscriptionConfirmation", MessageID: "confirmation-1", TopicARN: topic,
 		Message: "confirm", Timestamp: "2026-08-30T12:00:00Z", Token: "secret-token",
-		SubscribeURL: "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=secret-token",
+		SubscribeURL:     "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=secret-token",
 		SignatureVersion: "2",
-		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-test.pem",
+		SigningCertURL:   "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-test.pem",
 	}
 	envelope.Signature = signSNSEnvelope(t, key, envelope)
 	body, _ := json.Marshal(envelope)

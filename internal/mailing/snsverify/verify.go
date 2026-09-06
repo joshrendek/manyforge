@@ -27,13 +27,13 @@ import (
 )
 
 const (
-	maxCertificateBytes              = 64 << 10
-	certificateCacheTTL              = 24 * time.Hour
-	certificateFailureTTL            = time.Minute
-	certificateFetchWindow           = time.Minute
-	maxCertificateKeys               = 32
-	maxCertificateFailures           = 64
-	maxCertificateFetches            = 8
+	maxCertificateBytes             = 64 << 10
+	certificateCacheTTL             = 24 * time.Hour
+	certificateFailureTTL           = time.Minute
+	certificateFetchWindow          = time.Minute
+	maxCertificateKeys              = 32
+	maxCertificateFailures          = 64
+	maxCertificateFetches           = 8
 	maxConcurrentCertificateFetches = 8
 	maxConcurrentFetchesPerTopic    = 1
 	maxTopicFetchStates             = 64
@@ -78,7 +78,7 @@ type topicFetchState struct {
 	fetchWindow time.Time
 	fetches     int
 	inFlight    int
-	lastUsed   time.Time
+	lastUsed    time.Time
 }
 
 // Verifier validates SNS envelopes and confirms signed subscriptions. Client,
@@ -93,6 +93,7 @@ type Verifier struct {
 	topics     map[string]*topicFetchState
 	fetchSlots chan struct{}
 }
+
 // New returns a verifier using a guarded outbound client.
 func New() *Verifier {
 	client := netsafe.NewClient(10 * time.Second)
