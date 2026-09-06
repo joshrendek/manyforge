@@ -187,7 +187,7 @@ func TestCertificateFetchBudgetBoundsUniqueForgedPaths(t *testing.T) {
 			Type: "Notification", MessageID: "forged", Message: "{}", TopicARN: topic,
 			Timestamp: "2026-08-30T12:00:00Z", SignatureVersion: "2",
 			SigningCertURL: fmt.Sprintf("https://sns.us-east-1.amazonaws.com/SimpleNotificationService-forged-%d.pem", i),
-			Signature: base64.StdEncoding.EncodeToString([]byte("not-an-rsa-signature")),
+			Signature:      base64.StdEncoding.EncodeToString([]byte("not-an-rsa-signature")),
 		}
 		raw, err := json.Marshal(msg)
 		if err != nil {
@@ -324,7 +324,7 @@ func TestCertificateFetchesUseFairGlobalInflightCeiling(t *testing.T) {
 		Type: "Notification", MessageID: "authentic", Message: "{}",
 		TopicARN: topicB, Timestamp: "2026-08-30T12:00:00Z",
 		SignatureVersion: "2",
-		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-authentic.pem",
+		SigningCertURL:   "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-authentic.pem",
 	}
 	msgB.Signature = signMessage(t, key, msgB)
 	rawB, err := json.Marshal(msgB)
@@ -531,7 +531,7 @@ func TestVerificationWorksAfterTopicStateEviction(t *testing.T) {
 		Type: "Notification", MessageID: "before-eviction", Message: "{}",
 		TopicARN: topic, Timestamp: "2026-08-30T12:00:00Z",
 		SignatureVersion: "2",
-		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-before-eviction.pem",
+		SigningCertURL:   "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-before-eviction.pem",
 	}
 	msg.Signature = signMessage(t, key, msg)
 	raw, err := json.Marshal(msg)

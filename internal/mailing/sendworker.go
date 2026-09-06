@@ -23,13 +23,13 @@ import (
 )
 
 const (
-	fanoutGlobalBudget      = 1000
-	fanoutPerCampaignBudget = 250
-	rollupCampaignBudget    = 100
-	rollupLeaseSeconds      = 60
-	compiledCacheMaxEntries = 128
-	compiledCacheMaxBytes   = 8 << 20
-	compiledCacheTTL        = 15 * time.Minute
+	fanoutGlobalBudget         = 1000
+	fanoutPerCampaignBudget    = 250
+	rollupCampaignBudget       = 100
+	rollupLeaseSeconds         = 60
+	compiledCacheMaxEntries    = 128
+	compiledCacheMaxBytes      = 8 << 20
+	compiledCacheTTL           = 15 * time.Minute
 	providerWebhookPruneBudget = 256
 )
 
