@@ -448,10 +448,11 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	var result PublicSubscriptionResult
 	var rawConfirmation, email string
-	var confirmationBusinessID uuid.UUID
+	var confirmationBusinessID, confirmationListID uuid.UUID
 	authorized, err := h.withVerifiedS2S(r, raw, func(list publicListContext, tx pgx.Tx) error {
 		var subErr error
 		confirmationBusinessID = list.businessID
+		confirmationListID = list.listID
 		result, rawConfirmation, email, subErr = h.Service.subscribeResolved(r.Context(), tx, list, PublicSubscriptionInput{
 			Email: body.Email, FirstName: body.FirstName, LastName: body.LastName,
 			Attributes: body.Attributes, SkipConfirmation: body.SkipConfirmation,
@@ -478,7 +479,7 @@ func (h *PublicHandler) s2sSubscribe(w http.ResponseWriter, r *http.Request) {
 	if result.Status == "pending" && rawConfirmation != "" {
 		// The signed S2S path resolves the same verified business profile as public signup.
 		// Send failure is intentionally logged only; subscription response semantics stay stable.
-		h.Service.sendConfirmation(r.Context(), confirmationBusinessID, email, rawConfirmation)
+		h.Service.sendConfirmation(r.Context(), confirmationBusinessID, confirmationListID, email, rawConfirmation)
 	}
 	status := http.StatusOK
 	if result.Created {
