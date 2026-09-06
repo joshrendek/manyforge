@@ -34,9 +34,14 @@ const (
 	maxCertificateKeys               = 32
 	maxCertificateFailures           = 64
 	maxCertificateFetches            = 8
-	maxConcurrentCertificateFetches  = 8
-	maxConcurrentFetchesPerTopic     = 1
+	maxConcurrentCertificateFetches = 8
+	maxConcurrentFetchesPerTopic    = 1
+	maxTopicFetchStates             = 64
+	topicStateIdleTTL               = certificateFailureTTL
 )
+
+// ErrTopicStateCapacity indicates that every bounded topic state is active.
+var ErrTopicStateCapacity = errors.New("sns: topic state capacity exhausted")
 
 var (
 	snsHostPattern  = regexp.MustCompile(`^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$`)
@@ -73,6 +78,7 @@ type topicFetchState struct {
 	fetchWindow time.Time
 	fetches     int
 	inFlight    int
+	lastUsed   time.Time
 }
 
 // Verifier validates SNS envelopes and confirms signed subscriptions. Client,
@@ -185,19 +191,23 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL, expectedTopicARN stri
 			delete(v.cache, key)
 		}
 	}
-	state := v.topics[expectedTopicARN]
-	if state == nil {
-		state = &topicFetchState{failures: make(map[string]time.Time)}
-		v.topics[expectedTopicARN] = state
+	v.expireIdleTopicStatesLocked(now)
+	if entry, ok := v.cache[rawURL]; ok {
+		if state := v.topics[expectedTopicARN]; state != nil {
+			state.lastUsed = now
+		}
+		v.mu.Unlock()
+		return entry.key, nil
+	}
+	state, err := v.topicStateLocked(expectedTopicARN, now)
+	if err != nil {
+		v.mu.Unlock()
+		return nil, err
 	}
 	for key, expiresAt := range state.failures {
 		if !now.Before(expiresAt) {
 			delete(state.failures, key)
 		}
-	}
-	if entry, ok := v.cache[rawURL]; ok {
-		v.mu.Unlock()
-		return entry.key, nil
 	}
 	if _, failed := state.failures[rawURL]; failed {
 		v.mu.Unlock()
@@ -231,9 +241,11 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL, expectedTopicARN stri
 	now = v.now()
 	v.mu.Lock()
 	if entry, ok := v.cache[rawURL]; ok && now.Before(entry.expiresAt) {
+		state.lastUsed = now
 		v.mu.Unlock()
 		return entry.key, nil
 	}
+	state.lastUsed = now
 	if state.fetchWindow.IsZero() || !now.Before(state.fetchWindow.Add(certificateFetchWindow)) {
 		state.fetchWindow, state.fetches = now, 0
 	}
@@ -303,10 +315,56 @@ func (v *Verifier) signingKey(ctx context.Context, rawURL, expectedTopicARN stri
 	return key, nil
 }
 
+func (v *Verifier) expireIdleTopicStatesLocked(now time.Time) {
+	for topic, state := range v.topics {
+		if state == nil ||
+			(state.inFlight == 0 && !now.Before(state.lastUsed.Add(topicStateIdleTTL))) {
+			delete(v.topics, topic)
+		}
+	}
+}
+
+func (v *Verifier) topicStateLocked(expectedTopicARN string, now time.Time) (*topicFetchState, error) {
+	if state := v.topics[expectedTopicARN]; state != nil {
+		if state.failures == nil {
+			state.failures = make(map[string]time.Time)
+		}
+		state.lastUsed = now
+		return state, nil
+	}
+
+	for len(v.topics) >= maxTopicFetchStates {
+		var evict string
+		var oldest time.Time
+		for topic, state := range v.topics {
+			if state.inFlight != 0 {
+				continue
+			}
+			if evict == "" || state.lastUsed.Before(oldest) ||
+				(state.lastUsed.Equal(oldest) && topic < evict) {
+				evict, oldest = topic, state.lastUsed
+			}
+		}
+		if evict == "" {
+			return nil, ErrTopicStateCapacity
+		}
+		delete(v.topics, evict)
+	}
+
+	state := &topicFetchState{
+		failures: make(map[string]time.Time),
+		lastUsed: now,
+	}
+	v.topics[expectedTopicARN] = state
+	return state, nil
+}
+
 func (v *Verifier) finishCertificateReservation(expectedTopicARN string) {
+	now := v.now()
 	v.mu.Lock()
 	if state := v.topics[expectedTopicARN]; state != nil && state.inFlight > 0 {
 		state.inFlight--
+		state.lastUsed = now
 	}
 	v.mu.Unlock()
 }
@@ -318,13 +376,10 @@ func (v *Verifier) finishCertificateFetch(expectedTopicARN string, slots chan st
 
 func (v *Verifier) rememberFailure(expectedTopicARN, rawURL string, now time.Time) {
 	v.mu.Lock()
-	if v.topics == nil {
-		v.topics = make(map[string]*topicFetchState)
-	}
 	state := v.topics[expectedTopicARN]
 	if state == nil {
-		state = &topicFetchState{failures: make(map[string]time.Time)}
-		v.topics[expectedTopicARN] = state
+		v.mu.Unlock()
+		return
 	}
 	if state.failures == nil {
 		state.failures = make(map[string]time.Time)
@@ -340,6 +395,7 @@ func (v *Verifier) rememberFailure(expectedTopicARN, rawURL string, now time.Tim
 		delete(state.failures, evict)
 	}
 	state.failures[rawURL] = now.Add(certificateFailureTTL)
+	state.lastUsed = now
 	v.mu.Unlock()
 }
 
