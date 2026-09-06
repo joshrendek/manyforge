@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
+	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
@@ -147,7 +148,7 @@ func (s *Service) subscribeResolved(ctx context.Context, tx pgx.Tx, list publicL
 	return out, rawConfirmation, email, nil
 }
 
-func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, email, raw string) {
+func (s *Service) sendConfirmation(ctx context.Context, businessID, listID uuid.UUID, email, raw string) {
 	logger := s.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -156,10 +157,20 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, em
 		logger.ErrorContext(ctx, "mailing confirmation send failed", "err", "delivery is not configured")
 		return
 	}
-	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
-	profile, err := s.resolveBusinessProfile(ctx, businessID)
+	tokenHash, err := mailtoken.HashConfirmation(raw)
+	if err != nil {
+		logger.ErrorContext(ctx, "mailing confirmation token validation failed", "err", err)
+		return
+	}
+	profile, eligible, err := s.resolveConfirmationProfile(ctx, businessID, listID, email, tokenHash)
 	if err != nil {
 		logger.ErrorContext(ctx, "mailing confirmation profile resolution failed", "err", err)
+		return
+	}
+	if !eligible {
+		return
+	}
+	if s.OutboundLimiter != nil && !s.OutboundLimiter.Allow("ob:biz:"+businessID.String()) {
 		return
 	}
 	deliverer, err := s.Providers.Resolve(ctx, profile.provider)
@@ -167,6 +178,7 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, em
 		logger.ErrorContext(ctx, "mailing confirmation provider resolution failed", "err", err)
 		return
 	}
+	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
 	rendered, err := s.Renderer.RenderInput(mailrender.Input{
 		BodyMarkdown: "# Confirm your subscription\n\n[Confirm your subscription](" + link + ")",
 		FromName:     profile.fromName, PostalAddress: stringValue(profile.postalAddress),
@@ -186,6 +198,65 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID uuid.UUID, em
 	if err != nil {
 		logger.ErrorContext(ctx, "mailing confirmation send failed", "err", err)
 	}
+}
+
+func (s *Service) resolveConfirmationProfile(
+	ctx context.Context,
+	businessID, listID uuid.UUID,
+	email string,
+	tokenHash []byte,
+) (workerProfile, bool, error) {
+	var profile workerProfile
+	var mode, fromEmail string
+	var updated time.Time
+	var emailDomainID, secretRef *uuid.UUID
+	var sealed, sesRegion, sesConfig *string
+	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT profile_id, updated_at, mode::text, from_email::text,
+			from_name, reply_to::text, postal_address, email_domain_id, secret_ref,
+			credential_sealed, ses_region, ses_configuration_set
+			FROM mailing_confirmation_send_context($1,$2,$3,$4)`,
+			businessID, listID, email, tokenHash,
+		).Scan(
+			&profile.provider.ID, &updated, &mode, &fromEmail, &profile.fromName, &profile.replyTo,
+			&profile.postalAddress, &emailDomainID, &secretRef, &sealed, &sesRegion, &sesConfig)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return workerProfile{}, false, nil
+	}
+	if err != nil {
+		return workerProfile{}, false, err
+	}
+	profile.provider.UpdatedAt, profile.provider.Mode, profile.provider.FromEmail = updated, mode, fromEmail
+	profile.provider.EmailDomainID = emailDomainID
+	profile.provider.SESRegion = stringValue(sesRegion)
+	profile.provider.SESConfigurationSet = stringValue(sesConfig)
+	if secretRef != nil {
+		if sealed == nil || s.Sealer == nil {
+			return workerProfile{}, false, errors.New("mailing profile credential is unavailable")
+		}
+		credential, err := s.Sealer.Open(*sealed)
+		if err != nil {
+			return workerProfile{}, false, errors.New("mailing profile credential could not be opened")
+		}
+		defer clear(credential)
+		switch mode {
+		case "resend":
+			var creds ResendCredentials
+			if err := json.Unmarshal(credential, &creds); err != nil {
+				return workerProfile{}, false, errors.New("mailing stored Resend credentials are invalid")
+			}
+			profile.provider.ResendAPIKey = creds.APIKey
+		case "ses":
+			var creds SESCredentials
+			if err := json.Unmarshal(credential, &creds); err != nil {
+				return workerProfile{}, false, errors.New("mailing stored SES credentials are invalid")
+			}
+			profile.provider.SESAccessKeyID = creds.AccessKeyID
+			profile.provider.SESSecretAccessKey = creds.SecretAccessKey
+		}
+	}
+	return profile, true, nil
 }
 
 func nullIfEmpty(v string) any {
@@ -335,7 +406,7 @@ func (h *PublicHandler) publicSubscribe(w http.ResponseWriter, r *http.Request) 
 func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in PublicSubscriptionInput) (PublicSubscriptionResult, error) {
 	var result PublicSubscriptionResult
 	var rawConfirmation, email string
-	var confirmationBusinessID uuid.UUID
+	var confirmationBusinessID, confirmationListID uuid.UUID
 	err := h.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		list, found, err := resolvePublicList(ctx, tx, key)
 		if err != nil || !found {
@@ -345,6 +416,7 @@ func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in Publ
 			return errMailingRateLimited
 		}
 		confirmationBusinessID = list.businessID
+		confirmationListID = list.listID
 		result, rawConfirmation, email, err = h.Service.subscribeResolved(ctx, tx, list, in, false)
 		return err
 	})
@@ -352,7 +424,7 @@ func (h *PublicHandler) subscribePublic(ctx context.Context, key string, in Publ
 		return PublicSubscriptionResult{}, err
 	}
 	if result.Status == "pending" && rawConfirmation != "" {
-		h.Service.sendConfirmation(ctx, confirmationBusinessID, email, rawConfirmation)
+		h.Service.sendConfirmation(ctx, confirmationBusinessID, confirmationListID, email, rawConfirmation)
 	}
 	return result, nil
 }
