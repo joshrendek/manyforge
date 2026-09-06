@@ -30,6 +30,7 @@ const (
 	compiledCacheMaxEntries = 128
 	compiledCacheMaxBytes   = 8 << 20
 	compiledCacheTTL        = 15 * time.Minute
+	providerWebhookPruneBudget = 256
 )
 
 // SendWorker drains scheduled campaigns and the shared mailing delivery queue. Claims and
@@ -226,6 +227,15 @@ func (w *SendWorker) Run(ctx context.Context) {
 func (w *SendWorker) Tick(ctx context.Context) error {
 	if w == nil || w.Service == nil || w.Service.DB == nil {
 		return errors.New("mailing worker is not configured")
+	}
+	if err := w.Service.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		var pruned int
+		return tx.QueryRow(ctx,
+			"SELECT mailing_prune_expired_provider_webhooks($1)",
+			providerWebhookPruneBudget,
+		).Scan(&pruned)
+	}); err != nil {
+		return fmt.Errorf("prune expired provider webhooks: %w", err)
 	}
 	globalBudget := w.FanoutGlobal
 	if globalBudget <= 0 {
