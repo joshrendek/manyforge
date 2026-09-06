@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -363,14 +364,204 @@ func TestMFMailWebhook003EarlyEventIsReconciledAfterCorrelation(t *testing.T) {
 	}
 }
 
+// MF-MAIL-WEBHOOK-PENDING-004 bounds authenticated unmatched envelopes by row
+// and byte quotas while preserving durable, idempotent early correlation.
+func TestMFMailWebhookPending004BoundsAuthenticatedUnmatchedEnvelopes(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+
+	post := func(t *testing.T, router http.Handler, now time.Time, profileID uuid.UUID, eventID, providerMessageID, recipient, padding string) int {
+		t.Helper()
+		body := []byte(fmt.Sprintf(
+			`{"type":"email.bounced","created_at":"2026-08-30T12:00:00Z","data":{"email_id":%q,"to":[%q]},"padding":%q}`,
+			providerMessageID, recipient, padding,
+		))
+		timestamp := fmt.Sprint(now.Unix())
+		mac := hmac.New(sha256.New, bytes.Repeat([]byte{0x51}, 32))
+		mac.Write([]byte(eventID + "." + timestamp + "."))
+		mac.Write(body)
+		req := httptest.NewRequest(http.MethodPost, "/inbound/mailing/"+profileID.String()+"/resend", bytes.NewReader(body))
+		req.Header.Set("svix-id", eventID)
+		req.Header.Set("svix-timestamp", timestamp)
+		req.Header.Set("svix-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	seed := seedMailingTenant(ctx, t, tdb)
+	fx := seedWebhookFixture(ctx, t, tdb, seed)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	h := mailing.NewWebhookHandler(tdb.App, fx.svc.Sealer, nil)
+	h.Now = func() time.Time { return now }
+	router := chi.NewRouter()
+	h.PublicRoutes(router)
+
+	for i := range 256 {
+		if status := post(t, router, now, fx.profileID, fmt.Sprintf("evt-row-%03d", i),
+			fmt.Sprintf("unmatched-row-%03d", i), fx.email, ""); status != http.StatusOK {
+			t.Fatalf("bounded row %d status = %d, want %d", i, status, http.StatusOK)
+		}
+	}
+	if status := post(t, router, now, fx.profileID, "evt-row-overflow",
+		"unmatched-row-overflow", fx.email, ""); status != http.StatusServiceUnavailable {
+		t.Fatalf("row overflow status = %d, want retryable %d", status, http.StatusServiceUnavailable)
+	}
+	if status := post(t, router, now, fx.profileID, "evt-row-000",
+		"unmatched-row-000", fx.email, ""); status != http.StatusOK {
+		t.Fatalf("accepted replay status = %d, want %d", status, http.StatusOK)
+	}
+
+	var pendingRows int
+	var pendingBytes int64
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*),
+			COALESCE(sum(octet_length(envelope_payload::text) + octet_length(normalized_events::text)), 0)
+			FROM mailing_provider_webhook_delivery
+			WHERE profile_id=$1 AND processing_status='pending'`, fx.profileID,
+	).Scan(&pendingRows, &pendingBytes); err != nil {
+		t.Fatal(err)
+	}
+	if pendingRows != 256 || pendingBytes > 8<<20 {
+		t.Fatalf("pending row quota state rows=%d bytes=%d", pendingRows, pendingBytes)
+	}
+
+	if _, err = tdb.Super.Exec(ctx, `UPDATE mailing_provider_webhook_delivery
+		SET expires_at=clock_timestamp()-interval '1 second'
+		WHERE profile_id=$1 AND external_event_id='evt-row-000'`, fx.profileID); err != nil {
+		t.Fatal(err)
+	}
+	if status := post(t, router, now, fx.profileID, "evt-row-replacement",
+		"unmatched-row-replacement", fx.email, ""); status != http.StatusOK {
+		t.Fatalf("replacement after expiry status = %d, want %d", status, http.StatusOK)
+	}
+	var expiredRows, replacementRows int
+	if err = tdb.Super.QueryRow(ctx, `SELECT
+			count(*) FILTER (WHERE external_event_id='evt-row-000'),
+			count(*) FILTER (WHERE external_event_id='evt-row-replacement')
+			FROM mailing_provider_webhook_delivery WHERE profile_id=$1`, fx.profileID,
+	).Scan(&expiredRows, &replacementRows); err != nil {
+		t.Fatal(err)
+	}
+	if expiredRows != 0 || replacementRows != 1 {
+		t.Fatalf("bounded expiry prune old=%d replacement=%d", expiredRows, replacementRows)
+	}
+
+	seedBytes := seedMailingTenant(ctx, t, tdb)
+	fxBytes := seedWebhookFixture(ctx, t, tdb, seedBytes)
+	hBytes := mailing.NewWebhookHandler(tdb.App, fxBytes.svc.Sealer, nil)
+	hBytes.Now = func() time.Time { return now }
+	routerBytes := chi.NewRouter()
+	hBytes.PublicRoutes(routerBytes)
+
+	const attempts = 40
+	type result struct {
+		id     string
+		status int
+	}
+	results := make(chan result, attempts)
+	var wg sync.WaitGroup
+	padding := strings.Repeat("x", 240<<10)
+	for i := range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id := fmt.Sprintf("evt-bytes-%03d", i)
+			status := post(t, routerBytes, now, fxBytes.profileID, id,
+				fmt.Sprintf("unmatched-bytes-%03d", i), fxBytes.email, padding)
+			results <- result{id: id, status: status}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	accepted := 0
+	retryable := 0
+	firstAccepted := ""
+	for got := range results {
+		switch got.status {
+		case http.StatusOK:
+			accepted++
+			if firstAccepted == "" {
+				firstAccepted = got.id
+			}
+		case http.StatusServiceUnavailable:
+			retryable++
+		default:
+			t.Fatalf("byte-bound webhook %s status = %d", got.id, got.status)
+		}
+	}
+	if accepted == 0 || retryable == 0 {
+		t.Fatalf("byte quota accepted=%d retryable=%d, want both", accepted, retryable)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*),
+			COALESCE(sum(octet_length(envelope_payload::text) + octet_length(normalized_events::text)), 0)
+			FROM mailing_provider_webhook_delivery
+			WHERE profile_id=$1 AND processing_status='pending'`, fxBytes.profileID,
+	).Scan(&pendingRows, &pendingBytes); err != nil {
+		t.Fatal(err)
+	}
+	if pendingRows != accepted || pendingRows > 256 || pendingBytes > 8<<20 {
+		t.Fatalf("pending byte quota rows=%d accepted=%d bytes=%d", pendingRows, accepted, pendingBytes)
+	}
+	if firstAccepted == "" {
+		t.Fatal("byte quota accepted no authentic envelope")
+	}
+	if status := post(t, routerBytes, now, fxBytes.profileID, firstAccepted,
+		strings.Replace(firstAccepted, "evt-", "unmatched-", 1), fxBytes.email, padding); status != http.StatusOK {
+		t.Fatalf("byte-bound accepted replay status = %d, want %d", status, http.StatusOK)
+	}
+
+	var lookupIndex bool
+	if err = tdb.Super.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_indexes
+		WHERE schemaname='public'
+		  AND tablename='mailing_provider_webhook_delivery'
+		  AND indexname='mailing_provider_webhook_pending_correlation_idx'
+	)`).Scan(&lookupIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !lookupIndex {
+		t.Fatal("pending normalized correlation index is missing")
+	}
+}
+
 func assertWebhookState(t *testing.T, ctx context.Context, tdb *testdb.TestDB, fx webhookFixture,
 	deliveryWant, subscriberWant, suppressionWant string, webhookWant, trackingWant, activityWant int) {
 	t.Helper()
+	claimToken := uuid.New()
+	var claimed []uuid.UUID
 	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
-		var changed int
-		return tx.QueryRow(ctx, "SELECT mailing_rollup_campaigns()").Scan(&changed)
+		return tx.QueryRow(ctx, `SELECT mailing_claim_changed_campaign_rollups($1,1,60)`,
+			claimToken).Scan(&claimed)
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0] != fx.campaignID {
+		t.Fatalf("claimed rollups = %v, want [%s]", claimed, fx.campaignID)
+	}
+	var changed bool
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_rollup_changed_campaign($1)`,
+			fx.campaignID).Scan(&changed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatalf("campaign %s rollup was not applied", fx.campaignID)
+	}
+	var completed int
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mailing_complete_changed_campaign_rollups($1,$2)`,
+			claimToken, claimed).Scan(&completed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if completed != 1 {
+		t.Fatalf("completed rollups = %d, want 1", completed)
 	}
 	var delivery, subscriber, suppression string
 	var webhookCount, trackingCount, activityCount, bouncedCount, complainedCount int
@@ -422,6 +613,9 @@ func TestSESWebhookRejectsTopicARNMismatch(t *testing.T) {
 	region := "us-east-1"
 	topic := "arn:aws:sns:us-east-1:123456789012:expected"
 	configSet := "campaign-events"
+	fx.svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return &fakeResendProvisioner{cleanupMatches: true}, nil
+	}, time.Minute)
 	profile, err := fx.svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "ses", FromEmail: "news@example.test", FromName: "News",
 		SES: &mailing.SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},

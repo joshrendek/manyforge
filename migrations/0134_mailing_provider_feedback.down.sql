@@ -264,12 +264,15 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
      AND p.business_id = d.business_id AND p.id = COALESCE(c.profile_id, p.id);
 $$;
 
+DROP INDEX mailing_provider_webhook_pending_correlation_idx;
+DROP INDEX mailing_provider_webhook_expiry_idx;
 DROP INDEX mailing_provider_webhook_pending_idx;
 ALTER TABLE mailing_provider_webhook_delivery
     DROP CONSTRAINT mailing_provider_webhook_processing_chk,
     DROP CONSTRAINT mailing_provider_webhook_events_chk,
     DROP CONSTRAINT mailing_provider_webhook_payload_chk,
     DROP COLUMN applied_at,
+    DROP COLUMN expires_at,
     DROP COLUMN processing_status,
     DROP COLUMN normalized_events,
     DROP COLUMN envelope_payload;

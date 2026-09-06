@@ -137,11 +137,17 @@ func (h *WebhookHandler) recordAndApply(ctx context.Context, wc webhookContext, 
 	if err != nil {
 		return err
 	}
-	return h.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		var outcome string
+	var outcome string
+	if err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, "SELECT mailing_process_provider_webhook($1,$2,$3,$4,$5)",
 			wc.profileID, provider, eventID, payload, normalized).Scan(&outcome)
-	})
+	}); err != nil {
+		return err
+	}
+	if outcome == "full" {
+		return errors.New("mailing webhook: pending feedback quota exhausted")
+	}
+	return nil
 }
 
 func (h *WebhookHandler) transitionSESFeedback(ctx context.Context, wc webhookContext, status, message string) error {

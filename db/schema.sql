@@ -953,6 +953,9 @@ CREATE TABLE mailing_sending_profile (
     ses_region            text,
     ses_configuration_set text,
     sns_topic_arn         text,
+    resend_provisioning_token uuid,
+    resend_provisioning_expires_at timestamptz,
+    resend_cleanup_required boolean NOT NULL DEFAULT false,
     status                text NOT NULL DEFAULT 'unverified',
     last_verified_at      timestamptz,
     verify_error          text,
@@ -967,6 +970,10 @@ CREATE TABLE mailing_sending_profile (
     FOREIGN KEY (email_domain_id, tenant_root_id) REFERENCES email_domain (id, tenant_root_id),
     FOREIGN KEY (secret_ref, tenant_root_id) REFERENCES secret (id, tenant_root_id),
     CHECK (status IN ('unverified', 'verified', 'error')),
+    CHECK (
+        (resend_provisioning_token IS NULL AND resend_provisioning_expires_at IS NULL)
+        OR (resend_provisioning_token IS NOT NULL AND resend_provisioning_expires_at IS NOT NULL)
+    ),
     CHECK (
         (mode = 'relay' AND email_domain_id IS NOT NULL AND secret_ref IS NULL)
         OR (mode IN ('resend', 'ses') AND email_domain_id IS NULL AND secret_ref IS NOT NULL)
@@ -1227,12 +1234,39 @@ CREATE TABLE mailing_provider_webhook_delivery (
     provider          text NOT NULL,
     external_event_id text NOT NULL,
     received_at       timestamptz NOT NULL DEFAULT now(),
+    envelope_payload  jsonb NOT NULL,
+    normalized_events jsonb NOT NULL,
+    processing_status text NOT NULL DEFAULT 'pending',
+    expires_at        timestamptz NOT NULL,
+    applied_at        timestamptz,
     UNIQUE (id, tenant_root_id),
     UNIQUE (profile_id, external_event_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id),
     FOREIGN KEY (profile_id, tenant_root_id) REFERENCES mailing_sending_profile(id, tenant_root_id) ON DELETE CASCADE,
-    CHECK (provider IN ('resend', 'ses'))
+    CHECK (provider IN ('resend', 'ses')),
+    CHECK (
+        jsonb_typeof(envelope_payload) = 'object'
+        AND octet_length(envelope_payload::text) <= 262144
+    ),
+    CHECK (
+        jsonb_typeof(normalized_events) = 'array'
+        AND jsonb_array_length(normalized_events) <= 50
+        AND octet_length(normalized_events::text) <= 65536
+    ),
+    CHECK (
+        (processing_status = 'pending' AND applied_at IS NULL)
+        OR (processing_status = 'applied' AND applied_at IS NOT NULL)
+    )
 );
+CREATE INDEX mailing_provider_webhook_pending_idx
+    ON mailing_provider_webhook_delivery (profile_id, expires_at, received_at, id)
+    WHERE processing_status = 'pending';
+CREATE INDEX mailing_provider_webhook_expiry_idx
+    ON mailing_provider_webhook_delivery (profile_id, expires_at, id);
+CREATE INDEX mailing_provider_webhook_pending_correlation_idx
+    ON mailing_provider_webhook_delivery
+    USING gin (normalized_events jsonb_path_ops)
+    WHERE processing_status = 'pending';
 
 -- Branching drip automations (Spec 014, migrations 0128-0129).
 CREATE TYPE automation_status AS ENUM ('draft', 'active', 'paused', 'archived');
