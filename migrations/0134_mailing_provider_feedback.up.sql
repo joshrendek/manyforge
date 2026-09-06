@@ -65,10 +65,39 @@ CREATE INDEX mailing_provider_webhook_pending_idx
     WHERE processing_status = 'pending';
 CREATE INDEX mailing_provider_webhook_expiry_idx
     ON mailing_provider_webhook_delivery (profile_id, expires_at, id);
+CREATE INDEX mailing_provider_webhook_expiry_global_idx
+    ON mailing_provider_webhook_delivery (expires_at, id);
 CREATE INDEX mailing_provider_webhook_pending_correlation_idx
     ON mailing_provider_webhook_delivery
     USING gin (normalized_events jsonb_path_ops)
     WHERE processing_status = 'pending';
+
+CREATE FUNCTION mailing_prune_expired_provider_webhooks(p_limit integer)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_deleted integer;
+BEGIN
+    WITH expired AS (
+        SELECT webhook.id
+        FROM public.mailing_provider_webhook_delivery webhook
+        WHERE webhook.expires_at <= clock_timestamp()
+        ORDER BY webhook.expires_at, webhook.id
+        FOR UPDATE SKIP LOCKED
+        LIMIT GREATEST(0, LEAST(COALESCE(p_limit, 0), 1000))
+    ), deleted AS (
+        DELETE FROM public.mailing_provider_webhook_delivery webhook
+        USING expired
+        WHERE webhook.id = expired.id
+        RETURNING 1
+    )
+    SELECT count(*)::integer INTO v_deleted FROM deleted;
+    RETURN v_deleted;
+END;
+$$;
 
 DROP FUNCTION mailing_record_webhook(uuid,text,text);
 DROP FUNCTION mailing_apply_provider_event(uuid,text,citext,mailing_track_kind,timestamptz,jsonb);
@@ -334,22 +363,11 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- If every fact was already applied by another envelope, discard this
-    -- rotated provider event ID instead of retaining a semantic duplicate.
-    IF NOT EXISTS (
-        SELECT 1
-        FROM public.mailing_tracking_event event
-        WHERE event.provider_payload->>'provider_webhook_id' = v_webhook.id::text
-    ) THEN
-        DELETE FROM public.mailing_provider_webhook_delivery
-        WHERE id = v_webhook.id;
-        RETURN true;
-    END IF;
-
-    UPDATE public.mailing_provider_webhook_delivery
-    SET processing_status = 'applied', applied_at = clock_timestamp()
-    WHERE id = v_webhook.id AND processing_status = 'pending';
-    RETURN FOUND;
+    -- Tracking rows retain the compact semantic idempotency key. Raw provider
+    -- envelopes are needed only while correlation is unresolved.
+    DELETE FROM public.mailing_provider_webhook_delivery
+    WHERE id = v_webhook.id;
+    RETURN true;
 END;
 $$;
 
@@ -370,8 +388,8 @@ DECLARE
     v_webhook_id uuid;
     v_applied boolean;
     v_inserted boolean;
-    v_retained_rows bigint;
-    v_retained_bytes bigint;
+    v_pending_rows bigint;
+    v_pending_bytes bigint;
     v_now timestamptz := clock_timestamp();
 BEGIN
     IF p_event_id IS NULL OR btrim(p_event_id) = '' OR length(p_event_id) > 500
@@ -483,26 +501,27 @@ BEGIN
         END IF;
     END IF;
 
+    v_applied := public.mailing_apply_pending_webhook(v_webhook_id);
+    IF v_applied THEN
+        RETURN 'applied';
+    END IF;
+
     SELECT count(*),
            COALESCE(sum(
                octet_length(envelope_payload::text)
                + octet_length(normalized_events::text)
            ), 0)
-    INTO v_retained_rows, v_retained_bytes
+    INTO v_pending_rows, v_pending_bytes
     FROM public.mailing_provider_webhook_delivery
     WHERE profile_id = p_profile_id
+      AND processing_status = 'pending'
       AND expires_at > v_now;
-    IF v_retained_rows > 256 OR v_retained_bytes > 8388608 THEN
+    IF v_pending_rows > 256 OR v_pending_bytes > 8388608 THEN
         IF v_inserted THEN
             DELETE FROM public.mailing_provider_webhook_delivery
             WHERE id = v_webhook_id;
         END IF;
         RETURN 'full';
-    END IF;
-
-    v_applied := public.mailing_apply_pending_webhook(v_webhook_id);
-    IF v_applied THEN
-        RETURN 'applied';
     END IF;
     RETURN 'pending';
 END;
@@ -729,11 +748,13 @@ AS $$
      AND p.feedback_status = 'ready';
 $$;
 
+REVOKE ALL ON FUNCTION mailing_prune_expired_provider_webhooks(integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_webhook_context(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_transition_ses_feedback(uuid,timestamptz,text,text,text,text,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_apply_provider_event_internal(uuid,uuid,text,public.citext,public.mailing_track_kind,timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_apply_pending_webhook(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_process_provider_webhook(uuid,text,text,jsonb,jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mailing_prune_expired_provider_webhooks(integer) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_webhook_context(uuid) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_transition_ses_feedback(uuid,timestamptz,text,text,text,text,text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_process_provider_webhook(uuid,text,text,jsonb,jsonb) TO manyforge_app;
