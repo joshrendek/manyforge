@@ -795,7 +795,9 @@ func TestAutomationFence002SendWorkerDoesNotCallProviderAfterPause(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := fixture.database.Super.Exec(fixture.ctx, `UPDATE automation_enrollment
-		SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, fixture.enrollmentID); err != nil {
+		SET wake_at=now()-interval '1 second',
+		    lease_expires_at=now()-interval '1 second'
+		WHERE id=$1`, fixture.enrollmentID); err != nil {
 		t.Fatal(err)
 	}
 	ports := mailing.AutomationPorts{MessageDomain: "mail.example.test"}
@@ -959,7 +961,9 @@ func TestAutomationSendAuthz005ActivationSnapshotFeedsDeliveryClaim(t *testing.T
 		t.Fatal(err)
 	}
 	if _, err := fixture.database.Super.Exec(fixture.ctx, `UPDATE automation_enrollment
-		SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, fixture.enrollmentID); err != nil {
+		SET wake_at=now()-interval '1 second',
+		    lease_expires_at=now()-interval '1 second'
+		WHERE id=$1`, fixture.enrollmentID); err != nil {
 		t.Fatal(err)
 	}
 
