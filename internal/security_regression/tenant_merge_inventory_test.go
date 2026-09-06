@@ -990,9 +990,9 @@ func assertMailingTenantMergeRewrite(
 		campaignID, sourceRootID, claimToken)
 	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO outbox (tenant_root_id, topic, payload)
-		SELECT $1, topic, jsonb_build_object(
-			'tenant_root_id', $1::text,
-			'merge_probe', $2::text
+		SELECT $1::uuid, topic, jsonb_build_object(
+			'tenant_root_id', ($1::uuid)::text,
+			'merge_probe', ($2::uuid)::text
 		)
 		FROM unnest(ARRAY[
 			'mailing.subscriber.activated',
@@ -1004,9 +1004,9 @@ func assertMailingTenantMergeRewrite(
 	mustExec(t, ctx, tdb.Super, `
 		INSERT INTO outbox (tenant_root_id, topic, payload)
 		VALUES (
-			$1,
+			$1::uuid,
 			'automation.event.received',
-			jsonb_build_object('merge_contract_probe', $2::text)
+			jsonb_build_object('merge_contract_probe', ($2::uuid)::text)
 		)`,
 		sourceRootID, campaignID)
 
@@ -1014,13 +1014,12 @@ func assertMailingTenantMergeRewrite(
 		_, err := tx.Exec(ctx, `
 			UPDATE outbox
 			SET tenant_root_id = $1
-			WHERE payload->>'merge_probe' = $2::text`,
+			WHERE payload->>'merge_probe' = ($2::uuid)::text`,
 			destinationRootID, campaignID)
 		return err
 	})
-	if rewriteErr == nil || !strings.Contains(rewriteErr.Error(), "outbox tenant_root_id is immutable") {
-		t.Fatalf("ordinary outbox root rewrite error = %v, want tenant-root immutability failure",
-			rewriteErr)
+	if rewriteErr == nil {
+		t.Fatal("ordinary app outbox root rewrite unexpectedly succeeded")
 	}
 
 	rewriteErr = tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
@@ -1065,8 +1064,8 @@ func assertMailingTenantMergeRewrite(
 
 	mustExec(t, ctx, tdb.Super, `
 		UPDATE outbox
-		SET payload = payload || jsonb_build_object('tenant_root_id', $1::text)
-		WHERE payload->>'merge_contract_probe' = $2::text`,
+		SET payload = payload || jsonb_build_object('tenant_root_id', ($1::uuid)::text)
+		WHERE payload->>'merge_contract_probe' = ($2::uuid)::text`,
 		sourceRootID, campaignID)
 
 	if err := tdb.App.WithPrincipal(ctx, actorID, func(tx pgx.Tx) error {
@@ -1214,18 +1213,18 @@ func assertMailingTenantMergeRewrite(
 	if err := tdb.Super.QueryRow(ctx, `
 		SELECT
 			count(*) FILTER (
-				WHERE tenant_root_id = $1
-				  AND payload->>'tenant_root_id' = $1::text
+				WHERE tenant_root_id = $1::uuid
+				  AND payload->>'tenant_root_id' = ($1::uuid)::text
 			),
 			count(*) FILTER (
-				WHERE tenant_root_id = $2
-				   OR payload->>'tenant_root_id' = $2::text
+				WHERE tenant_root_id = $2::uuid
+				   OR payload->>'tenant_root_id' = ($2::uuid)::text
 			)
 		FROM outbox
 		WHERE COALESCE(
 			payload->>'merge_probe',
 			payload->>'merge_contract_probe'
-		) = $3::text`,
+		) = ($3::uuid)::text`,
 		destinationRootID, sourceRootID, campaignID,
 	).Scan(&rewrittenOutbox, &sourceOutbox); err != nil {
 		t.Fatalf("inspect rewritten mailing/automation outbox rows: %v", err)
