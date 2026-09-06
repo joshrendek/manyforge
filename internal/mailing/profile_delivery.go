@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/manyforge/manyforge/internal/authz"
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -32,6 +33,9 @@ type PreviewInput struct {
 // held open, then records either verified or error. Provider verification
 // failures are an expected result and return the updated profile with HTTP 200.
 func (s *Service) VerifySendingProfile(ctx context.Context, principalID, businessID uuid.UUID) (SendingProfile, error) {
+	if err := s.authorizeSendingProfileVerification(ctx, principalID, businessID); err != nil {
+		return SendingProfile{}, err
+	}
 	profile, providerProfile, err := s.loadProviderProfile(ctx, principalID, businessID)
 	if err != nil {
 		return SendingProfile{}, err
@@ -103,6 +107,9 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 
 	var out SendingProfile
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		if err := requireSendingProfileVerification(ctx, tx, principalID, businessID, profile.TenantRootID); err != nil {
+			return err
+		}
 		row, err := dbgen.New(tx).SetMailingSendingProfileVerification(ctx, dbgen.SetMailingSendingProfileVerificationParams{
 			Status: status, VerifyError: message,
 			FeedbackStatus: feedbackStatus, FeedbackError: feedbackMessage,
@@ -147,6 +154,9 @@ func (s *Service) persistResendWebhookVerification(
 	defer clear(raw)
 	var out SendingProfile
 	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		if err := requireSendingProfileVerification(ctx, tx, principalID, businessID, profile.TenantRootID); err != nil {
+			return err
+		}
 		q := dbgen.New(tx)
 		current, err := q.GetMailingSendingProfile(ctx, dbgen.GetMailingSendingProfileParams{
 			BusinessID: businessID, TenantRootID: profile.TenantRootID,
@@ -192,6 +202,9 @@ func (s *Service) claimResendProvisioning(
 ) (uuid.UUID, error) {
 	token := uuid.New()
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		if err := requireSendingProfileVerification(ctx, tx, principalID, profile.BusinessID, profile.TenantRootID); err != nil {
+			return err
+		}
 		_, err := dbgen.New(tx).ClaimMailingResendProvisioning(ctx, dbgen.ClaimMailingResendProvisioningParams{
 			Token: token, RequireCleanup: true, ID: profile.ID, TenantRootID: profile.TenantRootID,
 			ExpectedUpdatedAt: profile.UpdatedAt,
@@ -219,6 +232,41 @@ func (s *Service) releaseResendProvisioning(
 		})
 		return err
 	})
+}
+
+func (s *Service) authorizeSendingProfileVerification(
+	ctx context.Context, principalID, businessID uuid.UUID,
+) error {
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		root, err := resolveTenantRoot(ctx, dbgen.New(tx), businessID)
+		if err != nil {
+			return err
+		}
+		return requireSendingProfileVerification(ctx, tx, principalID, businessID, root)
+	})
+	return mapErr(err)
+}
+
+func requireSendingProfileVerification(
+	ctx context.Context,
+	tx pgx.Tx,
+	principalID, businessID, tenantRootID uuid.UUID,
+) error {
+	var operational bool
+	if err := tx.QueryRow(ctx, `SELECT mailing_business_operational($1,$2)`, businessID, tenantRootID).Scan(&operational); err != nil {
+		return err
+	}
+	if !operational {
+		return errs.ErrNotFound
+	}
+	permissions, err := authz.Resolve(ctx, tx, principalID, businessID)
+	if err != nil {
+		return err
+	}
+	if !permissions.Has(authz.PermMailingSend) {
+		return errs.ErrNotFound
+	}
+	return nil
 }
 
 // charges the business outbound limiter before contacting the provider.

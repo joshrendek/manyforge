@@ -3,29 +3,36 @@
 package mailing_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/google/uuid"
 
+	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/mailing"
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 type fakeResendProvisioner struct {
 	endpoints        []string
 	cleanupEndpoints []string
 	ensureCalls      int
+	verifyCalls      int
+	verify           func() error
 	deleted          []string
 	ensureErr        error
 	cleanupMatches   bool
@@ -33,7 +40,13 @@ type fakeResendProvisioner struct {
 	deleteErr        error
 }
 
-func (f *fakeResendProvisioner) Verify(context.Context) error { return nil }
+func (f *fakeResendProvisioner) Verify(context.Context) error {
+	f.verifyCalls++
+	if f.verify != nil {
+		return f.verify()
+	}
+	return nil
+}
 func (f *fakeResendProvisioner) Send(context.Context, notify.Mail) (mailprovider.SendResult, error) {
 	return mailprovider.SendResult{}, nil
 }
@@ -69,6 +82,165 @@ func (f *fakeResendProvisioner) DeleteWebhook(_ context.Context, id string) erro
 	return f.deleteErr
 }
 
+
+func TestMFAuthzProfileVerify001WriteOnlyCannotVerifySendingProfile(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	writerID := seedMailingWriteOnlyPrincipal(ctx, t, tdb, seed.businessID)
+	provisioner := &fakeResendProvisioner{}
+	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+		return provisioner, nil
+	}, time.Minute)
+
+	var profileID uuid.UUID
+	var before string
+	if err = tdb.Super.QueryRow(ctx, `SELECT id, row_to_json(p)::text
+		FROM mailing_sending_profile p WHERE business_id=$1`, seed.businessID).Scan(&profileID, &before); err != nil {
+		t.Fatal(err)
+	}
+	var secretCountBefore int
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret WHERE business_id=$1 AND scope='mailing'`, seed.businessID).Scan(&secretCountBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = svc.VerifySendingProfile(ctx, writerID, seed.businessID); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("direct VerifySendingProfile error = %v, want not found", err)
+	}
+
+	resolve := func(ctx context.Context, tx pgx.Tx, principalID, businessID uuid.UUID) (httpx.Permissions, error) {
+		return authz.Resolve(ctx, tx, principalID, businessID)
+	}
+	businessIDFromPath := func(r *http.Request) (uuid.UUID, error) {
+		return uuid.Parse(chi.URLParam(r, "id"))
+	}
+	handler := mailing.NewHandler(svc)
+	router := chi.NewRouter()
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(httpx.WithPrincipal(r.Context(), writerID)))
+		})
+	})
+	router.Group(func(writeRouter chi.Router) {
+		writeRouter.Use(httpx.RequirePermission(tdb.App, resolve, authz.PermMailingWrite, businessIDFromPath))
+		handler.WriteRoutes(writeRouter)
+	})
+	router.Group(func(sendRouter chi.Router) {
+		sendRouter.Use(httpx.RequirePermission(tdb.App, resolve, authz.PermMailingSend, businessIDFromPath))
+		handler.SendRoutes(sendRouter)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/businesses/"+seed.businessID.String()+"/mailing/sending-profile/verify", nil)
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("HTTP verify status = %d body=%s, want 404", response.Code, response.Body.String())
+	}
+
+	var after string
+	if err = tdb.Super.QueryRow(ctx, `SELECT row_to_json(p)::text FROM mailing_sending_profile p WHERE id=$1`, profileID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	var secretCountAfter int
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret WHERE business_id=$1 AND scope='mailing'`, seed.businessID).Scan(&secretCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if before != after || secretCountBefore != secretCountAfter {
+		t.Fatalf("write-only verification mutated profile or credentials: profile_changed=%t secrets=%d->%d", before != after, secretCountBefore, secretCountAfter)
+	}
+	if provisioner.verifyCalls != 0 || provisioner.ensureCalls != 0 {
+		t.Fatalf("write-only verification reached provider: verify=%d provision=%d", provisioner.verifyCalls, provisioner.ensureCalls)
+	}
+}
+
+func TestMFAuthzProfileVerify001RevocationCannotPersistVerification(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		providerError     error
+		wantProvisionCall int
+	}{
+		{name: "verification status", providerError: errors.New("provider rejected credentials")},
+		{name: "Resend webhook credentials", wantProvisionCall: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tdb, err := testdb.Start(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tdb.Close(ctx)
+
+			seed := seedMailingTenant(ctx, t, tdb)
+			svc, _ := campaignService(t, ctx, tdb, seed)
+			senderID := seedMailingWriteOnlyPrincipal(ctx, t, tdb, seed.businessID)
+			var roleID uuid.UUID
+			if err = tdb.Super.QueryRow(ctx, `SELECT role_id FROM membership
+				WHERE principal_id=$1 AND business_id=$2`, senderID, seed.businessID).Scan(&roleID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = tdb.Super.Exec(ctx, `INSERT INTO role_permission (role_id,permission_key)
+				VALUES ($1,'mailing.send')`, roleID); err != nil {
+				t.Fatal(err)
+			}
+
+			var profileID, secretID uuid.UUID
+			if err = tdb.Super.QueryRow(ctx, `SELECT id, secret_ref FROM mailing_sending_profile
+				WHERE business_id=$1`, seed.businessID).Scan(&profileID, &secretID); err != nil {
+				t.Fatal(err)
+			}
+			provisioner := &fakeResendProvisioner{}
+			var revokeErr error
+			provisioner.verify = func() error {
+				_, revokeErr = tdb.Super.Exec(ctx, `DELETE FROM role_permission
+					WHERE role_id=$1 AND permission_key='mailing.send'`, roleID)
+				return tc.providerError
+			}
+			svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+				return provisioner, nil
+			}, time.Minute)
+
+			if _, err = svc.VerifySendingProfile(ctx, senderID, seed.businessID); !errors.Is(err, errs.ErrNotFound) {
+				t.Fatalf("VerifySendingProfile after permission revocation error = %v, want not found", err)
+			}
+			if revokeErr != nil {
+				t.Fatalf("revoke mailing.send: %v", revokeErr)
+			}
+			if provisioner.verifyCalls != 1 || provisioner.ensureCalls != tc.wantProvisionCall {
+				t.Fatalf("provider calls: verify=%d provision=%d, want verify=1 provision=%d",
+					provisioner.verifyCalls, provisioner.ensureCalls, tc.wantProvisionCall)
+			}
+
+			var status, feedbackStatus string
+			var verifyError pgtype.Text
+			var afterSecretID uuid.UUID
+			var provisioningToken pgtype.UUID
+			if err = tdb.Super.QueryRow(ctx, `SELECT status, verify_error, feedback_status, secret_ref,
+					resend_provisioning_token FROM mailing_sending_profile WHERE id=$1`, profileID).
+				Scan(&status, &verifyError, &feedbackStatus, &afterSecretID, &provisioningToken); err != nil {
+				t.Fatal(err)
+			}
+			if status != "unverified" || verifyError.Valid || feedbackStatus != "pending" ||
+				afterSecretID != secretID || provisioningToken.Valid {
+				t.Fatalf("revoked verification result persisted: status=%q verify_error=%v feedback=%q secret_changed=%t token=%v",
+					status, verifyError, feedbackStatus, afterSecretID != secretID, provisioningToken)
+			}
+			var secretCount int
+			if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret
+				WHERE business_id=$1 AND scope='mailing'`, seed.businessID).Scan(&secretCount); err != nil {
+				t.Fatal(err)
+			}
+			if secretCount != 1 {
+				t.Fatalf("revoked verification persisted credential rows: count=%d", secretCount)
+			}
+		})
+	}
+}
 
 func TestMFMailDelivery002ProfileTestSendChecksSuppressionBeforeProviderResolution(t *testing.T) {
 	ctx := context.Background()

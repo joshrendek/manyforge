@@ -50,7 +50,6 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Delete("/businesses/{id}/mailing/lists/{lid}/keys/{kid}", h.revokeKey)
 	r.Put("/businesses/{id}/mailing/sending-profile", h.putProfile)
 	r.Delete("/businesses/{id}/mailing/sending-profile", h.deleteProfile)
-	r.Post("/businesses/{id}/mailing/sending-profile/verify", h.verifyProfile)
 	r.Post("/businesses/{id}/mailing/templates", h.createTemplate)
 	r.Post("/businesses/{id}/mailing/templates/preview", h.preview)
 	r.Patch("/businesses/{id}/mailing/templates/{tid}", h.updateTemplate)
@@ -66,6 +65,7 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 // SendRoutes registers operations that require the mailing send permission.
 func (h *Handler) SendRoutes(r chi.Router) {
 	r.Post("/businesses/{id}/mailing/sending-profile/test-send", h.testProfile)
+	r.Post("/businesses/{id}/mailing/sending-profile/verify", h.verifyProfile)
 	r.Post("/businesses/{id}/mailing/campaigns/{cid}/test-send", h.testCampaign)
 	r.Post("/businesses/{id}/mailing/campaigns/{cid}/send", h.sendCampaign)
 	r.Post("/businesses/{id}/mailing/campaigns/{cid}/cancel", h.cancelCampaign)
