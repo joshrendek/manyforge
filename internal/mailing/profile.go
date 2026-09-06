@@ -91,11 +91,13 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 		}
 	}
 	var credential []byte
+	replacementAPIKey := ""
 	if in.Resend != nil {
-		if strings.TrimSpace(in.Resend.APIKey) == "" {
+		replacementAPIKey = strings.TrimSpace(in.Resend.APIKey)
+		if replacementAPIKey == "" {
 			return SendingProfile{}, validation("resend api_key is required")
 		}
-		credential, err = json.Marshal(resendStoredCredentials{APIKey: strings.TrimSpace(in.Resend.APIKey)})
+		credential, err = json.Marshal(resendStoredCredentials{APIKey: replacementAPIKey})
 	}
 	if in.SES != nil {
 		if strings.TrimSpace(in.SES.AccessKeyID) == "" || strings.TrimSpace(in.SES.SecretAccessKey) == "" {
@@ -106,15 +108,11 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 	if err != nil {
 		return SendingProfile{}, validation("invalid credentials")
 	}
-	lease, err := s.claimResendMutation(ctx, principalID, businessID)
+	lease, err := s.claimResendMutation(ctx, principalID, businessID, replacementAPIKey)
 	if err != nil {
 		return SendingProfile{}, err
 	}
 	if lease != nil && (lease.cleanupRequired || lease.webhookID != "") {
-		replacementAPIKey := ""
-		if in.Resend != nil {
-			replacementAPIKey = strings.TrimSpace(in.Resend.APIKey)
-		}
 		if err = s.cleanupResendWebhooks(ctx, *lease, replacementAPIKey); err != nil {
 			s.releaseResendMutation(ctx, principalID, *lease)
 			return SendingProfile{}, err
@@ -254,7 +252,7 @@ func (s *Service) PutSendingProfile(ctx context.Context, principalID, businessID
 }
 
 func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, businessID uuid.UUID) error {
-	lease, err := s.claimResendMutation(ctx, principalID, businessID)
+	lease, err := s.claimResendMutation(ctx, principalID, businessID, "")
 	if err != nil {
 		return err
 	}
@@ -312,7 +310,7 @@ func (s *Service) DeleteSendingProfile(ctx context.Context, principalID, busines
 }
 
 func (s *Service) claimResendMutation(
-	ctx context.Context, principalID, businessID uuid.UUID,
+	ctx context.Context, principalID, businessID uuid.UUID, replacementAPIKey string,
 ) (*resendOperationLease, error) {
 	var lease *resendOperationLease
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
@@ -340,8 +338,13 @@ func (s *Service) claimResendMutation(
 		var stored resendStoredCredentials
 		decodeErr := json.Unmarshal(raw, &stored)
 		clear(raw)
-		if decodeErr != nil || strings.TrimSpace(stored.APIKey) == "" {
-			return errors.New("mailing: stored Resend credentials are invalid")
+		stored.APIKey = strings.TrimSpace(stored.APIKey)
+		storedCredentialValid := decodeErr == nil && stored.APIKey != ""
+		if !storedCredentialValid {
+			stored = resendStoredCredentials{}
+			if replacementAPIKey == "" {
+				return errors.New("mailing: stored Resend credentials are invalid")
+			}
 		}
 		var cleanupRequired bool
 		if err = tx.QueryRow(ctx, `SELECT resend_cleanup_required
@@ -361,7 +364,8 @@ func (s *Service) claimResendMutation(
 		}
 		lease = &resendOperationLease{
 			profileID: row.ID, tenantRootID: row.TenantRootID, updatedAt: row.UpdatedAt,
-			token: token, apiKey: stored.APIKey, cleanupRequired: cleanupRequired,
+			token: token, apiKey: stored.APIKey,
+			cleanupRequired: cleanupRequired || !storedCredentialValid,
 		}
 		if stored.Version == 2 {
 			lease.webhookID = stored.WebhookID
@@ -380,16 +384,23 @@ func (s *Service) cleanupResendWebhooks(ctx context.Context, lease resendOperati
 		return errors.New("mailing: public base URL is required for Resend webhook cleanup")
 	}
 	endpoint := baseURL + "/inbound/mailing/" + lease.profileID.String() + "/resend"
-	keys := []string{lease.apiKey}
+	type cleanupAttempt struct {
+		apiKey       string
+		requireMatch bool
+	}
+	attempts := make([]cleanupAttempt, 0, 2)
+	if lease.apiKey != "" {
+		attempts = append(attempts, cleanupAttempt{apiKey: lease.apiKey})
+	}
 	if replacementAPIKey != "" && replacementAPIKey != lease.apiKey {
-		keys = append(keys, replacementAPIKey)
+		attempts = append(attempts, cleanupAttempt{apiKey: replacementAPIKey, requireMatch: true})
 	}
 	var cleanupErr error
-	for index, apiKey := range keys {
+	for _, attempt := range attempts {
 		s.Providers.Invalidate(lease.profileID)
 		deliverer, err := s.Providers.Resolve(ctx, mailprovider.Profile{
 			ID: lease.profileID, UpdatedAt: lease.updatedAt,
-			Mode: "resend", ResendAPIKey: apiKey,
+			Mode: "resend", ResendAPIKey: attempt.apiKey,
 		})
 		if err != nil {
 			cleanupErr = err
@@ -400,7 +411,7 @@ func (s *Service) cleanupResendWebhooks(ctx context.Context, lease resendOperati
 			cleanupErr = errors.New("mailing: provider does not support Resend webhook cleanup")
 			continue
 		}
-		if err = provisioner.CleanupWebhooks(ctx, endpoint, lease.webhookID, index > 0); err == nil {
+		if err = provisioner.CleanupWebhooks(ctx, endpoint, lease.webhookID, attempt.requireMatch); err == nil {
 			return nil
 		}
 		cleanupErr = err

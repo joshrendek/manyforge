@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 type fakeResendProvisioner struct {
 	endpoints        []string
 	cleanupEndpoints []string
+	cleanupRequireMatch []bool
 	ensureCalls      int
 	verifyCalls      int
 	verify           func() error
@@ -65,6 +67,7 @@ func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, exist
 }
 
 func (f *fakeResendProvisioner) CleanupWebhooks(_ context.Context, endpoint, existingID string, requireMatch bool) error {
+	f.cleanupRequireMatch = append(f.cleanupRequireMatch, requireMatch)
 	f.cleanupEndpoints = append(f.cleanupEndpoints, endpoint)
 	if f.cleanupErr != nil {
 		return f.cleanupErr
@@ -769,6 +772,85 @@ func TestMFMailFeedback001AmbiguousResendCreateDeleteFailsClosedWithoutUsableKey
 	}
 	if provisioner.ensureCalls != 1 || len(provisioner.cleanupEndpoints) != 2 {
 		t.Fatalf("delete cleanup retry ensure=%d cleanup=%v", provisioner.ensureCalls, provisioner.cleanupEndpoints)
+	}
+}
+
+func TestCorruptResendCredentialsFailClosedWithoutReplacementCleanupProof(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+
+	seed := seedMailingTenant(ctx, t, tdb)
+	svc, _ := campaignService(t, ctx, tdb, seed)
+	var profileID, secretID uuid.UUID
+	var fromEmail string
+	if err = tdb.Super.QueryRow(ctx, `SELECT id, secret_ref, from_email
+		FROM mailing_sending_profile WHERE business_id=$1`, seed.businessID).
+		Scan(&profileID, &secretID, &fromEmail); err != nil {
+		t.Fatal(err)
+	}
+	corruptCredential, err := svc.Sealer.Seal([]byte("{"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tdb.Super.Exec(ctx, `UPDATE secret SET sealed_value=$1, updated_at=now()
+		WHERE id=$2`, corruptCredential, secretID); err != nil {
+		t.Fatal(err)
+	}
+
+	wrongAccount := &fakeResendProvisioner{}
+	var resolvedKeys []string
+	svc.Providers = mailprovider.NewCache(func(_ context.Context, profile mailprovider.Profile) (mailprovider.Deliverer, error) {
+		resolvedKeys = append(resolvedKeys, profile.ResendAPIKey)
+		return wrongAccount, nil
+	}, time.Minute)
+	if _, err = svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "replacement@example.test", FromName: "Replacement",
+		Resend: &mailing.ResendCredentials{APIKey: "re_wrong_account"},
+	}); err == nil {
+		t.Fatal("corrupt credential replacement accepted without exact-endpoint cleanup proof")
+	}
+	if len(resolvedKeys) != 1 || resolvedKeys[0] != "re_wrong_account" ||
+		len(wrongAccount.cleanupRequireMatch) != 1 || !wrongAccount.cleanupRequireMatch[0] ||
+		len(wrongAccount.deleted) != 0 {
+		t.Fatalf("replacement cleanup attempts keys=%v require_match=%v deleted=%v",
+			resolvedKeys, wrongAccount.cleanupRequireMatch, wrongAccount.deleted)
+	}
+
+	if _, err = svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+		Mode: "resend", FromEmail: "no-key@example.test", FromName: "No key",
+	}); err == nil || !strings.Contains(err.Error(), "stored Resend credentials are invalid") {
+		t.Fatalf("no-key update with corrupt credentials error = %v", err)
+	}
+	if err = svc.DeleteSendingProfile(ctx, seed.principalID, seed.businessID); err == nil ||
+		!strings.Contains(err.Error(), "stored Resend credentials are invalid") {
+		t.Fatalf("delete with corrupt credentials error = %v", err)
+	}
+	if len(resolvedKeys) != 1 {
+		t.Fatalf("empty or corrupt old key reached provider resolution: keys=%v", resolvedKeys)
+	}
+
+	var afterEmail string
+	var afterSecretID uuid.UUID
+	var profileCount, secretCount int
+	if err = tdb.Super.QueryRow(ctx, `SELECT from_email, secret_ref FROM mailing_sending_profile
+		WHERE id=$1`, profileID).Scan(&afterEmail, &afterSecretID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM mailing_sending_profile WHERE id=$1`,
+		profileID).Scan(&profileCount); err != nil {
+		t.Fatal(err)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret WHERE id=$1`,
+		secretID).Scan(&secretCount); err != nil {
+		t.Fatal(err)
+	}
+	if afterEmail != fromEmail || afterSecretID != secretID || profileCount != 1 || secretCount != 1 {
+		t.Fatalf("failed cleanup changed profile: email=%q->%q secret=%s->%s profile=%d credential=%d",
+			fromEmail, afterEmail, secretID, afterSecretID, profileCount, secretCount)
 	}
 }
 
