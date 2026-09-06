@@ -4,6 +4,9 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SubscriberImportComponent } from './subscriber-import';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const LIST_ID = '22222222-2222-4222-8222-222222222222';
+
 describe('SubscriberImportComponent', () => {
   let http: HttpTestingController;
   let fixture: ComponentFixture<SubscriberImportComponent>;
@@ -14,8 +17,8 @@ describe('SubscriberImportComponent', () => {
     });
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(SubscriberImportComponent);
-    fixture.componentRef.setInput('businessId', 'b1');
-    fixture.componentRef.setInput('listId', 'l1');
+    fixture.componentRef.setInput('businessId', BUSINESS_ID);
+    fixture.componentRef.setInput('listId', LIST_ID);
     fixture.detectChanges();
   });
 
@@ -40,7 +43,7 @@ describe('SubscriberImportComponent', () => {
     fixture.componentInstance.file = new File(['email'], 'people.csv');
     fixture.componentInstance.consentAttested = true;
     fixture.componentInstance.submit();
-    http.expectOne('/api/v1/businesses/b1/mailing/lists/l1/subscribers/import').flush({
+    http.expectOne(`/api/v1/businesses/${BUSINESS_ID}/mailing/lists/${LIST_ID}/subscribers/import`).flush({
       imported: 3,
       skipped: 1,
       errors: [],

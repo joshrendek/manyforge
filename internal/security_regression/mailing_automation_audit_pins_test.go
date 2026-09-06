@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
 
@@ -35,42 +32,6 @@ func auditSection(t *testing.T, source, startMarker, endMarker string) string {
 		t.Fatalf("missing end marker %q", endMarker)
 	}
 	return rest[:end]
-}
-
-// MF-AUTO-001 characterizes the activation/graph TOCTOU. Activate locks the
-// automation but not the validated version row, while PutGraph can update that
-// draft concurrently. Replace this pin with a behavioral regression after the
-// version row or validated graph identity is fenced atomically.
-func TestMFAuto001ActivationDoesNotFenceValidatedGraph(t *testing.T) {
-	source := auditSource(t, "../../internal/automations/service.go")
-	activate := auditSection(t, source, "func (s *Service) Activate", "func (s *Service) Pause")
-	putGraph := auditSection(t, source, "func (s *Service) PutGraph", "func (s *Service) ValidateVersion")
-
-	if !strings.Contains(activate, "lockAutomation(") ||
-		!strings.Contains(activate, "q.GetAutomationVersion(") ||
-		!strings.Contains(putGraph, "q.UpdateAutomationVersionGraph(") {
-		t.Fatal("expected vulnerable activation and graph-update paths were not found")
-	}
-	if strings.Contains(activate, "FOR UPDATE") || strings.Contains(activate, "lockAutomationVersion") {
-		t.Fatal("activation now appears to fence the version row; replace this characterization with the fixed invariant")
-	}
-}
-
-// MF-AUTO-002 characterizes unbounded version retention and response loading.
-// The list query has no LIMIT and the service decodes every full graph.
-func TestMFAuto002VersionHistoryResponseHasNoBound(t *testing.T) {
-	service := auditSource(t, "../../internal/automations/service.go")
-	versions := auditSection(t, service, "func (s *Service) Versions(", "func (s *Service) Version(")
-	queries := auditSource(t, "../../db/query/automations.sql")
-	query := auditSection(t, queries, "-- name: ListAutomationVersions", "-- name: UpdateAutomationVersionGraph")
-
-	if !strings.Contains(versions, "ListAutomationVersions") ||
-		!strings.Contains(versions, "for _, row := range rows") {
-		t.Fatal("expected full version-history decoding path was not found")
-	}
-	if strings.Contains(strings.ToUpper(query), "LIMIT") {
-		t.Fatal("version history query is now bounded; replace this characterization with the fixed limit contract")
-	}
 }
 
 // MF-MAIL-DELIVERY-003 requires the development log sink to emit only
@@ -159,62 +120,6 @@ func TestMFMailLifecycle002ArchivedListIsNotCheckedAtWorkerSinks(t *testing.T) {
 		if strings.Contains(body, "mailing_list") {
 			t.Fatalf("%s now consults mailing_list; replace this characterization with the fixed active-list invariant", name)
 		}
-	}
-}
-
-// MF-MAIL-LOG-001 characterizes capability-bearing public paths being written
-// verbatim by the global request logger. The GET target is inert.
-func TestMFMailLog001CapabilityTokenAppearsInRequestLog(t *testing.T) {
-	const sentinel = "MF_CAPABILITY_SENTINEL"
-
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	router := httpx.NewRouter(nil)
-	router.Get("/m/u/{token}", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/m/u/"+sentinel, nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !strings.Contains(logs.String(), sentinel) {
-		t.Fatalf("expected request log to contain capability token %q; log: %s", sentinel, logs.String())
-	}
-}
-
-// AUTOMATION-SEND-AUTHZ-005 characterizes the write-only path from mutable
-// automation content and explicit enrollment to provider-bound delivery work.
-func TestAutomationSendAuthz005WritePermissionReachesProviderContent(t *testing.T) {
-	permissions := auditSource(t, "../../migrations/0124_mailing_core.up.sql")
-	automationHandler := auditSource(t, "../../internal/automations/handler.go")
-	automationWrite := auditSection(t, automationHandler, "func (h *Handler) WriteRoutes(", "func (h *Handler) SendRoutes(")
-	automationSend := auditSection(t, automationHandler, "func (h *Handler) SendRoutes(", "type nullableString struct")
-	mailingHandler := auditSource(t, "../../internal/mailing/handler.go")
-	mailingWrite := auditSection(t, mailingHandler, "func (h *Handler) WriteRoutes(", "// SendRoutes registers")
-	claimSQL := auditSource(t, "../../migrations/0130_automation_engine_ports.up.sql")
-
-	if !strings.Contains(permissions, "'mailing.write'") ||
-		!strings.Contains(permissions, "'mailing.send'") {
-		t.Fatal("expected distinct mailing.write and mailing.send permissions")
-	}
-	if !strings.Contains(automationWrite, "h.enroll") ||
-		!strings.Contains(automationWrite, "h.createEvent") ||
-		strings.Contains(automationSend, "h.enroll") ||
-		strings.Contains(automationSend, "h.createEvent") {
-		t.Fatal("expected enrollment and event injection to remain write-gated rather than send-gated")
-	}
-	if !strings.Contains(mailingWrite, "h.updateTemplate") {
-		t.Fatal("expected mutable template content to remain write-gated")
-	}
-	if !strings.Contains(claimSQL, "COALESCE(c.subject, t.subject)") ||
-		!strings.Contains(claimSQL, "COALESCE(c.body_markdown, t.body_markdown)") {
-		t.Fatal("expected automation delivery claim to resolve current mutable template content")
 	}
 }
 

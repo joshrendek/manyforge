@@ -5,10 +5,16 @@ import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/route
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MailingListDetailComponent } from './list-detail';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const LIST_ID = '22222222-2222-4222-8222-222222222222';
+const SUBSCRIBER_ID = '33333333-3333-4333-8333-333333333333';
+const NEW_SUBSCRIBER_ID = '44444444-4444-4444-8444-444444444444';
+const LIST_URL = `/api/v1/businesses/${BUSINESS_ID}/mailing/lists/${LIST_ID}`;
+
 const list = {
-  id: 'l1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: LIST_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   slug: 'updates',
   name: 'Updates',
   description: null,
@@ -18,10 +24,10 @@ const list = {
   updated_at: '',
 };
 const subscriber = {
-  id: 's1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
-  list_id: 'l1',
+  id: SUBSCRIBER_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
+  list_id: LIST_ID,
   email: 'ada@example.com',
   first_name: 'Ada',
   last_name: 'Lovelace',
@@ -53,7 +59,7 @@ describe('MailingListDetailComponent', () => {
         {
           provide: ActivatedRoute,
           useValue: {
-            snapshot: { paramMap: convertToParamMap({ businessId: 'b1', listId: 'l1' }) },
+            snapshot: { paramMap: convertToParamMap({ businessId: BUSINESS_ID, listId: LIST_ID }) },
           },
         },
       ],
@@ -65,13 +71,13 @@ describe('MailingListDetailComponent', () => {
   function mount(): ComponentFixture<MailingListDetailComponent> {
     const fixture = TestBed.createComponent(MailingListDetailComponent);
     fixture.detectChanges();
-    http.expectOne('/api/v1/businesses/b1/mailing/lists/l1').flush(list);
-    http.expectOne('/api/v1/businesses/b1/mailing/lists/l1/keys').flush({ items: [] });
+    http.expectOne(LIST_URL).flush(list);
+    http.expectOne(`${LIST_URL}/keys`).flush({ items: [] });
     http
-      .expectOne('/api/v1/businesses/b1/mailing/lists/l1/subscribers')
+      .expectOne(`${LIST_URL}/subscribers`)
       .flush({ items: [subscriber], next_cursor: null });
     fixture.detectChanges();
-    http.expectOne('/api/v1/businesses/b1/contacts').flush({ items: [], next_cursor: null });
+    http.expectOne(`/api/v1/businesses/${BUSINESS_ID}/contacts`).flush({ items: [], next_cursor: null });
     fixture.detectChanges();
     return fixture;
   }
@@ -89,16 +95,16 @@ describe('MailingListDetailComponent', () => {
     fixture.componentInstance.newEmail = 'grace@example.com';
     fixture.componentInstance.newTags = ['customer'];
     fixture.componentInstance.addSubscriber();
-    const request = http.expectOne('/api/v1/businesses/b1/mailing/lists/l1/subscribers');
+    const request = http.expectOne(`${LIST_URL}/subscribers`);
     expect(request.request.method).toBe('POST');
     expect(request.request.body).toMatchObject({
       email: 'grace@example.com',
       tags: ['customer'],
       skip_confirmation: false,
     });
-    request.flush({ ...subscriber, id: 's2', email: 'grace@example.com', tags: ['customer'] });
+    request.flush({ ...subscriber, id: NEW_SUBSCRIBER_ID, email: 'grace@example.com', tags: ['customer'] });
     http
-      .expectOne('/api/v1/businesses/b1/mailing/lists/l1/subscribers')
+      .expectOne(`${LIST_URL}/subscribers`)
       .flush({ items: [subscriber], next_cursor: null });
   });
 });

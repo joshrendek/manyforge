@@ -5,10 +5,14 @@ import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/route
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MailingTemplateEditorComponent } from './template-editor';
 
+const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const TEMPLATE_ID = '22222222-2222-4222-8222-222222222222';
+const TEMPLATE_URL = `/api/v1/businesses/${BUSINESS_ID}/mailing/templates/${TEMPLATE_ID}`;
+
 const template = {
-  id: 't1',
-  business_id: 'b1',
-  tenant_root_id: 'b1',
+  id: TEMPLATE_ID,
+  business_id: BUSINESS_ID,
+  tenant_root_id: BUSINESS_ID,
   name: 'Welcome',
   subject: 'Hello',
   preheader: null,
@@ -36,7 +40,7 @@ describe('MailingTemplateEditorComponent', () => {
         {
           provide: ActivatedRoute,
           useValue: {
-            snapshot: { paramMap: convertToParamMap({ businessId: 'b1', templateId: 't1' }) },
+            snapshot: { paramMap: convertToParamMap({ businessId: BUSINESS_ID, templateId: TEMPLATE_ID }) },
           },
         },
       ],
@@ -48,7 +52,7 @@ describe('MailingTemplateEditorComponent', () => {
   it('loads and saves Markdown and tracking settings', () => {
     const fixture = TestBed.createComponent(MailingTemplateEditorComponent);
     fixture.detectChanges();
-    http.expectOne('/api/v1/businesses/b1/mailing/templates/t1').flush(template);
+    http.expectOne(TEMPLATE_URL).flush(template);
     fixture.detectChanges();
     expect(fixture.componentInstance.content().body_markdown).toBe('# Hi');
     expect(fixture.componentInstance.hasUnsavedChanges()).toBe(false);
@@ -59,7 +63,7 @@ describe('MailingTemplateEditorComponent', () => {
     }));
     expect(fixture.componentInstance.hasUnsavedChanges()).toBe(true);
     fixture.componentInstance.save();
-    const request = http.expectOne('/api/v1/businesses/b1/mailing/templates/t1');
+    const request = http.expectOne(TEMPLATE_URL);
     expect(request.request.method).toBe('PATCH');
     expect(request.request.body).toMatchObject({
       body_markdown: '# Updated',

@@ -6,17 +6,23 @@ import { Automation, Enrollment } from '../../../core/automations.service';
 import { MailingSubscriber } from '../../../core/mailing.service';
 import { EnrollmentsTabComponent } from './enrollments-tab';
 
-const listId = '11111111-1111-4111-8111-111111111111';
+const LIST_ID = '11111111-1111-4111-8111-111111111111';
+const BUSINESS_ID = '22222222-2222-4222-8222-222222222222';
+const AUTOMATION_ID = '33333333-3333-4333-8333-333333333333';
+const VERSION_ID = '44444444-4444-4444-8444-444444444444';
+const ENROLLMENT_ID = '55555555-5555-4555-8555-555555555555';
+const SECOND_ENROLLMENT_ID = '66666666-6666-4666-8666-666666666666';
+const CREATED_ENROLLMENT_ID = '77777777-7777-4777-8777-777777777777';
 
 const activeAutomation: Automation = {
-  id: 'a1', business_id: 'b1', tenant_root_id: 'b1', name: 'Welcome', description: null,
-  status: 'active', allow_reenroll: false, active_version_id: 'v1', draft_version_id: null,
+  id: AUTOMATION_ID, business_id: BUSINESS_ID, tenant_root_id: BUSINESS_ID, name: 'Welcome', description: null,
+  status: 'active', allow_reenroll: false, active_version_id: VERSION_ID, draft_version_id: null,
   created_by_principal_id: 'u1', created_at: '', updated_at: '',
 };
 
 function makeSubscriber(id: string, email: string): MailingSubscriber {
   return {
-    id, business_id: 'b1', tenant_root_id: 'b1', list_id: listId, email,
+    id, business_id: BUSINESS_ID, tenant_root_id: BUSINESS_ID, list_id: LIST_ID, email,
     first_name: null, last_name: null, attributes: {}, status: 'active', contact_id: null,
     consent_source: 'manual', consent_attested_by: 'u1', consent_at: '', confirmed_at: null,
     unsubscribed_at: null, status_reason: null, tags: [], created_at: '', updated_at: '',
@@ -25,7 +31,7 @@ function makeSubscriber(id: string, email: string): MailingSubscriber {
 
 function makeEnrollment(id: string, subscriberId: string, status: Enrollment['status']): Enrollment {
   return {
-    id, business_id: 'b1', tenant_root_id: 'b1', automation_id: 'a1', version_id: 'v1',
+    id, business_id: BUSINESS_ID, tenant_root_id: BUSINESS_ID, automation_id: AUTOMATION_ID, version_id: VERSION_ID,
     subscriber_id: subscriberId, status,
     current_node_id: status === 'active' ? 'n_welcome' : null,
     wake_at: null, node_attempts: 0,
@@ -46,8 +52,8 @@ describe('EnrollmentsTabComponent', () => {
     });
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(EnrollmentsTabComponent);
-    fixture.componentInstance.businessId = 'b1';
-    fixture.componentInstance.automationId = 'a1';
+    fixture.componentInstance.businessId = BUSINESS_ID;
+    fixture.componentInstance.automationId = AUTOMATION_ID;
   });
 
   function mount(automation: Automation, triggerListId: string | null): void {
@@ -69,8 +75,8 @@ describe('EnrollmentsTabComponent', () => {
   });
 
   it('lists enrollments with subscriber email, status pill, and exit action for active rows', () => {
-    mount(activeAutomation, listId);
-    const target = makeEnrollment('e1', '33333333-3333-4333-8333-333333333333', 'active');
+    mount(activeAutomation, LIST_ID);
+    const target = makeEnrollment(ENROLLMENT_ID, '88888888-8888-4888-8888-888888888888', 'active');
     flushInitial([target]);
     http.expectOne((req) => req.url.includes('/subscribers')).flush({
       items: [makeSubscriber(target.subscriber_id, 'ada@acme.test')],
@@ -86,13 +92,13 @@ describe('EnrollmentsTabComponent', () => {
   });
 
   it('shows the empty state when there are no enrollments', () => {
-    mount(activeAutomation, listId);
+    mount(activeAutomation, LIST_ID);
     flushInitial([]);
     expect(fixture.nativeElement.querySelector('[data-testid="enrollments-empty"]')).toBeTruthy();
   });
 
   it('sends the status filter on the reload request', () => {
-    mount(activeAutomation, listId);
+    mount(activeAutomation, LIST_ID);
     flushInitial([]);
     fixture.componentInstance.setStatusFilter('exited');
     const request = http.expectOne((req) => req.url.includes('/enrollments'));
@@ -102,7 +108,7 @@ describe('EnrollmentsTabComponent', () => {
   });
 
   it('disables the enroll button when the automation is not active', () => {
-    mount({ ...activeAutomation, status: 'paused' }, listId);
+    mount({ ...activeAutomation, status: 'paused' }, LIST_ID);
     flushInitial([]);
     expect((fixture.nativeElement.querySelector('[data-testid="enrollment-enroll"]') as HTMLButtonElement).disabled).toBe(true);
   });
@@ -115,14 +121,14 @@ describe('EnrollmentsTabComponent', () => {
 
   it('enrolls the chosen candidate from the search dialog and reloads', () => {
     vi.useFakeTimers();
-    mount(activeAutomation, listId);
+    mount(activeAutomation, LIST_ID);
     flushInitial([]);
 
     (fixture.nativeElement.querySelector('[data-testid="enrollment-enroll"]') as HTMLButtonElement).click();
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="enroll-dialog-backdrop"]')).toBeTruthy();
 
-    const candidate = makeSubscriber('44444444-4444-4444-8444-444444444444', 'grace@acme.test');
+    const candidate = makeSubscriber('99999999-9999-4999-8999-999999999999', 'grace@acme.test');
     const input = fixture.nativeElement.querySelector('[data-testid="enroll-search"]') as HTMLInputElement;
     input.value = 'grace';
     input.dispatchEvent(new Event('input'));
@@ -136,7 +142,7 @@ describe('EnrollmentsTabComponent', () => {
 
     (fixture.nativeElement.querySelector('[data-testid="enroll-candidate-select"]') as HTMLButtonElement).click();
     fixture.detectChanges();
-    const enrollment = makeEnrollment('e9', candidate.id, 'active');
+    const enrollment = makeEnrollment(CREATED_ENROLLMENT_ID, candidate.id, 'active');
     const enroll = http.expectOne((req) => req.url.includes('/enrollments') && req.method === 'POST');
     expect(enroll.request.body).toEqual({ subscriber_id: candidate.id });
     enroll.flush(enrollment, { status: 201, statusText: 'Created' });
@@ -152,11 +158,11 @@ describe('EnrollmentsTabComponent', () => {
 
   it('reloads without crashing when enrollment returns a conflict', () => {
     vi.useFakeTimers();
-    mount(activeAutomation, listId);
+    mount(activeAutomation, LIST_ID);
     flushInitial([]);
     (fixture.nativeElement.querySelector('[data-testid="enrollment-enroll"]') as HTMLButtonElement).click();
     fixture.detectChanges();
-    const candidate = makeSubscriber('55555555-5555-4555-8555-555555555555', 'bob@acme.test');
+    const candidate = makeSubscriber('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bob@acme.test');
     const input = fixture.nativeElement.querySelector('[data-testid="enroll-search"]') as HTMLInputElement;
     input.value = 'bob';
     input.dispatchEvent(new Event('input'));
@@ -179,15 +185,15 @@ describe('EnrollmentsTabComponent', () => {
 
   it('exits an active enrollment after confirmation and reloads', () => {
     vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
-    mount(activeAutomation, listId);
-    const target = makeEnrollment('e1', '66666666-6666-4666-8666-666666666666', 'active');
+    mount(activeAutomation, LIST_ID);
+    const target = makeEnrollment(ENROLLMENT_ID, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'active');
     flushInitial([target]);
     http.expectOne((req) => req.url.includes('/subscribers')).flush({ items: [], next_cursor: null });
     fixture.detectChanges();
 
     (fixture.nativeElement.querySelector('[data-testid="enrollment-exit"]') as HTMLButtonElement).click();
     const exit = http.expectOne((req) => req.url.includes('/exit'));
-    expect(exit.request.url).toContain('/enrollments/e1/exit');
+    expect(exit.request.url).toContain(`/enrollments/${ENROLLMENT_ID}/exit`);
     exit.flush({ ...target, status: 'exited', exit_reason: 'manual', current_node_id: null });
     fixture.detectChanges();
 
@@ -201,8 +207,8 @@ describe('EnrollmentsTabComponent', () => {
 
   it('does not call exit when confirmation is declined', () => {
     vi.stubGlobal('confirm', vi.fn().mockReturnValue(false));
-    mount(activeAutomation, listId);
-    flushInitial([makeEnrollment('e1', '66666666-6666-4666-8666-666666666666', 'active')]);
+    mount(activeAutomation, LIST_ID);
+    flushInitial([makeEnrollment(ENROLLMENT_ID, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'active')]);
     http.expectOne((req) => req.url.includes('/subscribers')).flush({ items: [], next_cursor: null });
     fixture.detectChanges();
     (fixture.nativeElement.querySelector('[data-testid="enrollment-exit"]') as HTMLButtonElement).click();
@@ -211,9 +217,9 @@ describe('EnrollmentsTabComponent', () => {
   });
 
   it('appends the next page when Load more is clicked', () => {
-    mount(activeAutomation, listId);
-    const first = makeEnrollment('e1', '33333333-3333-4333-8333-333333333333', 'active');
-    const second = makeEnrollment('e2', '44444444-4444-4444-8444-444444444444', 'active');
+    mount(activeAutomation, LIST_ID);
+    const first = makeEnrollment(ENROLLMENT_ID, '88888888-8888-4888-8888-888888888888', 'active');
+    const second = makeEnrollment(SECOND_ENROLLMENT_ID, '99999999-9999-4999-8999-999999999999', 'active');
     http.expectOne((req) => req.url.includes('/enrollments')).flush({ items: [first], next_cursor: 'c1' });
     fixture.detectChanges();
     http.expectOne((req) => req.url.includes('/subscribers')).flush({
@@ -237,14 +243,14 @@ describe('EnrollmentsTabComponent', () => {
   });
 
   it('shows an error state when the initial load fails', () => {
-    mount(activeAutomation, listId);
+    mount(activeAutomation, LIST_ID);
     http.expectOne((req) => req.url.includes('/enrollments')).error(new ErrorEvent('boom'));
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="enrollments-error"]')).toBeTruthy();
   });
 
   it('closes the enroll dialog with Escape', () => {
-    mount(activeAutomation, listId);
+    mount(activeAutomation, LIST_ID);
     flushInitial([]);
     (fixture.nativeElement.querySelector('[data-testid="enrollment-enroll"]') as HTMLButtonElement).click();
     fixture.detectChanges();
