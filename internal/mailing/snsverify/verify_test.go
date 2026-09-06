@@ -12,8 +12,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"io"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -351,6 +352,228 @@ func TestCertificateFetchesUseFairGlobalInflightCeiling(t *testing.T) {
 	if got := maxActive.Load(); got != maxConcurrentCertificateFetches {
 		t.Fatalf("maximum concurrent certificate fetches = %d, want %d",
 			got, maxConcurrentCertificateFetches)
+	}
+}
+
+func TestTopicStateChurnStaysWithinGlobalCap(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	v := &Verifier{
+		Now: func() time.Time { return now },
+		Client: doerFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusBadGateway, nil), nil
+		}),
+	}
+
+	for i := range maxTopicFetchStates * 3 {
+		topic := fmt.Sprintf("arn:aws:sns:us-east-1:%012d:rotated", i+1)
+		certURL := fmt.Sprintf(
+			"https://sns.us-east-1.amazonaws.com/SimpleNotificationService-rotated-%d.pem", i)
+		if _, err := v.signingKey(context.Background(), certURL, topic); err == nil {
+			t.Fatal("untrusted signing certificate unexpectedly accepted")
+		}
+
+		v.mu.Lock()
+		topicCount := len(v.topics)
+		v.mu.Unlock()
+		if topicCount > maxTopicFetchStates {
+			t.Fatalf("topic states = %d, want at most %d", topicCount, maxTopicFetchStates)
+		}
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if got := len(v.topics); got != maxTopicFetchStates {
+		t.Fatalf("topic states after churn = %d, want %d", got, maxTopicFetchStates)
+	}
+}
+
+func TestIdleTopicStatesExpire(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	v := &Verifier{
+		Now: func() time.Time { return now },
+		Client: doerFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusBadGateway, nil), nil
+		}),
+	}
+	oldTopic := "arn:aws:sns:us-east-1:111111111111:old"
+	certURL := "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-old.pem"
+	if _, err := v.signingKey(context.Background(), certURL, oldTopic); err == nil {
+		t.Fatal("untrusted signing certificate unexpectedly accepted")
+	}
+
+	now = now.Add(topicStateIdleTTL)
+	newTopic := "arn:aws:sns:us-east-1:222222222222:new"
+	certURL = "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-new.pem"
+	if _, err := v.signingKey(context.Background(), certURL, newTopic); err == nil {
+		t.Fatal("untrusted signing certificate unexpectedly accepted")
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if _, ok := v.topics[oldTopic]; ok {
+		t.Fatal("expired idle topic state was retained")
+	}
+	if _, ok := v.topics[newTopic]; !ok {
+		t.Fatal("current topic state was not retained")
+	}
+}
+
+func TestTopicStateEvictionPreservesInflightFetch(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	_, certPEM, roots := signingCertificate(t, now)
+	protectedURL := "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-protected.pem"
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	v := &Verifier{
+		Roots: roots, Now: func() time.Time { return now },
+		Client: doerFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() != protectedURL {
+				return response(http.StatusBadGateway, nil), nil
+			}
+			started <- struct{}{}
+			<-release
+			return response(http.StatusOK, certPEM), nil
+		}),
+	}
+	protectedTopic := "arn:aws:sns:us-east-1:111111111111:protected"
+	protectedDone := make(chan error, 1)
+	go func() {
+		_, err := v.signingKey(context.Background(), protectedURL, protectedTopic)
+		protectedDone <- err
+	}()
+	<-started
+
+	v.mu.Lock()
+	protectedState := v.topics[protectedTopic]
+	for i := range maxTopicFetchStates - 1 {
+		topic := fmt.Sprintf("arn:aws:sns:us-east-1:%012d:idle", i+2)
+		v.topics[topic] = &topicFetchState{
+			failures: make(map[string]time.Time),
+			lastUsed: now.Add(-time.Second),
+		}
+	}
+	v.mu.Unlock()
+
+	overflowTopic := "arn:aws:sns:us-east-1:999999999999:overflow"
+	overflowURL := "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-overflow.pem"
+	_, overflowErr := v.signingKey(context.Background(), overflowURL, overflowTopic)
+
+	v.mu.Lock()
+	retainedState := v.topics[protectedTopic]
+	retainedInFlight := 0
+	if retainedState != nil {
+		retainedInFlight = retainedState.inFlight
+	}
+	topicCount := len(v.topics)
+	v.mu.Unlock()
+
+	close(release)
+	protectedErr := <-protectedDone
+
+	if overflowErr == nil {
+		t.Fatal("untrusted overflow signing certificate unexpectedly accepted")
+	}
+	if retainedState != protectedState || retainedInFlight != 1 {
+		t.Fatal("in-flight topic state was evicted or replaced")
+	}
+	if topicCount != maxTopicFetchStates {
+		t.Fatalf("topic states = %d, want %d", topicCount, maxTopicFetchStates)
+	}
+	if protectedErr != nil {
+		t.Fatalf("in-flight signing certificate fetch failed after eviction: %v", protectedErr)
+	}
+}
+
+func TestTopicStateCapFailsClosedWhenEveryStateIsInflight(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	var fetches atomic.Int32
+	v := &Verifier{
+		Now: func() time.Time { return now },
+		Client: doerFunc(func(*http.Request) (*http.Response, error) {
+			fetches.Add(1)
+			return response(http.StatusOK, nil), nil
+		}),
+		topics: make(map[string]*topicFetchState, maxTopicFetchStates),
+	}
+	for i := range maxTopicFetchStates {
+		topic := fmt.Sprintf("arn:aws:sns:us-east-1:%012d:active", i+1)
+		v.topics[topic] = &topicFetchState{
+			failures: make(map[string]time.Time),
+			inFlight: 1,
+			lastUsed: now,
+		}
+	}
+
+	newTopic := "arn:aws:sns:us-east-1:999999999999:new"
+	certURL := "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-new-cap.pem"
+	if _, err := v.signingKey(context.Background(), certURL, newTopic); !errors.Is(err, ErrTopicStateCapacity) {
+		t.Fatalf("signingKey error = %v, want ErrTopicStateCapacity", err)
+	}
+	if got := fetches.Load(); got != 0 {
+		t.Fatalf("certificate fetches = %d, want zero at topic-state capacity", got)
+	}
+	if got := len(v.topics); got != maxTopicFetchStates {
+		t.Fatalf("topic states = %d, want fixed cap %d", got, maxTopicFetchStates)
+	}
+}
+
+func TestVerificationWorksAfterTopicStateEviction(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	key, certPEM, roots := signingCertificate(t, now)
+	v := &Verifier{
+		Roots: roots, Now: func() time.Time { return now },
+		Client: doerFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, certPEM), nil
+		}),
+	}
+	topic := "arn:aws:sns:us-east-1:111111111111:authentic"
+	msg := Message{
+		Type: "Notification", MessageID: "before-eviction", Message: "{}",
+		TopicARN: topic, Timestamp: "2026-08-30T12:00:00Z",
+		SignatureVersion: "2",
+		SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-before-eviction.pem",
+	}
+	msg.Signature = signMessage(t, key, msg)
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = v.Verify(context.Background(), raw, topic); err != nil {
+		t.Fatalf("initial verification failed: %v", err)
+	}
+
+	v.mu.Lock()
+	v.topics[topic].lastUsed = now.Add(-time.Second)
+	for i := range maxTopicFetchStates - 1 {
+		fillerTopic := fmt.Sprintf("arn:aws:sns:us-east-1:%012d:filler", i+2)
+		v.topics[fillerTopic] = &topicFetchState{
+			failures: make(map[string]time.Time),
+			lastUsed: now,
+		}
+	}
+	v.mu.Unlock()
+
+	evictorTopic := "arn:aws:sns:us-east-1:999999999998:evictor"
+	evictorURL := "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-evictor.pem"
+	if _, err = v.signingKey(context.Background(), evictorURL, evictorTopic); err != nil {
+		t.Fatalf("evictor signing certificate fetch failed: %v", err)
+	}
+	v.mu.Lock()
+	_, retained := v.topics[topic]
+	v.mu.Unlock()
+	if retained {
+		t.Fatal("least-recently-used authentic topic was not evicted")
+	}
+
+	msg.MessageID = "after-eviction"
+	msg.SigningCertURL = "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-after-eviction.pem"
+	msg.Signature = signMessage(t, key, msg)
+	raw, err = json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = v.Verify(context.Background(), raw, topic); err != nil {
+		t.Fatalf("verification after topic-state eviction failed: %v", err)
 	}
 }
 
