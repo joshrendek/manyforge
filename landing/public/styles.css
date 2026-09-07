@@ -131,10 +131,9 @@ code, samp, pre { font-family: var(--mf-font-mono); }
   font-size: 13.5px;
 }
 .nav-links > li > a { display: inline-flex; align-items: center; min-height: 36px; }
-.nav-links a:not(.button):not(.sign-in) { color: var(--mf-text-muted); }
+.nav-links a:not(.button) { color: var(--mf-text-muted); }
 .nav-links a:not(.button):hover { color: var(--mf-accent-text); }
 .repository-link { gap: 5px; font: 400 12.5px var(--mf-font-mono); }
-.sign-in { font-weight: 600; }
 .button {
   display: inline-flex;
   align-items: center;
