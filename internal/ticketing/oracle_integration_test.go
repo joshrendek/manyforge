@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -154,5 +156,68 @@ func TestNoOracleHTTP404Parity(t *testing.T) {
 	// And it is the generic NOT_FOUND envelope (never a 403 / forbidden shape).
 	if got := strings.TrimSpace(bodyUnknown); got != `{"code":"NOT_FOUND","message":"not found"}` {
 		t.Errorf("404 body = %q, want the generic NOT_FOUND envelope", got)
+	}
+}
+
+func TestListTicketsSearchHTTP(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	other := seedReadTenant(ctx, t, tdb)
+	firstID, lastID := uuid.New(), uuid.New()
+	seedTicket(ctx, t, tdb, rt, firstID, "open", "high", "First 50%_OFF offer", nil, nil, -time.Hour)
+	seedTicket(ctx, t, tdb, rt, uuid.New(), "open", "high", "50percent_off offer", nil, nil, -2*time.Hour)
+	seedTicket(ctx, t, tdb, rt, lastID, "open", "high", "Last 50%_off offer", nil, nil, -3*time.Hour)
+	seedTicket(ctx, t, tdb, other, uuid.New(), "open", "high", "50%_off offer", nil, nil, 0)
+	srv, ring := newTicketReadRouter(t, tdb)
+	bearer := mintBearer(t, ring, rt.reader)
+	base := "/businesses/" + rt.master.String() + "/tickets"
+	query := url.Values{"search": {" 50%_oFf "}, "status": {"open"}, "priority": {"high"}, "limit": {"1"}}
+
+	for i, want := range []uuid.UUID{firstID, lastID} {
+		status, body := getRaw(t, srv, bearer, base+"?"+query.Encode())
+		if status != http.StatusOK {
+			t.Fatalf("search page %d: status=%d body=%s", i, status, body)
+		}
+		var page struct {
+			Items []struct {
+				ID uuid.UUID `json:"id"`
+			} `json:"items"`
+			NextCursor *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal([]byte(body), &page); err != nil {
+			t.Fatalf("decode search page: %v", err)
+		}
+		if len(page.Items) != 1 || page.Items[0].ID != want {
+			t.Fatalf("search page %d: want %s, got %s", i, want, body)
+		}
+		if i == 0 {
+			if page.NextCursor == nil {
+				t.Fatal("missing continuation for matching older ticket")
+			}
+			query.Set("cursor", *page.NextCursor)
+		} else if page.NextCursor != nil {
+			t.Fatal("last matching ticket must end pagination")
+		}
+	}
+
+	// The HTTP boundary counts Unicode characters, not encoded bytes, and trims
+	// before applying the cap. Oversized searches are caller errors, not 500s.
+	for _, tc := range []struct {
+		search string
+		status int
+	}{
+		{" " + strings.Repeat("界", 256) + " ", http.StatusOK},
+		{strings.Repeat("界", 257), http.StatusBadRequest},
+	} {
+		status, body := getRaw(t, srv, bearer, base+"?search="+url.QueryEscape(tc.search))
+		if status != tc.status {
+			t.Fatalf("search length boundary: status=%d want=%d body=%s", status, tc.status, body)
+		}
+	}
+	noReader := mintBearer(t, ring, rt.noReader)
+	statusDenied, bodyDenied := getRaw(t, srv, noReader, base+"?"+query.Encode())
+	statusCross, bodyCross := getRaw(t, srv, bearer, "/businesses/"+other.master.String()+"/tickets?"+query.Encode())
+	if statusDenied != http.StatusNotFound || statusCross != http.StatusNotFound || bodyDenied != bodyCross {
+		t.Fatalf("search must retain no-oracle permission/tenant denials: denied=%d %s cross=%d %s", statusDenied, bodyDenied, statusCross, bodyCross)
 	}
 }

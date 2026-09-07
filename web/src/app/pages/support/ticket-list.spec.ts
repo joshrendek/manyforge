@@ -2,9 +2,10 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Subject } from 'rxjs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CurrentBusinessService } from '../../core/current-business.service';
-import { Page, Ticket } from '../../core/ticket.service';
+import { Page, Ticket, TicketService } from '../../core/ticket.service';
 import { TicketListComponent } from './ticket-list';
 
 // Component-level coverage for the US1 ticket-list page. We drive the real
@@ -91,6 +92,9 @@ describe('TicketListComponent (Task 19 UI redesign)', () => {
   });
 
   afterEach(() => {
+    fixture?.destroy();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     mock.verify();
     document.documentElement.setAttribute('data-theme', 'light');
   });
@@ -171,5 +175,89 @@ describe('TicketListComponent (Task 19 UI redesign)', () => {
     const hasTable = !!q('.mf-table');
     const hasCard = !!q('.mf-card');
     expect(hasTable || hasCard).toBe(true);
+  });
+
+  it('keeps the latest A → B → A search and facets when obsolete reads finish late', () => {
+    vi.useFakeTimers();
+    boot();
+    const firstA = new Subject<Page<Ticket>>();
+    const queryB = new Subject<Page<Ticket>>();
+    const latestA = new Subject<Page<Ticket>>();
+    const oldMore = new Subject<Page<Ticket>>();
+    const newStatus = new Subject<Page<Ticket>>();
+    const newPriority = new Subject<Page<Ticket>>();
+    vi.spyOn(TestBed.inject(TicketService), 'listTickets')
+      .mockReturnValueOnce(firstA)
+      .mockReturnValueOnce(queryB)
+      .mockReturnValueOnce(latestA)
+      .mockReturnValueOnce(oldMore)
+      .mockReturnValueOnce(newStatus)
+      .mockReturnValueOnce(newPriority);
+    const component = fixture.componentInstance;
+    component.setSearch('refund');
+    vi.advanceTimersByTime(200);
+    component.setSearch('invoice');
+    // A response arriving during the debounce must already be obsolete.
+    firstA.next({ items: [makeTicket({ subject: 'Stale refund' })], next_cursor: 'stale' });
+    fixture.detectChanges();
+    expect(q('[data-testid="ticket-row"]')).toBeNull();
+    vi.advanceTimersByTime(200);
+    component.setSearch('refund');
+    vi.advanceTimersByTime(200);
+    latestA.next({ items: [makeTicket({ subject: 'Current refund' })], next_cursor: 'more-refunds' });
+    fixture.detectChanges();
+    expect(text('ticket-subject')).toBe('Current refund');
+    component.loadMore();
+    component.setStatus('open');
+    component.setPriority('urgent');
+    newPriority.next({
+      items: [makeTicket({ subject: 'Urgent open refund', priority: 'urgent' })],
+      next_cursor: null,
+    });
+    oldMore.next({ items: [makeTicket({ id: 'old', subject: 'Stale extra refund' })], next_cursor: 'old' });
+    newStatus.next({ items: [makeTicket({ subject: 'Wrong priority refund' })], next_cursor: 'old' });
+    firstA.next({ items: [makeTicket({ subject: 'Stale refund' })], next_cursor: 'old' });
+    queryB.error(new Error('Obsolete request failed'));
+    fixture.detectChanges();
+    expect(text('ticket-subject')).toBe('Urgent open refund');
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="ticket-row"]')).toHaveLength(1);
+    expect(q('[data-testid="load-more"]')).toBeNull();
+    expect(q('[data-testid="list-error"]')).toBeNull();
+  });
+
+  it('follows the global business and ignores old pages even after switching back', () => {
+    boot();
+    const firstPage = new Subject<Page<Ticket>>();
+    const oldMore = new Subject<Page<Ticket>>();
+    const otherBusiness = new Subject<Page<Ticket>>();
+    const returnedBusiness = new Subject<Page<Ticket>>();
+    vi.spyOn(TestBed.inject(TicketService), 'listTickets')
+      .mockReturnValueOnce(firstPage)
+      .mockReturnValueOnce(oldMore)
+      .mockReturnValueOnce(otherBusiness)
+      .mockReturnValueOnce(returnedBusiness);
+    const component = fixture.componentInstance;
+    component.reload();
+    firstPage.next({ items: [makeTicket()], next_cursor: 'old-business-page' });
+    component.loadMore();
+    const currentBusiness = TestBed.inject(CurrentBusinessService);
+    currentBusiness.set('b2');
+    fixture.detectChanges();
+    currentBusiness.set('b1');
+    fixture.detectChanges();
+    returnedBusiness.next({
+      items: [makeTicket({ subject: 'Fresh Acme conversation' })],
+      next_cursor: null,
+    });
+    otherBusiness.next({
+      items: [makeTicket({ business_id: 'b2', subject: 'Other business conversation' })],
+      next_cursor: 'other',
+    });
+    oldMore.next({ items: [makeTicket({ id: 'old', subject: 'Obsolete Acme page' })], next_cursor: 'old' });
+    fixture.detectChanges();
+    expect(text('ticket-subject')).toBe('Fresh Acme conversation');
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="ticket-row"]')).toHaveLength(1);
+    expect(q('[data-testid="load-more"]')).toBeNull();
+    expect(q('[data-testid="inbox-settings-link"]')?.getAttribute('href')).toBe('/support/b1/settings/inbox');
   });
 });
