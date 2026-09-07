@@ -90,18 +90,6 @@ describe('AccountingSummaryComponent (Task 22 UI redesign)', () => {
     expect(header!.textContent).toContain('Accounting');
   });
 
-  it('business-select and window-select are select.mf-select', () => {
-    boot();
-    const bizSel = q('[data-testid="business-select"]');
-    expect(bizSel).not.toBeNull();
-    expect(bizSel!.tagName.toLowerCase()).toBe('select');
-    expect(bizSel!.classList.contains('mf-select')).toBe(true);
-
-    const winSel = q('[data-testid="window-select"]');
-    expect(winSel).not.toBeNull();
-    expect(winSel!.tagName.toLowerCase()).toBe('select');
-    expect(winSel!.classList.contains('mf-select')).toBe(true);
-  });
 
   it('totals cards present with correct testids inside .mf-card', () => {
     boot();

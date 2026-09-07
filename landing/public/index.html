@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0e0d0b">
+    <title>ManyForge — Ship your SaaS without reforging the basics</title>
+    <meta name="description" content="Customer accounts, teams and permissions, billing-ready org structures, and a real support inbox. The unglamorous half of every SaaS, already built.">
+    <link rel="icon" href="./assets/manyforge-mark.svg" type="image/svg+xml">
+    <link rel="preload" href="./assets/fonts/space-grotesk-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="./assets/fonts/space-grotesk-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="ManyForge home">
+        <img src="./assets/manyforge-mark.svg" width="26" height="22" alt="">
+        <span>manyforge</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <ul class="nav-links">
+          <li><a href="#features">Features</a></li>
+          <li><a href="#twowalls">Security</a></li>
+          <li><a href="#desk">Support desk</a></li>
+          <li><a href="#quickstart">Quickstart</a></li>
+          <li><a class="repository-link" href="https://github.com/joshrendek/manyforge">GitHub <span aria-hidden="true">↗</span></a></li>
+          <li><a class="sign-in" href="https://hub.bluescripts.net/login">Sign in</a></li>
+          <li><a class="button button-primary button-small" href="#quickstart">Get started</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="ember-glow" aria-hidden="true"></div>
+        <div class="spark spark-one" aria-hidden="true"></div>
+        <div class="spark spark-two" aria-hidden="true"></div>
+        <div class="spark spark-three" aria-hidden="true"></div>
+        <div class="container hero-content">
+          <p class="eyebrow hero-eyebrow">Public source · Self-hosted</p>
+          <h1 id="hero-title">Ship your SaaS without reforging the basics.</h1>
+          <p class="hero-description">Customer accounts, teams and permissions, billing-ready org structures, and a real support inbox — the unglamorous half of every SaaS, already built. Spend your fire on the product.</p>
+          <div class="actions hero-actions">
+            <a class="button button-primary" href="#quickstart">Light the forge</a>
+            <a class="button button-secondary clone-link" href="https://github.com/joshrendek/manyforge">git clone joshrendek/manyforge</a>
+          </div>
+          <dl class="hero-stats" aria-label="At a glance">
+            <div><dt>Afternoon to launch</dt><dd>1</dd></div>
+            <div><dt>Infrastructure</dt><dd>Yours</dd></div>
+            <div><dt>Customer orgs</dt><dd aria-label="Unlimited">∞</dd></div>
+            <div><dt>Hammer strikes</dt><dd>Pending</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section id="features" class="section" aria-label="Features">
+        <div class="container feature-grid">
+          <article class="feature">
+            <span class="diamond" aria-hidden="true"></span>
+            <h2>Accounts, done on day one</h2>
+            <p>Signups, logins, invitations, ownership handoffs, and clean account deletion — the table stakes nobody enjoys building twice.</p>
+          </article>
+          <article class="feature">
+            <span class="diamond" aria-hidden="true"></span>
+            <h2>Teams shaped like real companies</h2>
+            <p>Your customers have subsidiaries, departments, and agencies-with-clients. Model the real structure — access flows down the tree on its own.</p>
+          </article>
+          <article class="feature">
+            <span class="diamond" aria-hidden="true"></span>
+            <h2>Support without the extra SaaS bill</h2>
+            <p>Customers email you; you get organized, threaded tickets in the same product. Cancel the third-party help desk.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="twowalls" class="section section-alternate" aria-labelledby="security-title">
+        <div class="container section-grid security-grid">
+          <div class="section-copy">
+            <p class="eyebrow">Trust</p>
+            <h2 id="security-title">One customer can never see another's data.</h2>
+            <p class="section-description">The mistake that kills a SaaS isn't downtime — it's tenant A seeing tenant B's invoices. ManyForge enforces isolation twice, independently, so a single bug can't cause a breach. Walk into enterprise security reviews with a straight answer.</p>
+            <p class="section-note audit-note">Every action lands in an append-only audit trail — “who did what, when” is always one query away.</p>
+          </div>
+          <figure class="isolation-diagram" aria-label="A request with a principal JWT passes through two independent isolation walls: service-layer predicates, then PostgreSQL row-level security, before accessing tenant data.">
+            <div class="isolation-node request-node">request<span>principal JWT</span></div>
+            <span class="connector" aria-hidden="true"></span>
+            <div class="isolation-node wall-node">WALL I<span>service-layer<br>predicates</span></div>
+            <span class="connector" aria-hidden="true"></span>
+            <div class="isolation-node wall-node">WALL II<span>postgres<br>RLS</span></div>
+            <span class="connector" aria-hidden="true"></span>
+            <div class="isolation-node data-node">tenant<br>data</div>
+          </figure>
+        </div>
+      </section>
+
+      <section id="desk" class="section" aria-labelledby="desk-title">
+        <div class="container section-grid desk-grid">
+          <div class="section-copy">
+            <p class="eyebrow">Support desk</p>
+            <h2 id="desk-title">Meet customers where they already are: email.</h2>
+            <p class="section-description">No portal to log into, no widget to install. Customers just email you — and your team sees organized, threaded conversations with full history. Replies go out from your own domain, so it looks like you, not a help desk vendor.</p>
+            <ul class="desk-benefits">
+              <li><span aria-hidden="true">✓</span> Nothing lost or duplicated</li>
+              <li><span aria-hidden="true">✓</span> Replies from your domain</li>
+              <li><span aria-hidden="true">✓</span> Full thread history</li>
+            </ul>
+          </div>
+          <figure class="ticket-example" aria-labelledby="ticket-caption">
+            <figcaption id="ticket-caption">Illustrative support conversation</figcaption>
+            <div class="ticket-card">
+              <div class="ticket-header">
+                <p>#1042 — Can't invite a sub-business owner</p>
+                <span class="status-pill">Open</span>
+              </div>
+              <div class="ticket-thread">
+                <article class="message" aria-label="Example customer message">
+                  <span class="avatar" aria-hidden="true">MK</span>
+                  <div class="message-bubble">
+                    <p>Hi — inviting an owner to our subsidiary fails with a 404. The parent works fine?</p>
+                    <p class="message-meta">via mail@acme-holdings.test · <time datetime="12:04">12:04</time></p>
+                  </div>
+                </article>
+                <article class="message message-reply" aria-label="Example team reply">
+                  <span class="avatar avatar-team" aria-hidden="true">JR</span>
+                  <div class="message-bubble">
+                    <p>That 404 is deliberate — unknown and unauthorized look identical. You need <code>invitations:create</code> on the subsidiary itself.</p>
+                    <p class="message-meta">reply · DKIM-signed · <time datetime="12:11">12:11</time></p>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </figure>
+        </div>
+      </section>
+
+      <section id="quickstart" class="section section-alternate" aria-labelledby="quickstart-title">
+        <div class="container section-grid quickstart-grid">
+          <div class="section-copy">
+            <p class="eyebrow">Quickstart</p>
+            <h2 id="quickstart-title">From clone to running product in an afternoon.</h2>
+            <p class="section-description">Start the API with a seeded demo company, then launch the dashboard. The full setup guide covers the local database, secrets, and dependencies.</p>
+            <p class="section-note">Requires Go 1.25.5+, PostgreSQL 16, Docker, make, sqlc, golang-migrate, and Node.js for the dashboard.</p>
+            <a class="text-link quickstart-docs" href="https://github.com/joshrendek/manyforge#quick-start">Read the full setup guide <span aria-hidden="true">→</span></a>
+          </div>
+          <figure class="terminal-example" aria-labelledby="terminal-caption">
+            <figcaption id="terminal-caption">After cloning and configuring your local environment</figcaption>
+            <div class="terminal">
+              <p class="terminal-comment"># after configuring .env and starting PostgreSQL</p>
+              <pre><code><span class="prompt" aria-hidden="true">$ </span>set -a; . ./.env; set +a
+<span class="prompt" aria-hidden="true">$ </span>make migrate &amp;&amp; make generate
+<span class="prompt" aria-hidden="true">$ </span>make dev <span class="terminal-comment"># API :8080</span>
+<span class="prompt" aria-hidden="true">$ </span>go run ./cmd/seeddemo <span class="terminal-comment"># another configured terminal</span>
+<span class="prompt" aria-hidden="true">$ </span>npm --prefix web start <span class="terminal-comment"># dashboard, separate terminal</span></code></pre>
+              <div class="terminal-output">
+                <p class="output-label">Illustrative startup output</p>
+                <pre><samp>msg="http listening" addr=:8080
+msg="smtp receiver listening" addr=:2525
+msg="outbox worker started" <span class="lit-message">· the forge is lit</span></samp></pre>
+              </div>
+            </div>
+          </figure>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-cta">
+        <h2>Bring your own iron.</h2>
+        <p>Self-hosted with source you can inspect. Just you and the anvil.</p>
+        <div class="actions footer-actions">
+          <a class="button button-primary" href="https://github.com/joshrendek/manyforge">Star on GitHub</a>
+          <a class="button button-secondary" href="https://github.com/joshrendek/manyforge#quick-start">Read the docs</a>
+        </div>
+      </div>
+      <div class="footer-rule">
+        <div class="container footer-meta">
+          <p>go 1.25.5 · postgres 16 · angular 21 · source available</p>
+          <p class="commit-status"><span class="ember-dot" aria-hidden="true"></span>Commit count: Pending · still glowing</p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

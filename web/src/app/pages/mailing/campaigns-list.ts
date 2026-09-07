@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { BusinessService } from '../../core/business.service';
@@ -19,7 +21,7 @@ import { ToastService } from '../../ui/toast/toast.service';
   imports: [DatePipe, FormsModule, RouterLink, EmptyState, PageHeader, Spinner, StatusPill],
   template: `
     <div class="mf-card" data-testid="mailing-campaigns-page">
-      <mf-page-header title="Campaigns" subtitle="Write, schedule, and send email broadcasts">
+      <mf-page-header [eyebrow]="businessName()" title="Campaigns" subtitle="Write, schedule, and send email broadcasts">
         <a
           routerLink="/mailing/lists"
           class="mf-btn mf-btn-ghost mf-btn-sm"
@@ -51,21 +53,7 @@ import { ToastService } from '../../ui/toast/toast.service';
       </mf-page-header>
 
       <div class="mf-filters">
-        <div class="mf-field grow">
-          <label for="campaign-business">Business</label>
-          <select
-            id="campaign-business"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (business of businesses(); track business.id) {
-              <option [value]="business.id">{{ business.name }}</option>
-            }
-          </select>
-        </div>
+        
         @if (loading()) {
           <span class="loading"><mf-spinner /> Loading campaigns…</span>
         }
@@ -133,6 +121,7 @@ import { ToastService } from '../../ui/toast/toast.service';
             <span>{{ campaign.subject || 'No subject' }}</span>
             <span
               ><mf-status-pill [tone]="statusTone(campaign.status)" [label]="campaign.status"
+                [live]="campaign.status === 'sending'"
             /></span>
             <span>{{ campaign.scheduled_at || campaign.updated_at | date: 'medium' }}</span>
           </div>
@@ -187,6 +176,18 @@ import { ToastService } from '../../ui/toast/toast.service';
   ],
 })
 export class MailingCampaignsListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private businessesApi = inject(BusinessService);
   private mailing = inject(MailingService);
   private current = inject(CurrentBusinessService);
@@ -209,7 +210,7 @@ export class MailingCampaignsListComponent implements OnInit {
   readonly statusTone = mailingCampaignStatusTone;
 
   ngOnInit(): void {
-    this.businessesApi.list().subscribe({
+    this.businessesApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         const items = page.items ?? [];
         this.businesses.set(items);
@@ -221,8 +222,13 @@ export class MailingCampaignsListComponent implements OnInit {
   }
 
   selectBusiness(businessId: string): void {
+    if (businessId === this.businessId()) return;
+    this.businessChanged.next();
+    this.newName = '';
+    this.creating.set(false);
+    this.error.set('');
     this.businessId.set(businessId);
-    this.current.set(businessId);
+    if (businessId) this.current.set(businessId);
     // A previous business may still be loading. Its response is ignored below, while these
     // resets allow the newly selected business to start its own requests immediately.
     this.loading.set(false);
@@ -231,8 +237,10 @@ export class MailingCampaignsListComponent implements OnInit {
     this.lists.set([]);
     this.nextCursor.set(null);
     this.newListId = '';
-    this.loadLists(businessId);
-    this.load();
+    if (businessId) {
+      this.loadLists(businessId);
+      this.load();
+    }
   }
 
   loadMore(): void {
@@ -242,7 +250,7 @@ export class MailingCampaignsListComponent implements OnInit {
   private loadLists(businessId: string): void {
     const seq = ++this.listLoadSeq;
     this.loadingLists.set(true);
-    this.mailing.listAllLists(businessId).subscribe({
+    this.mailing.listAllLists(businessId).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (items) => {
         if (seq !== this.listLoadSeq || businessId !== this.businessId()) return;
         const active = items.filter((list) => list.status === 'active');
@@ -263,7 +271,7 @@ export class MailingCampaignsListComponent implements OnInit {
     if (!businessId || this.loading()) return;
     const seq = ++this.campaignLoadSeq;
     this.loading.set(true);
-    this.mailing.listCampaigns(businessId, cursor).subscribe({
+    this.mailing.listCampaigns(businessId, cursor).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         if (seq !== this.campaignLoadSeq || businessId !== this.businessId()) return;
         this.items.update((items) =>
@@ -296,17 +304,16 @@ export class MailingCampaignsListComponent implements OnInit {
         tag_filter: [],
         track_opens: true,
         track_clicks: true,
-      })
-      .subscribe({
-        next: (campaign) => {
-          this.creating.set(false);
-          this.toast.success('Campaign created');
-          void this.router.navigate(['/mailing', businessId, 'campaigns', campaign.id]);
-        },
-        error: () => {
-          this.creating.set(false);
-          this.toast.error('Could not create campaign');
-        },
-      });
+      }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (campaign) => {
+        this.creating.set(false);
+        this.toast.success('Campaign created');
+        void this.router.navigate(['/mailing', businessId, 'campaigns', campaign.id]);
+      },
+      error: () => {
+        this.creating.set(false);
+        this.toast.error('Could not create campaign');
+      },
+    });
   }
 }

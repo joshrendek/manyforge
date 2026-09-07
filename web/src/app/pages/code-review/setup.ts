@@ -1,4 +1,6 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
+import { Component, OnInit, computed, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Agent, AgentsService, ModelDescriptor } from '../../core/agents.service';
@@ -127,7 +129,7 @@ function catalogLabel(key: string): string {
   imports: [FormsModule, PageHeader, Spinner, EmptyState, CdkDropList, CdkDrag, CdkDragHandle],
   template: `
     <div class="mf-card" data-testid="code-review-setup">
-      <mf-page-header title="Review Setup" subtitle="Configure the multi-dimension reviewer panel for a business.">
+      <mf-page-header [eyebrow]="businessName()" title="Review Setup" subtitle="Configure the multi-dimension reviewer panel for a business.">
         @if (loading()) {
           <span class="mf-loading-row" actions><mf-spinner /></span>
         }
@@ -137,19 +139,9 @@ function catalogLabel(key: string): string {
         <p class="mf-err" data-testid="setup-error">{{ error() }}</p>
       }
       @if (saved()) {
-        <p style="color:var(--mf-success,#2e7d32);font-size:var(--mf-fs-sm)" data-testid="setup-saved">{{ saved() }}</p>
+        <p style="color:var(--mf-success-text);font-size:var(--mf-fs-sm)" data-testid="setup-saved">{{ saved() }}</p>
       }
-
-      <!-- Business selector -->
-      <div class="mf-field" style="max-width:360px;margin-bottom:16px">
-        <label for="setup-business">Business</label>
-        <select id="setup-business" class="mf-select" data-testid="setup-business"
-                [ngModel]="businessId()" (ngModelChange)="selectBusiness($event)">
-          @for (b of businesses(); track b.id) {
-            <option [value]="b.id">{{ b.name }}</option>
-          }
-        </select>
-      </div>
+      
 
       <!-- Presets -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
@@ -321,6 +313,18 @@ function catalogLabel(key: string): string {
   `,
 })
 export class CodeReviewSetupComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private api = inject(CodeReviewService);
   private agentsApi = inject(AgentsService);
   private bizApi = inject(BusinessService);
@@ -351,15 +355,13 @@ export class CodeReviewSetupComponent implements OnInit {
   saved = signal('');
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id ?? '';
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.loadPanel();
+          this.selectBusiness(id);
         } else {
           this.loading.set(false);
         }
@@ -372,10 +374,21 @@ export class CodeReviewSetupComponent implements OnInit {
   }
 
   selectBusiness(id: string): void {
-    if (!id || id === this.businessId()) return;
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.config.set({ dedupe: true, verify_enabled: false, verify_provider: '', verify_model: '', cite_rules: false, post_mode: 'single', review_agent_chain: [] });
+    this.rows.set([]);
+    this.estimate.set(null);
+    this.agents.set([]);
+    this.allModels.set([]);
+    this.catalogModels.set({});
+    this.loading.set(false);
+    this.savingConfig.set(false);
+    this.error.set('');
+    this.saved.set('');
     this.businessId.set(id);
-    this.current.set(id);
-    this.loadPanel();
+    if (id) this.current.set(id);
+    if (id) this.loadPanel();
   }
 
   private loadPanel(): void {
@@ -387,7 +400,7 @@ export class CodeReviewSetupComponent implements OnInit {
     this.loadedCatalogs.clear();
     this.catalogModels.set({});
 
-    this.api.listDimensions(bid).subscribe({
+    this.api.listDimensions(bid).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const rows = (r.items ?? []).map((d) => this.rowFromServer(d));
         this.rows.set(rows);
@@ -403,10 +416,10 @@ export class CodeReviewSetupComponent implements OnInit {
         this.error.set(e.status === 403 || e.status === 404 ? "You don't have access to this business." : 'Could not load the review panel.');
       },
     });
-    this.api.getConfig(bid).subscribe({ next: (c) => this.config.set(this.withChain(c)), error: () => {} });
+    this.api.getConfig(bid).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({ next: (c) => this.config.set(this.withChain(c)), error: () => {} });
     this.refreshEstimate(bid);
-    this.agentsApi.models(bid).subscribe({ next: (r) => this.allModels.set(r.items ?? []), error: () => {} });
-    this.agentsApi.list(bid).subscribe({ next: (r) => this.agents.set(r.items ?? []), error: () => {} });
+    this.agentsApi.models(bid).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({ next: (r) => this.allModels.set(r.items ?? []), error: () => {} });
+    this.agentsApi.list(bid).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({ next: (r) => this.agents.set(r.items ?? []), error: () => {} });
   }
 
   applyPreset(name: string): void {
@@ -433,7 +446,7 @@ export class CodeReviewSetupComponent implements OnInit {
     if (!bid) return;
     row.saving = true;
     this.bumpRows();
-    this.api.upsertDimension(bid, this.toInput(row)).subscribe({
+    this.api.upsertDimension(bid, this.toInput(row)).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (saved) => {
         row.id = saved.id;
         row.saving = false;
@@ -467,7 +480,7 @@ export class CodeReviewSetupComponent implements OnInit {
   // Called on load and after each save so the number tracks the persisted panel. A failure just
   // clears the estimate — it's advisory and must never block editing.
   private refreshEstimate(bid: string): void {
-    this.api.estimate(bid).subscribe({
+    this.api.estimate(bid).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (e) => this.estimate.set(e),
       error: () => this.estimate.set(null),
     });
@@ -481,7 +494,7 @@ export class CodeReviewSetupComponent implements OnInit {
     }
     const bid = this.businessId();
     if (!bid) return;
-    this.api.deleteDimension(bid, row.id).subscribe({
+    this.api.deleteDimension(bid, row.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         drop();
         this.saved.set(`Removed ${row.label}.`);
@@ -495,7 +508,7 @@ export class CodeReviewSetupComponent implements OnInit {
     const bid = this.businessId();
     if (!bid) return;
     this.savingConfig.set(true);
-    this.api.putConfig(bid, this.config()).subscribe({
+    this.api.putConfig(bid, this.config()).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (c) => {
         this.config.set(c);
         this.savingConfig.set(false);
@@ -617,7 +630,7 @@ export class CodeReviewSetupComponent implements OnInit {
     const bid = this.businessId();
     if (!bid) return; // mark loaded only once we actually fetch, or a no-business call poisons the cache
     this.loadedCatalogs.add(provider);
-    this.agentsApi.providerModels(bid, provider).subscribe({
+    this.agentsApi.providerModels(bid, provider).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => this.catalogModels.set({ ...this.catalogModels(), [provider]: r.items ?? [] }),
       error: () => {
         // Release the marker so selecting this provider again retries. Keeping it would make a

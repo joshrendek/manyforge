@@ -102,6 +102,7 @@ export interface TicketListFilters {
   priority?: TicketPriority;
   assignee?: string;
   tag?: string;
+  search?: string;
   cursor?: string;
   limit?: number;
 }
@@ -179,13 +180,14 @@ export class TicketService {
   private http = inject(HttpClient);
 
   // GET /businesses/{id}/tickets — keyset-paginated, optional status/priority/
-  // assignee/tag filters (requires tickets.read). 404 for unknown OR unauthorized.
+  // assignee/tag/subject filters (requires tickets.read). 404 for unknown OR unauthorized.
   listTickets(businessId: string, filters: TicketListFilters = {}): Observable<Page<Ticket>> {
     let params = new HttpParams();
     if (filters.status) params = params.set('status', filters.status);
     if (filters.priority) params = params.set('priority', filters.priority);
     if (filters.assignee) params = params.set('assignee', filters.assignee);
     if (filters.tag) params = params.set('tag', filters.tag);
+    if (filters.search) params = params.set('search', filters.search);
     if (filters.cursor) params = params.set('cursor', filters.cursor);
     if (filters.limit != null) params = params.set('limit', String(filters.limit));
     return this.http.get<Page<Ticket>>(`/api/v1/businesses/${businessId}/tickets`, { params });

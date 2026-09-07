@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Agent, AgentsService } from '../../core/agents.service';
@@ -28,7 +30,7 @@ import { PageHeader } from '../../ui/page-header/page-header';
   imports: [FormsModule, RouterLink, PageHeader],
   template: `
     <div class="mf-card" data-testid="github-app-settings-page">
-      <mf-page-header title="GitHub App" subtitle="Create the GitHub App and connect organizations for PR review." />
+      <mf-page-header [eyebrow]="businessName()" title="GitHub App" subtitle="Create the GitHub App and connect organizations for PR review." />
 
       <h3 style="margin:0 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
         Create GitHub App
@@ -51,16 +53,7 @@ import { PageHeader } from '../../ui/page-header/page-header';
         Connect an organization
       </h3>
       <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="gh-biz-select">Business</label>
-          <select id="gh-biz-select" class="mf-select" data-testid="gh-business-select"
-                  [ngModel]="businessId()" (ngModelChange)="selectBusiness($event)">
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
+        
         @if (agents().length) {
           <div class="mf-field" style="flex:1 1 220px">
             <label for="gh-agent-select">Review agent</label>
@@ -93,6 +86,18 @@ import { PageHeader } from '../../ui/page-header/page-header';
   `,
 })
 export class GithubAppSettingsComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private api = inject(GithubAppService);
   private bizApi = inject(BusinessService);
   private agentsApi = inject(AgentsService);
@@ -109,15 +114,13 @@ export class GithubAppSettingsComponent implements OnInit {
   connectError = signal('');
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.loadAgents(id);
+          this.selectBusiness(id);
         }
       },
       error: () => {
@@ -130,7 +133,7 @@ export class GithubAppSettingsComponent implements OnInit {
   createApp(): void {
     this.creatingApp.set(true);
     this.createAppError.set('');
-    this.api.getManifest().subscribe({
+    this.api.getManifest().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (res) => this.submitManifestForm(res.action_url, res.manifest, res.state),
       error: (e: HttpErrorResponse) => {
         this.creatingApp.set(false);
@@ -162,16 +165,19 @@ export class GithubAppSettingsComponent implements OnInit {
   }
 
   selectBusiness(id: string): void {
-    if (!id || id === this.businessId()) return;
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.agents.set([]);
+    this.connecting.set(false);
     this.businessId.set(id);
-    this.current.set(id);
+    if (id) this.current.set(id);
     this.selectedAgentId.set('');
     this.connectError.set('');
-    this.loadAgents(id);
+    if (id) this.loadAgents(id);
   }
 
   private loadAgents(businessId: string): void {
-    this.agentsApi.list(businessId).subscribe({
+    this.agentsApi.list(businessId).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() === businessId) this.agents.set(r.items ?? []);
       },
@@ -187,7 +193,7 @@ export class GithubAppSettingsComponent implements OnInit {
     if (!businessId || !agentId) return;
     this.connecting.set(true);
     this.connectError.set('');
-    this.api.getInstallUrl(businessId, agentId).subscribe({
+    this.api.getInstallUrl(businessId, agentId).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (res) => {
         window.location.href = res.install_url;
       },

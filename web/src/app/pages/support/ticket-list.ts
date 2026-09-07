@@ -1,4 +1,6 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil, timer } from 'rxjs';
+import { Component, OnInit, computed, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
@@ -22,17 +24,13 @@ import { ticketStatusTone, ticketPriorityTone } from '../../ui/status';
 const STATUSES: TicketStatus[] = ['new', 'open', 'pending', 'solved', 'closed'];
 const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 
-// Support ticket list. Mirrors dashboard.ts: signals for state, a centralised
-// load helper, generic no-oracle error copy. The "current business" is chosen
-// from the same /api/v1/businesses list the dashboard uses (there is no selected-
-// business service); the chosen id scopes every ticket call and seeds the thread
-// route. Status/priority filters and keyset "load more" drive the list.
+// Support tickets follow the global business context; filters and pagination remain page-local.
 @Component({
   selector: 'app-ticket-list',
   imports: [FormsModule, RouterLink, DatePipe, PageHeader, StatusPill, EmptyState, Spinner],
   template: `
     <div class="mf-card">
-      <mf-page-header title="Support" subtitle="Inbound conversations for the selected business.">
+      <mf-page-header [eyebrow]="businessName()" title="Support" subtitle="Inbound conversations for the selected business.">
         <ng-container actions>
           @if (businessId()) {
             <a
@@ -49,21 +47,11 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
       </mf-page-header>
 
       <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="biz-select">Business</label>
-          <select
-            id="biz-select"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
+        <div class="mf-field" style="flex:2 1 240px">
+          <label for="ticket-search">Search</label>
+          <input id="ticket-search" class="mf-input" placeholder="Subject contains…" maxlength="256" [ngModel]="search()" (ngModelChange)="setSearch($event)" />
         </div>
+        
         <div class="mf-field" style="flex:1 1 160px">
           <label for="status-filter">Status</label>
           <select
@@ -114,13 +102,13 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
         @if (tickets().length) {
           <div class="mf-table" data-testid="ticket-list">
             <div class="mf-tr mf-th">
-              <span style="flex:1">Subject</span>
+              <span style="flex:3">Subject</span>
               <span style="width:90px">Status</span>
               <span style="width:90px">Priority</span>
-              <span style="width:140px">Requester</span>
-              <span style="width:70px">Messages</span>
+              <span style="width:150px">Requester</span>
+              <span class="mf-td-num" style="width:52px">Msgs</span>
               <span style="flex:1">Tags</span>
-              <span style="width:120px">Last message</span>
+              <span style="width:140px">Last message</span>
             </div>
             @for (t of tickets(); track t.id) {
               <div
@@ -129,7 +117,7 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
                 [attr.data-ticket-id]="t.id"
                 (click)="open(t)"
               >
-                <span style="flex:1" data-testid="ticket-subject">{{
+                <span class="mf-tr-name" style="flex:3;font-weight:500" data-testid="ticket-subject">{{
                   t.subject || '(no subject)'
                 }}</span>
                 <span style="width:90px">
@@ -146,11 +134,11 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
                     data-testid="ticket-priority"
                   />
                 </span>
-                <span style="width:140px" data-testid="ticket-requester">{{
+                <span style="width:150px" data-testid="ticket-requester">{{
                   t.requester.display_name || t.requester.email
                 }}</span>
-                <span style="width:70px" data-testid="ticket-message-count"
-                  >{{ t.message_count }} msg</span
+                <span class="mf-td-num" style="width:52px" data-testid="ticket-message-count"
+                  >{{ t.message_count }}</span
                 >
                 <span style="flex:1">
                   @if (t.tags.length) {
@@ -161,7 +149,7 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
                     </span>
                   }
                 </span>
-                <span style="width:120px">
+                <span class="mf-td-data" style="width:140px">
                   @if (t.last_message_at) {
                     {{ t.last_message_at | date: 'short' }}
                   }
@@ -171,7 +159,8 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
           </div>
         } @else {
           <mf-empty-state title="No tickets" data-testid="ticket-empty">
-            No tickets match these filters.
+            The anvil is quiet — nothing matches these filters.
+            <button action class="mf-btn mf-btn-ghost mf-btn-sm" (click)="clearFilters()">Clear filters</button>
           </mf-empty-state>
         }
 
@@ -194,6 +183,18 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
   `,
 })
 export class TicketListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly queryChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.currentBiz.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private api = inject(TicketService);
   private router = inject(Router);
@@ -204,6 +205,13 @@ export class TicketListComponent implements OnInit {
 
   businesses = signal<Business[]>([]);
   businessId = signal<string>('');
+  search = signal('');
+  clearFilters(): void {
+    this.search.set('');
+    this.status.set('');
+    this.priority.set('');
+    this.reload();
+  }
   status = signal<TicketStatus | ''>('');
   priority = signal<TicketPriority | ''>('');
 
@@ -218,13 +226,15 @@ export class TicketListComponent implements OnInit {
     const f: TicketListFilters = {};
     if (this.status()) f.status = this.status() as TicketStatus;
     if (this.priority()) f.priority = this.priority() as TicketPriority;
+    const search = this.search().trim();
+    if (search) f.search = search;
     return f;
   });
 
   ngOnInit(): void {
     // The current business is chosen from the same list the dashboard renders;
     // we default to the first one so the page is useful on first load.
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
@@ -234,9 +244,7 @@ export class TicketListComponent implements OnInit {
           // either way so the approvals nav badge tracks the business shown here (crm).
           const shared = this.currentBiz.businessId();
           const initial = items.some((b) => b.id === shared) ? (shared as string) : items[0].id;
-          this.businessId.set(initial);
-          this.currentBiz.set(initial);
-          this.reload();
+          this.selectBusiness(initial);
         }
       },
       error: () => this.loadFailed.set(true),
@@ -244,9 +252,20 @@ export class TicketListComponent implements OnInit {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
     this.businessId.set(id);
-    this.currentBiz.set(id); // keep the approvals nav badge in sync with the viewed business (crm)
+    if (id) this.currentBiz.set(id); // keep the approvals nav badge in sync with the viewed business (crm)
     this.reload();
+  }
+
+  setSearch(search: string): void {
+    if (search === this.search()) return;
+    this.search.set(search);
+    // Invalidate immediately, not after the debounce: an old page must not
+    // appear or append while the input already describes a different query.
+    this.resetReads();
+    if (!this.businessId()) return;
+    timer(200).pipe(takeUntil(this.queryChanged), takeUntilDestroyed(this.destroyRef)).subscribe(() => this.reload());
   }
 
   setStatus(s: TicketStatus | ''): void {
@@ -259,12 +278,20 @@ export class TicketListComponent implements OnInit {
     this.reload();
   }
 
-  reload(): void {
-    if (!this.businessId()) return;
-    this.loading.set(true);
+  private resetReads(): void {
+    this.queryChanged.next();
+    this.tickets.set([]);
+    this.nextCursor.set(null);
+    this.loading.set(!!this.businessId());
     this.loadFailed.set(false);
+    this.busy.set(false);
     this.error.set('');
-    this.api.listTickets(this.businessId(), this.filters()).subscribe({
+  }
+
+  reload(): void {
+    this.resetReads();
+    if (!this.businessId()) return;
+    this.api.listTickets(this.businessId(), this.filters()).pipe(takeUntil(this.queryChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         this.tickets.set(page.items ?? []);
         this.nextCursor.set(page.next_cursor);
@@ -280,10 +307,10 @@ export class TicketListComponent implements OnInit {
 
   loadMore(): void {
     const cursor = this.nextCursor();
-    if (!cursor || this.busy()) return;
+    if (!cursor || this.busy() || this.loading()) return;
     this.busy.set(true);
     this.error.set('');
-    this.api.listTickets(this.businessId(), { ...this.filters(), cursor }).subscribe({
+    this.api.listTickets(this.businessId(), { ...this.filters(), cursor }).pipe(takeUntil(this.queryChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         this.tickets.update((cur) => [...cur, ...(page.items ?? [])]);
         this.nextCursor.set(page.next_cursor);

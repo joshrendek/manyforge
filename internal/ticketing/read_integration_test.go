@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,6 +222,79 @@ func TestListTicketsFilters(t *testing.T) {
 	tag := "billing"
 	if p, _ := svc.ListTickets(ctx, rt.reader, rt.master, TicketFilter{Tag: &tag}, "", 50); len(p.Items) != 1 {
 		t.Errorf("tag=billing: want 1, got %d", len(p.Items))
+	}
+}
+
+func TestListTicketsSearch(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	svc := newReadService(tdb)
+	rt := seedReadTenant(ctx, t, tdb)
+	other := seedReadTenant(ctx, t, tdb)
+	want := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	for i, subject := range []string{"Invoice 50%_OFF today", "RE: 50%_off renewal", "Old 50%_Off invoice"} {
+		seedTicket(ctx, t, tdb, rt, want[i], "open", "high", subject, nil, []string{"billing"}, -time.Duration(2*i+2)*time.Hour)
+	}
+	// Interleave excluded rows so both the initial and cursor queries must apply
+	// search and every facet; LIKE would incorrectly accept the first two.
+	for i, subject := range []string{"50anything_off", "50%Xoff", "unrelated"} {
+		seedTicket(ctx, t, tdb, rt, uuid.New(), "open", "high", subject, nil, []string{"billing"}, -time.Duration(2*i+1)*time.Hour)
+	}
+	seedTicket(ctx, t, tdb, rt, uuid.New(), "pending", "high", "50%_off", nil, []string{"billing"}, -time.Minute)
+	seedTicket(ctx, t, tdb, rt, uuid.New(), "open", "low", "50%_off", nil, []string{"billing"}, -3*time.Hour)
+	seedTicket(ctx, t, tdb, rt, uuid.New(), "open", "high", "50%_off", &rt.reader, []string{"billing"}, -5*time.Hour)
+	seedTicket(ctx, t, tdb, rt, uuid.New(), "open", "high", "50%_off", nil, []string{"shipping"}, -7*time.Hour)
+	seedTicket(ctx, t, tdb, other, uuid.New(), "open", "high", "50%_off", nil, []string{"billing"}, -time.Minute)
+
+	status, priority, tag := "open", "high", "BILLING"
+	filter := TicketFilter{Search: "\u2003 50%_oFf \t", Status: &status, Priority: &priority, Unassigned: true, Tag: &tag}
+	cursor := ""
+	for i, id := range want {
+		page, err := svc.ListTickets(ctx, rt.reader, rt.master, filter, cursor, 1)
+		if err != nil {
+			t.Fatalf("search page %d: %v", i, err)
+		}
+		if len(page.Items) != 1 || page.Items[0].ID != id {
+			t.Fatalf("search page %d: want ticket %s, got %+v", i, id, page.Items)
+		}
+		if i == len(want)-1 {
+			if page.NextCursor != nil {
+				t.Fatal("last matching ticket must end pagination")
+			}
+		} else {
+			if page.NextCursor == nil {
+				t.Fatalf("search page %d: missing continuation", i)
+			}
+			cursor = *page.NextCursor
+		}
+	}
+	for _, scope := range []struct {
+		principal uuid.UUID
+		business  uuid.UUID
+	}{
+		{other.reader, rt.master},
+		{rt.reader, other.master},
+	} {
+		page, err := svc.ListTickets(ctx, scope.principal, scope.business, filter, "", 50)
+		if err != nil {
+			t.Fatalf("unauthorized search: %v", err)
+		}
+		if len(page.Items) != 0 {
+			t.Fatalf("unauthorized search leaked tickets: %+v", page.Items)
+		}
+	}
+
+	longSubject, longID := strings.Repeat("界", 256), uuid.New()
+	seedTicket(ctx, t, tdb, rt, longID, "open", "normal", longSubject, nil, nil, 0)
+	page, err := svc.ListTickets(ctx, rt.reader, rt.master, TicketFilter{Search: " " + longSubject + " "}, "", 50)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != longID {
+		t.Fatalf("256 Unicode characters after trimming must match: page=%+v err=%v", page, err)
+	}
+	if _, err := svc.ListTickets(ctx, rt.reader, rt.master, TicketFilter{Search: longSubject + "界"}, "", 50); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("257 Unicode characters must fail at service boundary: %v", err)
+	}
+	all, err := svc.ListTickets(ctx, rt.reader, rt.master, TicketFilter{Search: " \t\u2003\n"}, "", 50)
+	if err != nil || len(all.Items) != 11 {
+		t.Fatalf("whitespace search must return all 11 own tickets: page=%+v err=%v", all, err)
 	}
 }
 

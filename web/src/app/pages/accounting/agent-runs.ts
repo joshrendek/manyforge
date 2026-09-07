@@ -29,7 +29,7 @@ import { runStatusTone } from '../../ui/status';
           @for (r of runs(); track r.id) {
             <div class="mf-tr" data-testid="run-row" [attr.data-run-id]="r.id">
               <div style="display:flex;align-items:center;gap:10px;flex:1">
-                <mf-status-pill [tone]="runStatusTone(r.status)" [label]="r.status" data-testid="run-status" />
+                <mf-status-pill [tone]="runStatusTone(r.status)" [label]="r.status" [live]="r.status === 'running'" data-testid="run-status" />
                 <span data-testid="run-cost">{{ r.cost_cents / 100 | currency }}</span>
               </div>
               <div style="display:flex;gap:12px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">

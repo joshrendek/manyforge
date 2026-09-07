@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { Automation, AutomationsService } from '../../../core/automations.service';
@@ -19,12 +21,12 @@ import { ToastService } from '../../../ui/toast/toast.service';
   imports: [DatePipe, FormsModule, RouterLink, EmptyState, PageHeader, Spinner, StatusPill],
   template: `
     <div class="mf-card" data-testid="automations-page">
-      <mf-page-header title="Automations" subtitle="Build branching journeys that react to subscriber activity">
+      <mf-page-header [eyebrow]="businessName()" title="Automations" subtitle="Build branching journeys that react to subscriber activity">
         <a routerLink="/mailing/lists" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="automations-lists-link" actions>Lists</a>
         <a routerLink="/mailing/templates" class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="automations-templates-link" actions>Templates</a>
       </mf-page-header>
       <div class="mf-filters">
-        <div class="mf-field grow"><label for="automation-business">Business</label><select id="automation-business" class="mf-select" data-testid="business-select" [ngModel]="businessId()" (ngModelChange)="selectBusiness($event)"><option value="" disabled>Choose a business…</option>@for (business of businesses(); track business.id) { <option [value]="business.id">{{ business.name }}</option> }</select></div>
+        
         @if (loading()) { <span class="loading"><mf-spinner /> Loading automations…</span> }
       </div>
       @if (businessId()) {
@@ -50,6 +52,18 @@ import { ToastService } from '../../../ui/toast/toast.service';
   `],
 })
 export class AutomationsListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private readonly businessesApi = inject(BusinessService);
   private readonly automations = inject(AutomationsService);
   private readonly current = inject(CurrentBusinessService);
@@ -69,7 +83,7 @@ export class AutomationsListComponent implements OnInit {
   readonly statusTone = automationStatusTone;
 
   ngOnInit(): void {
-    this.businessesApi.list().subscribe({
+    this.businessesApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         const items = page.items ?? [];
         this.businesses.set(items);
@@ -80,12 +94,18 @@ export class AutomationsListComponent implements OnInit {
     });
   }
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.newName = '';
+    this.allowReenroll = false;
+    this.creating.set(false);
+    this.error.set('');
     this.businessId.set(id);
-    this.current.set(id);
+    if (id) this.current.set(id);
     this.loading.set(false);
     this.items.set([]);
     this.nextCursor.set(null);
-    this.load();
+    if (id) this.load();
   }
   loadMore(): void { if (this.nextCursor()) this.load(this.nextCursor()!); }
   create(): void {
@@ -93,7 +113,7 @@ export class AutomationsListComponent implements OnInit {
     const businessId = this.businessId();
     if (!name || !businessId || this.creating()) return;
     this.creating.set(true);
-    this.automations.create(businessId, { name, allow_reenroll: this.allowReenroll }).subscribe({
+    this.automations.create(businessId, { name, allow_reenroll: this.allowReenroll }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (automation) => {
         this.creating.set(false);
         this.toast.success('Automation created');
@@ -107,7 +127,7 @@ export class AutomationsListComponent implements OnInit {
     if (!businessId || this.loading()) return;
     const seq = ++this.loadSeq;
     this.loading.set(true);
-    this.automations.list(businessId, cursor).subscribe({
+    this.automations.list(businessId, cursor).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         if (seq !== this.loadSeq || businessId !== this.businessId()) return;
         this.items.update((items) => cursor ? [...items, ...(page.items ?? [])] : (page.items ?? []));

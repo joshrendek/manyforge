@@ -149,13 +149,17 @@ func main() {
 		logger.Warn("using ephemeral dev JWT keys; access tokens are invalid across restarts")
 	}
 
+	var accountMailer mailer.Mailer = mailer.LogMailer{Logger: logger}
+	if cfg.OutboundMailDisabled {
+		accountMailer = mailer.DisabledMailer{}
+	}
 	acctSvc := &account.Service{
-		DB: database, Ring: ring, Mailer: mailer.LogMailer{Logger: logger},
+		DB: database, Ring: ring, Mailer: accountMailer,
 		AccessTTL: cfg.AccessTokenTTL, RefreshTTL: 30 * 24 * time.Hour, TokenTTL: 24 * time.Hour,
 	}
 	tenSvc := &tenancy.Service{DB: database, Metrics: metrics}
 	authzSvc := &authz.Service{DB: database}
-	invSvc := &invitations.Service{DB: database, Mailer: mailer.LogMailer{Logger: logger}}
+	invSvc := &invitations.Service{DB: database, Mailer: accountMailer}
 	// Outbound send rate limiter (FR-020): per-business AND per-recipient token
 	// buckets built from the SAME outbound knobs (MANYFORGE_OUTBOUND_RATE_*),
 	// mirroring how the ingest limiter is built from the ingest knobs. The
@@ -654,11 +658,13 @@ func main() {
 	}, logger)
 	eventBus.Subscribe(events.TopicBusinessCreated, inboxProvisioner.Handle)
 
-	// Outbound mail uses a real SMTP transport whenever configured. The
-	// metadata-only LogSender is restricted to development and reports every
-	// message as non-accepted; production without SMTP is a startup error.
+	// Explicit disabling takes precedence over every configured transport.
+	// Otherwise SMTP is required in production; the development sink is non-accepting.
 	var sender notify.Sender
-	if cfg.SMTPHost != "" {
+	if cfg.OutboundMailDisabled {
+		sender = notify.DisabledSender{}
+		logger.Warn("outbound mail explicitly disabled; all sends will be rejected")
+	} else if cfg.SMTPHost != "" {
 		dkimCfg, derr := dkimConfigFromCfg(cfg)
 		if derr != nil {
 			// A configured-but-unparseable DKIM key fails startup loudly rather than
@@ -686,6 +692,7 @@ func main() {
 		}
 		factory := &mailprovider.Factory{
 			DB: database, DKIMSealer: dkimSealer, RelaySender: sender,
+			Disabled:   cfg.OutboundMailDisabled,
 			HTTPClient: &http.Client{Timeout: 30 * time.Second},
 		}
 		mailingSvc.Providers = mailprovider.NewCache(factory.Build, 5*time.Minute)
@@ -694,12 +701,12 @@ func main() {
 		mailingSvc.MessageDomain = cfg.MailingMessageDomain
 		mailingWorker = &mailing.SendWorker{
 			Service: mailingSvc, Batch: cfg.MailingSendBatch, Lease: cfg.MailingLease,
-			Every: cfg.MailingSendEvery,
-			FanoutGlobal: cfg.MailingFanoutGlobal,
+			Every:             cfg.MailingSendEvery,
+			FanoutGlobal:      cfg.MailingFanoutGlobal,
 			FanoutPerCampaign: cfg.MailingFanoutPerCampaign,
-			RollupBatch: cfg.MailingRollupBatch,
-			Limiter: ratelimit.NewTokenBucket(cfg.MailingRateRPS, cfg.MailingRateBurst),
-			Logger: logger,
+			RollupBatch:       cfg.MailingRollupBatch,
+			Limiter:           ratelimit.NewTokenBucket(cfg.MailingRateRPS, cfg.MailingRateBurst),
+			Logger:            logger,
 		}
 		automationPorts := mailing.AutomationPorts{MessageDomain: cfg.MailingMessageDomain}
 		automationTrigger := automations.TriggerSubscriber{Subscribers: automationPorts}

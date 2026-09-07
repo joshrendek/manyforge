@@ -19,9 +19,7 @@ export class ThemeService {
     let saved: string | null = null;
     try { saved = localStorage.getItem(KEY); } catch { /* ignore */ }
     if (saved === 'light' || saved === 'dark') return saved;
-    const prefersDark = typeof window !== 'undefined'
-      && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
-    return prefersDark ? 'dark' : 'light';
+    return 'dark';
   }
 
   toggle(): void { this.theme.set(this.theme() === 'dark' ? 'light' : 'dark'); }

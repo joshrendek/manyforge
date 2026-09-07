@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
@@ -10,15 +10,27 @@ import { PageHeader } from '../ui/page-header/page-header';
 import { StatusPill } from '../ui/status-pill/status-pill';
 import { EmptyState } from '../ui/empty-state/empty-state';
 import { TenantMergeService } from '../core/tenant-merge.service';
+import { CurrentBusinessService } from '../core/current-business.service';
+import { ForgeFloorComponent } from './forge-floor';
 
 type PanelKind = 'add' | 'rename' | 'move';
 
 @Component({
   selector: 'app-dashboard',
-  imports: [FormsModule, RouterLink, PageHeader, StatusPill, EmptyState],
+  imports: [FormsModule, RouterLink, PageHeader, StatusPill, EmptyState, ForgeFloorComponent],
   template: `
+    @if (view() === 'floor') {
+      @if (loading()) {
+        <div class="mf-card"><p class="mf-text-muted" role="status">Lighting the forge…</p></div>
+      } @else if (loadFailed()) {
+        <div class="mf-card"><p class="mf-err" role="alert">{{ loadError() }}</p><button class="mf-btn mf-btn-ghost" (click)="loadBusinesses()">Try again</button></div>
+      } @else {
+        <mf-forge-floor [businesses]="businesses()" (manage)="view.set('ledger')" (light)="lightHearth()" />
+      }
+    } @else {
     <div class="mf-card">
       <mf-page-header title="Your businesses" subtitle="Manage your tenant businesses and their hierarchy.">
+        <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="view.set('floor')" actions>← Forge floor</button>
         <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/accounting" data-testid="nav-accounting" actions>Accounting</a>
       </mf-page-header>
 
@@ -26,7 +38,7 @@ type PanelKind = 'add' | 'rename' | 'move';
         <p class="mf-text-muted">Loading your businesses…</p>
       } @else if (loadFailed()) {
         <div class="mf-err">
-          <p>We couldn't load your businesses.</p>
+          <p>{{ loadError() }}</p>
           <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="loadBusinesses()">Try again</button>
         </div>
       } @else {
@@ -36,7 +48,7 @@ type PanelKind = 'add' | 'rename' | 'move';
               class="mf-tr"
               data-testid="biz-row"
               [class.is-child]="row.depth > 0"
-              [style.paddingLeft.px]="row.depth * 22 + 16"
+              [style.paddingLeft.px]="Math.min(row.depth, 4) * 14 + 16"
             >
               <div class="mf-tr-main">
                 @if (row.hasChildren) {
@@ -48,7 +60,7 @@ type PanelKind = 'add' | 'rename' | 'move';
                 } @else {
                   <span class="mf-caret-spacer"></span>
                 }
-                <span class="mf-tr-name" [class.mf-text-muted]="row.business.status === 'archived'">{{ row.business.name }}</span>
+                <span class="mf-tr-name" [class.mf-text-muted]="row.business.status === 'archived'" [title]="'Hierarchy level ' + row.depth">{{ row.business.name }}</span>
                 @if (row.business.is_tenant_root) {
                   <mf-status-pill tone="accent" label="master" />
                 }
@@ -142,14 +154,14 @@ type PanelKind = 'add' | 'rename' | 'move';
                 <div class="mf-card mf-panel mf-panel-danger">
                   <span>Delete <b>{{ row.business.name }}</b>? This can't be undone.</span>
                   <div class="mf-field-row">
-                    <button class="mf-btn mf-btn-danger mf-btn-sm" [disabled]="busy()" (click)="doDelete(row.business)">Confirm delete</button>
+                    <button class="mf-btn mf-btn-danger mf-btn-solid mf-btn-sm" [disabled]="busy()" (click)="doDelete(row.business)">Confirm delete</button>
                     <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="confirmDelete.set(null)">Cancel</button>
                   </div>
                 </div>
               }
             </li>
           } @empty {
-            <mf-empty-state icon="🏢" title="No businesses yet — create your master business below." />
+            <mf-empty-state title="No businesses yet — create your master business below." />
           }
         </ul>
       }
@@ -162,11 +174,12 @@ type PanelKind = 'add' | 'rename' | 'move';
       <form (ngSubmit)="createMaster()">
         <div class="mf-field">
           <label for="bizname">Business name</label>
-          <input class="mf-input" id="bizname" type="text" name="name" [(ngModel)]="masterName" placeholder="Acme, Inc." required />
+          <input #masterInput class="mf-input" id="bizname" type="text" name="name" [(ngModel)]="masterName" placeholder="Acme, Inc." required />
         </div>
         <button class="mf-btn mf-btn-primary" type="submit" [disabled]="busy()">{{ busy() ? 'Working…' : 'Create master business' }}</button>
       </form>
     </div>
+    }
   `,
 })
 export class DashboardComponent implements OnInit {
@@ -174,6 +187,23 @@ export class DashboardComponent implements OnInit {
   private api = inject(BusinessService);
   private tenantMerge = inject(TenantMergeService);
   private router = inject(Router);
+  private readonly current = inject(CurrentBusinessService);
+  readonly Math = Math;
+  readonly view = signal<'floor' | 'ledger'>('floor');
+  readonly loadError = signal('');
+  private focusMaster = false;
+
+  @ViewChild('masterInput') set masterInput(input: ElementRef<HTMLInputElement> | undefined) {
+    if (!input || !this.focusMaster) return;
+    this.focusMaster = false;
+    input.nativeElement.scrollIntoView({ block: 'center' });
+    input.nativeElement.focus({ preventScroll: true });
+  }
+
+  lightHearth(): void {
+    this.focusMaster = true;
+    this.view.set('ledger');
+  }
 
   businesses = signal<Business[]>([]);
   mergeEligibleSources = signal<ReadonlySet<string>>(new Set());
@@ -224,11 +254,14 @@ export class DashboardComponent implements OnInit {
     this.api.list().subscribe({
       next: (r) => {
         this.businesses.set(r.items ?? []);
+        this.current.replaceBusinesses(r.items ?? []);
         this.loading.set(false);
       },
-      error: () => {
+      error: (error: HttpErrorResponse) => {
         this.loading.set(false);
         this.loadFailed.set(true);
+        this.loadError.set(error.status === 403 || error.status === 404
+          ? "You don't have access to do that." : "We couldn't load your businesses.");
       },
     });
   }

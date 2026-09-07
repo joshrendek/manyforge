@@ -1,0 +1,141 @@
+<section class="mf-card forge-card">
+  <div class="forge-heading">
+    <mf-page-header [eyebrow]="'Evening shift · ' + hearthCount() + ' hearths, ' + lit() + ' lit'" title="The forge floor" subtitle="Brighter hearth, more open work. Click a station to walk over.">
+      <button actions class="mf-btn mf-btn-ghost mf-btn-sm" (click)="refreshKey.set(refreshKey() + 1)">Refresh</button>
+      <button actions class="mf-btn mf-btn-ghost mf-btn-sm" (click)="manage.emit()">Ledger view</button>
+      <button actions class="mf-btn mf-btn-primary mf-btn-sm" (click)="light.emit()">+ Light a hearth</button>
+    </mf-page-header>
+    <h2 class="forge-section-label">Needs you</h2>
+    <div class="forge-stats forge-needs">
+      @for (tile of needs(); track tile.label) {
+        <div class="forge-stat" [class.tone-danger]="tile.tone === 'danger'" [class.tone-warn]="tile.tone === 'warn'" [class.tone-success]="tile.tone === 'success'">
+          <span class="forge-stat-value" [class.is-pending]="tile.metric.state !== 'ready'" [title]="tile.metric.note">{{ format(tile.metric) }}</span>
+          @if (tile.route) { <button class="forge-stat-label forge-text-button" (click)="openTile(tile)">{{ tile.label }} →</button> }
+          @else { <span class="forge-stat-label">{{ tile.label }}</span> }
+          <span class="forge-stat-detail">{{ tile.detail }}</span>
+          @if (tile.metric.state === 'denied' || tile.metric.state === 'error') { <span class="forge-stat-detail">{{ tile.metric.note }}</span> }
+        </div>
+      }
+    </div>
+    <h2 class="forge-section-label">Across the business · 7d <span>Visible businesses · current balances where noted</span></h2>
+    <div class="forge-stats forge-growth">
+      @for (tile of growth(); track tile.label) {
+        <div class="forge-stat" [title]="tile.metric.note">
+          <span class="forge-stat-value" [class.is-pending]="tile.metric.state !== 'ready'">{{ format(tile.metric) }}</span>
+          @if (tile.route) { <button class="forge-stat-label forge-text-button" (click)="openTile(tile)">{{ tile.label }} →</button> }
+          @else { <span class="forge-stat-label">{{ tile.label }}</span> }
+          <span class="forge-stat-detail">{{ tile.detail }}</span>
+          @if (tile.metric.state === 'denied' || tile.metric.state === 'error') { <span class="forge-stat-detail">{{ tile.metric.note }}</span> }
+        </div>
+      }
+    </div>
+  </div>
+
+  <div class="mf-floor forge-floor">
+    <div class="forge-legend" aria-label="Station heat legend">
+      <span><i class="hot"></i>hot</span><span><i class="warm"></i>warm</span><span><i class="cold"></i>cold</span><span><i class="unknown"></i>unknown</span>
+    </div>
+    <div class="forge-map">
+      @for (group of groups(); track group.business.id) {
+        @let metrics = rollup(group.ids);
+        @let temperature = heat(metrics);
+        <section class="forge-group" [class.has-children]="group.children.length > 0" [attr.aria-label]="group.business.name + ' station group'">
+          <button class="mf-station forge-master" [class.is-unknown]="temperature === 'unknown'" (click)="open(group.business)" [attr.aria-label]="'Open ' + group.business.name + ', ' + temperature">
+            <span class="mf-hearth" [class.is-cold]="temperature === 'cold' || temperature === 'unknown'" aria-hidden="true">
+              @if (temperature === 'hot' || temperature === 'warm') { <span class="mf-hearth-glow" [style.opacity]="glow(metrics)"></span> }
+              <span class="mf-hearth-stack"></span><span class="mf-hearth-cap"></span>
+              <span class="mf-hearth-box" [style.boxShadow]="temperature === 'hot' || temperature === 'warm' ? '0 0 ' + (44 * glow(metrics)) + 'px var(--mf-heat-glow)' : 'none'">
+                <span class="mf-hearth-fire"></span><span class="mf-hearth-door"></span>
+              </span>
+              <span class="mf-hearth-base"></span>
+              @if (temperature === 'hot') { <span class="forge-sparks"><i class="mf-hearth-spark"></i><i class="mf-hearth-spark"></i><i class="mf-hearth-spark"></i></span> }
+              @if (temperature === 'unknown') { <span class="forge-unknown-mark">?</span> }
+            </span>
+            <span class="forge-master-name"><span>{{ group.business.name }}</span><mf-status-pill [tone]="group.business.is_tenant_root ? 'accent' : 'neutral'" [label]="group.business.is_tenant_root ? 'master' : 'business'" [outline]="true" /></span>
+            <span class="forge-station-subline">hearth · {{ group.children.length }} anvils · {{ temperature }}<br>users Pending · first reply Pending</span>
+          </button>
+          <div class="forge-master-metrics">
+            @for (label of ['MRR', 'users', 'billed', 'churn']; track label) {
+              <div class="mf-metric"><b class="forge-pending">Pending</b><span>{{ label }}</span></div>
+            }
+            <button class="mf-metric forge-metric-button" (click)="open(group.business, '/support')" [title]="metrics.tickets.note"><b [class.forge-danger]="metrics.urgent.observed > 0" [class.forge-pending]="metrics.tickets.state !== 'ready'">{{ format(metrics.tickets) }}</b><span>tickets</span></button>
+            <button class="mf-metric forge-metric-button" (click)="open(group.business, '/approvals')" [title]="metrics.approvals.note"><b [class.forge-warn]="metrics.approvals.observed > 0" [class.forge-pending]="metrics.approvals.state !== 'ready'">{{ format(metrics.approvals) }}</b><span>approvals</span></button>
+            <button class="mf-metric forge-metric-button" (click)="open(group.business, '/code-review')" [title]="metrics.failed.note"><b [class.forge-danger]="metrics.failed.observed > 0" [class.forge-pending]="metrics.failed.state !== 'ready'">{{ format(metrics.failed) }}</b><span>failed rev.</span></button>
+            <button class="mf-metric forge-metric-button" (click)="open(group.business, '/accounting')" title="Recorded cost, trailing 7d; unpriced provider usage may be excluded."><b [class.forge-pending]="metrics.spend.state !== 'ready'">{{ format(metrics.spend, true) }}</b><span>AI cost · 7d</span></button>
+          </div>
+          @if (temperature === 'unknown') { <p class="forge-coverage">Work unknown — not a cold station.</p> }
+          @else if (metrics.tickets.state !== 'ready' || metrics.approvals.state !== 'ready' || metrics.failed.state !== 'ready') { <p class="forge-coverage">Heat from observed work · totals incomplete.</p> }
+          @if (group.children.length) {
+            <div class="forge-anvils">
+              @for (child of group.children; track child.business.id) {
+                @let childMetrics = rollup([child.business.id]);
+                @let childHeat = heat(childMetrics);
+                <div class="forge-child" [class.is-hot]="childHeat === 'hot'">
+                  <svg class="forge-connection" viewBox="0 0 200 34" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0 C100 0, 100 14, 100 34" /></svg>
+                  <button class="mf-station forge-anvil-card" [class.is-hot]="childHeat === 'hot'" [class.is-unknown]="childHeat === 'unknown'" (click)="open(child.business)" [attr.aria-label]="'Open ' + child.business.name + ', under ' + child.parentName + ', ' + childHeat">
+                    <span class="mf-anvil" [class.is-hot]="childHeat === 'hot'" [class.is-warm]="childHeat === 'warm'" aria-hidden="true"><i></i><i></i><i></i></span>
+                    <span class="forge-child-name">{{ child.business.name }}</span>
+                    <span class="forge-station-subline">{{ format(childMetrics.tickets) }} tickets · {{ childHeat }}</span>
+                    <span class="forge-child-parent">under {{ child.parentName }} · level {{ child.depth }}</span>
+                    <span class="forge-child-metrics">
+                      @for (label of ['MRR', 'users', 'billed']; track label) { <span class="mf-metric"><b class="forge-pending">Pending</b><span>{{ label }}</span></span> }
+                    </span>
+                  </button>
+                </div>
+              }
+            </div>
+          }
+        </section>
+      }
+      <button class="mf-station forge-cold-station" (click)="manage.emit()"><strong>Cold station</strong><span>Light a new hearth here to start an isolated tenant.</span><span class="forge-cold-action">Open the ledger →</span></button>
+    </div>
+    <p class="forge-floor-note">Heat = known tickets + 2 × approvals + 2 × failed reviews + 6 × urgent tickets. Unknown data is never treated as no work.</p>
+    <div class="forge-audit-strip">
+      <span class="forge-section-label">Tonight</span>
+      @for (item of recentAudit(); track item.entry.id) {
+        <button class="forge-audit-event forge-text-button" (click)="showAudit(item.business)" [title]="item.business.name + ' · ' + item.entry.action + ' · ' + item.entry.created_at">
+          @if (auditHot(item.entry)) { <span class="forge-ember">● </span> }{{ item.entry.created_at | date:'shortTime' }} {{ item.entry.action }} · {{ item.business.name }}
+        </button>
+      }
+      <button class="forge-audit-link forge-text-button" (click)="showAudit()" [disabled]="!active().length">Full audit trail →</button>
+    </div>
+    <p class="forge-audit-status" role="status">{{ auditStatus() }}</p>
+  </div>
+
+  <details class="forge-data-notes">
+    <summary>About these numbers · Pending sources</summary>
+    <p>Counts cover visible active businesses, not hidden tenant records. CRM contacts and companies are tenant-wide and counted once per tenant. Capped or paginated reads never stand in for totals. AI cost is recorded usage, not an invoice; unpriced model usage remains a known gap (manyforge-zpw).</p>
+    <ul>
+      <li>MRR, revenue change and churn — Pending billing source (manyforge-bhkp).</li>
+      <li>Product users and signups — Pending identity source (manyforge-2gn8).</li>
+      <li>Labeled billable units and periods — Pending metering source (manyforge-gwtx).</li>
+      <li>First reply, waiting over 24h, oldest approval and Done today — Pending event aggregates (manyforge-8w7y).</li>
+      <li>Exact high-volume workload, contacts and company totals — Pending bounded aggregates (manyforge-20o4).</li>
+      <li>Enrollments, open/click rates, subscribers, net additions and unsubscribe rate — Pending mailing aggregates (manyforge-9w4r).</li>
+      <li>Visitor comparison and portfolios at the 200-site limit — Pending complete rollup reporting (manyforge-o7u0; manyforge-hu5a.8).</li>
+    </ul>
+    <p>{{ visitors().note }}</p>
+  </details>
+</section>
+
+@if (auditBusiness(); as business) {
+  <section #auditPanel tabindex="-1" class="mf-card forge-audit-panel" aria-labelledby="forge-audit-heading">
+    <mf-page-header [eyebrow]="business.name" title="Full audit trail" subtitle="Authorized event metadata. Sensitive before-and-after values are never included.">
+      <button actions class="mf-btn mf-btn-ghost mf-btn-sm" (click)="loadAudit()" [disabled]="auditLoading()">Newest events</button>
+      <button actions class="mf-btn mf-btn-ghost mf-btn-sm" (click)="closeAudit()">Close trail</button>
+    </mf-page-header>
+    <h2 id="forge-audit-heading" class="forge-section-label">{{ business.name }} · business audit</h2>
+    @if (auditLoading()) { <p role="status">Loading audit events…</p> }
+    @else if (fullAudit(); as page) {
+      @if (page.state !== 'ready') { <p class="mf-err" role="alert">{{ page.note }}</p><button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="loadAudit()">Try again</button> }
+      @else {
+        <ol class="forge-audit-list">
+          @for (entry of page.items; track entry.id) {
+            <li><time [attr.datetime]="entry.created_at">{{ entry.created_at | date:'medium' }}</time><strong>{{ entry.action }}</strong><span>{{ entry.target_type || 'account' }}@if (entry.target_id) { · {{ entry.target_id }} }</span><span>Actor: {{ entry.actor_principal_id || 'system' }}</span>@if (entry.correlation_id) { <span>Correlation: {{ entry.correlation_id }}</span> }</li>
+          } @empty { <li>No audit events for this business.</li> }
+        </ol>
+        @if (page.next_cursor) { <button class="mf-btn mf-btn-ghost" (click)="loadAudit(page.next_cursor)">Older events →</button> }
+      }
+    }
+  </section>
+}

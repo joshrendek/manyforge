@@ -83,6 +83,14 @@ type Sender interface {
 	Send(ctx context.Context, m Mail) error
 }
 
+// DisabledSender rejects all outgoing messages without network access or logging.
+type DisabledSender struct{}
+
+// Send reports non-acceptance regardless of the message or context.
+func (DisabledSender) Send(context.Context, Mail) error {
+	return ErrNotAccepted
+}
+
 // LogSender is the development-only sink. It records non-content metadata,
 // honors suppression, and always returns ErrNotAccepted so no caller can mark
 // a message delivered by a provider.

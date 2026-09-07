@@ -32,6 +32,7 @@ test('an expired access token is refreshed transparently and the user stays on t
   await page.route('**/api/v1/businesses**', (route) => guard(route, { items: [master], next_cursor: null }));
 
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
 
   await expect(page.getByRole('heading', { name: 'Your businesses' })).toBeVisible();
   await expect(page.getByTestId('biz-row').filter({ hasText: 'Acme' })).toBeVisible();
@@ -44,17 +45,18 @@ test('a failed business load shows a retry that recovers', async ({ page }) => {
   await seedAuth(page, 'fresh-access');
   await page.route('**/api/v1/me', (route) => route.fulfill({ json: profile }));
 
-  let attempts = 0;
-  await page.route('**/api/v1/businesses**', (route) => {
+  let unavailable = true;
+  await page.route('**/api/v1/businesses', (route) => {
     if (route.request().method() !== 'GET') return route.fallback();
-    attempts++;
-    return attempts === 1
+    return unavailable
       ? route.fulfill({ status: 500, body: '' })
       : route.fulfill({ json: { items: [master], next_cursor: null } });
   });
 
   await page.goto('/dashboard');
-  await expect(page.getByText(/couldn.t load your businesses/i)).toBeVisible();
-  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('main').getByText(/couldn.t load your businesses/i)).toBeVisible();
+  unavailable = false;
+  await page.getByRole('main').getByRole('button', { name: 'Try again' }).click();
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   await expect(page.getByTestId('biz-row').filter({ hasText: 'Acme' })).toBeVisible();
 });

@@ -110,6 +110,56 @@ go test -tags integration ./internal/tenancy/ -run TestTransferOwnership -count=
   limits, preflight interpretation, maintenance communication, monitoring,
   backup/PITR prerequisites, safe recovery, escalation, and verification SQL.
 
+### Forge interface
+
+The Angular app uses the warm iron/ember `--mf-*` tokens in `web/src/styles.css`,
+self-hosted Space Grotesk and JetBrains Mono, and a persisted dark-by-default theme.
+The sidebar groups product navigation and owns the business switcher. Scoped pages
+follow that selection; switching away from a business-specific editor respects its
+unsaved-change guard. The Analytics portfolio deliberately spans all accessible
+businesses and labels that scope.
+
+The dashboard opens on **The forge floor**. **Ledger view** retains the business
+hierarchy and all management actions; **Light a hearth** focuses the master-business
+creation form. Stations link to real business-scoped work, and the audit strip opens
+the existing metadata-only, paginated audit API.
+
+Missing billing, product-user, metering, service-timing, and mailing aggregates
+display **Pending**, with their beads listed under **About these numbers**.
+Paginated/capped lists never masquerade as complete totals. Permission failures and
+load errors remain distinct; unknown workload is not shown as an idle/cold station.
+AI cost is recorded usage, not an invoice; visitor sums are site-visitors, not
+deduplicated people.
+
+### Cloudflare homepage
+
+`landing/public/` contains the standalone homepage, local fonts and security headers;
+there is no client-side script or design-tool runtime. Only that directory is uploaded.
+`landing/wrangler.jsonc` targets the `manyforge-homepage` Worker with custom domains
+`manyforge.com` and `www.manyforge.com`.
+
+```bash
+cd landing
+npm ci
+npm run check             # Dry-run packaging; does not deploy
+npx wrangler login       # Authenticate the Cloudflare account owning the domain
+npm run deploy
+```
+
+Cloudflare authorization must permit Workers assets/scripts and custom-domain
+management for the owning account/zone. Do not commit credentials; Wrangler state
+and `.dev.vars*` are ignored. Homepage changes are independent of the Kubernetes app
+image and do not require a database migration.
+
+The app release remains master → GHCR → Flux → migration hook → Deployment.
+Production requires a genuine outbound SMTP relay, including the migration hook's
+transport configuration, unless outbound mail is explicitly disabled with
+`MANYFORGE_OUTBOUND_MAIL_DISABLED=true` (Helm: `outboundMailDisabled: true`).
+Disabled sends are rejected without delivery or message-content/token logging;
+authentication emails and email invitations are unavailable. The default is
+`false`; see [mailing providers](docs/runbooks/mailing-providers.md) to enable mail.
+Never work around an unconfigured relay with development mode or a fake SMTP host.
+
 ## Layout
 
 | Path | What |
@@ -125,6 +175,7 @@ go test -tags integration ./internal/tenancy/ -run TestTransferOwnership -count=
 | `migrations/` | Forward-only SQL migrations (source of truth for the live DB) |
 | `db/schema.sql`, `db/query/` | sqlc inputs (tables-only schema mirror + queries) |
 | `web/` | Angular 21 dashboard (+ Playwright e2e in `web/e2e/`) |
+| `landing/` | Static homepage and Cloudflare Workers asset deployment |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map and the two-wall
 authorization model, and `specs/001-tenant-foundation/` for the spec, plan,

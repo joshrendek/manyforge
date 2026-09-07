@@ -4,6 +4,28 @@ ManyForge supports the platform SMTP relay, Resend, and Amazon SES v2. Provider
 credentials are sealed at rest with `MANYFORGE_MAILING_MASTER_KEY`; the plaintext
 key belongs in the deployment's secret manager and never in Helm values.
 
+## Running without outbound mail
+
+Production requires a genuine SMTP relay by default. When email is not needed,
+explicitly set `MANYFORGE_OUTBOUND_MAIL_DISABLED=true`, or set the top-level Helm
+value `outboundMailDisabled: true`. The chart passes this setting to both the app
+and the migration Job, so production startup does not require an SMTP host in
+this mode. Keep the production environment; never substitute development mode or
+a fake SMTP host for transport configuration.
+
+The switch defaults to `false` and takes precedence over any configured relay or
+provider credentials. It disables all outgoing transports: the platform SMTP
+relay, Resend, and Amazon SES v2. Send attempts are rejected as not accepted, never
+reported as delivered or silently discarded, and message contents and tokens are
+not logged. Authentication emails and email invitations are unavailable while
+disabled. This switch is separate from the mailing master key setting below.
+
+To enable outbound mail later, configure a genuine SMTP relay and any required
+credential secrets, then remove the environment flag or set it to `false` (Helm:
+remove the override or set `outboundMailDisabled: false`) and roll out the release.
+The app and migration Job again enforce the default production SMTP requirement;
+configure any tenant Resend or SES profiles as described below.
+
 ## Platform relay
 
 1. Configure the shared SMTP transport with `MANYFORGE_SMTP_HOST`, port, and its
@@ -62,6 +84,7 @@ Secret reference. Non-secret controls are:
 
 | Environment variable | Default | Purpose |
 |---|---:|---|
+| `MANYFORGE_OUTBOUND_MAIL_DISABLED` | `false` | Reject all outgoing mail, including relay, Resend, and SES; Helm: `outboundMailDisabled` |
 | `MANYFORGE_MAILING_RATE_RPS` | `10` | Per-business campaign refill rate |
 | `MANYFORGE_MAILING_RATE_BURST` | `50` | Per-business campaign burst |
 | `MANYFORGE_MAILING_SEND_BATCH` | `100` | Deliveries claimed per worker pass |

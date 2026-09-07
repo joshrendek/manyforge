@@ -1,6 +1,8 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Agent, AgentsService } from '../../core/agents.service';
@@ -31,24 +33,13 @@ import { runStatusTone } from '../../ui/status';
   imports: [DatePipe, FormsModule, PageHeader, EmptyState, Spinner, StatusPill],
   template: `
     <div class="mf-card" data-testid="code-review-page">
-      <mf-page-header title="Code Review" subtitle="GitHub PR reviews powered by your agents">
+      <mf-page-header [eyebrow]="businessName()" title="Code Review" subtitle="GitHub PR reviews powered by your agents">
         @if (loading()) {
           <span class="mf-loading-row" data-testid="code-review-loading" actions><mf-spinner /></span>
         }
       </mf-page-header>
-
-      <!-- Business selector -->
       <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="cr-biz-select">Business</label>
-          <select id="cr-biz-select" class="mf-select" data-testid="business-select"
-                  [ngModel]="businessId()" (ngModelChange)="selectBusiness($event)" name="biz">
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
+        
         <div style="display:flex;align-items:flex-end">
           <button class="mf-btn mf-btn-primary mf-btn-sm" data-testid="connector-add-toggle"
                   (click)="showAdd.set(!showAdd())" [disabled]="!businessId()">
@@ -104,21 +95,21 @@ import { runStatusTone } from '../../ui/status';
       }
 
       <!-- Connectors table -->
-      <h3 style="margin:16px 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
+      <h3 class="mf-section-label">
         Connectors
       </h3>
       <div class="mf-table" data-testid="connectors-table">
         <div class="mf-tr mf-th">
           <span style="flex:1">Name</span>
           <span style="flex:1">Repo</span>
-          <span style="width:80px">Status</span>
+          <span style="width:100px">Status</span>
           <span style="width:220px"></span>
         </div>
         @for (c of connectors(); track c.id) {
           <div class="mf-tr" data-testid="connector-row" [attr.data-connector-id]="c.id">
             <span style="flex:1">{{ c.display_name }}</span>
-            <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ c.repo }}</span>
-            <span style="width:80px;font-size:var(--mf-fs-sm)">{{ c.status }}</span>
+            <span class="mf-td-data" style="flex:1">{{ c.repo }}</span>
+            <span style="width:100px"><mf-status-pill [tone]="c.status === 'active' ? 'success' : c.status === 'error' ? 'danger' : 'neutral'" [label]="c.status" [outline]="true" /></span>
             <span style="width:220px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
               @if (confirmDeleteConnectorId() === c.id) {
                 <span class="mf-err" data-testid="connector-delete-confirm"
@@ -171,7 +162,7 @@ import { runStatusTone } from '../../ui/status';
       }
 
       <!-- Review a PR section -->
-      <h3 style="margin:24px 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
+      <h3 class="mf-section-label">
         Review a PR
       </h3>
       <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end" data-testid="trigger-form">
@@ -197,7 +188,7 @@ import { runStatusTone } from '../../ui/status';
         </div>
         <div class="mf-field" style="flex:0 1 120px">
           <label for="cr-pr-num">PR number</label>
-          <input id="cr-pr-num" class="mf-input" data-testid="cr-pr-number" type="number" min="1"
+          <input id="cr-pr-num" class="mf-input mf-mono" data-testid="cr-pr-number" type="number" min="1"
                  [(ngModel)]="triggerForm.pr_number" name="cr_pr_number" placeholder="123" />
         </div>
         <div style="padding-bottom:1px">
@@ -212,7 +203,7 @@ import { runStatusTone } from '../../ui/status';
         <p class="mf-err" data-testid="trigger-error">{{ triggerError() }}</p>
       }
       @if (triggerSuccess()) {
-        <p class="mf-success" style="color:var(--mf-success,#22c55e);margin-top:8px" data-testid="trigger-success">
+        <p class="mf-success" style="color:var(--mf-success-text);margin-top:8px" data-testid="trigger-success">
           Review queued
         </p>
       }
@@ -220,8 +211,8 @@ import { runStatusTone } from '../../ui/status';
       <!-- History: live-polling review list. Polling runs every 3 s while any row is
            pending/running and stops automatically when all rows are terminal. -->
       @if (reviews().length) {
-        <h3 style="margin:24px 0 8px;font-size:var(--mf-fs-sm);font-weight:600;color:var(--mf-text-muted);text-transform:uppercase;letter-spacing:.05em">
-          Recent Reviews
+        <h3 class="mf-section-label">
+          Recent reviews
         </h3>
         <div class="mf-table" data-testid="reviews-table">
           <div class="mf-tr mf-th">
@@ -236,23 +227,23 @@ import { runStatusTone } from '../../ui/status';
           @for (r of reviews(); track r.id) {
             <div class="mf-tr" data-testid="review-row" [attr.data-review-id]="r.id"
                  style="cursor:pointer" (click)="openDetail(r)">
-              <span style="width:56px">#{{ r.pr_number }}</span>
+              <span class="mf-mono" style="width:56px">#{{ r.pr_number }}</span>
               <span style="width:96px">
-                <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" />
+                <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" [live]="r.status === 'running'" />
                 @if (r.status === 'running' && r.progress?.phase) {
                   <span data-testid="review-phase" style="display:block;color:var(--mf-text-muted);font-size:var(--mf-fs-xs);margin-top:2px">{{ r.progress?.phase }}</span>
                 }
               </span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                    data-testid="review-repo" [attr.title]="r.repo || null">{{ r.repo || '—' }}</span>
+                    class="mf-td-data" data-testid="review-repo" [attr.title]="r.repo || null">{{ r.repo || '—' }}</span>
               <span style="flex:1;color:var(--mf-text-muted);font-size:var(--mf-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     data-testid="review-model"
                     [title]="r.model === 'panel' ? 'Multi-model panel — see per-dimension models in the review detail' : r.model"
                     >{{ r.model === 'panel' ? 'Panel' : (r.model || '—') }}</span>
-              <span style="width:64px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
-              <span style="width:72px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)"
+              <span class="mf-td-num" style="width:64px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.findings_count }}</span>
+              <span class="mf-td-num" style="width:72px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)"
                     data-testid="review-cost">{{ formatCost(r.cost_cents) }}</span>
-              <span style="width:132px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
+              <span class="mf-td-data" style="width:132px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
               <span style="width:76px;text-align:right" role="cell" (click)="$event.stopPropagation()">
                 @if (isTerminal(r.status)) {
                   <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" [attr.data-testid]="'review-retry-' + r.id"
@@ -272,6 +263,18 @@ import { runStatusTone } from '../../ui/status';
   `,
 })
 export class CodeReviewListComponent implements OnInit, OnDestroy {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private api = inject(CodeReviewService);
   private agentsSvc = inject(AgentsService);
@@ -327,15 +330,13 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   };
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.reload();
+          this.selectBusiness(id);
         }
       },
       error: () => this.error.set('Could not load businesses'),
@@ -366,7 +367,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   private pollReviews(): void {
     if (!this.businessId()) return;
     const biz = this.businessId();
-    this.api.listReviews(biz).subscribe({
+    this.api.listReviews(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== biz) return;
         this.reviews.set(r.items ?? []);
@@ -399,7 +400,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   retry(r: CodeReview): void {
     if (this.retrying().has(r.id)) return;
     this.retrying.update((s) => new Set(s).add(r.id));
-    this.api.retry(this.businessId(), r.id).subscribe({
+    this.api.retry(this.businessId(), r.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (fresh) => {
         this.clearRetrying(r.id);
         this.reviews.set([fresh, ...this.reviews()]);
@@ -422,15 +423,32 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.resetAddForm();
+    this.triggerForm = { agent_id: '', repo_connector_id: '', pr_number: null };
+    this.connectors.set([]);
+    this.reviews.set([]);
+    this.retrying.set(new Set());
+    this.agents.set([]);
+    this.loading.set(false);
+    this.pending.set(0);
+    this.error.set('');
+    this.connectorsError.set('');
+    this.adding.set(false);
+    this.expandedConn.set('');
+    this.bizDimensions.set([]);
+    this.connOverrides.set({});
+    this.triggering.set(false);
     this.stopPolling();
     this.businessId.set(id);
-    this.current.set(id);
+    if (id) this.current.set(id);
     this.confirmDeleteConnectorId.set('');
     this.showAdd.set(false);
     this.addError.set('');
     this.triggerError.set('');
     this.triggerSuccess.set(false);
-    this.reload();
+    if (id) this.reload();
   }
 
   reload(): void {
@@ -443,7 +461,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
     this.loading.set(true);
     this.pending.set(3);
 
-    this.api.listConnectors(biz).subscribe({
+    this.api.listConnectors(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() === biz) {
           this.connectors.set(r.items ?? []);
@@ -460,7 +478,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
       },
     });
 
-    this.api.listReviews(biz).subscribe({
+    this.api.listReviews(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() === biz) {
           this.reviews.set(r.items ?? []);
@@ -474,7 +492,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
       },
     });
 
-    this.agentsSvc.list(biz).subscribe({
+    this.agentsSvc.list(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() === biz) this.agents.set(r.items ?? []);
         this.settle();
@@ -515,7 +533,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
     if (!this.businessId()) return;
     this.adding.set(true);
     this.addError.set('');
-    this.api.createConnector(this.businessId(), this.addForm).subscribe({
+    this.api.createConnector(this.businessId(), this.addForm).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.adding.set(false);
         this.showAdd.set(false);
@@ -535,7 +553,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   }
 
   deleteConnector(c: RepoConnector): void {
-    this.api.deleteConnector(this.businessId(), c.id).subscribe({
+    this.api.deleteConnector(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.connectors.update((xs) => xs.filter((x) => x.id !== c.id));
         this.confirmDeleteConnectorId.set('');
@@ -558,9 +576,9 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
     const bid = this.businessId();
     if (!bid) return;
     if (!this.bizDimensions().length) {
-      this.api.listDimensions(bid).subscribe({ next: (r) => this.bizDimensions.set(r.items ?? []), error: () => {} });
+      this.api.listDimensions(bid).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({ next: (r) => this.bizDimensions.set(r.items ?? []), error: () => {} });
     }
-    this.api.listRepoOverrides(bid, connId).subscribe({
+    this.api.listRepoOverrides(bid, connId).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => this.connOverrides.set({ ...this.connOverrides(), [connId]: r.items ?? [] }),
       error: () => {},
     });
@@ -575,7 +593,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
   setDimensionEnabled(connId: string, d: ReviewDimension, enabled: boolean): void {
     const bid = this.businessId();
     if (!bid) return;
-    this.api.upsertRepoOverride(bid, connId, { dimension_key: d.dimension, enabled }).subscribe({
+    this.api.upsertRepoOverride(bid, connId, { dimension_key: d.dimension, enabled }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (saved) => {
         const rest = (this.connOverrides()[connId] ?? []).filter((o) => o.dimension_key !== d.dimension);
         this.connOverrides.set({ ...this.connOverrides(), [connId]: [...rest, saved] });
@@ -594,7 +612,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
       agent_id: this.triggerForm.agent_id,
       repo_connector_id: this.triggerForm.repo_connector_id,
       pr_number: this.triggerForm.pr_number,
-    }).subscribe({
+    }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (resp) => {
         this.triggering.set(false);
         this.triggerSuccess.set(true);
@@ -635,7 +653,7 @@ export class CodeReviewListComponent implements OnInit, OnDestroy {
     if (!this.businessId()) return;
     const biz = this.businessId();
     this.loading.set(true);
-    this.api.listConnectors(biz).subscribe({
+    this.api.listConnectors(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() === biz) this.connectors.set(r.items ?? []);
         this.loading.set(false);

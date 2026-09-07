@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { BusinessService } from '../../core/business.service';
@@ -22,32 +24,13 @@ import { ToastService } from '../../ui/toast/toast.service';
   template: `
     <div class="mf-card" data-testid="feedback-boards-page">
       <mf-page-header
-        title="Feedback boards"
+        [eyebrow]="businessName()"        title="Feedback boards"
         subtitle="Collect feature requests and feedback per business"
       >
         @if (loading()) {
           <span class="mf-loading-row" data-testid="boards-loading" actions><mf-spinner /></span>
         }
       </mf-page-header>
-
-      <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="fb-biz-select">Business</label>
-          <select
-            id="fb-biz-select"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-            name="biz"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
-      </div>
 
       @if (businessId()) {
         <form class="mf-filters" data-testid="board-new" (ngSubmit)="create()">
@@ -139,6 +122,18 @@ import { ToastService } from '../../ui/toast/toast.service';
   ],
 })
 export class FeedbackBoardsListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private feedback = inject(FeedbackService);
   private current = inject(CurrentBusinessService);
@@ -154,15 +149,13 @@ export class FeedbackBoardsListComponent implements OnInit {
   creating = signal(false);
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.reload();
+          this.selectBusiness(id);
         }
       },
       error: () => this.error.set('Could not load businesses'),
@@ -170,16 +163,24 @@ export class FeedbackBoardsListComponent implements OnInit {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.newName = '';
+    this.newPublic = false;
+    this.items.set([]);
+    this.loading.set(false);
+    this.error.set('');
+    this.creating.set(false);
     this.businessId.set(id);
-    this.current.set(id);
-    this.reload();
+    if (id) this.current.set(id);
+    if (id) this.reload();
   }
 
   reload(): void {
     if (!this.businessId()) return;
     const biz = this.businessId();
     this.loading.set(true);
-    this.feedback.listBoards(biz).subscribe({
+    this.feedback.listBoards(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== biz) return;
         this.items.set(r.items ?? []);
@@ -199,7 +200,7 @@ export class FeedbackBoardsListComponent implements OnInit {
     const name = this.newName.trim();
     if (!name || this.creating()) return;
     this.creating.set(true);
-    this.feedback.createBoard(this.businessId(), { name, is_public: this.newPublic }).subscribe({
+    this.feedback.createBoard(this.businessId(), { name, is_public: this.newPublic }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.newName = '';
         this.newPublic = false;
