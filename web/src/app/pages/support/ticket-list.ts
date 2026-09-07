@@ -1,5 +1,5 @@
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Subject, takeUntil } from 'rxjs';
+import { Subject, takeUntil, timer } from 'rxjs';
 import { Component, OnInit, computed, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
@@ -49,10 +49,7 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
       <div class="mf-filters">
         <div class="mf-field" style="flex:2 1 240px">
           <label for="ticket-search">Search</label>
-          <input id="ticket-search" class="mf-input" placeholder="Subject contains…" [ngModel]="search()" (ngModelChange)="search.set($event)" />
-          @if (search() && nextCursor()) {
-            <span class="mf-field-hint">Searching loaded tickets. Load more to search earlier conversations.</span>
-          }
+          <input id="ticket-search" class="mf-input" placeholder="Subject contains…" maxlength="256" [ngModel]="search()" (ngModelChange)="setSearch($event)" />
         </div>
         
         <div class="mf-field" style="flex:1 1 160px">
@@ -102,7 +99,7 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
           <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="reload()">Try again</button>
         </div>
       } @else {
-        @if (visibleTickets().length) {
+        @if (tickets().length) {
           <div class="mf-table" data-testid="ticket-list">
             <div class="mf-tr mf-th">
               <span style="flex:3">Subject</span>
@@ -113,7 +110,7 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
               <span style="flex:1">Tags</span>
               <span style="width:140px">Last message</span>
             </div>
-            @for (t of visibleTickets(); track t.id) {
+            @for (t of tickets(); track t.id) {
               <div
                 class="mf-tr mf-clickable"
                 data-testid="ticket-row"
@@ -187,7 +184,7 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 })
 export class TicketListComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
-  private readonly businessChanged = new Subject<void>();
+  private readonly queryChanged = new Subject<void>();
   private readonly followBusiness = effect(() => {
     const id = this.currentBiz.businessId() ?? '';
     untracked(() => {
@@ -209,10 +206,6 @@ export class TicketListComponent implements OnInit {
   businesses = signal<Business[]>([]);
   businessId = signal<string>('');
   search = signal('');
-  readonly visibleTickets = computed(() => {
-    const query = this.search().trim().toLocaleLowerCase();
-    return query ? this.tickets().filter((ticket) => ticket.subject.toLocaleLowerCase().includes(query)) : this.tickets();
-  });
   clearFilters(): void {
     this.search.set('');
     this.status.set('');
@@ -233,6 +226,8 @@ export class TicketListComponent implements OnInit {
     const f: TicketListFilters = {};
     if (this.status()) f.status = this.status() as TicketStatus;
     if (this.priority()) f.priority = this.priority() as TicketPriority;
+    const search = this.search().trim();
+    if (search) f.search = search;
     return f;
   });
 
@@ -258,16 +253,19 @@ export class TicketListComponent implements OnInit {
 
   selectBusiness(id: string): void {
     if (id === this.businessId()) return;
-    this.businessChanged.next();
-    this.tickets.set([]);
-    this.nextCursor.set(null);
-    this.loading.set(false);
-    this.loadFailed.set(false);
-    this.busy.set(false);
-    this.error.set('');
     this.businessId.set(id);
     if (id) this.currentBiz.set(id); // keep the approvals nav badge in sync with the viewed business (crm)
-    if (id) this.reload();
+    this.reload();
+  }
+
+  setSearch(search: string): void {
+    if (search === this.search()) return;
+    this.search.set(search);
+    // Invalidate immediately, not after the debounce: an old page must not
+    // appear or append while the input already describes a different query.
+    this.resetReads();
+    if (!this.businessId()) return;
+    timer(200).pipe(takeUntil(this.queryChanged), takeUntilDestroyed(this.destroyRef)).subscribe(() => this.reload());
   }
 
   setStatus(s: TicketStatus | ''): void {
@@ -280,12 +278,20 @@ export class TicketListComponent implements OnInit {
     this.reload();
   }
 
-  reload(): void {
-    if (!this.businessId()) return;
-    this.loading.set(true);
+  private resetReads(): void {
+    this.queryChanged.next();
+    this.tickets.set([]);
+    this.nextCursor.set(null);
+    this.loading.set(!!this.businessId());
     this.loadFailed.set(false);
+    this.busy.set(false);
     this.error.set('');
-    this.api.listTickets(this.businessId(), this.filters()).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
+  }
+
+  reload(): void {
+    this.resetReads();
+    if (!this.businessId()) return;
+    this.api.listTickets(this.businessId(), this.filters()).pipe(takeUntil(this.queryChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         this.tickets.set(page.items ?? []);
         this.nextCursor.set(page.next_cursor);
@@ -301,10 +307,10 @@ export class TicketListComponent implements OnInit {
 
   loadMore(): void {
     const cursor = this.nextCursor();
-    if (!cursor || this.busy()) return;
+    if (!cursor || this.busy() || this.loading()) return;
     this.busy.set(true);
     this.error.set('');
-    this.api.listTickets(this.businessId(), { ...this.filters(), cursor }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.api.listTickets(this.businessId(), { ...this.filters(), cursor }).pipe(takeUntil(this.queryChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         this.tickets.update((cur) => [...cur, ...(page.items ?? [])]);
         this.nextCursor.set(page.next_cursor);

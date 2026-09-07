@@ -857,18 +857,20 @@ FROM ticket t
 JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
-  AND ($2::ticket_status IS NULL OR t.status = $2)
-  AND ($3::ticket_priority IS NULL OR t.priority = $3)
-  AND (NOT $4::boolean OR t.assignee_principal_id IS NULL)
-  AND ($5::uuid IS NULL OR t.assignee_principal_id = $5)
-  AND ($6::citext IS NULL OR EXISTS (
-        SELECT 1 FROM ticket_tag tt WHERE tt.ticket_id = t.id AND tt.tag = $6))
+  AND ($2::text = '' OR strpos(lower(t.subject), lower($2::text)) > 0)
+  AND ($3::ticket_status IS NULL OR t.status = $3)
+  AND ($4::ticket_priority IS NULL OR t.priority = $4)
+  AND (NOT $5::boolean OR t.assignee_principal_id IS NULL)
+  AND ($6::uuid IS NULL OR t.assignee_principal_id = $6)
+  AND ($7::citext IS NULL OR EXISTS (
+        SELECT 1 FROM ticket_tag tt WHERE tt.ticket_id = t.id AND tt.tag = $7))
 ORDER BY t.last_message_at DESC, t.id DESC
-LIMIT $7
+LIMIT $8
 `
 
 type ListTicketsParams struct {
 	BusinessID          uuid.UUID          `json:"business_id"`
+	Search              string             `json:"search"`
 	Status              NullTicketStatus   `json:"status"`
 	Priority            NullTicketPriority `json:"priority"`
 	AssigneeUnassigned  bool               `json:"assignee_unassigned"`
@@ -902,6 +904,7 @@ type ListTicketsRow struct {
 func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error) {
 	rows, err := q.db.Query(ctx, listTickets,
 		arg.BusinessID,
+		arg.Search,
 		arg.Status,
 		arg.Priority,
 		arg.AssigneeUnassigned,
@@ -969,19 +972,21 @@ FROM ticket t
 JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
-  AND ($2::ticket_status IS NULL OR t.status = $2)
-  AND ($3::ticket_priority IS NULL OR t.priority = $3)
-  AND (NOT $4::boolean OR t.assignee_principal_id IS NULL)
-  AND ($5::uuid IS NULL OR t.assignee_principal_id = $5)
-  AND ($6::citext IS NULL OR EXISTS (
-        SELECT 1 FROM ticket_tag tt WHERE tt.ticket_id = t.id AND tt.tag = $6))
-  AND (t.last_message_at, t.id) < ($7::timestamptz, $8::uuid)
+  AND ($2::text = '' OR strpos(lower(t.subject), lower($2::text)) > 0)
+  AND ($3::ticket_status IS NULL OR t.status = $3)
+  AND ($4::ticket_priority IS NULL OR t.priority = $4)
+  AND (NOT $5::boolean OR t.assignee_principal_id IS NULL)
+  AND ($6::uuid IS NULL OR t.assignee_principal_id = $6)
+  AND ($7::citext IS NULL OR EXISTS (
+        SELECT 1 FROM ticket_tag tt WHERE tt.ticket_id = t.id AND tt.tag = $7))
+  AND (t.last_message_at, t.id) < ($8::timestamptz, $9::uuid)
 ORDER BY t.last_message_at DESC, t.id DESC
-LIMIT $9
+LIMIT $10
 `
 
 type ListTicketsAfterParams struct {
 	BusinessID          uuid.UUID          `json:"business_id"`
+	Search              string             `json:"search"`
 	Status              NullTicketStatus   `json:"status"`
 	Priority            NullTicketPriority `json:"priority"`
 	AssigneeUnassigned  bool               `json:"assignee_unassigned"`
@@ -1005,6 +1010,7 @@ type ListTicketsAfterRow struct {
 func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterParams) ([]ListTicketsAfterRow, error) {
 	rows, err := q.db.Query(ctx, listTicketsAfter,
 		arg.BusinessID,
+		arg.Search,
 		arg.Status,
 		arg.Priority,
 		arg.AssigneeUnassigned,

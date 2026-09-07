@@ -159,8 +159,18 @@ paths:
           required: false
           description: Filter to tickets carrying this tag (exact match).
           schema: { type: string }
+        - name: search
+          in: query
+          required: false
+          description: >
+            Case-insensitive literal subject substring, combined with all other filters on every
+            cursor page. Leading/trailing whitespace is trimmed; empty or whitespace-only matches
+            all subjects. Percent and underscore are literal characters, not wildcards.
+            At most 256 Unicode characters after trimming; longer searches return 400.
+          schema: { type: string, maxLength: 256 }
       responses:
         '200': { $ref: '#/components/responses/TicketPage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [Tickets]

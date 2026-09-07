@@ -128,7 +128,6 @@ test('an ingested ticket renders in the support list with its subject and reques
 
   // The business auto-selects the first (only) business, scoping the list call.
   await expect(page.getByRole('heading', { name: 'Support' })).toBeVisible();
-  await expect(page.getByTestId('business-select')).toHaveValue(BIZ_ID);
 
   const row = page.getByTestId('ticket-row');
   await expect(row).toHaveCount(1);
@@ -137,6 +136,59 @@ test('an ingested ticket renders in the support list with its subject and reques
   await expect(row.getByTestId('ticket-requester')).toHaveText('Jane Customer');
   await expect(row.getByTestId('ticket-status')).toHaveText('new');
   await expect(row.getByTestId('ticket-message-count')).toHaveText('1');
+});
+
+test('subject search finds unloaded tickets and keeps search and facets on later pages', async ({ page }) => {
+  await installStack(page);
+  const corpus = [
+    ticket,
+    { ...ticket, id: 'refund-1', subject: 'Refund for first order', status: 'open', priority: 'high' },
+    { ...ticket, id: 'refund-2', subject: 'REFUND for second order', status: 'open', priority: 'high' },
+    { ...ticket, id: 'refund-pending', subject: 'Refund awaiting review', status: 'pending', priority: 'high' },
+    { ...ticket, id: 'refund-normal', subject: 'Refund with normal priority', status: 'open', priority: 'normal' },
+  ];
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/tickets**`, (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const search = (params.get('search') ?? '').trim().toLowerCase();
+    const matches = corpus.filter((item) =>
+      item.subject.toLowerCase().includes(search)
+      && (!params.get('status') || item.status === params.get('status'))
+      && (!params.get('priority') || item.priority === params.get('priority')),
+    );
+    const offset = Number(params.get('cursor') ?? 0);
+    return route.fulfill({
+      json: {
+        items: matches.slice(offset, offset + 1),
+        next_cursor: offset + 1 < matches.length ? String(offset + 1) : null,
+      },
+    });
+  });
+  await page.goto('/support');
+  const subjects = page.getByTestId('ticket-subject');
+  await expect(subjects).toHaveText(['Cannot reset my password']);
+  await expect(page.getByTestId('load-more')).toBeVisible();
+
+  // Neither refund has been loaded: searching must query the server corpus.
+  await page.getByRole('textbox', { name: 'Search', exact: true }).fill('  rEfUnD  ');
+  await expect(subjects).toHaveText(['Refund for first order']);
+  await page.getByTestId('load-more').click();
+  await expect(subjects).toHaveText(['Refund for first order', 'REFUND for second order']);
+
+  await page.getByTestId('status-filter').selectOption('open');
+  await expect(subjects).toHaveText(['Refund for first order']);
+  await page.getByTestId('priority-filter').selectOption('high');
+  await expect(subjects).toHaveText(['Refund for first order']);
+  await page.getByTestId('load-more').click();
+  await expect(subjects).toHaveText(['Refund for first order', 'REFUND for second order']);
+  await expect(page.getByTestId('load-more')).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Search', exact: true }).fill('no matching conversation');
+  await expect(page.getByTestId('ticket-empty')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await expect(subjects).toHaveText(['Cannot reset my password']);
+  await expect(page.getByRole('textbox', { name: 'Search', exact: true })).toHaveValue('');
+  await expect(page.getByTestId('status-filter')).toHaveValue('');
+  await expect(page.getByTestId('priority-filter')).toHaveValue('');
 });
 
 test('opening the ticket shows the inbound message body and the requester in the thread', async ({
@@ -830,7 +882,7 @@ test('US4: Support nav link on dashboard is visible and navigates to /support', 
 
   // The Support page shares the shell's global business context.
   await expect(page).toHaveURL(/\/support$/);
-  await expect(page.getByTestId('business-select')).toBeVisible();
+  await expect(page.getByTestId('ticket-empty')).toBeVisible();
 });
 
 // T060 regression: the inbox-settings page existed but no nav link pointed to it from
@@ -847,10 +899,6 @@ test('US4: inbox-settings link is visible on /support and navigates to the inbox
   );
 
   await page.goto('/support');
-
-  // The business auto-selects biz-1 → the select shows its value.
-  await expect(page.getByTestId('business-select')).toBeVisible();
-  await expect(page.getByTestId('business-select')).toHaveValue(BIZ_ID);
 
   // The inbox-settings-link must be visible once a business is selected.
   await expect(page.getByTestId('inbox-settings-link')).toBeVisible();

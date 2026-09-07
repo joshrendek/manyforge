@@ -28,6 +28,7 @@ FROM ticket t
 JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
+  AND (sqlc.arg('search')::text = '' OR strpos(lower(t.subject), lower(sqlc.arg('search')::text)) > 0)
   AND (sqlc.narg('status')::ticket_status IS NULL OR t.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::ticket_priority IS NULL OR t.priority = sqlc.narg('priority'))
   AND (NOT sqlc.arg('assignee_unassigned')::boolean OR t.assignee_principal_id IS NULL)
@@ -53,6 +54,7 @@ FROM ticket t
 JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
+  AND (sqlc.arg('search')::text = '' OR strpos(lower(t.subject), lower(sqlc.arg('search')::text)) > 0)
   AND (sqlc.narg('status')::ticket_status IS NULL OR t.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::ticket_priority IS NULL OR t.priority = sqlc.narg('priority'))
   AND (NOT sqlc.arg('assignee_unassigned')::boolean OR t.assignee_principal_id IS NULL)
