@@ -36,6 +36,8 @@ spec:
             # dispatch the migrate subcommand without weakening fail-closed startup.
             - name: MANYFORGE_ENVIRONMENT
               value: {{ .Values.environment | quote }}
+            - name: MANYFORGE_OUTBOUND_MAIL_DISABLED
+              value: {{ .Values.outboundMailDisabled | quote }}
             - name: MANYFORGE_SMTP_HOST
               value: {{ .Values.smtp.host | quote }}
             - name: MANYFORGE_SMTP_PORT

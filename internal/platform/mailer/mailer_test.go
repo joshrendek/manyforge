@@ -1,8 +1,10 @@
 package mailer
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 )
 
@@ -19,9 +21,21 @@ func (c staticChecker) IsSuppressed(context.Context, string) (bool, error) {
 	return c.suppressed, c.err
 }
 
-func TestLogMailerSend(t *testing.T) {
-	if err := (LogMailer{}).Send(context.Background(), Message{To: "a@b.test", Subject: "hi"}); err != nil {
-		t.Fatalf("log mailer send: %v", err)
+func TestDisabledMailerRejectsWithoutLogging(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	var sender Mailer = DisabledMailer{}
+	err := sender.Send(context.Background(), Message{
+		To: "reader@example.test", Subject: "Verify your email", Body: "token: private-capability",
+	})
+	if !errors.Is(err, ErrNotAccepted) {
+		t.Fatalf("Send error = %v, want ErrNotAccepted", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("disabled mailer logged message data: %s", output.String())
 	}
 }
 

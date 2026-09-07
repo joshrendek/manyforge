@@ -11,17 +11,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	"github.com/google/uuid"
@@ -41,6 +41,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{name: "sent", status: "sent"},
 		{name: "suppressed", err: notify.ErrSuppressed, status: "suppressed"},
+		{name: "disabled", err: notify.ErrNotAccepted, status: "failed"},
 		{name: "bad request", err: &HTTPError{StatusCode: 400}, status: "failed"},
 		{name: "unauthorized", err: &HTTPError{StatusCode: 401}, status: "failed"},
 		{name: "forbidden", err: &HTTPError{StatusCode: 403}, status: "failed"},
@@ -63,6 +64,24 @@ func TestClassify(t *testing.T) {
 			}
 			if tc.retry && got.NotBefore.Sub(now) != tc.delay {
 				t.Fatalf("delay = %s, want %s", got.NotBefore.Sub(now), tc.delay)
+			}
+		})
+	}
+}
+
+func TestDisabledFactoryRejectsEveryTransport(t *testing.T) {
+	domainID := uuid.New()
+	factory := Factory{Disabled: true, RelaySender: notify.DisabledSender{}}
+	for _, mode := range []string{"relay", "resend", "ses", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			deliverer, err := factory.Build(context.Background(), Profile{
+				Mode: mode, EmailDomainID: &domainID, FromEmail: "sender@example.test",
+				ResendAPIKey: "configured-resend-key", SESRegion: "us-east-1",
+				SESAccessKeyID: "configured-access-key", SESSecretAccessKey: "configured-secret",
+				SESConfigurationSet: "configured-set",
+			})
+			if !errors.Is(err, notify.ErrNotAccepted) || deliverer != nil {
+				t.Fatalf("disabled %s build = %T, %v; want no client and non-acceptance", mode, deliverer, err)
 			}
 		})
 	}
@@ -285,7 +304,7 @@ func TestResendEnsureWebhookCanonicalizesDuplicateExactEndpoints(t *testing.T) {
 			id := strings.TrimPrefix(req.URL.Path, "/webhooks/")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": id, "status": "enabled", "endpoint": endpoint,
-				"events": []string{"email.bounced", "email.complained"},
+				"events":         []string{"email.bounced", "email.complained"},
 				"signing_secret": "whsec_" + base64.StdEncoding.EncodeToString([]byte(id+"-0123456789abcdef")),
 			})
 		case req.Method == http.MethodDelete:
@@ -453,10 +472,10 @@ func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 		t.Fatal("Verify did not validate the configured SES event configuration set")
 	}
 	for name, response := range map[string]string{
-		"no destination":   `{"EventDestinations":[]}`,
-		"disabled":         `{"EventDestinations":[{"Name":"feedback","Enabled":false,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
-		"wrong topic":      `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:other"}}]}`,
-		"missing bounce":   `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
+		"no destination":    `{"EventDestinations":[]}`,
+		"disabled":          `{"EventDestinations":[{"Name":"feedback","Enabled":false,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
+		"wrong topic":       `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:other"}}]}`,
+		"missing bounce":    `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
 		"missing complaint": `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -490,12 +509,12 @@ func (r testSESEndpointResolver) ResolveEndpoint(context.Context, sesv2.Endpoint
 	return smithyendpoints.Endpoint{URI: *r.url}, nil
 }
 
-
 type stubSTSIdentity struct{ accountID string }
 
 func (s stubSTSIdentity) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
 	return &sts.GetCallerIdentityOutput{Account: aws.String(s.accountID)}, nil
 }
+
 type stubDeliverer struct{}
 
 func (stubDeliverer) Send(context.Context, notify.Mail) (SendResult, error) { return SendResult{}, nil }

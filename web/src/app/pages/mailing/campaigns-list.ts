@@ -121,6 +121,7 @@ import { ToastService } from '../../ui/toast/toast.service';
             <span>{{ campaign.subject || 'No subject' }}</span>
             <span
               ><mf-status-pill [tone]="statusTone(campaign.status)" [label]="campaign.status"
+                [live]="campaign.status === 'sending'"
             /></span>
             <span>{{ campaign.scheduled_at || campaign.updated_at | date: 'medium' }}</span>
           </div>

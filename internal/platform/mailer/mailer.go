@@ -1,10 +1,11 @@
 // Package mailer abstracts outbound transactional email (verification,
-// invitations). The dev implementation logs; production wires SMTP. A
-// suppression check skips hard-bounced addresses (research R6).
+// invitations). The dev implementation logs; explicit disabling rejects mail
+// without logging. A suppression check skips hard-bounced addresses (research R6).
 package mailer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 )
 
@@ -23,6 +24,17 @@ type Mailer interface {
 // SuppressionChecker reports whether an address is hard-bounced/suppressed.
 type SuppressionChecker interface {
 	IsSuppressed(ctx context.Context, email string) (bool, error)
+}
+
+// ErrNotAccepted marks an outgoing message that was not sent.
+var ErrNotAccepted = errors.New("outbound message was not accepted")
+
+// DisabledMailer rejects transactional mail without logging recipients or token bodies.
+type DisabledMailer struct{}
+
+// Send reports non-acceptance without network access or logging.
+func (DisabledMailer) Send(context.Context, Message) error {
+	return ErrNotAccepted
 }
 
 // LogMailer writes messages to the logger instead of sending them (dev default).

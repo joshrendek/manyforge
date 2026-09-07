@@ -41,3 +41,22 @@ func TestSMTPSenderWithoutHostDoesNotAccept(t *testing.T) {
 		t.Fatalf("Send error = %v, want ErrNotAccepted", err)
 	}
 }
+
+func TestDisabledSenderRejectsWithoutLogging(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	var sender Sender = DisabledSender{}
+	err := sender.Send(context.Background(), Mail{
+		To: "reader@example.test", Subject: "Private subject",
+		BodyText: "token: private-capability", BodyHTML: "<p>private body</p>",
+	})
+	if !errors.Is(err, ErrNotAccepted) {
+		t.Fatalf("Send error = %v, want ErrNotAccepted", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("disabled sender logged message data: %s", output.String())
+	}
+}
