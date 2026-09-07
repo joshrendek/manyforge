@@ -134,9 +134,17 @@ deduplicated people.
 ### Cloudflare homepage
 
 `landing/public/` contains the standalone homepage, local fonts and security headers;
-there is no client-side script or design-tool runtime. Only that directory is uploaded.
+the only client-side script is hub's cookieless analytics snippet. There is no design-tool
+runtime, and only that directory is uploaded.
 `landing/wrangler.jsonc` targets the `manyforge-homepage` Worker with custom domains
 `manyforge.com` and `www.manyforge.com`.
+
+The `manyforge.com` analytics site is registered in hub under **Bluescripts**, with exact
+allowed origins for the apex and `www` domains. The HTML contains only its public `mfk_`
+key, never a signing secret. CSP permits only the tracker script and collector paths.
+The tracker honors Do Not Track and uses no cookies or persistent visitor identifiers.
+Hub is a personal instance used here only as the requested analytics collector; public
+navigation and onboarding continue to point to GitHub and the self-hosting quickstart.
 
 ```bash
 cd landing
