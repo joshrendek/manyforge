@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Agent, AgentsService } from '../../core/agents.service';
 import { BusinessService } from '../../core/business.service';
@@ -21,23 +23,14 @@ const MODE_LABELS: Record<number, string> = { 1: 'Assist', 2: 'Queue writes', 3:
   imports: [FormsModule, PageHeader, EmptyState, Spinner, AgentFormComponent],
   template: `
     <div class="mf-card" data-testid="agents-page">
-      <mf-page-header title="Agents" subtitle="Automated agents that act on your tickets">
+      <mf-page-header [eyebrow]="businessName()" title="Agents" subtitle="Automated agents that act on your tickets">
         @if (loading()) {
           <span class="mf-loading-row" data-testid="agents-loading" actions><mf-spinner /></span>
         }
       </mf-page-header>
 
       <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="ag-biz-select">Business</label>
-          <select id="ag-biz-select" class="mf-select" data-testid="business-select"
-                  [ngModel]="businessId()" (ngModelChange)="selectBusiness($event)" name="biz">
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
+        
         <div style="display:flex;align-items:flex-end">
           <button class="mf-btn mf-btn-primary mf-btn-sm" data-testid="agent-add-toggle"
                   (click)="showAdd.set(!showAdd())" [disabled]="!businessId()">
@@ -100,6 +93,18 @@ const MODE_LABELS: Record<number, string> = { 1: 'Assist', 2: 'Queue writes', 3:
   `,
 })
 export class AgentsListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private api = inject(AgentsService);
   private current = inject(CurrentBusinessService);
@@ -115,15 +120,13 @@ export class AgentsListComponent implements OnInit {
   confirmDeleteId = signal<string>('');
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.reload();
+          this.selectBusiness(id);
         }
       },
       error: () => this.error.set('Could not load businesses'),
@@ -135,19 +138,24 @@ export class AgentsListComponent implements OnInit {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.items.set([]);
+    this.loading.set(false);
+    this.error.set('');
     this.businessId.set(id);
-    this.current.set(id);
+    if (id) this.current.set(id);
     this.confirmDeleteId.set('');
     this.editId.set('');
     this.showAdd.set(false);
-    this.reload();
+    if (id) this.reload();
   }
 
   reload(): void {
     if (!this.businessId()) return;
     const biz = this.businessId();
     this.loading.set(true);
-    this.api.list(biz).subscribe({
+    this.api.list(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== biz) return;
         this.items.set(r.items ?? []);
@@ -182,7 +190,7 @@ export class AgentsListComponent implements OnInit {
   }
 
   remove(a: Agent): void {
-    this.api.remove(this.businessId(), a.id).subscribe({
+    this.api.remove(this.businessId(), a.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.items.update((xs) => xs.filter((x) => x.id !== a.id));
         this.confirmDeleteId.set('');

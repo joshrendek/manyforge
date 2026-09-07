@@ -33,38 +33,6 @@ export interface StatTile {
       }
     </div>
   `,
-  styles: [
-    `
-      .mf-stats {
-        display: flex;
-        gap: 24px;
-        flex-wrap: wrap;
-        margin: 16px 0;
-      }
-      .mf-stat {
-        display: flex;
-        flex: 1 1 120px;
-        flex-direction: column;
-        min-width: 120px;
-      }
-      .mf-stat-value {
-        font-size: 28px;
-        font-weight: 600;
-      }
-      .mf-stat-label {
-        color: var(--mf-text-muted);
-        font-size: var(--mf-fs-sm);
-      }
-      .mf-stat-change,
-      .mf-stat-detail {
-        color: var(--mf-text-muted);
-        font-size: var(--mf-fs-xs);
-      }
-      .mf-stat-change {
-        margin-top: 4px;
-      }
-    `,
-  ],
 })
 export class StatTiles {
   @Input() tiles: StatTile[] = [];

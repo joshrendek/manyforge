@@ -175,6 +175,7 @@ test('real clicks select a target, review consequences, confirm, and reload the 
   });
 
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   const sourceRow = page.getByTestId('biz-row').filter({ hasText: source.name });
   await sourceRow.getByTestId('move-master').click();
   await expect(page).toHaveURL(/\/tenant-merges\/new\/source-root$/);

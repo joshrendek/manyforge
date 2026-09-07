@@ -1,6 +1,8 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { BusinessService } from '../../core/business.service';
@@ -21,7 +23,7 @@ import { ToastService } from '../../ui/toast/toast.service';
   template: `
     <div class="mf-card page" data-testid="mailing-suppression-page">
       <mf-page-header
-        title="Suppression list"
+        [eyebrow]="businessName()"        title="Suppression list"
         subtitle="Prevent campaigns from sending to blocked recipients"
       >
         <a
@@ -41,21 +43,7 @@ import { ToastService } from '../../ui/toast/toast.service';
       </mf-page-header>
 
       <div class="mf-filters">
-        <div class="mf-field business-field">
-          <label for="suppression-business">Business</label>
-          <select
-            id="suppression-business"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (business of businesses(); track business.id) {
-              <option [value]="business.id">{{ business.name }}</option>
-            }
-          </select>
-        </div>
+        
         @if (loading()) {
           <span class="loading"><mf-spinner /> Loading suppressions…</span>
         }
@@ -203,6 +191,18 @@ import { ToastService } from '../../ui/toast/toast.service';
   ],
 })
 export class MailingSuppressionListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private businessesApi = inject(BusinessService);
   private mailing = inject(MailingService);
   private current = inject(CurrentBusinessService);
@@ -227,7 +227,7 @@ export class MailingSuppressionListComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    this.businessesApi.list().subscribe({
+    this.businessesApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         const items = page.items ?? [];
         this.businesses.set(items);
@@ -239,13 +239,19 @@ export class MailingSuppressionListComponent implements OnInit {
   }
 
   selectBusiness(businessId: string): void {
+    if (businessId === this.businessId()) return;
+    this.businessChanged.next();
+    this.newEmail = '';
+    this.creating.set(false);
+    this.deleting.set(null);
+    this.error.set('');
     this.businessId.set(businessId);
-    this.current.set(businessId);
+    if (businessId) this.current.set(businessId);
     this.items.set([]);
     this.nextCursor.set(null);
     this.pendingDelete.set(null);
     this.loading.set(false);
-    this.load();
+    if (businessId) this.load();
   }
 
   loadMore(): void {
@@ -257,7 +263,7 @@ export class MailingSuppressionListComponent implements OnInit {
     const email = this.newEmail.trim();
     if (!email || this.creating()) return;
     this.creating.set(true);
-    this.mailing.createSuppression(this.businessId(), email, 'manual').subscribe({
+    this.mailing.createSuppression(this.businessId(), email, 'manual').pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (suppression) => {
         this.items.update((items) => [suppression, ...items]);
         this.newEmail = '';
@@ -278,7 +284,7 @@ export class MailingSuppressionListComponent implements OnInit {
   remove(suppression: MailingSuppression): void {
     if (this.deleting()) return;
     this.deleting.set(suppression.id);
-    this.mailing.deleteSuppression(this.businessId(), suppression.id).subscribe({
+    this.mailing.deleteSuppression(this.businessId(), suppression.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.items.update((items) => items.filter((item) => item.id !== suppression.id));
         this.deleting.set(null);
@@ -297,7 +303,7 @@ export class MailingSuppressionListComponent implements OnInit {
     if (!businessId || this.loading()) return;
     const seq = ++this.loadSeq;
     this.loading.set(true);
-    this.mailing.listSuppressions(businessId, cursor, 50).subscribe({
+    this.mailing.listSuppressions(businessId, cursor, 50).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         if (seq !== this.loadSeq || businessId !== this.businessId()) return;
         this.items.update((items) =>

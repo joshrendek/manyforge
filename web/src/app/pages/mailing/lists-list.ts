@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { BusinessService } from '../../core/business.service';
@@ -18,7 +20,7 @@ import { ToastService } from '../../ui/toast/toast.service';
   imports: [FormsModule, RouterLink, EmptyState, PageHeader, Spinner, StatusPill],
   template: `
     <div class="mf-card" data-testid="mailing-lists-page">
-      <mf-page-header title="Mailing lists" subtitle="Collect and manage opted-in subscribers">
+      <mf-page-header [eyebrow]="businessName()" title="Mailing lists" subtitle="Collect and manage opted-in subscribers">
         <a
           routerLink="/mailing/sending"
           class="mf-btn mf-btn-ghost mf-btn-sm"
@@ -36,23 +38,7 @@ import { ToastService } from '../../ui/toast/toast.service';
       </mf-page-header>
 
       <div class="mf-filters">
-        <div class="mf-field business-field">
-          <label for="mailing-business">Business</label>
-          <select
-            id="mailing-business"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (business of businesses(); track business.id) {
-              <option [value]="business.id">
-                {{ business.is_tenant_root ? business.name + ' (master)' : business.name }}
-              </option>
-            }
-          </select>
-        </div>
+        
         @if (loading()) {
           <span class="loading"><mf-spinner /> Loading lists…</span>
         }
@@ -167,6 +153,18 @@ import { ToastService } from '../../ui/toast/toast.service';
   ],
 })
 export class MailingListsListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private businessesApi = inject(BusinessService);
   private mailing = inject(MailingService);
   private current = inject(CurrentBusinessService);
@@ -183,7 +181,7 @@ export class MailingListsListComponent implements OnInit {
   newDoubleOptIn = true;
 
   ngOnInit(): void {
-    this.businessesApi.list().subscribe({
+    this.businessesApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         const items = page.items ?? [];
         this.businesses.set(items);
@@ -195,9 +193,18 @@ export class MailingListsListComponent implements OnInit {
   }
 
   selectBusiness(businessId: string): void {
+    if (businessId === this.businessId()) return;
+    this.businessChanged.next();
+    this.newName = '';
+    this.newDoubleOptIn = true;
+    this.items.set([]);
+    this.nextCursor.set(null);
+    this.loading.set(false);
+    this.creating.set(false);
+    this.error.set('');
     this.businessId.set(businessId);
-    this.current.set(businessId);
-    this.reload();
+    if (businessId) this.current.set(businessId);
+    if (businessId) this.reload();
   }
 
   reload(): void {
@@ -213,7 +220,7 @@ export class MailingListsListComponent implements OnInit {
     const businessId = this.businessId();
     if (!businessId || this.loading()) return;
     this.loading.set(true);
-    this.mailing.listLists(businessId, cursor).subscribe({
+    this.mailing.listLists(businessId, cursor).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         if (businessId !== this.businessId()) return;
         this.items.update((items) =>
@@ -235,22 +242,21 @@ export class MailingListsListComponent implements OnInit {
     if (!name || this.creating()) return;
     this.creating.set(true);
     this.mailing
-      .createList(this.businessId(), { name, double_opt_in: this.newDoubleOptIn })
-      .subscribe({
-        next: () => {
-          this.newName = '';
-          this.creating.set(false);
-          this.toast.success('Mailing list created');
-          this.reload();
-        },
-        error: (error: HttpErrorResponse) => {
-          this.creating.set(false);
-          this.toast.error(
-            error.status === 409
-              ? 'A list with that name already exists'
-              : 'Could not create mailing list',
-          );
-        },
-      });
+      .createList(this.businessId(), { name, double_opt_in: this.newDoubleOptIn }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => {
+        this.newName = '';
+        this.creating.set(false);
+        this.toast.success('Mailing list created');
+        this.reload();
+      },
+      error: (error: HttpErrorResponse) => {
+        this.creating.set(false);
+        this.toast.error(
+          error.status === 409
+            ? 'A list with that name already exists'
+            : 'Could not create mailing list',
+        );
+      },
+    });
   }
 }

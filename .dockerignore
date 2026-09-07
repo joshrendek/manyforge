@@ -12,6 +12,7 @@ specs/
 web/node_modules
 web/dist
 web/.angular
+landing/
 
 # Placeholder committed so the ui_embed build tag has a non-empty //go:embed
 # match before a real Angular build lands; the Dockerfile build stage

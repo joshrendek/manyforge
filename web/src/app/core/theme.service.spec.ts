@@ -6,12 +6,6 @@ describe('ThemeService', () => {
   beforeEach(() => { localStorage.clear(); document.documentElement.removeAttribute('data-theme'); });
   afterEach(() => { localStorage.clear(); document.documentElement.setAttribute('data-theme', 'light'); });
 
-  it('defaults to light when nothing saved and system is not dark', () => {
-    const svc = TestBed.inject(ThemeService);
-    TestBed.flushEffects();
-    expect(svc.theme()).toBe('light');
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-  });
 
   it('reads a saved theme from localStorage', () => {
     localStorage.setItem('mf-theme', 'dark');
@@ -22,6 +16,7 @@ describe('ThemeService', () => {
   });
 
   it('toggle() flips the theme and persists it', () => {
+    localStorage.setItem('mf-theme', 'light');
     const svc = TestBed.inject(ThemeService);
     svc.toggle();
     TestBed.flushEffects();

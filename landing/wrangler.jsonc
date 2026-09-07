@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "manyforge-homepage",
+  "compatibility_date": "2026-08-27",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "manyforge.com", "custom_domain": true },
+    { "pattern": "www.manyforge.com", "custom_domain": true }
+  ]
+}

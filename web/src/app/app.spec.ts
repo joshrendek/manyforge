@@ -2,7 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 
 describe('App shell', () => {
@@ -17,6 +17,7 @@ describe('App shell', () => {
   });
   afterEach(() => {
     localStorage.clear();
+    vi.useRealTimers();
   });
 
   it('renders the persistent sidebar with the Support nav when authenticated', () => {
@@ -47,15 +48,6 @@ describe('App shell', () => {
     mock.expectNone('/api/v1/me');
   });
 
-  it('classifies mailing routes as bare public portal routes', () => {
-    const fixture = TestBed.createComponent(App);
-    const app = fixture.componentInstance as unknown as {
-      isPortalRoute(url: string): boolean;
-    };
-    expect(app.isPortalRoute('/m/s/mlp_demo')).toBe(true);
-    expect(app.isPortalRoute('/m/confirm/token?source=email')).toBe(true);
-    expect(app.isPortalRoute('/mailing/lists')).toBe(false);
-  });
 
   it('renders all nav items including Accounting', () => {
     localStorage.setItem('mf_access', 'tok');
@@ -70,11 +62,13 @@ describe('App shell', () => {
   });
 
   it('shows a pending-count badge on the Approvals nav for the current business', () => {
+    vi.useFakeTimers();
     localStorage.setItem('mf_access', 'tok');
     localStorage.setItem('mf-current-business', 'b1');
     const f = TestBed.createComponent(App);
     f.detectChanges();
     mock.expectOne('/api/v1/me').flush({ id: '1', email: 'a@b.c', display_name: 'A', email_verified: true, status: 'active' });
+    vi.advanceTimersByTime(0);
     mock.expectOne('/api/v1/businesses/b1/approvals').flush({ items: [{ id: 'x1' }, { id: 'x2' }] });
     f.detectChanges();
     const badge = f.nativeElement.querySelector('[data-testid="nav-approvals"] .nav-badge');

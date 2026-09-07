@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { BusinessService } from '../../core/business.service';
@@ -18,6 +20,7 @@ import { ToastService } from '../../ui/toast/toast.service';
   template: `
     <div class="mf-card" data-testid="mailing-templates-page">
       <mf-page-header
+        [eyebrow]="businessName()"
         title="Email templates"
         subtitle="Write reusable campaign content in Markdown"
       >
@@ -30,21 +33,6 @@ import { ToastService } from '../../ui/toast/toast.service';
         >
       </mf-page-header>
       <div class="mf-filters">
-        <div class="mf-field grow">
-          <label for="template-business">Business</label
-          ><select
-            id="template-business"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (business of businesses(); track business.id) {
-              <option [value]="business.id">{{ business.name }}</option>
-            }
-          </select>
-        </div>
         @if (loading()) {
           <mf-spinner />
         }
@@ -135,6 +123,18 @@ import { ToastService } from '../../ui/toast/toast.service';
   ],
 })
 export class MailingTemplatesListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private businessesApi = inject(BusinessService);
   private mailing = inject(MailingService);
   private current = inject(CurrentBusinessService);
@@ -152,7 +152,7 @@ export class MailingTemplatesListComponent implements OnInit {
   newSubject = '';
 
   ngOnInit(): void {
-    this.businessesApi.list().subscribe({
+    this.businessesApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         const items = page.items ?? [];
         this.businesses.set(items);
@@ -163,9 +163,18 @@ export class MailingTemplatesListComponent implements OnInit {
     });
   }
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.newName = '';
+    this.newSubject = '';
+    this.items.set([]);
+    this.nextCursor.set(null);
+    this.loading.set(false);
+    this.creating.set(false);
+    this.error.set('');
     this.businessId.set(id);
-    this.current.set(id);
-    this.reload();
+    if (id) this.current.set(id);
+    if (id) this.reload();
   }
   reload(): void {
     this.items.set([]);
@@ -179,7 +188,7 @@ export class MailingTemplatesListComponent implements OnInit {
     const id = this.businessId();
     if (!id || this.loading()) return;
     this.loading.set(true);
-    this.mailing.listTemplates(id, cursor).subscribe({
+    this.mailing.listTemplates(id, cursor).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         if (id !== this.businessId()) return;
         this.items.update((items) =>
@@ -207,17 +216,16 @@ export class MailingTemplatesListComponent implements OnInit {
         body_markdown: '',
         track_opens: true,
         track_clicks: true,
-      })
-      .subscribe({
-        next: (template) => {
-          this.creating.set(false);
-          this.toast.success('Template created');
-          void this.router.navigate(['/mailing', this.businessId(), 'templates', template.id]);
-        },
-        error: () => {
-          this.creating.set(false);
-          this.toast.error('Could not create template');
-        },
-      });
+      }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (template) => {
+        this.creating.set(false);
+        this.toast.success('Template created');
+        void this.router.navigate(['/mailing', this.businessId(), 'templates', template.id]);
+      },
+      error: () => {
+        this.creating.set(false);
+        this.toast.error('Could not create template');
+      },
+    });
   }
 }

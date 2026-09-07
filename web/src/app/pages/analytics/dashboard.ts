@@ -308,7 +308,7 @@ import { StatTile, StatTiles } from '../../ui/stat-tiles/stat-tiles';
         display: block;
       }
       .mf-bar {
-        fill: var(--mf-accent, #4f8ef7);
+        fill: var(--mf-accent);
       }
       .mf-chart-data {
         margin: 8px 0 20px;

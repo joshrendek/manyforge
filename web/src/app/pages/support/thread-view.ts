@@ -30,7 +30,7 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
   selector: 'app-thread-view',
   imports: [RouterLink, DatePipe, FormsModule, PageHeader, StatusPill, Spinner, TagChipInput],
   template: `
-    <div class="mf-card">
+    <div class="thread-page">
       <mf-page-header title="Conversation">
         <ng-container actions>
           <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/support" data-testid="back-to-list"
@@ -50,6 +50,8 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
           <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="reload()">Try again</button>
         </div>
       } @else if (ticket(); as t) {
+        <div class="thread-layout">
+        <div class="mf-card conversation">
         <header class="thread-head" data-testid="thread-header">
           <h1 class="thread-subject" data-testid="thread-subject">
             {{ t.subject || '(no subject)' }}
@@ -74,14 +76,142 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
               >
             }
           </div>
-          <p class="requester" data-testid="thread-requester">
-            <b>{{ t.requester.display_name || t.requester.email }}</b>
-            <span class="muted">&lt;{{ t.requester.email }}&gt;</span>
-          </p>
 
+
+
+        </header>
+
+        <ul class="thread" data-testid="message-thread">
+          @for (m of messages(); track m.id) {
+            <li
+              class="message"
+              data-testid="message"
+              [attr.data-direction]="m.direction"
+              [class.inbound]="m.direction === 'inbound'"
+              [class.outbound]="m.direction === 'outbound'"
+              [class.note]="m.direction === 'note'"
+            >
+              <span class="message-avatar" aria-hidden="true">{{ messageInitials(m) }}</span>
+              <div class="message-bubble">
+              <div class="message-head">
+                <span class="direction" data-testid="message-direction">
+                  @switch (m.direction) {
+                    @case ('inbound') {
+                      Received
+                    }
+                    @case ('outbound') {
+                      Reply
+                    }
+                    @case ('note') {
+                      Internal note
+                    }
+                  }
+                </span>
+                <span class="when">{{ m.created_at | date: 'medium' }}</span>
+              </div>
+
+              <div class="message-body" data-testid="message-body">
+                {{ m.body_text || '(no text body)' }}
+              </div>
+
+              @if (m.delivery_state === 'failed') {
+                <div class="delivery-failed" data-testid="delivery-failed">Failed to send</div>
+              }
+
+              @if (m.attachments.length) {
+                <ul class="attachments" data-testid="message-attachments">
+                  @for (a of m.attachments; track a.id) {
+                    <li class="attachment" data-testid="attachment">
+                      <span class="filename">{{ a.filename }}</span>
+                      <span class="muted">{{ a.content_type }} · {{ a.size }} bytes</span>
+                    </li>
+                  }
+                </ul>
+              }
+
+              @if (m.direction === 'inbound') {
+                <div class="auth-flags" data-testid="auth-flags">
+                  <span class="flag" [class]="m.spf_result" data-testid="spf-result"
+                    >SPF: {{ m.spf_result }}</span
+                  >
+                  <span class="flag" [class]="m.dkim_result" data-testid="dkim-result"
+                    >DKIM: {{ m.dkim_result }}</span
+                  >
+                  <span class="flag" [class]="m.dmarc_result" data-testid="dmarc-result"
+                    >DMARC: {{ m.dmarc_result }}</span
+                  >
+                </div>
+              }
+              </div>
+            </li>
+          } @empty {
+            <li class="message-empty" data-testid="message-empty">
+              No messages in this conversation yet.
+            </li>
+          }
+        </ul>
+
+        @if (nextCursor()) {
+          <button
+            class="mf-btn mf-btn-ghost load-more"
+            data-testid="load-more-messages"
+            [disabled]="busy()"
+            (click)="loadMore()"
+          >
+            {{ busy() ? 'Loading…' : 'Load earlier messages' }}
+          </button>
+        }
+
+        <div class="composer mf-card" data-testid="composer">
+          <div class="composer-toggle" data-testid="composer-toggle">
+            <button
+              class="mf-btn mf-btn-sm toggle-btn"
+              [class.mf-btn-primary]="!noteMode()"
+              [class.mf-btn-ghost]="noteMode()"
+              data-testid="toggle-reply"
+              [attr.aria-pressed]="!noteMode()"
+              (click)="noteMode.set(false)"
+            >
+              Reply
+            </button>
+            <button
+              class="mf-btn mf-btn-sm toggle-btn"
+              [class.mf-btn-primary]="noteMode()"
+              [class.mf-btn-ghost]="!noteMode()"
+              data-testid="toggle-note"
+              [attr.aria-pressed]="noteMode()"
+              (click)="noteMode.set(true)"
+            >
+              Internal note
+            </button>
+          </div>
+          <textarea
+            class="mf-textarea composer-body"
+            data-testid="composer-body"
+            [placeholder]="noteMode() ? 'Add an internal note…' : 'Write a reply…'"
+            [(ngModel)]="composerText"
+            [disabled]="sending()"
+            rows="4"
+          ></textarea>
+          @if (sendError()) {
+            <p class="mf-err" data-testid="composer-error">{{ sendError() }}</p>
+          }
+          <div class="composer-actions">
+            <button
+              class="mf-btn mf-btn-primary"
+              data-testid="composer-submit"
+              [disabled]="!composerText.trim() || sending()"
+              (click)="submitComposer()"
+            >
+              {{ sending() ? 'Sending…' : noteMode() ? 'Add note' : 'Send reply' }}
+            </button>
+          </div>
+        </div>
+        </div>
           <!-- US3 triage controls. Each mutation PATCHes the ticket and reflects
                the returned Ticket so the header above never goes stale. -->
-          <div class="triage mf-card" data-testid="triage">
+          <aside class="triage mf-card" data-testid="triage">
+            <h2 class="mf-section-label">Triage</h2>
             <div class="mf-field triage-field">
               <label>Status</label>
               <select
@@ -232,131 +362,13 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
             @if (triageError()) {
               <p class="mf-err triage-error" data-testid="triage-error">{{ triageError() }}</p>
             }
-          </div>
-        </header>
-
-        <ul class="thread" data-testid="message-thread">
-          @for (m of messages(); track m.id) {
-            <li
-              class="message"
-              data-testid="message"
-              [attr.data-direction]="m.direction"
-              [class.inbound]="m.direction === 'inbound'"
-              [class.outbound]="m.direction === 'outbound'"
-              [class.note]="m.direction === 'note'"
-            >
-              <div class="message-head">
-                <span class="direction" data-testid="message-direction">
-                  @switch (m.direction) {
-                    @case ('inbound') {
-                      Received
-                    }
-                    @case ('outbound') {
-                      Reply
-                    }
-                    @case ('note') {
-                      Internal note
-                    }
-                  }
-                </span>
-                <span class="when">{{ m.created_at | date: 'medium' }}</span>
-              </div>
-
-              <div class="message-body" data-testid="message-body">
-                {{ m.body_text || '(no text body)' }}
-              </div>
-
-              @if (m.delivery_state === 'failed') {
-                <div class="delivery-failed" data-testid="delivery-failed">Failed to send</div>
-              }
-
-              @if (m.attachments.length) {
-                <ul class="attachments" data-testid="message-attachments">
-                  @for (a of m.attachments; track a.id) {
-                    <li class="attachment" data-testid="attachment">
-                      <span class="filename">{{ a.filename }}</span>
-                      <span class="muted">{{ a.content_type }} · {{ a.size }} bytes</span>
-                    </li>
-                  }
-                </ul>
-              }
-
-              @if (m.direction === 'inbound') {
-                <div class="auth-flags" data-testid="auth-flags">
-                  <span class="flag" [class]="m.spf_result" data-testid="spf-result"
-                    >SPF: {{ m.spf_result }}</span
-                  >
-                  <span class="flag" [class]="m.dkim_result" data-testid="dkim-result"
-                    >DKIM: {{ m.dkim_result }}</span
-                  >
-                  <span class="flag" [class]="m.dmarc_result" data-testid="dmarc-result"
-                    >DMARC: {{ m.dmarc_result }}</span
-                  >
-                </div>
-              }
-            </li>
-          } @empty {
-            <li class="message-empty" data-testid="message-empty">
-              No messages in this conversation yet.
-            </li>
-          }
-        </ul>
-
-        @if (nextCursor()) {
-          <button
-            class="mf-btn mf-btn-ghost load-more"
-            data-testid="load-more-messages"
-            [disabled]="busy()"
-            (click)="loadMore()"
-          >
-            {{ busy() ? 'Loading…' : 'Load earlier messages' }}
-          </button>
-        }
-
-        <div class="composer mf-card" data-testid="composer">
-          <div class="composer-toggle" data-testid="composer-toggle">
-            <button
-              class="mf-btn mf-btn-sm toggle-btn"
-              [class.mf-btn-primary]="!noteMode()"
-              [class.mf-btn-ghost]="noteMode()"
-              data-testid="toggle-reply"
-              [attr.aria-pressed]="!noteMode()"
-              (click)="noteMode.set(false)"
-            >
-              Reply
-            </button>
-            <button
-              class="mf-btn mf-btn-sm toggle-btn"
-              [class.mf-btn-primary]="noteMode()"
-              [class.mf-btn-ghost]="!noteMode()"
-              data-testid="toggle-note"
-              [attr.aria-pressed]="noteMode()"
-              (click)="noteMode.set(true)"
-            >
-              Internal note
-            </button>
-          </div>
-          <textarea
-            class="mf-textarea composer-body"
-            data-testid="composer-body"
-            [placeholder]="noteMode() ? 'Add an internal note…' : 'Write a reply…'"
-            [(ngModel)]="composerText"
-            [disabled]="sending()"
-            rows="4"
-          ></textarea>
-          @if (sendError()) {
-            <p class="mf-err" data-testid="composer-error">{{ sendError() }}</p>
-          }
-          <div class="composer-actions">
-            <button
-              class="mf-btn mf-btn-primary"
-              data-testid="composer-submit"
-              [disabled]="!composerText.trim() || sending()"
-              (click)="submitComposer()"
-            >
-              {{ sending() ? 'Sending…' : noteMode() ? 'Add note' : 'Send reply' }}
-            </button>
-          </div>
+            <h2 class="mf-section-label">Requester</h2>
+          <p class="requester" data-testid="thread-requester">
+            <b>{{ t.requester.display_name || t.requester.email }}</b>
+            <span class="muted">&lt;{{ t.requester.email }}&gt;</span>
+          </p>
+            <p class="mf-td-data requester-detail">{{ t.message_count }} messages · first seen {{ t.requester.first_seen_at | date: 'shortDate' }}</p>
+          </aside>
         </div>
       }
     </div>
@@ -397,21 +409,20 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
         margin: 8px 0;
         align-items: center;
       }
-      .thread-head .requester {
+      .requester {
         color: var(--mf-text-muted);
         font-size: var(--mf-fs-sm);
         margin: 6px 0 0;
       }
-      .thread-head .requester b {
+      .requester b {
         color: var(--mf-text);
       }
 
       .triage {
-        margin-top: 14px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        align-items: flex-start;
+        display: grid;
+        gap: 12px;
+        padding: 16px;
+        min-width: 0;
       }
       .triage-field {
         flex: 0 0 auto;
@@ -424,8 +435,8 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
         color: var(--mf-text-muted);
       }
       .triage .mf-select {
-        width: auto;
-        min-width: 130px;
+        width: 100%;
+        min-width: 0;
       }
       .triage .mf-select:disabled {
         opacity: 0.6;
@@ -433,7 +444,7 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
       }
       .triage-tags-field,
       .triage-assignee-field {
-        flex: 1 1 240px;
+        min-width: 0;
       }
       .chips {
         display: flex;
@@ -494,23 +505,24 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
         display: grid;
         gap: 12px;
       }
-      .message {
-        border: 1px solid var(--mf-border);
-        border-radius: var(--mf-radius-sm);
-        padding: 14px 16px;
+      .message { display: flex; align-items: flex-start; gap: 10px; }
+      .message.outbound, .message.note { flex-direction: row-reverse; }
+      .message-avatar {
+        width: 28px; height: 28px; flex: none; display: grid; place-items: center;
+        border-radius: 999px; border: 1px solid var(--mf-border);
+        background: var(--mf-surface-2); color: var(--mf-text);
+        font: var(--mf-text-eyebrow);
+      }
+      .outbound .message-avatar, .note .message-avatar {
+        background: var(--mf-accent); color: var(--mf-text-on-accent); border-color: transparent;
+      }
+      .message-bubble {
+        min-width: 0; max-width: 72%; padding: 10px 13px;
+        border: 1px solid var(--mf-border); border-radius: var(--mf-radius-sm);
         background: var(--mf-surface-2);
       }
-      .message.inbound {
-        box-shadow: inset 3px 0 0 var(--mf-accent);
-      }
-      .message.outbound {
-        box-shadow: inset 3px 0 0 var(--mf-success);
-        background: var(--mf-surface);
-      }
-      .message.note {
-        box-shadow: inset 3px 0 0 var(--mf-danger);
-        background: var(--mf-danger-soft);
-      }
+      .outbound .message-bubble { background: var(--mf-accent-soft); border-color: transparent; }
+      .note .message-bubble { background: var(--mf-warn-soft); border-color: var(--mf-warn); }
 
       .message-head {
         display: flex;
@@ -526,8 +538,9 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
         color: var(--mf-text-muted);
       }
       .message-head .when {
-        color: var(--mf-text-faint);
-        font-size: var(--mf-fs-xs);
+        color: var(--mf-text-muted);
+        font-family: var(--mf-font-mono);
+        font-size: 11px;
       }
       .message-body {
         margin-top: 8px;
@@ -628,7 +641,22 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
       }
       .composer-actions {
         display: flex;
-        justify-content: flex-end;
+        justify-content: flex-start;
+      }
+      .thread-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+      .conversation { min-width: 0; }
+      .triage .mf-section-label { margin: 0; }
+      .requester { overflow-wrap: anywhere; }
+      .requester-detail { margin: 0; font-size: 11px; }
+      .requester b, .requester .muted { display: block; }
+      .thread-subject { font: var(--mf-text-h1); }
+      .thread { gap: 14px; }
+      .composer { border: 0; box-shadow: none; padding: 0; }
+      .assignee-row { flex-wrap: wrap; }
+      .assignee-manual .mf-input { min-width: 0; width: 100%; }
+      @media (max-width: 1050px) {
+        .thread-layout { grid-template-columns: minmax(0, 1fr); }
+        .message-bubble { max-width: 85%; }
       }
     `,
   ],
@@ -684,6 +712,15 @@ export class ThreadViewComponent implements OnInit {
   // assignee picker. Stays empty (picker hidden) when the caller lacks tickets.assign
   // (404) or the load fails — the manual-uuid fallback still works.
   members = signal<AssignableMember[]>([]);
+
+  messageInitials(message: TicketMessage): string {
+    const name = message.direction === 'inbound'
+      ? this.ticket()?.requester.display_name || this.ticket()?.requester.email || ''
+      : this.members().find((member) => member.id === message.author_principal_id)?.display_name
+        || (message.author_principal_id === this.profile()?.id ? this.profile()?.display_name : '')
+        || 'Team';
+    return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+  }
 
   ngOnInit(): void {
     this.businessId = this.route.snapshot.paramMap.get('businessId') ?? '';
