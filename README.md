@@ -153,7 +153,11 @@ image and do not require a database migration.
 
 The app release remains master → GHCR → Flux → migration hook → Deployment.
 Production requires a genuine outbound SMTP relay, including the migration hook's
-transport configuration; see [mailing providers](docs/runbooks/mailing-providers.md).
+transport configuration, unless outbound mail is explicitly disabled with
+`MANYFORGE_OUTBOUND_MAIL_DISABLED=true` (Helm: `outboundMailDisabled: true`).
+Disabled sends are rejected without delivery or message-content/token logging;
+authentication emails and email invitations are unavailable. The default is
+`false`; see [mailing providers](docs/runbooks/mailing-providers.md) to enable mail.
 Never work around an unconfigured relay with development mode or a fake SMTP host.
 
 ## Layout
