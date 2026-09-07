@@ -52,7 +52,7 @@ import { MailingPreviewPaneComponent } from './preview-pane';
         </div>
       } @else if (campaign()) {
         <div class="status-row">
-          <mf-status-pill [tone]="statusTone(campaign()!.status)" [label]="campaign()!.status" />
+          <mf-status-pill [tone]="statusTone(campaign()!.status)" [label]="campaign()!.status" [live]="campaign()!.status === 'sending'" />
           @if (campaign()!.scheduled_at) {
             <span class="mf-hint">Scheduled {{ campaign()!.scheduled_at | date: 'medium' }}</span>
           }

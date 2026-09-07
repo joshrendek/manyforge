@@ -13,12 +13,6 @@ import { ToastService } from './toast.service';
         </div>
       }
     </div>`,
-  styles: [`
-    .mf-toast-stack{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:10px;z-index:50}
-    .mf-toast{display:flex;align-items:center;gap:10px;background:var(--mf-surface);border:1px solid var(--mf-border);border-left:3px solid var(--mf-success);border-radius:var(--mf-radius-sm);padding:11px 14px;box-shadow:var(--mf-shadow);font-size:var(--mf-fs-sm);color:var(--mf-text);max-width:360px}
-    .mf-toast-err{border-left-color:var(--mf-danger)}
-    .mf-toast-x{margin-left:auto;background:none;border:0;color:var(--mf-text-faint);cursor:pointer;font-size:16px;line-height:1}
-  `],
 })
 export class ToastHost {
   readonly toasts = inject(ToastService);

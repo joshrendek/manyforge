@@ -23,7 +23,7 @@ var mailingMessageDomainPattern = regexp.MustCompile(`^[a-z0-9.-]+$`)
 
 // Config holds runtime configuration.
 type Config struct {
-	Environment      string        // development or production; production requires a real outbound transport
+	Environment      string        // development or production; production requires SMTP unless outbound mail is explicitly disabled
 	Addr             string        // HTTP listen address
 	DatabaseURL      string        // PostgreSQL DSN for the app role (non-superuser, non-BYPASSRLS)
 	AccessTokenTTL   time.Duration // EdDSA access-token lifetime
@@ -62,8 +62,11 @@ type Config struct {
 	OutboundRateRPS   float64 // per-business outbound send refill rate (FR-020)
 	OutboundRateBurst float64 // per-business outbound send burst allowance
 
-	// Outbound SMTP relay. An empty host is permitted only in development, where
-	// LogSender is metadata-only and always reports non-acceptance.
+	// OutboundMailDisabled rejects every outgoing message, even with a configured relay.
+	OutboundMailDisabled bool
+
+	// Outbound SMTP relay. An empty host is permitted only in development or when
+	// outbound mail is explicitly disabled; neither mode accepts messages.
 	SMTPHost string
 	SMTPPort int    // outbound relay port (default 587)
 	SMTPUser string // SMTP AUTH username; empty ⇒ no auth
@@ -122,16 +125,16 @@ type Config struct {
 	FeedbackMasterKey []byte
 	// MailingMasterKey seals list S2S signing secrets and BYO provider credentials.
 	// MANYFORGE_MAILING_MASTER_KEY is optional at boot and must decode to 32 bytes when set.
-	MailingMasterKey     []byte
-	MailingRateRPS       float64
-	MailingRateBurst        float64
-	MailingSendBatch        int
-	MailingSendEvery        time.Duration
-	MailingLease            time.Duration
-	MailingFanoutGlobal     int
+	MailingMasterKey         []byte
+	MailingRateRPS           float64
+	MailingRateBurst         float64
+	MailingSendBatch         int
+	MailingSendEvery         time.Duration
+	MailingLease             time.Duration
+	MailingFanoutGlobal      int
 	MailingFanoutPerCampaign int
-	MailingRollupBatch      int
-	MailingMessageDomain    string
+	MailingRollupBatch       int
+	MailingMessageDomain     string
 
 	// InstanceOperatorPrincipal gates instance setup routes (GitHub App manifest
 	// creation, etc.). MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL (UUID). uuid.Nil when
@@ -210,7 +213,7 @@ type Config struct {
 }
 
 // Load reads configuration from the environment, applying safe local defaults
-// and rejecting production configurations without an outbound transport.
+// and rejecting production configurations without SMTP unless outbound mail is disabled.
 func Load() (Config, error) {
 	cfg := Config{
 		Environment:          env("MANYFORGE_ENVIRONMENT", defaultEnvironment()),
@@ -320,14 +323,17 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_RATE_BURST: %w", err)
 	}
 
-	// Outbound SMTP relay. Production cannot boot without a real transport.
+	// Production requires a real transport unless the operator explicitly disables mail.
+	if cfg.OutboundMailDisabled, err = envBool("MANYFORGE_OUTBOUND_MAIL_DISABLED", false); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_MAIL_DISABLED: %w", err)
+	}
 	cfg.SMTPHost = strings.TrimSpace(os.Getenv("MANYFORGE_SMTP_HOST"))
 	if cfg.SMTPPort, err = envInt("MANYFORGE_SMTP_PORT", 587); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_SMTP_PORT: %w", err)
 	}
 	cfg.SMTPUser = os.Getenv("MANYFORGE_SMTP_USER")
 	cfg.SMTPPass = os.Getenv("MANYFORGE_SMTP_PASS")
-	if cfg.Environment == "production" && cfg.SMTPHost == "" {
+	if cfg.Environment == "production" && !cfg.OutboundMailDisabled && cfg.SMTPHost == "" {
 		return Config{}, fmt.Errorf("MANYFORGE_SMTP_HOST: required in production")
 	}
 

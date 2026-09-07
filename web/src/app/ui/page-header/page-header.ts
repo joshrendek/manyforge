@@ -1,4 +1,5 @@
-import { Component, Input } from '@angular/core';
+import { Component, Input, inject } from '@angular/core';
+import { CurrentBusinessService } from '../../core/current-business.service';
 
 @Component({
   selector: 'mf-page-header',
@@ -6,19 +7,18 @@ import { Component, Input } from '@angular/core';
   template: `
     <header class="mf-pageheader">
       <div>
+        @if (eyebrow ?? current.businessName(); as context) {
+          <div class="mf-eyebrow">{{ context }}</div>
+        }
         <h1>{{ title }}</h1>
         @if (subtitle) { <div class="mf-pageheader-sub">{{ subtitle }}</div> }
       </div>
       <div class="mf-pageheader-actions"><ng-content select="[actions]" /></div>
     </header>`,
-  styles: [`
-    .mf-pageheader{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px}
-    h1{font-size:var(--mf-fs-2xl);font-weight:680;letter-spacing:-.025em;margin:0}
-    .mf-pageheader-sub{color:var(--mf-text-muted);font-size:var(--mf-fs-sm);margin-top:3px}
-    .mf-pageheader-actions{display:flex;gap:8px;align-items:center}
-  `],
 })
 export class PageHeader {
+  readonly current = inject(CurrentBusinessService);
+  @Input() eyebrow: string | undefined;
   @Input() title = '';
   @Input() subtitle = '';
 }

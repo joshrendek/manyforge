@@ -611,7 +611,7 @@ func parseLimit(r *http.Request) int {
 	return n
 }
 
-// parseTicketFilter reads the status/priority/assignee/tag query facets. Enum
+// parseTicketFilter reads the status/priority/assignee/tag/search query facets. Enum
 // values are validated against the closed sets so a bad value is a 400, not an
 // empty result that looks like "no such tickets". The assignee `unassigned`
 // sentinel is recognized; any other value must be a UUID.
@@ -645,7 +645,9 @@ func parseTicketFilter(r *http.Request) (TicketFilter, error) {
 	if t := q.Get("tag"); t != "" {
 		f.Tag = &t
 	}
-	return f, nil
+	var err error
+	f.Search, err = normalizeTicketSearch(q.Get("search"))
+	return f, err
 }
 
 func validStatus(s string) bool {

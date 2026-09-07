@@ -39,6 +39,7 @@ import { StatTile, StatTiles } from '../../ui/stat-tiles/stat-tiles';
             actions
             [tone]="campaignTone(current.campaign.status)"
             [label]="current.campaign.status"
+            [live]="current.campaign.status === 'sending'"
             data-testid="campaign-stats-status"
           />
         }
@@ -116,6 +117,7 @@ import { StatTile, StatTiles } from '../../ui/stat-tiles/stat-tiles';
                   <mf-status-pill
                     [tone]="deliveryTone(delivery.status)"
                     [label]="delivery.status"
+                    [live]="delivery.status === 'sending'"
                   />
                   @if (delivery.last_error) {
                     <small class="delivery-error" [title]="delivery.last_error">{{

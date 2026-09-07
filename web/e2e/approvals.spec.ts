@@ -8,12 +8,14 @@ test('approvals queue: renders, approve removes the row', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('mf_access', 'tok'));
   await page.route('**/api/v1/me', (r) => r.fulfill({ json: profile }));
   await page.route('**/api/v1/businesses', (r) => r.fulfill({ json: biz }));
-  let listed = 0;
-  await page.route('**/api/v1/businesses/b1/approvals', (r) => {
-    listed++;
-    return r.fulfill({ json: { items: listed === 1 ? [item] : [] } });
+  let approved = false;
+  await page.route('**/api/v1/businesses/b1/approvals', (r) =>
+    r.fulfill({ json: { items: approved ? [] : [item] } }),
+  );
+  await page.route('**/api/v1/businesses/b1/approvals/a1/approve', (r) => {
+    approved = true;
+    return r.fulfill({ json: { ...item, state: 'approved' } });
   });
-  await page.route('**/api/v1/businesses/b1/approvals/a1/approve', (r) => r.fulfill({ json: { ...item, state: 'approved' } }));
 
   await page.goto('/approvals');
   await expect(page.getByTestId('approval-summary')).toContainText('Transition ticket');

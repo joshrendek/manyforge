@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AICredential, AICredentialsService, AIProvider, UpdateAICredentialBody } from '../../../core/ai-credentials.service';
 import { AgentsService, ModelDescriptor } from '../../../core/agents.service';
@@ -21,23 +23,14 @@ import { CredentialFormComponent } from './credential-form';
   imports: [FormsModule, PageHeader, EmptyState, Spinner, CredentialFormComponent],
   template: `
     <div class="mf-card" data-testid="ai-credentials-page">
-      <mf-page-header title="AI Credentials" subtitle="Per-business provider keys for your agents">
+      <mf-page-header [eyebrow]="businessName()" title="AI Credentials" subtitle="Per-business provider keys for your agents">
         @if (loading()) {
           <span class="mf-loading-row" data-testid="credentials-loading" actions><mf-spinner /></span>
         }
       </mf-page-header>
 
       <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="cred-biz-select">Business</label>
-          <select id="cred-biz-select" class="mf-select" data-testid="business-select"
-                  [ngModel]="businessId()" (ngModelChange)="selectBusiness($event)" name="biz">
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
+        
         <div style="display:flex;align-items:flex-end">
           <button class="mf-btn mf-btn-primary mf-btn-sm" data-testid="credential-add-toggle"
                   (click)="toggleAdd()" [disabled]="!businessId()">
@@ -129,6 +122,18 @@ import { CredentialFormComponent } from './credential-form';
   `,
 })
 export class AICredentialsListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private api = inject(AICredentialsService);
   private agents = inject(AgentsService);
@@ -150,15 +155,13 @@ export class AICredentialsListComponent implements OnInit {
   codexModels = signal<ModelDescriptor[]>([]);
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.reload();
+          this.selectBusiness(id);
         }
       },
       error: () => this.error.set('Could not load businesses'),
@@ -166,18 +169,28 @@ export class AICredentialsListComponent implements OnInit {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.editModel = '';
+    this.editLanes = 4;
+    this.items.set([]);
+    this.loading.set(false);
+    this.error.set('');
+    this.reconnectProvider.set(null);
+    this.editId.set('');
+    this.codexModels.set([]);
     this.businessId.set(id);
-    this.current.set(id);
+    if (id) this.current.set(id);
     this.confirmDeleteId.set('');
     this.showAdd.set(false);
-    this.reload();
+    if (id) this.reload();
   }
 
   reload(): void {
     if (!this.businessId()) return;
     const biz = this.businessId();
     this.loading.set(true);
-    this.api.list(biz).subscribe({
+    this.api.list(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== biz) return;
         this.items.set(r.items ?? []);
@@ -223,7 +236,7 @@ export class AICredentialsListComponent implements OnInit {
     // live fetch is empty or fails. Other providers keep the free-text input for now.
     if (c.provider === 'openai_codex') {
       this.codexModels.set([]);
-      this.api.liveCodexModels(this.businessId()).subscribe({
+      this.api.liveCodexModels(this.businessId()).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
         next: (r) => {
           const live = (r.items ?? []).filter((m) => m.provider === 'openai_codex');
           if (live.length) this.codexModels.set(live);
@@ -237,7 +250,7 @@ export class AICredentialsListComponent implements OnInit {
   // loadStaticCodexModels populates the editor picker from the static model_pricing catalog — the
   // fallback when the live per-account list is unavailable.
   private loadStaticCodexModels(): void {
-    this.agents.models(this.businessId()).subscribe({
+    this.agents.models(this.businessId()).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => this.codexModels.set((r.items ?? []).filter((m) => m.provider === 'openai_codex')),
       error: () => this.codexModels.set([]),
     });
@@ -248,7 +261,7 @@ export class AICredentialsListComponent implements OnInit {
       default_model: this.editModel.trim(),
       max_concurrent_lanes: Math.min(16, Math.max(1, Math.round(Number(this.editLanes) || 4))),
     };
-    this.api.update(this.businessId(), c.id, body).subscribe({
+    this.api.update(this.businessId(), c.id, body).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (updated) => {
         this.items.update((xs) => xs.map((x) => (x.id === c.id ? updated : x)));
         this.editId.set('');
@@ -261,7 +274,7 @@ export class AICredentialsListComponent implements OnInit {
   }
 
   remove(c: AICredential): void {
-    this.api.remove(this.businessId(), c.id).subscribe({
+    this.api.remove(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.items.update((xs) => xs.filter((x) => x.id !== c.id));
         this.confirmDeleteId.set('');

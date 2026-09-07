@@ -126,8 +126,8 @@ describe('MailingCampaignsListComponent', () => {
     fixture.componentInstance.selectBusiness(SECOND_BUSINESS_ID);
     const newLists = http.expectOne(`${SECOND_BASE}/lists`);
     const newCampaigns = http.expectOne(`${SECOND_BASE}/campaigns`);
-    oldLists.flush({ items: [list], next_cursor: null });
-    oldCampaigns.flush({ items: [{ id: STALE_CAMPAIGN_ID, name: 'Old' }], next_cursor: null });
+    expect(oldLists.cancelled).toBe(true);
+    expect(oldCampaigns.cancelled).toBe(true);
     newLists.flush({ items: [{ ...list, id: SECOND_LIST_ID, business_id: SECOND_BUSINESS_ID }], next_cursor: null });
     newCampaigns.flush({ items: [{ id: FRESH_CAMPAIGN_ID, name: 'New' }], next_cursor: null });
 
@@ -135,7 +135,7 @@ describe('MailingCampaignsListComponent', () => {
     expect(fixture.componentInstance.loading()).toBe(false);
   });
 
-  it('ignores the original response after switching away and back to a business', () => {
+  it('cancels obsolete requests after switching away and back to a business', () => {
     const fixture = TestBed.createComponent(MailingCampaignsListComponent);
     fixture.detectChanges();
     http.expectOne('/api/v1/businesses').flush({
@@ -152,10 +152,10 @@ describe('MailingCampaignsListComponent', () => {
     expect(b1Lists).toHaveLength(2);
     expect(b1Campaigns).toHaveLength(2);
 
-    b1Lists[0].flush({ items: [{ ...list, id: '99999999-9999-4999-8999-999999999999' }], next_cursor: null });
-    b1Campaigns[0].flush({ items: [{ id: STALE_CAMPAIGN_ID, name: 'Old' }], next_cursor: null });
-    b2Lists.flush({ items: [], next_cursor: null });
-    b2Campaigns.flush({ items: [], next_cursor: null });
+    expect(b1Lists[0].cancelled).toBe(true);
+    expect(b1Campaigns[0].cancelled).toBe(true);
+    expect(b2Lists.cancelled).toBe(true);
+    expect(b2Campaigns.cancelled).toBe(true);
     b1Lists[1].flush({ items: [list], next_cursor: null });
     b1Campaigns[1].flush({ items: [{ id: FRESH_CAMPAIGN_ID, name: 'New' }], next_cursor: null });
 

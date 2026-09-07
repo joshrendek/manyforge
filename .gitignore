@@ -39,3 +39,8 @@ HANDOFF.md
 
 # Isolated implementation worktrees
 .worktrees/
+
+# Static homepage deployment dependencies and local credentials
+/landing/node_modules/
+/landing/.wrangler/
+/landing/.dev.vars*

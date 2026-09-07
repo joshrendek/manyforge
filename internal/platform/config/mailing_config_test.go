@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,14 +77,18 @@ func TestMailingMasterKeyRejectsWrongLength(t *testing.T) {
 func TestProductionRequiresOutboundSMTPTransport(t *testing.T) {
 	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
 	t.Setenv("MANYFORGE_SMTP_HOST", "")
-	if _, err := Load(); err == nil {
-		t.Fatal("expected production without outbound SMTP to fail")
+	for _, disabled := range []string{"", "false"} {
+		t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", disabled)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MANYFORGE_SMTP_HOST") {
+			t.Fatalf("production without SMTP and disabled=%q: error = %v", disabled, err)
+		}
 	}
 }
 
 func TestDevelopmentAllowsMetadataOnlyMailSink(t *testing.T) {
 	t.Setenv("MANYFORGE_ENVIRONMENT", "development")
 	t.Setenv("MANYFORGE_SMTP_HOST", "")
+	t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -97,6 +102,7 @@ func TestProductionLoadsConfiguredOutboundSMTPTransport(t *testing.T) {
 	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
 	t.Setenv("MANYFORGE_SMTP_HOST", "smtp.example.test")
 	t.Setenv("MANYFORGE_SMTP_PORT", "2525")
+	t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -104,5 +110,31 @@ func TestProductionLoadsConfiguredOutboundSMTPTransport(t *testing.T) {
 	if cfg.Environment != "production" || cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 {
 		t.Fatalf("production SMTP config = environment %q host %q port %d",
 			cfg.Environment, cfg.SMTPHost, cfg.SMTPPort)
+	}
+}
+
+func TestProductionAllowsExplicitlyDisabledOutboundMail(t *testing.T) {
+	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
+	t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", "true")
+	for _, host := range []string{"", "smtp.example.test"} {
+		t.Run("host="+host, func(t *testing.T) {
+			t.Setenv("MANYFORGE_SMTP_HOST", host)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !cfg.OutboundMailDisabled {
+				t.Fatal("configured relay must not override explicit outbound disable")
+			}
+		})
+	}
+}
+
+func TestOutboundMailDisabledRejectsInvalidBool(t *testing.T) {
+	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
+	t.Setenv("MANYFORGE_SMTP_HOST", "smtp.example.test")
+	t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", "notabool")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MANYFORGE_OUTBOUND_MAIL_DISABLED") {
+		t.Fatalf("invalid disable setting: error = %v", err)
 	}
 }

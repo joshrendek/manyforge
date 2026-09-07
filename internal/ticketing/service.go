@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -78,6 +79,7 @@ type TicketFilter struct {
 	Unassigned bool       // assignee == "unassigned" sentinel
 	Assignee   *uuid.UUID // filter to a specific assignee principal
 	Tag        *string    // exact (case-insensitive) tag match
+	Search     string     // case-insensitive literal subject substring; trimmed, at most 256 runes
 }
 
 // Page is a keyset-paginated result. NextCursor is an opaque token (nil = last page).
@@ -139,9 +141,13 @@ type Message struct {
 // first, optionally filtered. limit is clamped to [1,100] HERE (service boundary)
 // so an absurd caller value never returns the whole table.
 func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.UUID, f TicketFilter, cursor string, limit int) (Page[Ticket], error) {
+	search, err := normalizeTicketSearch(f.Search)
+	if err != nil {
+		return Page[Ticket]{}, err
+	}
 	lim := clampLimit(limit)
 	var out Page[Ticket]
-	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 
 		// The list query folds requester (JOIN), tags (array_agg), and
@@ -157,6 +163,7 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 				AssigneeUnassigned:  f.Unassigned,
 				AssigneePrincipalID: assigneeArg(f),
 				Tag:                 f.Tag,
+				Search:              search,
 				Lim:                 int32(lim + 1),
 			})
 			if qerr != nil {
@@ -178,6 +185,7 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 				AssigneeUnassigned:  f.Unassigned,
 				AssigneePrincipalID: assigneeArg(f),
 				Tag:                 f.Tag,
+				Search:              search,
 				CurLastMessageAt:    k.ts,
 				CurID:               k.id,
 				Lim:                 int32(lim + 1),
@@ -207,6 +215,14 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 		return Page[Ticket]{}, mapErr(err)
 	}
 	return out, nil
+}
+
+func normalizeTicketSearch(search string) (string, error) {
+	search = strings.TrimSpace(search)
+	if utf8.RuneCountInString(search) > 256 {
+		return "", errValidation("search must be at most 256 characters")
+	}
+	return search, nil
 }
 
 // GetTicket loads a single ticket the caller can see, or ErrNotFound (no oracle).

@@ -101,6 +101,9 @@ securityContext:
 addr: ":8080"
 # Pods run as production unless an operator explicitly selects development.
 environment: production
+# Explicitly reject all outbound mail without delivery or content logging.
+# False preserves the production requirement for a genuine SMTP relay.
+outboundMailDisabled: false
 
 # Non-secret SMTP endpoint. Credentials remain in secrets.smtp below.
 smtp:

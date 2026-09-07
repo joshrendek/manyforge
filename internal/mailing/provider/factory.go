@@ -13,6 +13,7 @@ import (
 
 // Factory owns the shared dependencies used to construct provider clients.
 type Factory struct {
+	Disabled            bool // rejects all modes before constructing a provider client
 	DB                  *db.DB
 	DKIMSealer          KeyOpener
 	RelaySender         notify.Sender
@@ -21,8 +22,11 @@ type Factory struct {
 	SESEndpointResolver sesv2.EndpointResolverV2
 }
 
-// Build constructs the relay, Resend, or SES client selected by profile.Mode.
+// Build rejects disabled mail, otherwise constructs the client selected by profile.Mode.
 func (f *Factory) Build(ctx context.Context, profile Profile) (Deliverer, error) {
+	if f.Disabled {
+		return nil, notify.ErrNotAccepted
+	}
 	switch profile.Mode {
 	case "relay":
 		if profile.EmailDomainID == nil {

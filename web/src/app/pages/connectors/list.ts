@@ -1,6 +1,8 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { BusinessService } from '../../core/business.service';
 import { Connector, ConnectorsService } from '../../core/connectors.service';
@@ -24,23 +26,14 @@ import { ConnectorFormComponent } from './connector-form';
   imports: [FormsModule, DatePipe, PageHeader, StatusPill, EmptyState, Spinner, ConnectorFormComponent],
   template: `
     <div class="mf-card" data-testid="connectors-page">
-      <mf-page-header title="Connectors" [subtitle]="items().length + ' connected'">
+      <mf-page-header [eyebrow]="businessName()" title="Connectors" [subtitle]="items().length + ' connected'">
         @if (loading()) {
           <span class="mf-loading-row" data-testid="connectors-loading" actions><mf-spinner /></span>
         }
       </mf-page-header>
 
       <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="biz-select">Business</label>
-          <select id="biz-select" class="mf-select" data-testid="business-select"
-                  [ngModel]="businessId()" (ngModelChange)="selectBusiness($event)">
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
+        
         <div style="display:flex;align-items:flex-end">
           <button class="mf-btn mf-btn-primary mf-btn-sm" data-testid="connector-add-toggle"
                   (click)="showAdd.set(!showAdd())" [disabled]="!businessId()">
@@ -125,6 +118,18 @@ import { ConnectorFormComponent } from './connector-form';
   `,
 })
 export class ConnectorsListComponent implements OnInit, OnDestroy {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private api = inject(ConnectorsService);
   private current = inject(CurrentBusinessService);
@@ -150,15 +155,13 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.reload();
+          this.selectBusiness(id);
         }
       },
       error: () => this.error.set('Could not load businesses'),
@@ -171,19 +174,25 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.items.set([]);
+    this.loading.set(false);
+    this.error.set('');
+    this.showAdd.set(false);
     this.businessId.set(id);
-    this.current.set(id);
+    if (id) this.current.set(id);
     this.confirmDeleteId.set('');
     this.rotateId.set('');
     this.editId.set('');
-    this.reload();
+    if (id) this.reload();
   }
 
   reload(): void {
     if (!this.businessId()) return;
     const biz = this.businessId();
     this.loading.set(true);
-    this.api.list(biz).subscribe({
+    this.api.list(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== biz) return;
         this.items.set(r.items ?? []);
@@ -218,7 +227,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   }
 
   sync(c: Connector): void {
-    this.api.sync(this.businessId(), c.id).subscribe({
+    this.api.sync(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => this.toast.success('Sync started'),
       error: () => this.toast.error('Sync failed'),
     });
@@ -228,7 +237,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   // (xfj): retry re-enqueues failed ops for the dispatcher, dismiss acknowledges them. Both reload
   // so the health pill + the buttons (gated on failed_outbound_ops) refresh.
   retryFailed(c: Connector): void {
-    this.api.retryFailedOps(this.businessId(), c.id).subscribe({
+    this.api.retryFailedOps(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         this.toast.success(`Re-enqueued ${r.retried} failed op(s)`);
         this.reload();
@@ -238,7 +247,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   }
 
   dismissFailed(c: Connector): void {
-    this.api.dismissFailedOps(this.businessId(), c.id).subscribe({
+    this.api.dismissFailedOps(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         this.toast.success(`Dismissed ${r.dismissed} failed op(s)`);
         this.reload();
@@ -248,7 +257,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   }
 
   test(c: Connector): void {
-    this.api.test(this.businessId(), c.id).subscribe({
+    this.api.test(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (res) => (res.ok ? this.toast.success('Connection OK') : this.toast.error('Test failed: ' + res.detail)),
       error: () => this.toast.error('Test failed'),
     });
@@ -256,7 +265,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
 
   toggle(c: Connector): void {
     const status = c.status === 'enabled' ? 'disabled' : 'enabled';
-    this.api.update(this.businessId(), c.id, { status }).subscribe({
+    this.api.update(this.businessId(), c.id, { status }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (updated) => {
         this.items.update((xs) => xs.map((x) => (x.id === updated.id ? updated : x)));
         this.api.degradedCount.set(this.items().filter((x) => x.health.state !== 'healthy').length);
@@ -267,7 +276,7 @@ export class ConnectorsListComponent implements OnInit, OnDestroy {
   }
 
   remove(c: Connector): void {
-    this.api.remove(this.businessId(), c.id).subscribe({
+    this.api.remove(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.items.update((xs) => xs.filter((x) => x.id !== c.id));
         this.api.degradedCount.set(this.items().filter((x) => x.health.state !== 'healthy').length);

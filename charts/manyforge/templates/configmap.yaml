@@ -7,6 +7,7 @@ metadata:
 data:
   MANYFORGE_ADDR: {{ .Values.addr | quote }}
   MANYFORGE_ENVIRONMENT: {{ .Values.environment | quote }}
+  MANYFORGE_OUTBOUND_MAIL_DISABLED: {{ .Values.outboundMailDisabled | quote }}
   MANYFORGE_SMTP_HOST: {{ .Values.smtp.host | quote }}
   MANYFORGE_SMTP_PORT: {{ .Values.smtp.port | quote }}
   MANYFORGE_JWT_ISSUER: {{ .Values.jwt.issuer | quote }}

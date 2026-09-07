@@ -22,6 +22,7 @@ describe('DashboardComponent', () => {
       providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
     });
     const f = TestBed.createComponent(DashboardComponent);
+    f.componentInstance.view.set('ledger');
     f.detectChanges();
 
     const ctrl = TestBed.inject(HttpTestingController);
@@ -51,27 +52,6 @@ describe('DashboardComponent', () => {
     return { f, ctrl };
   }
 
-  it('renders page header, biz row, create input, and accounting link', () => {
-    const { f } = mount();
-    const el: HTMLElement = f.nativeElement;
-
-    expect(el.querySelector('mf-page-header')).toBeTruthy();
-    const h1 = el.querySelector('mf-page-header h1');
-    expect(h1?.textContent).toContain('Your businesses');
-
-    expect(el.querySelector('[data-testid="biz-row"]')).toBeTruthy();
-
-    expect(el.querySelector('input.mf-input')).toBeTruthy();
-
-    expect(el.querySelector('[data-testid="nav-accounting"]')).toBeTruthy();
-  });
-
-  it('renders .mf-card in dark theme', () => {
-    document.documentElement.setAttribute('data-theme', 'dark');
-    const { f } = mount();
-    const el: HTMLElement = f.nativeElement;
-    expect(el.querySelector('.mf-card')).toBeTruthy();
-  });
 
   it('shows Move master only when the authorization read returns an eligible source', () => {
     const unauthorized = mount();

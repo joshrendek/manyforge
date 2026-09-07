@@ -10,6 +10,7 @@ import {
   ReviewDimensionFallbackEntry,
 } from '../../core/code-review.service';
 import { CdkDragDrop } from '@angular/cdk/drag-drop';
+import { CurrentBusinessService } from '../../core/current-business.service';
 import { CodeReviewSetupComponent } from './setup';
 
 const businesses = {
@@ -104,6 +105,7 @@ describe('CodeReviewSetupComponent', () => {
     // is advisory. Drain any pending estimate request so it doesn't trip mock.verify().
     mock
       .match((r) => r.url.includes('/review-config/estimate'))
+      .filter((req) => !req.cancelled)
       .forEach((req) => req.flush(defaultEstimate));
     mock.verify();
     localStorage.clear();
@@ -126,16 +128,6 @@ describe('CodeReviewSetupComponent', () => {
     fixture.detectChanges();
   }
 
-  it('renders a business selector seeded from the current business', () => {
-    mount();
-    const sel = q('[data-testid="setup-business"]') as HTMLSelectElement;
-    expect(sel).toBeTruthy();
-    expect(cmp.businessId()).toBe('b1');
-    const opts = Array.from(qAll('[data-testid="setup-business"] option')).map(
-      (o) => (o as HTMLOptionElement).value,
-    );
-    expect(opts).toEqual(['b1', 'b2']);
-  });
 
   it('offers openai_codex as a review provider', () => {
     // PROVIDERS is rendered into every fallback-chain provider <select>; assert the option exists.
@@ -346,9 +338,7 @@ describe('CodeReviewSetupComponent', () => {
 
   it('reloads the panel when a different business is selected', () => {
     mount();
-    const sel = q('[data-testid="setup-business"]') as HTMLSelectElement;
-    sel.value = 'b2';
-    sel.dispatchEvent(new Event('change'));
+    TestBed.inject(CurrentBusinessService).set('b2');
     fixture.detectChanges();
     // Selecting b2 refetches its panel.
     mock.expectOne('/api/v1/businesses/b2/review-dimensions').flush({ items: [] });
