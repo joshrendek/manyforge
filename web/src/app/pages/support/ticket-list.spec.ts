@@ -114,13 +114,6 @@ describe('TicketListComponent (Task 19 UI redesign)', () => {
     expect(cb.businessId()).toBe('b2');
   });
 
-  it('business-select is a select.mf-select', () => {
-    boot();
-    const sel = q('[data-testid="business-select"]');
-    expect(sel).not.toBeNull();
-    expect(sel!.tagName.toLowerCase()).toBe('select');
-    expect(sel!.classList.contains('mf-select')).toBe(true);
-  });
 
   it('status-filter and priority-filter are present', () => {
     boot();

@@ -37,9 +37,9 @@ import { runStatusTone } from '../../ui/status';
       @if (review(); as r) {
         <!-- Header: status + GitHub link -->
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-          <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" />
-          <span style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">PR #{{ r.pr_number }}</span>
-          <span style="color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">{{ r.created_at | date:'short' }}</span>
+          <mf-status-pill [tone]="reviewTone(r.status)" [label]="r.status" [live]="r.status === 'running'" />
+          <span class="mf-td-data">PR #{{ r.pr_number }}</span>
+          <span class="mf-td-data">{{ r.created_at | date:'short' }}</span>
           @if (r.review_url) {
             <a [href]="r.review_url" target="_blank" rel="noopener noreferrer"
                class="mf-btn mf-btn-ghost mf-btn-sm" data-testid="view-on-github">
@@ -60,7 +60,7 @@ import { runStatusTone } from '../../ui/status';
             </div>
             @if (r.progress.preview) {
               <pre data-testid="progress-preview"
-                   style="max-height:240px;overflow:auto;white-space:pre-wrap;font-family:monospace;font-size:var(--mf-fs-xs);margin:0;padding:8px;border-radius:6px;background:var(--mf-bg-subtle,rgba(0,0,0,.05))">{{ r.progress.preview }}</pre>
+                   style="max-height:240px;overflow:auto;white-space:pre-wrap;font-family:var(--mf-font-mono);font-size:var(--mf-fs-xs);margin:0;padding:8px;border-radius:6px;background:var(--mf-surface-inset)">{{ r.progress.preview }}</pre>
             }
           </div>
         }
@@ -70,11 +70,11 @@ import { runStatusTone } from '../../ui/status';
              sandbox internals); the preview shown here is already secret-redacted. -->
         @if (r.status === 'failed') {
           <div class="mf-card" style="margin-bottom:16px" data-testid="review-failed">
-            <p style="margin:0 0 8px;font-weight:600;color:var(--mf-danger,#c0392b)">This review failed.</p>
+            <p style="margin:0 0 8px;font-weight:600;color:var(--mf-danger-text)">This review failed.</p>
             @if (r.progress?.preview) {
               <p style="margin:0 0 6px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)">Output captured before it failed:</p>
               <pre data-testid="review-failed-output"
-                   style="max-height:240px;overflow:auto;white-space:pre-wrap;font-family:monospace;font-size:var(--mf-fs-xs);margin:0;padding:8px;border-radius:6px;background:var(--mf-bg-subtle,rgba(0,0,0,.05))">{{ r.progress?.preview }}</pre>
+                   style="max-height:240px;overflow:auto;white-space:pre-wrap;font-family:var(--mf-font-mono);font-size:var(--mf-fs-xs);margin:0;padding:8px;border-radius:6px;background:var(--mf-surface-inset)">{{ r.progress?.preview }}</pre>
             } @else {
               <p style="margin:0;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" data-testid="review-failed-nooutput">No output was captured before the failure.</p>
             }
@@ -117,7 +117,7 @@ import { runStatusTone } from '../../ui/status';
                 </div>
                 @for (f of g.findings; track $index) {
                   <div class="mf-tr" data-testid="finding-row" role="row">
-                    <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all" role="cell">{{ f.file }}</span>
+                    <span style="flex:2;font-size:var(--mf-fs-sm);font-family:var(--mf-font-mono);word-break:break-all" role="cell">{{ f.file }}</span>
                     <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.line ?? '—' }}</span>
                     <span style="width:80px;font-size:var(--mf-fs-sm)" role="cell">
                       <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" [ariaLabel]="'severity ' + f.severity" />
@@ -140,7 +140,7 @@ import { runStatusTone } from '../../ui/status';
             </div>
             @for (f of r.findings; track $index) {
               <div class="mf-tr" data-testid="finding-row" role="row">
-                <span style="flex:2;font-size:var(--mf-fs-sm);font-family:monospace;word-break:break-all" role="cell">{{ f.file }}</span>
+                <span style="flex:2;font-size:var(--mf-fs-sm);font-family:var(--mf-font-mono);word-break:break-all" role="cell">{{ f.file }}</span>
                 <span style="width:60px;color:var(--mf-text-muted);font-size:var(--mf-fs-sm)" role="cell">{{ f.line ?? '—' }}</span>
                 <span style="width:80px;font-size:var(--mf-fs-sm)" role="cell">
                   <mf-status-pill [tone]="findingTone(f.severity)" [label]="f.severity" [ariaLabel]="'severity ' + f.severity" />

@@ -1,51 +1,77 @@
 <div class="mf-app">
   @if (showShell()) {
-    <div class="shell">
-      <aside class="sidebar" data-testid="app-sidebar">
-        <div class="sidebar-brand">Many<span class="brand-accent">Forge</span></div>
-        <nav class="sidebar-nav">
-          @for (item of navItemsWithBadge(); track item.route) {
-            <a
-              [routerLink]="item.route"
-              routerLinkActive="active"
-              [attr.data-testid]="item.testid"
-              [attr.aria-current]="rla.isActive ? 'page' : null"
-              #rla="routerLinkActive"
-            >
-              {{ item.label }}
-              @if (item.badge) {
-                <span class="nav-badge">{{ item.badge }}</span>
+    <a class="skip-link mf-btn mf-btn-primary" href="#main-content">Skip to content</a>
+    <div class="mf-shell shell">
+      <aside class="mf-sidebar sidebar" data-testid="app-sidebar">
+        <div class="sidebar-heading">
+          <a class="mf-brand sidebar-brand" routerLink="/dashboard" aria-label="ManyForge dashboard">
+            <img src="manyforge-mark.svg" width="26" height="26" alt="" />
+            <span>manyforge</span>
+          </a>
+          <button class="mf-btn mf-btn-ghost mf-btn-sm mobile-nav-toggle" type="button"
+            aria-controls="workspace-navigation" [attr.aria-expanded]="navOpen()"
+            (click)="navOpen.set(!navOpen())">{{ navOpen() ? 'Close menu' : 'Menu' }}</button>
+        </div>
+        <div class="business-switcher mf-field">
+          <label for="shell-business">Business</label>
+          <select id="shell-business" class="mf-select" data-testid="business-select"
+            [value]="currentBusiness.businessId() ?? ''"
+            [disabled]="businessesLoading() || switchingBusiness() || !currentBusiness.businesses().length"
+            [attr.aria-busy]="businessesLoading() || switchingBusiness()"
+            (change)="switchBusiness($event)">
+            @if (!currentBusiness.businesses().length) {
+              <option value="">{{ businessesLoading() ? 'Lighting the forge…' : 'No businesses' }}</option>
+            }
+            @for (business of currentBusiness.businesses(); track business.id) {
+              <option [value]="business.id">{{ business.name }}{{ business.status === 'archived' ? ' · archived' : '' }}</option>
+            }
+          </select>
+          @if (businessesError()) {
+            <div class="mf-err" role="alert">{{ businessesError() }}</div>
+            <button class="mf-btn mf-btn-link mf-btn-sm" (click)="loadBusinesses()">Try again</button>
+          }
+        </div>
+        <div id="workspace-navigation" class="sidebar-content" [class.is-open]="navOpen()">
+          <nav class="mf-nav sidebar-nav" aria-label="Workspace">
+            @for (group of navGroupsWithBadge(); track group.label) {
+              <div class="mf-nav-group">{{ group.label }}</div>
+              @for (item of group.items; track item.route) {
+                <a [routerLink]="item.route" [class.active]="activeRoute() === item.route"
+                  [attr.data-testid]="item.testid"
+                  [attr.aria-current]="activeRoute() === item.route ? 'page' : null">
+                  <lucide-icon [img]="item.icon" [size]="15" [strokeWidth]="1.75" aria-hidden="true" />
+                  <span>{{ item.label }}</span>
+                  @if (item.badge) { <span class="mf-nav-badge nav-badge">{{ item.badge }}</span> }
+                </a>
               }
-            </a>
-          }
-        </nav>
-        <div class="sidebar-foot">
-          @if (profile(); as p) {
-            <p class="profile" data-testid="sidebar-identity">
-              Signed in as <b>{{ p.display_name }}</b
-              ><br /><span class="faint">{{ p.email }}</span>
-            </p>
-          }
-          <div class="sidebar-foot-row">
-            <mf-theme-toggle />
-            <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="logout()" data-testid="sign-out">
-              Sign out
-            </button>
+            }
+          </nav>
+          <div class="mf-sidebar-foot sidebar-foot">
+            @if (profile(); as p) {
+              <p class="profile" data-testid="sidebar-identity">
+                Signed in as <b>{{ p.display_name }}</b><br /><span class="faint">{{ p.email }}</span>
+              </p>
+            }
+            <div class="mf-sidebar-foot-row">
+              <mf-theme-toggle />
+              <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="logout()" data-testid="sign-out">Sign out</button>
+            </div>
           </div>
         </div>
       </aside>
-      <main class="shell-main"><router-outlet /></main>
+      <main id="main-content" class="mf-main shell-main" tabindex="-1"><router-outlet /></main>
     </div>
   } @else if (portalRoute()) {
     <main class="portal-main" data-testid="portal-main"><router-outlet /></main>
   } @else {
-    <header class="topbar">
-      <span class="brand">Many<span class="brand-accent">Forge</span></span>
+    <header class="mf-topbar topbar">
+      <a class="mf-brand brand" routerLink="/dashboard" aria-label="ManyForge">
+        <img src="manyforge-mark.svg" width="26" height="26" alt="" /><span>manyforge</span>
+      </a>
       <span class="tagline">all-in-one founder platform</span>
-      <span style="flex: 1"></span>
       <mf-theme-toggle />
     </header>
-    <main class="container"><router-outlet /></main>
+    <main class="mf-container container"><router-outlet /></main>
   }
   <mf-toast-host />
 </div>

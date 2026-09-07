@@ -77,6 +77,7 @@ test('foundation journey: signup → verify → login → create master → add 
   await page.locator('#password').fill('supersecretpassword');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('button', { name: /Light a hearth/ }).click();
   await expect(page.getByRole('heading', { name: 'Your businesses' })).toBeVisible();
 
   // 4) Create the master business (empty-state form), posting with no parent_id.
@@ -124,6 +125,7 @@ test('an invited member, on login, sees only the business they were scoped to', 
   await mockBusinesses(page, scoped);
 
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   await expect(page.getByTestId('biz-row')).toHaveCount(1);
   await expect(page.getByTestId('biz-row').filter({ hasText: 'Engineering' })).toBeVisible();
   // The master tenant and any sibling are never visible to this member.

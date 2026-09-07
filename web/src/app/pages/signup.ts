@@ -9,9 +9,10 @@ import { AuthService } from '../core/auth.service';
   template: `
     <div class="mf-card" style="max-width:410px;margin:8vh auto 0">
       @if (step() === 'form') {
+        <div class="mf-eyebrow">Welcome to ManyForge</div>
         <h1>Create your account</h1>
         <p class="mf-pageheader-sub">Start your ManyForge workspace.</p>
-        <form (ngSubmit)="signup()">
+        <form class="auth-form" (ngSubmit)="signup()">
           <div class="mf-field">
             <label for="email">Email</label>
             <input class="mf-input" id="email" type="email" name="email" [(ngModel)]="email" autocomplete="email" required data-testid="signup-email" />
@@ -27,11 +28,12 @@ import { AuthService } from '../core/auth.service';
           <button class="mf-btn mf-btn-primary" type="submit" [disabled]="loading()" data-testid="signup-submit">{{ loading() ? 'Creating…' : 'Create account' }}</button>
         </form>
         @if (error()) { <p class="mf-err" data-testid="signup-error">{{ error() }}</p> }
-        <p>Already have an account? <a class="mf-btn-link" routerLink="/login">Sign in</a></p>
+        <p class="auth-footer">Already have an account? <a class="mf-btn-link" routerLink="/login">Sign in</a></p>
       } @else {
+        <div class="mf-eyebrow">One more step</div>
         <h1>Verify your email</h1>
         <p class="mf-pageheader-sub">We sent a verification link to <b>{{ email }}</b>.</p>
-        <form (ngSubmit)="verify()">
+        <form class="auth-form" (ngSubmit)="verify()">
           <div class="mf-field">
             <label for="token">Verification token</label>
             <input class="mf-input" id="token" type="text" name="token" [(ngModel)]="token" required data-testid="signup-token" />
@@ -43,6 +45,13 @@ import { AuthService } from '../core/auth.service';
       }
     </div>
   `,
+  styles: [`
+    h1 { font: var(--mf-text-h1); letter-spacing: -.02em; margin: 0; }
+    .mf-pageheader-sub { margin-bottom: 18px; }
+    .auth-form { display: grid; gap: 14px; }
+    .auth-form .mf-btn { justify-content: center; }
+    .auth-footer { font-size: 13px; color: var(--mf-text-muted); margin: 18px 0 0; }
+  `],
 })
 export class SignupComponent {
   private auth = inject(AuthService);

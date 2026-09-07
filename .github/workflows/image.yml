@@ -11,6 +11,7 @@ on:
       - 'docs/**'
       - '**/*.md'
       - '.claude/**'
+      - 'landing/**'
 
 permissions:
   contents: read

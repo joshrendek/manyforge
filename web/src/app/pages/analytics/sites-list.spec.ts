@@ -127,7 +127,7 @@ describe('AnalyticsSitesListComponent', () => {
   });
 
   it('labels legacy unrestricted sites and lets operators restrict them', () => {
-    fixture.componentInstance.selectBusiness('b1');
+    fixture.componentInstance.reload();
     mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
       clients: [{ ...clients.clients[0], allowed_origins: [] }],
     });
@@ -353,7 +353,7 @@ describe('AnalyticsSitesListComponent', () => {
   });
 
   it('shows a stale site with the exact last accepted event', () => {
-    fixture.componentInstance.selectBusiness('b1');
+    fixture.componentInstance.reload();
     mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({
       clients: [
         {
@@ -470,7 +470,7 @@ describe('AnalyticsSitesListComponent', () => {
 
   it('shows an empty state when a business has no sites', () => {
     const comp = fixture.componentInstance;
-    comp.selectBusiness('b1');
+    comp.reload();
     mock.expectOne('/api/v1/businesses/b1/telemetry/clients').flush({ clients: [] });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="sites-empty"]')).toBeTruthy();

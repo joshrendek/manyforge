@@ -1,5 +1,7 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { BusinessService } from '../../core/business.service';
 import { CurrentBusinessService } from '../../core/current-business.service';
@@ -24,7 +26,7 @@ import { ToastService } from '../../ui/toast/toast.service';
   template: `
     <div class="mf-card page" data-testid="mailing-sending-profile-page">
       <mf-page-header
-        title="Sending profile"
+        [eyebrow]="businessName()"        title="Sending profile"
         subtitle="Choose how campaigns are sent and which identity recipients see"
       >
         @if (profile(); as currentProfile) {
@@ -37,23 +39,7 @@ import { ToastService } from '../../ui/toast/toast.service';
         }
       </mf-page-header>
 
-      <div class="mf-field business-field">
-        <label for="sending-business">Business</label>
-        <select
-          id="sending-business"
-          class="mf-select"
-          data-testid="business-select"
-          [ngModel]="businessId()"
-          (ngModelChange)="selectBusiness($event)"
-        >
-          <option value="" disabled>Choose a business…</option>
-          @for (business of businesses(); track business.id) {
-            <option [value]="business.id">
-              {{ business.is_tenant_root ? business.name + ' (master)' : business.name }}
-            </option>
-          }
-        </select>
-      </div>
+      
 
       @if (loading()) {
         <p class="loading" data-testid="sending-profile-loading"><mf-spinner /> Loading…</p>
@@ -471,6 +457,18 @@ import { ToastService } from '../../ui/toast/toast.service';
   ],
 })
 export class MailingSendingProfileComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private businessesApi = inject(BusinessService);
   private mailing = inject(MailingService);
   private tickets = inject(TicketService);
@@ -506,7 +504,7 @@ export class MailingSendingProfileComponent implements OnInit {
   profileTone = mailingProfileStatusTone;
 
   ngOnInit(): void {
-    this.businessesApi.list().subscribe({
+    this.businessesApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         const businesses = page.items ?? [];
         this.businesses.set(businesses);
@@ -518,11 +516,19 @@ export class MailingSendingProfileComponent implements OnInit {
   }
 
   selectBusiness(businessId: string): void {
+    if (businessId === this.businessId()) return;
+    this.businessChanged.next();
+    this.testEmail = '';
+    this.saving.set(false);
+    this.verifying.set(false);
+    this.testing.set(false);
+    this.replaceCredentials.set(false);
     this.businessId.set(businessId);
-    this.current.set(businessId);
+    if (businessId) this.current.set(businessId);
     this.profile.set(null);
     this.domains.set([]);
     this.resetForm();
+    if (!businessId) return;
     this.loading.set(true);
     this.error.set('');
     this.loadProfile(businessId);
@@ -587,7 +593,7 @@ export class MailingSendingProfileComponent implements OnInit {
 
     this.saving.set(true);
     this.error.set('');
-    this.mailing.putSendingProfile(this.businessId(), body).subscribe({
+    this.mailing.putSendingProfile(this.businessId(), body).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (profile) => {
         this.saving.set(false);
         this.applyProfile(profile);
@@ -604,7 +610,7 @@ export class MailingSendingProfileComponent implements OnInit {
     if (!this.profile() || this.verifying()) return;
     this.verifying.set(true);
     this.error.set('');
-    this.mailing.verifySendingProfile(this.businessId()).subscribe({
+    this.mailing.verifySendingProfile(this.businessId()).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (profile) => {
         this.verifying.set(false);
         this.applyProfile(profile);
@@ -623,7 +629,7 @@ export class MailingSendingProfileComponent implements OnInit {
     const to = this.testEmail.trim();
     if (!to || this.testing() || this.profile()?.status !== 'verified') return;
     this.testing.set(true);
-    this.mailing.testSendingProfile(this.businessId(), to).subscribe({
+    this.mailing.testSendingProfile(this.businessId(), to).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.testing.set(false);
         this.toast.success('Test message sent');
@@ -640,7 +646,7 @@ export class MailingSendingProfileComponent implements OnInit {
   }
 
   private loadProfile(businessId: string): void {
-    this.mailing.getSendingProfile(businessId).subscribe({
+    this.mailing.getSendingProfile(businessId).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (profile) => {
         if (businessId !== this.businessId()) return;
         this.loading.set(false);
@@ -657,7 +663,7 @@ export class MailingSendingProfileComponent implements OnInit {
   }
 
   private loadDomains(businessId: string, cursor?: string, accumulated: EmailDomain[] = []): void {
-    this.tickets.listEmailDomains(businessId, cursor).subscribe({
+    this.tickets.listEmailDomains(businessId, cursor).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (page) => {
         if (businessId !== this.businessId()) return;
         const domains = [...accumulated, ...(page.items ?? [])];

@@ -50,7 +50,7 @@ test('the sidebar persists across dashboard and support with correct active stat
 test('the sidebar is absent on the login screen when unauthenticated', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByTestId('app-sidebar')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
 });
 
 // Regression for the bug caught while driving the live app: an authenticated user
@@ -61,6 +61,6 @@ test('the sidebar is absent on /login even when a token is present', async ({ pa
   await page.route('**/api/v1/me', (route) => route.fulfill({ json: profile }));
 
   await page.goto('/login');
-  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   await expect(page.getByTestId('app-sidebar')).toHaveCount(0);
 });

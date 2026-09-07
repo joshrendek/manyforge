@@ -79,6 +79,7 @@ async function installStack(page: Page, businesses: MockBiz[]) {
 test('renders the business hierarchy nested, master tagged, in sorted order', async ({ page }) => {
   await installStack(page, seed());
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Your businesses' })).toBeVisible();
 
   const rows = page.getByTestId('biz-row');
@@ -94,7 +95,8 @@ test('renders the business hierarchy nested, master tagged, in sorted order', as
 test('collapsing a node hides its descendants', async ({ page }) => {
   await installStack(page, seed());
   await page.goto('/dashboard');
-  await expect(page.getByText('Backend')).toBeVisible();
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
+  await expect(page.getByTestId('biz-row').filter({ hasText: 'Backend' })).toBeVisible();
   // collapse Engineering -> Backend disappears, Sales stays
   await page.getByTestId('biz-row').filter({ hasText: 'Engineering' }).getByRole('button', { name: 'Collapse' }).click();
   await expect(page.getByTestId('biz-row').filter({ hasText: 'Backend' })).toHaveCount(0);
@@ -104,6 +106,7 @@ test('collapsing a node hides its descendants', async ({ page }) => {
 test('adding a sub-business posts with the parent_id and shows the new node', async ({ page }) => {
   await installStack(page, seed());
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   const acme = page.getByTestId('biz-row').filter({ hasText: 'Acme' });
   await acme.getByRole('button', { name: 'Add sub' }).click();
 
@@ -115,12 +118,13 @@ test('adding a sub-business posts with the parent_id and shows the new node', as
     })(),
   ]);
   expect(req.postDataJSON()).toMatchObject({ name: 'Marketing', parent_id: 'r' });
-  await expect(page.getByText('Marketing')).toBeVisible();
+  await expect(page.getByTestId('biz-row').filter({ hasText: 'Marketing' })).toBeVisible();
 });
 
 test('deleting requires confirmation and sends confirm=true', async ({ page }) => {
   await installStack(page, seed());
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   const backend = page.getByTestId('biz-row').filter({ hasText: 'Backend' });
   await backend.getByRole('button', { name: 'Delete' }).click();
 
@@ -143,6 +147,7 @@ test('a 409 conflict on delete surfaces a friendly message', async ({ page }) =>
       : route.fallback(),
   );
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   const eng = page.getByTestId('biz-row').filter({ hasText: 'Engineering' });
   await eng.getByRole('button', { name: 'Delete' }).click();
   await page.getByRole('button', { name: 'Confirm delete' }).click();
@@ -152,6 +157,7 @@ test('a 409 conflict on delete surfaces a friendly message', async ({ page }) =>
 test('archiving a node marks it archived and offers restore', async ({ page }) => {
   await installStack(page, seed());
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   const sales = page.getByTestId('biz-row').filter({ hasText: 'Sales' });
   await sales.getByRole('button', { name: 'Archive' }).click();
   await expect(sales.getByText('archived')).toBeVisible();
@@ -161,6 +167,7 @@ test('archiving a node marks it archived and offers restore', async ({ page }) =
 test('moving a sub-business re-parents it; the target menu excludes self and the current parent', async ({ page }) => {
   await installStack(page, seed());
   await page.goto('/dashboard');
+  await page.getByRole('button', { name: 'Ledger view', exact: true }).click();
   // Backend sits under Engineering — initial order: Acme, Engineering, Backend, Sales.
   await page.getByTestId('biz-row').filter({ hasText: 'Backend' }).getByRole('button', { name: 'Move' }).click();
 

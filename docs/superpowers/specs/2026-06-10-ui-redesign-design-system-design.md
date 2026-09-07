@@ -5,6 +5,11 @@
 **Author:** Josh Rendek
 **Visual reference:** [`assets/2026-06-10-ui-component-kit-reference.html`](assets/2026-06-10-ui-component-kit-reference.html) — open in a browser; the dark/light toggle flips every token live. Every value in this spec matches that sheet.
 
+**Historical reference:** The forge re-theme supersedes this document's blue palette,
+Inter typography, radii, default theme and flat navigation. Current visual tokens
+are in `web/src/styles.css`; see the repository README's **Forge interface** section.
+The original decisions below are retained as design history.
+
 ---
 
 ## 1. Context

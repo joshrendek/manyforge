@@ -1,6 +1,8 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApprovalItem, ApprovalsService } from '../../core/approvals.service';
 import { BusinessService } from '../../core/business.service';
@@ -24,31 +26,13 @@ import { ToastService } from '../../ui/toast/toast.service';
   imports: [FormsModule, DatePipe, PageHeader, StatusPill, EmptyState, Spinner],
   template: `
     <div class="mf-card" data-testid="approvals-page">
-      <mf-page-header title="Approvals" [subtitle]="items().length + ' pending'">
+      <mf-page-header [eyebrow]="businessName()" title="Approvals" [subtitle]="items().length + ' pending'">
         @if (loading()) {
           <span class="mf-loading-row" data-testid="approvals-loading" actions>
             <mf-spinner />
           </span>
         }
       </mf-page-header>
-
-      <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="biz-select">Business</label>
-          <select
-            id="biz-select"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
-      </div>
 
       <div class="mf-table" data-testid="approvals-list">
         <div class="mf-tr mf-th">
@@ -108,6 +92,18 @@ import { ToastService } from '../../ui/toast/toast.service';
   `,
 })
 export class ApprovalsQueueComponent implements OnInit, OnDestroy {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private api = inject(ApprovalsService);
   private current = inject(CurrentBusinessService);
@@ -125,16 +121,13 @@ export class ApprovalsQueueComponent implements OnInit, OnDestroy {
   private timer: ReturnType<typeof setInterval> | undefined;
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          // Persist so the nav badge (Task 8) has a current business after first visit.
-          this.current.set(id);
-          this.reload();
+          this.selectBusiness(id);
         }
       },
       error: () => this.error.set('Could not load businesses'),
@@ -148,16 +141,21 @@ export class ApprovalsQueueComponent implements OnInit, OnDestroy {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.items.set([]);
+    this.loading.set(false);
+    this.error.set('');
     this.businessId.set(id);
-    this.current.set(id);
-    this.reload();
+    if (id) this.current.set(id);
+    if (id) this.reload();
   }
 
   reload(): void {
     if (!this.businessId()) return;
     const biz = this.businessId(); // capture: a poll/in-flight load for B must not clobber a newer A
     this.loading.set(true);
-    this.api.listPending(biz).subscribe({
+    this.api.listPending(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== biz) return; // a newer business was selected — drop stale response
         this.items.set(r.items ?? []);
@@ -174,7 +172,7 @@ export class ApprovalsQueueComponent implements OnInit, OnDestroy {
   }
 
   approve(it: ApprovalItem): void {
-    this.api.approve(this.businessId(), it.id).subscribe({
+    this.api.approve(this.businessId(), it.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.items.update((xs) => xs.filter((x) => x.id !== it.id));
         // Keep the shared badge count in sync with the optimistic removal (clamp at 0).
@@ -187,7 +185,7 @@ export class ApprovalsQueueComponent implements OnInit, OnDestroy {
   }
 
   deny(it: ApprovalItem): void {
-    this.api.deny(this.businessId(), it.id).subscribe({
+    this.api.deny(this.businessId(), it.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.items.update((xs) => xs.filter((x) => x.id !== it.id));
         // Keep the shared badge count in sync with the optimistic removal (clamp at 0).

@@ -1,21 +1,12 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Component, OnInit, computed, inject, signal, DestroyRef } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AnalyticsService, DayPoint, OverviewSite } from '../../core/analytics.service';
 import { EmptyState } from '../../ui/empty-state/empty-state';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
 
-// The analytics landing page: every site the account can see, grouped by business.
-//
-// This replaces a screen that made you pick ONE business from a dropdown before it showed
-// anything, which meant comparing sub-businesses was N page loads. The grid is the whole point —
-// traffic across the tree is visible at a glance, and a card is a link into the existing per-site
-// dashboard rather than a different way of reading the same numbers.
-//
-// The sparkline is hand-rolled SVG, matching the per-site chart. A charting dependency would be a
-// far larger addition to the bundle than the handful of lines it replaces, and every card renders
-// one, so its cost is multiplied.
-
+// Portfolio overview intentionally spans accessible businesses; site management uses the global context.
 interface BusinessGroup {
   id: string;
   name: string;
@@ -27,7 +18,7 @@ interface BusinessGroup {
   imports: [RouterLink, PageHeader, EmptyState, Spinner],
   template: `
     <div class="mf-card" data-testid="analytics-overview-page">
-      <mf-page-header title="Analytics" subtitle="Every site you can see, across all businesses">
+      <mf-page-header eyebrow="All businesses" title="Analytics" subtitle="Sites and traffic across your businesses">
         <span class="mf-hdr" actions>
           @if (loading()) {
             <mf-spinner data-testid="overview-loading" />
@@ -162,11 +153,7 @@ interface BusinessGroup {
         gap: 4px;
         padding: 14px;
         border: 1px solid var(--mf-border);
-        border-radius: 8px;
-        /* --mf-surface-inset, not --mf-surface-2. This is a surface nested inside .mf-card, which
-           is what inset is for (board-detail uses it the same way). It also passes contrast:
-           --mf-text-muted on --mf-surface-2 is 4.28:1 in light mode, BELOW the 4.5:1 AA minimum,
-           and the card labels are all muted. On inset it is 4.76:1 light / 7.49:1 dark. */
+        border-radius: var(--mf-radius);
         background: var(--mf-surface-inset);
         text-decoration: none;
         color: inherit;
@@ -190,6 +177,8 @@ interface BusinessGroup {
         gap: 6px;
       }
       .mf-site-visitors {
+        font-family: var(--mf-font-mono);
+        font-variant-numeric: tabular-nums;
         font-size: 1.6rem;
         font-weight: 700;
         line-height: 1.1;
@@ -228,6 +217,7 @@ interface BusinessGroup {
 })
 export class AnalyticsOverviewComponent implements OnInit {
   private api = inject(AnalyticsService);
+  private readonly destroyRef = inject(DestroyRef);
 
   sites = signal<OverviewSite[]>([]);
   loading = signal(false);
@@ -272,7 +262,7 @@ export class AnalyticsOverviewComponent implements OnInit {
     // prevent. A monotonic token is unambiguous because it can only ever match the latest request.
     const token = ++this.reqToken;
     this.loading.set(true);
-    this.api.overview(this.days()).subscribe({
+    this.api.overview(this.days()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (token !== this.reqToken) return;
         this.sites.set(r.sites ?? []);

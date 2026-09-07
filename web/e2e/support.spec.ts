@@ -136,7 +136,7 @@ test('an ingested ticket renders in the support list with its subject and reques
   await expect(row.getByTestId('ticket-subject')).toHaveText('Cannot reset my password');
   await expect(row.getByTestId('ticket-requester')).toHaveText('Jane Customer');
   await expect(row.getByTestId('ticket-status')).toHaveText('new');
-  await expect(row.getByTestId('ticket-message-count')).toContainText('1 msg');
+  await expect(row.getByTestId('ticket-message-count')).toHaveText('1');
 });
 
 test('opening the ticket shows the inbound message body and the requester in the thread', async ({
@@ -821,9 +821,6 @@ test('US4: Support nav link on dashboard is visible and navigates to /support', 
 
   await page.goto('/dashboard');
 
-  // The dashboard renders: the "Your businesses" heading and the biz-row for Acme.
-  await expect(page.getByRole('heading', { name: 'Your businesses' })).toBeVisible();
-  await expect(page.getByTestId('biz-row')).toHaveCount(1);
 
   // The nav-support link must be visible.
   await expect(page.getByTestId('nav-support')).toBeVisible();
@@ -831,7 +828,7 @@ test('US4: Support nav link on dashboard is visible and navigates to /support', 
   // Click it → navigate to /support.
   await page.getByTestId('nav-support').click();
 
-  // URL lands on /support and the ticket-list renders its business-select.
+  // The Support page shares the shell's global business context.
   await expect(page).toHaveURL(/\/support$/);
   await expect(page.getByTestId('business-select')).toBeVisible();
 });

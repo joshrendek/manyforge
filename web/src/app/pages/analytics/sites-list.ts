@@ -1,13 +1,13 @@
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
-import {
-  Component,
+import { Component,
   ElementRef,
   OnInit,
   inject,
   signal,
   viewChild,
-  viewChildren,
-} from '@angular/core';
+  viewChildren, DestroyRef, effect, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import {
@@ -36,31 +36,11 @@ import { Tone } from '../../ui/status';
   imports: [FormsModule, RouterLink, PageHeader, EmptyState, Spinner, StatusPill],
   template: `
     <div class="mf-card" data-testid="analytics-sites-page">
-      <mf-page-header title="Analytics sites" subtitle="Register a site, then paste its embed tag">
+      <mf-page-header [eyebrow]="businessName()" title="Analytics sites" subtitle="Register a site, then paste its embed tag">
         @if (loading()) {
           <span class="mf-loading-row" data-testid="sites-loading" actions><mf-spinner /></span>
         }
       </mf-page-header>
-
-      <div class="mf-filters">
-        <div class="mf-field" style="flex:1 1 220px">
-          <label for="an-biz-select">Business</label>
-          <select
-            id="an-biz-select"
-            class="mf-select"
-            data-testid="business-select"
-            [ngModel]="businessId()"
-            (ngModelChange)="selectBusiness($event)"
-            [disabled]="moving()"
-            name="biz"
-          >
-            <option value="" disabled>Choose a business…</option>
-            @for (b of businesses(); track b.id) {
-              <option [value]="b.id">{{ b.is_tenant_root ? b.name + ' (master)' : b.name }}</option>
-            }
-          </select>
-        </div>
-      </div>
 
       @if (businessId()) {
         <form class="mf-filters" data-testid="site-new" (ngSubmit)="create()">
@@ -600,6 +580,18 @@ import { Tone } from '../../ui/status';
   ],
 })
 export class AnalyticsSitesListComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly businessChanged = new Subject<void>();
+  private readonly followBusiness = effect(() => {
+    const id = this.current.businessId() ?? '';
+    untracked(() => {
+      if (id !== this.businessId()) this.selectBusiness(id);
+    });
+  });
+  businessName(): string {
+    return this.businesses().find((business) => business.id === this.businessId())?.name ?? '';
+  }
+
   private bizApi = inject(BusinessService);
   private api = inject(AnalyticsService);
   private current = inject(CurrentBusinessService);
@@ -631,15 +623,13 @@ export class AnalyticsSitesListComponent implements OnInit {
   savingProperties = signal(false);
 
   ngOnInit(): void {
-    this.bizApi.list().subscribe({
+    this.bizApi.list().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         const items = r.items ?? [];
         this.businesses.set(items);
         const id = this.current.businessId() ?? items[0]?.id;
         if (id) {
-          this.businessId.set(id);
-          this.current.set(id);
-          this.reload();
+          this.selectBusiness(id);
         }
       },
       error: () => this.error.set('Could not load businesses'),
@@ -647,13 +637,31 @@ export class AnalyticsSitesListComponent implements OnInit {
   }
 
   selectBusiness(id: string): void {
+    if (id === this.businessId()) return;
+    this.businessChanged.next();
+    this.newName = '';
+    this.newOrigin = '';
+    this.sites.set([]);
+    this.loading.set(false);
+    this.error.set('');
+    this.creating.set(false);
+    this.movingSiteId.set('');
+    this.moveTargets.set([]);
+    this.loadingTargets.set(false);
+    this.moving.set(false);
+    this.editingOriginsSiteId.set('');
+    this.savingOrigins.set(false);
+    this.editingPropertiesSiteId.set('');
+    this.propertyDrafts.set([]);
+    this.loadingProperties.set(false);
+    this.savingProperties.set(false);
     this.cancelMove();
     this.cancelOrigins();
     this.cancelProperties();
     this.verifyingSiteId.set('');
     this.businessId.set(id);
-    this.current.set(id);
-    this.reload();
+    if (id) this.current.set(id);
+    if (id) this.reload();
   }
 
   startOrigins(c: TelemetryClient): void {
@@ -680,7 +688,7 @@ export class AnalyticsSitesListComponent implements OnInit {
     const origins = this.parsedOrigins();
     if (!origins.length || this.savingOrigins()) return;
     this.savingOrigins.set(true);
-    this.api.setAllowedOrigins(this.businessId(), c.id, origins).subscribe({
+    this.api.setAllowedOrigins(this.businessId(), c.id, origins).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (updated) => {
         this.sites.update((sites) =>
           sites.map((site) =>
@@ -711,7 +719,7 @@ export class AnalyticsSitesListComponent implements OnInit {
     this.propertyDrafts.set([]);
     this.loadingProperties.set(true);
     const businessId = this.businessId();
-    this.api.propertyRules(businessId, c.id).subscribe({
+    this.api.propertyRules(businessId, c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: ({ rules }) => {
         if (this.editingPropertiesSiteId() !== c.id || this.businessId() !== businessId) return;
         this.propertyDrafts.set(
@@ -765,7 +773,7 @@ export class AnalyticsSitesListComponent implements OnInit {
       label: rule.label.trim(),
     }));
     this.savingProperties.set(true);
-    this.api.replacePropertyRules(this.businessId(), c.id, rules).subscribe({
+    this.api.replacePropertyRules(this.businessId(), c.id, rules).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: ({ rules: saved }) => {
         this.savingProperties.set(false);
         this.editingPropertiesSiteId.set('');
@@ -798,7 +806,7 @@ export class AnalyticsSitesListComponent implements OnInit {
     if (!this.businessId()) return;
     const biz = this.businessId();
     this.loading.set(true);
-    this.api.listClients(biz).subscribe({
+    this.api.listClients(biz).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== biz) return;
         // This screen is analytics-only; crash clients belong to a different surface.
@@ -877,7 +885,7 @@ export class AnalyticsSitesListComponent implements OnInit {
     if (this.verifyingSiteId()) return;
     const businessId = this.businessId();
     this.verifyingSiteId.set(c.id);
-    this.api.listClients(businessId).subscribe({
+    this.api.listClients(businessId).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.businessId() !== businessId) return;
         const sites = (r.clients ?? []).filter((client) => client.kind === 'analytics');
@@ -921,29 +929,28 @@ export class AnalyticsSitesListComponent implements OnInit {
         name,
         require_signature: false,
         allowed_origins: [origin],
-      })
-      .subscribe({
-        next: () => {
-          this.newName = '';
-          this.newOrigin = '';
-          this.creating.set(false);
-          this.toast.success('Site added — copy its embed tag');
-          this.reload();
-          this.createBtn()?.nativeElement.focus();
-        },
-        error: (e: HttpErrorResponse) => {
-          this.creating.set(false);
-          this.toast.error(
-            e.status === 400
-              ? 'Use a valid site name and exact HTTPS origin (HTTP is allowed for localhost)'
-              : 'Could not add site',
-          );
-        },
-      });
+      }).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => {
+        this.newName = '';
+        this.newOrigin = '';
+        this.creating.set(false);
+        this.toast.success('Site added — copy its embed tag');
+        this.reload();
+        this.createBtn()?.nativeElement.focus();
+      },
+      error: (e: HttpErrorResponse) => {
+        this.creating.set(false);
+        this.toast.error(
+          e.status === 400
+            ? 'Use a valid site name and exact HTTPS origin (HTTP is allowed for localhost)'
+            : 'Could not add site',
+        );
+      },
+    });
   }
 
   revoke(c: TelemetryClient): void {
-    this.api.revokeClient(this.businessId(), c.id).subscribe({
+    this.api.revokeClient(this.businessId(), c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.toast.success('Site revoked — its embed tag will stop collecting');
         this.reload();
@@ -960,7 +967,7 @@ export class AnalyticsSitesListComponent implements OnInit {
     this.moveTargetId = '';
     this.loadingTargets.set(true);
     const sourceBusinessId = this.businessId();
-    this.api.moveTargets(sourceBusinessId, c.id).subscribe({
+    this.api.moveTargets(sourceBusinessId, c.id).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (r) => {
         if (this.movingSiteId() !== c.id || this.businessId() !== sourceBusinessId) return;
         this.moveTargets.set(r.targets ?? []);
@@ -992,7 +999,7 @@ export class AnalyticsSitesListComponent implements OnInit {
     const targetBusinessId = this.moveTargetId;
     if (!targetBusinessId || this.moving()) return;
     this.moving.set(true);
-    this.api.moveClient(sourceBusinessId, c.id, targetBusinessId).subscribe({
+    this.api.moveClient(sourceBusinessId, c.id, targetBusinessId).pipe(takeUntil(this.businessChanged), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.moving.set(false);
         this.movingSiteId.set('');
@@ -1000,10 +1007,8 @@ export class AnalyticsSitesListComponent implements OnInit {
         this.moveTargetId = '';
         // Switch to and reload the destination. This refreshes both affected lists in one visible
         // transition: the source row disappears and the unchanged site/link appears under target.
-        this.businessId.set(targetBusinessId);
-        this.current.set(targetBusinessId);
+        this.selectBusiness(targetBusinessId);
         this.toast.success('Site moved — its embed tag and analytics history are unchanged');
-        this.reload();
       },
       error: (e: HttpErrorResponse) => {
         this.moving.set(false);

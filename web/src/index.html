@@ -1,17 +1,17 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <title>ManyforgeWeb</title>
+  <title>ManyForge</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="manyforge-mark.svg">
   <script>
     (function () {
       try {
         var t = localStorage.getItem('mf-theme');
         if (t !== 'light' && t !== 'dark') {
-          t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+          t = 'dark';
         }
         document.documentElement.setAttribute('data-theme', t);
       } catch (e) {}
