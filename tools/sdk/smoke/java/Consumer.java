@@ -319,12 +319,18 @@ public final class Consumer {
             }
             wire.delayMillis.set(0);
             passed("wire_async_cancellation_timeout_no_mutation_replay");
-            wire.status.set(200); wire.body.set("email\nstream@example.invalid\n".getBytes(StandardCharsets.UTF_8)); wire.delayBodyMillis.set(300);
-            try (ManyForgeClient client = ManyForgeClient.builder().baseUrl(wire.base).accessToken("token").build();
-                 InputStream stream = client.business(UUID.randomUUID()).mailing().subscribers().exportCsvAsync(BusinessMailingSubscribersExportCsvParams.builder().lid(UUID.randomUUID()).build(), new RequestOptions(Duration.ofMillis(100))).get()) {
-                check(fails(() -> stream.readAllBytes()) instanceof HttpTimeoutException, "stream timeout applies after response headers");
+            wire.status.set(200); wire.body.set("email\nstream@example.invalid\n".getBytes(StandardCharsets.UTF_8));
+            try (ManyForgeClient client = ManyForgeClient.builder().baseUrl(wire.base).accessToken("token").build()) {
+                var subscribers = client.business(UUID.randomUUID()).mailing().subscribers();
+                var params = BusinessMailingSubscribersExportCsvParams.builder().lid(UUID.randomUUID()).build();
+                try (InputStream warm = subscribers.exportCsv(params)) { warm.readAllBytes(); }
+                wire.delayBodyMillis.set(2000);
+                try (InputStream stream = subscribers.exportCsvAsync(params, new RequestOptions(Duration.ofSeconds(1))).get()) {
+                    check(stream.read() == 'e', "stream prefix arrives before its deadline");
+                    check(fails(() -> stream.readAllBytes()) instanceof HttpTimeoutException, "stream timeout applies after response headers");
+                }
             }
-            Thread.sleep(350); wire.delayBodyMillis.set(0);
+            Thread.sleep(2200); wire.delayBodyMillis.set(0);
             passed("wire_stream_timeout_after_headers");
 
             wire.status.set(200); wire.body.set("{\"items\":[]}".getBytes(StandardCharsets.UTF_8));
@@ -507,8 +513,17 @@ public final class Consumer {
                     byte[] response = body.get();
                     exchange.getResponseHeaders().set("Content-Type", "application/json"); exchange.getResponseHeaders().set("X-Request-Id", "java-wire-request");
                     exchange.sendResponseHeaders(status.get(), status.get() == 204 ? -1 : response.length);
-                    try { Thread.sleep(delayBodyMillis.get()); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-                    if (status.get() != 204) exchange.getResponseBody().write(response);
+                    if (status.get() != 204) {
+                        int pause = delayBodyMillis.get();
+                        if (pause > 0 && response.length > 0) {
+                            exchange.getResponseBody().write(response, 0, 1);
+                            exchange.getResponseBody().flush();
+                            try { Thread.sleep(pause); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                            exchange.getResponseBody().write(response, 1, response.length - 1);
+                        } else {
+                            exchange.getResponseBody().write(response);
+                        }
+                    }
                 } catch (IOException cancelled) { /* A cancelled client is expected to close its connection. */ }
             });
             server.start();
