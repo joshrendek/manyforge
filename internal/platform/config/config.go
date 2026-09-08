@@ -65,8 +65,8 @@ type Config struct {
 	// OutboundMailDisabled rejects every outgoing message, even with a configured relay.
 	OutboundMailDisabled bool
 
-	// Outbound SMTP relay. An empty host is permitted only in development or when
-	// outbound mail is explicitly disabled; neither mode accepts messages.
+	// Optional shared SMTP relay for support mail and the mailing relay provider.
+	// API providers (Resend and SES) do not require this transport.
 	SMTPHost string
 	SMTPPort int    // outbound relay port (default 587)
 	SMTPUser string // SMTP AUTH username; empty ⇒ no auth
@@ -212,8 +212,7 @@ type Config struct {
 	SandboxPullSecret string
 }
 
-// Load reads configuration from the environment, applying safe local defaults
-// and rejecting production configurations without SMTP unless outbound mail is disabled.
+// Load reads configuration from the environment, applying safe local defaults.
 func Load() (Config, error) {
 	cfg := Config{
 		Environment:          env("MANYFORGE_ENVIRONMENT", defaultEnvironment()),
@@ -323,7 +322,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_RATE_BURST: %w", err)
 	}
 
-	// Production requires a real transport unless the operator explicitly disables mail.
+	// The global switch applies to all providers; SMTP is an independent transport.
 	if cfg.OutboundMailDisabled, err = envBool("MANYFORGE_OUTBOUND_MAIL_DISABLED", false); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_MAIL_DISABLED: %w", err)
 	}
@@ -333,9 +332,6 @@ func Load() (Config, error) {
 	}
 	cfg.SMTPUser = os.Getenv("MANYFORGE_SMTP_USER")
 	cfg.SMTPPass = os.Getenv("MANYFORGE_SMTP_PASS")
-	if cfg.Environment == "production" && !cfg.OutboundMailDisabled && cfg.SMTPHost == "" {
-		return Config{}, fmt.Errorf("MANYFORGE_SMTP_HOST: required in production")
-	}
 
 	// Optional system DKIM. The private key can be supplied inline (…_PEM) or via a
 	// file path (…_PEM_PATH); a malformed path is a hard config error so a configured

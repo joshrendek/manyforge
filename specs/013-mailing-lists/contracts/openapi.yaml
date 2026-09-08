@@ -233,7 +233,7 @@ paths:
         Requires mailing.read. Available even when the mailing master key is absent.
         Reports deployment prerequisites without exposing secrets or configured host values.
         Ready means configured, not proof of connectivity or delivery. Checks are scoped
-        to providers by required_for; production SMTP is required for all providers.
+        to providers by required_for; SMTP and relay DKIM are required only for relay.
       responses:
         '200':
           description: Instance configuration checks
