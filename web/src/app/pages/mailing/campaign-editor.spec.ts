@@ -52,6 +52,9 @@ const profile = {
   status: 'verified',
   last_verified_at: '',
   verify_error: null,
+  feedback_status: 'ready',
+  feedback_error: null,
+  feedback_confirmed_at: null,
   has_credentials: true,
   created_at: '',
   updated_at: '',
@@ -102,7 +105,9 @@ describe('MailingCampaignEditorComponent', () => {
         {
           provide: ActivatedRoute,
           useValue: {
-            snapshot: { paramMap: convertToParamMap({ businessId: BUSINESS_ID, campaignId: CAMPAIGN_ID }) },
+            snapshot: {
+              paramMap: convertToParamMap({ businessId: BUSINESS_ID, campaignId: CAMPAIGN_ID }),
+            },
           },
         },
       ],
@@ -168,9 +173,7 @@ describe('MailingCampaignEditorComponent', () => {
         ) as HTMLTextAreaElement
       ).readOnly,
     ).toBe(true);
-    http
-      .expectOne(CAMPAIGN_URL)
-      .flush({ ...campaign, name: 'Renamed' });
+    http.expectOne(CAMPAIGN_URL).flush({ ...campaign, name: 'Renamed' });
   });
 
   it('persists visible content before sending a comma-separated test', () => {
@@ -258,6 +261,8 @@ describe('MailingCampaignEditorComponent', () => {
     const link = editor.nativeElement.querySelector(
       '[data-testid="campaign-view-stats"]',
     ) as HTMLAnchorElement;
-    expect(link.getAttribute('href')).toBe(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}/stats`);
+    expect(link.getAttribute('href')).toBe(
+      `/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}/stats`,
+    );
   });
 });

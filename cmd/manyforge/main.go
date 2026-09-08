@@ -229,6 +229,15 @@ func main() {
 	feedbackH := feedback.NewHandler(feedbackSvc)
 	feedbackPublicH := feedback.NewPublicHandler(database, logger, feedbackSealer)
 
+	mailingSetupH := mailing.NewSetupHandler(mailing.SetupConfig{
+		Production:           cfg.Environment == "production",
+		OutboundMailDisabled: cfg.OutboundMailDisabled,
+		MailingKeyConfigured: len(cfg.MailingMasterKey) > 0,
+		PublicBaseURL:        cfg.PublicBaseURL,
+		SMTPConfigured:       cfg.SMTPHost != "",
+		DKIMKeyConfigured:    len(cfg.DKIMMasterKey) > 0,
+	})
+
 	var mailingSealer *mfcrypto.Sealer
 	var mailingSvc *mailing.Service
 	var mailingH *mailing.Handler
@@ -261,7 +270,7 @@ func main() {
 		mailingPublicH.S2SEvents = automationSvc
 		mailingWebhookH = mailing.NewWebhookHandler(database, mailingSealer, logger)
 	} else {
-		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled")
+		logger.Warn("MANYFORGE_MAILING_MASTER_KEY unset; mailing API disabled except setup diagnostics")
 	}
 	// manyforge-p20 telemetry: client registration (authenticated, gated by telemetry.read /
 	// telemetry.write) plus the principal-less batch ingest endpoint shared by the analytics and
@@ -877,6 +886,7 @@ func main() {
 		feedbackRead:     httpx.RequirePermission(database, permResolve, authz.PermFeedbackRead, businessIDFromPath),
 		feedbackWrite:    httpx.RequirePermission(database, permResolve, authz.PermFeedbackWrite, businessIDFromPath),
 		mailing:          mailingH,
+		mailingSetup:     mailingSetupH,
 		mailingPublic:    mailingPublicH,
 		mailingWebhook:   mailingWebhookH,
 		mailingRead:      httpx.RequirePermission(database, permResolve, authz.PermMailingRead, businessIDFromPath),
@@ -1189,6 +1199,7 @@ type apiHandlers struct {
 	feedbackWrite func(http.Handler) http.Handler
 
 	mailing        *mailing.Handler
+	mailingSetup   *mailing.SetupHandler
 	mailingPublic  *mailing.PublicHandler
 	mailingWebhook *mailing.WebhookHandler
 	mailingRead    func(http.Handler) http.Handler
@@ -1421,6 +1432,9 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				fw.Use(h.feedbackWrite)
 				h.feedback.WriteRoutes(fw)
 			})
+			if h.mailingSetup != nil {
+				pr.Group(func(mr chi.Router) { mr.Use(h.mailingRead); h.mailingSetup.ReadRoutes(mr) })
+			}
 			if h.mailing != nil {
 				pr.Group(func(mr chi.Router) { mr.Use(h.mailingRead); h.mailing.ReadRoutes(mr) })
 				pr.Group(func(mw chi.Router) { mw.Use(h.mailingWrite); h.mailing.WriteRoutes(mw) })

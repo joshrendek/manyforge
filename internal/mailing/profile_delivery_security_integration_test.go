@@ -28,18 +28,19 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 	"github.com/manyforge/manyforge/internal/platform/notify"
 )
+
 type fakeResendProvisioner struct {
-	endpoints        []string
-	cleanupEndpoints []string
+	endpoints           []string
+	cleanupEndpoints    []string
 	cleanupRequireMatch []bool
-	ensureCalls      int
-	verifyCalls      int
-	verify           func() error
-	deleted          []string
-	ensureErr        error
-	cleanupMatches   bool
-	cleanupErr       error
-	deleteErr        error
+	ensureCalls         int
+	verifyCalls         int
+	verify              func() error
+	deleted             []string
+	ensureErr           error
+	cleanupMatches      bool
+	cleanupErr          error
+	deleteErr           error
 }
 
 func (f *fakeResendProvisioner) Verify(context.Context) error {
@@ -84,7 +85,6 @@ func (f *fakeResendProvisioner) DeleteWebhook(_ context.Context, id string) erro
 	f.deleted = append(f.deleted, id)
 	return f.deleteErr
 }
-
 
 func TestMFAuthzProfileVerify001WriteOnlyCannotVerifySendingProfile(t *testing.T) {
 	ctx := context.Background()
@@ -444,8 +444,8 @@ func TestMFMailFeedback001ResendProvisioningBindsUniqueProfileRoutes(t *testing.
 	if verifiedA.FeedbackStatus != "ready" || verifiedB.FeedbackStatus != "ready" {
 		t.Fatalf("feedback readiness = %q/%q", verifiedA.FeedbackStatus, verifiedB.FeedbackStatus)
 	}
-	wantA := "https://hub.example.test/inbound/mailing/" + profileA.ID.String() + "/resend"
-	wantB := "https://hub.example.test/inbound/mailing/" + profileB.ID.String() + "/resend"
+	wantA := "https://hub.example.test/api/v1/inbound/mailing/" + profileA.ID.String() + "/resend"
+	wantB := "https://hub.example.test/api/v1/inbound/mailing/" + profileB.ID.String() + "/resend"
 	if len(provisioner.endpoints) != 2 || provisioner.endpoints[0] != wantA || provisioner.endpoints[1] != wantB {
 		t.Fatalf("provisioned endpoints = %v", provisioner.endpoints)
 	}
@@ -489,7 +489,7 @@ func TestMFMailFeedback001WrongResendRouteNeverReady(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	provisioner := &fakeResendProvisioner{ensureErr: errors.New("provider: resend webhook does not match the required feedback route")}
+	provisioner := &fakeResendProvisioner{ensureErr: errors.New("hostile-provider-payload https://secret.invalid/token?key=re_secret")}
 	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
 		return provisioner, nil
 	}, time.Minute)
@@ -497,8 +497,11 @@ func TestMFMailFeedback001WrongResendRouteNeverReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.Status != "error" || profile.FeedbackStatus != "pending" {
-		t.Fatalf("wrong Resend route verification state = %q/%q", profile.Status, profile.FeedbackStatus)
+	if profile.Status != "error" || profile.FeedbackStatus != "error" ||
+		profile.VerifyError == nil || profile.FeedbackError == nil ||
+		strings.Contains(*profile.VerifyError, "hostile-provider-payload") ||
+		strings.Contains(*profile.FeedbackError, "re_secret") {
+		t.Fatalf("wrong Resend route verification = %+v", profile)
 	}
 }
 
@@ -711,7 +714,7 @@ func TestMFMailFeedback001AmbiguousResendCreatePersistsCleanupIntentForUpdate(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantEndpoint := "https://hub.example.test/inbound/mailing/" + profile.ID.String() + "/resend"
+	wantEndpoint := "https://hub.example.test/api/v1/inbound/mailing/" + profile.ID.String() + "/resend"
 	if provisioner.ensureCalls != 1 || len(provisioner.cleanupEndpoints) != 1 ||
 		provisioner.cleanupEndpoints[0] != wantEndpoint {
 		t.Fatalf("intent recovery ensure=%d cleanup=%v", provisioner.ensureCalls, provisioner.cleanupEndpoints)

@@ -225,6 +225,21 @@ paths:
   /businesses/{id}/mailing/lists/{lid}/keys/{kid}:
     parameters: [{$ref: '#/components/parameters/BusinessID'}, {$ref: '#/components/parameters/ListID'}, {$ref: '#/components/parameters/KeyID'}]
     delete: {operationId: revokeMailingListKey, responses: {'204': {description: Revoked}, '404': {$ref: '#/components/responses/NotFound'}}}
+  /businesses/{id}/mailing/setup:
+    parameters: [{$ref: '#/components/parameters/BusinessID'}]
+    get:
+      operationId: getMailingSetup
+      description: >
+        Requires mailing.read. Available even when the mailing master key is absent.
+        Reports deployment prerequisites without exposing secrets or configured host values.
+        Ready means configured, not proof of connectivity or delivery. Checks are scoped
+        to providers by required_for; production SMTP is required for all providers.
+      responses:
+        '200':
+          description: Instance configuration checks
+          content: {application/json: {schema: {$ref: '#/components/schemas/MailingSetup'}}}
+        '401': {description: Authentication required}
+        '404': {$ref: '#/components/responses/NotFound'}
   /businesses/{id}/mailing/sending-profile:
     parameters: [{$ref: '#/components/parameters/BusinessID'}]
     get: {operationId: getMailingSendingProfile, responses: {'200': {$ref: '#/components/responses/Profile'}, '404': {$ref: '#/components/responses/NotFound'}}}
@@ -401,11 +416,27 @@ components:
     ImportResult: {type: object, required: [imported, skipped, errors], properties: {imported: {type: integer, minimum: 0}, skipped: {type: integer, minimum: 0}, errors: {type: array, maxItems: 100, items: {type: object, required: [row, message], properties: {row: {type: integer}, message: {type: string}}}}}}
     ListKey: {type: object, required: [id, business_id, tenant_root_id, list_id, publishable_key, status, has_secret, created_at], properties: {id: {type: string, format: uuid}, business_id: {type: string, format: uuid}, tenant_root_id: {type: string, format: uuid}, list_id: {type: string, format: uuid}, publishable_key: {type: string}, label: {type: string, nullable: true}, status: {type: string, enum: [enabled, revoked]}, has_secret: {type: boolean}, created_at: {type: string, format: date-time}, revoked_at: {type: string, format: date-time, nullable: true}}}
     ListKeyCreated: {description: Create-only response; plaintext secret is returned once and never appears on read paths., allOf: [{$ref: '#/components/schemas/ListKey'}, {type: object, properties: {secret: {type: string, description: Plaintext mls_ signing secret returned once at creation.}}}]}
+    MailingSetup:
+      type: object
+      required: [checks]
+      properties:
+        checks:
+          type: array
+          items:
+            type: object
+            required: [id, label, status, message, action, required_for]
+            properties:
+              id: {type: string, enum: [outbound_enabled, mailing_key, public_url, smtp_relay, dkim_key]}
+              label: {type: string}
+              status: {type: string, enum: [ready, blocked]}
+              message: {type: string}
+              action: {type: string, description: Corrective action for an instance administrator; empty for ready checks.}
+              required_for: {type: array, items: {type: string, enum: [relay, resend, ses]}}
     SendingProfile:
       type: object
-      required: [id, business_id, tenant_root_id, mode, from_email, from_name, status, has_credentials, created_at, updated_at]
-      properties: {id: {type: string, format: uuid}, business_id: {type: string, format: uuid}, tenant_root_id: {type: string, format: uuid}, mode: {type: string, enum: [relay, resend, ses]}, from_email: {type: string, format: email}, from_name: {type: string}, reply_to: {type: string, format: email, nullable: true}, postal_address: {type: string, nullable: true}, email_domain_id: {type: string, format: uuid, nullable: true}, ses_region: {type: string, nullable: true}, ses_configuration_set: {type: string, nullable: true}, sns_topic_arn: {type: string, nullable: true}, status: {type: string, enum: [unverified, verified, error]}, last_verified_at: {type: string, format: date-time, nullable: true}, verify_error: {type: string, nullable: true}, has_credentials: {type: boolean}, created_at: {type: string, format: date-time}, updated_at: {type: string, format: date-time}}
-    SendingProfileInput: {type: object, required: [mode, from_email, from_name], properties: {mode: {type: string, enum: [relay, resend, ses]}, from_email: {type: string, format: email}, from_name: {type: string}, reply_to: {type: string, format: email, nullable: true}, postal_address: {type: string, nullable: true}, email_domain_id: {type: string, format: uuid, nullable: true}, resend: {type: object, properties: {api_key: {type: string, writeOnly: true}, webhook_secret: {type: string, writeOnly: true}}}, ses: {type: object, properties: {access_key_id: {type: string, writeOnly: true}, secret_access_key: {type: string, writeOnly: true}}}, ses_region: {type: string}, ses_configuration_set: {type: string}, sns_topic_arn: {type: string}}}
+      required: [id, business_id, tenant_root_id, mode, from_email, from_name, status, feedback_status, feedback_error, feedback_confirmed_at, has_credentials, created_at, updated_at]
+      properties: {id: {type: string, format: uuid}, business_id: {type: string, format: uuid}, tenant_root_id: {type: string, format: uuid}, mode: {type: string, enum: [relay, resend, ses]}, from_email: {type: string, format: email}, from_name: {type: string}, reply_to: {type: string, format: email, nullable: true}, postal_address: {type: string, nullable: true}, email_domain_id: {type: string, format: uuid, nullable: true}, ses_region: {type: string, nullable: true}, ses_configuration_set: {type: string, nullable: true}, sns_topic_arn: {type: string, nullable: true}, status: {type: string, enum: [unverified, verified, error]}, last_verified_at: {type: string, format: date-time, nullable: true}, verify_error: {type: string, nullable: true}, feedback_status: {type: string, enum: [pending, ready, error]}, feedback_error: {type: string, nullable: true}, feedback_confirmed_at: {type: string, format: date-time, nullable: true}, has_credentials: {type: boolean}, created_at: {type: string, format: date-time}, updated_at: {type: string, format: date-time}}
+    SendingProfileInput: {type: object, required: [mode, from_email, from_name], properties: {mode: {type: string, enum: [relay, resend, ses]}, from_email: {type: string, format: email}, from_name: {type: string}, reply_to: {type: string, format: email, nullable: true}, postal_address: {type: string, nullable: true}, email_domain_id: {type: string, format: uuid, nullable: true}, resend: {type: object, properties: {api_key: {type: string, writeOnly: true}}}, ses: {type: object, properties: {access_key_id: {type: string, writeOnly: true}, secret_access_key: {type: string, writeOnly: true}}}, ses_region: {type: string}, ses_configuration_set: {type: string}, sns_topic_arn: {type: string}}}
     TestSendInput: {type: object, required: [to], properties: {to: {type: string, format: email}}}
     PreviewInput: {type: object, required: [body_markdown], properties: {body_markdown: {type: string, maxLength: 1048576}, preheader: {type: string, nullable: true}, from_name: {type: string, nullable: true}, postal_address: {type: string, nullable: true}}}
     PreviewOutput: {type: object, required: [html, text], properties: {html: {type: string}, text: {type: string}}}

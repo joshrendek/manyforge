@@ -24,7 +24,6 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 )
 
-
 type mailingSeed struct{ businessID, principalID uuid.UUID }
 
 type capturedDeliverer struct {
@@ -32,7 +31,6 @@ type capturedDeliverer struct {
 	mail     notify.Mail
 	mails    []notify.Mail
 }
-
 
 func (d *capturedDeliverer) Verify(context.Context) error {
 	d.verified = true
@@ -46,7 +44,7 @@ func (d *capturedDeliverer) Send(_ context.Context, mail notify.Mail) (mailprovi
 
 func (d *capturedDeliverer) EnsureWebhook(context.Context, string, string) (mailprovider.ResendWebhook, bool, error) {
 	return mailprovider.ResendWebhook{
-		ID: "wh_provider_generated",
+		ID:            "wh_provider_generated",
 		SigningSecret: "whsec_MDEyMzQ1Njc4OWFiY2RlZg==",
 	}, true, nil
 }
@@ -218,8 +216,19 @@ func TestMailingLifecycleAndIsolation(t *testing.T) {
 	if _, err = tdb.Super.Exec(ctx, `UPDATE secret SET sealed_value=$1, updated_at=now() WHERE id=$2`, corruptCredential, secretID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = svc.VerifySendingProfile(ctx, a.principalID, a.businessID); err == nil || !strings.Contains(err.Error(), "stored Resend credentials are invalid") {
-		t.Fatalf("VerifySendingProfile with corrupt credentials error = %v", err)
+	corrupt, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
+	if err != nil || corrupt.Status != "error" || corrupt.VerifyError == nil ||
+		corrupt.FeedbackStatus != "error" || corrupt.FeedbackError == nil ||
+		strings.Contains(*corrupt.VerifyError, "re_secret") {
+		t.Fatalf("VerifySendingProfile with corrupt credentials = %+v, err=%v", corrupt, err)
+	}
+	vault := svc.Vault
+	svc.Vault = nil
+	unavailableStorage, err := svc.VerifySendingProfile(ctx, a.principalID, a.businessID)
+	svc.Vault = vault
+	if err != nil || unavailableStorage.Status != "error" || unavailableStorage.VerifyError == nil ||
+		!strings.Contains(*unavailableStorage.VerifyError, "MANYFORGE_MAILING_MASTER_KEY") {
+		t.Fatalf("VerifySendingProfile without credential storage = %+v, err=%v", unavailableStorage, err)
 	}
 	recoveryProvider := &fakeResendProvisioner{cleanupMatches: true}
 	svc.PublicBaseURL = "https://hub.example.test"

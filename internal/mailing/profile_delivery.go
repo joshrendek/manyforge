@@ -37,9 +37,10 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 		return SendingProfile{}, err
 	}
 	profile, providerProfile, err := s.loadProviderProfile(ctx, principalID, businessID)
-	if err != nil {
+	if err != nil && profile.ID == uuid.Nil {
 		return SendingProfile{}, err
 	}
+	verifyErr := err
 	var resendProvisioningToken uuid.UUID
 	if profile.Mode == "resend" {
 		resendProvisioningToken, err = s.claimResendProvisioning(ctx, principalID, profile)
@@ -48,13 +49,15 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 		}
 	}
 	var deliverer mailprovider.Deliverer
-	verifyErr := errors.New("provider resolution is not configured")
-	if s.Providers != nil {
+	if verifyErr == nil && s.Providers == nil {
+		verifyErr = mailprovider.ErrProviderConfiguration
+	}
+	if verifyErr == nil {
 		deliverer, verifyErr = s.Providers.Resolve(ctx, providerProfile)
 		if verifyErr == nil {
 			verifier, ok := deliverer.(mailprovider.Verifier)
 			if !ok {
-				verifyErr = errors.New("provider does not support verification")
+				verifyErr = mailprovider.ErrProviderConfiguration
 			} else {
 				verifyErr = verifier.Verify(ctx)
 			}
@@ -63,14 +66,14 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	if verifyErr == nil && profile.Mode == "resend" {
 		provisioner, ok := deliverer.(mailprovider.ResendWebhookProvisioner)
 		if !ok {
-			verifyErr = errors.New("provider does not support Resend webhook provisioning")
+			verifyErr = mailprovider.ErrResendWebhook
 		} else if baseURL := strings.TrimRight(strings.TrimSpace(s.PublicBaseURL), "/"); baseURL == "" {
-			verifyErr = errors.New("mailing public base URL is not configured")
+			verifyErr = mailprovider.ErrPublicURL
 		} else {
-			endpoint := baseURL + "/inbound/mailing/" + profile.ID.String() + "/resend"
+			endpoint := baseURL + "/api/v1/inbound/mailing/" + profile.ID.String() + "/resend"
 			webhook, _, provisionErr := provisioner.EnsureWebhook(ctx, endpoint, providerProfile.ResendWebhookID)
 			if provisionErr != nil {
-				verifyErr = provisionErr
+				verifyErr = fmt.Errorf("%w: %w", mailprovider.ErrResendWebhook, provisionErr)
 			} else {
 				out, persistErr := s.persistResendWebhookVerification(
 					ctx, principalID, businessID, profile, providerProfile.ResendAPIKey,
@@ -93,6 +96,9 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	switch profile.Mode {
 	case "resend":
 		feedbackStatus = "pending"
+		if verifyErr != nil {
+			feedbackStatus, feedbackMessage = "error", message
+		}
 	case "relay":
 		if verifyErr == nil {
 			feedbackStatus = "ready"
@@ -102,6 +108,9 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	case "ses":
 		if feedbackStatus != "ready" {
 			feedbackStatus = "pending"
+		}
+		if errors.Is(verifyErr, mailprovider.ErrSESFeedback) || errors.Is(verifyErr, mailprovider.ErrSESConfiguration) {
+			feedbackStatus, feedbackMessage = "error", message
 		}
 	}
 
@@ -132,7 +141,6 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 	})
 	return out, mapErr(err)
 }
-
 
 func (s *Service) persistResendWebhookVerification(
 	ctx context.Context,
@@ -381,14 +389,20 @@ func (s *Service) loadProviderProfile(ctx context.Context, principalID, business
 		}
 		if row.SecretRef.Valid {
 			if s.Vault == nil {
-				return errors.New("mailing: credential storage is not configured")
+				return mailprovider.ErrCredentialStorage
 			}
 			credential, err = s.Vault.Open(ctx, tx, businessID, uuid.UUID(row.SecretRef.Bytes))
-			return err
+			if err != nil {
+				return fmt.Errorf("%w: %w", mailprovider.ErrCredentialStorage, err)
+			}
+			return nil
 		}
 		return nil
 	})
 	if err != nil {
+		if row.ID != uuid.Nil && errors.Is(err, mailprovider.ErrCredentialStorage) {
+			return toSendingProfile(row), mailprovider.Profile{}, err
+		}
 		return SendingProfile{}, mailprovider.Profile{}, mapErr(err)
 	}
 	defer clear(credential)
@@ -402,13 +416,13 @@ func (s *Service) loadProviderProfile(ctx context.Context, principalID, business
 		var creds resendStoredCredentials
 		if err := json.Unmarshal(credential, &creds); err != nil ||
 			strings.TrimSpace(creds.APIKey) == "" {
-			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored Resend credentials are invalid")
+			return toSendingProfile(row), p, mailprovider.ErrCredentials
 		}
 		if creds.Version == 2 {
 			key, keyErr := decodeSvixSecret(strings.TrimSpace(creds.WebhookSecret))
 			clear(key)
 			if keyErr != nil || strings.TrimSpace(creds.WebhookID) == "" {
-				return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored Resend feedback credentials are invalid")
+				return toSendingProfile(row), p, fmt.Errorf("%w: %w", mailprovider.ErrCredentials, mailprovider.ErrResendWebhook)
 			}
 			p.ResendWebhookID = creds.WebhookID
 		}
@@ -417,10 +431,10 @@ func (s *Service) loadProviderProfile(ctx context.Context, principalID, business
 		var creds SESCredentials
 		if err := json.Unmarshal(credential, &creds); err != nil ||
 			strings.TrimSpace(creds.AccessKeyID) == "" || strings.TrimSpace(creds.SecretAccessKey) == "" {
-			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored SES credentials are invalid")
+			return toSendingProfile(row), p, mailprovider.ErrCredentials
 		}
 		if err := validateSESFeedbackConfiguration(row.SesRegion, row.SesConfigurationSet, row.SnsTopicArn); err != nil {
-			return SendingProfile{}, mailprovider.Profile{}, errors.New("mailing: stored SES feedback configuration is invalid")
+			return toSendingProfile(row), p, mailprovider.ErrSESFeedback
 		}
 		p.SESAccessKeyID, p.SESSecretAccessKey = creds.AccessKeyID, creds.SecretAccessKey
 	}
@@ -449,8 +463,8 @@ func (s *Service) checkTestRecipientSuppression(ctx context.Context, principalID
 	}
 	return nil
 }
-func providerVerificationMessage(_ error) string {
-	return "provider verification failed"
+func providerVerificationMessage(err error) string {
+	return mailprovider.VerificationMessage(err)
 }
 
 func safeProviderMessage(err error) string {

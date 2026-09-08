@@ -480,15 +480,15 @@ func TestSESEndpointResolverSendAndVerify(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			eventDestinationsJSON = response
-			if err := sender.Verify(context.Background()); err == nil {
-				t.Fatal("Verify accepted an SES configuration set without the required feedback route")
+			if err := sender.Verify(context.Background()); !errors.Is(err, ErrSESFeedback) {
+				t.Fatalf("Verify did not identify the invalid SES feedback route: %v", err)
 			}
 		})
 	}
 	eventDestinationsJSON = `{"EventDestinations":[{"Name":"feedback","Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-1:123456789012:mailing-events"}}]}`
 	sender.Identity = stubSTSIdentity{accountID: "999999999999"}
-	if err := sender.Verify(context.Background()); err == nil {
-		t.Fatal("Verify accepted an SNS topic from a different AWS account")
+	if err := sender.Verify(context.Background()); !errors.Is(err, ErrSESFeedback) {
+		t.Fatalf("Verify did not identify the SNS credential account mismatch: %v", err)
 	}
 	sender.Identity = stubSTSIdentity{accountID: "123456789012"}
 	result, err := sender.Send(context.Background(), notify.Mail{
@@ -597,7 +597,7 @@ func TestCacheConcurrentResolve(t *testing.T) {
 
 func TestRelayRequiresCompleteConfiguration(t *testing.T) {
 	r := &Relay{}
-	if err := r.Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "not configured") {
+	if err := r.Verify(context.Background()); !errors.Is(err, ErrRelayConfiguration) {
 		t.Fatalf("Verify error = %v", err)
 	}
 }

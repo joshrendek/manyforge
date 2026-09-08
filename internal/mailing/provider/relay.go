@@ -51,7 +51,7 @@ type relayIdentity struct {
 
 func (r *Relay) identity(ctx context.Context) (relayIdentity, error) {
 	if r.DB == nil || r.Sealer == nil || r.Sender == nil || r.EmailDomainID == uuid.Nil {
-		return relayIdentity{}, errors.New("provider: relay is not configured")
+		return relayIdentity{}, ErrRelayConfiguration
 	}
 	var domain, selector, sealed string
 	err := r.DB.WithTx(ctx, func(tx pgx.Tx) error {
@@ -61,16 +61,16 @@ func (r *Relay) identity(ctx context.Context) (relayIdentity, error) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return relayIdentity{}, errors.New("provider: relay domain is not verified")
+			return relayIdentity{}, ErrSenderDomain
 		}
 		return relayIdentity{}, fmt.Errorf("provider: relay identity: %w", err)
 	}
 	key, err := r.Sealer.Open(sealed)
 	if err != nil {
-		return relayIdentity{}, errors.New("provider: relay DKIM key could not be opened")
+		return relayIdentity{}, ErrDKIMKey
 	}
 	if len(key) != ed25519.PrivateKeySize {
-		return relayIdentity{}, errors.New("provider: relay DKIM key is invalid")
+		return relayIdentity{}, ErrDKIMKey
 	}
 	return relayIdentity{domain: domain, selector: selector, key: ed25519.PrivateKey(key)}, nil
 }
