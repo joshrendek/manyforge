@@ -1,0 +1,10 @@
+# SDK and API changes require the repository maintainer's review.
+/api/ @joshrendek
+/sdk/ @joshrendek
+/tools/sdk/ @joshrendek
+/.github/workflows/ @joshrendek
+/.github/CODEOWNERS @joshrendek
+/release-please-config.json @joshrendek
+/.release-please-manifest.json @joshrendek
+/Makefile @joshrendek
+/.dockerignore @joshrendek

@@ -9,6 +9,17 @@ docs/
 specs/
 .beads/
 
+# Independently distributed SDKs, canonical contracts and release-only tooling
+# are not dependencies of either Go application image or the Angular build.
+api/
+sdk/
+tools/sdk/
+release-please-config.json
+.release-please-manifest.json
+.github/workflows/sdk-*.yml
+.github/workflows/ci.yml
+.github/CODEOWNERS
+
 web/node_modules
 web/dist
 web/.angular

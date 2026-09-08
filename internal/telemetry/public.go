@@ -51,6 +51,9 @@ const (
 type PublicHandler struct {
 	DB     *appdb.DB
 	Logger *slog.Logger
+	// AllowedOrigins opts this route into CORS; InstanceOrigin is also allowed.
+	AllowedOrigins []string
+	InstanceOrigin string
 	// Sealer opens the mfs_ signing secret. A client that HAS a sealed secret requires a valid
 	// signature and fails closed when no sealer is configured — verification is mandatory for
 	// those clients, and being unable to verify is not a reason to accept.
@@ -74,9 +77,12 @@ type resolvedClient struct {
 	sealedSecret     *string
 }
 
-// PublicRoutes mounts the ingest endpoint on the principal-less ingress group.
-func (h *PublicHandler) PublicRoutes(r chi.Router) {
-	r.Post("/telemetry/ingest/{key}", h.ingest)
+// PublicRoutes mounts ingest with CORS before the shared rate limiter. Preflights
+// never spend ingest budget, resolve a key, or access the database.
+func (h *PublicHandler) PublicRoutes(r chi.Router, ingestLimit func(http.Handler) http.Handler) {
+	ingest := r.With(httpx.PublicIngestCORS(h.AllowedOrigins, h.InstanceOrigin, http.MethodPost), ingestLimit)
+	ingest.Post("/telemetry/ingest/{key}", h.ingest)
+	ingest.Options("/telemetry/ingest/{key}", h.ingest)
 }
 
 type ingestRequest struct {

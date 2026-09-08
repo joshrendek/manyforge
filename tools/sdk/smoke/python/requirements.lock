@@ -1,0 +1,31 @@
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.14.2
+    # via httpx
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+h11==0.16.0
+    # via httpcore
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via manyforge (sdk/python/pyproject.toml)
+idna==3.19
+    # via
+    #   anyio
+    #   httpx
+pydantic==2.12.5
+    # via manyforge (sdk/python/pyproject.toml)
+pydantic-core==2.41.5
+    # via pydantic
+typing-extensions==4.15.0
+    # via
+    #   manyforge (sdk/python/pyproject.toml)
+    #   anyio
+    #   pydantic
+    #   pydantic-core
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via pydantic

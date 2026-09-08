@@ -1,0 +1,12 @@
+{
+  "generatorName": "python",
+  "library": "httpx",
+  "packageName": "manyforge",
+  "supportHttpxSync": false,
+  "disallowAdditionalPropertiesIfNotPresent": false,
+  "hideGenerationTimestamp": true,
+  "generateSourceCodeOnly": true,
+  "apiNameSuffix": "Resource",
+  "typeMappings": {"object": "JsonValue", "AnyType": "JsonValue"},
+  "importMappings": {"JsonValue": "from manyforge.model_support import JsonValue"}
+}

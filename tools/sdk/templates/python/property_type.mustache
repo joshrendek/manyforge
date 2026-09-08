@@ -1,0 +1,1 @@
+{{#isBoolean}}StrictBool{{/isBoolean}}{{^isBoolean}}{{#isInteger}}StrictInt{{/isInteger}}{{^isInteger}}{{#isLong}}StrictInt{{/isLong}}{{^isLong}}{{#isNumber}}Union[StrictFloat, StrictInt]{{/isNumber}}{{^isNumber}}{{{dataType}}}{{/isNumber}}{{/isLong}}{{/isInteger}}{{/isBoolean}}

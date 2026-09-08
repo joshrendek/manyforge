@@ -12,6 +12,16 @@ on:
       - '**/*.md'
       - '.claude/**'
       - 'landing/**'
+      # These contracts, packages and release controls are not app image inputs.
+      # paths-ignore suppresses only all-excluded pushes; mixed backend changes still deploy.
+      - 'api/**'
+      - 'sdk/**'
+      - 'tools/sdk/**'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
+      - '.github/workflows/sdk-*.yml'
+      - '.github/workflows/ci.yml'
+      - '.github/CODEOWNERS'
 
 permissions:
   contents: read

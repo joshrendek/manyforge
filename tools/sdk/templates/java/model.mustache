@@ -1,0 +1,25 @@
+{{! Derived from OpenAPI Generator 7.25.0 Java/native templates; Apache-2.0, Copyright OpenAPI-Generator contributors. }}
+{{>licenseInfo}}
+package {{package}};
+
+import com.fasterxml.jackson.annotation.*;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.*;
+import java.io.IOException;
+import java.util.*;
+import java.time.*;
+import java.math.BigDecimal;
+import java.net.URI;
+import org.openapitools.jackson.nullable.JsonNullable;
+import com.manyforge.sdk.ModelJson;
+{{#imports}}
+import {{import}};
+{{/imports}}
+{{#models}}{{#model}}
+{{#isEnum}}{{>modelEnum}}{{/isEnum}}
+{{^isEnum}}
+{{#oneOf}}{{#-first}}{{>union}}{{/-first}}{{/oneOf}}
+{{^oneOf}}{{#anyOf}}{{#-first}}{{>union}}{{/-first}}{{/anyOf}}{{^anyOf}}{{>pojo}}{{/anyOf}}{{/oneOf}}
+{{/isEnum}}
+{{/model}}{{/models}}

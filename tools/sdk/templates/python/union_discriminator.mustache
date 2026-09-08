@@ -1,0 +1,12 @@
+{{#discriminator}}
+    @model_validator(mode="before")
+    @classmethod
+    def select_variant(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+{{#mappedModels}}
+        if value.get("{{propertyBaseName}}") == "{{mappingName}}":
+            return {{modelName}}.model_validate(value)
+{{/mappedModels}}
+        return value
+{{/discriminator}}

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review, labeled, unlabeled]
 
 jobs:
   build-test:
@@ -183,3 +184,223 @@ jobs:
           name: playwright-traces
           path: web/test-results/
           retention-days: 7
+
+  # Keep these jobs unfiltered: backend-only changes can break the installed SDKs.
+  sdk-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.13"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          overwrite-settings: false
+      - name: Install frozen SDK tooling
+        run: uv sync --frozen --project tools/sdk --python 3.11
+      - name: Resolve comparison merge-base
+        id: baseline
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$BASE_SHA"
+          test "$BASE_SHA" != "0000000000000000000000000000000000000000"
+          base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          test -n "$base"
+          echo "ref=$base" >> "$GITHUB_OUTPUT"
+      - name: Canonical schema, pinned generation, file manifest and four-language parity
+        # generate.py verifies the toolchain.json JAR SHA-256 before execution.
+        # Compiler-derived snapshot verification runs independently in sdk-pack.
+        run: tools/sdk/.venv/bin/python tools/sdk/generate.py --check
+      - name: SDK contract and synchronization regression checks
+        run: tools/sdk/.venv/bin/python -m unittest discover -s tools/sdk -p 'test_*.py'
+      - name: All-enabled routes and canonical wire assertions
+        run: go test -tags contract -count=1 -timeout 120s ./cmd/manyforge ./internal/security_regression
+      - name: Wire, operation metadata and committed public-surface compatibility
+        env:
+          SDK_BASE_REF: ${{ steps.baseline.outputs.ref }}
+        run: tools/sdk/.venv/bin/python tools/sdk/compatibility.py --base-ref "$SDK_BASE_REF"
+      - name: SDK release signal and verified bot-only exemption
+        env:
+          SDK_BASE_REF: ${{ steps.baseline.outputs.ref }}
+          SDK_RELEASE_APP_SLUG: ${{ vars.SDK_RELEASE_APP_SLUG }}
+          SDK_RELEASE_APP_ID: ${{ vars.SDK_RELEASE_APP_ID }}
+        run: tools/sdk/.venv/bin/python tools/sdk/release_signal.py --event "$GITHUB_EVENT_PATH" --base-ref "$SDK_BASE_REF"
+
+  sdk-pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache-dependency-path: |
+            sdk/go/go.sum
+            tools/sdk/modulezip/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          overwrite-settings: false
+          cache: maven
+      - name: Install frozen SDK tooling
+        run: uv sync --frozen --project tools/sdk --python 3.11
+      - name: Build all installable SDK artifacts and language behavior checks
+        run: make sdk-pack
+      - name: Retain exact staged artifacts for installed consumers
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-pack-${{ github.sha }}-${{ github.run_attempt }}
+          path: sdk/dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  sdk-smoke:
+    name: sdk-smoke (${{ matrix.language }} ${{ matrix.runtime }})
+    needs: sdk-pack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {language: python, runtime: "3.11", python: "3.11", go: "1.25.5"}
+          - {language: python, runtime: "3.14", python: "3.14", go: "1.25.5"}
+          - {language: typescript, runtime: "22", python: "3.11", node: "22", go: "1.25.5"}
+          - {language: typescript, runtime: "24", python: "3.11", node: "24", go: "1.25.5"}
+          - {language: go, runtime: "1.25.5", python: "3.11", go: "1.25.5"}
+          - {language: go, runtime: "1.26", python: "3.11", go: "1.26"}
+          - {language: java, runtime: "17", python: "3.11", java: "17", go: "1.25.5"}
+          - {language: java, runtime: "21", python: "3.11", java: "21", go: "1.25.5"}
+          - {language: java, runtime: "25", python: "3.11", java: "25", go: "1.25.5"}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.13"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - uses: actions/setup-node@v4
+        if: matrix.language == 'typescript'
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: tools/sdk/smoke/typescript/package-lock.json
+      - uses: actions/setup-java@v4
+        if: matrix.language == 'java'
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          overwrite-settings: false
+          cache: maven
+      - name: Install frozen SDK tooling on the selected runtime
+        env:
+          SDK_PYTHON_VERSION: ${{ matrix.python }}
+        run: uv sync --frozen --project tools/sdk --python "$SDK_PYTHON_VERSION"
+      - name: Prepare actual Docker database
+        run: |
+          set -euo pipefail
+          docker info
+          docker pull postgres:16
+      - name: Install locked Chromium and operating-system dependencies
+        if: matrix.language == 'typescript'
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --prefix tools/sdk/smoke/typescript
+          node tools/sdk/smoke/typescript/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Download the exact packaged revision
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-pack-${{ github.sha }}-${{ github.run_attempt }}
+          path: sdk/dist/
+      - name: Exercise installed SDK against an isolated real process and database
+        env:
+          SDK_LANGUAGE: ${{ matrix.language }}
+        run: |
+          set -euo pipefail
+          mkdir -p sdk/dist/smoke
+          # The fixture sanitizes server/consumer logs; never retain its credential-bearing temp tree.
+          tools/sdk/.venv/bin/python tools/sdk/smoke.py \
+            --language "$SDK_LANGUAGE" --artifacts sdk/dist \
+            --evidence-dir sdk/dist/smoke 2>&1 | tee sdk/dist/smoke/fixture.log
+      - name: Retain browser proof and sanitized fixture output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-smoke-${{ matrix.language }}-${{ matrix.runtime }}-${{ github.run_attempt }}
+          path: sdk/dist/smoke/
+          if-no-files-found: warn
+          retention-days: 14
+
+  sdk-required:
+    name: sdk-required
+    if: ${{ always() }}
+    needs: [sdk-contract, sdk-pack, sdk-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every SDK gate to succeed
+        env:
+          SDK_CONTRACT_RESULT: ${{ needs.sdk-contract.result }}
+          SDK_PACK_RESULT: ${{ needs.sdk-pack.result }}
+          SDK_SMOKE_RESULT: ${{ needs.sdk-smoke.result }}
+        run: |
+          set -euo pipefail
+          printf 'sdk-contract=%s sdk-pack=%s sdk-smoke=%s\n' \
+            "$SDK_CONTRACT_RESULT" "$SDK_PACK_RESULT" "$SDK_SMOKE_RESULT"
+          test "$SDK_CONTRACT_RESULT" = success
+          test "$SDK_PACK_RESULT" = success
+          test "$SDK_SMOKE_RESULT" = success

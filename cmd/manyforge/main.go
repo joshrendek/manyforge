@@ -250,6 +250,8 @@ func main() {
 	feedbackSvc := &feedback.Service{DB: database, Sealer: feedbackSealer}
 	feedbackH := feedback.NewHandler(feedbackSvc)
 	feedbackPublicH := feedback.NewPublicHandler(database, logger, feedbackSealer)
+	feedbackPublicH.AllowedOrigins = cfg.PublicIngestAllowedOrigins
+	feedbackPublicH.InstanceOrigin = cfg.PublicBaseURL
 
 	mailingSetupH := mailing.NewSetupHandler(mailing.SetupConfig{
 		OutboundMailDisabled: cfg.OutboundMailDisabled,
@@ -803,12 +805,14 @@ func main() {
 	// — collapsing every visitor of every tenant site into a single shared bucket and silently
 	// dropping legitimate pageviews as 204s.
 	telemetryPublicH := &telemetry.PublicHandler{
-		DB:     database,
-		Logger: logger,
-		Sealer: feedbackSealer,
-		// PerIP is deliberately nil: the public ingress group already applies the shared per-IP
-		// ingest limiter, and a second per-IP bucket here would just halve that budget
-		// confusingly. PerKey is the dimension the group does NOT cover — it stops one leaked
+		DB:             database,
+		Logger:         logger,
+		Sealer:         feedbackSealer,
+		AllowedOrigins: cfg.PublicIngestAllowedOrigins,
+		InstanceOrigin: cfg.PublicBaseURL,
+		// PerIP is deliberately nil: PublicRoutes applies the shared per-IP ingest
+		// limiter after CORS. A second per-IP bucket here would halve that budget.
+		// PerKey is the dimension the outer limiter does NOT cover — it stops one leaked
 		// publishable key from being abused across a whole botnet.
 		PerKey:         ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst),
 		TrustedProxies: trusted,
@@ -1289,21 +1293,19 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			if h.githubApp != nil {
 				h.githubApp.WebhookRoutes(ingress)
 			}
-			// Spec 006 feedback SDK/portal ingress: public, authenticated by a publishable
-			// board key (not JWT), per-IP ingest-rate-limited. Unknown/revoked key or a
-			// non-public board → uniform 401 (no business/board existence oracle).
-			h.feedbackPublic.PublicRoutes(ingress)
 			if h.mailingPublic != nil {
 				h.mailingPublic.PublicRoutes(ingress)
 			}
 			if h.mailingWebhook != nil {
 				h.mailingWebhook.PublicRoutes(ingress)
 			}
-			// manyforge-p20 telemetry ingest: public, authenticated by a publishable mfk_
-			// client key, per-IP ingest-rate-limited here and additionally per-key inside
-			// the handler. Unknown, revoked, and malformed keys all return a byte-identical
-			// 401 (no client-existence oracle).
-			h.telemetryPublic.PublicRoutes(ingress)
+		})
+		// Only public feedback/telemetry opt into browser CORS. Their route-local
+		// middleware wraps the SAME shared ingest limiter, exposing actual 429s
+		// while answering preflights before limiter or key/database access.
+		r.Group(func(public chi.Router) {
+			h.feedbackPublic.PublicRoutes(public, h.ingestLimit)
+			h.telemetryPublic.PublicRoutes(public, h.ingestLimit)
 		})
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)

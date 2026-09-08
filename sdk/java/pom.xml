@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.manyforge</groupId>
+  <artifactId>manyforge-sdk</artifactId>
+  <version>2026.9.1</version>
+  <name>ManyForge SDK</name>
+  <description>Typed ManyForge management and public integration SDK for Java.</description>
+  <url>https://github.com/joshrendek/manyforge</url>
+  <licenses><license><name>MIT License</name><url>https://opensource.org/license/mit</url></license></licenses>
+  <developers><developer><id>manyforge</id><name>ManyForge contributors</name><url>https://manyforge.com</url></developer></developers>
+  <scm><connection>scm:git:https://github.com/joshrendek/manyforge.git</connection><developerConnection>scm:git:ssh://git@github.com/joshrendek/manyforge.git</developerConnection><url>https://github.com/joshrendek/manyforge</url></scm>
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.build.outputTimestamp>1980-01-01T00:00:02Z</project.build.outputTimestamp>
+    <jackson.version>2.20.1</jackson.version>
+  </properties>
+  <dependencies>
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>${jackson.version}</version></dependency>
+    <dependency><groupId>com.fasterxml.jackson.datatype</groupId><artifactId>jackson-datatype-jsr310</artifactId><version>${jackson.version}</version></dependency>
+    <dependency><groupId>org.openapitools</groupId><artifactId>jackson-databind-nullable</artifactId><version>0.2.8</version></dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.1</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-source-plugin</artifactId><version>3.3.1</version><executions><execution><id>sources</id><goals><goal>jar-no-fork</goal></goals></execution></executions></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-javadoc-plugin</artifactId><version>3.11.3</version><executions><execution><id>javadoc</id><goals><goal>jar</goal></goals></execution></executions></plugin>
+    </plugins>
+  </build>
+</project>

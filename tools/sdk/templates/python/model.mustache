@@ -1,0 +1,53 @@
+{{>partial_header}}
+from __future__ import annotations
+from datetime import date, datetime
+from uuid import UUID
+from typing import Any, ClassVar, Dict, List, Optional, Union
+from pydantic import Field, StrictBool, StrictBytes, StrictFloat, StrictInt, StrictStr, RootModel, field_validator, model_validator
+from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
+{{#models}}{{#model}}
+{{#vendorExtensions.x-py-other-imports}}
+{{{.}}}
+{{/vendorExtensions.x-py-other-imports}}
+{{#vendorExtensions.x-py-model-imports}}
+{{{.}}}
+{{/vendorExtensions.x-py-model-imports}}
+{{#isEnum}}
+class {{classname}}(OpenEnum):
+{{#allowableValues}}{{#enumVars}}
+    {{{name}}} = {{{value}}}
+{{/enumVars}}{{/allowableValues}}
+{{/isEnum}}
+{{^isEnum}}
+{{#oneOf}}{{#-first}}
+class {{classname}}(RootModel[Union[{{#oneOf}}{{{.}}}, {{/oneOf}}]]):
+    """Typed wire union; serialize its root, never a wrapper object."""
+{{>union_discriminator}}
+{{/-first}}{{/oneOf}}
+{{^oneOf}}{{#anyOf}}{{#-first}}
+class {{classname}}(RootModel[Union[{{#anyOf}}{{{.}}}, {{/anyOf}}]]):
+    """Typed wire union; serialize its root, never a wrapper object."""
+{{>union_discriminator}}
+{{/-first}}{{/anyOf}}{{^anyOf}}
+class {{classname}}(Model):
+    """{{classname}} wire model. Unspecified fields are never sent."""
+{{#vars}}
+    {{name}}: {{>property_type}}{{#isNullable}} | None{{/isNullable}}{{^required}} | UnsetType{{/required}} = Field({{#required}}...{{/required}}{{^required}}default=UNSET{{/required}}, alias={{{vendorExtensions.x-py-wire-name-literal}}})
+{{/vars}}
+{{#vars}}{{#vendorExtensions.x-python-closed-enum}}
+
+    @field_validator("{{name}}")
+    @classmethod
+    def validate_{{name}}(cls, value: Any) -> Any:
+        if isinstance(value, UnsetType){{#isNullable}} or value is None{{/isNullable}}:
+            return value
+        if value not in ({{{vendorExtensions.x-python-enum-values}}},):
+            raise ValueError("Value is not permitted by the wire schema")
+        return value
+{{/vendorExtensions.x-python-closed-enum}}{{/vars}}
+{{/anyOf}}{{/oneOf}}
+{{/isEnum}}
+{{#vendorExtensions.x-py-postponed-model-imports}}
+{{{.}}}
+{{/vendorExtensions.x-py-postponed-model-imports}}
+{{/model}}{{/models}}

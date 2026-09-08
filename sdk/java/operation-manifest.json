@@ -1,0 +1,1904 @@
+[
+  {
+    "operationId": "AccountConfirmEmailChange",
+    "resource": "account",
+    "method": "confirmEmailChange",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AccountDeactivate",
+    "resource": "account",
+    "method": "deactivate",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AccountDelete",
+    "resource": "account",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AccountEmailChange",
+    "resource": "account",
+    "method": "emailChange",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AccountExport",
+    "resource": "account",
+    "method": "export",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AccountGet",
+    "resource": "account",
+    "method": "get",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AccountUpdate",
+    "resource": "account",
+    "method": "update",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuditList",
+    "resource": "audit",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "AuthConfirmPasswordReset",
+    "resource": "auth",
+    "method": "confirmPasswordReset",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthConsumeMagicLink",
+    "resource": "auth",
+    "method": "consumeMagicLink",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthLogin",
+    "resource": "auth",
+    "method": "login",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthLogout",
+    "resource": "auth",
+    "method": "logout",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthMagicLink",
+    "resource": "auth",
+    "method": "magicLink",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthPasswordReset",
+    "resource": "auth",
+    "method": "passwordReset",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthRefresh",
+    "resource": "auth",
+    "method": "refresh",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthSignup",
+    "resource": "auth",
+    "method": "signup",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "AuthVerifyEmail",
+    "resource": "auth",
+    "method": "verifyEmail",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesArchive",
+    "resource": "businesses",
+    "method": "archive",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesCreate",
+    "resource": "businesses",
+    "method": "create",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesDelete",
+    "resource": "businesses",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesGet",
+    "resource": "businesses",
+    "method": "get",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesLeave",
+    "resource": "businesses",
+    "method": "leave",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesList",
+    "resource": "businesses",
+    "method": "list",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesMove",
+    "resource": "businesses",
+    "method": "move",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesRestore",
+    "resource": "businesses",
+    "method": "restore",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesTransferOwnership",
+    "resource": "businesses",
+    "method": "transferOwnership",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "BusinessesUpdate",
+    "resource": "businesses",
+    "method": "update",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "ConnectorsSync",
+    "resource": "connectors",
+    "method": "sync",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "InboxEmailDomainsCreate",
+    "resource": "inbox.emailDomains",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "InboxEmailDomainsList",
+    "resource": "inbox.emailDomains",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "InboxEmailDomainsVerify",
+    "resource": "inbox.emailDomains",
+    "method": "verify",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "InboxInboundAddressesCreate",
+    "resource": "inbox.inboundAddresses",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "InboxInboundAddressesList",
+    "resource": "inbox.inboundAddresses",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "InvitationsAccept",
+    "resource": "invitations",
+    "method": "accept",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "InvitationsCreate",
+    "resource": "invitations",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "InvitationsDelete",
+    "resource": "invitations",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "InvitationsList",
+    "resource": "invitations",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "InvitationsResend",
+    "resource": "invitations",
+    "method": "resend",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "MembersDelete",
+    "resource": "members",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "MembersList",
+    "resource": "members",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "MembersUpdate",
+    "resource": "members",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "PermissionsList",
+    "resource": "permissions",
+    "method": "list",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "RequestersGet",
+    "resource": "requesters",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "RequestersList",
+    "resource": "requesters",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "RolesCreate",
+    "resource": "roles",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "RolesDelete",
+    "resource": "roles",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "RolesList",
+    "resource": "roles",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "RolesUpdate",
+    "resource": "roles",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "TenantMergesConfirm",
+    "resource": "tenantMerges",
+    "method": "confirm",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "TenantMergesCreate",
+    "resource": "tenantMerges",
+    "method": "create",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "TenantMergesGet",
+    "resource": "tenantMerges",
+    "method": "get",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "TenantMergesOptionsList",
+    "resource": "tenantMerges.options",
+    "method": "list",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "TenantMergesPreflight",
+    "resource": "tenantMerges",
+    "method": "preflight",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "TicketsAddNote",
+    "resource": "tickets",
+    "method": "addNote",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "TicketsAssignableMembersList",
+    "resource": "tickets.assignableMembers",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "TicketsDelete",
+    "resource": "tickets",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "TicketsGet",
+    "resource": "tickets",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "TicketsList",
+    "resource": "tickets",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "TicketsMessagesList",
+    "resource": "tickets.messages",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "TicketsReply",
+    "resource": "tickets",
+    "method": "reply",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "TicketsUpdate",
+    "resource": "tickets",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "activateAutomationVersion",
+    "resource": "automations.versions",
+    "method": "activate",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "addMailingSubscribersFromContacts",
+    "resource": "mailing.subscribers",
+    "method": "fromContacts",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "approveApprovalItem",
+    "resource": "approvals",
+    "method": "approve",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "archiveAutomation",
+    "resource": "automations",
+    "method": "archive",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "archiveMailingList",
+    "resource": "mailing.lists",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "cancelMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "cancel",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "clearMCPToolPolicy",
+    "resource": "mcpServers.toolPolicies",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "collectAnalyticsEvent",
+    "resource": "analytics",
+    "method": "collect",
+    "audience": "public",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "convertFeedbackPost",
+    "resource": "feedback.posts",
+    "method": "convert",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createAICredential",
+    "resource": "aiCredentials",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createAgent",
+    "resource": "agents",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createAutomation",
+    "resource": "automations",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createAutomationDraftVersion",
+    "resource": "automations.versions",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createAutomationEvent",
+    "resource": "mailing.events",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createAutomationEventS2S",
+    "resource": "mailing.events",
+    "method": "create",
+    "audience": "server",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "createCompany",
+    "resource": "companies",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createConnector",
+    "resource": "connectors",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createContact",
+    "resource": "contacts",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createFeedbackBoard",
+    "resource": "feedback.boards",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createFeedbackIngestKey",
+    "resource": "feedback.keys",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createFeedbackPost",
+    "resource": "feedback.posts",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createMCPServer",
+    "resource": "mcpServers",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createMailingList",
+    "resource": "mailing.lists",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createMailingListKey",
+    "resource": "mailing.keys",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createMailingSubscriber",
+    "resource": "mailing.subscribers",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createMailingSuppression",
+    "resource": "mailing.suppressions",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createMailingTemplate",
+    "resource": "mailing.templates",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createRepoConnector",
+    "resource": "repoConnectors",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "createTelemetryClient",
+    "resource": "telemetry.clients",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteAICredential",
+    "resource": "aiCredentials",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteAgent",
+    "resource": "agents",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteCompany",
+    "resource": "companies",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteConnector",
+    "resource": "connectors",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteContact",
+    "resource": "contacts",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteFeedbackPost",
+    "resource": "feedback.posts",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteMCPServer",
+    "resource": "mcpServers",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteMailingSendingProfile",
+    "resource": "mailing.sendingProfile",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteMailingSuppression",
+    "resource": "mailing.suppressions",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteMailingTemplate",
+    "resource": "mailing.templates",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteRepoConnector",
+    "resource": "repoConnectors",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteRepoDimensionOverride",
+    "resource": "repoConnectors.dimensionOverrides",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteReviewDimension",
+    "resource": "reviewDimensions",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "denyApprovalItem",
+    "resource": "approvals",
+    "method": "deny",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "discoverMCPServerTools",
+    "resource": "mcpServers.tools",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "dismissConnectorFailedOps",
+    "resource": "connectors.failedOps",
+    "method": "dismiss",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "enrollAutomationSubscriber",
+    "resource": "automations.enrollments",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "exchangeCodexPKCEConnect",
+    "resource": "aiCredentials.codex.pkce",
+    "method": "exchange",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "exitAutomationEnrollment",
+    "resource": "automations.enrollments",
+    "method": "exit",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "exportMailingSubscribersCSV",
+    "resource": "mailing.subscribers",
+    "method": "exportCsv",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getAgent",
+    "resource": "agents",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getAgentRun",
+    "resource": "agentRuns",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getAnalyticsOverview",
+    "resource": "analytics",
+    "method": "get",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "getAnalyticsSummary",
+    "resource": "analytics",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getAutomation",
+    "resource": "automations",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getAutomationEnrollment",
+    "resource": "automations.enrollments",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getAutomationStats",
+    "resource": "automations.stats",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getAutomationVersion",
+    "resource": "automations.versions",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getBusinessAccounting",
+    "resource": "accounting",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getCodeReview",
+    "resource": "codeReviews",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getCompany",
+    "resource": "companies",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getConnector",
+    "resource": "connectors",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getContact",
+    "resource": "contacts",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getFeedbackBoard",
+    "resource": "feedback.boards",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getFeedbackPost",
+    "resource": "feedback.posts",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getGithubInstallURL",
+    "resource": "githubApp.installUrl",
+    "method": "get",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "getMCPServer",
+    "resource": "mcpServers",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getMailingCampaignStats",
+    "resource": "mailing.campaigns.stats",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getMailingList",
+    "resource": "mailing.lists",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getMailingSendingProfile",
+    "resource": "mailing.sendingProfile",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getMailingSubscriber",
+    "resource": "mailing.subscribers",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getMailingTemplate",
+    "resource": "mailing.templates",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getReviewConfig",
+    "resource": "reviewConfig",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getReviewConfigEstimate",
+    "resource": "reviewConfig",
+    "method": "estimate",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "importMailingSubscribersCSV",
+    "resource": "mailing.subscribers",
+    "method": "importCsv",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "ingestTelemetry",
+    "resource": "telemetry",
+    "method": "ingest",
+    "audience": "public",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "linkGithubInstallation",
+    "resource": "githubApp.installations",
+    "method": "link",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "listAICredentials",
+    "resource": "aiCredentials",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listAgentModels",
+    "resource": "agents.models",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listAgentProviderModels",
+    "resource": "agents.providerModels",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listAgentRuns",
+    "resource": "agentRuns",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listAgentTools",
+    "resource": "agents.tools",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listAgents",
+    "resource": "agents",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listAnalyticsPropertyRules",
+    "resource": "analytics.propertyRules",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listApprovals",
+    "resource": "approvals",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listAutomationEnrollments",
+    "resource": "automations.enrollments",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listAutomationVersions",
+    "resource": "automations.versions",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listAutomations",
+    "resource": "automations",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listCodeReviews",
+    "resource": "codeReviews",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listCodexAccountModels",
+    "resource": "aiCredentials.codex.models",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listCompanies",
+    "resource": "companies",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listConnectors",
+    "resource": "connectors",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listContactActivity",
+    "resource": "contacts.activity",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listContacts",
+    "resource": "contacts",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listFeedbackBoards",
+    "resource": "feedback.boards",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listFeedbackIngestKeys",
+    "resource": "feedback.keys",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listFeedbackPosts",
+    "resource": "feedback.posts",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listMCPServers",
+    "resource": "mcpServers",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listMCPToolPolicies",
+    "resource": "mcpServers.toolPolicies",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listMailingCampaignDeliveries",
+    "resource": "mailing.deliveries",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listMailingCampaigns",
+    "resource": "mailing.campaigns",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listMailingListKeys",
+    "resource": "mailing.keys",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listMailingLists",
+    "resource": "mailing.lists",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listMailingSubscribers",
+    "resource": "mailing.subscribers",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listMailingSuppressions",
+    "resource": "mailing.suppressions",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listMailingTemplates",
+    "resource": "mailing.templates",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "listRepoConnectors",
+    "resource": "repoConnectors",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listRepoDimensionOverrides",
+    "resource": "repoConnectors.dimensionOverrides",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listReviewDimensions",
+    "resource": "reviewDimensions",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listTelemetryClientMoveTargets",
+    "resource": "telemetry.clients.moveTargets",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "listTelemetryClients",
+    "resource": "telemetry.clients",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "mergeContact",
+    "resource": "contacts",
+    "method": "merge",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "moveTelemetryAnalyticsClient",
+    "resource": "telemetry.clients",
+    "method": "move",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "pauseAutomation",
+    "resource": "automations",
+    "method": "pause",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "previewMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "preview",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "previewMailingTemplate",
+    "resource": "mailing.templates",
+    "method": "preview",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "publicListFeedbackPosts",
+    "resource": "posts",
+    "method": "list",
+    "audience": "public",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "publicSubmitFeedbackPost",
+    "resource": "posts",
+    "method": "create",
+    "audience": "public",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "publicVoteFeedbackPost",
+    "resource": "posts",
+    "method": "vote",
+    "audience": "public",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "putMailingSendingProfile",
+    "resource": "mailing.sendingProfile",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "replaceAnalyticsPropertyRules",
+    "resource": "analytics.propertyRules",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "replaceAutomationGraph",
+    "resource": "automations.versions.graph",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "resumeAutomation",
+    "resource": "automations",
+    "method": "resume",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "retryCodeReview",
+    "resource": "codeReviews",
+    "method": "retry",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "retryConnectorFailedOps",
+    "resource": "connectors.failedOps",
+    "method": "retry",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "revokeFeedbackIngestKey",
+    "resource": "feedback.keys",
+    "method": "revoke",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "revokeMailingListKey",
+    "resource": "mailing.keys",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "revokeTelemetryClient",
+    "resource": "telemetry.clients",
+    "method": "revoke",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "rotateConnectorCredential",
+    "resource": "connectors.credentials",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "sendMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "send",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "setFeedbackPostStatus",
+    "resource": "feedback.posts",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "setMCPToolPolicy",
+    "resource": "mcpServers.toolPolicies",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "setTelemetryClientAllowedOrigins",
+    "resource": "telemetry.clients.allowedOrigins",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "startCodexPKCEConnect",
+    "resource": "aiCredentials.codex.pkce",
+    "method": "start",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "subscribeMailingPublic",
+    "resource": "mailing",
+    "method": "subscribe",
+    "audience": "public",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "subscribeMailingS2S",
+    "resource": "mailing.subscribers",
+    "method": "create",
+    "audience": "server",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "testConnector",
+    "resource": "connectors",
+    "method": "test",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "testMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "testSend",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "testMailingSendingProfile",
+    "resource": "mailing.sendingProfile",
+    "method": "testSend",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "triggerAgentRun",
+    "resource": "agentRuns",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "triggerCodeReview",
+    "resource": "codeReviews",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "unsubscribeMailingS2S",
+    "resource": "mailing.subscribers",
+    "method": "delete",
+    "audience": "server",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "unsubscribeMailingSubscriber",
+    "resource": "mailing.subscribers",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateAICredential",
+    "resource": "aiCredentials",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateAgent",
+    "resource": "agents",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateAutomation",
+    "resource": "automations",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateCompany",
+    "resource": "companies",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateConnector",
+    "resource": "connectors",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateContact",
+    "resource": "contacts",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateFeedbackBoard",
+    "resource": "feedback.boards",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateMCPServer",
+    "resource": "mcpServers",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateMailingCampaign",
+    "resource": "mailing.campaigns",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateMailingList",
+    "resource": "mailing.lists",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateMailingSubscriber",
+    "resource": "mailing.subscribers",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "updateMailingTemplate",
+    "resource": "mailing.templates",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "upsertRepoDimensionOverride",
+    "resource": "repoConnectors.dimensionOverrides",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "upsertReviewConfig",
+    "resource": "reviewConfig",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "upsertReviewDimension",
+    "resource": "reviewDimensions",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "validateAutomationVersion",
+    "resource": "automations.versions",
+    "method": "validate",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "verifyMailingSendingProfile",
+    "resource": "mailing.sendingProfile",
+    "method": "verify",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "voteFeedbackPost",
+    "resource": "feedback.posts",
+    "method": "vote",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  }
+]

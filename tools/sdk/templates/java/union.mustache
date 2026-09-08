@@ -1,0 +1,27 @@
+{{! Focused union codec based on OpenAPI Generator Java/native oneof_model.mustache (Apache-2.0). }}
+@JsonDeserialize(using = {{classname}}.Deserializer.class)
+public final class {{classname}} {
+  private final Object value;
+{{#oneOf}}
+  public {{classname}}({{{.}}} value) { this.value = Objects.requireNonNull(value); }
+  public {{{.}}} as{{{.}}}() { return ({{{.}}}) value; }
+{{/oneOf}}
+{{#anyOf}}
+  public {{classname}}({{{.}}} value) { this.value = Objects.requireNonNull(value); }
+  public {{{.}}} as{{{.}}}() { return ({{{.}}}) value; }
+{{/anyOf}}
+  @JsonValue public Object value() { return value; }
+  public static final class Deserializer extends JsonDeserializer<{{classname}}> {
+    @Override public {{classname}} deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+      JsonNode tree = parser.getCodec().readTree(parser);
+      String selected = ModelJson.alternative("{{classname}}", tree);
+{{#oneOf}}
+      if (selected.equals("{{{.}}}")) return new {{classname}}(parser.getCodec().treeToValue(tree, {{{.}}}.class));
+{{/oneOf}}
+{{#anyOf}}
+      if (selected.equals("{{{.}}}")) return new {{classname}}(parser.getCodec().treeToValue(tree, {{{.}}}.class));
+{{/anyOf}}
+      throw com.fasterxml.jackson.databind.JsonMappingException.from(parser, "Payload does not match {{classname}}");
+    }
+  }
+}

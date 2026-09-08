@@ -1,0 +1,11 @@
+{"models":[
+{{#models}}
+{{#model}}
+{"name":"{{name}}","schema":{{{modelJson}}},"properties":[
+{{#vars}}
+["{{baseName}}","{{name}}"]{{^-last}},{{/-last}}
+{{/vars}}
+]}
+{{/model}}{{^-last}},{{/-last}}
+{{/models}}
+]}

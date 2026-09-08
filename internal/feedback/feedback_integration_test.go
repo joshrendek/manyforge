@@ -290,7 +290,7 @@ func TestPublicIngressAndOracle(t *testing.T) {
 
 	h := feedback.NewPublicHandler(tdb.App, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	r := chi.NewRouter()
-	h.PublicRoutes(r)
+	h.PublicRoutes(r, func(next http.Handler) http.Handler { return next })
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -381,7 +381,7 @@ func newTestSealer(t *testing.T, fill byte) *crypto.Sealer {
 func startPublicServer(t *testing.T, h *feedback.PublicHandler) *httptest.Server {
 	t.Helper()
 	r := chi.NewRouter()
-	h.PublicRoutes(r)
+	h.PublicRoutes(r, func(next http.Handler) http.Handler { return next })
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv

@@ -44,3 +44,16 @@ HANDOFF.md
 /landing/node_modules/
 /landing/.wrangler/
 /landing/.dev.vars*
+
+# SDK tooling and package build outputs
+/tools/sdk/.venv/
+/tools/sdk/.cache/
+**/__pycache__/
+/sdk/python/.venv/
+/sdk/python/dist/
+/sdk/python/build/
+/sdk/python/src/*.egg-info/
+/sdk/typescript/node_modules/
+/sdk/typescript/dist/
+/sdk/java/target/
+/sdk/dist/

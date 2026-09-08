@@ -1,6 +1,34 @@
 GO ?= go
 PKG := ./...
 
+SDK_PYTHON ?= tools/sdk/.venv/bin/python
+
+.PHONY: sdk-tools sdk-generate sdk-check
+
+sdk-tools:
+	uv sync --frozen --project tools/sdk
+
+sdk-generate: sdk-tools
+	$(SDK_PYTHON) tools/sdk/generate.py
+	$(SDK_PYTHON) tools/sdk/surfaces.py --write
+
+sdk-check: sdk-tools
+	$(SDK_PYTHON) tools/sdk/generate.py --check
+	$(SDK_PYTHON) tools/sdk/surfaces.py --check
+	$(SDK_PYTHON) -m unittest discover -s tools/sdk -p 'test_*.py'
+	$(GO) test -tags contract -count=1 -timeout 120s ./cmd/manyforge ./internal/security_regression
+
+.PHONY: sdk-pack
+
+sdk-pack: sdk-tools
+	$(SDK_PYTHON) tools/sdk/pack.py $(if $(SDK_LANGUAGE),--language $(SDK_LANGUAGE),)
+	$(if $(SDK_LANGUAGE),,$(SDK_PYTHON) tools/sdk/surfaces.py --check --built)
+
+.PHONY: sdk-smoke
+
+sdk-smoke: sdk-tools
+	$(SDK_PYTHON) tools/sdk/smoke.py --language $(SDK_LANGUAGE) $(if $(SDK_ARTIFACTS),--artifacts $(SDK_ARTIFACTS),)
+
 .PHONY: build dev seed-demo test sec-test int-test contract-test lint vet generate migrate db-smoke tidy
 
 build:

@@ -1,0 +1,33 @@
+{{! Derived from OpenAPI Generator go/model_simple.mustache (Apache-2.0). }}
+{{#vendorExtensions.x-go-has-time}}
+import "time"
+{{/vendorExtensions.x-go-has-time}}
+type {{classname}} struct {
+{{#vars}}
+    {{name}} {{#required}}{{^isNullable}}{{{vendorExtensions.x-go-base-type}}}{{/isNullable}}{{#isNullable}}Optional[{{{vendorExtensions.x-go-base-type}}}]{{/isNullable}}{{/required}}{{^required}}Optional[{{{vendorExtensions.x-go-base-type}}}]{{/required}} `json:"{{baseName}}{{#isNullable}},omitzero{{/isNullable}}{{^isNullable}}{{^required}},omitzero{{/required}}{{/isNullable}}"`
+{{/vars}}
+{{#vendorExtensions.x-go-token-pair}}
+    // receivedAt records native HTTP receipt and is never part of the wire model.
+    receivedAt time.Time
+{{/vendorExtensions.x-go-token-pair}}
+}
+
+// New{{classname}} assigns only the supplied required fields, never schema defaults.
+func New{{classname}}({{#requiredVars}}{{nameInCamelCase}} {{#isNullable}}Optional[{{/isNullable}}{{{vendorExtensions.x-go-base-type}}}{{#isNullable}}]{{/isNullable}}{{^-last}}, {{/-last}}{{/requiredVars}}) *{{classname}} {
+    return &{{classname}}{
+{{#requiredVars}}
+        {{name}}: {{nameInCamelCase}},
+{{/requiredVars}}
+    }
+}
+
+func (o *{{classname}}) UnmarshalJSON(data []byte) error {
+    fields, err := objectFields(data{{#requiredVars}}, "{{baseName}}"{{/requiredVars}})
+    if err != nil { return err }
+    if err := nonNullFields(fields{{#vars}}{{^isNullable}}, "{{baseName}}"{{/isNullable}}{{/vars}}); err != nil { return err }
+    type plain {{classname}}
+    var value plain
+    if err := decodeJSON(data, &value); err != nil { return err }
+    *o = {{classname}}(value)
+    return nil
+}

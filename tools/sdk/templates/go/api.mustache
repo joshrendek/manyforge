@@ -1,0 +1,101 @@
+{{! Derived from OpenAPI Generator go/api.mustache (Apache-2.0). }}
+{{>partial_header}}
+package {{packageName}}
+
+import (
+    "context"
+{{#operations}}{{#operation}}{{#vendorExtensions.x-go-import-fmt}}    "fmt"
+{{/vendorExtensions.x-go-import-fmt}}{{/operation}}{{/operations}}
+    "net/url"
+{{#operations}}{{#operation}}{{#vendorExtensions.x-go-import-path}}    "strings"
+{{/vendorExtensions.x-go-import-path}}{{/operation}}{{/operations}}
+{{#operations}}{{#operation}}{{#vendorExtensions.x-go-import-io}}    "io"
+{{/vendorExtensions.x-go-import-io}}{{/operation}}{{/operations}}
+)
+
+{{#operations}}
+type {{classname}} struct {
+    transport Transport
+    binding string
+{{#operation}}{{#vendorExtensions.x-go-children}}
+    {{name}} *{{type}}
+{{/vendorExtensions.x-go-children}}{{/operation}}
+}
+{{#operation}}
+{{#vendorExtensions.x-go-has-params}}
+type {{vendorExtensions.x-go-params}} struct {
+{{#queryParams}}
+    {{vendorExtensions.x-export-param-name}} {{^required}}{{^vendorExtensions.x-go-direct}}Optional[{{/vendorExtensions.x-go-direct}}{{/required}}{{{dataType}}}{{^required}}{{^vendorExtensions.x-go-direct}}]{{/vendorExtensions.x-go-direct}}{{/required}}
+{{/queryParams}}
+{{#headerParams}}
+    {{vendorExtensions.x-export-param-name}} {{^required}}Optional[{{/required}}{{{dataType}}}{{^required}}]{{/required}}
+{{/headerParams}}
+{{#formParams}}
+    {{vendorExtensions.x-export-param-name}} {{^required}}Optional[{{/required}}{{#isFile}}Upload{{/isFile}}{{^isFile}}{{{dataType}}}{{/isFile}}{{^required}}]{{/required}}
+{{/formParams}}
+}
+{{/vendorExtensions.x-go-has-params}}
+
+// {{vendorExtensions.x-sdk-method-go}} invokes {{vendorExtensions.x-go-original-id}}.
+func (r *{{classname}}) {{vendorExtensions.x-sdk-method-go}}(ctx context.Context{{#pathParams}}{{^vendorExtensions.x-sdk-bound}}, {{paramName}} {{{dataType}}}{{/vendorExtensions.x-sdk-bound}}{{/pathParams}}{{#bodyParams}}, body {{^required}}Optional[{{/required}}{{{dataType}}}{{^required}}]{{/required}}{{/bodyParams}}{{#vendorExtensions.x-go-has-params}}, params {{vendorExtensions.x-go-params}}{{/vendorExtensions.x-go-has-params}}, options ...RequestOption) ({{#vendorExtensions.x-sdk-stream}}io.ReadCloser, {{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{#returnType}}{{{.}}}, {{/returnType}}{{/vendorExtensions.x-sdk-stream}}error) {
+    path := "{{{path}}}"
+{{#pathParams}}
+    path = strings.ReplaceAll(path, "{" + "{{baseName}}" + "}", url.PathEscape(fmt.Sprint({{#vendorExtensions.x-sdk-bound}}r.binding{{/vendorExtensions.x-sdk-bound}}{{^vendorExtensions.x-sdk-bound}}{{paramName}}{{/vendorExtensions.x-sdk-bound}})))
+{{/pathParams}}
+    request := Request{OperationID: "{{vendorExtensions.x-go-original-id}}", Method: "{{vendorExtensions.x-sdk-http-method}}", Path: path, Query: url.Values{}, Headers: map[string]string{}, Authenticated: {{vendorExtensions.x-sdk-authenticated}}, Audience: "{{vendorExtensions.x-manyforge-audience}}", Signing: "{{vendorExtensions.x-manyforge-signing}}", BodyKey: "{{vendorExtensions.x-sdk-body-key}}"}
+{{#queryParams}}
+{{#required}}
+    addQuery(request.Query, "{{baseName}}", params.{{vendorExtensions.x-export-param-name}}, "{{vendorExtensions.x-go-style}}", {{vendorExtensions.x-go-explode}})
+{{/required}}
+{{^required}}{{#vendorExtensions.x-go-direct}}
+    if params.{{vendorExtensions.x-export-param-name}} != {{{vendorExtensions.x-go-zero}}} { addQuery(request.Query, "{{baseName}}", params.{{vendorExtensions.x-export-param-name}}, "{{vendorExtensions.x-go-style}}", {{vendorExtensions.x-go-explode}}) }
+{{/vendorExtensions.x-go-direct}}{{^vendorExtensions.x-go-direct}}
+    if value, ok := params.{{vendorExtensions.x-export-param-name}}.Get(); ok { addQuery(request.Query, "{{baseName}}", value, "{{vendorExtensions.x-go-style}}", {{vendorExtensions.x-go-explode}}) }
+{{/vendorExtensions.x-go-direct}}{{/required}}
+{{/queryParams}}
+{{#headerParams}}
+{{#required}}
+    request.Headers["{{baseName}}"] = fmt.Sprint(params.{{vendorExtensions.x-export-param-name}})
+{{/required}}{{^required}}
+    if value, ok := params.{{vendorExtensions.x-export-param-name}}.Get(); ok { request.Headers["{{baseName}}"] = fmt.Sprint(value) }
+{{/required}}
+{{/headerParams}}
+{{#bodyParams}}
+{{#required}}
+    request.Body = body
+{{/required}}{{^required}}
+    if body.IsSet() { request.Body = body }
+{{/required}}
+{{/bodyParams}}
+{{#hasFormParams}}
+    request.Form = map[string]any{}
+{{#formParams}}{{#required}}
+    request.Form["{{baseName}}"] = params.{{vendorExtensions.x-export-param-name}}
+{{/required}}{{^required}}
+    if value, ok := params.{{vendorExtensions.x-export-param-name}}.Get(); ok { request.Form["{{baseName}}"] = value }
+{{/required}}{{/formParams}}
+{{/hasFormParams}}
+{{#vendorExtensions.x-sdk-stream}}
+    return r.transport.OpenStream(ctx, request, options...)
+{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{#returnType}}
+    var result {{{.}}}
+    err := r.transport.Do(ctx, request, &result, options...)
+    return result, err
+{{/returnType}}{{^returnType}}
+    return r.transport.Do(ctx, request, nil, options...)
+{{/returnType}}{{/vendorExtensions.x-sdk-stream}}
+}
+{{#vendorExtensions.x-sdk-pagination}}
+
+func (r *{{classname}}) Iter(ctx context.Context{{#pathParams}}{{^vendorExtensions.x-sdk-bound}}, {{paramName}} {{{dataType}}}{{/vendorExtensions.x-sdk-bound}}{{/pathParams}}, params {{vendorExtensions.x-go-params}}, options ...RequestOption) *Iterator[{{vendorExtensions.x-go-item-type}}] {
+    return newIterator(params.Cursor, func(cursor string) ([]{{vendorExtensions.x-go-item-type}}, string, error) {
+        params.Cursor = cursor
+        page, err := r.{{vendorExtensions.x-sdk-method-go}}(ctx{{#pathParams}}{{^vendorExtensions.x-sdk-bound}}, {{paramName}}{{/vendorExtensions.x-sdk-bound}}{{/pathParams}}, params, options...)
+        if err != nil { return nil, "", err }
+        next, _ := page.NextCursor.Get()
+        return page.Items, next, nil
+    })
+}
+{{/vendorExtensions.x-sdk-pagination}}
+{{/operation}}
+{{/operations}}
