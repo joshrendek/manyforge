@@ -48,6 +48,8 @@ HANDOFF.md
 # SDK tooling and package build outputs
 /tools/sdk/.venv/
 /tools/sdk/.cache/
+/tools/sdk/release/node_modules/
+/tools/sdk/smoke/typescript/node_modules/
 **/__pycache__/
 /sdk/python/.venv/
 /sdk/python/dist/

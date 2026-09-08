@@ -226,6 +226,13 @@ Coordinated publication is intentionally non-atomic and completes only after all
 four registries resolve the reviewed artifacts. Namespace ownership, a release
 GitHub App, trusted publishers and Central signing credentials are prerequisites.
 
+Java staging signs and checksums the retained tested JAR/POM/sources/Javadoc,
+then assembles Central's documented ZIP layout locally. The pinned Central
+plugin 0.11.0 does not implement a safe bundle-only `skipPublishing` path, so its
+publish/deploy goal is never invoked during staging. Only the source-bound
+`sdk-publish.yml` workflow uploads the retained bundle. Rehearsal keys/bundles are
+marked and rejected by publication validation.
+
 MIT licenses in `sdk/`, `api/` and `tools/sdk/` cover those SDK-owned deliverables,
 not unrelated backend/frontend code or third-party assets. Modified upstream
 generator templates retain their own notices.

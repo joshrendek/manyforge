@@ -7674,6 +7674,41 @@ paths:
       x-manyforge-method: delete
       tags:
       - MailingKeys
+  /api/v1/businesses/{id}/mailing/setup:
+    get:
+      operationId: getMailingSetup
+      summary: Read provider-scoped outbound mailing prerequisites
+      description: Requires mailing.read and remains mounted when the mailing master key is absent. Reports configuration readiness without credential values or configured hosts; ready is not proof of connectivity or delivery. SMTP and DKIM checks apply only to the relay provider.
+      tags: [MailingSetup]
+      x-manyforge-audience: management
+      x-manyforge-resource: mailing.setup
+      x-manyforge-method: get
+      x-manyforge-business-param: id
+      parameters:
+      - $ref: '#/components/parameters/BusinessID'
+      responses:
+        '200':
+          description: Provider-specific configuration checks
+          headers:
+            Cache-Control:
+              schema: {type: string}
+              description: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailingSetup'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown business or missing mailing.read permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/businesses/{id}/mailing/sending-profile:
     parameters:
     - $ref: '#/components/parameters/BusinessID'
@@ -13031,6 +13066,36 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    MailingSetup:
+      type: object
+      required: [checks]
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/MailingSetupCheck'
+    MailingSetupCheck:
+      type: object
+      required: [id, label, status, message, action, required_for]
+      properties:
+        id:
+          type: string
+          enum: [outbound_enabled, mailing_key, public_url, smtp_relay, dkim_key]
+        label:
+          type: string
+        status:
+          type: string
+          enum: [ready, blocked]
+        message:
+          type: string
+        action:
+          type: string
+          description: Corrective action for an instance administrator; empty for ready checks.
+        required_for:
+          type: array
+          items:
+            type: string
+            enum: [relay, resend, ses]
     AICredential:
       type: object
       description: Non-secret view of a stored AI-provider credential. The API key is write-only and never returned.

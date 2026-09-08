@@ -17,6 +17,10 @@ const pair = await bootstrap.auth.login({ body: { email: fixture.email, password
 const client = new ManyForge({ baseUrl: fixture.base_url, session: Session.fromTokenPair(pair) });
 const business = await client.businesses.create({ body: { name: `TypeScript SDK ${uid}` } });
 const scope = client.business(business.id);
+const setupChecks = new Map((await scope.mailing.setup.get()).checks.map(item => [item.id, item]));
+assert.equal(setupChecks.get('outbound_enabled').status, 'blocked');
+assert.deepEqual(setupChecks.get('smtp_relay').requiredFor, ['relay']);
+checks.push('real-provider-scoped-outbound-setup');
 const contact = await scope.contacts.create({ body: { primaryEmail: `sdk-${uid}@example.test`, displayName: 'Original SDK contact' } });
 assert.equal(contact.tenantRootId, business.tenantRootId);
 assert.equal((await scope.contacts.get({ cid: contact.id })).primaryEmail, contact.primaryEmail);

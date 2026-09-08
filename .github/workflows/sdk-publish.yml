@@ -1,0 +1,133 @@
+name: SDK Publish
+
+on:
+  push:
+    tags: ['sdk-v*']
+  workflow_dispatch:
+    inputs:
+      tag_ref:
+        description: Original refs/tags/sdk-vYYYY.M.N (select that same tag as the run ref)
+        required: true
+        type: string
+
+# A tag-bound dispatch and tag push share one durable candidate, not a new build.
+concurrency:
+  group: sdk-publish-${{ inputs.tag_ref || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'joshrendek/manyforge' && startsWith(github.ref, 'refs/tags/sdk-v') && (github.event_name == 'push' || inputs.tag_ref == github.ref)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: sdk-release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SDK_RELEASE_READY: ${{ vars.SDK_RELEASE_READY }}
+      RELEASE_TAG: ${{ github.ref }}
+      SOURCE_SHA: ${{ github.sha }}
+      RETAINED: ${{ github.workspace }}/retained-sdk
+    steps:
+      - name: Require publication authorization
+        env:
+          APP_ID: ${{ vars.SDK_RELEASE_APP_ID }}
+        run: |
+          test "$SDK_RELEASE_READY" = true || { echo 'Blocked: exact namespace ownership, sdk-release trusted publishers and Central credentials require maintainer setup.'; exit 1; }
+          test -n "$APP_ID" || { echo 'Blocked: repository-scoped SDK Release GitHub App is not configured.'; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          # No registry-url: do not install a NODE_AUTH_TOKEN-based npmrc in OIDC mode.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Install publisher tooling only (never build SDKs)
+        run: |
+          python -m pip install PyYAML==6.0.2
+          npm install --global npm@11.5.2 --ignore-scripts
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ vars.SDK_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDK_RELEASE_APP_PRIVATE_KEY }}
+          owner: joshrendek
+          repositories: manyforge
+      - name: Download retained assets and validate every digest, version and source identity
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python tools/sdk/publish.py prepare --tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" --directory "$RETAINED"
+      - name: Record wheel attempt only immediately before its trusted publishing action
+        id: prepare_wheel
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python tools/sdk/publish.py prepare-python --distribution wheel --tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" --directory "$RETAINED"
+      - name: Publish retained wheel through trusted publishing
+        if: steps.prepare_wheel.outputs.python_missing == 'true'
+        id: python_wheel
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: retained-sdk/python-wheel-upload/
+          skip-existing: false
+          attestations: true
+      - name: Record sdist attempt only after the wheel action succeeds or is unnecessary
+        if: steps.python_wheel.outcome != 'failure'
+        id: prepare_sdist
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python tools/sdk/publish.py prepare-python --distribution sdist --tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" --directory "$RETAINED"
+      - name: Publish retained sdist through trusted publishing
+        if: steps.prepare_sdist.outputs.python_missing == 'true'
+        id: python_sdist
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: retained-sdk/python-sdist-upload/
+          skip-existing: false
+          attestations: true
+      - name: Publish exact npm tarball (OIDC unless explicitly authorized first-tag bootstrap)
+        id: typescript
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SDK_NPM_BOOTSTRAP_TAG: ${{ vars.SDK_NPM_BOOTSTRAP_TAG }}
+          SDK_NPM_BOOTSTRAP_TOKEN: ${{ secrets.SDK_NPM_BOOTSTRAP_TOKEN }}
+        run: python tools/sdk/publish.py publish --target typescript --tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" --directory "$RETAINED"
+      - name: Publish retained signed Central bundle or resume deployment
+        id: java
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          # Optional maintainer recovery receipt from Portal/original run after a
+          # lost upload response; validated against this candidate's deployment name.
+          SDK_CENTRAL_RECOVERY_DEPLOYMENT_ID: ${{ vars.SDK_CENTRAL_RECOVERY_DEPLOYMENT_ID }}
+        run: python tools/sdk/publish.py publish --target java --tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" --directory "$RETAINED"
+      - name: Create or verify immutable mapped Go module tag
+        id: go
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python tools/sdk/publish.py publish --target go --tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" --directory "$RETAINED"
+      - name: Verify public bytes, fresh anonymous consumers and npm provenance before completion
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python tools/sdk/publish.py finalize --tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" --directory "$RETAINED"

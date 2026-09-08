@@ -184,6 +184,8 @@ export * from './MagicLinkRequest.js';
 export * from './MailingEventRateLimitError.js';
 export * from './MailingIngressError.js';
 export * from './MailingList.js';
+export * from './MailingSetup.js';
+export * from './MailingSetupCheck.js';
 export * from './Member.js';
 export * from './MemberPage.js';
 export * from './MemberUpdateRequest.js';

@@ -1102,6 +1102,14 @@
     "audience": "management",
     "businessParam": "id",
     "method": "get",
+    "operationId": "getMailingSetup",
+    "pagination": null,
+    "resource": "mailing.setup"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "get",
     "operationId": "getMailingSubscriber",
     "pagination": null,
     "resource": "mailing.subscribers"

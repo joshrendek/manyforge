@@ -6399,6 +6399,71 @@
         ],
         "type": "object"
       },
+      "MailingSetup": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/MailingSetupCheck"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "checks"
+        ],
+        "type": "object"
+      },
+      "MailingSetupCheck": {
+        "properties": {
+          "action": {
+            "description": "Corrective action for an instance administrator; empty for ready checks.",
+            "type": "string"
+          },
+          "id": {
+            "enum": [
+              "outbound_enabled",
+              "mailing_key",
+              "public_url",
+              "smtp_relay",
+              "dkim_key"
+            ],
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "required_for": {
+            "items": {
+              "enum": [
+                "relay",
+                "resend",
+                "ses"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "blocked"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "status",
+          "message",
+          "action",
+          "required_for"
+        ],
+        "type": "object"
+      },
       "Member": {
         "properties": {
           "display_name": {
@@ -22149,6 +22214,65 @@
         "x-manyforge-resource": "mailing.sendingProfile"
       }
     },
+    "/api/v1/businesses/{id}/mailing/setup": {
+      "get": {
+        "description": "Requires mailing.read and remains mounted when the mailing master key is absent. Reports configuration readiness without credential values or configured hosts; ready is not proof of connectivity or delivery. SMTP and DKIM checks apply only to the relay provider.",
+        "operationId": "getMailingSetup",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BusinessID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailingSetup"
+                }
+              }
+            },
+            "description": "Provider-specific configuration checks",
+            "headers": {
+              "Cache-Control": {
+                "description": "private, no-store",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unknown business or missing mailing.read permission"
+          }
+        },
+        "summary": "Read provider-scoped outbound mailing prerequisites",
+        "tags": [
+          "MailingSetup"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "get",
+        "x-manyforge-resource": "mailing.setup"
+      }
+    },
     "/api/v1/businesses/{id}/mailing/suppressions": {
       "get": {
         "operationId": "listMailingSuppressions",
@@ -28270,6 +28394,9 @@
     },
     {
       "name": "MailingSendingProfile"
+    },
+    {
+      "name": "MailingSetup"
     },
     {
       "name": "MailingSubscribers"

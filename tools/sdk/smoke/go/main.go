@@ -71,6 +71,17 @@ func main() {
 	assertions := []string{}
 	business := must(client.Businesses.Create(ctx, mf.BusinessCreateRequest{Name: "Go installed consumer"}))
 	scope := client.Business(business.Id)
+	setup := must(scope.Mailing.Setup.Get(ctx))
+	setupBlocked, relayOnly := false, false
+	for _, item := range setup.Checks {
+		if item.Id == "outbound_enabled" {
+			setupBlocked = item.Status == "blocked"
+		}
+		if item.Id == "smtp_relay" {
+			relayOnly = len(item.RequiredFor) == 1 && item.RequiredFor[0] == "relay"
+		}
+	}
+	check(setupBlocked && relayOnly, "provider-scoped outbound setup")
 	contact := must(scope.Contacts.Create(ctx, mf.CreateContact{PrimaryEmail: "sdk-go-contact@example.test", DisplayName: mf.Value("Before")}))
 	read := must(scope.Contacts.Get(ctx, contact.Id))
 	check(read.PrimaryEmail == contact.PrimaryEmail, "contact read")

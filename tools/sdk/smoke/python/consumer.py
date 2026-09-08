@@ -381,6 +381,10 @@ def main():
     with ManyForge(base_url=fixture["base_url"], session=session) as client, ManyForge(base_url=fixture["base_url"], session=Session.from_token_pair(other_pair)) as other:
         business = client.businesses.create(business_create_request=BusinessCreateRequest(name="Python SDK smoke"))
         scope = client.business(business.id)
+        setup_checks = {item.id.value: item for item in scope.mailing.setup.get().checks}
+        assert setup_checks["outbound_enabled"].status.value == "blocked"
+        assert setup_checks["smtp_relay"].required_for == ["relay"]
+        assertions.append("real-provider-scoped-outbound-setup")
         first = scope.contacts.create(create_contact=CreateContact(primary_email="python-contact@example.invalid", display_name="Original"))
         read_back = scope.contacts.get(cid=first.id)
         assert read_back.id == first.id and read_back.primary_email == "python-contact@example.invalid"

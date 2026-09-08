@@ -38,6 +38,7 @@ export * from './BusinessMailingEventsApi.js';
 export * from './BusinessMailingKeysApi.js';
 export * from './BusinessMailingListsApi.js';
 export * from './BusinessMailingSendingProfileApi.js';
+export * from './BusinessMailingSetupApi.js';
 export * from './BusinessMailingSubscribersApi.js';
 export * from './BusinessMailingSuppressionsApi.js';
 export * from './BusinessMailingTemplatesApi.js';

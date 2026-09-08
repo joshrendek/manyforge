@@ -1,0 +1,149 @@
+name: SDK release coordinator
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      now:
+        description: 'Explicit timezone-aware UTC clock for zero-write dry-run (for example 2026-09-08T00:00:00Z)'
+        required: true
+        type: string
+
+concurrency:
+  group: sdk-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  reconcile:
+    if: >-
+      github.repository == 'joshrendek/manyforge' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'master' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: sdk-release
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+    env:
+      SDK_RELEASE_READY: ${{ vars.SDK_RELEASE_READY }}
+      SDK_RELEASE_APP_ID: ${{ vars.SDK_RELEASE_APP_ID }}
+      SDK_RELEASE_APP_SLUG: ${{ vars.SDK_RELEASE_APP_SLUG }}
+    steps:
+      - name: Check external release prerequisites before App writes
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          APP_KEY_PRESENT: ${{ secrets.SDK_RELEASE_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$SDK_RELEASE_READY" != true || -z "$SDK_RELEASE_APP_ID" || -z "$SDK_RELEASE_APP_SLUG" || "$APP_KEY_PRESENT" != true ]]; then
+            echo 'SDK release blocked: verify exact PyPI manyforge, npm @manyforge and Central com.manyforge ownership; configure sdk-publish.yml/sdk-release trusted publishers, SDK_RELEASE_READY, App ID/slug/private key. No public tags or uploads attempted.' >&2
+            exit 1
+          fi
+      - name: Repository-scoped release App
+        if: github.event_name != 'workflow_dispatch'
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SDK_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDK_RELEASE_APP_PRIVATE_KEY }}
+          owner: joshrendek
+          repositories: manyforge
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.9.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tools/sdk/release/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          overwrite-settings: false
+      - name: Install frozen release tooling
+        run: |
+          uv sync --frozen --project tools/sdk --python 3.11
+          npm ci --prefix tools/sdk/release --ignore-scripts --no-audit --no-fund
+      - name: Configure App-only Git pushes
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: gh auth setup-git
+      - name: Read-only explicit-clock rehearsal
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPLICIT_UTC: ${{ inputs.now }}
+        run: tools/sdk/.venv/bin/python tools/sdk/release.py dry-run --now "$EXPLICIT_UTC" --plan "$RUNNER_TEMP/sdk-release-plan.json"
+      - name: Reconcile all persistent candidates before allocating
+        if: github.event_name != 'workflow_dispatch'
+        id: plan
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: tools/sdk/.venv/bin/python tools/sdk/release.py plan --plan "$RUNNER_TEMP/sdk-release-plan.json"
+      - name: Install real browser smoke prerequisites
+        if: steps.plan.outputs.action == 'resume'
+        run: |
+          npm ci --ignore-scripts --prefix tools/sdk/smoke/typescript
+          node tools/sdk/smoke/typescript/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Stage exact reviewed SHA or recover immutable retained bytes
+        if: steps.plan.outputs.action == 'resume'
+        id: stage
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: tools/sdk/.venv/bin/python tools/sdk/release.py stage --plan "$RUNNER_TEMP/sdk-release-plan.json" --output "$RUNNER_TEMP/sdk-release-stage"
+      - name: Retain complete staging before any draft asset upload
+        if: steps.stage.outputs.upload_required == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.plan.outputs.artifact_name }}
+          path: ${{ runner.temp }}/sdk-release-stage/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+          overwrite: false
+      - name: Renew repository App token after long-running consumer verification
+        if: steps.plan.outputs.action == 'resume'
+        id: finalize-app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SDK_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SDK_RELEASE_APP_PRIVATE_KEY }}
+          owner: joshrendek
+          repositories: manyforge
+      - name: Verify retained bytes, fill missing draft assets, tag original SHA
+        if: steps.plan.outputs.action == 'resume'
+        env:
+          GH_TOKEN: ${{ steps.finalize-app.outputs.token }}
+        run: tools/sdk/.venv/bin/python tools/sdk/release.py finalize --plan "$RUNNER_TEMP/sdk-release-plan.json" --output "$RUNNER_TEMP/sdk-release-stage"

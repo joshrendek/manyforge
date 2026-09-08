@@ -1099,6 +1099,14 @@
     "pagination": null
   },
   {
+    "operationId": "getMailingSetup",
+    "resource": "mailing.setup",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
     "operationId": "getMailingSubscriber",
     "resource": "mailing.subscribers",
     "method": "get",

@@ -42,6 +42,7 @@ from manyforge.api.business_mailing_events_resource import BusinessMailingEvents
 from manyforge.api.business_mailing_keys_resource import BusinessMailingKeysResource, AsyncBusinessMailingKeysResource
 from manyforge.api.business_mailing_lists_resource import BusinessMailingListsResource, AsyncBusinessMailingListsResource
 from manyforge.api.business_mailing_sending_profile_resource import BusinessMailingSendingProfileResource, AsyncBusinessMailingSendingProfileResource
+from manyforge.api.business_mailing_setup_resource import BusinessMailingSetupResource, AsyncBusinessMailingSetupResource
 from manyforge.api.business_mailing_subscribers_resource import BusinessMailingSubscribersResource, AsyncBusinessMailingSubscribersResource
 from manyforge.api.business_mailing_suppressions_resource import BusinessMailingSuppressionsResource, AsyncBusinessMailingSuppressionsResource
 from manyforge.api.business_mailing_templates_resource import BusinessMailingTemplatesResource, AsyncBusinessMailingTemplatesResource
@@ -229,6 +230,11 @@ class BusinessMailingListsScope(BusinessMailingListsResource):
         self._bindings = MappingProxyType(dict(bindings or {}))
 
 class BusinessMailingSendingProfileScope(BusinessMailingSendingProfileResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class BusinessMailingSetupScope(BusinessMailingSetupResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
@@ -578,6 +584,10 @@ class BusinessMailingScope(object):
     @property
     def sending_profile(self) -> BusinessMailingSendingProfileScope:
         return BusinessMailingSendingProfileScope(self._transport, self._bindings)
+
+    @property
+    def setup(self) -> BusinessMailingSetupScope:
+        return BusinessMailingSetupScope(self._transport, self._bindings)
 
     @property
     def subscribers(self) -> BusinessMailingSubscribersScope:
@@ -952,6 +962,11 @@ class AsyncBusinessMailingSendingProfileScope(AsyncBusinessMailingSendingProfile
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class AsyncBusinessMailingSetupScope(AsyncBusinessMailingSetupResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class AsyncBusinessMailingSubscribersScope(AsyncBusinessMailingSubscribersResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -1297,6 +1312,10 @@ class AsyncBusinessMailingScope(object):
     @property
     def sending_profile(self) -> AsyncBusinessMailingSendingProfileScope:
         return AsyncBusinessMailingSendingProfileScope(self._transport, self._bindings)
+
+    @property
+    def setup(self) -> AsyncBusinessMailingSetupScope:
+        return AsyncBusinessMailingSetupScope(self._transport, self._bindings)
 
     @property
     def subscribers(self) -> AsyncBusinessMailingSubscribersScope:

@@ -77,6 +77,11 @@ public final class Consumer {
         try (ManyForgeClient client = client(base, owner)) {
             var business = client.businesses().create(RootBusinessesCreateParams.builder().businessCreateRequest(new BusinessCreateRequest().name("Java SDK smoke")).build());
             var scope = client.business(business.getId());
+            var setup = scope.mailing().setup().get();
+            check(setup.getChecks().stream().anyMatch(item -> "outbound_enabled".equals(item.getId().getValue()) && "blocked".equals(item.getStatus().getValue())), "outbound setup disabled prerequisite");
+            var relayCheck = setup.getChecks().stream().filter(item -> "smtp_relay".equals(item.getId().getValue())).findFirst().orElseThrow();
+            check(relayCheck.getRequiredFor().size() == 1 && "relay".equals(relayCheck.getRequiredFor().get(0).getValue()), "relay-only SMTP prerequisite");
+            passed("real_provider_scoped_outbound_setup");
             var contact = scope.contacts().create(BusinessContactsCreateParams.builder().createContact(new CreateContact().primaryEmail("java-contact@example.invalid").displayName("Before")).build());
             var readContact = scope.contacts().get(BusinessContactsGetParams.builder().cid(contact.getId()).build());
             check(readContact.getPrimaryEmail().equals("java-contact@example.invalid"), "contact primary email");

@@ -335,6 +335,7 @@ public final class Resources {
     private final BusinessMailingKeys keys;
     private final BusinessMailingLists lists;
     private final BusinessMailingSendingProfile sendingProfile;
+    private final BusinessMailingSetup setup;
     private final BusinessMailingSubscribers subscribers;
     private final BusinessMailingSuppressions suppressions;
     private final BusinessMailingTemplates templates;
@@ -346,6 +347,7 @@ public final class Resources {
       this.keys = new BusinessMailingKeys(transport, binding);
       this.lists = new BusinessMailingLists(transport, binding);
       this.sendingProfile = new BusinessMailingSendingProfile(transport, binding);
+      this.setup = new BusinessMailingSetup(transport, binding);
       this.subscribers = new BusinessMailingSubscribers(transport, binding);
       this.suppressions = new BusinessMailingSuppressions(transport, binding);
       this.templates = new BusinessMailingTemplates(transport, binding);
@@ -356,6 +358,7 @@ public final class Resources {
     public BusinessMailingKeys keys() { return keys; }
     public BusinessMailingLists lists() { return lists; }
     public BusinessMailingSendingProfile sendingProfile() { return sendingProfile; }
+    public BusinessMailingSetup setup() { return setup; }
     public BusinessMailingSubscribers subscribers() { return subscribers; }
     public BusinessMailingSuppressions suppressions() { return suppressions; }
     public BusinessMailingTemplates templates() { return templates; }
@@ -395,6 +398,11 @@ public final class Resources {
   }
   public static class BusinessMailingSendingProfile extends BusinessMailingSendingProfileResource {
     public BusinessMailingSendingProfile(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class BusinessMailingSetup extends BusinessMailingSetupResource {
+    public BusinessMailingSetup(Transport transport, String binding) {
       super(transport, binding);
     }
   }
