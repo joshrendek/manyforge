@@ -7,9 +7,7 @@ metadata:
 data:
   MANYFORGE_ADDR: {{ .Values.addr | quote }}
   MANYFORGE_ENVIRONMENT: {{ .Values.environment | quote }}
-  MANYFORGE_OUTBOUND_MAIL_DISABLED: {{ .Values.outboundMailDisabled | quote }}
-  MANYFORGE_SMTP_HOST: {{ .Values.smtp.host | quote }}
-  MANYFORGE_SMTP_PORT: {{ .Values.smtp.port | quote }}
+  {{- include "manyforge.outboundMailConfig" . | nindent 2 }}
   MANYFORGE_JWT_ISSUER: {{ .Values.jwt.issuer | quote }}
   MANYFORGE_JWT_AUDIENCE: {{ .Values.jwt.audience | quote }}
   # Single source of truth for the active signing kid: .Values.jwt.activeKid.

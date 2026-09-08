@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/manyforge/manyforge/internal/platform/config"
 	"github.com/manyforge/manyforge/internal/platform/notify"
+	"github.com/manyforge/manyforge/internal/platform/outbound"
 )
 
 func auditSource(t *testing.T, path string) string {
@@ -37,14 +39,22 @@ func auditSection(t *testing.T, source, startMarker, endMarker string) string {
 // MF-MAIL-DELIVERY-003 requires the development log sink to emit only
 // non-capability metadata and to report that no provider accepted the message.
 func TestMFMailDelivery003UnsetSMTPIsNonAcceptingAndCapabilitySafe(t *testing.T) {
-	mainSource := auditSource(t, "../../cmd/manyforge/main.go")
-	if !strings.Contains(mainSource, "cfg.Environment == \"development\"") {
-		t.Fatal("SMTP-unset fallback is not restricted to explicit development mode")
+	var productionLogs bytes.Buffer
+	production, err := outbound.New(context.Background(), config.Config{
+		Environment: "production", OutboundProvider: "smtp",
+	}, outbound.Dependencies{Logger: slog.New(slog.NewTextHandler(&productionLogs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Sender.Send(context.Background(), notify.Mail{
+		To: "recipient@example.test", BodyText: "audit-capability-token",
+	}); err == nil || productionLogs.Len() != 0 {
+		t.Fatal("production without SMTP must reject without a development logging fallback")
 	}
 
 	var logs bytes.Buffer
 	sender := notify.LogSender{Logger: slog.New(slog.NewTextHandler(&logs, nil))}
-	err := sender.Send(context.Background(), notify.Mail{
+	err = sender.Send(context.Background(), notify.Mail{
 		From: "news@example.test", To: "recipient@example.test", Subject: "Campaign",
 		BodyText: "unsubscribe: https://manyforge.test/m/u/audit-capability-token",
 	})

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -23,7 +25,7 @@ var mailingMessageDomainPattern = regexp.MustCompile(`^[a-z0-9.-]+$`)
 
 // Config holds runtime configuration.
 type Config struct {
-	Environment      string        // development or production; production requires SMTP unless outbound mail is explicitly disabled
+	Environment      string        // development or production
 	Addr             string        // HTTP listen address
 	DatabaseURL      string        // PostgreSQL DSN for the app role (non-superuser, non-BYPASSRLS)
 	AccessTokenTTL   time.Duration // EdDSA access-token lifetime
@@ -62,8 +64,19 @@ type Config struct {
 	OutboundRateRPS   float64 // per-business outbound send refill rate (FR-020)
 	OutboundRateBurst float64 // per-business outbound send burst allowance
 
-	// OutboundMailDisabled rejects every outgoing message, even with a configured relay.
+	// OutboundMailDisabled rejects every outgoing message, regardless of provider.
 	OutboundMailDisabled bool
+
+	// Shared support and transactional mail use one selected provider. Business
+	// mailing profiles remain independent overrides, never account-mail defaults.
+	OutboundProvider            string // smtp (default), resend, or ses
+	OutboundFromEmail           string // bare system sender address; required for API providers and transactional SMTP
+	OutboundFromName            string // optional system sender display name
+	OutboundResendAPIKey        string
+	OutboundSESRegion           string
+	OutboundSESAccessKeyID      string
+	OutboundSESSecretAccessKey  string
+	OutboundSESConfigurationSet string // optional SES configuration set
 
 	// Optional shared SMTP relay for support mail and the mailing relay provider.
 	// API providers (Resend and SES) do not require this transport.
@@ -322,13 +335,27 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_RATE_BURST: %w", err)
 	}
 
-	// The global switch applies to all providers; SMTP is an independent transport.
+	// Validate only the selected shared provider's prerequisites.
 	if cfg.OutboundMailDisabled, err = envBool("MANYFORGE_OUTBOUND_MAIL_DISABLED", false); err != nil {
-		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_MAIL_DISABLED: %w", err)
+		return Config{}, fmt.Errorf("MANYFORGE_OUTBOUND_MAIL_DISABLED: must be a boolean")
+	}
+	cfg.OutboundProvider = env("MANYFORGE_OUTBOUND_PROVIDER", "smtp")
+	cfg.OutboundFromEmail = os.Getenv("MANYFORGE_OUTBOUND_FROM_EMAIL")
+	cfg.OutboundFromName = os.Getenv("MANYFORGE_OUTBOUND_FROM_NAME")
+	cfg.OutboundResendAPIKey = os.Getenv("MANYFORGE_OUTBOUND_RESEND_API_KEY")
+	cfg.OutboundSESRegion = os.Getenv("MANYFORGE_OUTBOUND_SES_REGION")
+	cfg.OutboundSESAccessKeyID = os.Getenv("MANYFORGE_OUTBOUND_SES_ACCESS_KEY_ID")
+	cfg.OutboundSESSecretAccessKey = os.Getenv("MANYFORGE_OUTBOUND_SES_SECRET_ACCESS_KEY")
+	cfg.OutboundSESConfigurationSet = os.Getenv("MANYFORGE_OUTBOUND_SES_CONFIGURATION_SET")
+	if err := cfg.ValidateOutbound(); err != nil {
+		return Config{}, err
 	}
 	cfg.SMTPHost = strings.TrimSpace(os.Getenv("MANYFORGE_SMTP_HOST"))
-	if cfg.SMTPPort, err = envInt("MANYFORGE_SMTP_PORT", 587); err != nil {
-		return Config{}, fmt.Errorf("MANYFORGE_SMTP_PORT: %w", err)
+	cfg.SMTPPort = 587
+	if cfg.OutboundProvider == "smtp" && !cfg.OutboundMailDisabled {
+		if cfg.SMTPPort, err = envInt("MANYFORGE_SMTP_PORT", 587); err != nil {
+			return Config{}, fmt.Errorf("MANYFORGE_SMTP_PORT: must be an integer")
+		}
 	}
 	cfg.SMTPUser = os.Getenv("MANYFORGE_SMTP_USER")
 	cfg.SMTPPass = os.Getenv("MANYFORGE_SMTP_PASS")
@@ -508,6 +535,48 @@ func Load() (Config, error) {
 	cfg.SandboxPullSecret = env("MANYFORGE_SANDBOX_PULL_SECRET", "ghcr-auth")
 
 	return cfg, nil
+}
+
+// ValidateOutbound checks the selected shared provider without disclosing input values.
+// Disabled mail still rejects unknown providers and unsafe configured identities.
+func (cfg Config) ValidateOutbound() error {
+	switch cfg.OutboundProvider {
+	case "", "smtp", "resend", "ses":
+	default:
+		return fmt.Errorf("MANYFORGE_OUTBOUND_PROVIDER: must be smtp, resend, or ses")
+	}
+	if strings.IndexFunc(cfg.OutboundFromName, unicode.IsControl) >= 0 {
+		return fmt.Errorf("MANYFORGE_OUTBOUND_FROM_NAME: must not contain control characters")
+	}
+	if cfg.OutboundFromEmail != "" {
+		address, err := mail.ParseAddress(cfg.OutboundFromEmail)
+		if err != nil || strings.IndexFunc(cfg.OutboundFromEmail, unicode.IsControl) >= 0 ||
+			address.Name != "" || address.Address != cfg.OutboundFromEmail {
+			return fmt.Errorf("MANYFORGE_OUTBOUND_FROM_EMAIL: must be a bare email address without control characters")
+		}
+	}
+	if cfg.OutboundMailDisabled || cfg.OutboundProvider == "" || cfg.OutboundProvider == "smtp" {
+		return nil
+	}
+	if cfg.OutboundFromEmail == "" {
+		return fmt.Errorf("MANYFORGE_OUTBOUND_FROM_EMAIL: required for the selected API provider")
+	}
+	if cfg.OutboundProvider == "resend" {
+		if strings.TrimSpace(cfg.OutboundResendAPIKey) == "" {
+			return fmt.Errorf("MANYFORGE_OUTBOUND_RESEND_API_KEY: required for resend")
+		}
+		return nil
+	}
+	if strings.TrimSpace(cfg.OutboundSESRegion) == "" {
+		return fmt.Errorf("MANYFORGE_OUTBOUND_SES_REGION: required for ses")
+	}
+	if strings.TrimSpace(cfg.OutboundSESAccessKeyID) == "" {
+		return fmt.Errorf("MANYFORGE_OUTBOUND_SES_ACCESS_KEY_ID: required for ses")
+	}
+	if strings.TrimSpace(cfg.OutboundSESSecretAccessKey) == "" {
+		return fmt.Errorf("MANYFORGE_OUTBOUND_SES_SECRET_ACCESS_KEY: required for ses")
+	}
+	return nil
 }
 
 // defaultSandboxMode picks "kube" when KUBERNETES_SERVICE_HOST is present (the pod

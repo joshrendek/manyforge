@@ -114,20 +114,7 @@ spec:
                   name: {{ .Values.secrets.masterKeys.secretName }}
                   key: {{ .Values.secrets.masterKeys.mailingKey }}
                   optional: true
-            # SMTP environment/host/port come from the ConfigMap above. Only optional
-            # SMTP credentials and inbound signing secrets are sourced here.
-            {{- if .Values.secrets.smtp.secretName }}
-            - name: MANYFORGE_SMTP_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.smtp.secretName }}
-                  key: {{ .Values.secrets.smtp.userKey }}
-            - name: MANYFORGE_SMTP_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.smtp.secretName }}
-                  key: {{ .Values.secrets.smtp.passKey }}
-            {{- end }}
+            {{- include "manyforge.outboundMailSecretEnv" . | nindent 12 }}
             {{- if .Values.secrets.inbound.secretName }}
             - name: MANYFORGE_INBOUND_WEBHOOK_SECRET
               valueFrom:
