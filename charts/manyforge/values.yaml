@@ -152,6 +152,10 @@ trustedProxyCidr: ""
 #     redirect URLs baked into the App manifest (e.g. https://hub.bluescripts.net).
 instanceOperatorPrincipal: ""
 publicBaseURL: ""
+# Exact customer-site origins allowed to use public feedback/telemetry in browsers.
+# Empty disables this CORS policy; nonempty requires publicBaseURL above.
+# Example: ["https://app.customer.example"]
+publicIngestAllowedOrigins: []
 
 mailing:
   rateRPS: 10
