@@ -36,7 +36,7 @@ type SES struct {
 	FromEmail         string
 	ConfigurationSet  string
 	ExpectedAccountID string
-	ExpectedTopicARN   string
+	ExpectedTopicARN  string
 }
 
 type sesRequestError struct {
@@ -50,13 +50,13 @@ func (e *sesRequestError) Unwrap() error { return e.cause }
 // NewSES validates static configuration and constructs an AWS SES v2 client.
 func NewSES(ctx context.Context, profile Profile, endpoint sesv2.EndpointResolverV2, httpClient sesv2.HTTPClient) (*SES, error) {
 	if strings.TrimSpace(profile.SESRegion) == "" {
-		return nil, fmt.Errorf("provider: SES region is required")
+		return nil, ErrSESConfiguration
 	}
 	if strings.TrimSpace(profile.SESAccessKeyID) == "" || strings.TrimSpace(profile.SESSecretAccessKey) == "" {
-		return nil, fmt.Errorf("provider: SES static credentials are required")
+		return nil, ErrCredentials
 	}
 	if strings.TrimSpace(profile.SESConfigurationSet) == "" {
-		return nil, fmt.Errorf("provider: SES configuration set is required")
+		return nil, ErrSESConfiguration
 	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(profile.SESRegion),
@@ -77,7 +77,7 @@ func NewSES(ctx context.Context, profile Profile, endpoint sesv2.EndpointResolve
 		parts := strings.SplitN(topicARN, ":", 6)
 		if len(parts) != 6 || parts[2] != "sns" || parts[3] != profile.SESRegion ||
 			len(parts[4]) != 12 {
-			return nil, fmt.Errorf("provider: SES SNS topic ARN does not match the configured region and account")
+			return nil, ErrSESFeedback
 		}
 		expectedAccountID = parts[4]
 		expectedTopicARN = topicARN
@@ -112,11 +112,11 @@ func (s *SES) Send(ctx context.Context, mail notify.Mail) (SendResult, error) {
 func (s *SES) Verify(ctx context.Context) error {
 	address, err := mail.ParseAddress(s.FromEmail)
 	if err != nil {
-		return fmt.Errorf("provider: SES from address: %w", err)
+		return fmt.Errorf("%w: %w", ErrSenderAddress, err)
 	}
 	at := strings.LastIndex(address.Address, "@")
 	if at < 0 {
-		return fmt.Errorf("provider: SES from address has no domain")
+		return ErrSenderAddress
 	}
 	domain := address.Address[at+1:]
 	identity, err := s.Client.GetEmailIdentity(ctx, &sesv2.GetEmailIdentityInput{EmailIdentity: aws.String(domain)})
@@ -124,19 +124,19 @@ func (s *SES) Verify(ctx context.Context) error {
 		return &sesRequestError{operation: "identity verification", cause: err}
 	}
 	if !identity.VerifiedForSendingStatus {
-		return fmt.Errorf("provider: SES identity %s is not verified for sending", domain)
+		return ErrSenderDomain
 	}
 	account, err := s.Client.GetAccount(ctx, &sesv2.GetAccountInput{})
 	if err != nil {
 		return &sesRequestError{operation: "account verification", cause: err}
 	}
 	if !account.SendingEnabled {
-		return fmt.Errorf("provider: SES account sending is disabled")
+		return ErrSESSendingDisabled
 	}
 	if _, err := s.Client.GetConfigurationSet(ctx, &sesv2.GetConfigurationSetInput{
 		ConfigurationSetName: aws.String(s.ConfigurationSet),
 	}); err != nil {
-		return &sesRequestError{operation: "configuration-set verification", cause: err}
+		return fmt.Errorf("%w: %w", ErrSESConfiguration, &sesRequestError{operation: "configuration-set verification", cause: err})
 	}
 	if s.ExpectedTopicARN != "" {
 		destinations, err := s.Client.GetConfigurationSetEventDestinations(ctx,
@@ -144,10 +144,10 @@ func (s *SES) Verify(ctx context.Context) error {
 				ConfigurationSetName: aws.String(s.ConfigurationSet),
 			})
 		if err != nil {
-			return &sesRequestError{operation: "event-destination verification", cause: err}
+			return fmt.Errorf("%w: %w", ErrSESFeedback, &sesRequestError{operation: "event-destination verification", cause: err})
 		}
 		if !hasRequiredSESFeedbackDestination(destinations.EventDestinations, s.ExpectedTopicARN) {
-			return fmt.Errorf("provider: SES configuration set has no enabled bounce and complaint destination for the configured SNS topic")
+			return ErrSESFeedback
 		}
 	}
 	if s.ExpectedAccountID != "" {
@@ -156,7 +156,7 @@ func (s *SES) Verify(ctx context.Context) error {
 			return &sesRequestError{operation: "account identity verification", cause: err}
 		}
 		if aws.ToString(identity.Account) != s.ExpectedAccountID {
-			return fmt.Errorf("provider: SES SNS topic account does not match the credential account")
+			return ErrSESFeedback
 		}
 	}
 	return nil

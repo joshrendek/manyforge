@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
@@ -30,7 +29,7 @@ func (f *Factory) Build(ctx context.Context, profile Profile) (Deliverer, error)
 	switch profile.Mode {
 	case "relay":
 		if profile.EmailDomainID == nil {
-			return nil, fmt.Errorf("provider: relay profile has no email domain")
+			return nil, ErrSenderDomain
 		}
 		return &Relay{DB: f.DB, Sealer: f.DKIMSealer, Sender: f.RelaySender, EmailDomainID: *profile.EmailDomainID}, nil
 	case "resend":
@@ -38,6 +37,6 @@ func (f *Factory) Build(ctx context.Context, profile Profile) (Deliverer, error)
 	case "ses":
 		return NewSES(ctx, profile, f.SESEndpointResolver, f.HTTPClient)
 	default:
-		return nil, fmt.Errorf("provider: unknown mode %q", profile.Mode)
+		return nil, ErrProviderConfiguration
 	}
 }

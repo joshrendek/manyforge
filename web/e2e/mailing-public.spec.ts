@@ -20,6 +20,9 @@ const profile = {
   status: 'unverified',
   last_verified_at: null,
   verify_error: null,
+  feedback_status: 'pending',
+  feedback_error: null,
+  feedback_confirmed_at: null,
   has_credentials: true,
   created_at: '2026-08-28T10:00:00Z',
   updated_at: '2026-08-28T10:00:00Z',
@@ -62,6 +65,22 @@ async function shellRoutes(page: import('@playwright/test').Page) {
 test('sending profile keeps credentials write-only and supports verification', async ({ page }) => {
   await shellRoutes(page);
   let currentProfile = { ...profile };
+  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/setup`, (route) =>
+    route.fulfill({
+      json: {
+        checks: ['outbound_enabled', 'mailing_key', 'public_url', 'smtp_relay', 'dkim_key'].map(
+          (id) => ({
+            id,
+            label: id,
+            status: 'ready',
+            message: 'Available',
+            action: '',
+            required_for: ['relay', 'resend', 'ses'],
+          }),
+        ),
+      },
+    }),
+  );
   await page.route(`**/api/v1/businesses/${BUSINESS_ID}/email-domains**`, (route) =>
     route.fulfill({ json: { items: [], next_cursor: null } }),
   );
@@ -76,15 +95,21 @@ test('sending profile keeps credentials write-only and supports verification', a
     }
     return route.fulfill({ json: currentProfile });
   });
-  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/sending-profile/verify`, (route) => {
-    currentProfile = { ...currentProfile, status: 'verified' };
-    return route.fulfill({ json: currentProfile });
-  });
+  await page.route(
+    `**/api/v1/businesses/${BUSINESS_ID}/mailing/sending-profile/verify`,
+    (route) => {
+      currentProfile = { ...currentProfile, status: 'verified', feedback_status: 'ready' };
+      return route.fulfill({ json: currentProfile });
+    },
+  );
 
   await page.goto('/mailing/sending');
+  await page.getByRole('button', { name: '2. Provider', exact: true }).click();
   await expect(page.getByTestId('sending-credentials-stored')).toBeVisible();
   await expect(page.getByTestId('sending-resend-key')).toHaveCount(0);
+  await page.getByRole('button', { name: '3. Sender & DNS', exact: true }).click();
   await expect(page.getByTestId('sending-postal-warning')).toBeVisible();
+  await page.getByRole('button', { name: '4. Feedback', exact: true }).click();
   await page.getByTestId('sending-profile-verify').click();
   await expect(page.getByTestId('sending-profile-status')).toContainText('Verified');
 });

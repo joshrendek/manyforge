@@ -43,7 +43,7 @@ func TestSendingProfileRequiresFeedbackConfiguration(t *testing.T) {
 			name: "SES configuration set",
 			in: SendingProfileInput{
 				Mode: "ses", FromEmail: "sender@example.com", FromName: "Sender",
-				SES: &SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+				SES:       &SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
 				SESRegion: &region, SNSTopicARN: &topic,
 			},
 		},
@@ -51,7 +51,7 @@ func TestSendingProfileRequiresFeedbackConfiguration(t *testing.T) {
 			name: "SES topic region binding",
 			in: SendingProfileInput{
 				Mode: "ses", FromEmail: "sender@example.com", FromName: "Sender",
-				SES: &SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
+				SES:       &SESCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"},
 				SESRegion: &region, SESConfigurationSet: &configSet, SNSTopicARN: &topic,
 			},
 		},
@@ -71,14 +71,6 @@ func TestResendCredentialsDoNotAcceptTenantWebhookSecret(t *testing.T) {
 		t.Fatal("tenant-facing Resend credentials expose a webhook secret")
 	}
 }
-
-func TestProviderVerificationMessageIsGeneric(t *testing.T) {
-	got := providerVerificationMessage(errors.New("upstream response includes tenant secret"))
-	if got != "provider verification failed" {
-		t.Fatalf("providerVerificationMessage = %q", got)
-	}
-}
-
 
 func TestSafeProviderMessageTruncatesByRune(t *testing.T) {
 	message := strings.Repeat("é", 501)

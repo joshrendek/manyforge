@@ -26,6 +26,9 @@ const profile = {
   status: 'verified',
   last_verified_at: '2026-08-30T12:00:00Z',
   verify_error: null,
+  feedback_status: 'ready',
+  feedback_error: null,
+  feedback_confirmed_at: '2026-08-30T12:00:00Z',
   has_credentials: true,
   created_at: '2026-08-30T12:00:00Z',
   updated_at: '2026-08-30T12:00:00Z',
@@ -126,12 +129,15 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
     }
     return route.fulfill({ json: { items: [], next_cursor: null } });
   });
-  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}`, (route) => {
-    if (route.request().method() === 'PATCH') {
-      campaign = { ...campaign, ...(route.request().postDataJSON() as typeof campaign) };
-    }
-    return route.fulfill({ json: campaign });
-  });
+  await page.route(
+    `**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}`,
+    (route) => {
+      if (route.request().method() === 'PATCH') {
+        campaign = { ...campaign, ...(route.request().postDataJSON() as typeof campaign) };
+      }
+      return route.fulfill({ json: campaign });
+    },
+  );
   await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/preview`, (route) => {
     const body = route.request().postDataJSON() as { body_markdown: string };
     return route.fulfill({
@@ -141,15 +147,21 @@ test('campaigns: create, preview, guard edits, test, and confirm send', async ({
       },
     });
   });
-  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/test-send`, (route) => {
-    testRecipients = (route.request().postDataJSON() as { to: string[] }).to;
-    return route.fulfill({ status: 204 });
-  });
-  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/send`, (route) => {
-    sendCount++;
-    campaign = { ...campaign, status: 'sending' };
-    return route.fulfill({ json: campaign });
-  });
+  await page.route(
+    `**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/test-send`,
+    (route) => {
+      testRecipients = (route.request().postDataJSON() as { to: string[] }).to;
+      return route.fulfill({ status: 204 });
+    },
+  );
+  await page.route(
+    `**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/send`,
+    (route) => {
+      sendCount++;
+      campaign = { ...campaign, status: 'sending' };
+      return route.fulfill({ json: campaign });
+    },
+  );
 
   await page.goto('/mailing/campaigns');
   await page.getByTestId('mailing-campaign-name').fill('September update');
@@ -227,41 +239,46 @@ test('campaigns: inspect stats and manage the suppression list through real navi
   await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns`, (route) =>
     route.fulfill({ json: { items: [sentCampaign], next_cursor: null } }),
   );
-  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}`, (route) =>
-    route.fulfill({ json: sentCampaign }),
+  await page.route(
+    `**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}`,
+    (route) => route.fulfill({ json: sentCampaign }),
   );
-  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/stats`, (route) =>
-    route.fulfill({
-      json: {
-        campaign: sentCampaign,
-        links: [{ url: 'https://example.com/docs', click_count: 30, unique_click_count: 24 }],
-      },
-    }),
+  await page.route(
+    `**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/stats`,
+    (route) =>
+      route.fulfill({
+        json: {
+          campaign: sentCampaign,
+          links: [{ url: 'https://example.com/docs', click_count: 30, unique_click_count: 24 }],
+        },
+      }),
   );
-  await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/deliveries**`, (route) =>
-    route.fulfill({
-      json: {
-        items: [
-          {
-            id: DELIVERY_ID,
-            campaign_id: CAMPAIGN_ID,
-            subscriber_id: SUBSCRIBER_ID,
-            email: 'ada@example.com',
-            status: 'delivered',
-            attempts: 1,
-            not_before: '2026-09-01T12:00:00Z',
-            lease_until: null,
-            message_id: 'message-1',
-            provider_message_id: 'provider-1',
-            opened_at: '2026-09-01T12:02:00Z',
-            first_clicked_at: '2026-09-01T12:03:00Z',
-            last_error: null,
-            created_at: '2026-09-01T12:00:00Z',
-          },
-        ],
-        next_cursor: null,
-      },
-    }),
+  await page.route(
+    `**/api/v1/businesses/${BUSINESS_ID}/mailing/campaigns/${CAMPAIGN_ID}/deliveries**`,
+    (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: DELIVERY_ID,
+              campaign_id: CAMPAIGN_ID,
+              subscriber_id: SUBSCRIBER_ID,
+              email: 'ada@example.com',
+              status: 'delivered',
+              attempts: 1,
+              not_before: '2026-09-01T12:00:00Z',
+              lease_until: null,
+              message_id: 'message-1',
+              provider_message_id: 'provider-1',
+              opened_at: '2026-09-01T12:02:00Z',
+              first_clicked_at: '2026-09-01T12:03:00Z',
+              last_error: null,
+              created_at: '2026-09-01T12:00:00Z',
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
   );
   await page.route(`**/api/v1/businesses/${BUSINESS_ID}/mailing/suppressions**`, (route) => {
     const method = route.request().method();
@@ -290,7 +307,9 @@ test('campaigns: inspect stats and manage the suppression list through real navi
   await page.getByTestId('mailing-campaign-open').click();
   await expect(page).toHaveURL(new RegExp(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}$`));
   await page.getByTestId('campaign-view-stats').click();
-  await expect(page).toHaveURL(new RegExp(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}/stats$`));
+  await expect(page).toHaveURL(
+    new RegExp(`/mailing/${BUSINESS_ID}/campaigns/${CAMPAIGN_ID}/stats$`),
+  );
   await expect(page.getByTestId('stat-delivered')).toHaveText('96');
   await expect(page.getByTestId('campaign-link-row')).toContainText('example.com/docs');
   await expect(page.getByTestId('campaign-delivery-row')).toContainText('ada@example.com');

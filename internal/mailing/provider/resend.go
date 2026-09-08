@@ -3,8 +3,8 @@ package provider
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -90,11 +90,11 @@ func (r *Resend) Send(ctx context.Context, mail notify.Mail) (SendResult, error)
 func (r *Resend) Verify(ctx context.Context) error {
 	address, err := mail.ParseAddress(r.FromEmail)
 	if err != nil {
-		return fmt.Errorf("provider: resend from address: %w", err)
+		return fmt.Errorf("%w: %w", ErrSenderAddress, err)
 	}
 	at := strings.LastIndex(address.Address, "@")
 	if at < 0 {
-		return fmt.Errorf("provider: resend from address has no domain")
+		return ErrSenderAddress
 	}
 	domain := strings.ToLower(address.Address[at+1:])
 	var response struct {
@@ -111,16 +111,16 @@ func (r *Resend) Verify(ctx context.Context) error {
 			if strings.EqualFold(candidate.Status, "verified") {
 				return nil
 			}
-			return fmt.Errorf("provider: resend domain %s is %s", domain, candidate.Status)
+			return ErrSenderDomain
 		}
 	}
-	return fmt.Errorf("provider: resend domain %s was not found", domain)
+	return ErrSenderDomain
 }
 
 func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string) (ResendWebhook, bool, error) {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
-		return ResendWebhook{}, false, fmt.Errorf("provider: resend webhook endpoint is required")
+		return ResendWebhook{}, false, ErrPublicURL
 	}
 	if webhook, found, err := r.reconcileWebhooks(ctx, endpoint, existingID); err != nil || found {
 		return webhook, false, err
@@ -144,7 +144,7 @@ func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string)
 	if createErr != nil {
 		return ResendWebhook{}, false, createErr
 	}
-	return ResendWebhook{}, false, fmt.Errorf("provider: resend created webhook was not visible during reconciliation")
+	return ResendWebhook{}, false, ErrResendWebhook
 }
 
 func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID string) (ResendWebhook, bool, error) {
@@ -156,7 +156,7 @@ func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID str
 		return ResendWebhook{}, false, err
 	}
 	if listed.HasMore || len(listed.Data) > 100 {
-		return ResendWebhook{}, false, fmt.Errorf("provider: resend webhook reconciliation exceeds the bounded page")
+		return ResendWebhook{}, false, ErrResendWebhookLimit
 	}
 	candidates := make([]resendWebhookResponse, 0, 1)
 	for _, summary := range listed.Data {

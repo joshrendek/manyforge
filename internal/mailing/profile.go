@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
+	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
@@ -26,12 +26,12 @@ var (
 )
 
 type resendOperationLease struct {
-	profileID    uuid.UUID
-	tenantRootID uuid.UUID
-	updatedAt    time.Time
-	token        uuid.UUID
-	apiKey       string
-	webhookID    string
+	profileID       uuid.UUID
+	tenantRootID    uuid.UUID
+	updatedAt       time.Time
+	token           uuid.UUID
+	apiKey          string
+	webhookID       string
 	cleanupRequired bool
 }
 
@@ -383,7 +383,7 @@ func (s *Service) cleanupResendWebhooks(ctx context.Context, lease resendOperati
 	if baseURL == "" {
 		return errors.New("mailing: public base URL is required for Resend webhook cleanup")
 	}
-	endpoint := baseURL + "/inbound/mailing/" + lease.profileID.String() + "/resend"
+	endpoint := baseURL + "/api/v1/inbound/mailing/" + lease.profileID.String() + "/resend"
 	type cleanupAttempt struct {
 		apiKey       string
 		requireMatch bool

@@ -96,6 +96,19 @@ export interface MailingImportResult {
   errors: Array<{ row: number; message: string }>;
 }
 
+export interface MailingSetupCheck {
+  id: string;
+  label: string;
+  status: 'ready' | 'blocked';
+  message: string;
+  action: string;
+  required_for: MailingSendingMode[];
+}
+
+export interface MailingSetup {
+  checks: MailingSetupCheck[];
+}
+
 export interface MailingSendingProfile {
   id: string;
   business_id: string;
@@ -112,6 +125,9 @@ export interface MailingSendingProfile {
   status: MailingSendingProfileStatus;
   last_verified_at: string | null;
   verify_error: string | null;
+  feedback_status: 'pending' | 'ready' | 'error';
+  feedback_error: string | null;
+  feedback_confirmed_at: string | null;
   has_credentials: boolean;
   created_at: string;
   updated_at: string;
@@ -124,7 +140,7 @@ export interface MailingSendingProfileInput {
   reply_to?: string | null;
   postal_address?: string | null;
   email_domain_id?: string | null;
-  resend?: { api_key: string; webhook_secret?: string };
+  resend?: { api_key: string };
   ses?: { access_key_id: string; secret_access_key: string };
   ses_region?: string | null;
   ses_configuration_set?: string | null;
@@ -263,9 +279,7 @@ export class MailingService {
   }
 
   getList(businessId: string, listId: string): Observable<MailingList> {
-    return this.http.get<MailingList>(
-      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}`,
-    );
+    return this.http.get<MailingList>(`${this.base(businessId)}/lists/${routeSegmentUUID(listId)}`);
   }
 
   createList(
@@ -287,9 +301,7 @@ export class MailingService {
   }
 
   archiveList(businessId: string, listId: string): Observable<void> {
-    return this.http.delete<void>(
-      `${this.base(businessId)}/lists/${routeSegmentUUID(listId)}`,
-    );
+    return this.http.delete<void>(`${this.base(businessId)}/lists/${routeSegmentUUID(listId)}`);
   }
 
   listSubscribers(
@@ -408,6 +420,10 @@ export class MailingService {
     );
   }
 
+  getSetup(businessId: string): Observable<MailingSetup> {
+    return this.http.get<MailingSetup>(`${this.base(businessId)}/setup`);
+  }
+
   getSendingProfile(businessId: string): Observable<MailingSendingProfile> {
     return this.http.get<MailingSendingProfile>(`${this.base(businessId)}/sending-profile`);
   }
@@ -441,7 +457,9 @@ export class MailingService {
 
   listAllTemplates(businessId: string): Observable<MailingTemplate[]> {
     return this.listTemplates(businessId).pipe(
-      expand((page) => (page.next_cursor ? this.listTemplates(businessId, page.next_cursor) : EMPTY)),
+      expand((page) =>
+        page.next_cursor ? this.listTemplates(businessId, page.next_cursor) : EMPTY,
+      ),
       map((page) => page.items ?? []),
       reduce((all, items) => [...all, ...items], [] as MailingTemplate[]),
     );
