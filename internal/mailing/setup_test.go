@@ -14,7 +14,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
 
-func TestSetupSeparatesProviderAndProductionPrerequisites(t *testing.T) {
+func TestSetupSeparatesRelayAndAPIPrerequisites(t *testing.T) {
 	cfg := SetupConfig{MailingKeyConfigured: true, PublicBaseURL: "https://private-origin.example.test"}
 	request := func() (SetupStatus, string) {
 		t.Helper()
@@ -42,24 +42,18 @@ func TestSetupSeparatesProviderAndProductionPrerequisites(t *testing.T) {
 		}
 		return out
 	}
-	development, body := request()
+	status, body := request()
 	if strings.Contains(body, cfg.PublicBaseURL) {
 		t.Fatal("setup exposes the configured origin instead of readiness")
 	}
-	if got := blockers(development, "resend"); len(got) != 0 {
-		t.Fatalf("BYO provider blocked by relay-only development requirements: %v", got)
-	}
-	if got := blockers(development, "relay"); !slices.Equal(got, []string{"smtp_relay", "dkim_key"}) {
-		t.Fatalf("relay blockers = %v", got)
-	}
-	cfg.Production = true
-	production, _ := request()
 	for _, mode := range []string{"resend", "ses"} {
-		if got := blockers(production, mode); !slices.Equal(got, []string{"smtp_relay"}) {
-			t.Fatalf("production %s can bypass shared SMTP prerequisite: %v", mode, got)
+		if got := blockers(status, mode); len(got) != 0 {
+			t.Fatalf("%s blocked by relay-only requirements: %v", mode, got)
 		}
 	}
-	cfg.SMTPConfigured = true
+	if got := blockers(status, "relay"); !slices.Equal(got, []string{"smtp_relay", "dkim_key"}) {
+		t.Fatalf("relay blockers = %v", got)
+	}
 	cfg.OutboundMailDisabled = true
 	disabled, _ := request()
 	if got := blockers(disabled, "resend"); !slices.Equal(got, []string{"outbound_enabled"}) {

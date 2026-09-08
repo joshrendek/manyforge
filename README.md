@@ -6,7 +6,7 @@ transfer, an append-only audit trail, and GDPR-aware account lifecycle. Spec 002
 adds a native support desk — inbound email (SMTP receiver + provider webhook),
 threaded tickets, replies, attachments, custom sending identities with DKIM, and
 a transactional outbox. Authorization is enforced by **two independent walls**
-(PostgreSQL Row-Level Security *and* service-layer ownership predicates), neither
+(PostgreSQL Row-Level Security _and_ service-layer ownership predicates), neither
 trusting the other.
 
 Go backend (`internal/` layout, `sqlc`, PostgreSQL 16 with RLS) + an Angular
@@ -160,30 +160,31 @@ and `.dev.vars*` are ignored. Homepage changes are independent of the Kubernetes
 image and do not require a database migration.
 
 The app release remains master → GHCR → Flux → migration hook → Deployment.
-Production requires a genuine outbound SMTP relay, including the migration hook's
-transport configuration, unless outbound mail is explicitly disabled with
-`MANYFORGE_OUTBOUND_MAIL_DISABLED=true` (Helm: `outboundMailDisabled: true`).
-Disabled sends are rejected without delivery or message-content/token logging;
-authentication emails and email invitations are unavailable. The default is
-`false`; see [mailing providers](docs/runbooks/mailing-providers.md) to enable mail.
-Never work around an unconfigured relay with development mode or a fake SMTP host.
+Resend and SES mailing profiles use their HTTPS APIs and do not require SMTP.
+The shared SMTP configuration is only needed for support mail and the ManyForge
+relay provider; without it, those deliveries are rejected rather than logged or
+reported as sent. Production startup and migrations support API-only deployments.
+`MANYFORGE_OUTBOUND_MAIL_DISABLED=true` (Helm: `outboundMailDisabled: true`) rejects
+every outgoing transport; the default is `false`. Account verification and
+invitation mail use a separate transactional adapter and are not automatically
+routed through business mailing profiles. See [mailing providers](docs/runbooks/mailing-providers.md).
 
 ## Layout
 
-| Path | What |
-|------|------|
-| `cmd/manyforge` | Entry point: config, DB, router wiring, graceful shutdown |
-| `internal/account` | Identity & auth: signup, login, refresh, lifecycle, auth flows |
-| `internal/tenancy` | Business hierarchy, membership, ownership transfer, audit read |
-| `internal/authz` | RBAC permission resolution (roles, inherited grants) |
-| `internal/invitations` | Invite / accept flows |
-| `internal/inbox` | Inbound ingestion: SMTP receiver + webhook adapter, recipient resolve, thread/dedupe, bounce intake |
-| `internal/ticketing` | Tickets, messages, requesters, tags, replies, internal notes, triage, custom email-domain identity |
-| `internal/platform/*` | Cross-cutting: `db`, `auth`, `audit`, `httpx`, `errs`, `config`, `mailer`, `ratelimit`, `netsafe`, `observability`, `events` (SL-C), `notify` (SL-D), `blob` (SL-E) |
-| `migrations/` | Forward-only SQL migrations (source of truth for the live DB) |
-| `db/schema.sql`, `db/query/` | sqlc inputs (tables-only schema mirror + queries) |
-| `web/` | Angular 21 dashboard (+ Playwright e2e in `web/e2e/`) |
-| `landing/` | Static homepage and Cloudflare Workers asset deployment |
+| Path                         | What                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd/manyforge`              | Entry point: config, DB, router wiring, graceful shutdown                                                                                                           |
+| `internal/account`           | Identity & auth: signup, login, refresh, lifecycle, auth flows                                                                                                      |
+| `internal/tenancy`           | Business hierarchy, membership, ownership transfer, audit read                                                                                                      |
+| `internal/authz`             | RBAC permission resolution (roles, inherited grants)                                                                                                                |
+| `internal/invitations`       | Invite / accept flows                                                                                                                                               |
+| `internal/inbox`             | Inbound ingestion: SMTP receiver + webhook adapter, recipient resolve, thread/dedupe, bounce intake                                                                 |
+| `internal/ticketing`         | Tickets, messages, requesters, tags, replies, internal notes, triage, custom email-domain identity                                                                  |
+| `internal/platform/*`        | Cross-cutting: `db`, `auth`, `audit`, `httpx`, `errs`, `config`, `mailer`, `ratelimit`, `netsafe`, `observability`, `events` (SL-C), `notify` (SL-D), `blob` (SL-E) |
+| `migrations/`                | Forward-only SQL migrations (source of truth for the live DB)                                                                                                       |
+| `db/schema.sql`, `db/query/` | sqlc inputs (tables-only schema mirror + queries)                                                                                                                   |
+| `web/`                       | Angular 21 dashboard (+ Playwright e2e in `web/e2e/`)                                                                                                               |
+| `landing/`                   | Static homepage and Cloudflare Workers asset deployment                                                                                                             |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map and the two-wall
 authorization model, and `specs/001-tenant-foundation/` for the spec, plan,

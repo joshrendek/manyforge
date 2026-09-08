@@ -10,10 +10,8 @@ import (
 )
 
 // SetupConfig describes deployment prerequisites, never credential values.
-// SMTP remains a prerequisite for every provider in production because the
-// instance also sends authentication and support mail through its shared relay.
+// SMTP and its DKIM key are prerequisites only for the relay provider.
 type SetupConfig struct {
-	Production           bool
 	OutboundMailDisabled bool
 	MailingKeyConfigured bool
 	PublicBaseURL        string
@@ -43,10 +41,6 @@ type SetupHandler struct {
 func NewSetupHandler(cfg SetupConfig) *SetupHandler {
 	all := []string{"relay", "resend", "ses"}
 	relay := []string{"relay"}
-	smtpModes := relay
-	if cfg.Production {
-		smtpModes = all
-	}
 	publicURL, err := url.Parse(cfg.PublicBaseURL)
 	validPublicURL := err == nil && publicURL.Host != "" && (publicURL.Scheme == "http" || publicURL.Scheme == "https")
 	check := func(id, label string, ready bool, message, action string, modes []string) SetupCheck {
@@ -60,7 +54,7 @@ func NewSetupHandler(cfg SetupConfig) *SetupHandler {
 	return &SetupHandler{status: SetupStatus{Checks: []SetupCheck{
 		check("outbound_enabled", "Outbound mail enabled", !cfg.OutboundMailDisabled,
 			"The instance-wide outbound switch controls every provider, including Resend and SES.",
-			"Ask an instance administrator to configure a genuine SMTP relay, set MANYFORGE_OUTBOUND_MAIL_DISABLED=false (Helm: outboundMailDisabled: false), and roll out the release.", all),
+			"Ask an instance administrator to set MANYFORGE_OUTBOUND_MAIL_DISABLED=false (Helm: outboundMailDisabled: false) and roll out the release. Then configure and verify the selected provider.", all),
 		check("mailing_key", "Mailing encryption key configured", cfg.MailingKeyConfigured,
 			"Mailing credentials and tracking tokens require the instance mailing master key.",
 			"Ask an instance administrator to provision MANYFORGE_MAILING_MASTER_KEY through the secret manager and roll out the release. Restore an existing key rather than rotating it when recovering a deployment.", all),
@@ -68,8 +62,8 @@ func NewSetupHandler(cfg SetupConfig) *SetupHandler {
 			"Confirmation, unsubscribe, tracking, and provider webhooks require an absolute public HTTP(S) URL.",
 			"Ask an instance administrator to set MANYFORGE_PUBLIC_BASE_URL to the externally reachable application origin (Helm: publicBaseURL) and roll out the release.", all),
 		check("smtp_relay", "SMTP relay configured", cfg.SMTPConfigured,
-			"This checks relay configuration, not connectivity. Production requires a shared SMTP relay even when campaigns use another provider.",
-			"Ask an instance administrator to configure MANYFORGE_SMTP_HOST, MANYFORGE_SMTP_PORT, and any required SMTP credentials, then roll out the release. Use a real relay, not a placeholder host.", smtpModes),
+			"This checks relay configuration, not connectivity. SMTP is required only for the ManyForge relay; Resend and SES use their own HTTPS APIs.",
+			"To use the ManyForge relay, ask an instance administrator to configure MANYFORGE_SMTP_HOST, MANYFORGE_SMTP_PORT, and any required SMTP credentials, then roll out the release.", relay),
 		check("dkim_key", "Relay DKIM encryption key configured", cfg.DKIMKeyConfigured,
 			"The ManyForge relay requires a DKIM master key to open verified-domain signing keys.",
 			"Ask an instance administrator to provision MANYFORGE_DKIM_MASTER_KEY through the secret manager and roll out the release. Keep the existing key when recovering a deployment.", relay),
