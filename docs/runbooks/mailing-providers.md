@@ -1,8 +1,9 @@
 # Mailing provider operations
 
-ManyForge supports the platform SMTP relay, Resend, and Amazon SES v2. Provider
-credentials are sealed at rest with `MANYFORGE_MAILING_MASTER_KEY`; the plaintext
-key belongs in the deployment's secret manager and never in Helm values.
+ManyForge supports SMTP, Resend, and Amazon SES v2. Shared support/system transport
+credentials come from instance-managed Secrets. Business mailing-profile credentials
+are separately sealed at rest with `MANYFORGE_MAILING_MASTER_KEY`. Never commit
+credential values to Helm values or expose them in logs.
 
 ## SMTP relay versus provider APIs
 
@@ -11,12 +12,65 @@ credentials, a verified sender, and ready feedback, but **no SMTP host, port, or
 password**. SMTP and the instance DKIM key checks apply only to ManyForge relay.
 Production startup and migrations work without an SMTP host.
 
-The shared SMTP settings serve support mail and the ManyForge relay provider.
-If SMTP is absent, relay verification and delivery remain unavailable without
-blocking Resend or SES. Business mailing profiles do not configure system-wide
-account verification or invitation email. No production transactional adapter is
-currently configured, so those messages are rejected without logging tokens
-rather than being reported as delivered.
+Shared support, account-verification, password/email-change, and invitation mail
+use one selected instance transport: **SMTP OR Resend OR SES**. There is no
+automatic fallback to a different provider after a failure. API transports use
+the configured system From identity and preserve support Reply-To tokens,
+Message-ID, In-Reply-To, and References. SMTP support keeps its existing
+per-business identity and optional DKIM signing.
+
+Business mailing profiles remain independent. Their credentials are never
+implicitly used for tenant-less account emails.
+
+## Configure shared support and system mail
+
+Set `outboundMail.provider` to `smtp`, `resend`, or `ses`, and configure a verified
+system sender in `outboundMail.fromEmail` and optional `outboundMail.fromName`.
+The corresponding environment variables are `MANYFORGE_OUTBOUND_PROVIDER`,
+`MANYFORGE_OUTBOUND_FROM_EMAIL`, and `MANYFORGE_OUTBOUND_FROM_NAME`.
+
+| Selected provider | Required settings                                                       | Credential source                                                 |
+| ----------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `smtp`            | `smtp.host`, `smtp.port`; system From for account/invitation mail       | Optional `secrets.smtp` username/password                         |
+| `resend`          | System From and a sending API key                                       | `secrets.outboundMail.secretName`, key `resend-api-key`           |
+| `ses`             | System From, `outboundMail.sesRegion`, static AWS access key and secret | Same Secret, keys `ses-access-key-id` and `ses-secret-access-key` |
+
+For shared SES delivery, `outboundMail.sesConfigurationSet` is optional. SNS
+subscription and campaign-feedback verification are not prerequisites for these
+system/support messages. The business campaign setup below retains its separate
+feedback requirements.
+
+For example, after provisioning an instance-owned Resend Secret in the release
+namespace, configure the HelmRelease:
+
+```yaml
+outboundMailDisabled: false
+outboundMail:
+  provider: resend
+  fromEmail: accounts@example.com
+  fromName: ManyForge
+secrets:
+  outboundMail:
+    secretName: manyforge-system-mail
+```
+
+The example address must be replaced with an identity verified in your provider
+account. The Secret's `resend-api-key` must be provisioned before the rollout.
+No SMTP fields are needed. Only the selected provider's Secret references are
+mounted; the application and pre-install/pre-upgrade migration Job receive the
+same configuration.
+
+Direct environment equivalents for API credentials are
+`MANYFORGE_OUTBOUND_RESEND_API_KEY`, or `MANYFORGE_OUTBOUND_SES_REGION`,
+`MANYFORGE_OUTBOUND_SES_ACCESS_KEY_ID`, and
+`MANYFORGE_OUTBOUND_SES_SECRET_ACCESS_KEY`. The optional SES set is
+`MANYFORGE_OUTBOUND_SES_CONFIGURATION_SET`.
+
+With shared SMTP selected but no SMTP host, production shared mail is unavailable;
+business API mailing profiles can still operate. Without a system From address,
+SMTP support can operate but account/invitation mail is rejected. Production
+never substitutes message/token logging for delivery. Global suppression is
+checked before sending, and rejected messages are not acknowledged as sent.
 
 ## Guided sending setup
 
@@ -62,9 +116,9 @@ disabled. This switch is separate from the mailing master key setting below.
 
 To enable outbound mail, remove the environment flag or set it to `false` (Helm:
 remove the override or set `outboundMailDisabled: false`) and roll out the release.
-Configure and verify the selected tenant provider as described below. Resend and
-SES require no shared SMTP settings; configure a genuine SMTP relay only if using
-the ManyForge relay or shared support-mail transport.
+Configure the chosen shared provider above and any independent business mailing
+profiles below. Resend and SES require no SMTP settings. Use SMTP settings only
+when selecting the SMTP transport or the business ManyForge relay option.
 
 ## Platform relay
 
