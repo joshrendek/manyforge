@@ -32,16 +32,14 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           env:
             # Pre-install hooks cannot rely on the release ConfigMap existing yet.
-            # Supply the production transport boundary directly so config.Load can
-            # dispatch the migrate subcommand without weakening fail-closed startup.
+            # Render the same mail settings and selected Secret refs as the app.
             - name: MANYFORGE_ENVIRONMENT
               value: {{ .Values.environment | quote }}
-            - name: MANYFORGE_OUTBOUND_MAIL_DISABLED
-              value: {{ .Values.outboundMailDisabled | quote }}
-            - name: MANYFORGE_SMTP_HOST
-              value: {{ .Values.smtp.host | quote }}
-            - name: MANYFORGE_SMTP_PORT
-              value: {{ .Values.smtp.port | quote }}
+            {{- range $name, $value := (include "manyforge.outboundMailConfig" . | fromYaml) }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- include "manyforge.outboundMailSecretEnv" . | nindent 12 }}
             # Owner-role DSN — distinct from the app's non-superuser DSN
             # (secrets.database) since migrations need DDL privileges the app
             # role should not have.

@@ -49,11 +49,11 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/events"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
-	"github.com/manyforge/manyforge/internal/platform/mailer"
 	"github.com/manyforge/manyforge/internal/platform/mcp"
 	"github.com/manyforge/manyforge/internal/platform/netsafe"
 	"github.com/manyforge/manyforge/internal/platform/notify"
 	"github.com/manyforge/manyforge/internal/platform/observability"
+	"github.com/manyforge/manyforge/internal/platform/outbound"
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 	"github.com/manyforge/manyforge/internal/platform/timeseries"
@@ -85,15 +85,6 @@ func newAnalyticsPublicHandler(
 		CloudflareSourceRanges:       cloudflareSources,
 		TrustCloudflareCountryHeader: cfg.TrustCFIPCountry,
 	}
-}
-
-// Business mailing profiles do not provide a system-wide transactional identity.
-// Without a production account-mail adapter, reject rather than log secret tokens.
-func newAccountMailer(cfg config.Config, logger *slog.Logger) mailer.Mailer {
-	if cfg.Environment == "development" && !cfg.OutboundMailDisabled {
-		return mailer.LogMailer{Logger: logger}
-	}
-	return mailer.DisabledMailer{}
 }
 
 func main() {
@@ -158,17 +149,39 @@ func main() {
 		logger.Warn("using ephemeral dev JWT keys; access tokens are invalid across restarts")
 	}
 
-	accountMailer := newAccountMailer(cfg, logger)
-	if cfg.Environment == "production" && !cfg.OutboundMailDisabled {
-		logger.Warn("transactional account mail has no production transport; messages will be rejected")
+	var systemDKIM *notify.DKIMConfig
+	if cfg.OutboundProvider == "smtp" && cfg.SMTPHost != "" && !cfg.OutboundMailDisabled {
+		systemDKIM, err = dkimConfigFromCfg(cfg)
+		if err != nil {
+			logger.Error("parse system DKIM key", "err", err)
+			os.Exit(1)
+		}
+	}
+	sharedMail, err := outbound.New(ctx, cfg, outbound.Dependencies{
+		Logger: logger, Suppression: notify.DBSuppression{DB: database},
+		DKIM: systemDKIM, HTTPClient: &http.Client{Timeout: 30 * time.Second},
+	})
+	if err != nil {
+		logger.Error("initialize shared outbound mail", "err", err)
+		os.Exit(1)
+	}
+	if cfg.OutboundMailDisabled {
+		logger.Warn("outbound mail explicitly disabled; all sends will be rejected")
+	} else if cfg.OutboundProvider == "smtp" && cfg.SMTPHost == "" {
+		logger.Warn("shared outbound SMTP is not configured; business API mailing profiles remain independent")
+	} else {
+		logger.Info("shared outbound mail transport selected", "provider", cfg.OutboundProvider)
+	}
+	if !cfg.OutboundMailDisabled && cfg.Environment == "production" && cfg.OutboundFromEmail == "" {
+		logger.Warn("MANYFORGE_OUTBOUND_FROM_EMAIL unset; account and invitation mail unavailable")
 	}
 	acctSvc := &account.Service{
-		DB: database, Ring: ring, Mailer: accountMailer,
+		DB: database, Ring: ring, Mailer: sharedMail.Mailer,
 		AccessTTL: cfg.AccessTokenTTL, RefreshTTL: 30 * 24 * time.Hour, TokenTTL: 24 * time.Hour,
 	}
 	tenSvc := &tenancy.Service{DB: database, Metrics: metrics}
 	authzSvc := &authz.Service{DB: database}
-	invSvc := &invitations.Service{DB: database, Mailer: accountMailer}
+	invSvc := &invitations.Service{DB: database, Mailer: sharedMail.Mailer}
 	// Outbound send rate limiter (FR-020): per-business AND per-recipient token
 	// buckets built from the SAME outbound knobs (MANYFORGE_OUTBOUND_RATE_*),
 	// mirroring how the ingest limiter is built from the ingest knobs. The
@@ -242,7 +255,7 @@ func main() {
 		OutboundMailDisabled: cfg.OutboundMailDisabled,
 		MailingKeyConfigured: len(cfg.MailingMasterKey) > 0,
 		PublicBaseURL:        cfg.PublicBaseURL,
-		SMTPConfigured:       cfg.SMTPHost != "",
+		SMTPConfigured:       cfg.OutboundProvider == "smtp" && cfg.SMTPHost != "",
 		DKIMKeyConfigured:    len(cfg.DKIMMasterKey) > 0,
 	})
 
@@ -675,32 +688,6 @@ func main() {
 	}, logger)
 	eventBus.Subscribe(events.TopicBusinessCreated, inboxProvisioner.Handle)
 
-	// Explicit disabling takes precedence over every configured transport.
-	// An absent shared relay does not disable independent Resend/SES providers.
-	var sender notify.Sender
-	if cfg.OutboundMailDisabled {
-		sender = notify.DisabledSender{}
-		logger.Warn("outbound mail explicitly disabled; all sends will be rejected")
-	} else if cfg.SMTPHost != "" {
-		dkimCfg, derr := dkimConfigFromCfg(cfg)
-		if derr != nil {
-			// A configured-but-unparseable DKIM key fails startup loudly rather than
-			// silently sending unsigned mail (deliverability/spoofing risk).
-			logger.Error("parse system DKIM key", "err", derr)
-			os.Exit(1)
-		}
-		sender = notify.NewSMTPSender(notify.SMTPConfig{
-			Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUser, Password: cfg.SMTPPass,
-			DKIM: dkimCfg, // nil ⇒ unsigned (the locked default when no DKIM key is configured)
-		}, notify.DBSuppression{DB: database})
-		logger.Info("outbound mail via SMTP relay", "host", cfg.SMTPHost, "dkim", dkimCfg != nil)
-	} else if cfg.Environment == "development" {
-		sender = notify.LogSender{Logger: logger, Suppression: notify.DBSuppression{DB: database}}
-		logger.Warn("MANYFORGE_SMTP_HOST unset; development mail sink is non-accepting")
-	} else {
-		sender = notify.DisabledSender{}
-		logger.Warn("MANYFORGE_SMTP_HOST unset; shared SMTP relay unavailable, API mailing providers remain available")
-	}
 	if mailingSvc != nil {
 		renderer, renderErr := mailrender.New()
 		if renderErr != nil {
@@ -712,8 +699,8 @@ func main() {
 			Disabled:   cfg.OutboundMailDisabled,
 			HTTPClient: &http.Client{Timeout: 30 * time.Second},
 		}
-		if cfg.SMTPHost != "" {
-			factory.RelaySender = sender
+		if cfg.OutboundProvider == "smtp" && cfg.SMTPHost != "" && !cfg.OutboundMailDisabled {
+			factory.RelaySender = sharedMail.Sender
 		}
 		mailingSvc.Providers = mailprovider.NewCache(factory.Build, 5*time.Minute)
 		mailingSvc.Renderer = renderer
@@ -746,12 +733,12 @@ func main() {
 			MaxNodesPerTick: 25, MaxNodeAttempts: 5, Logger: logger,
 		}
 	}
-	// Outbound identity selection shares the same DKIM sealer as IdentityService,
-	// so it can unseal a verified custom
-	// domain's private key and sign the reply as that domain. When the sealer is nil
-	// (no MANYFORGE_DKIM_MASTER_KEY), the send path simply never selects a custom
-	// identity and every reply goes out from the system address — the correct degrade.
-	sendSub := notify.SendSubscriber{Sender: sender, Logger: logger, Sealer: dkimSealer, Metrics: metrics}
+	// SMTP retains per-business custom DKIM identities. API transports use their
+	// configured verified From identity while retaining the support Reply-To token.
+	sendSub := notify.SendSubscriber{Sender: sharedMail.Sender, Logger: logger, Metrics: metrics}
+	if cfg.OutboundProvider == "smtp" {
+		sendSub.Sealer = dkimSealer
+	}
 	eventBus.Subscribe(events.TopicTicketReplied, sendSub.Handle)
 
 	// US5 redact: the attachment.purge worker deletes redacted attachment blobs out-of-

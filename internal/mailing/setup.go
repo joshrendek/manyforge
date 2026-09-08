@@ -63,7 +63,7 @@ func NewSetupHandler(cfg SetupConfig) *SetupHandler {
 			"Ask an instance administrator to set MANYFORGE_PUBLIC_BASE_URL to the externally reachable application origin (Helm: publicBaseURL) and roll out the release.", all),
 		check("smtp_relay", "SMTP relay configured", cfg.SMTPConfigured,
 			"This checks relay configuration, not connectivity. SMTP is required only for the ManyForge relay; Resend and SES use their own HTTPS APIs.",
-			"To use the ManyForge relay, ask an instance administrator to configure MANYFORGE_SMTP_HOST, MANYFORGE_SMTP_PORT, and any required SMTP credentials, then roll out the release.", relay),
+			"To use the ManyForge relay, ask an instance administrator to select MANYFORGE_OUTBOUND_PROVIDER=smtp (Helm: outboundMail.provider), configure MANYFORGE_SMTP_HOST, MANYFORGE_SMTP_PORT and any SMTP credentials, then roll out the release.", relay),
 		check("dkim_key", "Relay DKIM encryption key configured", cfg.DKIMKeyConfigured,
 			"The ManyForge relay requires a DKIM master key to open verified-domain signing keys.",
 			"Ask an instance administrator to provision MANYFORGE_DKIM_MASTER_KEY through the secret manager and roll out the release. Keep the existing key when recovering a deployment.", relay),

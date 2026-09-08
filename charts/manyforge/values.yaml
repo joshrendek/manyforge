@@ -105,8 +105,19 @@ environment: production
 # False permits configured providers; Resend/SES do not require an SMTP relay.
 outboundMailDisabled: false
 
-# Optional shared SMTP relay/support endpoint; Resend/SES use HTTPS instead.
-# Credentials remain in secrets.smtp below.
+# Select one shared backend for support and account/invitation mail.
+# API modes need only their credentials in secrets.outboundMail, never SMTP.
+# From identity is required for API modes and SMTP account/invitation mail.
+# Per-business mailing profiles remain independent overrides.
+outboundMail:
+  provider: smtp
+  fromEmail: ""
+  fromName: ""
+  sesRegion: ""
+  sesConfigurationSet: ""
+
+# Optional shared SMTP endpoint, used only when outboundMail.provider is smtp.
+# Credentials remain in secrets.smtp below; no host leaves shared mail unavailable.
 smtp:
   host: ""
   port: 587
@@ -255,6 +266,13 @@ secrets:
     secretName: ""
     userKey: user
     passKey: pass
+  # Shared API credentials, only referenced for the selected outboundMail.provider.
+  # Leave secretName empty for SMTP or explicitly disabled mail.
+  outboundMail:
+    secretName: ""
+    resendAPIKeyKey: resend-api-key
+    sesAccessKeyIDKey: ses-access-key-id
+    sesSecretAccessKeyKey: ses-secret-access-key
   inbound:
     secretName: ""
     webhookSecretKey: webhook-secret

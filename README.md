@@ -160,14 +160,16 @@ and `.dev.vars*` are ignored. Homepage changes are independent of the Kubernetes
 image and do not require a database migration.
 
 The app release remains master → GHCR → Flux → migration hook → Deployment.
-Resend and SES mailing profiles use their HTTPS APIs and do not require SMTP.
-The shared SMTP configuration is only needed for support mail and the ManyForge
-relay provider; without it, those deliveries are rejected rather than logged or
-reported as sent. Production startup and migrations support API-only deployments.
+Shared support and system email select **SMTP OR Resend OR SES** through
+`outboundMail.provider` (`MANYFORGE_OUTBOUND_PROVIDER`). Resend/SES use HTTPS APIs
+and require no SMTP configuration. Configure an instance-owned credential Secret
+and verified system From identity for account verification and invitations;
+business mailing-profile credentials are not reused for these tenant-less emails.
 `MANYFORGE_OUTBOUND_MAIL_DISABLED=true` (Helm: `outboundMailDisabled: true`) rejects
-every outgoing transport; the default is `false`. Account verification and
-invitation mail use a separate transactional adapter and are not automatically
-routed through business mailing profiles. See [mailing providers](docs/runbooks/mailing-providers.md).
+every outgoing transport; the default is `false`. No provider failure falls back
+to another backend or production token logging. See
+[mailing providers](docs/runbooks/mailing-providers.md) for the provider-specific
+Helm/environment settings and migration-Job parity.
 
 ## Layout
 
