@@ -416,6 +416,35 @@ func TestSuppressionRefusesBothPortsBeforeNetwork(t *testing.T) {
 	}
 }
 
+type suppressedMailbox string
+
+func (mailbox suppressedMailbox) IsSuppressed(_ context.Context, recipient string) (bool, error) {
+	return recipient == string(mailbox), nil
+}
+
+func TestDisplayNamesCannotBypassMailboxSuppression(t *testing.T) {
+	for _, mode := range []string{"smtp", "resend", "ses"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, deps, capture := localTransport(t, mode, false)
+			deps.Suppression = suppressedMailbox("blocked@example.net")
+			transport := newTransport(t, cfg, deps)
+			message := supportMessage()
+			message.To = "Recipient <blocked@example.net>"
+			if err := transport.Sender.Send(context.Background(), message); !errors.Is(err, notify.ErrSuppressed) {
+				t.Fatalf("display name bypassed support suppression: %v", err)
+			}
+			if err := transport.Mailer.Send(context.Background(), mailer.Message{
+				To: message.To, Body: secretMarker,
+			}); !errors.Is(err, notify.ErrSuppressed) || !errors.Is(err, mailer.ErrNotAccepted) {
+				t.Fatalf("display name bypassed transactional suppression: %v", err)
+			}
+			if capture.requests.Load() != 0 {
+				t.Fatal("suppressed mailbox reached a transport")
+			}
+		})
+	}
+}
+
 func TestDisabledPrecedesCredentialsAndEveryBackend(t *testing.T) {
 	for _, mode := range []string{"smtp", "resend", "ses"} {
 		t.Run(mode, func(t *testing.T) {

@@ -47,6 +47,9 @@ func New(ctx context.Context, cfg config.Config, deps Dependencies) (Transport, 
 	if cfg.OutboundMailDisabled {
 		return transport, nil
 	}
+	if deps.Suppression != nil {
+		deps.Suppression = mailboxSuppression{checker: deps.Suppression}
+	}
 	from := (&mail.Address{Name: cfg.OutboundFromName, Address: cfg.OutboundFromEmail}).String()
 	switch cfg.OutboundProvider {
 	case "", "smtp":
@@ -183,6 +186,20 @@ func (m developmentMailer) Send(ctx context.Context, message mailer.Message) err
 		return errors.Join(mailer.ErrNotAccepted, err)
 	}
 	return m.sink.Send(ctx, message)
+}
+
+// Suppression keys are mailbox addresses, not display-name header strings.
+// Apply the same normalization before every selected transport and dev sink.
+type mailboxSuppression struct {
+	checker mailer.SuppressionChecker
+}
+
+func (s mailboxSuppression) IsSuppressed(ctx context.Context, recipient string) (bool, error) {
+	address, err := mail.ParseAddress(recipient)
+	if err != nil {
+		return false, notify.ErrNotAccepted
+	}
+	return s.checker.IsSuppressed(ctx, address.Address)
 }
 
 func checkSuppression(ctx context.Context, checker mailer.SuppressionChecker, recipient string) error {
