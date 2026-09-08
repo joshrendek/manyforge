@@ -74,42 +74,16 @@ func TestMailingMasterKeyRejectsWrongLength(t *testing.T) {
 	}
 }
 
-func TestProductionRequiresOutboundSMTPTransport(t *testing.T) {
+func TestProductionAllowsAPIProvidersWithoutSMTP(t *testing.T) {
 	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
 	t.Setenv("MANYFORGE_SMTP_HOST", "")
-	for _, disabled := range []string{"", "false"} {
-		t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", disabled)
-		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MANYFORGE_SMTP_HOST") {
-			t.Fatalf("production without SMTP and disabled=%q: error = %v", disabled, err)
-		}
-	}
-}
-
-func TestDevelopmentAllowsMetadataOnlyMailSink(t *testing.T) {
-	t.Setenv("MANYFORGE_ENVIRONMENT", "development")
-	t.Setenv("MANYFORGE_SMTP_HOST", "")
-	t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", "")
+	t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", "false")
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("API-only production configuration rejected: %v", err)
 	}
-	if cfg.Environment != "development" {
-		t.Fatalf("Environment = %q, want development", cfg.Environment)
-	}
-}
-
-func TestProductionLoadsConfiguredOutboundSMTPTransport(t *testing.T) {
-	t.Setenv("MANYFORGE_ENVIRONMENT", "production")
-	t.Setenv("MANYFORGE_SMTP_HOST", "smtp.example.test")
-	t.Setenv("MANYFORGE_SMTP_PORT", "2525")
-	t.Setenv("MANYFORGE_OUTBOUND_MAIL_DISABLED", "")
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Environment != "production" || cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 {
-		t.Fatalf("production SMTP config = environment %q host %q port %d",
-			cfg.Environment, cfg.SMTPHost, cfg.SMTPPort)
+	if cfg.OutboundMailDisabled {
+		t.Fatal("missing SMTP must not disable independently configured API providers")
 	}
 }
 

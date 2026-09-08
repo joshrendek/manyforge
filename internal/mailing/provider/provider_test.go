@@ -119,8 +119,15 @@ func TestResendSendAndVerify(t *testing.T) {
 	}))
 	defer server.Close()
 
-	r := &Resend{APIKey: "re_test", FromEmail: "sender@example.com", BaseURL: server.URL, Client: server.Client()}
-	if err := r.Verify(context.Background()); err != nil {
+	// API delivery must work without a configured shared SMTP sender.
+	factory := &Factory{ResendBaseURL: server.URL, HTTPClient: server.Client()}
+	r, err := factory.Build(context.Background(), Profile{
+		Mode: "resend", ResendAPIKey: "re_test", FromEmail: "sender@example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.(Verifier).Verify(context.Background()); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 	result, err := r.Send(context.Background(), notify.Mail{

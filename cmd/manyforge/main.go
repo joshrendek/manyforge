@@ -87,6 +87,15 @@ func newAnalyticsPublicHandler(
 	}
 }
 
+// Business mailing profiles do not provide a system-wide transactional identity.
+// Without a production account-mail adapter, reject rather than log secret tokens.
+func newAccountMailer(cfg config.Config, logger *slog.Logger) mailer.Mailer {
+	if cfg.Environment == "development" && !cfg.OutboundMailDisabled {
+		return mailer.LogMailer{Logger: logger}
+	}
+	return mailer.DisabledMailer{}
+}
+
 func main() {
 	logger := observability.NewLogger(os.Getenv("LOG_LEVEL"))
 	slog.SetDefault(logger)
@@ -149,9 +158,9 @@ func main() {
 		logger.Warn("using ephemeral dev JWT keys; access tokens are invalid across restarts")
 	}
 
-	var accountMailer mailer.Mailer = mailer.LogMailer{Logger: logger}
-	if cfg.OutboundMailDisabled {
-		accountMailer = mailer.DisabledMailer{}
+	accountMailer := newAccountMailer(cfg, logger)
+	if cfg.Environment == "production" && !cfg.OutboundMailDisabled {
+		logger.Warn("transactional account mail has no production transport; messages will be rejected")
 	}
 	acctSvc := &account.Service{
 		DB: database, Ring: ring, Mailer: accountMailer,
@@ -230,7 +239,6 @@ func main() {
 	feedbackPublicH := feedback.NewPublicHandler(database, logger, feedbackSealer)
 
 	mailingSetupH := mailing.NewSetupHandler(mailing.SetupConfig{
-		Production:           cfg.Environment == "production",
 		OutboundMailDisabled: cfg.OutboundMailDisabled,
 		MailingKeyConfigured: len(cfg.MailingMasterKey) > 0,
 		PublicBaseURL:        cfg.PublicBaseURL,
@@ -668,7 +676,7 @@ func main() {
 	eventBus.Subscribe(events.TopicBusinessCreated, inboxProvisioner.Handle)
 
 	// Explicit disabling takes precedence over every configured transport.
-	// Otherwise SMTP is required in production; the development sink is non-accepting.
+	// An absent shared relay does not disable independent Resend/SES providers.
 	var sender notify.Sender
 	if cfg.OutboundMailDisabled {
 		sender = notify.DisabledSender{}
@@ -690,8 +698,8 @@ func main() {
 		sender = notify.LogSender{Logger: logger, Suppression: notify.DBSuppression{DB: database}}
 		logger.Warn("MANYFORGE_SMTP_HOST unset; development mail sink is non-accepting")
 	} else {
-		logger.Error("outbound SMTP transport is required outside development")
-		os.Exit(1)
+		sender = notify.DisabledSender{}
+		logger.Warn("MANYFORGE_SMTP_HOST unset; shared SMTP relay unavailable, API mailing providers remain available")
 	}
 	if mailingSvc != nil {
 		renderer, renderErr := mailrender.New()
@@ -700,9 +708,12 @@ func main() {
 			os.Exit(1)
 		}
 		factory := &mailprovider.Factory{
-			DB: database, DKIMSealer: dkimSealer, RelaySender: sender,
+			DB: database, DKIMSealer: dkimSealer,
 			Disabled:   cfg.OutboundMailDisabled,
 			HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		}
+		if cfg.SMTPHost != "" {
+			factory.RelaySender = sender
 		}
 		mailingSvc.Providers = mailprovider.NewCache(factory.Build, 5*time.Minute)
 		mailingSvc.Renderer = renderer
