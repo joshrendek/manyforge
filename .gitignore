@@ -1,8 +1,12 @@
 
-# Beads / Dolt files (added by bd init)
+# Task records live in a separate private store; local routing is never tracked.
 .dolt/
 *.db
 .beads-credential-key
+/.beads
+/.beads/
+**/.beads/
+/issues.jsonl
 
 # Local agent/session context (e.g. Codex session ids)
 .context/
