@@ -1,6 +1,6 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+This project uses **bd** (Beads) in a separately configured **private store**. Run `bd info` first and confirm it resolves that store.
 
 ## Quick Reference
 
@@ -9,8 +9,23 @@ bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
+bd dolt push          # Sync only to the configured private Beads remote
 ```
+
+## Private Tracking Requirements
+
+- Use `bd` for task tracking and persistent knowledge. Never commit issue records,
+  memories, operational receipts, database files, or personal notes to this repository.
+- The local `.beads/redirect` and `.beads/config.yaml` are ignored routing/safety
+  files, not project data. If private routing is missing, ask the operator to
+  configure it; do not initialize a new task database in the application checkout.
+- Keep `export.auto` and `export.git-add` disabled in application checkouts.
+  Do not install Beads hooks that export or stage task data.
+- Never run an export into the application repository. Commit JSONL snapshots and
+  native backups only from the private tracking checkout using its sync workflow.
+- Keep credentials out of task descriptions, even in the private store.
+- Do not merge pre-scrub history into this repository. Re-clone or rebase work
+  onto the sanitized history; an old merge can republish removed private data.
 
 ## Non-Interactive Shell Commands
 
@@ -36,49 +51,11 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
 ## Session Completion
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
+1. Record remaining work and completed tasks in the private Beads store.
+2. Run relevant quality gates when application code changes.
+3. Commit and push application changes only; confirm the application checkout is clean.
+4. Sync private task data separately from its private tracking checkout.
+5. Preserve other users' work, stashes, and branches during cleanup.
+6. Hand off verification results and any remaining blockers without private record dumps.
