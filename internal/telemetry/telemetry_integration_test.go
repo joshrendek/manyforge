@@ -66,7 +66,9 @@ func newEnv(t *testing.T) (context.Context, *env) {
 		Sealer: sealer,
 	}
 	r := chi.NewRouter()
-	r.Route("/api/v1", func(api chi.Router) { h.PublicRoutes(api) })
+	r.Route("/api/v1", func(api chi.Router) {
+		h.PublicRoutes(api, func(next http.Handler) http.Handler { return next })
+	})
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 

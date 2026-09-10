@@ -1,0 +1,7 @@
+{
+  "name": "manyforge-installed-consumer-smoke",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "dependencies": { "esbuild": "0.25.9", "playwright": "1.55.0" }
+}

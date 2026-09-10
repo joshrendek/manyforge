@@ -1,0 +1,51 @@
+{{>licenseInfo}}
+// Template derived from OpenAPI Generator 7.25.0 (Apache-2.0).
+import { convertModel, type JsonValue } from '../model-support.js';
+{{#models}}{{#model}}
+{{#vendorExtensions.x-ts-reference-union}}
+{{#oneOf}}
+import type { {{{.}}} } from './{{.}}{{importFileExtension}}';
+{{/oneOf}}
+{{/vendorExtensions.x-ts-reference-union}}
+{{^vendorExtensions.x-ts-reference-union}}
+{{#tsImports}}
+import type { {{{classname}}} } from './{{filename}}{{importFileExtension}}';
+{{/tsImports}}
+{{/vendorExtensions.x-ts-reference-union}}
+{{#isEnum}}
+export const {{classname}} = {
+{{#allowableValues}}{{#enumVars}}    {{{name}}}: {{{value}}},
+{{/enumVars}}{{/allowableValues}}
+} as const;
+export type {{classname}} = typeof {{classname}}[keyof typeof {{classname}}]{{#isString}} | (string & {}){{/isString}};
+{{/isEnum}}
+{{^isEnum}}
+{{#oneOf}}{{#-first}}export type {{classname}} = {{/-first}}{{{.}}}{{^-last}} | {{/-last}}{{#-last}};{{/-last}}{{/oneOf}}
+{{^oneOf}}
+{{#anyOf}}{{#-first}}export type {{classname}} = {{/-first}}{{{.}}}{{^-last}} | {{/-last}}{{#-last}};{{/-last}}{{/anyOf}}
+{{^anyOf}}
+export interface {{classname}} {{#parent}}extends {{{.}}} {{/parent}}{
+{{#vars}}
+    {{#isReadOnly}}readonly {{/isReadOnly}}{{name}}{{^required}}?{{/required}}: {{{datatypeWithEnum}}}{{#isNullable}} | null{{/isNullable}};
+{{/vars}}
+{{#additionalPropertiesType}}    [key: string]: {{#hasVars}}unknown{{/hasVars}}{{^hasVars}}{{{additionalPropertiesType}}}{{/hasVars}};
+{{/additionalPropertiesType}}
+}
+{{#vars}}{{#isEnum}}
+export const {{classname}}{{enumName}} = {
+{{#allowableValues}}{{#enumVars}}    {{{name}}}: {{{value}}},
+{{/enumVars}}{{/allowableValues}}
+} as const;
+export type {{classname}}{{enumName}} = typeof {{classname}}{{enumName}}[keyof typeof {{classname}}{{enumName}}]{{#isString}} | (string & {}){{/isString}};
+{{/isEnum}}{{/vars}}
+{{/anyOf}}{{/oneOf}}
+{{/isEnum}}
+
+export function {{classname}}FromJSON(value: unknown): {{classname}} {
+    return convertModel('{{name}}', value, 'decode') as {{classname}};
+}
+
+export function {{classname}}ToJSON(value: {{classname}}): JsonValue {
+    return convertModel('{{name}}', value, 'encode') as JsonValue;
+}
+{{/model}}{{/models}}

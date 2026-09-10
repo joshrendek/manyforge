@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "manyforge"
+version = "2026.9.1"
+description = "Typed ManyForge management and public integration SDK"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["pydantic==2.12.5", "httpx==0.28.1", "typing-extensions==4.15.0"]
+
+[project.urls]
+Repository = "https://github.com/joshrendek/manyforge"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/manyforge"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/pyproject.toml", "/LICENSE", "/operation-manifest.json"]

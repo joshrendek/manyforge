@@ -1,0 +1,22 @@
+{
+  "name": "@manyforge/sdk",
+  "version": "2026.9.1",
+  "description": "Typed ManyForge management and public ingestion SDK",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }, "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" } },
+    "./public": { "import": { "types": "./dist/public.d.ts", "default": "./dist/public.js" }, "require": { "types": "./dist/public.d.cts", "default": "./dist/public.cjs" } },
+    "./server": { "browser": null, "import": { "types": "./dist/server.d.ts", "default": "./dist/server.js" }, "require": { "types": "./dist/server.d.cts", "default": "./dist/server.cjs" } }
+  },
+  "files": ["dist", "LICENSE"],
+  "sideEffects": false,
+  "scripts": { "build": "tsup", "typecheck": "tsc --noEmit" },
+  "dependencies": { "lossless-json": "4.2.0" },
+  "devDependencies": { "@types/node": "22.18.6", "typescript": "5.9.3", "tsup": "8.5.0" },
+  "repository": { "type": "git", "url": "https://github.com/joshrendek/manyforge.git", "directory": "sdk/typescript" }
+}

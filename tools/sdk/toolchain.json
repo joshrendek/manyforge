@@ -1,0 +1,25 @@
+{
+  "openapi_generator": {
+    "version": "7.25.0",
+    "url": "https://github.com/OpenAPITools/openapi-generator/releases/download/v7.25.0/openapi-generator-cli-7.25.0.jar",
+    "sha256": "2c5b8f0cd4d992c61684be9393f9f7a74f631067ac793414f919f51330700359"
+  },
+  "oasdiff": {
+    "version": "1.31.0",
+    "checksums_url": "https://github.com/oasdiff/oasdiff/releases/download/v1.31.0/checksums.txt",
+    "artifacts": {
+      "darwin_all": {
+        "url": "https://github.com/oasdiff/oasdiff/releases/download/v1.31.0/oasdiff_1.31.0_darwin_all.tar.gz",
+        "sha256": "920639cc49da700e37ec070b6981686d6fa2f02d036aa18aeb62e1445ffd9286"
+      },
+      "linux_amd64": {
+        "url": "https://github.com/oasdiff/oasdiff/releases/download/v1.31.0/oasdiff_1.31.0_linux_amd64.tar.gz",
+        "sha256": "0177d4bc0bf04f4061e9277795b77335ee100a43b508e94fce5c46de083bbede"
+      },
+      "linux_arm64": {
+        "url": "https://github.com/oasdiff/oasdiff/releases/download/v1.31.0/oasdiff_1.31.0_linux_arm64.tar.gz",
+        "sha256": "5df49123030eb0816ccd440ed8f1caa8bab8dcb50aa725485d02226a0c82f49f"
+      }
+    }
+  }
+}

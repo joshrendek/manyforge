@@ -1,0 +1,17 @@
+{
+  "generatorName": "java",
+  "library": "native",
+  "invokerPackage": "com.manyforge.sdk",
+  "apiPackage": "com.manyforge.sdk.resources",
+  "modelPackage": "com.manyforge.sdk.models",
+  "groupId": "com.manyforge",
+  "artifactId": "manyforge-sdk",
+  "dateLibrary": "java8",
+  "openApiNullable": true,
+  "generateBuilders": true,
+  "disallowAdditionalPropertiesIfNotPresent": false,
+  "hideGenerationTimestamp": true,
+  "annotationLibrary": "none",
+  "useBeanValidation": false,
+  "supportUrlQuery": false
+}

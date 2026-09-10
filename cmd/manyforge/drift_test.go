@@ -22,6 +22,7 @@ import (
 	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/automations"
+	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/feedback"
 	"github.com/manyforge/manyforge/internal/githubapp"
@@ -62,6 +63,8 @@ func noop(next http.Handler) http.Handler { return next }
 // middleware. Shared by the drift walker and the authorization-wiring test so the two cannot
 // disagree about what the router actually mounts.
 func testHandlers() apiHandlers {
+	credentials := agents.NewCredentialHandler(&agents.CredentialService{})
+	credentials.SetCodex(&agents.CodexTokenService{})
 	return apiHandlers{
 		account:          account.NewHandler(&account.Service{}),
 		tenancy:          tenancy.NewHandler(&tenancy.Service{}),
@@ -81,6 +84,7 @@ func testHandlers() apiHandlers {
 		ticketsDelete:    noop,
 		inboxManage:      noop,
 		agents:           agents.NewHandler(nil),
+		credentials:      credentials,
 		agentsConfigure:  noop,
 		agentRuns:        agents.NewRunHandler(nil),
 		agentsRun:        noop,
@@ -112,16 +116,15 @@ func testHandlers() apiHandlers {
 		analyticsPublic:  &analytics.PublicHandler{},
 		codingReviews:    &coding.Handler{},
 		githubApp:        &githubapp.Handler{},
+		connectors:       connectors.NewHandler(&connectors.Service{}),
+		connWebhookH:     connectors.NewWebhookHandler(nil, nil, nil, nil),
 		connectorsManage: noop,
 	}
 }
 
-// apiRoutes walks the FULL production /api/v1 router — every module, including the
-// 002 inbound webhook and ticketing read slice — and returns the set of
-// "METHOD /normalized/path" it serves. It mounts routes through the SAME
-// mountAPIRoutes seam main uses, so the test's view of the route table cannot
-// drift from production. Handlers are built with zero-value services and middleware
-// is replaced with no-ops; route registration never invokes either.
+// apiRoutes enumerates every application route through the production registration
+// seam, with optional modules enabled. Infrastructure routes and the SPA catch-all
+// live outside this seam. No zero-service handler is executed by the walker.
 func apiRoutes(t *testing.T) map[string]bool {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
@@ -134,11 +137,11 @@ func apiRoutes(t *testing.T) map[string]bool {
 
 	routes := map[string]bool{}
 	walk := func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		route = strings.TrimPrefix(route, "/api/v1")
-		if route == "" {
-			route = "/"
+		op := strings.ToUpper(method) + " " + normalizePath(route)
+		if routes[op] {
+			t.Fatalf("duplicate normalized router operation %q (from %s %s)", op, method, route)
 		}
-		routes[method+" "+normalizePath(route)] = true
+		routes[op] = true
 		return nil
 	}
 	if err := chi.Walk(mux, walk); err != nil {
@@ -189,316 +192,111 @@ func TestTenantMergeRoutesUseDedicatedRateLimit(t *testing.T) {
 	}
 }
 
-// specPath resolves an OpenAPI contract file relative to the repo root.
-func specPath(parts ...string) string {
-	_, thisFile, _, _ := runtime.Caller(0)
-	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
-	return filepath.Join(append([]string{root}, parts...)...)
+type canonicalSpec struct {
+	Paths      map[string]map[string]yaml.Node `yaml:"paths"`
+	Components struct {
+		Schemas    map[string]yaml.Node `yaml:"schemas"`
+		Parameters map[string]yaml.Node `yaml:"parameters"`
+	} `yaml:"components"`
 }
 
-// specRoutesFrom returns the set of "METHOD /normalized/path" declared in the
-// OpenAPI contract at path.
-func specRoutesFrom(t *testing.T, path string) map[string]bool {
+// loadCanonicalSpec is the only contract loader used by the application tests.
+func loadCanonicalSpec(t *testing.T) canonicalSpec {
 	t.Helper()
+	_, thisFile, _, _ := runtime.Caller(0)
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "api", "openapi.yaml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read openapi %s: %v", path, err)
+		t.Fatalf("read canonical OpenAPI: %v", err)
 	}
-	var doc struct {
-		Paths map[string]map[string]yaml.Node `yaml:"paths"`
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("parse canonical OpenAPI: %v", err)
 	}
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse openapi %s: %v", path, err)
-	}
-	// "options" is included because the analytics collect endpoint serves a real CORS preflight
-	// route. Without it here, a declared OPTIONS operation is invisible to the walker and its
-	// served route is reported as undocumented forever.
-	verbs := map[string]bool{
-		"get": true, "post": true, "put": true, "patch": true, "delete": true, "options": true,
-	}
-	out := map[string]bool{}
-	for p, ops := range doc.Paths {
-		for verb := range ops {
-			if verbs[verb] {
-				out[strings.ToUpper(verb)+" "+normalizePath(p)] = true
+	var checkKeys func(*yaml.Node)
+	checkKeys = func(node *yaml.Node) {
+		if node.Kind == yaml.MappingNode {
+			seen := make(map[string]bool, len(node.Content)/2)
+			for i := 0; i < len(node.Content); i += 2 {
+				key := node.Content[i]
+				if seen[key.Value] {
+					t.Fatalf("duplicate OpenAPI key %q at line %d", key.Value, key.Line)
+				}
+				seen[key.Value] = true
 			}
+		}
+		for _, child := range node.Content {
+			checkKeys(child)
+		}
+	}
+	checkKeys(&root)
+	var doc canonicalSpec
+	if err := root.Decode(&doc); err != nil {
+		t.Fatalf("decode canonical OpenAPI: %v", err)
+	}
+	if len(doc.Paths) == 0 {
+		t.Fatal("canonical OpenAPI declares no paths")
+	}
+	return doc
+}
+
+func canonicalRoutes(t *testing.T, doc canonicalSpec) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	operationIDs := map[string]string{}
+	for path, operations := range doc.Paths {
+		for verb, node := range operations {
+			switch strings.ToUpper(verb) {
+			case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch,
+				http.MethodDelete, http.MethodOptions, http.MethodHead,
+				http.MethodTrace, http.MethodConnect:
+			default:
+				continue
+			}
+			op := strings.ToUpper(verb) + " " + normalizePath(path)
+			if out[op] {
+				t.Fatalf("duplicate normalized OpenAPI operation %q (from %s %s)", op, verb, path)
+			}
+			var operation struct {
+				ID string `yaml:"operationId"`
+			}
+			if err := node.Decode(&operation); err != nil {
+				t.Fatalf("decode %s: %v", op, err)
+			}
+			if operation.ID == "" {
+				t.Fatalf("%s has no operationId", op)
+			}
+			if previous, exists := operationIDs[operation.ID]; exists {
+				t.Fatalf("duplicate operationId %q: %s and %s", operation.ID, previous, op)
+			}
+			operationIDs[operation.ID] = op
+			out[op] = true
 		}
 	}
 	return out
 }
 
-// spec001Routes returns the operations declared in the spec-001 contract.
-func spec001Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	return specRoutesFrom(t, specPath("specs", "001-tenant-foundation", "contracts", "openapi.yaml"))
-}
-
-// spec002Routes returns the operations declared in the spec-002 contract.
-func spec002Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	return specRoutesFrom(t, specPath("specs", "002-support-desk", "contracts", "openapi.yaml"))
-}
-
-// spec003Routes returns the operations declared in the spec-003 contract, or an
-// empty set if the contract file does not yet exist (so the untagged drift test
-// does not fail before Task 9 creates the file; the contract-tagged drift_003_test
-// enforces the full two-way check once the file is present).
-func spec003Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "003-agent-runtime", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec005Routes returns the operations declared in the spec-005 contract, or an
-// empty set if the contract file does not yet exist (so the untagged drift test does
-// not fail before Task 8 creates the file; a future contract-tagged drift_005_test
-// enforces the full two-way check once the file is present).
-func spec005Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "005-crm-contacts-timeline", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec007Routes returns the operations declared in the spec-007 contract, or an
-// empty set if the contract file does not yet exist (so the untagged drift test does
-// not fail before the file is committed; the contract-tagged drift_007_test enforces
-// the full two-way check once the file is present).
-func spec007Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "007-coding-review-agents", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec008Routes returns the operations declared in the spec-008 contract, or an
-// empty set if the contract file does not yet exist (so the untagged drift test does
-// not fail before the file is committed; the contract-tagged drift_008_test enforces
-// the full two-way check once the file is present).
-func spec008Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "008-review-dimensions", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec009Routes returns the operations declared in the spec-009 contract, or an
-// empty set if the contract file does not yet exist (so the untagged drift test does
-// not fail before the file is committed; the contract-tagged drift_009_test enforces
-// the full two-way check once the file is present).
-func spec009Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "009-github-app-review", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec006Routes returns the operations declared in the spec-006 contract, or an
-// empty set if the contract file does not yet exist (so the untagged drift test does
-// not fail before the file is committed; the contract-tagged drift_006_test enforces
-// the full two-way check once the file is present).
-func spec006Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "006-feedback-boards", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec010Routes returns the operations declared in the spec-010 telemetry-ingest contract
-// (manyforge-p20), or an empty set if the contract file does not yet exist. The strict two-way
-// check is TestOpenAPIDrift010.
-func spec010Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "010-telemetry-ingest", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec011Routes returns the operations declared in the spec-011 analytics contract (manyforge-as0),
-// or an empty set if the contract file does not yet exist. The strict two-way check is
-// TestOpenAPIDrift011.
-func spec011Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "011-analytics-pageviews", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-// spec012Routes returns the whole-tenant merge control-plane contract.
-func spec012Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	p := specPath("specs", "012-tenant-merge", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-func spec013Routes(t *testing.T) map[string]bool {
-	p := specPath("specs", "013-mailing-lists", "contracts", "openapi.yaml")
-	if _, err := os.Stat(p); err != nil {
-		return map[string]bool{}
-	}
-	return specRoutesFrom(t, p)
-}
-
-func spec014Routes(t *testing.T) map[string]bool {
-	t.Helper()
-	return specRoutesFrom(t, specPath("specs", "014-automations", "contracts", "openapi.yaml"))
-}
-
-// TestOpenAPIDrift fails if the router and the OpenAPI contracts disagree on which
-// operations exist (T082): an operation specced (in spec 001) but not served, or an
-// operation served but documented in NO contract at all. Direction 2 unions every spec
-// contract (001, 002, 003, 005, 006, 007, 008, 009, 010), so a route documented in any
-// one of them is accounted for. Param-name and trailing-slash differences are normalized
-// away.
-//
-// Direction 1 (spec→router) is checked against spec 001 only here, because some
-// spec-002 operations (US2 reply/note/inbox-management) are documented ahead of
-// their handlers; the US1 in-scope 002 operations are pinned by TestOpenAPIDrift002
-// (cmd/manyforge/drift_002_test.go, contract build tag).
-//
-// Direction 2 (router→spec) is checked against the UNION of both contracts so a
-// registered 002 route is not falsely flagged as undocumented while still catching
-// any route served by the router but documented in no contract at all.
+// TestOpenAPIDrift requires a two-way match for all enabled application modules.
 func TestOpenAPIDrift(t *testing.T) {
 	routes := apiRoutes(t)
-	spec001 := spec001Routes(t)
-
-	documented := map[string]bool{}
-	for op := range spec001 {
-		documented[op] = true
-	}
-	for op := range spec002Routes(t) {
-		documented[op] = true
-	}
-	spec003 := spec003Routes(t)
-	spec003Available := len(spec003) > 0
-	for op := range spec003 {
-		documented[op] = true
-	}
-	spec005 := spec005Routes(t)
-	spec005Available := len(spec005) > 0
-	for op := range spec005 {
-		documented[op] = true
-	}
-	spec007 := spec007Routes(t)
-	spec007Available := len(spec007) > 0
-	for op := range spec007 {
-		documented[op] = true
-	}
-	spec008 := spec008Routes(t)
-	spec008Available := len(spec008) > 0
-	for op := range spec008 {
-		documented[op] = true
-	}
-	spec009 := spec009Routes(t)
-	spec009Available := len(spec009) > 0
-	for op := range spec009 {
-		documented[op] = true
-	}
-	for op := range spec010Routes(t) {
-		documented[op] = true
-	}
-	for op := range spec011Routes(t) {
-		documented[op] = true
-	}
-	for op := range spec012Routes(t) {
-		documented[op] = true
-	}
-	for op := range spec013Routes(t) {
-		documented[op] = true
-	}
-	for op := range spec014Routes(t) {
-		documented[op] = true
-	}
-	spec006 := spec006Routes(t)
-	spec006Available := len(spec006) > 0
-	for op := range spec006 {
-		documented[op] = true
-	}
-
+	documented := canonicalRoutes(t, loadCanonicalSpec(t))
 	var missing, undocumented []string
-	for op := range spec001 {
+	for op := range documented {
 		if !routes[op] {
 			missing = append(missing, op)
 		}
 	}
 	for op := range routes {
 		if !documented[op] {
-			// When the spec-003 contract file does not yet exist, skip routes that
-			// belong to the 003 surface (identified by /agents in the path) — they
-			// will be pinned by TestOpenAPIDrift003 once the file is committed.
-			// INERT post-commit: specs/003-agent-runtime/contracts/openapi.yaml now
-			// exists, so spec003Available is always true and this branch never fires.
-			// It remains only as a guard if that contract file is ever removed;
-			// TestOpenAPIDrift003 enforces the strict spec-003 two-way check.
-			if !spec003Available && strings.Contains(op, "/agents") {
-				continue
-			}
-			// Likewise skip the spec-005 CRM surface (/contacts, /companies) until
-			// Task 8 commits specs/005-crm-contacts-timeline/contracts/openapi.yaml.
-			// Once that file exists spec005Available is true and these routes must be
-			// documented (the strict two-way check is owned by Task 8's contract test).
-			if !spec005Available && (strings.Contains(op, "/contacts") || strings.Contains(op, "/companies")) {
-				continue
-			}
-			// Likewise skip the spec-007 code-review surface (/repo-connectors,
-			// /code-reviews) until specs/007-coding-review-agents/contracts/openapi.yaml
-			// is committed. Once that file exists spec007Available is true and these
-			// routes must be documented (the strict two-way check is TestOpenAPIDrift007).
-			if !spec007Available && (strings.Contains(op, "/repo-connectors") || strings.Contains(op, "/code-reviews")) {
-				continue
-			}
-			// Likewise skip the spec-008 review-panel config surface (/review-dimensions,
-			// /review-config) until specs/008-review-dimensions/contracts/openapi.yaml is
-			// committed. Once that file exists spec008Available is true and these routes must
-			// be documented (the strict two-way check is TestOpenAPIDrift008).
-			if !spec008Available && (strings.Contains(op, "/review-dimensions") || strings.Contains(op, "/review-config")) {
-				continue
-			}
-			// Likewise skip the spec-009 GitHub App surface (every 009 route contains
-			// /github/) until specs/009-github-app-review/contracts/openapi.yaml is
-			// committed. Once that file exists spec009Available is true and these routes
-			// must be documented (the strict two-way check is TestOpenAPIDrift009).
-			if !spec009Available && strings.Contains(op, "/github/") {
-				continue
-			}
-			// Likewise skip the spec-006 feedback surface (every 006 route contains
-			// /feedback) until specs/006-feedback-boards/contracts/openapi.yaml is
-			// committed. Once that file exists spec006Available is true and these routes
-			// must be documented (the strict two-way check is TestOpenAPIDrift006).
-			if !spec006Available && strings.Contains(op, "/feedback") {
-				continue
-			}
 			undocumented = append(undocumented, op)
 		}
 	}
 	sort.Strings(missing)
 	sort.Strings(undocumented)
-
 	for _, op := range missing {
-		t.Errorf("spec drift: %q is in 001 openapi.yaml but not served by the router", op)
+		t.Errorf("contract drift: %q is documented but not served", op)
 	}
 	for _, op := range undocumented {
-		t.Errorf("spec drift: %q is served by the router but not in any openapi.yaml", op)
+		t.Errorf("contract drift: %q is served but undocumented", op)
 	}
 }

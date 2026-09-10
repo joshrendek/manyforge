@@ -1,3 +1,4 @@
+# Historical design snapshot. The sole editable live contract is api/openapi.yaml.
 openapi: 3.0.3
 info:
   title: manyforge — web analytics (manyforge-as0)

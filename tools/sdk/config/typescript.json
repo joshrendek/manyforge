@@ -1,0 +1,24 @@
+{
+  "generatorName": "typescript-fetch",
+  "npmName": "@manyforge/sdk",
+  "modelPropertyNaming": "camelCase",
+  "dateLibrary": "string",
+  "supportsES6": true,
+  "importFileExtension": ".js",
+  "disallowAdditionalPropertiesIfNotPresent": false,
+  "hideGenerationTimestamp": true,
+  "enumUnknownDefaultCase": false,
+  "stringEnums": false,
+  "useSingleRequestParameter": true,
+  "withoutRuntimeChecks": false,
+  "languageSpecificPrimitives": ["bigint", "JsonValue"],
+  "typeMappings": {
+    "Set": "Array",
+    "set": "Array",
+    "long": "bigint",
+    "object": "JsonValue",
+    "AnyType": "JsonValue",
+    "Date": "string",
+    "DateTime": "string"
+  }
+}

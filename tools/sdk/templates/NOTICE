@@ -1,0 +1,8 @@
+Portions of these templates derive from OpenAPI Generator7.25.0.
+Copyright2018 OpenAPI-Generator Contributors (https://openapi-generator.tech).
+Copyright2018 SmartBear Software.
+
+Original template portions remain Apache-2.0 licensed; see LICENSE.openapi-generator.
+ManyForge contributors modified model enum/presence/date/int64 codecs and resource
+interfaces to implement the ManyForge SDK contracts. SDK-owned contributions are
+covered by tools/sdk/LICENSE; this does not replace upstream licensing obligations.

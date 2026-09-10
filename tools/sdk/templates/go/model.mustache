@@ -1,0 +1,17 @@
+{{! Derived from OpenAPI Generator's Go templates, Apache-2.0, OpenAPI Tools contributors. }}
+{{>partial_header}}
+package {{packageName}}
+
+{{#models}}{{#model}}
+{{#isEnum}}
+{{>model_enum}}
+{{/isEnum}}
+{{^isEnum}}
+{{#vendorExtensions.x-go-is-union}}
+{{>model_union}}
+{{/vendorExtensions.x-go-is-union}}
+{{^vendorExtensions.x-go-is-union}}
+{{>model_simple}}
+{{/vendorExtensions.x-go-is-union}}
+{{/isEnum}}
+{{/model}}{{/models}}

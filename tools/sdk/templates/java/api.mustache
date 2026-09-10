@@ -1,0 +1,78 @@
+{{! Derived from OpenAPI Generator Java/native api.mustache, Apache-2.0, Copyright OpenAPI-Generator contributors. }}
+{{>licenseInfo}}
+package {{package}};
+
+import com.manyforge.sdk.*;
+import com.manyforge.sdk.models.*;
+import com.fasterxml.jackson.core.type.TypeReference;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.io.InputStream;
+import java.time.*;
+import java.math.BigDecimal;
+{{#imports}}
+import {{import}};
+{{/imports}}
+
+public class {{classname}} {
+  protected final Transport transport;
+  protected final String binding;
+  public {{classname}}(Transport transport, String binding) {
+    this.transport = Objects.requireNonNull(transport);
+    this.binding = binding;
+  }
+{{#operations}}{{#operation}}
+  public static final class {{vendorExtensions.x-java-params}} {
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+    private final {{{dataType}}} {{paramName}};
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+    private {{vendorExtensions.x-java-params}}(Builder builder) {
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+      this.{{paramName}} = builder.{{paramName}};
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+    }
+    public static Builder builder() { return new Builder(); }
+    public Builder toBuilder() {
+      Builder builder = new Builder();
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+      builder.{{paramName}} = {{paramName}};
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+      return builder;
+    }
+    public static final class Builder {
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+      private {{{dataType}}} {{paramName}};
+      public Builder {{paramName}}({{{dataType}}} value) { this.{{paramName}} = value; return this; }
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+      public {{vendorExtensions.x-java-params}} build() { return new {{vendorExtensions.x-java-params}}(this); }
+    }
+  }
+  private Request<{{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}}> {{vendorExtensions.x-sdk-method}}Request({{vendorExtensions.x-java-params}} params) {
+    Objects.requireNonNull(params, "params");
+    List<Request.Parameter> parameters = new ArrayList<>();
+{{#allParams}}
+{{#required}}{{^vendorExtensions.x-sdk-bound}}
+    Objects.requireNonNull(params.{{paramName}}, "{{paramName}}");
+{{/vendorExtensions.x-sdk-bound}}{{/required}}
+{{^isBodyParam}}
+    parameters.add(new Request.Parameter("{{baseName}}", "{{#isPathParam}}path{{/isPathParam}}{{#isQueryParam}}query{{/isQueryParam}}{{#isHeaderParam}}header{{/isHeaderParam}}{{#isCookieParam}}cookie{{/isCookieParam}}{{#isFormParam}}form{{/isFormParam}}", {{#vendorExtensions.x-sdk-bound}}Objects.requireNonNull(binding, "resource binding"){{/vendorExtensions.x-sdk-bound}}{{^vendorExtensions.x-sdk-bound}}params.{{paramName}}{{/vendorExtensions.x-sdk-bound}}, "{{collectionFormat}}"));
+{{/isBodyParam}}
+{{/allParams}}
+    return new Request<>("{{vendorExtensions.x-sdk-http-method}}", "{{{vendorExtensions.x-sdk-path}}}", parameters, {{#bodyParam}}params.{{paramName}}{{/bodyParam}}{{^bodyParam}}null{{/bodyParam}}, "{{#consumes}}{{#-first}}{{{mediaType}}}{{/-first}}{{/consumes}}", {{vendorExtensions.x-sdk-authenticated}}, "{{vendorExtensions.x-manyforge-audience}}", {{vendorExtensions.x-sdk-stream}}, {{#vendorExtensions.x-sdk-body-key}}"{{.}}"{{/vendorExtensions.x-sdk-body-key}}{{^vendorExtensions.x-sdk-body-key}}null{{/vendorExtensions.x-sdk-body-key}}, new TypeReference<{{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}}>() {});
+  }
+  public {{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}} {{vendorExtensions.x-sdk-method}}({{vendorExtensions.x-java-params}} params) { return {{vendorExtensions.x-sdk-method}}(params, RequestOptions.DEFAULT); }
+  public {{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}} {{vendorExtensions.x-sdk-method}}({{vendorExtensions.x-java-params}} params, RequestOptions options) { return transport.send({{vendorExtensions.x-sdk-method}}Request(params), options); }
+  public CompletableFuture<{{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}}> {{vendorExtensions.x-sdk-method}}Async({{vendorExtensions.x-java-params}} params) { return {{vendorExtensions.x-sdk-method}}Async(params, RequestOptions.DEFAULT); }
+  public CompletableFuture<{{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}}> {{vendorExtensions.x-sdk-method}}Async({{vendorExtensions.x-java-params}} params, RequestOptions options) { return transport.sendAsync({{vendorExtensions.x-sdk-method}}Request(params), options); }
+{{#vendorExtensions.x-java-default-params}}
+  public {{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}} {{vendorExtensions.x-sdk-method}}() { return {{vendorExtensions.x-sdk-method}}({{vendorExtensions.x-java-params}}.builder().build()); }
+  public CompletableFuture<{{#vendorExtensions.x-sdk-stream}}InputStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}Void{{/returnType}}{{/vendorExtensions.x-sdk-stream}}> {{vendorExtensions.x-sdk-method}}Async() { return {{vendorExtensions.x-sdk-method}}Async({{vendorExtensions.x-java-params}}.builder().build()); }
+{{/vendorExtensions.x-java-default-params}}
+{{#vendorExtensions.x-sdk-pagination}}
+  public Iterable<{{vendorExtensions.x-java-item}}> iter({{vendorExtensions.x-java-params}} params) { return iter(params, RequestOptions.DEFAULT); }
+  public Iterable<{{vendorExtensions.x-java-item}}> iter({{vendorExtensions.x-java-params}} params, RequestOptions options) {
+    return Pages.iterate(params.{{vendorExtensions.x-java-cursor}}, cursor -> {{vendorExtensions.x-sdk-method}}(params.toBuilder().{{vendorExtensions.x-java-cursor}}(cursor).build(), options), page -> page.getItems(), page -> page.getNextCursor());
+  }
+{{/vendorExtensions.x-sdk-pagination}}
+{{/operation}}{{/operations}}
+}

@@ -19,6 +19,8 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+
+	"github.com/manyforge/manyforge/internal/platform/weborigin"
 )
 
 var mailingMessageDomainPattern = regexp.MustCompile(`^[a-z0-9.-]+$`)
@@ -154,12 +156,13 @@ type Config struct {
 	// unset — setup routes reject everyone (404, no oracle). The operator finds
 	// their principal id from GET /api/v1/me.
 	InstanceOperatorPrincipal uuid.UUID
-	// PublicBaseURL is the externally-reachable base (https://hub.example.com) used
-	// to build the GitHub App manifest's redirect/callback/webhook URLs.
-	// MANYFORGE_PUBLIC_BASE_URL. No existing base-URL config was reusable — the only
-	// other *BaseURL/*URL settings in this file are per-connector (Jira/Zendesk) or
-	// per-feature (BlobURL), not an instance-wide externally-reachable base.
+	// PublicBaseURL is the externally reachable instance base for GitHub App
+	// callbacks and public mailing links (MANYFORGE_PUBLIC_BASE_URL). Enabling
+	// public ingest CORS additionally requires it to be an exact valid origin.
 	PublicBaseURL string
+	// PublicIngestAllowedOrigins opts public feedback/telemetry into exact-origin CORS.
+	// Empty disables CORS. The normalized PublicBaseURL origin is also allowed.
+	PublicIngestAllowedOrigins []string
 
 	// Agent run loop bounds (Spec 003 §8, manyforge-ji7). Defaults below mirror the code
 	// defaults in agents.RunLimits (withDefaults backstops any zero). Tunable per-deployment
@@ -465,6 +468,22 @@ func Load() (Config, error) {
 		}
 	}
 	cfg.PublicBaseURL = strings.TrimSuffix(os.Getenv("MANYFORGE_PUBLIC_BASE_URL"), "/")
+	if raw := os.Getenv("MANYFORGE_PUBLIC_INGEST_ALLOWED_ORIGINS"); raw != "" {
+		seen := make(map[string]struct{})
+		for _, entry := range strings.Split(raw, ",") {
+			origin, normalizeErr := weborigin.Normalize(entry)
+			if normalizeErr != nil {
+				return Config{}, fmt.Errorf("MANYFORGE_PUBLIC_INGEST_ALLOWED_ORIGINS: %w", normalizeErr)
+			}
+			if _, exists := seen[origin]; !exists {
+				seen[origin] = struct{}{}
+				cfg.PublicIngestAllowedOrigins = append(cfg.PublicIngestAllowedOrigins, origin)
+			}
+		}
+		if cfg.PublicBaseURL, err = weborigin.Normalize(os.Getenv("MANYFORGE_PUBLIC_BASE_URL")); err != nil {
+			return Config{}, fmt.Errorf("MANYFORGE_PUBLIC_BASE_URL: a valid instance origin is required when public ingest CORS is enabled: %w", err)
+		}
+	}
 	if len(cfg.MailingMasterKey) > 0 {
 		publicURL, parseErr := url.Parse(cfg.PublicBaseURL)
 		if parseErr != nil || publicURL.Host == "" || (publicURL.Scheme != "http" && publicURL.Scheme != "https") {

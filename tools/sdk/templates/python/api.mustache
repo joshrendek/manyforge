@@ -1,0 +1,194 @@
+{{>partial_header}}
+from __future__ import annotations
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Union
+from collections.abc import Iterator, AsyncIterator, Mapping
+from pydantic import TypeAdapter, StrictBool, StrictBytes, StrictFloat, StrictInt, StrictStr
+from manyforge.model_support import JsonValue, UNSET, UnsetType
+from manyforge.transport import (SyncTransport, AsyncTransport, Request, RequestOptions, QueryParameter, Upload, ByteStream, AsyncByteStream, PaginationError)
+{{#imports}}
+{{{import}}}
+{{/imports}}
+{{#operations}}
+{{#operation}}{{#vendorExtensions.x-sdk-pagination}}
+from manyforge.models import {{vendorExtensions.x-python-page-item}}
+{{/vendorExtensions.x-sdk-pagination}}{{/operation}}
+class {{classname}}:
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = dict(bindings or {})
+
+{{#operation}}
+    def {{vendorExtensions.x-sdk-method-python}}(
+        self,
+{{#vendorExtensions.x-python-auth-fields}}
+        {{name}}: str,
+{{/vendorExtensions.x-python-auth-fields}}
+        *,
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}{{^vendorExtensions.x-python-hide}}
+        {{paramName}}: {{#isFile}}Upload{{/isFile}}{{^isFile}}{{{dataType}}}{{/isFile}}{{#isNullable}} | None{{/isNullable}}{{^required}} | UnsetType = UNSET{{/required}},
+{{/vendorExtensions.x-python-hide}}{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+        request_options: RequestOptions | None = None,
+    ) -> {{#vendorExtensions.x-sdk-stream}}ByteStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}None{{/returnType}}{{/vendorExtensions.x-sdk-stream}}:
+        request = Request(
+            operation_id="{{vendorExtensions.x-python-operation-id}}",
+            method="{{httpMethod}}",
+            path="{{{path}}}",
+            authenticated={{#vendorExtensions.x-sdk-authenticated}}True{{/vendorExtensions.x-sdk-authenticated}}{{^vendorExtensions.x-sdk-authenticated}}False{{/vendorExtensions.x-sdk-authenticated}},
+{{#vendorExtensions.x-sdk-body-key}}
+            body_key="{{.}}",
+{{/vendorExtensions.x-sdk-body-key}}
+            response=TypeAdapter({{#vendorExtensions.x-sdk-stream}}type(None){{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}type(None){{/returnType}}{{/vendorExtensions.x-sdk-stream}}),
+            path_parameters={
+{{#pathParams}}
+                "{{baseName}}": {{#vendorExtensions.x-sdk-bound}}self._bindings["{{baseName}}"]{{/vendorExtensions.x-sdk-bound}}{{^vendorExtensions.x-sdk-bound}}{{paramName}}{{/vendorExtensions.x-sdk-bound}},
+{{/pathParams}}
+            },
+            query=(
+{{#queryParams}}
+                QueryParameter("{{baseName}}", {{paramName}}, "{{vendorExtensions.x-python-style}}", {{vendorExtensions.x-python-explode}}),
+{{/queryParams}}
+            ),
+            headers={
+{{#headerParams}}
+                "{{baseName}}": {{paramName}},
+{{/headerParams}}
+            },
+{{#bodyParam}}
+            body={{#vendorExtensions.x-python-hide}}{{{dataType}}}({{#vendorExtensions.x-python-auth-fields}}{{name}}={{name}}, {{/vendorExtensions.x-python-auth-fields}}){{/vendorExtensions.x-python-hide}}{{^vendorExtensions.x-python-hide}}{{paramName}}{{/vendorExtensions.x-python-hide}},
+{{/bodyParam}}
+            form={
+{{#formParams}}
+                "{{baseName}}": {{paramName}},
+{{/formParams}}
+            },
+{{#consumes}}{{#-first}}
+            content_type="{{{mediaType}}}",
+{{/-first}}{{/consumes}}
+{{#produces}}{{#-first}}
+            accept="{{{mediaType}}}",
+{{/-first}}{{/produces}}
+        )
+        return self._transport.{{#vendorExtensions.x-sdk-stream}}stream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}request{{/vendorExtensions.x-sdk-stream}}(request, request_options=request_options)
+
+{{#vendorExtensions.x-sdk-pagination}}
+    def iter(
+        self,
+        *,
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+        {{paramName}}: {{{dataType}}}{{#isNullable}} | None{{/isNullable}}{{^required}} | UnsetType = UNSET{{/required}},
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+        request_options: RequestOptions | None = None,
+    ) -> Iterator[{{vendorExtensions.x-python-page-item}}]:
+        seen: set[str] = set()
+        next_cursor = cursor
+        if isinstance(next_cursor, str) and next_cursor:
+            seen.add(next_cursor)
+        while True:
+            page = self.{{vendorExtensions.x-sdk-method-python}}(
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+                {{paramName}}={{#vendorExtensions.x-python-cursor}}next_cursor{{/vendorExtensions.x-python-cursor}}{{^vendorExtensions.x-python-cursor}}{{paramName}}{{/vendorExtensions.x-python-cursor}},
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+                request_options=request_options,
+            )
+            for item in page.{{vendorExtensions.x-python-page-items}}:
+                yield item
+            next_cursor = page.{{vendorExtensions.x-python-page-next}}
+            if isinstance(next_cursor, UnsetType) or not next_cursor:
+                return
+            if next_cursor in seen:
+                raise PaginationError("Server returned a repeated cursor")
+            seen.add(next_cursor)
+
+{{/vendorExtensions.x-sdk-pagination}}
+{{/operation}}
+class Async{{classname}}:
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = dict(bindings or {})
+
+{{#operation}}
+    async def {{vendorExtensions.x-sdk-method-python}}(
+        self,
+{{#vendorExtensions.x-python-auth-fields}}
+        {{name}}: str,
+{{/vendorExtensions.x-python-auth-fields}}
+        *,
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}{{^vendorExtensions.x-python-hide}}
+        {{paramName}}: {{#isFile}}Upload{{/isFile}}{{^isFile}}{{{dataType}}}{{/isFile}}{{#isNullable}} | None{{/isNullable}}{{^required}} | UnsetType = UNSET{{/required}},
+{{/vendorExtensions.x-python-hide}}{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+        request_options: RequestOptions | None = None,
+    ) -> {{#vendorExtensions.x-sdk-stream}}AsyncByteStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}None{{/returnType}}{{/vendorExtensions.x-sdk-stream}}:
+        request = Request(
+            operation_id="{{vendorExtensions.x-python-operation-id}}",
+            method="{{httpMethod}}",
+            path="{{{path}}}",
+            authenticated={{#vendorExtensions.x-sdk-authenticated}}True{{/vendorExtensions.x-sdk-authenticated}}{{^vendorExtensions.x-sdk-authenticated}}False{{/vendorExtensions.x-sdk-authenticated}},
+{{#vendorExtensions.x-sdk-body-key}}
+            body_key="{{.}}",
+{{/vendorExtensions.x-sdk-body-key}}
+            response=TypeAdapter({{#vendorExtensions.x-sdk-stream}}type(None){{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}type(None){{/returnType}}{{/vendorExtensions.x-sdk-stream}}),
+            path_parameters={
+{{#pathParams}}
+                "{{baseName}}": {{#vendorExtensions.x-sdk-bound}}self._bindings["{{baseName}}"]{{/vendorExtensions.x-sdk-bound}}{{^vendorExtensions.x-sdk-bound}}{{paramName}}{{/vendorExtensions.x-sdk-bound}},
+{{/pathParams}}
+            },
+            query=(
+{{#queryParams}}
+                QueryParameter("{{baseName}}", {{paramName}}, "{{vendorExtensions.x-python-style}}", {{vendorExtensions.x-python-explode}}),
+{{/queryParams}}
+            ),
+            headers={
+{{#headerParams}}
+                "{{baseName}}": {{paramName}},
+{{/headerParams}}
+            },
+{{#bodyParam}}
+            body={{#vendorExtensions.x-python-hide}}{{{dataType}}}({{#vendorExtensions.x-python-auth-fields}}{{name}}={{name}}, {{/vendorExtensions.x-python-auth-fields}}){{/vendorExtensions.x-python-hide}}{{^vendorExtensions.x-python-hide}}{{paramName}}{{/vendorExtensions.x-python-hide}},
+{{/bodyParam}}
+            form={
+{{#formParams}}
+                "{{baseName}}": {{paramName}},
+{{/formParams}}
+            },
+{{#consumes}}{{#-first}}
+            content_type="{{{mediaType}}}",
+{{/-first}}{{/consumes}}
+{{#produces}}{{#-first}}
+            accept="{{{mediaType}}}",
+{{/-first}}{{/produces}}
+        )
+        return await self._transport.{{#vendorExtensions.x-sdk-stream}}stream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}request{{/vendorExtensions.x-sdk-stream}}(request, request_options=request_options)
+
+{{#vendorExtensions.x-sdk-pagination}}
+    async def iter(
+        self,
+        *,
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+        {{paramName}}: {{{dataType}}}{{#isNullable}} | None{{/isNullable}}{{^required}} | UnsetType = UNSET{{/required}},
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+        request_options: RequestOptions | None = None,
+    ) -> AsyncIterator[{{vendorExtensions.x-python-page-item}}]:
+        seen: set[str] = set()
+        next_cursor = cursor
+        if isinstance(next_cursor, str) and next_cursor:
+            seen.add(next_cursor)
+        while True:
+            page = await self.{{vendorExtensions.x-sdk-method-python}}(
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+                {{paramName}}={{#vendorExtensions.x-python-cursor}}next_cursor{{/vendorExtensions.x-python-cursor}}{{^vendorExtensions.x-python-cursor}}{{paramName}}{{/vendorExtensions.x-python-cursor}},
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+                request_options=request_options,
+            )
+            for item in page.{{vendorExtensions.x-python-page-items}}:
+                yield item
+            next_cursor = page.{{vendorExtensions.x-python-page-next}}
+            if isinstance(next_cursor, UnsetType) or not next_cursor:
+                return
+            if next_cursor in seen:
+                raise PaginationError("Server returned a repeated cursor")
+            seen.add(next_cursor)
+
+{{/vendorExtensions.x-sdk-pagination}}
+{{/operation}}
+{{/operations}}

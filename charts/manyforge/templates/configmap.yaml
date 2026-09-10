@@ -37,7 +37,12 @@ data:
   # GitHub App integration (spec 009) — optional; empty values leave the
   # operator-gated setup routes 404 and the webhook/OAuth redirect URLs unset.
   MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL: {{ .Values.instanceOperatorPrincipal | quote }}
+  {{- if .Values.publicIngestAllowedOrigins }}
+  MANYFORGE_PUBLIC_BASE_URL: {{ required "manyforge: publicBaseURL is required when publicIngestAllowedOrigins is nonempty" .Values.publicBaseURL | quote }}
+  {{- else }}
   MANYFORGE_PUBLIC_BASE_URL: {{ .Values.publicBaseURL | quote }}
+  {{- end }}
+  MANYFORGE_PUBLIC_INGEST_ALLOWED_ORIGINS: {{ join "," .Values.publicIngestAllowedOrigins | quote }}
   MANYFORGE_MAILING_RATE_RPS: {{ .Values.mailing.rateRPS | quote }}
   MANYFORGE_MAILING_RATE_BURST: {{ .Values.mailing.rateBurst | quote }}
   MANYFORGE_MAILING_SEND_BATCH: {{ .Values.mailing.sendBatch | quote }}

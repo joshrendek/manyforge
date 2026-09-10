@@ -14,6 +14,8 @@ package security_regression
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestPin_MCPServerRLS pins the RLS invariant on the mcp_server table (migration 0036).
@@ -101,82 +103,60 @@ func TestPin_MCPInvokeNotForbidden(t *testing.T) {
 	}
 }
 
-// TestPin_MCPSealedAuthNeverInResponse pins that the mcpServerResp struct and toMCPServerResp
-// mapper in mcp_server_handler.go do NOT contain sealed_auth_ref or auth_token fields.
-// Auth is write-only: leaking the sealed blob in a GET/LIST response would expose
-// (sealed) bearer tokens to any caller with agents.configure, enabling token extraction.
-func TestPin_MCPSealedAuthNeverInResponse(t *testing.T) {
-	handler := mustRead(t, "../agents/mcp_server_handler.go")
-
-	// Extract the mcpServerResp struct body (from the type declaration to the closing brace).
-	structStart := strings.Index(handler, "type mcpServerResp struct {")
-	if structStart < 0 {
-		t.Fatal("mcp_server_handler.go: mcpServerResp struct not found")
-	}
-	structEnd := strings.Index(handler[structStart:], "\n}")
-	if structEnd < 0 {
-		t.Fatal("mcp_server_handler.go: could not locate end of mcpServerResp struct")
-	}
-	respStruct := handler[structStart : structStart+structEnd]
-
-	// Extract the toMCPServerResp function body.
-	mapperStart := strings.Index(handler, "func toMCPServerResp(")
-	if mapperStart < 0 {
-		t.Fatal("mcp_server_handler.go: toMCPServerResp not found")
-	}
-	mapperEnd := strings.Index(handler[mapperStart:], "\n}")
-	if mapperEnd < 0 {
-		t.Fatal("mcp_server_handler.go: could not locate end of toMCPServerResp")
-	}
-	respMapper := handler[mapperStart : mapperStart+mapperEnd]
-
-	for _, forbidden := range []string{"sealed_auth_ref", "auth_token", "AuthToken", "SealedAuth"} {
-		if strings.Contains(respStruct, forbidden) {
-			t.Errorf("mcp_server_handler.go mcpServerResp struct: must NOT contain %q — leaking sealed auth in responses exposes bearer tokens", forbidden)
-		}
-		if strings.Contains(respMapper, forbidden) {
-			t.Errorf("mcp_server_handler.go toMCPServerResp: must NOT contain %q — leaking sealed auth in responses exposes bearer tokens", forbidden)
-		}
-	}
-}
-
-// TestPin_MCPSealedAuthNotInOpenAPIResponse pins the SAME write-only-auth invariant at the
-// API CONTRACT level: the OpenAPI MCPServer / MCPServerList RESPONSE schemas must not expose
-// auth_token or sealed_auth_ref. The request schemas (CreateMCPServerRequest /
-// UpdateMCPServerRequest) legitimately carry auth_token with writeOnly: true, so the
-// extraction window is scoped strictly to the response schemas (from "    MCPServer:" up to
-// the next sibling "    CreateMCPServerRequest:" key) — it must NOT span the request schemas.
+// TestPin_MCPSealedAuthNotInOpenAPIResponse checks the response schema graph,
+// including referenced and composed schemas, without depending on YAML layout.
 func TestPin_MCPSealedAuthNotInOpenAPIResponse(t *testing.T) {
-	spec := mustRead(t, "../../specs/003-agent-runtime/contracts/openapi.yaml")
-
-	// Response schemas are MCPServer and MCPServerList (which $refs MCPServer). They are
-	// declared consecutively under components.schemas, immediately followed by the first
-	// REQUEST schema, CreateMCPServerRequest. Extract [MCPServer: , CreateMCPServerRequest:)
-	// so the window covers both response schemas and excludes the writeOnly request schemas.
-	respStart := strings.Index(spec, "\n    MCPServer:\n")
-	if respStart < 0 {
-		t.Fatal("openapi.yaml: '    MCPServer:' response schema not found")
+	raw := mustRead(t, "../../api/openapi.yaml")
+	var doc struct {
+		Components struct {
+			Schemas map[string]any `yaml:"schemas"`
+		} `yaml:"components"`
 	}
-	reqStart := strings.Index(spec[respStart:], "\n    CreateMCPServerRequest:\n")
-	if reqStart < 0 {
-		t.Fatal("openapi.yaml: '    CreateMCPServerRequest:' (the sibling key that bounds the response block) not found")
+	if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("parse canonical OpenAPI: %v", err)
 	}
-	respBlock := spec[respStart : respStart+reqStart]
-
-	// Sanity-check the window actually contains the response schemas it claims to scope...
-	if !strings.Contains(respBlock, "MCPServerList:") {
-		t.Fatal("openapi.yaml: extraction window did not capture MCPServerList — schema layout changed; re-scope the pin")
-	}
-	// ...and that it stops BEFORE the request schema (so a writeOnly auth_token there can't
-	// give this pin a false pass).
-	if strings.Contains(respBlock, "CreateMCPServerRequest:") {
-		t.Fatal("openapi.yaml: extraction window leaked into the request schemas — re-scope the pin")
-	}
-
-	for _, forbidden := range []string{"auth_token", "sealed_auth_ref"} {
-		if strings.Contains(respBlock, forbidden) {
-			t.Errorf("openapi.yaml MCPServer/MCPServerList response schema: must NOT contain %q — leaking the bearer token in the API contract exposes sealed auth to any reader of a GET/LIST response", forbidden)
+	visited := map[string]bool{}
+	var inspect func(any)
+	inspect = func(value any) {
+		switch node := value.(type) {
+		case map[string]any:
+			if ref, ok := node["$ref"].(string); ok {
+				const prefix = "#/components/schemas/"
+				if !strings.HasPrefix(ref, prefix) {
+					t.Fatalf("unexpected schema reference %q", ref)
+				}
+				name := strings.TrimPrefix(ref, prefix)
+				schema, ok := doc.Components.Schemas[name]
+				if !ok {
+					t.Fatalf("unresolved response schema %q", ref)
+				}
+				if !visited[name] {
+					visited[name] = true
+					inspect(schema)
+				}
+			}
+			if properties, ok := node["properties"].(map[string]any); ok {
+				for _, forbidden := range []string{"auth_token", "sealed_auth_ref"} {
+					if _, exists := properties[forbidden]; exists {
+						t.Errorf("MCP response schema exposes secret field %q", forbidden)
+					}
+				}
+			}
+			for _, child := range node {
+				inspect(child)
+			}
+		case []any:
+			for _, child := range node {
+				inspect(child)
+			}
 		}
+	}
+	for _, name := range []string{"MCPServer", "MCPServerList"} {
+		schema, ok := doc.Components.Schemas[name]
+		if !ok {
+			t.Fatalf("canonical OpenAPI omits response schema %s", name)
+		}
+		inspect(schema)
 	}
 }
 

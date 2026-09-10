@@ -1,0 +1,43 @@
+{{! Derived from OpenAPI Generator go/model_oneof.mustache and model_anyof.mustache (Apache-2.0). }}
+import (
+    "encoding/json"
+    "fmt"
+)
+
+type {{classname}} struct {
+{{#vendorExtensions.x-go-union}}
+    {{name}} *{{name}}
+{{/vendorExtensions.x-go-union}}
+}
+{{#vendorExtensions.x-go-union}}
+func {{name}}As{{classname}}(value *{{name}}) {{classname}} { return {{classname}}{ {{name}}: value } }
+{{/vendorExtensions.x-go-union}}
+func (o *{{classname}}) UnmarshalJSON(data []byte) error {
+    var result {{classname}}
+    matches := 0
+{{#vendorExtensions.x-go-union}}
+    if unionShape(data, []string{ {{{required}}} }, map[string][]string{ {{{literals}}} }) {
+        var value {{name}}
+        if err := decodeJSON(data, &value); err == nil {
+            result.{{name}} = &value
+            matches++
+{{#vendorExtensions.x-go-any-of}}
+            *o = result
+            return nil
+{{/vendorExtensions.x-go-any-of}}
+        }
+    }
+{{/vendorExtensions.x-go-union}}
+    if matches != 1 { return fmt.Errorf("JSON does not match exactly one {{classname}} alternative") }
+    *o = result
+    return nil
+}
+func (o {{classname}}) MarshalJSON() ([]byte, error) {
+    var selected any
+    matches := 0
+{{#vendorExtensions.x-go-union}}
+    if o.{{name}} != nil { selected = o.{{name}}; matches++ }
+{{/vendorExtensions.x-go-union}}
+    if matches != 1 { return nil, fmt.Errorf("select exactly one {{classname}} alternative") }
+    return json.Marshal(selected)
+}

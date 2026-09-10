@@ -31,9 +31,10 @@ inbound address, and a few threaded support conversations ingested through the r
 pipeline. Safe to re-run (Message-ID idempotency means a second run adds nothing).
 
 Health `GET /healthz` · readiness `GET /readyz` · metrics `GET /metrics`. The
-HTTP API is versioned under `/api/v1`; the contract is
-`specs/001-tenant-foundation/contracts/openapi.yaml` (a unit test fails CI if the
-router and that contract drift apart).
+HTTP API is versioned under `/api/v1`, with the existing `/a/e`, `/a.js`, and
+`/m/...` browser/collector routes at the instance root. The sole editable live
+contract is [`api/openapi.yaml`](api/openapi.yaml). Full all-enabled route coverage
+is checked in both directions; `specs/*/contracts/` are historical design snapshots.
 
 ### Support desk (spec 002)
 
@@ -80,7 +81,7 @@ curl -s http://localhost:8080/api/v1/inbound/email/webhook \
 See `specs/002-support-desk/quickstart.md` for the full end-to-end walkthrough
 (inbound email → ticket → reply → customer threads back → custom domain + DKIM).
 
-Requires: Go 1.23+, PostgreSQL 16, Docker (for integration tests), and
+Requires: Go 1.25.5+, PostgreSQL 16, Docker (for integration tests), and
 `make`, `sqlc`, `golang-migrate`, `node`.
 
 ## Test
@@ -89,7 +90,7 @@ Requires: Go 1.23+, PostgreSQL 16, Docker (for integration tests), and
 make test           # unit tests (fast, no DB) — includes source-level security pins + OpenAPI drift
 make int-test       # ALL integration tests (ephemeral Postgres via testcontainers; Docker required)
 make sec-test       # security-regression suite only (the merge gate for Principles I/II/IV)
-make contract-test  # shared-layer interface contracts + spec-002 OpenAPI contract (fails CI on drift)
+make contract-test  # shared-layer interfaces + canonical OpenAPI contract
 make lint           # go vet (+ golangci-lint if installed)
 # Angular Playwright e2e (separate terminal):
 cd web && npm run e2e
@@ -103,6 +104,138 @@ they need Docker but no local database. Run a single package/test:
 ```bash
 go test -tags integration ./internal/tenancy/ -run TestTransferOwnership -count=1
 ```
+
+## SDKs
+
+Typed Python, TypeScript, Go and Java SDKs live in `sdk/`. Their models and
+resource methods derive from the same current contract; handwritten transports
+own authentication, signing, cancellation and connection pools. No generator or
+backend dependencies are required by installed consumers.
+
+| Package | Runtime floor | Coordinated release coordinate |
+|---|---|---|
+| Python | Python 3.11, Pydantic v2, HTTPX | `manyforge==2026.9.1` |
+| TypeScript | Node 22 or modern browsers, ESM/CJS | `@manyforge/sdk@2026.9.1` |
+| Go | Go 1.25 | `github.com/joshrendek/manyforge/sdk/go@v1.202609.1` |
+| Java | Java 17, JDK HttpClient, Jackson | `com.manyforge:manyforge-sdk:2026.9.1` |
+
+These are release coordinates, not a claim that the initial candidate is already
+public. Install a registry version only after its coordinated release completes.
+For a checkout, build and exercise the actual staged packages:
+
+```bash
+make sdk-generate
+make sdk-check
+make sdk-pack
+make sdk-smoke SDK_LANGUAGE=python   # also typescript, go, java
+```
+
+SDK tooling uses its frozen `tools/sdk/uv.lock` environment (`uv` required).
+Generation verifies the pinned OpenAPI Generator JAR before execution.
+`sdk-check` compares complete generated file sets, not only tracked Git diffs.
+`make generate` remains sqlc-only. Smoke tests install outside source directories,
+start the actual application with an isolated RLS database, disable outbound
+mail/AI sandboxes, and retain browser evidence under `sdk/dist/smoke/`.
+They need a working Docker context and the selected language toolchain.
+Run database smoke jobs serially on constrained local Docker VMs.
+
+Every client requires an explicit absolute **instance-root** URL, not a URL
+ending in `/api/v1`. There is no hosted-instance default. For example:
+
+```python
+from manyforge import ManyForge
+
+with ManyForge(base_url="https://manyforge.example", access_token=token) as client:
+    page = client.business(business_id).tickets.list(limit=20)
+```
+
+```typescript
+import { ManyForge } from '@manyforge/sdk';
+
+const client = new ManyForge({ baseUrl: 'https://manyforge.example', accessToken });
+const page = await client.business(businessId).tickets.list({ limit: 20 });
+```
+
+```go
+client, err := manyforge.NewClient(baseURL, manyforge.WithAccessToken(accessToken))
+if err != nil { return err }
+defer client.Close()
+page, err := client.Business(businessID).Tickets.List(ctx, manyforge.TicketListParams{Limit: 20})
+```
+
+```java
+import com.manyforge.sdk.ManyForgeClient;
+import com.manyforge.sdk.resources.BusinessTicketsResource.TicketListParams;
+
+try (var client = ManyForgeClient.builder().baseUrl(baseUrl).accessToken(accessToken).build()) {
+    var page = client.business(businessId).tickets().list(TicketListParams.builder().limit(20).build());
+}
+```
+
+Business scopes are immutable. Cursor lists provide lazy iteration; capped lists
+do not pretend to paginate. Unknown string enum values and additional response
+fields are tolerated. Supplied null, false, zero and empty arrays remain distinct
+from omission. Ticket assignment accepts omission/preserve, null/unassign and
+UUID/assign; CRM null does **not** clear its pointer/COALESCE-backed fields.
+TypeScript int64 fields are `bigint`, encoded as numeric JSON tokens without
+rounding; date-only values stay dates rather than timestamps.
+
+Management credentials are mutually exclusive: fixed access token, token
+provider, or an in-memory rotating `Session` (`AsyncSession` for Python async).
+Login returns a token pair without changing client state. Rotation is proactive,
+single-flight, and waits for `onRotate` persistence. Lost refresh responses or
+persistence failures invalidate that owner; old refresh tokens are never replayed.
+Independent processes/tabs need separate login sessions or an externally
+coordinated provider. Business/password-step-up and public-key 401s never trigger
+automatic refresh. Existing stateless JWT lifecycle limits remain: logout,
+password reset and deletion do not promise immediate access-token revocation.
+
+Public `FeedbackClient`, `TelemetryClient`, `MailingClient` and `AnalyticsClient`
+use publishable keys, never management sessions or cookies. Browser-safe
+TypeScript imports are under `@manyforge/sdk/public`; signing clients are under
+`@manyforge/sdk/server` (blocked by browser exports). Python signing clients are
+under `manyforge.server`. Signed feedback/telemetry and mailing use their distinct
+existing protocols over exact final request bytes. Server analytics requires the
+actual source site's `sourceOrigin`; `collect` returns no acceptance claim from
+the always-empty 204. Keep using `/a.js` for automatic pageview tracking.
+
+Cross-origin feedback/telemetry browser access is opt-in:
+
+```dotenv
+MANYFORGE_PUBLIC_BASE_URL=https://manyforge.example
+MANYFORGE_PUBLIC_INGEST_ALLOWED_ORIGINS=https://customer.example
+```
+
+The Helm equivalent is `publicBaseURL` plus `publicIngestAllowedOrigins`.
+Only exact configured origins and the instance origin are allowed; wildcard/null
+origins, Authorization and signing-header preflights are rejected. This does not
+enable cross-origin management/auth, callbacks or signed mailing. Origin is not
+authentication, and analytics source-site registration remains a separate policy.
+
+There are no SDK-level retries, hidden telemetry queues or implicit credential
+storage. Redirects are blocked. The default request timeout is 30 seconds with
+per-call overrides; CSV exports are closeable streams. HTTP errors retain status,
+server code/message, request ID, headers and bounded diagnostics without exposing
+credentials or raw bodies in default formatting.
+
+SDK releases use one CalVer ID, `YYYY.M.N`; Go maps it to `v1.YYYYMM.N`.
+Calendar boundaries do not permit breaking source/wire compatibility. API changes
+update the canonical contract, generated interfaces and their wire scenario in
+the same PR; SDK-affecting changes use `feat(sdk):` or `fix(sdk):` release signals.
+Coordinated publication is intentionally non-atomic and completes only after all
+four registries resolve the reviewed artifacts. Namespace ownership, a release
+GitHub App, trusted publishers and Central signing credentials are prerequisites.
+
+Java staging signs and checksums the retained tested JAR/POM/sources/Javadoc,
+then assembles Central's documented ZIP layout locally. The pinned Central
+plugin 0.11.0 does not implement a safe bundle-only `skipPublishing` path, so its
+publish/deploy goal is never invoked during staging. Only the source-bound
+`sdk-publish.yml` workflow uploads the retained bundle. Rehearsal keys/bundles are
+marked and rejected by publication validation.
+
+MIT licenses in `sdk/`, `api/` and `tools/sdk/` cover those SDK-owned deliverables,
+not unrelated backend/frontend code or third-party assets. Modified upstream
+generator templates retain their own notices.
 
 ## Operations
 
@@ -187,6 +320,9 @@ Helm/environment settings and migration-Job parity.
 | `db/schema.sql`, `db/query/` | sqlc inputs (tables-only schema mirror + queries)                                                                                                                   |
 | `web/`                       | Angular 21 dashboard (+ Playwright e2e in `web/e2e/`)                                                                                                               |
 | `landing/`                   | Static homepage and Cloudflare Workers asset deployment                                                                                                             |
+| `api/` | Canonical current OpenAPI and generated SDK projection |
+| `sdk/` | Four independently installable SDK packages and one CalVer release ID |
+| `tools/sdk/` | Pinned generation, package, compatibility and installed-consumer tooling |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map and the two-wall
 authorization model, and `specs/001-tenant-foundation/` for the spec, plan,

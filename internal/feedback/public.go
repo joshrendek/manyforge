@@ -5,8 +5,8 @@ package feedback
 // access goes through the SECURITY DEFINER functions of migration 0102, which bypass RLS.
 //
 // Auth is a per-board PUBLISHABLE key (Sentry-DSN style) carried in the URL path. It is not a
-// secret — the security model is: unguessable random keys + IP rate-limiting (applied by the
-// ingress group middleware) + content caps + one-vote-per-identity.
+// secret — the security model is: unguessable random keys + IP rate-limiting (applied
+// after route-local CORS) + content caps + one-vote-per-identity.
 //
 // Oracle policy (Spec 006 public-portal boundary):
 //   - Unknown / revoked key, or a key on a NON-public board → uniform 401. Never reveals which
@@ -44,6 +44,9 @@ const maxPublicBytes int64 = 64 << 10
 type PublicHandler struct {
 	DB     *appdb.DB
 	Logger *slog.Logger
+	// AllowedOrigins opts these routes into CORS; InstanceOrigin is also allowed.
+	AllowedOrigins []string
+	InstanceOrigin string
 	// Sealer nil-behavior is bifurcated by the key's own state: a signed request against a key
 	// that HAS a sealed_secret gets 401 (fail closed — verification is required but impossible
 	// without a sealer). A key with no sealed_secret (verified tier never enabled for it)
@@ -57,12 +60,16 @@ func NewPublicHandler(database *appdb.DB, logger *slog.Logger, sealer *crypto.Se
 	return &PublicHandler{DB: database, Logger: logger, Sealer: sealer, maxBytes: maxPublicBytes}
 }
 
-// PublicRoutes mounts the SDK/portal endpoints. The caller applies the global ingest
-// rate-limiter before calling this (mirrors connectors.WebhookHandler.PublicRoutes).
-func (h *PublicHandler) PublicRoutes(r chi.Router) {
-	r.Post("/feedback/public/{key}/posts", h.submit)
-	r.Get("/feedback/public/{key}/posts", h.list)
-	r.Post("/feedback/public/{key}/posts/{postID}/votes", h.vote)
+// PublicRoutes mounts SDK/portal endpoints with CORS before the shared ingest
+// limiter, so preflights never spend ingest budget or resolve a publishable key.
+func (h *PublicHandler) PublicRoutes(r chi.Router, ingestLimit func(http.Handler) http.Handler) {
+	posts := r.With(httpx.PublicIngestCORS(h.AllowedOrigins, h.InstanceOrigin, http.MethodGet, http.MethodPost), ingestLimit)
+	posts.Post("/feedback/public/{key}/posts", h.submit)
+	posts.Get("/feedback/public/{key}/posts", h.list)
+	posts.Options("/feedback/public/{key}/posts", h.list)
+	votes := r.With(httpx.PublicIngestCORS(h.AllowedOrigins, h.InstanceOrigin, http.MethodPost), ingestLimit)
+	votes.Post("/feedback/public/{key}/posts/{postID}/votes", h.vote)
+	votes.Options("/feedback/public/{key}/posts/{postID}/votes", h.vote)
 }
 
 // publicBoard is the tenancy resolved from a publishable key (only for an enabled key on a

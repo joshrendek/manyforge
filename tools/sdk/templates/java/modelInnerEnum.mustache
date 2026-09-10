@@ -1,0 +1,19 @@
+{{! Derived from OpenAPI Generator Java/modelEnum.mustache (Apache-2.0). }}
+@JsonDeserialize(using = {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}}.Deserializer.class)
+public static final class {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}} {
+{{#allowableValues}}{{#enumVars}}
+  public static final {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}} {{name}} = new {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}}({{#isBoolean}}Boolean.valueOf({{{value}}}){{/isBoolean}}{{^isBoolean}}{{{value}}}{{/isBoolean}});
+{{/enumVars}}{{/allowableValues}}
+  private final {{{dataType}}} value;
+  @JsonCreator(mode = JsonCreator.Mode.DELEGATING) public {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}}({{{dataType}}} value) { this.value = value; }
+  @JsonValue public {{{dataType}}} getValue() { return value; }
+  public static {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}} fromValue({{{dataType}}} value) { return new {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}}(value); }
+  @Override public String toString() { return String.valueOf(value); }
+  @Override public boolean equals(Object other) { return other instanceof {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}} e && Objects.equals(value, e.value); }
+  @Override public int hashCode() { return Objects.hashCode(value); }
+  public static final class Deserializer extends JsonDeserializer<{{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}}> {
+    @Override public {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}} deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+      return new {{{datatypeWithEnum}}}{{^datatypeWithEnum}}{{classname}}{{/datatypeWithEnum}}(context.readValue(parser, {{{dataType}}}.class));
+    }
+  }
+}

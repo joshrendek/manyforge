@@ -1,0 +1,2 @@
+"""Generated canonical ManyForge SDK release identifier."""
+__version__ = "@VERSION@"

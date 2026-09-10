@@ -1,0 +1,128 @@
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { setTimeout as delay } from 'node:timers/promises';
+import { ManyForge, Session, SessionError, ManyForgeError } from '@manyforge/sdk';
+import { FeedbackClient, TelemetryClient } from '@manyforge/sdk/public';
+import { SignedFeedbackClient, SignedTelemetryClient, AnalyticsClient } from '@manyforge/sdk/server';
+import { supplemental } from './supplemental.mjs';
+import { browserSmoke } from './browser.mjs';
+
+const fixture = JSON.parse(await readFile(process.argv[2], 'utf8'));
+const checks = [];
+const uid = randomUUID();
+const bootstrap = new ManyForge({ baseUrl: fixture.base_url });
+const pair = await bootstrap.auth.login({ body: { email: fixture.email, password: fixture.password } });
+const client = new ManyForge({ baseUrl: fixture.base_url, session: Session.fromTokenPair(pair) });
+const business = await client.businesses.create({ body: { name: `TypeScript SDK ${uid}` } });
+const scope = client.business(business.id);
+const setupChecks = new Map((await scope.mailing.setup.get()).checks.map(item => [item.id, item]));
+assert.equal(setupChecks.get('outbound_enabled').status, 'blocked');
+assert.deepEqual(setupChecks.get('smtp_relay').requiredFor, ['relay']);
+checks.push('real-provider-scoped-outbound-setup');
+const contact = await scope.contacts.create({ body: { primaryEmail: `sdk-${uid}@example.test`, displayName: 'Original SDK contact' } });
+assert.equal(contact.tenantRootId, business.tenantRootId);
+assert.equal((await scope.contacts.get({ cid: contact.id })).primaryEmail, contact.primaryEmail);
+assert.equal((await scope.contacts.update({ cid: contact.id, body: { displayName: 'Updated SDK contact' } })).displayName, 'Updated SDK contact');
+const ids = [contact.id];
+for (let i = 0; i < 3; i++) ids.push((await scope.contacts.create({ body: { primaryEmail: `sdk-${uid}-${i}@example.test`, displayName: `Page ${i}` } })).id);
+const seen = [];
+for await (const item of scope.contacts.iter({ limit: 1 })) { assert.equal(item.tenantRootId, business.tenantRootId); seen.push(item.id); }
+assert.deepEqual(seen.sort(), ids.sort());
+const otherPair = await bootstrap.auth.login({ body: { email: fixture.other_email, password: fixture.other_password } });
+const other = new ManyForge({ baseUrl: fixture.base_url, session: Session.fromTokenPair(otherPair) });
+for (const cid of [contact.id, randomUUID()]) await assert.rejects(other.business(business.id).contacts.get({ cid }), error => error instanceof ManyForgeError && error.status === 404 && error.code === 'NOT_FOUND' && Boolean(error.requestId));
+checks.push('real-crm-create-read-update-pagination-rls');
+
+const tickets = client.business(fixture.ticket_business_id).tickets;
+assert.equal((await tickets.update({ tid: fixture.ticket_id, body: { priority: 'high' } })).assigneePrincipalId, fixture.principal_id);
+assert.equal((await tickets.update({ tid: fixture.ticket_id, body: { assigneePrincipalId: null } })).assigneePrincipalId, null);
+const ticket = await tickets.update({ tid: fixture.ticket_id, body: { assigneePrincipalId: fixture.principal_id, tags: [] } });
+assert.equal(ticket.assigneePrincipalId, fixture.principal_id);
+assert.deepEqual(ticket.tags, []);
+checks.push('real-ticket-absent-null-value');
+
+let rotations = 0;
+const concurrentBootstrap = new ManyForge({ baseUrl: fixture.session_base_url });
+const concurrentPair = await concurrentBootstrap.auth.login({ body: { email: fixture.email, password: fixture.password } });
+let persisted = false;
+const concurrent = new ManyForge({ baseUrl: fixture.session_base_url, session: Session.fromTokenPair(concurrentPair, { onRotate: async () => { rotations++; await delay(50); persisted = true; } }) });
+await delay(fixture.access_token_ttl_seconds * 1000 + 50);
+await Promise.all(Array.from({ length: 8 }, async () => { await concurrent.account.get(); assert.equal(persisted, true); }));
+assert.equal(rotations, 1);
+const lossyBootstrap = new ManyForge({ baseUrl: fixture.lossy_base_url });
+const lossyPair = await lossyBootstrap.auth.login({ body: { email: fixture.email, password: fixture.password } });
+const lossy = new ManyForge({ baseUrl: fixture.lossy_base_url, session: Session.fromTokenPair(lossyPair) });
+await delay(fixture.access_token_ttl_seconds * 1000 + 50);
+await assert.rejects(lossy.account.get(), SessionError);
+await assert.rejects(lossy.account.get(), SessionError);
+checks.push('real-single-flight-durable-rotation-loss-invalidates');
+
+const board = await scope.feedback.boards.create({ body: { name: `SDK board ${uid}`, isPublic: true } });
+const key = await scope.feedback.keys.create({ bid: board.id, body: { label: 'SDK public' } });
+assert.ok(key.secret);
+const feedback = new FeedbackClient({ baseUrl: fixture.base_url, publishableKey: key.publishableKey });
+const signed = new SignedFeedbackClient({ baseUrl: fixture.base_url, publishableKey: key.publishableKey, signingSecret: key.secret });
+const anonymous = await feedback.posts.create({ body: { title: `Anonymous ${uid}`, authorIdentity: 'anonymous@example.test' } });
+assert.equal(anonymous.identityVerified, false);
+const signedBody = { title: `Signed ${uid}`, body: 'Same exact UTF-8 bytes: café ! / ?', authorIdentity: 'signed@example.test', idempotencyKey: randomUUID() };
+const signedPost = await signed.posts.create({ body: signedBody });
+assert.equal(signedPost.identityVerified, true);
+const deduped = await signed.posts.create({ body: signedBody });
+assert.equal(deduped.id, signedPost.id);
+assert.equal(deduped.deduped, true);
+await assert.rejects(signed.posts.create({ body: { ...signedBody, title: `${signedBody.title} changed` } }), error => error instanceof ManyForgeError && error.status === 409);
+const vote = { postID: anonymous.id, body: { voterIdentity: `voter-${uid}` } };
+assert.equal((await feedback.posts.vote(vote)).voted, true);
+assert.equal((await feedback.posts.vote(vote)).voted, false);
+await signed.posts.list({ author: 'signed@example.test!? /+', voterIdentity: 'voter/?&= +!', limit: 2 });
+checks.push('real-feedback-identity-idempotency-conflict-vote');
+
+const crash = await scope.telemetry.clients.create({ body: { kind: 'crash', name: `SDK crash ${uid}`, requireSignature: false } });
+const telemetry = new TelemetryClient({ baseUrl: fixture.base_url, publishableKey: crash.publishableKey });
+const event = { occurredAt: new Date().toISOString(), platform: 'sdk-smoke', signature: `sdk-${uid}`, payload: { message: 'disposable fixture crash' } };
+const ingested = await telemetry.ingest({ body: { crash: [event, { ...event, occurredAt: '2000-01-01T00:00:00Z' }] } });
+assert.equal(ingested.accepted, 1);
+assert.equal(ingested.dropped, 1);
+await assert.rejects(telemetry.ingest({ body: { crash: [{ ...event, payload: { large: 'x'.repeat(270_000) } }] } }), error => error instanceof ManyForgeError && error.status === 413);
+await assert.rejects(telemetry.ingest({ body: { crash: Array.from({ length: 1001 }, () => ({ occurredAt: new Date().toISOString(), platform: 'sdk', signature: 'sdk-batch' })) } }), error => error instanceof ManyForgeError && error.status === 400 && error.serverMessage === 'batch_too_large');
+const required = await scope.telemetry.clients.create({ body: { kind: 'crash', name: `SDK signed ${uid}`, requireSignature: true } });
+await assert.rejects(new TelemetryClient({ baseUrl: fixture.base_url, publishableKey: required.publishableKey }).ingest({ body: { crash: [event] } }), error => error instanceof ManyForgeError && error.status === 401);
+assert.equal((await new SignedTelemetryClient({ baseUrl: fixture.base_url, publishableKey: required.publishableKey, signingSecret: required.secret }).ingest({ body: { crash: [event] } })).accepted, 1);
+await assert.rejects(new SignedTelemetryClient({ baseUrl: fixture.base_url, publishableKey: required.publishableKey, signingSecret: 'wrong-secret' }).ingest({ body: { crash: [event] } }), error => error instanceof ManyForgeError && error.status === 401);
+await assert.rejects(new TelemetryClient({ baseUrl: fixture.lossy_telemetry_base_url, publishableKey: crash.publishableKey }).ingest({ body: { crash: [event] } }), error => !(error instanceof ManyForgeError));
+checks.push('real-telemetry-partial-bounds-signature-no-replay');
+
+const analytics = await scope.telemetry.clients.create({ body: { kind: 'analytics', name: `SDK analytics ${uid}`, allowedOrigins: [fixture.allowed_origin] } });
+const eventName = `sdk_allowed_${uid}`;
+const deniedName = `sdk_denied_${uid}`;
+assert.equal(await new AnalyticsClient({ baseUrl: fixture.base_url, publishableKey: analytics.publishableKey, sourceOrigin: fixture.allowed_origin }).collect({ body: { n: eventName, p: '/sdk-proof' } }), undefined);
+assert.equal(await new AnalyticsClient({ baseUrl: fixture.base_url, publishableKey: analytics.publishableKey, sourceOrigin: fixture.denied_origin }).collect({ body: { n: deniedName, p: '/sdk-proof-denied' } }), undefined);
+const summary = await scope.analytics.get({ clientId: analytics.id, days: 7 });
+assert.match(summary.from, /^\d{4}-\d{2}-\d{2}$/);
+assert.match(summary.to, /^\d{4}-\d{2}-\d{2}$/);
+assert.equal(typeof summary.pageviews, 'bigint');
+for (const point of summary.series) { assert.match(point.date, /^\d{4}-\d{2}-\d{2}$/); assert.equal(typeof point.pageviews, 'bigint'); }
+checks.push('real-analytics-source-origin-no-acceptance-claim-date-only');
+
+const list = await scope.mailing.lists.create({ body: { name: `SDK CSV ${uid}`, doubleOptIn: false } });
+const csvEmail = `csv-${uid}@example.test`;
+const csv = new TextEncoder().encode(`email,name\n${csvEmail},SDK CSV Person\n`);
+const imported = await scope.mailing.subscribers.importCsv({ lid: list.id, consentAttested: true, skipConfirmation: true, file: { filename: 'subscribers.csv', data: csv, contentType: 'text/csv' } });
+assert.equal(imported.imported, 1n);
+const download = await scope.mailing.subscribers.exportCsv({ lid: list.id }, { timeoutMs: 60_000 });
+try { const text = await new Response(download.stream).text(); assert.match(text, /email/); assert.ok(text.includes(csvEmail)); } finally { await download.close(); }
+const oversized = new TextEncoder().encode(`email,name\n${csvEmail},${'x'.repeat(5 * 1024 * 1024)}\n`);
+await assert.rejects(scope.mailing.subscribers.importCsv({ lid: list.id, consentAttested: true, skipConfirmation: true, file: { filename: 'oversized.csv', data: oversized } }), error => error instanceof ManyForgeError && error.status === 400);
+checks.push('real-mailing-consent-import-closeable-csv-export-size-bound');
+
+const cjs = createRequire(import.meta.url)('@manyforge/sdk');
+assert.equal((await new cjs.ManyForge({ baseUrl: fixture.base_url, tokenProvider: async () => (await bootstrap.auth.login({ body: { email: fixture.email, password: fixture.password } })).accessToken }).business(business.id).contacts.get({ cid: contact.id })).id, contact.id);
+checks.push('installed-commonjs-real-product-request');
+await supplemental({ fixture, contact, ticket, checks });
+const browserResult = await browserSmoke({ fixture, key, crash, required, analytics, event, checks, uid });
+await scope.feedback.keys.revoke({ kid: key.id });
+await assert.rejects(feedback.posts.list(), error => error instanceof ManyForgeError && error.status === 401);
+checks.push('real-feedback-revoked-key-uniform-401');
+await writeFile(fixture.result_path, JSON.stringify({ business_id: business.id, contact_id: contact.id, analytics_client_id: analytics.id, analytics_event_name: eventName, analytics_denied_event_name: deniedName, board_id: board.id, feedback_publishable_key: key.publishableKey, assertions: checks, ...browserResult }, null, 2));

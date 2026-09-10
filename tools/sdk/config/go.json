@@ -1,0 +1,14 @@
+{
+  "generatorName": "go",
+  "packageName": "manyforge",
+  "isGoSubmodule": true,
+  "withGoMod": true,
+  "hideGenerationTimestamp": true,
+  "disallowAdditionalPropertiesIfNotPresent": false,
+  "enumClassPrefix": true,
+  "apiNameSuffix": "Resource",
+  "generateAliasAsModel": true,
+  "modelNameMappings": {"TelemetryClient": "TelemetryClientRecord"},
+  "typeMappings": {"date": "Date"},
+  "importMappings": {"Date": ""}
+}

@@ -1,0 +1,8 @@
+{{! Derived from OpenAPI Generator go/model_enum.mustache (Apache-2.0). }}
+// {{classname}} retains unknown server values; constants list currently known values.
+type {{classname}} {{dataType}}
+const (
+{{#allowableValues}}{{#enumVars}}
+    {{classname}}{{name}} {{classname}} = {{{value}}}
+{{/enumVars}}{{/allowableValues}}
+)

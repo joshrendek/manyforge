@@ -1,0 +1,72 @@
+{{>licenseInfo}}
+// Focused OpenAPI Generator API template; native HTTP is owned by Transport.
+import { Resource, PaginationError, type Transport, type RequestOptions, type ByteStream, type Upload } from '../transport.js';
+import { decodeJSON, type JsonValue } from '../model-support.js';
+{{#imports}}
+import type { {{className}} } from '../models/{{classFileName}}{{importFileExtension}}';
+{{/imports}}
+
+{{#operations}}{{#operation}}
+export interface {{vendorExtensions.x-ts-params-name}} {
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}
+    {{paramName}}{{^required}}?{{/required}}: {{#isFile}}Upload{{/isFile}}{{^isFile}}{{#isEnum}}{{{datatypeWithEnum}}}{{/isEnum}}{{^isEnum}}{{{dataType}}}{{/isEnum}}{{/isFile}}{{#isNullable}} | null{{/isNullable}};
+{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+}
+{{#allParams}}{{^vendorExtensions.x-sdk-bound}}{{#isEnum}}
+export const {{operationIdCamelCase}}{{enumName}} = {
+{{#allowableValues}}{{#enumVars}}    {{{name}}}: {{{value}}},
+{{/enumVars}}{{/allowableValues}}
+} as const;
+export type {{operationIdCamelCase}}{{enumName}} = typeof {{operationIdCamelCase}}{{enumName}}[keyof typeof {{operationIdCamelCase}}{{enumName}}]{{#isString}} | (string & {}){{/isString}};
+{{/isEnum}}{{/vendorExtensions.x-sdk-bound}}{{/allParams}}
+{{/operation}}
+
+export class {{classname}} extends Resource {
+{{#operation}}
+    {{vendorExtensions.x-sdk-method}}(params: {{vendorExtensions.x-ts-params-name}}{{^vendorExtensions.x-ts-required-params}} = {}{{/vendorExtensions.x-ts-required-params}}, options?: RequestOptions): Promise<{{#vendorExtensions.x-sdk-stream}}ByteStream{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{{returnType}}}{{^returnType}}void{{/returnType}}{{/vendorExtensions.x-sdk-stream}}> {
+        return this.transport.request({
+            operationId: '{{vendorExtensions.x-ts-operation-id}}',
+            method: '{{httpMethod}}',
+            path: '{{{path}}}',
+            pathParams: { ...this.scope, {{#pathParams}}{{^vendorExtensions.x-sdk-bound}}'{{baseName}}': String(params.{{paramName}}), {{/vendorExtensions.x-sdk-bound}}{{/pathParams}} },
+            query: [{{#queryParams}}{ name: '{{baseName}}', value: params.{{paramName}}, style: '{{vendorExtensions.x-ts-style}}', explode: {{vendorExtensions.x-ts-explode}} }, {{/queryParams}}],
+            headers: { {{#headerParams}}'{{baseName}}': params.{{paramName}}, {{/headerParams}} },
+            authenticated: {{vendorExtensions.x-sdk-authenticated}},
+            audience: '{{vendorExtensions.x-manyforge-audience}}',
+{{#bodyParam}}
+            body: params.{{paramName}},
+            bodySchema: {{{vendorExtensions.x-ts-schema}}},
+{{/bodyParam}}
+{{#vendorExtensions.x-sdk-body-key}}
+            bodyKey: '{{.}}',
+{{/vendorExtensions.x-sdk-body-key}}
+{{#hasFormParams}}
+            form: { {{#formParams}}'{{baseName}}': params.{{paramName}}, {{/formParams}} },
+{{/hasFormParams}}
+{{#consumes}}{{#-first}}            contentType: '{{mediaType}}',
+{{/-first}}{{/consumes}}
+            response: '{{vendorExtensions.x-ts-response-kind}}',
+            responseSchema: {{{vendorExtensions.x-ts-response-schema}}},
+            decode: (text: string) => {{#vendorExtensions.x-sdk-stream}}{ throw new TypeError('Streaming responses must not be JSON-decoded'); }{{/vendorExtensions.x-sdk-stream}}{{^vendorExtensions.x-sdk-stream}}{{#returnType}}decodeJSON<{{{returnType}}}>(text, {{{vendorExtensions.x-ts-response-schema}}}){{/returnType}}{{^returnType}}undefined{{/returnType}}{{/vendorExtensions.x-sdk-stream}},
+        }, options);
+    }
+{{#vendorExtensions.x-sdk-pagination}}
+
+    async *iter(params: {{vendorExtensions.x-ts-params-name}}{{^vendorExtensions.x-ts-required-params}} = {}{{/vendorExtensions.x-ts-required-params}}, options?: RequestOptions): AsyncIterable<{{{returnType}}}['items'][number]> {
+        let cursor = params.cursor;
+        const seen = new Set<string>();
+        if (cursor) seen.add(cursor);
+        while (true) {
+            const page = await this.{{vendorExtensions.x-sdk-method}}({ ...params, cursor }, options);
+            for (const item of page.items) yield item;
+            const next = page.nextCursor;
+            if (!next) return;
+            if (seen.has(next)) throw new PaginationError();
+            seen.add(next);
+            cursor = next;
+        }
+    }
+{{/vendorExtensions.x-sdk-pagination}}
+{{/operation}}
+}
+{{/operations}}

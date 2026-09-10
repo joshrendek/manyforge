@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "34e6ea857ba5e2f0f86620bf76fb247ee8b4bcb8",
+  "separate-pull-requests": true,
+  "pull-request-title-pattern": "chore(master): release sdk ${version}",
+  "pull-request-header": "Coordinated ManyForge SDK release. Versions are allocated in UTC, not from commit types.",
+  "pull-request-footer": "This PR was generated with [Release Please](https://github.com/googleapis/release-please).",
+  "packages": {
+    "sdk": {
+      "release-type": "simple",
+      "component": "sdk",
+      "include-component-in-tag": true,
+      "include-v-in-tag": true,
+      "tag-separator": "-",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}

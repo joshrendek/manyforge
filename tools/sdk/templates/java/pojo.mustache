@@ -1,0 +1,37 @@
+{{! Focused replacement for OpenAPI Generator Java/pojo.mustache (Apache-2.0). }}
+@JsonIgnoreProperties(ignoreUnknown = true)
+@JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
+@JsonPropertyOrder({ {{#vars}}"{{baseName}}"{{^-last}}, {{/-last}}{{/vars}} })
+@com.manyforge.sdk.ModelShape(required = { {{#vars}}{{#required}}"{{baseName}}", {{/required}}{{/vars}} }, nonNullable = { {{#vars}}{{^isNullable}}"{{baseName}}", {{/isNullable}}{{/vars}} })
+public class {{classname}} {
+{{#additionalPropertiesType}}
+  private Map<String, {{{additionalPropertiesType}}}> additionalProperties;
+  @JsonAnyGetter public Map<String, {{{additionalPropertiesType}}}> getAdditionalProperties() {
+    return additionalProperties == null ? Collections.emptyMap() : Collections.unmodifiableMap(additionalProperties);
+  }
+  @JsonAnySetter public void putAdditionalProperty(String name, {{{additionalPropertiesType}}} value) {
+    if (additionalProperties == null) additionalProperties = new LinkedHashMap<>();
+    additionalProperties.put(name, value);
+  }
+{{/additionalPropertiesType}}
+{{#vars}}
+{{#isEnum}}{{^isContainer}}{{>modelInnerEnum}}{{/isContainer}}{{#isContainer}}{{#mostInnerItems}}{{>modelInnerEnum}}{{/mostInnerItems}}{{/isContainer}}{{/isEnum}}
+  @JsonProperty("{{baseName}}")
+  private JsonNullable<{{{datatypeWithEnum}}}> {{name}} = JsonNullable.undefined();
+
+  public {{{datatypeWithEnum}}} {{getter}}() { return {{name}}.orElse(null); }
+  public JsonNullable<{{{datatypeWithEnum}}}> {{name}}Presence() { return {{name}}; }
+  public {{classname}} {{name}}({{{datatypeWithEnum}}} value) { this.{{name}} = JsonNullable.of(value); return this; }
+{{/vars}}
+  public static Builder builder() { return new Builder(); }
+  public static final class Builder {
+    private final {{classname}} value = new {{classname}}();
+{{#additionalPropertiesType}}
+    public Builder additionalProperty(String name, {{{additionalPropertiesType}}} field) { value.putAdditionalProperty(name, field); return this; }
+{{/additionalPropertiesType}}
+{{#vars}}
+    public Builder {{name}}({{{datatypeWithEnum}}} field) { value.{{name}}(field); return this; }
+{{/vars}}
+    public {{classname}} build() { return value; }
+  }
+}

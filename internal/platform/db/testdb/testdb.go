@@ -7,6 +7,7 @@ package testdb
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
@@ -67,6 +69,25 @@ func Start(ctx context.Context) (*TestDB, error) {
 	if err != nil {
 		_ = ctr.Terminate(ctx)
 		return nil, err
+	}
+
+	// Independent local Docker VMs can publish the same port. Fail closed before
+	// migrations if a forwarded endpoint reaches a different PostgreSQL instance.
+	code, output, execErr := ctr.Exec(ctx, []string{"psql", "-U", "manyforge", "-d", "manyforge", "-Atc", "SELECT system_identifier::text FROM pg_control_system()"}, tcexec.Multiplexed())
+	var containerIdentity []byte
+	if execErr == nil && code == 0 {
+		containerIdentity, execErr = io.ReadAll(io.LimitReader(output, 1024))
+	}
+	var connectedIdentity string
+	if execErr == nil && code == 0 {
+		execErr = super.QueryRow(ctx, "SELECT system_identifier::text FROM pg_control_system()").Scan(&connectedIdentity)
+	}
+	if execErr != nil || code != 0 || strings.TrimSpace(string(containerIdentity)) != connectedIdentity {
+		super.Close()
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = ctr.Terminate(cleanup)
+		return nil, fmt.Errorf("isolated PostgreSQL endpoint identity verification failed")
 	}
 
 	if err := runMigrations(host, port.Port()); err != nil {
