@@ -9,6 +9,7 @@ import java.util.function.Function;
 /** One in-memory owner of a rotating human session. Never share refresh tokens across owners. */
 public final class Session {
     private String accessToken, refreshToken;
+    private String origin;
     private long expiresAt, margin;
     private boolean valid = true;
     private CompletableFuture<String> rotation;
@@ -32,8 +33,11 @@ public final class Session {
         expiresAt = System.nanoTime() + lifetime;
         margin = Math.min(Duration.ofSeconds(30).toNanos(), lifetime / 10);
     }
-    synchronized CompletableFuture<String> token(Function<String, CompletableFuture<TokenPair>> refresh) {
+    synchronized CompletableFuture<String> token(String instanceOrigin, Function<String, CompletableFuture<TokenPair>> refresh) {
         if (!valid) return CompletableFuture.failedFuture(new SessionException());
+        if (origin != null && !origin.equals(instanceOrigin))
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Session belongs to another instance"));
+        origin = Objects.requireNonNull(instanceOrigin);
         if (rotation != null) return rotation.copy();
         if (expiresAt - System.nanoTime() >= margin) return CompletableFuture.completedFuture(accessToken);
         CompletableFuture<String> shared = new CompletableFuture<>();

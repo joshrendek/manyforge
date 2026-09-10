@@ -84,7 +84,7 @@ final class NativeTransport implements Transport, AutoCloseable {
         if (!request.authenticated()) return CompletableFuture.completedFuture(null);
         if (publishableKey != null) return CompletableFuture.failedFuture(new IllegalArgumentException("Public clients cannot authenticate management requests"));
         try {
-            if (session != null) return session.token(refreshToken -> new RootAuthResource(this, null).refreshAsync(
+            if (session != null) return session.token(baseUrl, refreshToken -> new RootAuthResource(this, null).refreshAsync(
                 RootAuthResource.RootAuthRefreshParams.builder().refreshRequest(new RefreshRequest().refreshToken(refreshToken)).build()));
             if (provider != null) return provider.accessToken().toCompletableFuture().copy().thenApply(value -> required(value, "access token"));
             return CompletableFuture.completedFuture(required(accessToken, "access token"));

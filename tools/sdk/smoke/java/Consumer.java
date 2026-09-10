@@ -391,6 +391,30 @@ public final class Consumer {
             }
             passed("boundary_fixed_provider_session_credential_redaction");
         }
+        if (scenario.equals("all") || scenario.equals("session-origin")) {
+            for (boolean expired : List.of(false, true)) {
+                try (Wire first = new Wire(); Wire second = new Wire()) {
+                    first.status.set(401); second.status.set(401);
+                    byte[] rejected = "{\"code\":\"UNAUTHORIZED\",\"message\":\"expected fixture rejection\"}".getBytes(StandardCharsets.UTF_8);
+                    first.body.set(rejected); second.body.set(rejected);
+                    Session session = Session.fromTokenPair(new TokenPair().accessToken("owned-access")
+                        .refreshToken("owned-refresh").expiresIn(expired ? 1 : 300));
+                    try (ManyForgeClient owner = client(first.base, session); ManyForgeClient other = client(second.base, session)) {
+                        api(401, () -> owner.account().get());
+                        check(first.requests.get() == 1 && "Bearer owned-access".equals(first.authorization.get()), "session first used at its owner origin");
+                        if (expired) Thread.sleep(1100);
+                        for (boolean async : List.of(false, true)) {
+                            Throwable failure = fails(() -> { if (async) other.account().getAsync().get(); else other.account().get(); });
+                            Throwable cause = failure instanceof ExecutionException ? failure.getCause() : failure;
+                            check(cause instanceof IllegalArgumentException, "cross-origin session rejected before token access or rotation");
+                        }
+                        check(second.requests.get() == 0, "neither access nor refresh credentials reach another origin");
+                        check(session.isValid(), "origin mismatch does not invalidate the owning session");
+                    }
+                }
+            }
+            passed("boundary_session_origin_ownership");
+        }
         if (scenario.equals("all") || scenario.equals("provider")) {
             try (Wire wire = new Wire()) {
                 wire.status.set(204);
