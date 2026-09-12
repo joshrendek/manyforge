@@ -73,6 +73,7 @@ from manyforge.api.root_businesses_resource import RootBusinessesResource, Async
 from manyforge.api.root_github_app_install_url_resource import RootGithubAppInstallUrlResource, AsyncRootGithubAppInstallUrlResource
 from manyforge.api.root_github_app_installations_resource import RootGithubAppInstallationsResource, AsyncRootGithubAppInstallationsResource
 from manyforge.api.root_invitations_resource import RootInvitationsResource, AsyncRootInvitationsResource
+from manyforge.api.root_mailing_reporting_resource import RootMailingReportingResource, AsyncRootMailingReportingResource
 from manyforge.api.root_permissions_resource import RootPermissionsResource, AsyncRootPermissionsResource
 from manyforge.api.root_tenant_merges_resource import RootTenantMergesResource, AsyncRootTenantMergesResource
 from manyforge.api.root_tenant_merges_options_resource import RootTenantMergesOptionsResource, AsyncRootTenantMergesOptionsResource
@@ -298,6 +299,11 @@ class RootGithubAppInstallUrlScope(RootGithubAppInstallUrlResource):
         self._bindings = MappingProxyType(dict(bindings or {}))
 
 class RootGithubAppInstallationsScope(RootGithubAppInstallationsResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class RootMailingReportingScope(RootMailingReportingResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
@@ -742,6 +748,10 @@ class RootScope(object):
         return RootInvitationsScope(self._transport, self._bindings)
 
     @property
+    def mailing(self) -> RootMailingScope:
+        return RootMailingScope(self._transport, self._bindings)
+
+    @property
     def permissions(self) -> RootPermissionsScope:
         return RootPermissionsScope(self._transport, self._bindings)
 
@@ -786,6 +796,15 @@ class RootInvitationsScope(RootInvitationsResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class RootMailingScope(object):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def reporting(self) -> RootMailingReportingScope:
+        return RootMailingReportingScope(self._transport, self._bindings)
 
 class RootPermissionsScope(RootPermissionsResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -1026,6 +1045,11 @@ class AsyncRootGithubAppInstallUrlScope(AsyncRootGithubAppInstallUrlResource):
         self._bindings = MappingProxyType(dict(bindings or {}))
 
 class AsyncRootGithubAppInstallationsScope(AsyncRootGithubAppInstallationsResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncRootMailingReportingScope(AsyncRootMailingReportingResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
@@ -1470,6 +1494,10 @@ class AsyncRootScope(object):
         return AsyncRootInvitationsScope(self._transport, self._bindings)
 
     @property
+    def mailing(self) -> AsyncRootMailingScope:
+        return AsyncRootMailingScope(self._transport, self._bindings)
+
+    @property
     def permissions(self) -> AsyncRootPermissionsScope:
         return AsyncRootPermissionsScope(self._transport, self._bindings)
 
@@ -1514,6 +1542,15 @@ class AsyncRootInvitationsScope(AsyncRootInvitationsResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncRootMailingScope(object):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def reporting(self) -> AsyncRootMailingReportingScope:
+        return AsyncRootMailingReportingScope(self._transport, self._bindings)
 
 class AsyncRootPermissionsScope(AsyncRootPermissionsResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:

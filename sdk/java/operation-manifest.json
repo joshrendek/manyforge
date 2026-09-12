@@ -319,6 +319,14 @@
     "pagination": null
   },
   {
+    "operationId": "MailingReportingGet",
+    "resource": "mailing.reporting",
+    "method": "get",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
     "operationId": "MembersDelete",
     "resource": "members",
     "method": "delete",

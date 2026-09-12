@@ -225,6 +225,8 @@ from .mailing_event_rate_limit_error import MailingEventRateLimitError
 from .mailing_ingress_error import MailingIngressError
 from .mailing_list import MailingList
 from .mailing_list_properties_status_enum import MailingListPropertiesStatusEnum
+from .mailing_report import MailingReport
+from .mailing_report_rate import MailingReportRate
 from .mailing_setup import MailingSetup
 from .mailing_setup_check import MailingSetupCheck
 from .mailing_setup_check_properties_id_enum import MailingSetupCheckPropertiesIdEnum

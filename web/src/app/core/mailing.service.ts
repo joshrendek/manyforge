@@ -218,6 +218,28 @@ export interface MailingCampaignStats {
   links: MailingCampaignLinkStat[];
 }
 
+export interface MailingReportRate {
+  numerator: number;
+  denominator: number;
+  percent: number | null;
+}
+
+export interface MailingReport {
+  as_of: string;
+  window_start: string;
+  subscriber_window_start: string;
+  subscriber_window_complete: boolean;
+  business_count: number;
+  tenant_count: number;
+  active_automations: number;
+  active_enrollments: number;
+  active_subscribers: number;
+  subscriber_net_additions: number;
+  open_rate: MailingReportRate;
+  click_rate: MailingReportRate;
+  unsubscribe_rate: MailingReportRate;
+}
+
 export interface MailingSuppression {
   id: string;
   business_id: string;
@@ -263,6 +285,13 @@ export class MailingService {
 
   private base(businessId: string): string {
     return `/api/v1/businesses/${routeSegmentUUID(businessId)}/mailing`;
+  }
+
+  reporting(businessId?: string): Observable<MailingReport> {
+    const params = businessId
+      ? new HttpParams().set('business_id', routeSegmentUUID(businessId))
+      : undefined;
+    return this.http.get<MailingReport>('/api/v1/mailing/reporting', { params });
   }
 
   listLists(businessId: string, cursor?: string): Observable<Page<MailingList>> {

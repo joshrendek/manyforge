@@ -764,6 +764,9 @@ type Querier interface {
 	// (Spec 008 Slice 4): it was flagged before and is gone now. Idempotent — already-resolved rows
 	// are excluded by the status filter.
 	MarkFindingsResolved(ctx context.Context, arg MarkFindingsResolvedParams) (int64, error)
+	// Record cleanup intent only at the boundary that can mutate remote webhooks.
+	// Keep updated_at unchanged so provisioning persistence can compare the same revision.
+	MarkMailingResendWebhookMutation(ctx context.Context, arg MarkMailingResendWebhookMutationParams) (uuid.UUID, error)
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)

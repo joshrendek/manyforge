@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ type fakeResendProvisioner struct {
 	ensureCalls         int
 	verifyCalls         int
 	verify              func() error
+	ensure              func() error
 	deleted             []string
 	ensureErr           error
 	cleanupMatches      bool
@@ -56,6 +58,11 @@ func (f *fakeResendProvisioner) Send(context.Context, notify.Mail) (mailprovider
 
 func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, existingID string) (mailprovider.ResendWebhook, bool, error) {
 	f.ensureCalls++
+	if f.ensure != nil {
+		if err := f.ensure(); err != nil {
+			return mailprovider.ResendWebhook{}, false, err
+		}
+	}
 	if f.ensureErr != nil {
 		return mailprovider.ResendWebhook{}, false, f.ensureErr
 	}
@@ -164,12 +171,14 @@ func TestMFAuthzProfileVerify001WriteOnlyCannotVerifySendingProfile(t *testing.T
 
 func TestMFAuthzProfileVerify001RevocationCannotPersistVerification(t *testing.T) {
 	for _, tc := range []struct {
-		name              string
-		providerError     error
-		wantProvisionCall int
+		name               string
+		providerError      error
+		revokeDuringEnsure bool
+		wantProvisionCall  int
 	}{
 		{name: "verification status", providerError: errors.New("provider rejected credentials")},
-		{name: "Resend webhook credentials", wantProvisionCall: 1},
+		{name: "before webhook mutation"},
+		{name: "Resend webhook credentials", revokeDuringEnsure: true, wantProvisionCall: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -199,10 +208,15 @@ func TestMFAuthzProfileVerify001RevocationCannotPersistVerification(t *testing.T
 			}
 			provisioner := &fakeResendProvisioner{}
 			var revokeErr error
-			provisioner.verify = func() error {
+			revoke := func() error {
 				_, revokeErr = tdb.Super.Exec(ctx, `DELETE FROM role_permission
 					WHERE role_id=$1 AND permission_key='mailing.send'`, roleID)
 				return tc.providerError
+			}
+			if tc.revokeDuringEnsure {
+				provisioner.ensure = revoke
+			} else {
+				provisioner.verify = revoke
 			}
 			svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
 				return provisioner, nil
@@ -223,15 +237,19 @@ func TestMFAuthzProfileVerify001RevocationCannotPersistVerification(t *testing.T
 			var verifyError pgtype.Text
 			var afterSecretID uuid.UUID
 			var provisioningToken pgtype.UUID
+			var cleanupRequired bool
 			if err = tdb.Super.QueryRow(ctx, `SELECT status, verify_error, feedback_status, secret_ref,
-					resend_provisioning_token FROM mailing_sending_profile WHERE id=$1`, profileID).
-				Scan(&status, &verifyError, &feedbackStatus, &afterSecretID, &provisioningToken); err != nil {
+					resend_provisioning_token, resend_cleanup_required FROM mailing_sending_profile WHERE id=$1`, profileID).
+				Scan(&status, &verifyError, &feedbackStatus, &afterSecretID, &provisioningToken, &cleanupRequired); err != nil {
 				t.Fatal(err)
 			}
 			if status != "unverified" || verifyError.Valid || feedbackStatus != "pending" ||
 				afterSecretID != secretID || provisioningToken.Valid {
 				t.Fatalf("revoked verification result persisted: status=%q verify_error=%v feedback=%q secret_changed=%t token=%v",
 					status, verifyError, feedbackStatus, afterSecretID != secretID, provisioningToken)
+			}
+			if cleanupRequired != tc.revokeDuringEnsure {
+				t.Fatalf("cleanup intent after permission revocation = %v, want %v", cleanupRequired, tc.revokeDuringEnsure)
 			}
 			var secretCount int
 			if err = tdb.Super.QueryRow(ctx, `SELECT count(*) FROM secret
@@ -544,12 +562,14 @@ func TestMFMailFeedback001ResendProvisioningDBFailureNeverReady(t *testing.T) {
 		t.Fatal("Resend provisioning persistence failure was acknowledged")
 	}
 	var status, feedbackStatus string
-	if err = tdb.Super.QueryRow(ctx, `SELECT status,feedback_status FROM mailing_sending_profile WHERE id=$1`,
-		profile.ID).Scan(&status, &feedbackStatus); err != nil {
+	var cleanupRequired bool
+	if err = tdb.Super.QueryRow(ctx, `SELECT status,feedback_status,resend_cleanup_required
+		FROM mailing_sending_profile WHERE id=$1`,
+		profile.ID).Scan(&status, &feedbackStatus, &cleanupRequired); err != nil {
 		t.Fatal(err)
 	}
-	if status == "verified" || feedbackStatus == "ready" {
-		t.Fatalf("failed provisioning state = %q/%q", status, feedbackStatus)
+	if status == "verified" || feedbackStatus == "ready" || !cleanupRequired {
+		t.Fatalf("failed provisioning state = %q/%q cleanup=%v", status, feedbackStatus, cleanupRequired)
 	}
 	if len(provisioner.deleted) != 0 {
 		t.Fatalf("persistence ambiguity must retain the remotely provisioned webhook: %v", provisioner.deleted)
@@ -626,6 +646,180 @@ func TestMFMailFeedback001ResendDeleteFailureRetainsProfileAndCredentialsForRetr
 	}
 }
 
+func TestMFMailFeedback001ReadOnlyResendFailureAllowsCredentialReplacement(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+
+	for _, tc := range []struct {
+		name          string
+		restrictedKey bool
+		publicBaseURL string
+	}{
+		{name: "restricted key cannot read domains", restrictedKey: true, publicBaseURL: "https://hub.example.test"},
+		{name: "missing public webhook URL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seed := seedMailingTenant(ctx, t, tdb)
+			svc, _ := campaignService(t, ctx, tdb, seed)
+			profile, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+				Mode: "resend", FromEmail: "news@example.test", FromName: "News",
+				Resend: &mailing.ResendCredentials{APIKey: "re_restricted"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var domainCalls, webhookCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/domains":
+					domainCalls.Add(1)
+					if tc.restrictedKey && r.Header.Get("Authorization") == "Bearer re_restricted" {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"message":"restricted API key"}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"data":[{"name":"example.test","status":"verified"}]}`))
+				case strings.HasPrefix(r.URL.Path, "/webhooks"):
+					webhookCalls.Add(1)
+					if r.Header.Get("Authorization") == "Bearer re_restricted" {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"message":"restricted API key"}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"data":[],"has_more":false}`))
+				default:
+					t.Errorf("unexpected provider request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			svc.PublicBaseURL = tc.publicBaseURL
+			svc.Providers = mailprovider.NewCache(func(_ context.Context, profile mailprovider.Profile) (mailprovider.Deliverer, error) {
+				return &mailprovider.Resend{
+					APIKey: profile.ResendAPIKey, FromEmail: profile.FromEmail,
+					BaseURL: server.URL, Client: server.Client(),
+				}, nil
+			}, time.Minute)
+
+			failed, err := svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID)
+			if err != nil || failed.Status != "error" || failed.FeedbackStatus != "error" {
+				t.Fatalf("read-only verification failure = %+v, err=%v", failed, err)
+			}
+			var cleanupRequired bool
+			var token pgtype.UUID
+			if err = tdb.Super.QueryRow(ctx, `SELECT resend_cleanup_required,resend_provisioning_token
+				FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&cleanupRequired, &token); err != nil {
+				t.Fatal(err)
+			}
+			if cleanupRequired || token.Valid {
+				t.Fatalf("read-only failure invented cleanup debt or retained lease: cleanup=%v token=%v",
+					cleanupRequired, token)
+			}
+
+			replaced, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
+				Mode: "resend", FromEmail: "news@example.test", FromName: "News",
+				Resend: &mailing.ResendCredentials{APIKey: "re_replacement"},
+			})
+			if err != nil {
+				t.Fatalf("credential replacement after read-only failure was blocked: %v", err)
+			}
+			stored := loadStoredResendBundle(t, ctx, tdb, svc, profile.ID)
+			if stored.APIKey != "re_replacement" || stored.WebhookID != "" ||
+				replaced.Status != "unverified" || replaced.FeedbackStatus != "pending" {
+				t.Fatalf("replacement state: profile=%+v stored=%+v", replaced, stored)
+			}
+			if domainCalls.Load() != 1 || webhookCalls.Load() != 0 {
+				t.Fatalf("read-only failure/replacement provider calls: domains=%d webhooks=%d",
+					domainCalls.Load(), webhookCalls.Load())
+			}
+		})
+	}
+}
+
+func TestMFMailFeedback001ResendMutationBoundaryRejectsStaleLease(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tdb.Close(ctx)
+
+	for _, tc := range []struct {
+		name       string
+		changeSQL  string
+		stealToken bool
+	}{
+		{
+			name: "lease expired during domain check",
+			changeSQL: `UPDATE mailing_sending_profile
+				SET resend_provisioning_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`,
+		},
+		{
+			name: "lease claimed by another operation", stealToken: true,
+			changeSQL: `UPDATE mailing_sending_profile
+				SET resend_provisioning_token=$2,resend_provisioning_expires_at=clock_timestamp()+interval '2 minutes'
+				WHERE id=$1`,
+		},
+		{
+			name: "profile revision changed during domain check",
+			changeSQL: `UPDATE mailing_sending_profile
+				SET from_name='Concurrent update',updated_at=updated_at+interval '1 second' WHERE id=$1`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seed := seedMailingTenant(ctx, t, tdb)
+			svc, _ := campaignService(t, ctx, tdb, seed)
+			profile, err := svc.GetSendingProfile(ctx, seed.principalID, seed.businessID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := loadStoredResendBundle(t, ctx, tdb, svc, profile.ID)
+			successorToken := uuid.New()
+			provisioner := &fakeResendProvisioner{}
+			provisioner.verify = func() error {
+				args := []any{profile.ID}
+				if tc.stealToken {
+					args = append(args, successorToken)
+				}
+				if _, err := tdb.Super.Exec(ctx, tc.changeSQL, args...); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			}
+			svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
+				return provisioner, nil
+			}, time.Minute)
+
+			if _, err = svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID); !errors.Is(err, errs.ErrConflict) {
+				t.Fatalf("stale verification error = %v, want conflict", err)
+			}
+			if provisioner.verifyCalls != 1 || provisioner.ensureCalls != 0 {
+				t.Fatalf("stale verification reached webhook mutation: verify=%d ensure=%d",
+					provisioner.verifyCalls, provisioner.ensureCalls)
+			}
+			var cleanupRequired bool
+			var token pgtype.UUID
+			if err = tdb.Super.QueryRow(ctx, `SELECT resend_cleanup_required,resend_provisioning_token
+				FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&cleanupRequired, &token); err != nil {
+				t.Fatal(err)
+			}
+			if cleanupRequired || token.Valid != tc.stealToken ||
+				(tc.stealToken && uuid.UUID(token.Bytes) != successorToken) {
+				t.Fatalf("stale boundary changed cleanup debt or successor lease: cleanup=%v token=%v",
+					cleanupRequired, token)
+			}
+			if after := loadStoredResendBundle(t, ctx, tdb, svc, profile.ID); after != before {
+				t.Fatalf("stale verification replaced credentials: before=%+v after=%+v", before, after)
+			}
+		})
+	}
+}
+
 func TestMFMailFeedback001ResendProvisioningLeaseSerializesMutation(t *testing.T) {
 	ctx := context.Background()
 	tdb, err := testdb.Start(ctx)
@@ -692,6 +886,19 @@ func TestMFMailFeedback001AmbiguousResendCreatePersistsCleanupIntentForUpdate(t 
 		t.Fatal(err)
 	}
 	provisioner := &fakeResendProvisioner{ensureErr: errors.New("create accepted but reconciliation failed")}
+	provisioner.ensure = func() error {
+		var durableIntent, liveLease bool
+		if err := tdb.Super.QueryRow(ctx, `SELECT resend_cleanup_required,
+			resend_provisioning_token IS NOT NULL AND resend_provisioning_expires_at > clock_timestamp()
+			FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&durableIntent, &liveLease); err != nil {
+			t.Fatal(err)
+		}
+		if !durableIntent || !liveLease {
+			t.Fatalf("remote mutation started without committed cleanup intent and live lease: intent=%v lease=%v",
+				durableIntent, liveLease)
+		}
+		return nil
+	}
 	svc.Providers = mailprovider.NewCache(func(context.Context, mailprovider.Profile) (mailprovider.Deliverer, error) {
 		return provisioner, nil
 	}, time.Minute)
@@ -708,6 +915,19 @@ func TestMFMailFeedback001AmbiguousResendCreatePersistsCleanupIntentForUpdate(t 
 		t.Fatalf("ambiguous create intent=%v token=%v", cleanupRequired, token)
 	}
 	provisioner.ensureErr = nil
+	provisioner.verify = func() error { return errors.New("read-only domain check rejected") }
+	rechecked, err := svc.VerifySendingProfile(ctx, seed.principalID, seed.businessID)
+	if err != nil || rechecked.Status != "error" || rechecked.FeedbackStatus != "error" {
+		t.Fatalf("read-only recheck after ambiguous create = %+v, err=%v", rechecked, err)
+	}
+	if err = tdb.Super.QueryRow(ctx, `SELECT resend_cleanup_required,resend_provisioning_token
+		FROM mailing_sending_profile WHERE id=$1`, profile.ID).Scan(&cleanupRequired, &token); err != nil {
+		t.Fatal(err)
+	}
+	if !cleanupRequired || token.Valid || provisioner.ensureCalls != 1 {
+		t.Fatalf("read-only recheck lost pending cleanup: intent=%v token=%v ensure=%d",
+			cleanupRequired, token, provisioner.ensureCalls)
+	}
 	updated, err := svc.PutSendingProfile(ctx, seed.principalID, seed.businessID, mailing.SendingProfileInput{
 		Mode: "resend", FromEmail: "updated@example.test", FromName: "Updated",
 	})

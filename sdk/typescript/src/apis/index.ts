@@ -69,6 +69,7 @@ export * from './RootBusinessesApi.js';
 export * from './RootGithubAppInstallUrlApi.js';
 export * from './RootGithubAppInstallationsApi.js';
 export * from './RootInvitationsApi.js';
+export * from './RootMailingReportingApi.js';
 export * from './RootPermissionsApi.js';
 export * from './RootTenantMergesApi.js';
 export * from './RootTenantMergesOptionsApi.js';

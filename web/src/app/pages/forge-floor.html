@@ -17,7 +17,7 @@
         </div>
       }
     </div>
-    <h2 class="forge-section-label">Across the business · 7d <span>Visible businesses · current balances where noted</span></h2>
+    <h2 class="forge-section-label">Across the business · 7d <span>Authorized businesses · current balances where noted</span></h2>
     <div class="forge-stats forge-growth">
       @for (tile of growth(); track tile.label) {
         <div class="forge-stat" [title]="tile.metric.note">
@@ -29,6 +29,11 @@
         </div>
       }
     </div>
+    <p class="forge-coverage" role="status">{{ mailing().note }}
+      @if (mailing().report; as report) {
+        As of {{ report.as_of | date:'medium' }}. Subscribers are deduplicated across readable lists and businesses within each tenant.
+      }
+    </p>
   </div>
 
   <div class="mf-floor forge-floor">
@@ -104,17 +109,24 @@
 
   <details class="forge-data-notes">
     <summary>About these numbers · Pending sources</summary>
-    <p>Counts cover visible active businesses, not hidden tenant records. CRM contacts and companies are tenant-wide and counted once per tenant. Capped or paginated reads never stand in for totals. AI cost is recorded usage, not an invoice; unpriced model usage remains a known gap (manyforge-zpw).</p>
+    <p>Workload counts cover visible active businesses, not hidden tenant records. Mailing totals independently cover every active business where you have mailing.read permission, without a list-page cap. CRM contacts and companies are tenant-wide and counted once per tenant. Capped or paginated reads never stand in for totals. AI cost is recorded usage, not an invoice; unpriced model usage remains a known gap (manyforge-zpw).</p>
     <ul>
       <li>MRR, revenue change and churn — Pending billing source (manyforge-bhkp).</li>
       <li>Product users and signups — Pending identity source (manyforge-2gn8).</li>
       <li>Labeled billable units and periods — Pending metering source (manyforge-gwtx).</li>
       <li>First reply, waiting over 24h, oldest approval and Done today — Pending event aggregates (manyforge-8w7y).</li>
       <li>Exact high-volume workload, contacts and company totals — Pending bounded aggregates (manyforge-20o4).</li>
-      <li>Enrollments, open/click rates, subscribers, net additions and unsubscribe rate — Pending mailing aggregates (manyforge-9w4r).</li>
       <li>Visitor comparison and portfolios at the 200-site limit — Pending complete rollup reporting (manyforge-o7u0; manyforge-hu5a.8).</li>
     </ul>
     <p>{{ visitors().note }}</p>
+    <p>Mail engagement covers campaign and automation messages queued in the trailing seven days and accepted by the provider. Each message counts once; open/click denominators include only messages with that tracking enabled. Unsubscribe rate counts tracked message unsubscribes, not all list removals. N/A means no eligible messages, not a measured zero.</p>
+    <p>Opens and clicks include bots and privacy proxies, not verified human engagement. Active enrollment counts include paused workflows. Subscriber totals count active consent on active lists, not guaranteed deliverability, and do not deduplicate people across tenants.</p>
+    @if (mailing().report; as report) {
+      <p>Net subscriber change compares the same currently authorized scope at both endpoints, including list archival and subscriber removal.
+        @if (report.subscriber_window_complete) { The subscriber history covers the full trailing seven days. }
+        @else { History began {{ report.subscriber_window_start | date:'medium' }}; the net change covers only that shorter period. No earlier history is inferred. }
+      </p>
+    }
   </details>
 </section>
 

@@ -1464,6 +1464,10 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			if h.analytics != nil {
 				h.analytics.OverviewRoutes(pr)
 			}
+			if h.mailing != nil {
+				// Cross-business reporting applies mailing.read in SQL, not a path-id gate.
+				h.mailing.ReportingRoutes(pr)
+			}
 			// manyforge-p20 telemetry write slice: register + revoke clients, gated on
 			// telemetry.write. Same RLS-bound 404-on-lacking-perm semantics.
 			pr.Group(func(tw chi.Router) {

@@ -584,6 +584,7 @@ public final class Resources {
     private final RootBusinesses businesses;
     private final RootGithubApp githubApp;
     private final RootInvitations invitations;
+    private final RootMailing mailing;
     private final RootPermissions permissions;
     private final RootTenantMerges tenantMerges;
     public Root(Transport transport, String binding) {
@@ -594,6 +595,7 @@ public final class Resources {
       this.businesses = new RootBusinesses(transport, binding);
       this.githubApp = new RootGithubApp(transport, binding);
       this.invitations = new RootInvitations(transport, binding);
+      this.mailing = new RootMailing(transport, binding);
       this.permissions = new RootPermissions(transport, binding);
       this.tenantMerges = new RootTenantMerges(transport, binding);
     }
@@ -603,6 +605,7 @@ public final class Resources {
     public RootBusinesses businesses() { return businesses; }
     public RootGithubApp githubApp() { return githubApp; }
     public RootInvitations invitations() { return invitations; }
+    public RootMailing mailing() { return mailing; }
     public RootPermissions permissions() { return permissions; }
     public RootTenantMerges tenantMerges() { return tenantMerges; }
   }
@@ -651,6 +654,21 @@ public final class Resources {
   }
   public static class RootInvitations extends RootInvitationsResource {
     public RootInvitations(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class RootMailing {
+    protected final Transport transport;
+    protected final String binding;
+    private final RootMailingReporting reporting;
+    public RootMailing(Transport transport, String binding) {
+      this.transport = Objects.requireNonNull(transport); this.binding = binding;
+      this.reporting = new RootMailingReporting(transport, binding);
+    }
+    public RootMailingReporting reporting() { return reporting; }
+  }
+  public static class RootMailingReporting extends RootMailingReportingResource {
+    public RootMailingReporting(Transport transport, String binding) {
       super(transport, binding);
     }
   }
