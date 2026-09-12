@@ -56,7 +56,13 @@ func (f *fakeResendProvisioner) Send(context.Context, notify.Mail) (mailprovider
 	return mailprovider.SendResult{}, nil
 }
 
-func (f *fakeResendProvisioner) EnsureWebhook(_ context.Context, endpoint, existingID string) (mailprovider.ResendWebhook, bool, error) {
+func (f *fakeResendProvisioner) EnsureWebhook(ctx context.Context, endpoint, existingID string, beforeMutation func(context.Context) error) (mailprovider.ResendWebhook, bool, error) {
+	if beforeMutation == nil {
+		return mailprovider.ResendWebhook{}, false, mailprovider.ErrProviderConfiguration
+	}
+	if err := beforeMutation(ctx); err != nil {
+		return mailprovider.ResendWebhook{}, false, err
+	}
 	f.ensureCalls++
 	if f.ensure != nil {
 		if err := f.ensure(); err != nil {
@@ -655,12 +661,16 @@ func TestMFMailFeedback001ReadOnlyResendFailureAllowsCredentialReplacement(t *te
 	defer tdb.Close(ctx)
 
 	for _, tc := range []struct {
-		name          string
-		restrictedKey bool
-		publicBaseURL string
+		name               string
+		restrictedKey      bool
+		publicBaseURL      string
+		webhookReadFailure string
+		wantWebhookReads   int32
 	}{
 		{name: "restricted key cannot read domains", restrictedKey: true, publicBaseURL: "https://hub.example.test"},
 		{name: "missing public webhook URL"},
+		{name: "webhook enumeration forbidden", publicBaseURL: "https://hub.example.test", webhookReadFailure: "list", wantWebhookReads: 1},
+		{name: "webhook detail forbidden", publicBaseURL: "https://hub.example.test", webhookReadFailure: "detail", wantWebhookReads: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			seed := seedMailingTenant(ctx, t, tdb)
@@ -672,7 +682,7 @@ func TestMFMailFeedback001ReadOnlyResendFailureAllowsCredentialReplacement(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			var domainCalls, webhookCalls atomic.Int32
+			var domainCalls, webhookReads, webhookWrites atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
@@ -685,8 +695,21 @@ func TestMFMailFeedback001ReadOnlyResendFailureAllowsCredentialReplacement(t *te
 					}
 					_, _ = w.Write([]byte(`{"data":[{"name":"example.test","status":"verified"}]}`))
 				case strings.HasPrefix(r.URL.Path, "/webhooks"):
-					webhookCalls.Add(1)
-					if r.Header.Get("Authorization") == "Bearer re_restricted" {
+					if r.Method != http.MethodGet {
+						webhookWrites.Add(1)
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					webhookReads.Add(1)
+					oldKey := r.Header.Get("Authorization") == "Bearer re_restricted"
+					if oldKey && tc.webhookReadFailure == "detail" && r.URL.Path == "/webhooks" {
+						endpoint := "https://hub.example.test/api/v1/inbound/mailing/" + profile.ID.String() + "/resend"
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"data": []any{map[string]any{"id": "wh_existing", "endpoint": endpoint}}, "has_more": false,
+						})
+						return
+					}
+					if oldKey {
 						w.WriteHeader(http.StatusForbidden)
 						_, _ = w.Write([]byte(`{"message":"restricted API key"}`))
 						return
@@ -733,9 +756,9 @@ func TestMFMailFeedback001ReadOnlyResendFailureAllowsCredentialReplacement(t *te
 				replaced.Status != "unverified" || replaced.FeedbackStatus != "pending" {
 				t.Fatalf("replacement state: profile=%+v stored=%+v", replaced, stored)
 			}
-			if domainCalls.Load() != 1 || webhookCalls.Load() != 0 {
-				t.Fatalf("read-only failure/replacement provider calls: domains=%d webhooks=%d",
-					domainCalls.Load(), webhookCalls.Load())
+			if domainCalls.Load() != 1 || webhookReads.Load() != tc.wantWebhookReads || webhookWrites.Load() != 0 {
+				t.Fatalf("read-only failure/replacement provider calls: domains=%d webhook_reads=%d webhook_writes=%d",
+					domainCalls.Load(), webhookReads.Load(), webhookWrites.Load())
 			}
 		})
 	}

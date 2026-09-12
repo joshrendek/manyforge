@@ -210,7 +210,7 @@ func TestResendEnsureWebhookCreatesExactFeedbackRoute(t *testing.T) {
 	}))
 	defer server.Close()
 	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
-	got, wasCreated, err := r.EnsureWebhook(context.Background(), endpoint, "")
+	got, wasCreated, err := r.EnsureWebhook(context.Background(), endpoint, "", func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,11 +245,13 @@ func TestResendEnsureWebhookReconcilesLostCreateResponseWithoutSecondPost(t *tes
 	}))
 	defer server.Close()
 	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
-	got, _, err := r.EnsureWebhook(context.Background(), endpoint, "")
+	got, _, err := r.EnsureWebhook(context.Background(), endpoint, "", func(context.Context) error { return nil })
 	if err != nil || got.ID != "wh_lost" {
 		t.Fatalf("lost-response reconciliation = %+v, err=%v", got, err)
 	}
-	if _, _, err = r.EnsureWebhook(context.Background(), endpoint, got.ID); err != nil {
+	if _, _, err = r.EnsureWebhook(context.Background(), endpoint, got.ID, func(context.Context) error {
+		return errors.New("existing webhook recovery must remain read-only")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if postCalls != 1 {
@@ -283,10 +285,12 @@ func TestResendEnsureWebhookRetainsReconciliationPathAfterLostResponseAndListFai
 	}))
 	defer server.Close()
 	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
-	if _, _, err := r.EnsureWebhook(context.Background(), endpoint, ""); err == nil {
+	if _, _, err := r.EnsureWebhook(context.Background(), endpoint, "", func(context.Context) error { return nil }); err == nil {
 		t.Fatal("lost create response plus failed reconciliation was acknowledged")
 	}
-	got, _, err := r.EnsureWebhook(context.Background(), endpoint, "")
+	got, _, err := r.EnsureWebhook(context.Background(), endpoint, "", func(context.Context) error {
+		return errors.New("ambiguous webhook recovery must remain read-only")
+	})
 	if err != nil || got.ID != "wh_recovered" {
 		t.Fatalf("durable retry reconciliation = %+v, err=%v", got, err)
 	}
@@ -325,7 +329,7 @@ func TestResendEnsureWebhookCanonicalizesDuplicateExactEndpoints(t *testing.T) {
 	}))
 	defer server.Close()
 	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
-	got, created, err := r.EnsureWebhook(context.Background(), endpoint, "")
+	got, created, err := r.EnsureWebhook(context.Background(), endpoint, "", func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,8 +353,117 @@ func TestResendEnsureWebhookRejectsWrongExistingRoute(t *testing.T) {
 	}))
 	defer server.Close()
 	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
-	if _, _, err := r.EnsureWebhook(context.Background(), "https://hub.example.test/inbound/mailing/profile-a/resend", "wh_123"); err == nil {
+	if _, _, err := r.EnsureWebhook(context.Background(), "https://hub.example.test/inbound/mailing/profile-a/resend", "wh_123", func(context.Context) error { return nil }); err == nil {
 		t.Fatal("accepted or ignored wrong existing Resend feedback route cleanup failure")
+	}
+}
+
+func TestResendEnsureWebhookGuardsEveryRemoteMutation(t *testing.T) {
+	const endpoint = "https://hub.example.test/inbound/mailing/profile-a/resend"
+	denied := errors.New("provisioning lease no longer held")
+	for _, tc := range []struct {
+		name       string
+		initial    string
+		denyAt     int32
+		nilGuard   bool
+		wantWrites int32
+		wantID     string
+	}{
+		{name: "create", wantWrites: 1, wantID: "wh_created"},
+		{name: "denied create", denyAt: 1},
+		{name: "missing required guard", nilGuard: true},
+		{name: "replace invalid hook", initial: "invalid", wantWrites: 2, wantID: "wh_created"},
+		{name: "denied invalid hook delete", initial: "invalid", denyAt: 1},
+		{name: "denied create after invalid hook delete", initial: "invalid", denyAt: 2, wantWrites: 1},
+		{name: "delete duplicates", initial: "duplicates", wantWrites: 2, wantID: "wh_a"},
+		{name: "denied second duplicate delete", initial: "duplicates", denyAt: 2, wantWrites: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hooks := map[string]bool{}
+			switch tc.initial {
+			case "invalid":
+				hooks["wh_invalid"] = false
+			case "duplicates":
+				hooks["wh_a"], hooks["wh_b"], hooks["wh_c"] = true, true, true
+			}
+			var guardCalls, writeCalls atomic.Int32
+			var guarded atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Method == http.MethodGet {
+					if guarded.Load() {
+						t.Error("mutation guard was called before a read instead of immediately before a write")
+					}
+				} else {
+					writeCalls.Add(1)
+					if !guarded.CompareAndSwap(true, false) {
+						t.Error("remote mutation had no fresh successful guard")
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+				}
+				switch {
+				case req.Method == http.MethodGet && req.URL.Path == "/webhooks":
+					data := make([]map[string]any, 0, len(hooks))
+					for id := range hooks {
+						data = append(data, map[string]any{"id": id, "endpoint": endpoint})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "has_more": false})
+				case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/webhooks/"):
+					id := strings.TrimPrefix(req.URL.Path, "/webhooks/")
+					status := "enabled"
+					if !hooks[id] {
+						status = "disabled"
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"id": id, "endpoint": endpoint, "status": status,
+						"events":         []string{"email.bounced", "email.complained"},
+						"signing_secret": "whsec_MDEyMzQ1Njc4OWFiY2RlZg==",
+					})
+				case req.Method == http.MethodPost && req.URL.Path == "/webhooks":
+					hooks["wh_created"] = true
+					_, _ = io.WriteString(w, `{"id":"wh_created","signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`)
+				case req.Method == http.MethodDelete && strings.HasPrefix(req.URL.Path, "/webhooks/"):
+					delete(hooks, strings.TrimPrefix(req.URL.Path, "/webhooks/"))
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected provider request: %s %s", req.Method, req.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			beforeMutation := func(context.Context) error {
+				call := guardCalls.Add(1)
+				if call == tc.denyAt {
+					return denied
+				}
+				if !guarded.CompareAndSwap(false, true) {
+					t.Error("guard called again without an intervening remote mutation")
+				}
+				return nil
+			}
+			if tc.nilGuard {
+				beforeMutation = nil
+			}
+			r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
+			got, _, err := r.EnsureWebhook(context.Background(), endpoint, "", beforeMutation)
+			switch {
+			case tc.nilGuard:
+				if !errors.Is(err, ErrProviderConfiguration) || guardCalls.Load() != 0 {
+					t.Fatalf("missing guard error=%v calls=%d", err, guardCalls.Load())
+				}
+			case tc.denyAt != 0:
+				if !errors.Is(err, denied) || guardCalls.Load() != tc.denyAt {
+					t.Fatalf("denied mutation error=%v guard_calls=%d", err, guardCalls.Load())
+				}
+			default:
+				if err != nil || got.ID != tc.wantID || guardCalls.Load() != tc.wantWrites {
+					t.Fatalf("guarded reconciliation webhook=%+v err=%v guard_calls=%d", got, err, guardCalls.Load())
+				}
+			}
+			if writeCalls.Load() != tc.wantWrites || guarded.Load() {
+				t.Fatalf("remote writes=%d want=%d unused_guard=%v", writeCalls.Load(), tc.wantWrites, guarded.Load())
+			}
+		})
 	}
 }
 

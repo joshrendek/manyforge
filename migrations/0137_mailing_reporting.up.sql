@@ -18,7 +18,8 @@ CREATE TABLE mailing_reporting_business (
     business_id uuid PRIMARY KEY,
     tenant_root_id uuid NOT NULL,
     history_started_at timestamptz NOT NULL,
-    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id)
+    CONSTRAINT mailing_reporting_business_business_fk
+        FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id)
         ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 INSERT INTO mailing_reporting_business
@@ -34,7 +35,8 @@ CREATE TABLE mailing_reporting_membership (
     started_at timestamptz NOT NULL,
     ended_at timestamptz,
     CHECK (ended_at IS NULL OR ended_at >= started_at),
-    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id)
+    CONSTRAINT mailing_reporting_membership_business_fk
+        FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id)
         ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE UNIQUE INDEX mailing_reporting_membership_open_idx
@@ -52,7 +54,8 @@ CREATE TABLE mailing_reporting_list (
     started_at timestamptz NOT NULL,
     ended_at timestamptz,
     CHECK (ended_at IS NULL OR ended_at >= started_at),
-    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id)
+    CONSTRAINT mailing_reporting_list_business_fk
+        FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id)
         ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE UNIQUE INDEX mailing_reporting_list_open_idx
@@ -82,7 +85,7 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['mailing_reporting_business', 'mailing_reporting_membership', 'mailing_reporting_list'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('CREATE POLICY %I ON %I FOR SELECT USING
-            (business_id IN (SELECT business_id FROM businesses_with_permission(current_principal(), ''mailing.read'')))', t || '_read', t);
+            (business_id IN (SELECT business_id FROM businesses_with_permission(current_principal(), ''mailing.read'')))', t || '_rls', t);
         EXECUTE format('GRANT SELECT ON %I TO manyforge_app', t);
         EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION support_tenant_root_immutable()', t || '_troot_immutable', t);
         EXECUTE format('CREATE TRIGGER tenant_merge_write_fence BEFORE INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION tenant_merge_write_fence()', t);

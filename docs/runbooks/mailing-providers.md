@@ -151,10 +151,10 @@ cannot be opened. It never falls back to unsigned tenant mail.
 5. Once provider and feedback are ready, send a test. Messages use `POST /emails`
    with the mailing delivery ID supplied as Resend's `Idempotency-Key`.
 
-Read-only verification failures (for example a sending-only key that cannot read
-domains) do not introduce webhook-cleanup debt. Before remote webhook reconciliation
-starts, ManyForge records durable cleanup intent under the current, unexpired
-provisioning lease. An ambiguous remote outcome or failed credential persistence
+Read-only failures while checking domains or listing/reading webhooks do not
+introduce webhook-cleanup debt. Immediately before each webhook create or delete,
+ManyForge records durable cleanup intent under the current, unexpired provisioning
+lease and rechecks authorization. An ambiguous remote outcome or failed credential persistence
 retains that obligation. Existing cleanup obligations and webhook account-ownership
 proof remain required for replacement/deletion; do not clear markers manually to
 force a credential change.

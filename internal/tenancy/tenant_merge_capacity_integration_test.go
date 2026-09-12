@@ -234,26 +234,34 @@ func TestTenantMergeMaximumRowEnvelopeCompletesWithinPublishedP95(t *testing.T) 
 		t.Fatalf("create destination parent: %v", err)
 	}
 
-	// A directly-seeded founder owns exactly three manifest rows: business,
-	// closure, and membership. Add 249,997 notifications to exercise the
-	// published 250,000-row cutover boundary exactly.
-	if _, err := tdb.Super.Exec(ctx, `
-		INSERT INTO notification (
-		    id, tenant_root_id, principal_id, kind, ref
-		)
-		SELECT gen_random_uuid(), $1, $2, 'capacity_load',
-		       jsonb_build_object('ordinal', ordinal)
-		FROM generate_series(1, 249997) AS ordinal`,
-		sourceRoot, actor,
-	); err != nil {
-		t.Fatalf("seed maximum row envelope: %v", err)
-	}
 	operation, err := svc.CreateTenantMergeOperation(
 		ctx, actor, sourceRoot, destinationParent.ID,
 		"capacity-maximum-row-envelope",
 	)
 	if err != nil {
 		t.Fatalf("create maximum-envelope operation: %v", err)
+	}
+	base, err := svc.PreflightTenantMerge(ctx, actor, operation.ID)
+	if err != nil || base.Status != "ready" {
+		t.Fatalf("base-envelope preflight: status=%q err=%v conflicts=%+v",
+			base.Status, err, base.Conflicts)
+	}
+	// Source business creation can seed additional module-owned rows. Fill the
+	// published boundary from the actual manifest count, not a schema-era guess.
+	fillerRows := int64(250000) - base.AffectedRows
+	if fillerRows <= 0 {
+		t.Fatalf("base fixture already exhausts the row envelope: %d", base.AffectedRows)
+	}
+	if _, err := tdb.Super.Exec(ctx, `
+		INSERT INTO notification (
+		    id, tenant_root_id, principal_id, kind, ref
+		)
+		SELECT gen_random_uuid(), $1, $2, 'capacity_load',
+		       jsonb_build_object('ordinal', ordinal)
+		FROM generate_series(1, $3::bigint) AS ordinal`,
+		sourceRoot, actor, fillerRows,
+	); err != nil {
+		t.Fatalf("seed maximum row envelope: %v", err)
 	}
 	ready, err := svc.PreflightTenantMerge(ctx, actor, operation.ID)
 	if err != nil || ready.Status != "ready" {

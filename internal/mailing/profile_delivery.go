@@ -71,13 +71,17 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 			verifyErr = mailprovider.ErrPublicURL
 		} else {
 			endpoint := baseURL + "/api/v1/inbound/mailing/" + profile.ID.String() + "/resend"
-			// EnsureWebhook may delete or create remote webhooks while reconciling.
-			// Commit cleanup intent before entering it, not during read-only checks.
-			if err := s.markResendWebhookMutation(ctx, principalID, profile, resendProvisioningToken); err != nil {
+			// Reads need no cleanup intent. Fence and commit it immediately before
+			// each remote write, including deletes during reconciliation.
+			var mutationErr error
+			webhook, _, provisionErr := provisioner.EnsureWebhook(ctx, endpoint, providerProfile.ResendWebhookID, func(ctx context.Context) error {
+				mutationErr = s.markResendWebhookMutation(ctx, principalID, profile, resendProvisioningToken)
+				return mutationErr
+			})
+			if mutationErr != nil {
 				s.releaseResendProvisioning(ctx, principalID, profile, resendProvisioningToken)
-				return SendingProfile{}, err
+				return SendingProfile{}, mutationErr
 			}
-			webhook, _, provisionErr := provisioner.EnsureWebhook(ctx, endpoint, providerProfile.ResendWebhookID)
 			if provisionErr != nil {
 				verifyErr = fmt.Errorf("%w: %w", mailprovider.ErrResendWebhook, provisionErr)
 			} else {

@@ -34,7 +34,9 @@ type ResendWebhook struct {
 }
 
 type ResendWebhookProvisioner interface {
-	EnsureWebhook(context.Context, string, string) (ResendWebhook, bool, error)
+	// EnsureWebhook calls beforeMutation immediately before each remote write,
+	// never for reads, and aborts without that write when the callback fails.
+	EnsureWebhook(context.Context, string, string, func(context.Context) error) (ResendWebhook, bool, error)
 	CleanupWebhooks(context.Context, string, string, bool) error
 	DeleteWebhook(context.Context, string) error
 }
@@ -117,12 +119,15 @@ func (r *Resend) Verify(ctx context.Context) error {
 	return ErrSenderDomain
 }
 
-func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string) (ResendWebhook, bool, error) {
+func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string, beforeMutation func(context.Context) error) (ResendWebhook, bool, error) {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
 		return ResendWebhook{}, false, ErrPublicURL
 	}
-	if webhook, found, err := r.reconcileWebhooks(ctx, endpoint, existingID); err != nil || found {
+	if beforeMutation == nil {
+		return ResendWebhook{}, false, ErrProviderConfiguration
+	}
+	if webhook, found, err := r.reconcileWebhooks(ctx, endpoint, existingID, beforeMutation); err != nil || found {
 		return webhook, false, err
 	}
 	payload := struct {
@@ -133,8 +138,11 @@ func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string)
 		Events:   []string{"email.bounced", "email.complained"},
 	}
 	var created resendWebhookResponse
+	if err := beforeMutation(ctx); err != nil {
+		return ResendWebhook{}, false, err
+	}
 	createErr := r.do(ctx, http.MethodPost, "/webhooks", payload, "", &created)
-	webhook, found, reconcileErr := r.reconcileWebhooks(ctx, endpoint, created.ID)
+	webhook, found, reconcileErr := r.reconcileWebhooks(ctx, endpoint, created.ID, beforeMutation)
 	if reconcileErr != nil {
 		return ResendWebhook{}, false, reconcileErr
 	}
@@ -147,7 +155,7 @@ func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string)
 	return ResendWebhook{}, false, ErrResendWebhook
 }
 
-func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID string) (ResendWebhook, bool, error) {
+func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID string, beforeMutation func(context.Context) error) (ResendWebhook, bool, error) {
 	var listed struct {
 		HasMore bool                    `json:"has_more"`
 		Data    []resendWebhookResponse `json:"data"`
@@ -172,6 +180,9 @@ func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID str
 			containsResendEvents(detail.Events, "email.bounced", "email.complained") &&
 			validResendSigningSecret(detail.SigningSecret)
 		if !valid {
+			if err := beforeMutation(ctx); err != nil {
+				return ResendWebhook{}, false, err
+			}
 			if err := r.DeleteWebhook(ctx, summary.ID); err != nil {
 				return ResendWebhook{}, false, err
 			}
@@ -184,6 +195,9 @@ func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID str
 		return ResendWebhook{}, false, nil
 	}
 	for _, duplicate := range candidates[1:] {
+		if err := beforeMutation(ctx); err != nil {
+			return ResendWebhook{}, false, err
+		}
 		if err := r.DeleteWebhook(ctx, duplicate.ID); err != nil {
 			return ResendWebhook{}, false, err
 		}

@@ -42,7 +42,13 @@ func (d *capturedDeliverer) Send(_ context.Context, mail notify.Mail) (mailprovi
 	return mailprovider.SendResult{ProviderID: "captured"}, nil
 }
 
-func (d *capturedDeliverer) EnsureWebhook(context.Context, string, string) (mailprovider.ResendWebhook, bool, error) {
+func (d *capturedDeliverer) EnsureWebhook(ctx context.Context, _, _ string, beforeMutation func(context.Context) error) (mailprovider.ResendWebhook, bool, error) {
+	if beforeMutation == nil {
+		return mailprovider.ResendWebhook{}, false, mailprovider.ErrProviderConfiguration
+	}
+	if err := beforeMutation(ctx); err != nil {
+		return mailprovider.ResendWebhook{}, false, err
+	}
 	return mailprovider.ResendWebhook{
 		ID:            "wh_provider_generated",
 		SigningSecret: "whsec_MDEyMzQ1Njc4OWFiY2RlZg==",
