@@ -482,12 +482,12 @@ def main():
 
         duplicate_list = scope.mailing.lists.create(list_input=ListInput(name="Python reporting overlap", double_opt_in=False))
         scope.mailing.subscribers.import_csv(lid=duplicate_list.id, consent_attested=True, skip_confirmation=True, file=Upload("duplicate.csv", csv_bytes))
-        report = client.mailing.reporting.get(business_id=business.id)
+        report = client.analytics.mailing(business_id=business.id)
         assert report.business_count == 1 and report.active_subscribers == 1
         assert report.subscriber_net_additions == 1 and not report.subscriber_window_complete
         assert report.window_start <= report.subscriber_window_start <= report.as_of
         assert report.open_rate.denominator == 0 and report.open_rate.percent is None
-        expect_api(lambda: other.mailing.reporting.get(business_id=business.id), 404, "NOT_FOUND")
+        expect_api(lambda: other.analytics.mailing(business_id=business.id), 404, "NOT_FOUND")
         assertions.append("real-mailing-reporting-deduplicated-history-null-rate-and-isolation")
 
         # Password step-up is an application 401, never a signal to rotate/replay.

@@ -320,8 +320,8 @@
   },
   {
     "operationId": "MailingReportingGet",
-    "resource": "mailing.reporting",
-    "method": "get",
+    "resource": "analytics",
+    "method": "mailing",
     "audience": "management",
     "businessParam": null,
     "pagination": null

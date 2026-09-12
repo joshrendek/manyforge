@@ -240,7 +240,7 @@ func main() {
 	assertions = append(assertions, "real consent CSV import/stream export/oversize rejection")
 	overlappingList := must(scope.Mailing.Lists.Create(ctx, mf.ListInput{Name: "Go reporting overlap", DoubleOptIn: mf.Value(false)}))
 	must(scope.Mailing.Subscribers.ImportCsv(ctx, overlappingList.Id, mf.BusinessMailingSubscribersImportCsvParams{ConsentAttested: true, SkipConfirmation: mf.Value(true), File: mf.Upload{Filename: "duplicate.csv", Reader: strings.NewReader("email,name\ngo-csv@example.test,Go CSV\n"), ContentType: "text/csv"}}))
-	report := must(client.Mailing.Reporting.Get(ctx, mf.RootMailingReportingGetParams{BusinessId: mf.Value(business.Id)}))
+	report := must(client.Analytics.Mailing(ctx, mf.RootAnalyticsMailingParams{BusinessId: mf.Value(business.Id)}))
 	check(report.BusinessCount == 1 && report.ActiveSubscribers == 1, "report deduplicates overlapping list membership")
 	check(report.SubscriberNetAdditions == 1 && !report.SubscriberWindowComplete, "report exposes genuine partial history")
 	_, hasOpenRate := report.OpenRate.Percent.Get()

@@ -115,7 +115,6 @@ type RootResources struct {
 	Businesses   *RootBusinessesResource
 	GithubApp    *RootGithubAppResource
 	Invitations  *RootInvitationsResource
-	Mailing      *RootMailingResource
 	Permissions  *RootPermissionsResource
 	TenantMerges *RootTenantMergesResource
 }
@@ -125,12 +124,6 @@ type RootGithubAppResource struct {
 	binding       string
 	InstallUrl    *RootGithubAppInstallUrlResource
 	Installations *RootGithubAppInstallationsResource
-}
-
-type RootMailingResource struct {
-	transport Transport
-	binding   string
-	Reporting *RootMailingReportingResource
 }
 
 type TelemetryResources struct {
@@ -166,7 +159,7 @@ func NewMailingServerResources(transport Transport, binding string) *MailingServ
 
 // NewRootResources shares transport and immutably binds its business ID or public key.
 func NewRootResources(transport Transport, binding string) *RootResources {
-	return &RootResources{transport: transport, binding: binding, Account: &RootAccountResource{transport: transport, binding: binding}, Analytics: &RootAnalyticsResource{transport: transport, binding: binding}, Auth: &RootAuthResource{transport: transport, binding: binding}, Businesses: &RootBusinessesResource{transport: transport, binding: binding}, GithubApp: &RootGithubAppResource{transport: transport, binding: binding, InstallUrl: &RootGithubAppInstallUrlResource{transport: transport, binding: binding}, Installations: &RootGithubAppInstallationsResource{transport: transport, binding: binding}}, Invitations: &RootInvitationsResource{transport: transport, binding: binding}, Mailing: &RootMailingResource{transport: transport, binding: binding, Reporting: &RootMailingReportingResource{transport: transport, binding: binding}}, Permissions: &RootPermissionsResource{transport: transport, binding: binding}, TenantMerges: &RootTenantMergesResource{transport: transport, binding: binding, Options: &RootTenantMergesOptionsResource{transport: transport, binding: binding}}}
+	return &RootResources{transport: transport, binding: binding, Account: &RootAccountResource{transport: transport, binding: binding}, Analytics: &RootAnalyticsResource{transport: transport, binding: binding}, Auth: &RootAuthResource{transport: transport, binding: binding}, Businesses: &RootBusinessesResource{transport: transport, binding: binding}, GithubApp: &RootGithubAppResource{transport: transport, binding: binding, InstallUrl: &RootGithubAppInstallUrlResource{transport: transport, binding: binding}, Installations: &RootGithubAppInstallationsResource{transport: transport, binding: binding}}, Invitations: &RootInvitationsResource{transport: transport, binding: binding}, Permissions: &RootPermissionsResource{transport: transport, binding: binding}, TenantMerges: &RootTenantMergesResource{transport: transport, binding: binding, Options: &RootTenantMergesOptionsResource{transport: transport, binding: binding}}}
 }
 
 // NewTelemetryResources shares transport and immutably binds its business ID or public key.

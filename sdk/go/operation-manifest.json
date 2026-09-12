@@ -321,10 +321,10 @@
   {
     "audience": "management",
     "businessParam": null,
-    "method": "get",
+    "method": "mailing",
     "operationId": "MailingReportingGet",
     "pagination": null,
-    "resource": "mailing.reporting"
+    "resource": "analytics"
   },
   {
     "audience": "management",

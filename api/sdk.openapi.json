@@ -27420,11 +27420,11 @@
         },
         "summary": "Mailing and automation aggregates across authorized businesses",
         "tags": [
-          "MailingReporting"
+          "Analytics"
         ],
         "x-manyforge-audience": "management",
-        "x-manyforge-method": "get",
-        "x-manyforge-resource": "mailing.reporting"
+        "x-manyforge-method": "mailing",
+        "x-manyforge-resource": "analytics"
       }
     },
     "/api/v1/mailing/s2s/{key}/events": {
@@ -28577,9 +28577,6 @@
     },
     {
       "name": "MailingLists"
-    },
-    {
-      "name": "MailingReporting"
     },
     {
       "name": "MailingSendingProfile"

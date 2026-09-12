@@ -119,7 +119,7 @@ checks.push('real-mailing-consent-import-closeable-csv-export-size-bound');
 
 const overlappingList = await scope.mailing.lists.create({ body: { name: `SDK overlap ${uid}`, doubleOptIn: false } });
 await scope.mailing.subscribers.importCsv({ lid: overlappingList.id, consentAttested: true, skipConfirmation: true, file: { filename: 'duplicate.csv', data: csv } });
-const mailingReport = await client.mailing.reporting.get({ businessId: business.id });
+const mailingReport = await client.analytics.mailing({ businessId: business.id });
 assert.equal(mailingReport.businessCount, 1n);
 assert.equal(mailingReport.activeSubscribers, 1n);
 assert.equal(mailingReport.subscriberNetAdditions, 1n);

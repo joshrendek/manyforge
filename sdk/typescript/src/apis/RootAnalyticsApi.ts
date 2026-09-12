@@ -14,12 +14,20 @@
 import { Resource, PaginationError, type Transport, type RequestOptions, type ByteStream, type Upload } from '../transport.js';
 import { decodeJSON, type JsonValue } from '../model-support.js';
 import type { AnalyticsOverview } from '../models/AnalyticsOverview.js';
+import type { MailingReport } from '../models/MailingReport.js';
 import type { PublicDataError } from '../models/PublicDataError.js';
 
 
 export interface RootAnalyticsGetParams {
 
     days?: number;
+
+}
+
+
+export interface RootAnalyticsMailingParams {
+
+    businessId?: string;
 
 }
 
@@ -39,6 +47,22 @@ export class RootAnalyticsApi extends Resource {
             response: 'json',
             responseSchema: {"$ref":"#/components/schemas/AnalyticsOverview"},
             decode: (text: string) => decodeJSON<AnalyticsOverview>(text, {"$ref":"#/components/schemas/AnalyticsOverview"}),
+        }, options);
+    }
+    mailing(params: RootAnalyticsMailingParams = {}, options?: RequestOptions): Promise<MailingReport> {
+        return this.transport.request({
+            operationId: 'MailingReportingGet',
+            method: 'GET',
+            path: '/api/v1/mailing/reporting',
+            pathParams: { ...this.scope,  },
+            query: [{ name: 'business_id', value: params.businessId, style: 'form', explode: true }, ],
+            headers: {  },
+            authenticated: true,
+            audience: 'management',
+
+            response: 'json',
+            responseSchema: {"$ref":"#/components/schemas/MailingReport"},
+            decode: (text: string) => decodeJSON<MailingReport>(text, {"$ref":"#/components/schemas/MailingReport"}),
         }, options);
     }
 }

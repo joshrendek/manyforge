@@ -182,8 +182,8 @@ rounding; date-only values stay dates rather than timestamps.
 
 Management reporting is available at `GET /api/v1/mailing/reporting`, with an
 optional `business_id` filter. For example, TypeScript and Python expose
-`client.mailing.reporting.get(...)`; Go exposes `client.Mailing.Reporting.Get`
-and Java `client.mailing().reporting().get(...)`. It returns complete authorized
+`client.analytics.mailing(...)`; Go exposes `client.Analytics.Mailing`
+and Java `client.analytics().mailing(...)`. It returns complete authorized
 mailing/automation counts, tenant-deduplicated subscribers, recorded net change,
 and denominator-aware engagement rates without subscriber PII. See the
 [reporting definitions and retention policy](docs/runbooks/mailing-providers.md#reporting-definitions-and-history).

@@ -17,7 +17,7 @@ import com.manyforge.sdk.resources.BusinessMailingSubscribersResource.*;
 import com.manyforge.sdk.resources.MailingMailingResource.*;
 import com.manyforge.sdk.resources.BusinessMailingKeysResource.*;
 import com.manyforge.sdk.resources.MailingServerMailingSubscribersResource.*;
-import com.manyforge.sdk.resources.RootMailingReportingResource.*;
+import com.manyforge.sdk.resources.RootAnalyticsResource.*;
 import com.manyforge.sdk.resources.BusinessAutomationsResource.*;
 import com.manyforge.sdk.resources.BusinessAutomationsVersionsResource.*;
 import com.manyforge.sdk.resources.BusinessAutomationsVersionsGraphResource.*;
@@ -232,7 +232,7 @@ public final class Consumer {
             api(400, () -> scope.mailing().subscribers().importCsv(BusinessMailingSubscribersImportCsvParams.builder().lid(mailingList.getId()).file(Upload.bytes("too-big.csv", oversized)).consentAttested(true).skipConfirmation(true).build()));
             var overlappingList = scope.mailing().lists().create(BusinessMailingListsCreateParams.builder().listInput(new ListInput().name("Java reporting overlap").doubleOptIn(false)).build());
             scope.mailing().subscribers().importCsv(BusinessMailingSubscribersImportCsvParams.builder().lid(overlappingList.getId()).file(Upload.bytes("duplicate.csv", csv)).consentAttested(true).skipConfirmation(true).build());
-            var mailingReport = client.mailing().reporting().get(RootMailingReportingGetParams.builder().businessId(business.getId()).build());
+            var mailingReport = client.analytics().mailing(RootAnalyticsMailingParams.builder().businessId(business.getId()).build());
             check(mailingReport.getBusinessCount() == 1 && mailingReport.getActiveSubscribers() == 1, "report deduplicates overlapping list membership");
             check(mailingReport.getSubscriberNetAdditions() == 1 && !mailingReport.getSubscriberWindowComplete(), "report exposes genuine partial history");
             check(mailingReport.getOpenRate().getDenominator() == 0 && mailingReport.getOpenRate().getPercent() == null, "empty cohort is not a measured zero rate");

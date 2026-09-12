@@ -12288,10 +12288,10 @@ paths:
         default:
           description: Unexpected HTTP response, including non-JSON intermediary errors. Preserve status, headers, request ID and bounded raw body.
       x-manyforge-audience: management
-      x-manyforge-resource: mailing.reporting
-      x-manyforge-method: get
+      x-manyforge-resource: analytics
+      x-manyforge-method: mailing
       tags:
-      - MailingReporting
+      - Analytics
   /api/v1/analytics/overview:
     get:
       summary: Every analytics site the caller can see, across all their businesses
@@ -21284,7 +21284,6 @@ tags:
 - name: MailingEvents
 - name: MailingKeys
 - name: MailingLists
-- name: MailingReporting
 - name: MailingSendingProfile
 - name: MailingSubscribers
 - name: MailingSuppressions
