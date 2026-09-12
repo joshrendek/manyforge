@@ -71,7 +71,17 @@ func (s *Service) VerifySendingProfile(ctx context.Context, principalID, busines
 			verifyErr = mailprovider.ErrPublicURL
 		} else {
 			endpoint := baseURL + "/api/v1/inbound/mailing/" + profile.ID.String() + "/resend"
-			webhook, _, provisionErr := provisioner.EnsureWebhook(ctx, endpoint, providerProfile.ResendWebhookID)
+			// Reads need no cleanup intent. Fence and commit it immediately before
+			// each remote write, including deletes during reconciliation.
+			var mutationErr error
+			webhook, _, provisionErr := provisioner.EnsureWebhook(ctx, endpoint, providerProfile.ResendWebhookID, func(ctx context.Context) error {
+				mutationErr = s.markResendWebhookMutation(ctx, principalID, profile, resendProvisioningToken)
+				return mutationErr
+			})
+			if mutationErr != nil {
+				s.releaseResendProvisioning(ctx, principalID, profile, resendProvisioningToken)
+				return SendingProfile{}, mutationErr
+			}
 			if provisionErr != nil {
 				verifyErr = fmt.Errorf("%w: %w", mailprovider.ErrResendWebhook, provisionErr)
 			} else {
@@ -214,7 +224,7 @@ func (s *Service) claimResendProvisioning(
 			return err
 		}
 		_, err := dbgen.New(tx).ClaimMailingResendProvisioning(ctx, dbgen.ClaimMailingResendProvisioningParams{
-			Token: token, RequireCleanup: true, ID: profile.ID, TenantRootID: profile.TenantRootID,
+			Token: token, RequireCleanup: false, ID: profile.ID, TenantRootID: profile.TenantRootID,
 			ExpectedUpdatedAt: profile.UpdatedAt,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -226,6 +236,25 @@ func (s *Service) claimResendProvisioning(
 		return uuid.Nil, mapErr(err)
 	}
 	return token, nil
+}
+
+func (s *Service) markResendWebhookMutation(
+	ctx context.Context, principalID uuid.UUID, profile SendingProfile, token uuid.UUID,
+) error {
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		if err := requireSendingProfileVerification(ctx, tx, principalID, profile.BusinessID, profile.TenantRootID); err != nil {
+			return err
+		}
+		_, err := dbgen.New(tx).MarkMailingResendWebhookMutation(ctx, dbgen.MarkMailingResendWebhookMutationParams{
+			ID: profile.ID, BusinessID: profile.BusinessID, TenantRootID: profile.TenantRootID,
+			ExpectedUpdatedAt: profile.UpdatedAt, Token: token,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("mailing: Resend provisioning lease lost or profile changed: %w", errs.ErrConflict)
+		}
+		return err
+	})
+	return mapErr(err)
 }
 
 func (s *Service) releaseResendProvisioning(

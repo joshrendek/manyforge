@@ -70,6 +70,9 @@ var tenantMergeTableInventory = map[string]string{
 	"mailing_list_key":                  "drain_fence_then_rewrite",
 	"mailing_delivery":                  "drain_fence_then_rewrite",
 	"mailing_provider_webhook_delivery": "drain_fence_then_rewrite",
+	"mailing_reporting_business":        "drain_fence_then_rewrite",
+	"mailing_reporting_list":            "drain_fence_then_rewrite",
+	"mailing_reporting_membership":      "drain_fence_then_rewrite",
 	"mailing_sending_profile":           "drain_fence_then_rewrite",
 	"mailing_suppression":               "drain_fence_then_rewrite",
 	"mailing_template":                  "drain_fence_then_rewrite",
@@ -120,8 +123,8 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"automation_enrollment_step.automation_step_business_fk":                                         true,
 	"automation_enrollment_step.automation_step_delivery_fk":                                         true,
 	"automation_enrollment_step.automation_step_enrollment_version_fk":                               true,
-	"automation_event.automation_event_ingress_key_fk":                                              true,
-	"automation_event.automation_event_ingress_list_fk":                                             true,
+	"automation_event.automation_event_ingress_key_fk":                                               true,
+	"automation_event.automation_event_ingress_list_fk":                                              true,
 	"automation_event.automation_event_business_fk":                                                  true,
 	"automation_event.automation_event_subscriber_fk":                                                true,
 	"automation_version.automation_version_automation_fk":                                            true,
@@ -162,7 +165,7 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_campaign_fk":                        true,
 	"mailing_list.mailing_list_business_fk":                                                          true,
 	"mailing_list_key.mailing_list_key_business_fk":                                                  true,
-	"mailing_list_key.mailing_list_key_list_business_fk":                                            true,
+	"mailing_list_key.mailing_list_key_list_business_fk":                                             true,
 	"mailing_list_key.mailing_list_key_list_fk":                                                      true,
 	"mailing_delivery.mailing_delivery_business_fk":                                                  true,
 	"mailing_delivery.mailing_delivery_campaign_fk":                                                  true,
@@ -170,6 +173,9 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"mailing_delivery.mailing_delivery_template_fk":                                                  true,
 	"mailing_provider_webhook_delivery.mailing_webhook_business_fk":                                  true,
 	"mailing_provider_webhook_delivery.mailing_webhook_profile_fk":                                   true,
+	"mailing_reporting_business.mailing_reporting_business_business_fk":                              true,
+	"mailing_reporting_list.mailing_reporting_list_business_fk":                                      true,
+	"mailing_reporting_membership.mailing_reporting_membership_business_fk":                          true,
 	"mailing_sending_profile.mailing_sending_profile_business_fk":                                    true,
 	"mailing_sending_profile.mailing_sending_profile_email_domain_fk":                                true,
 	"mailing_sending_profile.mailing_sending_profile_secret_fk":                                      true,
@@ -233,66 +239,72 @@ var tenantMergeRootPayloadInventory = map[string][]string{
 }
 
 // These are the non-generic guards whose root/role/owner invariants cutover
-// must preserve in addition to the common tenant_merge_write_fence on all 69
+// must preserve in addition to the common tenant_merge_write_fence on all
 // manifest tables.
 var tenantMergeImmutabilityInventory = map[string]string{
-	"activity_entry.activity_troot_immutable":                                             "support_tenant_root_immutable",
-	"agent.agent_troot_immutable":                                                         "support_tenant_root_immutable",
-	"agent_run.agent_run_troot_immutable":                                                 "support_tenant_root_immutable",
-	"ai_provider_credential.ai_provider_credential_troot_immutable":                       "support_tenant_root_immutable",
-	"approval_item.approval_item_troot_immutable":                                         "support_tenant_root_immutable",
-	"attachment.attachment_troot_immutable":                                               "support_tenant_root_immutable",
-	"automation.automation_troot_immutable":                                               "support_tenant_root_immutable",
-	"automation_enrollment.automation_enrollment_troot_immutable":                         "support_tenant_root_immutable",
-	"automation_enrollment_step.automation_enrollment_step_troot_immutable":               "support_tenant_root_immutable",
-	"automation_event.automation_event_troot_immutable":                                   "support_tenant_root_immutable",
-	"automation_version.automation_version_troot_immutable":                               "support_tenant_root_immutable",
-	"business.business_root_guard_trg":                                                    "business_root_guard",
-	"campaign.campaign_troot_immutable":                                                   "support_tenant_root_immutable",
-	"code_review_finding_seen.code_review_finding_seen_troot_immutable":                   "support_tenant_root_immutable",
-	"codex_oauth_pending.codex_oauth_pending_troot_immutable":                             "support_tenant_root_immutable",
-	"company.company_troot_immutable":                                                     "support_tenant_root_immutable",
-	"connector.connector_troot_immutable":                                                 "support_tenant_root_immutable",
-	"connector_outbound_op.connector_outbound_op_troot_immutable":                         "support_tenant_root_immutable",
-	"connector_sync_state.connector_sync_state_troot_immutable":                           "support_tenant_root_immutable",
-	"connector_webhook_delivery.connector_webhook_delivery_troot_immutable":               "support_tenant_root_immutable",
-	"contact.contact_troot_immutable":                                                     "support_tenant_root_immutable",
-	"email_domain.email_domain_troot_immutable":                                           "support_tenant_root_immutable",
-	"feedback_board.feedback_board_troot_immutable":                                       "support_tenant_root_immutable",
-	"feedback_ingest_idempotency.feedback_ingest_idempotency_tenant_root_immutable":       "support_tenant_root_immutable",
-	"feedback_ingest_key.feedback_ingest_key_troot_immutable":                             "support_tenant_root_immutable",
-	"feedback_post.feedback_post_troot_immutable":                                         "support_tenant_root_immutable",
-	"feedback_vote.feedback_vote_troot_immutable":                                         "support_tenant_root_immutable",
-	"inbound_address.inbound_address_troot_immutable":                                     "support_tenant_root_immutable",
-	"list_subscriber.list_subscriber_troot_immutable":                                     "support_tenant_root_immutable",
-	"mailing_list.mailing_list_troot_immutable":                                           "support_tenant_root_immutable",
-	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_cancel_claim_on_root_change":         "mailing_campaign_rollup_queue_cancel_claim_on_root_change",
-	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_troot_immutable":                     "support_tenant_root_immutable",
-	"mailing_list_key.mailing_list_key_troot_immutable":                                   "support_tenant_root_immutable",
-	"mailing_delivery.mailing_delivery_automation_fence_guard":                                      "mailing_delivery_automation_fence_guard",
-	"mailing_delivery.mailing_delivery_queue_campaign_rollup_change":                                "mailing_queue_campaign_rollup_change",
-	"mailing_delivery.mailing_delivery_troot_immutable":                                   "support_tenant_root_immutable",
-	"outbox.tenant_merge_event_outbox_root_rewrite":                                      "tenant_merge_event_outbox_root_rewrite",
-	"mailing_provider_webhook_delivery.mailing_provider_webhook_delivery_troot_immutable": "support_tenant_root_immutable",
-	"mailing_sending_profile.mailing_sending_profile_troot_immutable":                     "support_tenant_root_immutable",
-	"mailing_suppression.mailing_suppression_troot_immutable":                             "support_tenant_root_immutable",
-	"mailing_template.mailing_template_troot_immutable":                                   "support_tenant_root_immutable",
-	"mailing_tracking_event.mailing_tracking_event_troot_immutable":                       "support_tenant_root_immutable",
-	"mcp_server.mcp_server_troot_immutable":                                               "support_tenant_root_immutable",
-	"mcp_tool_policy.mcp_tool_policy_troot_immutable":                                     "support_tenant_root_immutable",
-	"membership.membership_agent_trg":                                                     "membership_agent_guard",
-	"membership.membership_role_tenant_trg":                                               "membership_role_tenant_guard",
-	"membership.tenant_owner_guard_trg":                                                   "tenant_owner_guard",
-	"requester.requester_troot_immutable":                                                 "support_tenant_root_immutable",
-	"review_config.review_config_troot_immutable":                                         "support_tenant_root_immutable",
-	"review_dimension.review_dimension_troot_immutable":                                   "support_tenant_root_immutable",
-	"review_dimension_repo_override.review_dimension_repo_override_troot_immutable":       "support_tenant_root_immutable",
-	"secret.secret_troot_immutable":                                                       "support_tenant_root_immutable",
-	"subscriber_tag.subscriber_tag_troot_immutable":                                       "support_tenant_root_immutable",
-	"telemetry_client.telemetry_client_troot_immutable":                                   "telemetry_client_tenant_root_guard",
-	"ticket.ticket_troot_immutable":                                                       "support_tenant_root_immutable",
-	"ticket_message.ticket_message_troot_immutable":                                       "support_tenant_root_immutable",
-	"ticket_tag.ticket_tag_troot_immutable":                                               "support_tenant_root_immutable",
+	"activity_entry.activity_troot_immutable":                                                 "support_tenant_root_immutable",
+	"agent.agent_troot_immutable":                                                             "support_tenant_root_immutable",
+	"agent_run.agent_run_troot_immutable":                                                     "support_tenant_root_immutable",
+	"ai_provider_credential.ai_provider_credential_troot_immutable":                           "support_tenant_root_immutable",
+	"approval_item.approval_item_troot_immutable":                                             "support_tenant_root_immutable",
+	"attachment.attachment_troot_immutable":                                                   "support_tenant_root_immutable",
+	"automation.automation_troot_immutable":                                                   "support_tenant_root_immutable",
+	"automation_enrollment.automation_enrollment_troot_immutable":                             "support_tenant_root_immutable",
+	"automation_enrollment_step.automation_enrollment_step_troot_immutable":                   "support_tenant_root_immutable",
+	"automation_event.automation_event_troot_immutable":                                       "support_tenant_root_immutable",
+	"automation_version.automation_version_troot_immutable":                                   "support_tenant_root_immutable",
+	"business.business_root_guard_trg":                                                        "business_root_guard",
+	"business.mailing_reporting_business_created":                                             "mailing_reporting_business_created",
+	"campaign.campaign_troot_immutable":                                                       "support_tenant_root_immutable",
+	"code_review_finding_seen.code_review_finding_seen_troot_immutable":                       "support_tenant_root_immutable",
+	"codex_oauth_pending.codex_oauth_pending_troot_immutable":                                 "support_tenant_root_immutable",
+	"company.company_troot_immutable":                                                         "support_tenant_root_immutable",
+	"connector.connector_troot_immutable":                                                     "support_tenant_root_immutable",
+	"connector_outbound_op.connector_outbound_op_troot_immutable":                             "support_tenant_root_immutable",
+	"connector_sync_state.connector_sync_state_troot_immutable":                               "support_tenant_root_immutable",
+	"connector_webhook_delivery.connector_webhook_delivery_troot_immutable":                   "support_tenant_root_immutable",
+	"contact.contact_troot_immutable":                                                         "support_tenant_root_immutable",
+	"email_domain.email_domain_troot_immutable":                                               "support_tenant_root_immutable",
+	"feedback_board.feedback_board_troot_immutable":                                           "support_tenant_root_immutable",
+	"feedback_ingest_idempotency.feedback_ingest_idempotency_tenant_root_immutable":           "support_tenant_root_immutable",
+	"feedback_ingest_key.feedback_ingest_key_troot_immutable":                                 "support_tenant_root_immutable",
+	"feedback_post.feedback_post_troot_immutable":                                             "support_tenant_root_immutable",
+	"feedback_vote.feedback_vote_troot_immutable":                                             "support_tenant_root_immutable",
+	"inbound_address.inbound_address_troot_immutable":                                         "support_tenant_root_immutable",
+	"list_subscriber.list_subscriber_troot_immutable":                                         "support_tenant_root_immutable",
+	"list_subscriber.mailing_reporting_membership_changed":                                    "mailing_reporting_membership_changed",
+	"mailing_list.mailing_list_troot_immutable":                                               "support_tenant_root_immutable",
+	"mailing_list.mailing_reporting_list_changed":                                             "mailing_reporting_list_changed",
+	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_cancel_claim_on_root_change": "mailing_campaign_rollup_queue_cancel_claim_on_root_change",
+	"mailing_campaign_rollup_queue.mailing_campaign_rollup_queue_troot_immutable":             "support_tenant_root_immutable",
+	"mailing_list_key.mailing_list_key_troot_immutable":                                       "support_tenant_root_immutable",
+	"mailing_delivery.mailing_delivery_automation_fence_guard":                                "mailing_delivery_automation_fence_guard",
+	"mailing_delivery.mailing_delivery_queue_campaign_rollup_change":                          "mailing_queue_campaign_rollup_change",
+	"mailing_delivery.mailing_delivery_troot_immutable":                                       "support_tenant_root_immutable",
+	"outbox.tenant_merge_event_outbox_root_rewrite":                                           "tenant_merge_event_outbox_root_rewrite",
+	"mailing_provider_webhook_delivery.mailing_provider_webhook_delivery_troot_immutable":     "support_tenant_root_immutable",
+	"mailing_reporting_business.mailing_reporting_business_troot_immutable":                   "support_tenant_root_immutable",
+	"mailing_reporting_list.mailing_reporting_list_troot_immutable":                           "support_tenant_root_immutable",
+	"mailing_reporting_membership.mailing_reporting_membership_troot_immutable":               "support_tenant_root_immutable",
+	"mailing_sending_profile.mailing_sending_profile_troot_immutable":                         "support_tenant_root_immutable",
+	"mailing_suppression.mailing_suppression_troot_immutable":                                 "support_tenant_root_immutable",
+	"mailing_template.mailing_template_troot_immutable":                                       "support_tenant_root_immutable",
+	"mailing_tracking_event.mailing_tracking_event_troot_immutable":                           "support_tenant_root_immutable",
+	"mcp_server.mcp_server_troot_immutable":                                                   "support_tenant_root_immutable",
+	"mcp_tool_policy.mcp_tool_policy_troot_immutable":                                         "support_tenant_root_immutable",
+	"membership.membership_agent_trg":                                                         "membership_agent_guard",
+	"membership.membership_role_tenant_trg":                                                   "membership_role_tenant_guard",
+	"membership.tenant_owner_guard_trg":                                                       "tenant_owner_guard",
+	"requester.requester_troot_immutable":                                                     "support_tenant_root_immutable",
+	"review_config.review_config_troot_immutable":                                             "support_tenant_root_immutable",
+	"review_dimension.review_dimension_troot_immutable":                                       "support_tenant_root_immutable",
+	"review_dimension_repo_override.review_dimension_repo_override_troot_immutable":           "support_tenant_root_immutable",
+	"secret.secret_troot_immutable":                                                           "support_tenant_root_immutable",
+	"subscriber_tag.subscriber_tag_troot_immutable":                                           "support_tenant_root_immutable",
+	"telemetry_client.telemetry_client_troot_immutable":                                       "telemetry_client_tenant_root_guard",
+	"ticket.ticket_troot_immutable":                                                           "support_tenant_root_immutable",
+	"ticket_message.ticket_message_troot_immutable":                                           "support_tenant_root_immutable",
+	"ticket_tag.ticket_tag_troot_immutable":                                                   "support_tenant_root_immutable",
 }
 
 func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
@@ -511,6 +523,29 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 	if appHasDirectQueueAccess {
 		t.Error("mailing campaign rollup queue must remain security-definer-only")
 	}
+	// Consent history is read-only to the app, and its HMAC key is not a
+	// dictionary oracle. Broadening table grants could otherwise forge a start
+	// balance or recover erased identities despite the aggregate-only HTTP API.
+	for _, table := range []string{"mailing_reporting_business", "mailing_reporting_list", "mailing_reporting_membership"} {
+		var writable bool
+		if err := tdb.Super.QueryRow(ctx, `SELECT
+			has_table_privilege('manyforge_app',$1,'INSERT')
+			OR has_table_privilege('manyforge_app',$1,'UPDATE')
+			OR has_table_privilege('manyforge_app',$1,'DELETE')`, table).Scan(&writable); err != nil {
+			t.Fatal(err)
+		}
+		if writable {
+			t.Errorf("application can forge or erase consent history in %s", table)
+		}
+	}
+	var keyReadable bool
+	if err := tdb.Super.QueryRow(ctx, `SELECT has_column_privilege(
+		'manyforge_app','mailing_reporting_state','identity_key','SELECT')`).Scan(&keyReadable); err != nil {
+		t.Fatal(err)
+	}
+	if keyReadable {
+		t.Error("application can read the consent history identity key")
+	}
 	if err := rlsRows.Err(); err != nil {
 		t.Fatalf("iterate tenant-merge RLS policies: %v", err)
 	}
@@ -583,7 +618,7 @@ func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {
 		for signature, destination := range map[string]*string{
 			"tenant_merge_preflight_inventory_v1(uuid,uuid)": &preflightDefinition,
 			"tenant_merge_cutover(uuid)":                     &cutoverDefinition,
-			"tenant_merge_event_outbox_root_rewrite()":        &outboxRewriteDefinition,
+			"tenant_merge_event_outbox_root_rewrite()":       &outboxRewriteDefinition,
 		} {
 			if err := tdb.Super.QueryRow(ctx,
 				"SELECT pg_get_functiondef($1::regprocedure)", signature,

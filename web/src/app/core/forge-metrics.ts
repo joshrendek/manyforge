@@ -4,9 +4,9 @@ import { Observable, catchError, forkJoin, map, of } from 'rxjs';
 import { AccountingService } from './accounting.service';
 import { AnalyticsService } from './analytics.service';
 import { ApprovalItem } from './approvals.service';
-import { AutomationsService } from './automations.service';
 import { CodeReviewService } from './code-review.service';
 import { CrmService } from './crm.service';
+import { MailingReport, MailingService } from './mailing.service';
 import { Page, TicketService } from './ticket.service';
 
 export type MetricState = 'ready' | 'loading' | 'pending' | 'denied' | 'error';
@@ -16,7 +16,7 @@ export interface ForgeMetric {
   note: string;
   observed: number;
 }
-export type WorkKey = 'tickets' | 'urgent' | 'approvals' | 'failed' | 'spend' | 'drips';
+export type WorkKey = 'tickets' | 'urgent' | 'approvals' | 'failed' | 'spend';
 export type ForgeWork = Record<WorkKey, ForgeMetric>;
 export interface ForgeAuditEntry {
   id: string;
@@ -30,6 +30,11 @@ export interface ForgeAuditEntry {
 }
 export interface ForgeAuditPage extends Page<ForgeAuditEntry> {
   state: MetricState;
+  note: string;
+}
+export interface ForgeMailingReport {
+  state: MetricState;
+  report: MailingReport | null;
   note: string;
 }
 export const pendingMetric = (note: string): ForgeMetric => ({ state: 'pending', value: null, observed: 0, note });
@@ -48,7 +53,7 @@ export function sumMetrics(metrics: ForgeMetric[]): ForgeMetric {
   return incomplete ? { ...incomplete, observed } : readyMetric(observed, 'Across the visible businesses only.');
 }
 export function emptyWork(): ForgeWork {
-  return { tickets: loadingMetric(), urgent: loadingMetric(), approvals: loadingMetric(), failed: loadingMetric(), spend: loadingMetric(), drips: loadingMetric() };
+  return { tickets: loadingMetric(), urgent: loadingMetric(), approvals: loadingMetric(), failed: loadingMetric(), spend: loadingMetric() };
 }
 function boundedCount(count: number, complete: boolean, note: string): ForgeMetric {
   return complete ? readyMetric(count, note) : { ...pendingMetric('Exact total Pending: this source is paginated or capped. ' + note), observed: count };
@@ -62,7 +67,7 @@ export class ForgeMetricsService {
   private readonly accounting = inject(AccountingService);
   private readonly analytics = inject(AnalyticsService);
   private readonly crm = inject(CrmService);
-  private readonly automations = inject(AutomationsService);
+  private readonly mailing = inject(MailingService);
 
   // One bounded read per source, never a crawl through customer data for a dashboard total.
   work(businessId: string): Observable<ForgeWork> {
@@ -86,9 +91,6 @@ export class ForgeMetricsService {
       spend: this.accounting.getSummary(businessId, 'custom', from.toISOString(), to.toISOString()).pipe(
         map(summary => readyMetric(summary.totals.cost_cents, 'Recorded AI cost · trailing 7d. Unpriced provider usage may be excluded; not a billing invoice.')),
         catchError(error => of(metricFailure(error)))),
-      drips: this.automations.list(businessId).pipe(
-        map(page => boundedCount(page.items.filter(a => a.status === 'active').length, page.next_cursor === null, 'Currently active automations.')),
-        catchError(error => of(metricFailure(error)))),
     }).pipe(map(result => ({ ...result, ...result.tickets })));
   }
 
@@ -102,6 +104,17 @@ export class ForgeMetricsService {
         page.items.filter(c => Date.parse(c.created_at) >= since).length, page.next_cursor === null, 'New tenant companies · trailing 7d.')),
         catchError(error => of(metricFailure(error)))),
     });
+  }
+
+  mailingReport(): Observable<ForgeMailingReport> {
+    return this.mailing.reporting().pipe(
+      map(report => ({
+        state: 'ready' as const,
+        report,
+        note: `${report.business_count} mailing-readable active businesses across ${report.tenant_count} tenants.`,
+      })),
+      catchError(error => of({ ...metricFailure(error), report: null })),
+    );
   }
 
   visitors(): Observable<ForgeMetric> {

@@ -1748,6 +1748,37 @@ type MailingProviderWebhookDelivery struct {
 	AppliedAt        pgtype.Timestamptz `json:"applied_at"`
 }
 
+type MailingReportingBusiness struct {
+	BusinessID       uuid.UUID `json:"business_id"`
+	TenantRootID     uuid.UUID `json:"tenant_root_id"`
+	HistoryStartedAt time.Time `json:"history_started_at"`
+}
+
+type MailingReportingList struct {
+	ID           int64              `json:"id"`
+	BusinessID   uuid.UUID          `json:"business_id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	ListID       uuid.UUID          `json:"list_id"`
+	StartedAt    time.Time          `json:"started_at"`
+	EndedAt      pgtype.Timestamptz `json:"ended_at"`
+}
+
+type MailingReportingMembership struct {
+	ID                  int64              `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	TenantRootID        uuid.UUID          `json:"tenant_root_id"`
+	ListID              uuid.UUID          `json:"list_id"`
+	IdentityFingerprint []byte             `json:"identity_fingerprint"`
+	StartedAt           time.Time          `json:"started_at"`
+	EndedAt             pgtype.Timestamptz `json:"ended_at"`
+}
+
+type MailingReportingState struct {
+	Singleton        bool      `json:"singleton"`
+	HistoryStartedAt time.Time `json:"history_started_at"`
+	IdentityKey      []byte    `json:"identity_key"`
+}
+
 type MailingSendingProfile struct {
 	ID                          uuid.UUID          `json:"id"`
 	BusinessID                  uuid.UUID          `json:"business_id"`

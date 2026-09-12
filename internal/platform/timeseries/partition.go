@@ -58,6 +58,12 @@ func (w *MaintenanceWorker) SweepOnce(ctx context.Context) (created, dropped int
 		if qerr := tx.QueryRow(ctx, "SELECT purge_expired_analytics_salts()").Scan(&purged); qerr != nil {
 			return fmt.Errorf("purge expired analytics salts: %w", qerr)
 		}
+		// Mailing keeps only active consent spans and the closed spans needed for
+		// its seven-day baseline. Reuse this always-on retention sweep.
+		var mailingPurged int64
+		if qerr := tx.QueryRow(ctx, "SELECT mailing_reporting_prune()").Scan(&mailingPurged); qerr != nil {
+			return fmt.Errorf("purge expired mailing reporting history: %w", qerr)
+		}
 		return nil
 	})
 	if err != nil {

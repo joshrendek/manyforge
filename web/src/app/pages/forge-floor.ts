@@ -4,7 +4,8 @@ import { Router } from '@angular/router';
 import { forkJoin, from, mergeMap, Subscription, tap } from 'rxjs';
 import { Business } from '../core/tree';
 import { CurrentBusinessService } from '../core/current-business.service';
-import { ForgeAuditEntry, ForgeAuditPage, ForgeMetric, ForgeMetricsService, ForgeWork, WorkKey, emptyWork, loadingMetric, pendingMetric, sumMetrics } from '../core/forge-metrics';
+import { ForgeAuditEntry, ForgeAuditPage, ForgeMailingReport, ForgeMetric, ForgeMetricsService, ForgeWork, WorkKey, emptyWork, loadingMetric, pendingMetric, readyMetric, sumMetrics } from '../core/forge-metrics';
+import { MailingReportRate } from '../core/mailing.service';
 import { PageHeader } from '../ui/page-header/page-header';
 import { StatusPill } from '../ui/status-pill/status-pill';
 
@@ -34,6 +35,7 @@ export class ForgeFloorComponent {
   readonly work = signal<Record<string, ForgeWork>>({});
   readonly crm = signal<Record<string, { contacts: ForgeMetric; companies: ForgeMetric }>>({});
   readonly visitors = signal<ForgeMetric>(loadingMetric());
+  readonly mailing = signal<ForgeMailingReport>({ state: 'loading', report: null, note: 'Loading mailing totals…' });
   readonly auditPages = signal<Record<string, ForgeAuditPage>>({});
   readonly refreshKey = signal(0);
   readonly auditBusiness = signal<Business | null>(null);
@@ -83,8 +85,8 @@ export class ForgeFloorComponent {
       { label: "What's billed", metric: pendingMetric('Billable units, labels and usage periods not connected. Unlike units are never summed.'), detail: 'Labeled units Pending' },
       { label: 'Net churn', metric: pendingMetric('Billing churn and reporting denominator not available.'), detail: 'Period comparison Pending' },
       { label: 'New contacts', metric: sumMetrics(crm.map(c => c.contacts)), route: '/crm/contacts', detail: `${this.format(sumMetrics(crm.map(c => c.companies)))} new companies · tenant-deduplicated` },
-      { label: 'Drips active', metric: this.totals().drips, route: '/mailing/automations', detail: 'Enrolled · open rate · click rate Pending' },
-      { label: 'Subscribers', metric: pendingMetric('Deduplicated subscriber reporting across mailing lists is not available.'), route: '/mailing/lists', detail: 'Net additions · unsubscribe rate Pending' },
+      { label: 'Drips active', metric: this.mailingMetric('active_automations'), route: '/mailing/automations', detail: this.mailingEngagement() },
+      { label: 'Subscribers', metric: this.mailingMetric('active_subscribers'), route: '/mailing/lists', detail: this.subscriberChange() },
       { label: 'Visitors / day', metric: this.visitors(), route: '/analytics', detail: '7d average · readable sites · comparison Pending' },
     ];
   });
@@ -108,6 +110,7 @@ export class ForgeFloorComponent {
       const tenants = [...new Map(businesses.map(b => [b.tenant_root_id, b])).values()];
       this.crm.set(Object.fromEntries(tenants.map(b => [b.tenant_root_id, { contacts: loadingMetric(), companies: loadingMetric() }])));
       this.visitors.set(loadingMetric());
+      this.mailing.set({ state: 'loading', report: null, note: 'Loading mailing totals…' });
       const subscriptions = new Subscription();
       subscriptions.add(from(businesses).pipe(mergeMap(b => forkJoin({ work: this.api.work(b.id), audit: this.api.audit(b.id) }).pipe(
         tap(result => { this.work.update(all => ({ ...all, [b.id]: result.work })); this.auditPages.update(all => ({ ...all, [b.id]: result.audit })); }),
@@ -116,6 +119,7 @@ export class ForgeFloorComponent {
         this.crm.update(all => ({ ...all, [b.tenant_root_id]: result }));
       })), 3)).subscribe());
       subscriptions.add(this.api.visitors().subscribe(metric => this.visitors.set(metric)));
+      subscriptions.add(this.api.mailingReport().subscribe(report => this.mailing.set(report)));
       onCleanup(() => { subscriptions.unsubscribe(); this.auditRequest?.unsubscribe(); });
     });
   }
@@ -123,7 +127,7 @@ export class ForgeFloorComponent {
   rollup(ids: string[]): ForgeWork {
     const work = this.work();
     const values = ids.map(id => work[id] ?? emptyWork());
-    return Object.fromEntries((['tickets', 'urgent', 'approvals', 'failed', 'spend', 'drips'] as WorkKey[])
+    return Object.fromEntries((['tickets', 'urgent', 'approvals', 'failed', 'spend'] as WorkKey[])
       .map(key => [key, sumMetrics(values.map(value => value[key]))])) as ForgeWork;
   }
   heat(work: ForgeWork): 'hot' | 'warm' | 'cold' | 'unknown' {
@@ -140,6 +144,29 @@ export class ForgeFloorComponent {
     if (metric.state === 'ready') return money ? '$' + ((metric.value ?? 0) / 100).toFixed(2)
       : (metric.value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
     return { loading: 'Loading', pending: 'Pending', denied: 'No access', error: 'Error' }[metric.state];
+  }
+  mailingMetric(key: 'active_automations' | 'active_subscribers'): ForgeMetric {
+    const result = this.mailing();
+    return result.report ? readyMetric(result.report[key], result.note)
+      : { state: result.state, value: null, observed: 0, note: result.note };
+  }
+  mailingEngagement(): string {
+    const { report } = this.mailing();
+    return report
+      ? `${report.active_enrollments.toLocaleString()} enrolled · mail opens ${this.mailRate(report.open_rate)} · clicks ${this.mailRate(report.click_rate)}`
+      : 'Mail engagement · 7d queued cohort';
+  }
+  subscriberChange(): string {
+    const { report } = this.mailing();
+    if (!report) return 'Tenant-deduplicated active consent';
+    const delta = report.subscriber_net_additions;
+    const period = report.subscriber_window_complete ? '7d'
+      : `since ${new Date(report.subscriber_window_start).toLocaleString()}`;
+    return `${delta > 0 ? '+' : ''}${delta.toLocaleString()} net · ${period} · mail unsubscribes ${this.mailRate(report.unsubscribe_rate)}`;
+  }
+  mailRate(rate: MailingReportRate): string {
+    return rate.percent === null ? 'N/A (no eligible mail)'
+      : `${rate.percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}% (${rate.numerator.toLocaleString()}/${rate.denominator.toLocaleString()})`;
   }
   open(business: Business, route?: string): void {
     const work = this.work()[business.id];

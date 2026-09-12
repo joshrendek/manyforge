@@ -100,6 +100,15 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 	}
 	t.Cleanup(func() { tdb.Close(context.Background()) })
 	svc := &tenancy.Service{DB: tdb.App}
+	currentSchemaVersion, _, err := tdb.App.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expectedTables []string
+	if err := tdb.Super.QueryRow(ctx, `SELECT array_agg(table_name::text ORDER BY table_name)
+		FROM tenant_merge_manifest`).Scan(&expectedTables); err != nil {
+		t.Fatal(err)
+	}
 
 	actor, sourceRoot := seedFounder(ctx, t, tdb, "merge-source-owner@x.test")
 	destinationFounder, destinationRoot := seedFounder(ctx, t, tdb, "merge-destination-owner@x.test")
@@ -199,9 +208,9 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			first.ReconciliationPlan == nil {
 			t.Fatalf("preflight generations/schema were not persisted: %+v", first)
 		}
-		if *first.InventoryVersion != 1 || *first.SchemaVersion != 136 {
-			t.Errorf("manifest/schema versions = %d/%d, want 1/136",
-				*first.InventoryVersion, *first.SchemaVersion)
+		if *first.InventoryVersion != 1 || *first.SchemaVersion != int64(currentSchemaVersion) {
+			t.Errorf("manifest/schema versions = %d/%d, want 1/%d",
+				*first.InventoryVersion, *first.SchemaVersion, currentSchemaVersion)
 		}
 		if *first.ReconciliationVersion != 1 ||
 			*first.ReconciliationHash == "" ||
@@ -211,19 +220,18 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 				first.ReconciliationVersion, first.ReconciliationHash,
 				first.ReconciliationPlan)
 		}
-		if len(first.ReconciliationPlan.Tables) != 69 ||
-			len(first.ReconciliationPlan.Policies) != 8 {
-			t.Errorf("reconciliation plan tables/policies = %d/%d, want 69/8",
-				len(first.ReconciliationPlan.Tables),
-				len(first.ReconciliationPlan.Policies))
+		for _, table := range expectedTables {
+			if _, ok := first.ReconciliationPlan.Tables[table]; !ok {
+				t.Errorf("reconciliation plan omits table %s", table)
+			}
+			if _, ok := first.TableMetrics[table]; !ok {
+				t.Errorf("preflight metrics omit table %s", table)
+			}
 		}
 		if first.ReconciliationPlan.Access.ScopeRule !=
 			"preserve_original_business_subtree" {
 			t.Errorf("reconciliation access rule = %q",
 				first.ReconciliationPlan.Access.ScopeRule)
-		}
-		if len(first.TableMetrics) != 69 {
-			t.Errorf("table metrics = %d, want 69", len(first.TableMetrics))
 		}
 		if metric := first.TableMetrics["business"]; metric.ContentDigest == "" ||
 			metric.StableIDDigest == "" {
@@ -403,7 +411,7 @@ func TestTenantMergeOperationAndPreflightContract(t *testing.T) {
 			t.Fatalf("schema mutation did not stale: result=%+v err=%v", schemaStale, err)
 		}
 		if _, err := tdb.Super.Exec(ctx,
-			"UPDATE schema_migrations SET version=129",
+			"UPDATE schema_migrations SET version=$1", currentSchemaVersion,
 		); err != nil {
 			t.Fatalf("restore schema version: %v", err)
 		}

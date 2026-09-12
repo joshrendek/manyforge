@@ -1490,3 +1490,38 @@ CREATE TABLE tenant_merge_capacity_policy (
     release_gate_p95_ms          bigint NOT NULL,
     created_at                   timestamptz NOT NULL DEFAULT now()
 );
+
+-- Exact mailing consent reporting history (migration 0137).
+CREATE TABLE mailing_reporting_state (
+    singleton boolean PRIMARY KEY DEFAULT true,
+    history_started_at timestamptz NOT NULL,
+    identity_key bytea NOT NULL
+);
+
+CREATE TABLE mailing_reporting_business (
+    business_id uuid PRIMARY KEY,
+    tenant_root_id uuid NOT NULL,
+    history_started_at timestamptz NOT NULL,
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id) ON DELETE CASCADE
+);
+
+CREATE TABLE mailing_reporting_membership (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    business_id uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    list_id uuid NOT NULL,
+    identity_fingerprint bytea NOT NULL,
+    started_at timestamptz NOT NULL,
+    ended_at timestamptz,
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id) ON DELETE CASCADE
+);
+
+CREATE TABLE mailing_reporting_list (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    business_id uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    list_id uuid NOT NULL,
+    started_at timestamptz NOT NULL,
+    ended_at timestamptz,
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id) ON DELETE CASCADE
+);

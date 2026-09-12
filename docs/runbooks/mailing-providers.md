@@ -151,6 +151,14 @@ cannot be opened. It never falls back to unsigned tenant mail.
 5. Once provider and feedback are ready, send a test. Messages use `POST /emails`
    with the mailing delivery ID supplied as Resend's `Idempotency-Key`.
 
+Read-only failures while checking domains or listing/reading webhooks do not
+introduce webhook-cleanup debt. Immediately before each webhook create or delete,
+ManyForge records durable cleanup intent under the current, unexpired provisioning
+lease and rechecks authorization. An ambiguous remote outcome or failed credential persistence
+retains that obligation. Existing cleanup obligations and webhook account-ownership
+proof remain required for replacement/deletion; do not clear markers manually to
+force a credential change.
+
 ## Amazon SES v2
 
 1. Verify the From domain in the same AWS region configured on the profile.
@@ -203,3 +211,56 @@ existing master keys when recovering a deployment. Non-secret controls are:
 Delivery is at least once: a process crash after a provider accepts a message but
 before completion is recorded can cause a retry. Resend deduplicates the stable
 delivery ID; SES and relay recipients may receive a duplicate in that narrow window.
+
+## Reporting definitions and history
+
+`GET /api/v1/mailing/reporting` is an authenticated, aggregate-only read across
+active businesses where the caller holds `mailing.read`. Optional `business_id`
+restricts the same query to one business. Malformed/duplicate filters, missing
+businesses and unauthorized/inactive businesses return the same 404. An unfiltered
+empty authorized scope returns zero counts and null rates, never another tenant's
+data. No subscriber emails, names, attributes or individual IDs are returned.
+
+1. **Active automations and enrollments:** exact current counts, not counts from
+   the first list page. Active enrollments include those waiting on paused workflows.
+2. **Active subscribers:** distinct case-insensitive email within each tenant,
+   across authorized active lists and businesses. The same address in another
+   tenant counts separately. This measures active consent, not guaranteed delivery.
+3. **Net subscriber additions:** current active subscribers minus the recorded
+   starting balance, using the same current authorization scope for both.
+   Membership changes, removal, list archival and reactivation are recorded
+   transactionally. Migration 0137 takes an actual baseline; it does not infer
+   earlier states from current timestamps. `subscriber_window_start` and
+   `subscriber_window_complete` declare any shorter initial or post-erasure period.
+   New empty businesses do not reset the portfolio's history.
+4. **Open/click rates:** each provider-accepted message queued in
+   `[window_start, as_of)` counts at most once, across broadcasts and automations.
+   Denominators contain only messages with the relevant tracking enabled.
+   Persisted automation tracking overrides and immutable campaign settings are
+   authoritative; legacy messages with unknown tracking settings are not assigned
+   guessed eligibility. This is a trailing-seven-day **queue-date cohort**, not a
+   send-date cohort, and includes observations from bots/privacy proxies.
+5. **Unsubscribe rate:** distinct accepted cohort messages with a recorded
+   unsubscribe event divided by all accepted cohort messages. This is not the rate
+   of every unsubscribe or list removal. All rates return numerator, denominator,
+   and `percent`; zero denominator means `percent: null`, not a measured zero.
+
+History retains keyed email fingerprints, list/business scope and interval
+boundaries, not raw emails or subscriber IDs. The application cannot read the
+fingerprinting key. These are pseudonyms, not an assertion of anonymization.
+Current spans are retained while active; the existing startup/hourly maintenance
+sweep prunes closed spans that no longer overlap the seven-day window. Retention
+can extend while a tenant merge is fenced or maintenance is unavailable.
+
+History participates in tenant-merge inventory, write fencing and root rewriting.
+After a merge, both balances deduplicate under the current merged tenant without
+creating synthetic subscriber activity.
+
+For explicit mailing-consent erasure, remove the source memberships through the
+trusted erasure process first, then invoke
+`mailing_reporting_erase(tenant_root_id uuid, email text)` as `manyforge_erasure`
+(or the database owner). The function rejects remaining source memberships,
+serializes against re-subscription, removes their historical pseudonyms and advances
+only affected businesses' trustworthy baseline. Ordinary application users cannot
+call it. Account deletion alone is not mailing-consent erasure; this change does not
+add an account-erasure worker or implicitly join account addresses to mailing lists.

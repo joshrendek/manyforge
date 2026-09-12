@@ -320,6 +320,14 @@
   },
   {
     "audience": "management",
+    "businessParam": null,
+    "method": "mailing",
+    "operationId": "MailingReportingGet",
+    "pagination": null,
+    "resource": "analytics"
+  },
+  {
+    "audience": "management",
     "businessParam": "id",
     "method": "delete",
     "operationId": "MembersDelete",

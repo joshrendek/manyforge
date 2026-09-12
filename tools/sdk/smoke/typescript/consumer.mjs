@@ -117,6 +117,17 @@ const oversized = new TextEncoder().encode(`email,name\n${csvEmail},${'x'.repeat
 await assert.rejects(scope.mailing.subscribers.importCsv({ lid: list.id, consentAttested: true, skipConfirmation: true, file: { filename: 'oversized.csv', data: oversized } }), error => error instanceof ManyForgeError && error.status === 400);
 checks.push('real-mailing-consent-import-closeable-csv-export-size-bound');
 
+const overlappingList = await scope.mailing.lists.create({ body: { name: `SDK overlap ${uid}`, doubleOptIn: false } });
+await scope.mailing.subscribers.importCsv({ lid: overlappingList.id, consentAttested: true, skipConfirmation: true, file: { filename: 'duplicate.csv', data: csv } });
+const mailingReport = await client.analytics.mailing({ businessId: business.id });
+assert.equal(mailingReport.businessCount, 1n);
+assert.equal(mailingReport.activeSubscribers, 1n);
+assert.equal(mailingReport.subscriberNetAdditions, 1n);
+assert.equal(mailingReport.subscriberWindowComplete, false);
+assert.equal(mailingReport.openRate.denominator, 0n);
+assert.equal(mailingReport.openRate.percent, null);
+checks.push('real-mailing-reporting-deduplicated-history-and-null-rate');
+
 const cjs = createRequire(import.meta.url)('@manyforge/sdk');
 assert.equal((await new cjs.ManyForge({ baseUrl: fixture.base_url, tokenProvider: async () => (await bootstrap.auth.login({ body: { email: fixture.email, password: fixture.password } })).accessToken }).business(business.id).contacts.get({ cid: contact.id })).id, contact.id);
 checks.push('installed-commonjs-real-product-request');

@@ -19,7 +19,9 @@ from manyforge.transport import (SyncTransport, AsyncTransport, Request, Request
 from pydantic import Field
 from typing import Optional
 from typing_extensions import Annotated
+from uuid import UUID
 from manyforge.models.analytics_overview import AnalyticsOverview
+from manyforge.models.mailing_report import MailingReport
 
 class RootAnalyticsResource:
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -56,6 +58,36 @@ class RootAnalyticsResource:
         )
         return self._transport.request(request, request_options=request_options)
 
+    def mailing(
+        self,
+        *,
+
+        business_id: UUID | UnsetType = UNSET,
+
+        request_options: RequestOptions | None = None,
+    ) -> MailingReport:
+        request = Request(
+            operation_id="MailingReportingGet",
+            method="GET",
+            path="/api/v1/mailing/reporting",
+            authenticated=True,
+            response=TypeAdapter(MailingReport),
+            path_parameters={
+            },
+            query=(
+                QueryParameter("business_id", business_id, "form", True),
+            ),
+            headers={
+            },
+            form={
+            },
+
+
+            accept="application/json",
+
+        )
+        return self._transport.request(request, request_options=request_options)
+
 class AsyncRootAnalyticsResource:
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -79,6 +111,36 @@ class AsyncRootAnalyticsResource:
             },
             query=(
                 QueryParameter("days", days, "form", True),
+            ),
+            headers={
+            },
+            form={
+            },
+
+
+            accept="application/json",
+
+        )
+        return await self._transport.request(request, request_options=request_options)
+
+    async def mailing(
+        self,
+        *,
+
+        business_id: UUID | UnsetType = UNSET,
+
+        request_options: RequestOptions | None = None,
+    ) -> MailingReport:
+        request = Request(
+            operation_id="MailingReportingGet",
+            method="GET",
+            path="/api/v1/mailing/reporting",
+            authenticated=True,
+            response=TypeAdapter(MailingReport),
+            path_parameters={
+            },
+            query=(
+                QueryParameter("business_id", business_id, "form", True),
             ),
             headers={
             },

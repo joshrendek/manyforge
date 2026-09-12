@@ -12227,6 +12227,71 @@ paths:
       tags:
       - AnalyticsPropertyRules
       x-manyforge-business-param: id
+  /api/v1/mailing/reporting:
+    get:
+      operationId: MailingReportingGet
+      summary: Mailing and automation aggregates across authorized businesses
+      description: |
+        Reports all active businesses where the caller has mailing.read, or one explicitly
+        selected business. Counts are not list-page totals and contain no subscriber PII.
+        Subscribers are deduplicated by case-insensitive email within each tenant across
+        authorized active lists; the same address in different tenants counts separately.
+        Active enrollment counts include paused workflows.
+
+        Engagement uses the trailing seven-day delivery-created cohort, for campaigns and
+        automations accepted by the provider. This is a queue-date cohort, not a send-date
+        cohort. Open/click denominators include only tracking-enabled messages; each message
+        counts once. Tracked-message unsubscribe rate is distinct from total list attrition.
+        Tracking includes bots and privacy proxies and does not establish human engagement.
+
+        Net subscriber change compares the same currently authorized business scope at the
+        start and end of the available history window, including membership and list-state
+        changes. Newly installed reporting has a shorter history; subscriber_window_start
+        and subscriber_window_complete expose this without inferring pre-installation data.
+      parameters:
+      - name: business_id
+        in: query
+        required: false
+        description: Restrict to one active mailing-readable business. Malformed or duplicate filters and missing, inactive or unauthorized businesses return the same 404.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Aggregate-only report. No readable active businesses yields zero counts and null rates.
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailingReport'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Malformed or duplicate business filter, or requested business is missing, inactive or unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP response, including non-JSON intermediary errors. Preserve status, headers, request ID and bounded raw body.
+      x-manyforge-audience: management
+      x-manyforge-resource: analytics
+      x-manyforge-method: mailing
+      tags:
+      - Analytics
   /api/v1/analytics/overview:
     get:
       summary: Every analytics site the caller can see, across all their businesses
@@ -13066,6 +13131,90 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    MailingReportRate:
+      type: object
+      required: [numerator, denominator, percent]
+      properties:
+        numerator:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Distinct accepted cohort messages with the recorded event.
+        denominator:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Eligible accepted cohort messages; open/click rates exclude messages with tracking disabled.
+        percent:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          maximum: 100
+          description: 100 times numerator divided by denominator; null when the denominator is zero.
+    MailingReport:
+      type: object
+      required:
+      - as_of
+      - window_start
+      - subscriber_window_start
+      - subscriber_window_complete
+      - business_count
+      - tenant_count
+      - active_automations
+      - active_enrollments
+      - active_subscribers
+      - subscriber_net_additions
+      - open_rate
+      - click_rate
+      - unsubscribe_rate
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        window_start:
+          type: string
+          format: date-time
+          description: Start of the trailing seven-day queue-date cohort, inclusive; as_of is exclusive.
+        subscriber_window_start:
+          type: string
+          format: date-time
+          description: Later of the seven-day boundary and the trustworthy subscriber-history baseline.
+        subscriber_window_complete:
+          type: boolean
+          description: True only when history covers the full seven-day window.
+        business_count:
+          type: integer
+          format: int64
+          minimum: 0
+        tenant_count:
+          type: integer
+          format: int64
+          minimum: 0
+        active_automations:
+          type: integer
+          format: int64
+          minimum: 0
+        active_enrollments:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Active enrollments, including those in paused workflows.
+        active_subscribers:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tenant-deduplicated active consent on active lists, not a deliverability guarantee.
+        subscriber_net_additions:
+          type: integer
+          format: int64
+          description: Signed change in active subscribers over the available history for the same current authorization scope.
+        open_rate:
+          $ref: '#/components/schemas/MailingReportRate'
+        click_rate:
+          $ref: '#/components/schemas/MailingReportRate'
+        unsubscribe_rate:
+          $ref: '#/components/schemas/MailingReportRate'
     MailingSetup:
       type: object
       required: [checks]

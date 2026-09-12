@@ -37,3 +37,22 @@ func (r *RootAnalyticsResource) Get(ctx context.Context, params RootAnalyticsGet
 	return result, err
 
 }
+
+type RootAnalyticsMailingParams struct {
+	BusinessId Optional[string]
+}
+
+// Mailing invokes MailingReportingGet.
+func (r *RootAnalyticsResource) Mailing(ctx context.Context, params RootAnalyticsMailingParams, options ...RequestOption) (MailingReport, error) {
+	path := "/api/v1/mailing/reporting"
+	request := Request{OperationID: "MailingReportingGet", Method: "GET", Path: path, Query: url.Values{}, Headers: map[string]string{}, Authenticated: true, Audience: "management", Signing: "", BodyKey: ""}
+
+	if value, ok := params.BusinessId.Get(); ok {
+		addQuery(request.Query, "business_id", value, "form", true)
+	}
+
+	var result MailingReport
+	err := r.transport.Do(ctx, request, &result, options...)
+	return result, err
+
+}

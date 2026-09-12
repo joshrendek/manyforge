@@ -180,6 +180,14 @@ UUID/assign; CRM null does **not** clear its pointer/COALESCE-backed fields.
 TypeScript int64 fields are `bigint`, encoded as numeric JSON tokens without
 rounding; date-only values stay dates rather than timestamps.
 
+Management reporting is available at `GET /api/v1/mailing/reporting`, with an
+optional `business_id` filter. For example, TypeScript and Python expose
+`client.analytics.mailing(...)`; Go exposes `client.Analytics.Mailing`
+and Java `client.analytics().mailing(...)`. It returns complete authorized
+mailing/automation counts, tenant-deduplicated subscribers, recorded net change,
+and denominator-aware engagement rates without subscriber PII. See the
+[reporting definitions and retention policy](docs/runbooks/mailing-providers.md#reporting-definitions-and-history).
+
 Management credentials are mutually exclusive: fixed access token, token
 provider, or an in-memory rotating `Session` (`AsyncSession` for Python async).
 Login returns a token pair without changing client state. Rotation is proactive,
@@ -257,12 +265,19 @@ hierarchy and all management actions; **Light a hearth** focuses the master-busi
 creation form. Stations link to real business-scoped work, and the audit strip opens
 the existing metadata-only, paginated audit API.
 
-Missing billing, product-user, metering, service-timing, and mailing aggregates
+Missing billing, product-user, metering, and service-timing aggregates
 display **Pending**, with their beads listed under **About these numbers**.
 Paginated/capped lists never masquerade as complete totals. Permission failures and
 load errors remain distinct; unknown workload is not shown as an idle/cold station.
 AI cost is recorded usage, not an invoice; visitor sums are site-visitors, not
 deduplicated people.
+
+Mailing tiles use server aggregates over all active businesses where the caller
+has `mailing.read`, independently of the visible business-list page. Subscribers
+are deduplicated within each tenant; active enrollments include paused workflows.
+The seven-day engagement cohort uses queue dates and includes bots/privacy proxies.
+Rates with no eligible messages show **N/A**, not zero. Net subscriber change shows
+the available history period until seven days of trustworthy history exist.
 
 ### Cloudflare homepage
 

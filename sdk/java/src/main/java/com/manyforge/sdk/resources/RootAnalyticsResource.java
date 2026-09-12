@@ -21,7 +21,9 @@ import java.time.*;
 import java.math.BigDecimal;
 import com.manyforge.sdk.models.AnalyticsOverview;
 import com.manyforge.sdk.models.Error;
+import com.manyforge.sdk.models.MailingReport;
 import com.manyforge.sdk.models.PublicDataError;
+import java.util.UUID;
 
 public class RootAnalyticsResource {
   protected final Transport transport;
@@ -69,5 +71,44 @@ public class RootAnalyticsResource {
   public CompletableFuture<AnalyticsOverview> getAsync(RootAnalyticsGetParams params, RequestOptions options) { return transport.sendAsync(getRequest(params), options); }
   public AnalyticsOverview get() { return get(RootAnalyticsGetParams.builder().build()); }
   public CompletableFuture<AnalyticsOverview> getAsync() { return getAsync(RootAnalyticsGetParams.builder().build()); }
+
+  public static final class RootAnalyticsMailingParams {
+
+    private final UUID businessId;
+
+    private RootAnalyticsMailingParams(Builder builder) {
+
+      this.businessId = builder.businessId;
+
+    }
+    public static Builder builder() { return new Builder(); }
+    public Builder toBuilder() {
+      Builder builder = new Builder();
+
+      builder.businessId = businessId;
+
+      return builder;
+    }
+    public static final class Builder {
+
+      private UUID businessId;
+      public Builder businessId(UUID value) { this.businessId = value; return this; }
+
+      public RootAnalyticsMailingParams build() { return new RootAnalyticsMailingParams(this); }
+    }
+  }
+  private Request<MailingReport> mailingRequest(RootAnalyticsMailingParams params) {
+    Objects.requireNonNull(params, "params");
+    List<Request.Parameter> parameters = new ArrayList<>();
+
+    parameters.add(new Request.Parameter("business_id", "query", params.businessId, ""));
+    return new Request<>("GET", "/api/v1/mailing/reporting", parameters, null, "", true, "management", false, null, new TypeReference<MailingReport>() {});
+  }
+  public MailingReport mailing(RootAnalyticsMailingParams params) { return mailing(params, RequestOptions.DEFAULT); }
+  public MailingReport mailing(RootAnalyticsMailingParams params, RequestOptions options) { return transport.send(mailingRequest(params), options); }
+  public CompletableFuture<MailingReport> mailingAsync(RootAnalyticsMailingParams params) { return mailingAsync(params, RequestOptions.DEFAULT); }
+  public CompletableFuture<MailingReport> mailingAsync(RootAnalyticsMailingParams params, RequestOptions options) { return transport.sendAsync(mailingRequest(params), options); }
+  public MailingReport mailing() { return mailing(RootAnalyticsMailingParams.builder().build()); }
+  public CompletableFuture<MailingReport> mailingAsync() { return mailingAsync(RootAnalyticsMailingParams.builder().build()); }
 
 }

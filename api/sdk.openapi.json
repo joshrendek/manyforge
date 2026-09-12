@@ -6399,6 +6399,115 @@
         ],
         "type": "object"
       },
+      "MailingReport": {
+        "properties": {
+          "active_automations": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "active_enrollments": {
+            "description": "Active enrollments, including those in paused workflows.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "active_subscribers": {
+            "description": "Tenant-deduplicated active consent on active lists, not a deliverability guarantee.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "as_of": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "business_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "click_rate": {
+            "$ref": "#/components/schemas/MailingReportRate"
+          },
+          "open_rate": {
+            "$ref": "#/components/schemas/MailingReportRate"
+          },
+          "subscriber_net_additions": {
+            "description": "Signed change in active subscribers over the available history for the same current authorization scope.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "subscriber_window_complete": {
+            "description": "True only when history covers the full seven-day window.",
+            "type": "boolean"
+          },
+          "subscriber_window_start": {
+            "description": "Later of the seven-day boundary and the trustworthy subscriber-history baseline.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "tenant_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unsubscribe_rate": {
+            "$ref": "#/components/schemas/MailingReportRate"
+          },
+          "window_start": {
+            "description": "Start of the trailing seven-day queue-date cohort, inclusive; as_of is exclusive.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "window_start",
+          "subscriber_window_start",
+          "subscriber_window_complete",
+          "business_count",
+          "tenant_count",
+          "active_automations",
+          "active_enrollments",
+          "active_subscribers",
+          "subscriber_net_additions",
+          "open_rate",
+          "click_rate",
+          "unsubscribe_rate"
+        ],
+        "type": "object"
+      },
+      "MailingReportRate": {
+        "properties": {
+          "denominator": {
+            "description": "Eligible accepted cohort messages; open/click rates exclude messages with tracking disabled.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "numerator": {
+            "description": "Distinct accepted cohort messages with the recorded event.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "percent": {
+            "description": "100 times numerator divided by denominator; null when the denominator is zero.",
+            "format": "double",
+            "maximum": 100,
+            "minimum": 0,
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "numerator",
+          "denominator",
+          "percent"
+        ],
+        "type": "object"
+      },
       "MailingSetup": {
         "properties": {
           "checks": {
@@ -27239,6 +27348,83 @@
         "x-manyforge-audience": "public",
         "x-manyforge-method": "subscribe",
         "x-manyforge-resource": "mailing"
+      }
+    },
+    "/api/v1/mailing/reporting": {
+      "get": {
+        "description": "Reports all active businesses where the caller has mailing.read, or one explicitly\nselected business. Counts are not list-page totals and contain no subscriber PII.\nSubscribers are deduplicated by case-insensitive email within each tenant across\nauthorized active lists; the same address in different tenants counts separately.\nActive enrollment counts include paused workflows.\n\nEngagement uses the trailing seven-day delivery-created cohort, for campaigns and\nautomations accepted by the provider. This is a queue-date cohort, not a send-date\ncohort. Open/click denominators include only tracking-enabled messages; each message\ncounts once. Tracked-message unsubscribe rate is distinct from total list attrition.\nTracking includes bots and privacy proxies and does not establish human engagement.\n\nNet subscriber change compares the same currently authorized business scope at the\nstart and end of the available history window, including membership and list-state\nchanges. Newly installed reporting has a shorter history; subscriber_window_start\nand subscriber_window_complete expose this without inferring pre-installation data.\n",
+        "operationId": "MailingReportingGet",
+        "parameters": [
+          {
+            "description": "Restrict to one active mailing-readable business. Malformed or duplicate filters and missing, inactive or unauthorized businesses return the same 404.",
+            "in": "query",
+            "name": "business_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailingReport"
+                }
+              }
+            },
+            "description": "Aggregate-only report. No readable active businesses yields zero counts and null rates.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Malformed or duplicate business filter, or requested business is missing, inactive or unauthorized."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error."
+          },
+          "default": {
+            "description": "Unexpected HTTP response, including non-JSON intermediary errors. Preserve status, headers, request ID and bounded raw body."
+          }
+        },
+        "summary": "Mailing and automation aggregates across authorized businesses",
+        "tags": [
+          "Analytics"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-method": "mailing",
+        "x-manyforge-resource": "analytics"
       }
     },
     "/api/v1/mailing/s2s/{key}/events": {
