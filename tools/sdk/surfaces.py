@@ -16,8 +16,16 @@ ROOT = Path(__file__).resolve().parents[2]
 LANGUAGES = ("python", "typescript", "go", "java")
 
 
+def _comparable(descriptor: dict, *, ignore: str) -> dict:
+    return {
+        key: (" | ".join(sorted(part.strip() for part in _union_parts(value))) if key in ("type", "returns") and isinstance(value, str) else value)
+        for key, value in descriptor.items()
+        if key != ignore
+    }
+
+
 def _signature_accepts(old: dict, new: dict) -> bool:
-    if {k: v for k, v in old.items() if k != "params"} != {k: v for k, v in new.items() if k != "params"}:
+    if _comparable(old, ignore="params") != _comparable(new, ignore="params"):
         return False
     before, after = old.get("params", []), new.get("params", [])
     positional_before = [p for p in before if p.get("kind") != "KEYWORD_ONLY"]
@@ -31,12 +39,74 @@ def _signature_accepts(old: dict, new: dict) -> bool:
         return False
     pairs.extend((p, keywords_after[name]) for name, p in keywords_before.items())
     for left, right in pairs:
-        if {k: v for k, v in left.items() if k != "required"} != {k: v for k, v in right.items() if k != "required"}:
+        if _comparable(left, ignore="required") != _comparable(right, ignore="required"):
             return False
         if not left.get("required", True) and right.get("required", True):
             return False
     additions = positional_after[len(positional_before):] + [p for name, p in keywords_after.items() if name not in keywords_before]
     return all(not param.get("required", True) for param in additions)
+
+
+def _split_top_level(text: str, separator: str) -> list[str]:
+    """Split on a separator that appears outside every bracket pair."""
+    parts, depth, current = [], 0, []
+    for character in text:
+        if character in "<([{":
+            depth += 1
+        elif character in ">)]}":
+            depth -= 1
+        if character == separator and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(character)
+    parts.append("".join(current))
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _union_parts(text: str) -> list[str]:
+    return _split_top_level(text, "|")
+
+
+def _object_members(text: str) -> dict[str, str] | None:
+    """Members of an inline object literal type, or None when it is not one."""
+    text = text.strip()
+    if not text.startswith("{") or not text.endswith("}"):
+        return None
+    members = {}
+    for entry in _split_top_level(text[1:-1], ";"):
+        name, separator, declared = entry.partition(":")
+        if not separator:
+            return None
+        name = name.removeprefix("readonly ").strip()
+        if not name.removesuffix("?").isidentifier():
+            return None
+        members[name] = declared.strip()
+    return members
+
+
+def _same_type(old: object, new: object) -> bool:
+    """Compare type strings by meaning rather than spelling.
+
+    Two printed differences are not source-compatibility changes: a union's member
+    order, which the TypeScript checker derives from internal type registration and
+    reshuffles when unrelated declarations are generated; and an inline object
+    literal gaining a member, which is how a new scoped resource appears on the
+    resource container. Removals and changed member types still fail.
+    """
+    if old == new:
+        return True
+    if not isinstance(old, str) or not isinstance(new, str):
+        return False
+    before, after = _union_parts(old), _union_parts(new)
+    if len(before) > 1 or len(after) > 1:
+        if len(before) != len(after):
+            return False
+        return sorted(before) == sorted(after)
+    old_members, new_members = _object_members(old), _object_members(new)
+    if old_members is None or new_members is None:
+        return False
+    return all(name in new_members and _same_type(declared, new_members[name]) for name, declared in old_members.items())
 
 
 def _compare_node(old: dict, new: dict, path: str, errors: list[str]) -> None:
@@ -68,6 +138,9 @@ def _compare_node(old: dict, new: dict, path: str, errors: list[str]) -> None:
         elif key == "model_fields":
             if not set(value) <= set(new[key]):
                 errors.append(f"{path}: removed model fields")
+        elif key in ("type", "returns"):
+            if not _same_type(value, new[key]):
+                errors.append(f"{path}: changed {key}")
         elif value != new[key]:
             errors.append(f"{path}: changed {key}")
     for key in new.keys() - old.keys():

@@ -1,7 +1,8 @@
 import { Component, HostListener, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { MailingService, MailingTemplate } from '../../core/mailing.service';
+import { catchError, forkJoin, of } from 'rxjs';
+import { MailingBrand, MailingService, MailingTemplate } from '../../core/mailing.service';
 import { HasUnsavedChanges, protectBeforeUnload } from '../../core/unsaved-changes.guard';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { Spinner } from '../../ui/spinner/spinner';
@@ -59,11 +60,24 @@ import { MailingPreviewPaneComponent } from './preview-pane';
               (valueChange)="content.set($event)"
             />
           </section>
-          <app-mailing-preview-pane
-            [businessId]="businessId"
-            kind="templates"
-            [content]="content()"
-          />
+          <div class="preview-col">
+            <a
+              routerLink="/mailing/brand"
+              class="brand-chip"
+              data-testid="template-editor-brand-link"
+            >
+              @if (brand(); as brand) {
+                Branded as <b>{{ brand.name }}</b>
+              } @else {
+                Set up brand
+              }
+            </a>
+            <app-mailing-preview-pane
+              [businessId]="businessId"
+              kind="templates"
+              [content]="content()"
+            />
+          </div>
         </div>
 
         <div class="actions">
@@ -126,11 +140,17 @@ import { MailingPreviewPaneComponent } from './preview-pane';
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 24px;
       }
-      .form-pane {
+      .form-pane,
+      .preview-col {
         display: grid;
         align-content: start;
         gap: 16px;
         min-width: 0;
+      }
+      .brand-chip {
+        justify-self: end;
+        font-size: var(--mf-fs-sm);
+        color: var(--mf-text-muted);
       }
       .actions {
         flex-wrap: wrap;
@@ -156,6 +176,7 @@ export class MailingTemplateEditorComponent implements OnInit, HasUnsavedChanges
   businessId = '';
   templateId = '';
   template = signal<MailingTemplate | null>(null);
+  brand = signal<MailingBrand | null>(null);
   content = signal<MailingContentDraft>({
     subject: '',
     preheader: '',
@@ -178,8 +199,12 @@ export class MailingTemplateEditorComponent implements OnInit, HasUnsavedChanges
       this.error.set('Template route is invalid');
       return;
     }
-    this.mailing.getTemplate(this.businessId, this.templateId).subscribe({
-      next: (template) => {
+    forkJoin({
+      template: this.mailing.getTemplate(this.businessId, this.templateId),
+      brand: this.mailing.getBrand(this.businessId).pipe(catchError(() => of(null))),
+    }).subscribe({
+      next: ({ template, brand }) => {
+        this.brand.set(brand);
         this.populate(template);
         this.loading.set(false);
       },

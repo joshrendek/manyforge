@@ -27,6 +27,7 @@ type PreviewInput struct {
 	Preheader     *string
 	FromName      *string
 	PostalAddress *string
+	Brand         *BrandInput
 }
 
 // VerifySendingProfile checks the live provider with no database transaction
@@ -365,10 +366,17 @@ func (s *Service) Preview(ctx context.Context, principalID, businessID uuid.UUID
 		return mailrender.Output{}, validation("body_markdown must not exceed 1 MiB")
 	}
 	fromName, postalAddress := "ManyForge", ""
+	var brandRow *dbgen.MailingBrand
 	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		root, err := resolveTenantRoot(ctx, q, businessID)
 		if err != nil {
+			return err
+		}
+		brand, err := q.GetMailingBrand(ctx, dbgen.GetMailingBrandParams{BusinessID: businessID, TenantRootID: root})
+		if err == nil {
+			brandRow = &brand
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		profile, err := q.GetMailingSendingProfile(ctx, dbgen.GetMailingSendingProfileParams{BusinessID: businessID, TenantRootID: root})
@@ -397,6 +405,7 @@ func (s *Service) Preview(ctx context.Context, principalID, businessID uuid.UUID
 	return s.Renderer.RenderInput(mailrender.Input{
 		BodyMarkdown: in.BodyMarkdown, FromName: fromName,
 		Preheader: stringValue(in.Preheader), PostalAddress: postalAddress,
+		Brand: s.renderBrand(brandRow, in.Brand),
 	}, mailrender.Variables{
 		FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.com",
 		UnsubscribeURL: "#", ListName: "Sample list",

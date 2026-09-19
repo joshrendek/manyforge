@@ -10,10 +10,11 @@ API version: 1.0.0
 package manyforge
 
 type PreviewInput struct {
-	BodyMarkdown  Optional[string] `json:"body_markdown,omitzero"`
-	FromName      Optional[string] `json:"from_name,omitzero"`
-	PostalAddress Optional[string] `json:"postal_address,omitzero"`
-	Preheader     Optional[string] `json:"preheader,omitzero"`
+	BodyMarkdown  Optional[string]            `json:"body_markdown,omitzero"`
+	Brand         Optional[MailingBrandInput] `json:"brand,omitzero"`
+	FromName      Optional[string]            `json:"from_name,omitzero"`
+	PostalAddress Optional[string]            `json:"postal_address,omitzero"`
+	Preheader     Optional[string]            `json:"preheader,omitzero"`
 }
 
 // NewPreviewInput assigns only the supplied required fields, never schema defaults.

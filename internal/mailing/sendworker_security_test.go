@@ -1,6 +1,7 @@
 package mailing
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,48 @@ func TestCompiledContentCacheExpiresAndInvalidatesImmutableVersions(t *testing.T
 	now = now.Add(time.Minute + time.Nanosecond)
 	if _, ok := cache.get(v2); ok {
 		t.Fatal("expired compiled content remained cached")
+	}
+}
+
+func TestCompiledContentCacheMissesOnBrandUpdate(t *testing.T) {
+	renderer, err := mailrender.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := &SendWorker{Service: &Service{Renderer: renderer}}
+	updatedAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	brandID := uuid.New()
+	profile := workerProfile{
+		provider: mailprovider.Profile{ID: uuid.New(), UpdatedAt: updatedAt},
+		fromName: "Audit sender",
+		brand:    &workerBrand{id: brandID, updatedAt: updatedAt, render: mailrender.Brand{Name: "Old brand"}},
+	}
+	delivery := claimedDelivery{SourceID: uuid.New(), ContentUpdatedAt: updatedAt, BodyMarkdown: "# Hello\n\nBody"}
+	before, err := worker.compile(delivery, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(before.HTML, "Old brand") {
+		t.Fatal("branded compile did not render the brand name")
+	}
+	profile.brand = &workerBrand{id: brandID, updatedAt: updatedAt.Add(time.Second), render: mailrender.Brand{Name: "New brand"}}
+	after, err := worker.compile(delivery, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(after.HTML, "New brand") || strings.Contains(after.HTML, "Old brand") {
+		t.Fatal("brand update served stale compiled content from the cache")
+	}
+	if entries, _ := worker.compiled.stats(); entries != 1 {
+		t.Fatalf("compiled cache entries after brand update = %d, want 1 (superseded brand version evicted)", entries)
+	}
+	profile.brand = nil
+	unbranded, err := worker.compile(delivery, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(unbranded.HTML, "New brand") {
+		t.Fatal("brand removal served branded compiled content from the cache")
 	}
 }
 

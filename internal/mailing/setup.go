@@ -10,13 +10,15 @@ import (
 )
 
 // SetupConfig describes deployment prerequisites, never credential values.
-// SMTP and its DKIM key are prerequisites only for the relay provider.
+// SMTP and its DKIM key are prerequisites only for the relay provider. Blob storage
+// gates only the optional brand logo and is required for no provider.
 type SetupConfig struct {
 	OutboundMailDisabled bool
 	MailingKeyConfigured bool
 	PublicBaseURL        string
 	SMTPConfigured       bool
 	DKIMKeyConfigured    bool
+	BlobStoreConfigured  bool
 }
 
 type SetupCheck struct {
@@ -28,8 +30,17 @@ type SetupCheck struct {
 	RequiredFor []string `json:"required_for"`
 }
 
+// LogoStorageStatus reports brand-logo object storage separately from Checks.
+// A check gates sending; logo storage never does, so it is not one.
+type LogoStorageStatus struct {
+	Ready   bool   `json:"ready"`
+	Message string `json:"message"`
+	Action  string `json:"action"`
+}
+
 type SetupStatus struct {
-	Checks []SetupCheck `json:"checks"`
+	Checks      []SetupCheck      `json:"checks"`
+	LogoStorage LogoStorageStatus `json:"logo_storage"`
 }
 
 // SetupHandler remains available when credential-dependent mailing routes are
@@ -51,7 +62,14 @@ func NewSetupHandler(cfg SetupConfig) *SetupHandler {
 		}
 		return SetupCheck{ID: id, Label: label, Status: status, Message: message, Action: action, RequiredFor: modes}
 	}
-	return &SetupHandler{status: SetupStatus{Checks: []SetupCheck{
+	logoStorage := LogoStorageStatus{
+		Ready:   cfg.BlobStoreConfigured,
+		Message: "Brand logos are stored in object storage. Without it every other mailing feature works; only the logo upload is unavailable.",
+	}
+	if !logoStorage.Ready {
+		logoStorage.Action = "Ask an instance administrator to set MANYFORGE_BLOB_URL to a file:// or s3:// bucket and roll out the release."
+	}
+	return &SetupHandler{status: SetupStatus{LogoStorage: logoStorage, Checks: []SetupCheck{
 		check("outbound_enabled", "Outbound mail enabled", !cfg.OutboundMailDisabled,
 			"The instance-wide outbound switch controls every provider, including Resend and SES.",
 			"Ask an instance administrator to set MANYFORGE_OUTBOUND_MAIL_DISABLED=false (Helm: outboundMailDisabled: false) and roll out the release. Then configure and verify the selected provider.", all),

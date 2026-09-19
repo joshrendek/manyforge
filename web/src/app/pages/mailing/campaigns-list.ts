@@ -44,6 +44,13 @@ import { ToastService } from '../../ui/toast/toast.service';
           >Sending profile</a
         >
         <a
+          routerLink="/mailing/brand"
+          class="mf-btn mf-btn-ghost mf-btn-sm"
+          data-testid="campaigns-brand-link"
+          actions
+          >Brand</a
+        >
+        <a
           routerLink="/mailing/suppression"
           class="mf-btn mf-btn-ghost mf-btn-sm"
           data-testid="campaigns-suppression-link"

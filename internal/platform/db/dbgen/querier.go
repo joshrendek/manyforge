@@ -39,6 +39,7 @@ type Querier interface {
 	// ---- bounded worker claims ----
 	ClaimChangedCampaignRollups(ctx context.Context, arg ClaimChangedCampaignRollupsParams) ([]uuid.UUID, error)
 	ClaimMailingResendProvisioning(ctx context.Context, arg ClaimMailingResendProvisioningParams) (MailingSendingProfile, error)
+	ClearMailingBrandLogo(ctx context.Context, arg ClearMailingBrandLogoParams) (MailingBrand, error)
 	ClearRolePermissions(ctx context.Context, roleID uuid.UUID) error
 	CompleteChangedCampaignRollups(ctx context.Context, arg CompleteChangedCampaignRollupsParams) (int32, error)
 	// ConnectorWebhookContext returns the connector's tenancy + base_url + allow_private_base_url +
@@ -142,6 +143,7 @@ type Querier interface {
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams) (int64, error)
 	DeleteMCPToolPolicy(ctx context.Context, arg DeleteMCPToolPolicyParams) (int64, error)
+	DeleteMailingBrand(ctx context.Context, arg DeleteMailingBrandParams) (MailingBrand, error)
 	DeleteMailingSendingProfile(ctx context.Context, arg DeleteMailingSendingProfileParams) (MailingSendingProfile, error)
 	DeleteMailingSuppression(ctx context.Context, arg DeleteMailingSuppressionParams) (MailingSuppression, error)
 	DeleteMailingTemplate(ctx context.Context, arg DeleteMailingTemplateParams) (MailingTemplate, error)
@@ -297,6 +299,9 @@ type Querier interface {
 	// business_id is defense in depth. pgx.ErrNoRows => ErrNotFound.
 	GetMCPServerByID(ctx context.Context, arg GetMCPServerByIDParams) (McpServer, error)
 	GetMCPToolPolicy(ctx context.Context, arg GetMCPToolPolicyParams) (McpToolPolicy, error)
+	// Spec 016 mailing brand: one row per business, RLS-scoped, read by the worker via
+	// the mailing_brand_context DEFINER rather than these queries.
+	GetMailingBrand(ctx context.Context, arg GetMailingBrandParams) (MailingBrand, error)
 	GetMailingList(ctx context.Context, arg GetMailingListParams) (MailingList, error)
 	// ---- sending profile ----
 	GetMailingSendingProfile(ctx context.Context, arg GetMailingSendingProfileParams) (MailingSendingProfile, error)
@@ -848,6 +853,7 @@ type Querier interface {
 	// attempts and leave these columns alone.
 	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
 	SetFeedbackPostStatus(ctx context.Context, arg SetFeedbackPostStatusParams) (FeedbackPost, error)
+	SetMailingBrandLogo(ctx context.Context, arg SetMailingBrandLogoParams) (MailingBrand, error)
 	// Resend provisioning performs provider I/O before this CAS. Persist the
 	// provider-generated webhook credential and readiness atomically.
 	SetMailingResendWebhookVerification(ctx context.Context, arg SetMailingResendWebhookVerificationParams) (MailingSendingProfile, error)
@@ -954,6 +960,7 @@ type Querier interface {
 	// Derives (business_id, tenant_root_id) from the RLS-visible mcp_server row, so an invisible or
 	// foreign server yields no row → pgx.ErrNoRows → 404 (no oracle). Upsert on (mcp_server_id, tool_name).
 	UpsertMCPToolPolicy(ctx context.Context, arg UpsertMCPToolPolicyParams) (McpToolPolicy, error)
+	UpsertMailingBrand(ctx context.Context, arg UpsertMailingBrandParams) (MailingBrand, error)
 	// Insert-or-update one per-repo override, keyed on UNIQUE(repo_connector_id, dimension_key).
 	// business_id + tenant_root_id are derived from the RLS-visible repo_connector (foreign connector
 	// ⇒ no row ⇒ ErrNotFound), which also enforces connector ownership. min_severity NULL ⇒ inherit.

@@ -10,7 +10,8 @@ API version: 1.0.0
 package manyforge
 
 type MailingSetup struct {
-	Checks []MailingSetupCheck `json:"checks"`
+	Checks      []MailingSetupCheck          `json:"checks"`
+	LogoStorage Optional[MailingLogoStorage] `json:"logo_storage,omitzero"`
 }
 
 // NewMailingSetup assigns only the supplied required fields, never schema defaults.
@@ -25,7 +26,7 @@ func (o *MailingSetup) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "checks"); err != nil {
+	if err := nonNullFields(fields, "checks", "logo_storage"); err != nil {
 		return err
 	}
 	type plain MailingSetup

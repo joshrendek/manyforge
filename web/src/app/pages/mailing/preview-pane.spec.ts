@@ -84,4 +84,43 @@ describe('MailingPreviewPaneComponent', () => {
     expect(fixture.nativeElement.querySelector('pre').textContent).toContain('Hi');
     fixture.destroy();
   });
+
+  it('forwards an unsaved brand override and omits it when absent', () => {
+    const fixture = TestBed.createComponent(MailingPreviewPaneComponent);
+    fixture.componentRef.setInput('businessId', BUSINESS_ID);
+    fixture.componentRef.setInput('kind', 'templates');
+    fixture.componentRef.setInput('content', {
+      subject: '',
+      preheader: '',
+      body_markdown: 'Hi',
+      track_opens: true,
+      track_clicks: true,
+    });
+    fixture.detectChanges();
+    vi.advanceTimersByTime(400);
+    const plain = http.expectOne(`${BASE}/templates/preview`);
+    expect('brand' in plain.request.body).toBe(false);
+    plain.flush({ html: '', text: '' });
+
+    const brand = {
+      name: 'Acme',
+      colors: {
+        background: '#f4f6f8',
+        surface: '#ffffff',
+        text: '#17212b',
+        accent: '#c9501d',
+        header_background: '#ffffff',
+        header_text: '#17212b',
+      },
+      font_stack: 'serif',
+      footer_markdown: 'Thanks',
+    };
+    fixture.componentRef.setInput('brand', brand);
+    fixture.detectChanges();
+    vi.advanceTimersByTime(400);
+    const branded = http.expectOne(`${BASE}/templates/preview`);
+    expect(branded.request.body.brand).toEqual(brand);
+    branded.flush({ html: '', text: '' });
+    fixture.destroy();
+  });
 });

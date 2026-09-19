@@ -661,6 +661,16 @@
         },
         "description": "Lists"
       },
+      "MailingBrand": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MailingBrand"
+            }
+          }
+        },
+        "description": "Mailing brand"
+      },
       "Maintenance": {
         "content": {
           "application/json": {
@@ -6320,6 +6330,189 @@
         ],
         "type": "object"
       },
+      "MailingBrand": {
+        "properties": {
+          "business_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "colors": {
+            "$ref": "#/components/schemas/MailingBrandColors"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "font_stack": {
+            "enum": [
+              "system",
+              "serif",
+              "mono"
+            ],
+            "type": "string"
+          },
+          "footer_markdown": {
+            "description": "Markdown rendered above the postal address; raw HTML is disabled.",
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "logo": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MailingBrandLogo"
+              }
+            ],
+            "nullable": true
+          },
+          "logo_width": {
+            "description": "Rendered logo width in px.",
+            "maximum": 600,
+            "minimum": 40,
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tenant_root_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "business_id",
+          "tenant_root_id",
+          "name",
+          "logo",
+          "logo_width",
+          "colors",
+          "font_stack",
+          "footer_markdown",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "MailingBrandColors": {
+        "description": "Lowercase '#rrggbb' colors. An empty value on input selects the default for that slot.",
+        "properties": {
+          "accent": {
+            "pattern": "^(#[0-9a-f]{6})?$",
+            "type": "string"
+          },
+          "background": {
+            "pattern": "^(#[0-9a-f]{6})?$",
+            "type": "string"
+          },
+          "header_background": {
+            "pattern": "^(#[0-9a-f]{6})?$",
+            "type": "string"
+          },
+          "header_text": {
+            "pattern": "^(#[0-9a-f]{6})?$",
+            "type": "string"
+          },
+          "surface": {
+            "pattern": "^(#[0-9a-f]{6})?$",
+            "type": "string"
+          },
+          "text": {
+            "pattern": "^(#[0-9a-f]{6})?$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "background",
+          "surface",
+          "text",
+          "accent",
+          "header_background",
+          "header_text"
+        ],
+        "type": "object"
+      },
+      "MailingBrandInput": {
+        "description": "Full replacement of the brand fields. The stored logo is never changed by this body.",
+        "properties": {
+          "colors": {
+            "$ref": "#/components/schemas/MailingBrandColors"
+          },
+          "font_stack": {
+            "description": "Font stack for the rendered mail. The server also treats an empty string as system.",
+            "enum": [
+              "system",
+              "serif",
+              "mono"
+            ],
+            "type": "string"
+          },
+          "footer_markdown": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "logo_width": {
+            "description": "Rendered logo width in px. Omitted or null keeps the current width (160 on create).",
+            "maximum": 600,
+            "minimum": 40,
+            "nullable": true,
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "colors",
+          "font_stack",
+          "footer_markdown"
+        ],
+        "type": "object"
+      },
+      "MailingBrandLogo": {
+        "properties": {
+          "content_type": {
+            "description": "Image media type sniffed at upload.",
+            "type": "string"
+          },
+          "url": {
+            "description": "Absolute public logo URL (/m/b/{bid}/logo?v=...) embedded in rendered mail.",
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "content_type"
+        ],
+        "type": "object"
+      },
+      "MailingBrandLogoUpload": {
+        "description": "Multipart logo upload: a single nonempty file part of at most 512 KiB total body size.",
+        "properties": {
+          "file": {
+            "description": "Image bytes (PNG, JPEG, GIF or WebP). The part Content-Type is ignored.",
+            "format": "binary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
       "MailingEventRateLimitError": {
         "description": "The outer IP limiter uses code/message; the per-key limiter uses error.",
         "oneOf": [
@@ -6396,6 +6589,27 @@
           "status",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "MailingLogoStorage": {
+        "description": "Brand-logo object-storage readiness. Only the logo uploader depends on it.",
+        "properties": {
+          "action": {
+            "description": "Corrective action for an instance administrator; empty when storage is ready.",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "message",
+          "action"
         ],
         "type": "object"
       },
@@ -6515,6 +6729,14 @@
               "$ref": "#/components/schemas/MailingSetupCheck"
             },
             "type": "array"
+          },
+          "logo_storage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MailingLogoStorage"
+              }
+            ],
+            "description": "Brand-logo object storage. Reported separately from checks because it never blocks sending."
           }
         },
         "required": [
@@ -7084,6 +7306,15 @@
           "body_markdown": {
             "maxLength": 1048576,
             "type": "string"
+          },
+          "brand": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MailingBrandInput"
+              }
+            ],
+            "description": "Optional override of the stored brand fields for this preview only. The stored logo is kept.",
+            "nullable": true
           },
           "from_name": {
             "nullable": true,
@@ -20208,6 +20439,283 @@
         "x-manyforge-resource": "automations.versions"
       }
     },
+    "/api/v1/businesses/{id}/mailing/brand": {
+      "delete": {
+        "description": "Deletes the brand and its stored logo. Subsequent renders use the default look.",
+        "operationId": "deleteMailingBrand",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "MailingBrand"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "delete",
+        "x-manyforge-resource": "mailing.brand"
+      },
+      "get": {
+        "description": "Reads the single mailing brand for the business. Campaign, template, automation and confirmation emails inherit it at render time; it is never snapshotted. 404 when no brand has been saved.",
+        "operationId": "getMailingBrand",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MailingBrand"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "MailingBrand"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "get",
+        "x-manyforge-resource": "mailing.brand"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        }
+      ],
+      "put": {
+        "description": "Creates or fully replaces the mailing brand. Empty colors fall back to the defaults and an empty font_stack means system. The stored logo is kept; manage it through the logo sub-resource.",
+        "operationId": "putMailingBrand",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailingBrandInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MailingBrand"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "JSON request body exceeds 1 MiB"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "MailingBrand"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "replace",
+        "x-manyforge-resource": "mailing.brand"
+      }
+    },
+    "/api/v1/businesses/{id}/mailing/brand/logo": {
+      "delete": {
+        "description": "Removes the stored logo and returns the brand; rendered mail falls back to the text header.",
+        "operationId": "deleteMailingBrandLogo",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MailingBrand"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "MailingBrand"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "deleteLogo",
+        "x-manyforge-resource": "mailing.brand"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        }
+      ],
+      "put": {
+        "description": "Stores the brand logo from the multipart `file` part. The declared part Content-Type is ignored; the bytes are sniffed and must be an image (PNG, JPEG, GIF or WebP). Decodable images wider or taller than 2000 px are rejected and logo_width is derived from the natural width (at most 240 px). Requires a saved brand and configured blob storage (see logo_storage on the mailing setup response).",
+        "operationId": "putMailingBrandLogo",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/MailingBrandLogoUpload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MailingBrand"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "VALIDATION: missing or empty file part, unsupported or undecodable image, oversized dimensions, or logo storage not configured"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Multipart body exceeds 512 KiB"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "MailingBrand"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "uploadLogo",
+        "x-manyforge-resource": "mailing.brand"
+      }
+    },
     "/api/v1/businesses/{id}/mailing/campaigns": {
       "get": {
         "operationId": "listMailingCampaigns",
@@ -28559,6 +29067,9 @@
     },
     {
       "name": "Mailing"
+    },
+    {
+      "name": "MailingBrand"
     },
     {
       "name": "MailingCampaigns"

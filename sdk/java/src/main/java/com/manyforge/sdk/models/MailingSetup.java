@@ -27,6 +27,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.manyforge.sdk.models.MailingLogoStorage;
 import com.manyforge.sdk.models.MailingSetupCheck;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,8 +37,8 @@ import java.util.List;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "checks" })
-@com.manyforge.sdk.ModelShape(required = { "checks",  }, nonNullable = { "checks",  })
+@JsonPropertyOrder({ "checks", "logo_storage" })
+@com.manyforge.sdk.ModelShape(required = { "checks",  }, nonNullable = { "checks", "logo_storage",  })
 public class MailingSetup {
 
   @JsonProperty("checks")
@@ -46,10 +47,18 @@ public class MailingSetup {
   public List<MailingSetupCheck> getChecks() { return checks.orElse(null); }
   public JsonNullable<List<MailingSetupCheck>> checksPresence() { return checks; }
   public MailingSetup checks(List<MailingSetupCheck> value) { this.checks = JsonNullable.of(value); return this; }
+
+  @JsonProperty("logo_storage")
+  private JsonNullable<MailingLogoStorage> logoStorage = JsonNullable.undefined();
+
+  public MailingLogoStorage getLogoStorage() { return logoStorage.orElse(null); }
+  public JsonNullable<MailingLogoStorage> logoStoragePresence() { return logoStorage; }
+  public MailingSetup logoStorage(MailingLogoStorage value) { this.logoStorage = JsonNullable.of(value); return this; }
   public static Builder builder() { return new Builder(); }
   public static final class Builder {
     private final MailingSetup value = new MailingSetup();
     public Builder checks(List<MailingSetupCheck> field) { value.checks(field); return this; }
+    public Builder logoStorage(MailingLogoStorage field) { value.logoStorage(field); return this; }
     public MailingSetup build() { return value; }
   }
 }

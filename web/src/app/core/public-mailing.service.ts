@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
+import { PublicMailingBrand } from './mailing.service';
 
 export interface PublicMailingSubscription {
   email: string;
@@ -18,6 +19,12 @@ export class PublicMailingService {
     return this.http.post<{ accepted: boolean }>(
       `/api/v1/mailing/public/${encodeURIComponent(key)}/subscribe`,
       body,
+    );
+  }
+
+  brand(key: string): Observable<{ brand: PublicMailingBrand | null }> {
+    return this.http.get<{ brand: PublicMailingBrand | null }>(
+      `/api/v1/mailing/public/${encodeURIComponent(key)}/brand`,
     );
   }
 

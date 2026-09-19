@@ -179,10 +179,15 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID, listID uuid.
 		return
 	}
 	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
-	rendered, err := s.Renderer.RenderInput(mailrender.Input{
+	input := mailrender.Input{
 		BodyMarkdown: "# Confirm your subscription\n\n[Confirm your subscription](" + link + ")",
 		FromName:     profile.fromName, PostalAddress: stringValue(profile.postalAddress),
-	}, mailrender.Variables{Email: email, UnsubscribeURL: "#", ListName: "Mailing list"}, mailrender.Tracking{})
+	}
+	if profile.brand != nil {
+		input.Brand = profile.brand.render
+	}
+	rendered, err := s.Renderer.RenderInput(input,
+		mailrender.Variables{Email: email, UnsubscribeURL: "#", ListName: "Mailing list"}, mailrender.Tracking{})
 	if err != nil {
 		logger.ErrorContext(ctx, "mailing confirmation render failed", "err", err)
 		return
@@ -212,14 +217,22 @@ func (s *Service) resolveConfirmationProfile(
 	var emailDomainID, secretRef *uuid.UUID
 	var sealed, sesRegion, sesConfig *string
 	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT profile_id, updated_at, mode::text, from_email::text,
+		if err := tx.QueryRow(ctx, `SELECT profile_id, updated_at, mode::text, from_email::text,
 			from_name, reply_to::text, postal_address, email_domain_id, secret_ref,
 			credential_sealed, ses_region, ses_configuration_set
 			FROM mailing_confirmation_send_context($1,$2,$3,$4)`,
 			businessID, listID, email, tokenHash,
 		).Scan(
 			&profile.provider.ID, &updated, &mode, &fromEmail, &profile.fromName, &profile.replyTo,
-			&profile.postalAddress, &emailDomainID, &secretRef, &sealed, &sesRegion, &sesConfig)
+			&profile.postalAddress, &emailDomainID, &secretRef, &sealed, &sesRegion, &sesConfig); err != nil {
+			return err
+		}
+		brand, err := s.queryBrandContext(ctx, tx, businessID)
+		if err != nil {
+			return err
+		}
+		profile.brand = brand
+		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return workerProfile{}, false, nil
@@ -297,6 +310,7 @@ func NewPublicHandler(svc *Service, logger *slog.Logger, sealer *crypto.Sealer, 
 func (h *PublicHandler) PublicRoutes(r chi.Router) {
 	r.Post("/mailing/public/{key}/subscribe", h.publicSubscribe)
 	r.Options("/mailing/public/{key}/subscribe", h.publicPreflight)
+	r.Get("/mailing/public/{key}/brand", h.publicBrand)
 	r.Post("/mailing/s2s/{key}/subscribers", h.s2sSubscribe)
 	r.Delete("/mailing/s2s/{key}/subscribers/{email}", h.s2sUnsubscribe)
 	r.Post("/mailing/s2s/{key}/events", h.s2sEvent)
@@ -306,7 +320,7 @@ func (h *PublicHandler) PublicRoutes(r chi.Router) {
 // routes take no cookie or bearer credentials, and they return no tenant data.
 func mailingCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Access-Control-Max-Age", "86400")
 	w.Header().Set("Vary", "Origin")

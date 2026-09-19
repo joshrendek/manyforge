@@ -827,6 +827,22 @@
     "pagination": null
   },
   {
+    "operationId": "deleteMailingBrand",
+    "resource": "mailing.brand",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "deleteMailingBrandLogo",
+    "resource": "mailing.brand",
+    "method": "deleteLogo",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
     "operationId": "deleteMailingCampaign",
     "resource": "mailing.campaigns",
     "method": "delete",
@@ -1069,6 +1085,14 @@
   {
     "operationId": "getMCPServer",
     "resource": "mcpServers",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "getMailingBrand",
+    "resource": "mailing.brand",
     "method": "get",
     "audience": "management",
     "businessParam": "id",
@@ -1579,6 +1603,22 @@
     "method": "vote",
     "audience": "public",
     "businessParam": null,
+    "pagination": null
+  },
+  {
+    "operationId": "putMailingBrand",
+    "resource": "mailing.brand",
+    "method": "replace",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "putMailingBrandLogo",
+    "resource": "mailing.brand",
+    "method": "uploadLogo",
+    "audience": "management",
+    "businessParam": "id",
     "pagination": null
   },
   {
