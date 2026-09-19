@@ -24,12 +24,78 @@ var layoutSource string
 
 var variablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
 
+var colorPattern = regexp.MustCompile(`^#[0-9a-f]{6}$`)
+
+// Colors holds the six layout colors as lowercase "#rrggbb" strings.
+type Colors struct {
+	Background       string
+	Surface          string
+	Text             string
+	Accent           string
+	HeaderBackground string
+	HeaderText       string
+}
+
+// DefaultColors is the unbranded look and the per-field fallback for
+// missing or invalid brand colors.
+var DefaultColors = Colors{
+	Background:       "#f4f6f8",
+	Surface:          "#ffffff",
+	Text:             "#17212b",
+	Accent:           "#1769aa",
+	HeaderBackground: "#ffffff",
+	HeaderText:       "#17212b",
+}
+
+// Font stack keys accepted by Brand.FontStack.
+const (
+	FontStackSystem = "system"
+	FontStackSerif  = "serif"
+	FontStackMono   = "mono"
+)
+
+const (
+	defaultLogoWidth = 160
+
+	fontStackSystemCSS = `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
+	fontStackSerifCSS  = `Georgia, "Times New Roman", Times, serif`
+	fontStackMonoCSS   = `ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`
+)
+
+// ValidColor reports whether s is a lowercase six-digit hex color ("#rrggbb").
+func ValidColor(s string) bool { return colorPattern.MatchString(s) }
+
+// FontStackCSS returns the CSS font-family list for a font stack key. Unknown
+// or empty keys resolve to the system stack.
+func FontStackCSS(key string) string {
+	switch key {
+	case FontStackSerif:
+		return fontStackSerifCSS
+	case FontStackMono:
+		return fontStackMonoCSS
+	default:
+		return fontStackSystemCSS
+	}
+}
+
+// Brand holds the per-business look applied by the layout. The zero value
+// produces the default, unbranded layout.
+type Brand struct {
+	Name           string // header text and logo alt; empty → Input.FromName
+	LogoURL        string // empty → text header
+	LogoWidth      int    // px; <=0 → 160
+	Colors         Colors // each empty/invalid field → DefaultColors field
+	FontStack      string // FontStackSystem, FontStackSerif, or FontStackMono
+	FooterMarkdown string // rendered above the postal address, raw HTML disabled
+}
+
 // Input contains campaign-stable Markdown and layout fields to compile.
 type Input struct {
 	BodyMarkdown  string
 	FromName      string
 	Preheader     string
 	PostalAddress string
+	Brand         Brand
 }
 
 // Variables contains the supported recipient substitutions: first_name,
@@ -86,24 +152,68 @@ func (r *Renderer) Compile(in Input) (Compiled, error) {
 	if err := r.markdown.Convert([]byte(in.BodyMarkdown), &body); err != nil {
 		return Compiled{}, fmt.Errorf("mailing render: markdown: %w", err)
 	}
+	brand := normalizeBrand(in)
+	var footer bytes.Buffer
+	if brand.FooterMarkdown != "" {
+		if err := r.markdown.Convert([]byte(brand.FooterMarkdown), &footer); err != nil {
+			return Compiled{}, fmt.Errorf("mailing render: footer markdown: %w", err)
+		}
+	}
 	var page bytes.Buffer
 	data := struct {
 		FromName, Preheader, PostalAddress string
-		Body                               template.HTML
+		Brand                              Brand
+		FontStack                          template.CSS
+		Body, FooterHTML                   template.HTML
 		UnsubscribeMarker                  string
 	}{
 		FromName: in.FromName, Preheader: in.Preheader,
 		PostalAddress: in.PostalAddress,
-		// Goldmark emitted this fragment with unsafe HTML disabled. Marking only
+		Brand:         brand,
+		// The stack is one of three package constants, never caller input, so
+		// its quotes and commas may bypass the CSS value filter.
+		FontStack: template.CSS(brand.FontStack), // #nosec G203 -- fixed package constant, not caller input.
+		// Goldmark emitted these fragments with unsafe HTML disabled. Marking only
 		// that output trusted lets the layout preserve headings and links while
 		// all profile fields continue through html/template escaping.
-		Body:              template.HTML(body.String()), // #nosec G203 -- trusted renderer output, not raw author HTML.
+		Body:              template.HTML(body.String()),   // #nosec G203 -- trusted renderer output, not raw author HTML.
+		FooterHTML:        template.HTML(footer.String()), // #nosec G203 -- trusted renderer output, not raw author HTML.
 		UnsubscribeMarker: unsubscribeMarker,
 	}
 	if err := r.layout.Execute(&page, data); err != nil {
 		return Compiled{}, fmt.Errorf("mailing render: execute layout: %w", err)
 	}
 	return Compiled{HTML: page.String()}, nil
+}
+
+// normalizeBrand resolves every Brand field to a value the layout can emit
+// verbatim: name falls back to the sender, colors to DefaultColors, the logo
+// width to 160px, and FontStack becomes the CSS font-family list.
+func normalizeBrand(in Input) Brand {
+	b := in.Brand
+	if b.Name == "" {
+		b.Name = in.FromName
+	}
+	if b.LogoWidth <= 0 {
+		b.LogoWidth = defaultLogoWidth
+	}
+	b.FontStack = FontStackCSS(b.FontStack)
+	b.Colors = Colors{
+		Background:       colorOr(b.Colors.Background, DefaultColors.Background),
+		Surface:          colorOr(b.Colors.Surface, DefaultColors.Surface),
+		Text:             colorOr(b.Colors.Text, DefaultColors.Text),
+		Accent:           colorOr(b.Colors.Accent, DefaultColors.Accent),
+		HeaderBackground: colorOr(b.Colors.HeaderBackground, DefaultColors.HeaderBackground),
+		HeaderText:       colorOr(b.Colors.HeaderText, DefaultColors.HeaderText),
+	}
+	return b
+}
+
+func colorOr(s, fallback string) string {
+	if ValidColor(s) {
+		return s
+	}
+	return fallback
 }
 
 // Render performs the recipient-specific half: escaped variables, safe link

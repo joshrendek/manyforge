@@ -64,7 +64,10 @@ func (s *Service) recordTrack(ctx context.Context, deliveryID uuid.UUID, kind, t
 
 // RootRoutes mounts the stable, principal-less confirmation and unsubscribe surface. The
 // limiter lives here because these routes are intentionally outside the shared /api/v1 group.
+// The brand logo is mounted outside the limiter: email-client image proxies fetch it in
+// bursts from shared IPs and a throttled logo would break every branded mail at once.
 func (h *PublicHandler) RootRoutes(r chi.Router) {
+	r.Get("/m/b/{bid}/logo", h.brandLogo)
 	mount := func(root chi.Router) {
 		root.Get("/m/confirm/{token}", h.confirmPage)
 		root.Post("/m/confirm/{token}", h.confirm)

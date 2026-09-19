@@ -1674,6 +1674,27 @@ type ListSubscriber struct {
 	UpdatedAt         time.Time               `json:"updated_at"`
 }
 
+type MailingBrand struct {
+	ID              uuid.UUID `json:"id"`
+	BusinessID      uuid.UUID `json:"business_id"`
+	TenantRootID    uuid.UUID `json:"tenant_root_id"`
+	Name            string    `json:"name"`
+	LogoBlobKey     *string   `json:"logo_blob_key"`
+	LogoContentType *string   `json:"logo_content_type"`
+	LogoSha256      []byte    `json:"logo_sha256"`
+	LogoWidth       int32     `json:"logo_width"`
+	ColorBackground string    `json:"color_background"`
+	ColorSurface    string    `json:"color_surface"`
+	ColorText       string    `json:"color_text"`
+	ColorAccent     string    `json:"color_accent"`
+	ColorHeaderBg   string    `json:"color_header_bg"`
+	ColorHeaderText string    `json:"color_header_text"`
+	FontStack       string    `json:"font_stack"`
+	FooterMarkdown  string    `json:"footer_markdown"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type MailingCampaignRollupQueue struct {
 	CampaignID   uuid.UUID          `json:"campaign_id"`
 	BusinessID   uuid.UUID          `json:"business_id"`

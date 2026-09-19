@@ -5,6 +5,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { catchError, forkJoin, of, switchMap } from 'rxjs';
 import { CurrentBusinessService } from '../../core/current-business.service';
 import {
+  MailingBrand,
   MailingCampaign,
   MailingList,
   MailingSendingProfile,
@@ -130,13 +131,26 @@ import { MailingPreviewPaneComponent } from './preview-pane';
             />
           </section>
 
-          <app-mailing-preview-pane
-            [businessId]="businessId"
-            kind="campaigns"
-            [content]="content()"
-            [fromName]="profile()?.from_name ?? null"
-            [postalAddress]="profile()?.postal_address ?? null"
-          />
+          <div class="preview-col">
+            <a
+              routerLink="/mailing/brand"
+              class="brand-chip"
+              data-testid="campaign-editor-brand-link"
+            >
+              @if (brand(); as brand) {
+                Branded as <b>{{ brand.name }}</b>
+              } @else {
+                Set up brand
+              }
+            </a>
+            <app-mailing-preview-pane
+              [businessId]="businessId"
+              kind="campaigns"
+              [content]="content()"
+              [fromName]="profile()?.from_name ?? null"
+              [postalAddress]="profile()?.postal_address ?? null"
+            />
+          </div>
         </div>
 
         <section class="actions" data-testid="campaign-editor-actions">
@@ -285,11 +299,17 @@ import { MailingPreviewPaneComponent } from './preview-pane';
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 24px;
       }
-      .form-pane {
+      .form-pane,
+      .preview-col {
         display: grid;
         align-content: start;
         gap: 16px;
         min-width: 0;
+      }
+      .brand-chip {
+        justify-self: end;
+        font-size: var(--mf-fs-sm);
+        color: var(--mf-text-muted);
       }
       .meta-grid {
         display: grid;
@@ -362,6 +382,7 @@ export class MailingCampaignEditorComponent implements OnInit, HasUnsavedChanges
   campaign = signal<MailingCampaign | null>(null);
   lists = signal<MailingList[]>([]);
   profile = signal<MailingSendingProfile | null>(null);
+  brand = signal<MailingBrand | null>(null);
   content = signal<MailingContentDraft>({
     subject: '',
     preheader: '',
@@ -398,10 +419,12 @@ export class MailingCampaignEditorComponent implements OnInit, HasUnsavedChanges
       campaign: this.mailing.getCampaign(this.businessId, this.campaignId),
       lists: this.mailing.listAllLists(this.businessId),
       profile: this.mailing.getSendingProfile(this.businessId).pipe(catchError(() => of(null))),
+      brand: this.mailing.getBrand(this.businessId).pipe(catchError(() => of(null))),
     }).subscribe({
-      next: ({ campaign, lists, profile }) => {
+      next: ({ campaign, lists, profile, brand }) => {
         this.lists.set(lists.filter((list) => list.status === 'active'));
         this.profile.set(profile);
+        this.brand.set(brand);
         this.populate(campaign);
         this.loading.set(false);
       },

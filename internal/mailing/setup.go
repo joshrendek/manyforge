@@ -10,13 +10,15 @@ import (
 )
 
 // SetupConfig describes deployment prerequisites, never credential values.
-// SMTP and its DKIM key are prerequisites only for the relay provider.
+// SMTP and its DKIM key are prerequisites only for the relay provider. Blob storage
+// gates only the optional brand logo and is required for no provider.
 type SetupConfig struct {
 	OutboundMailDisabled bool
 	MailingKeyConfigured bool
 	PublicBaseURL        string
 	SMTPConfigured       bool
 	DKIMKeyConfigured    bool
+	BlobStoreConfigured  bool
 }
 
 type SetupCheck struct {
@@ -67,6 +69,9 @@ func NewSetupHandler(cfg SetupConfig) *SetupHandler {
 		check("dkim_key", "Relay DKIM encryption key configured", cfg.DKIMKeyConfigured,
 			"The ManyForge relay requires a DKIM master key to open verified-domain signing keys.",
 			"Ask an instance administrator to provision MANYFORGE_DKIM_MASTER_KEY through the secret manager and roll out the release. Keep the existing key when recovering a deployment.", relay),
+		check("blob_storage", "Logo storage configured", cfg.BlobStoreConfigured,
+			"Brand logos are stored in object storage. Without it every other mailing feature works; only the logo upload is unavailable.",
+			"Ask an instance administrator to set MANYFORGE_BLOB_URL to a file:// or s3:// bucket and roll out the release.", []string{}),
 	}}}
 }
 

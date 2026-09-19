@@ -7,8 +7,22 @@ import { ThemeToggle } from '../../../ui/theme-toggle/theme-toggle';
   imports: [ThemeToggle],
   template: `
     <div class="public-shell" data-testid="mailing-public-shell">
-      <header class="public-bar">
-        <span class="brand">Mailing</span>
+      <header class="public-bar" [style.border-bottom-color]="accentColor || null">
+        @if (brandLogoUrl) {
+          <img
+            class="brand-logo"
+            data-testid="mailing-public-brand-logo"
+            [src]="brandLogoUrl"
+            [alt]="brandName || 'Mailing'"
+          />
+        } @else {
+          <span
+            class="brand"
+            data-testid="mailing-public-brand-name"
+            [style.color]="accentColor || null"
+            >{{ brandName || 'Mailing' }}</span
+          >
+        }
         <span class="spacer"></span>
         <mf-theme-toggle />
       </header>
@@ -37,6 +51,13 @@ import { ThemeToggle } from '../../../ui/theme-toggle/theme-toggle';
         font-weight: 680;
         letter-spacing: -0.01em;
       }
+      .brand-logo {
+        display: block;
+        max-height: 40px;
+        max-width: 200px;
+        width: auto;
+        height: auto;
+      }
       .spacer {
         flex: 1;
       }
@@ -55,7 +76,11 @@ import { ThemeToggle } from '../../../ui/theme-toggle/theme-toggle';
     `,
   ],
 })
-export class MailingPublicShellComponent {}
+export class MailingPublicShellComponent {
+  @Input() brandName: string | null = null;
+  @Input() brandLogoUrl: string | null = null;
+  @Input() accentColor: string | null = null;
+}
 
 @Component({
   selector: 'app-mailing-public-done',

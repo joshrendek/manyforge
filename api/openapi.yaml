@@ -6621,6 +6621,50 @@ paths:
       x-manyforge-method: preflightSubscribe
       tags:
       - Mailing
+  /api/v1/mailing/public/{key}/brand:
+    parameters:
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getMailingPublicBrand
+      security: []
+      description: Brand shown on hosted signup pages for a publishable list key. Always 200; brand is null for
+        unknown or revoked keys and for businesses without a saved brand, so the response never reveals key
+        validity. Cacheable for five minutes.
+      responses:
+        '200':
+          description: Uniform brand envelope
+          headers:
+            Cache-Control:
+              schema: {type: string}
+              description: public, max-age=300
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicMailingBrandEnvelope'
+        '429':
+          description: Shared per-IP ingress rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Temporary database failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers,
+            request ID, and bounded raw body.
+      x-manyforge-audience: browser
+      x-manyforge-resource: mailing.publicBrand
+      x-manyforge-method: get
+      tags:
+      - MailingPublicBrand
   /api/v1/mailing/s2s/{key}/subscribers:
     parameters:
     - name: key
@@ -6923,6 +6967,72 @@ paths:
       x-manyforge-method: click
       tags:
       - MailingTracking
+  /m/b/{bid}/logo:
+    parameters:
+    - name: bid
+      in: path
+      required: true
+      description: Brand id embedded in rendered mail. The ?v= cache-buster carried by embedded URLs is ignored.
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getMailingBrandLogo
+      security: []
+      description: Serves the stored brand logo to email clients and image proxies. Mounted outside the shared
+        ingress rate limiter so proxied bursts never break branded mail. Unknown ids and logo-less brands are
+        indistinguishable 404s. Content-Type is the type sniffed at upload; the ETag is the content SHA-256.
+      parameters:
+      - name: If-None-Match
+        in: header
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Logo bytes
+          headers:
+            Cache-Control:
+              schema: {type: string}
+              description: public, max-age=31536000, immutable
+            ETag:
+              schema: {type: string}
+              description: Quoted hex SHA-256 of the logo bytes
+            X-Content-Type-Options:
+              schema: {type: string}
+              description: nosniff
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: If-None-Match matches the current ETag
+          headers:
+            Cache-Control:
+              schema: {type: string}
+            ETag:
+              schema: {type: string}
+        '404':
+          description: Invalid or unknown brand id, or the brand has no logo
+          content:
+            text/plain:
+              schema:
+                type: string
+        '503':
+          description: Temporary database or storage failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers,
+            request ID, and bounded raw body.
+      x-manyforge-audience: browser
+      x-manyforge-resource: mailing.brandLogo
+      x-manyforge-method: get
+      tags:
+      - MailingBrandLogo
   /api/v1/inbound/mailing/{profileID}/ses:
     parameters:
     - name: profileID
@@ -7822,6 +7932,195 @@ paths:
       x-manyforge-method: delete
       tags:
       - MailingSendingProfile
+  /api/v1/businesses/{id}/mailing/brand:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    get:
+      operationId: getMailingBrand
+      description: Reads the single mailing brand for the business. Campaign, template, automation and confirmation
+        emails inherit it at render time; it is never snapshotted. 404 when no brand has been saved.
+      responses:
+        '200':
+          $ref: '#/components/responses/MailingBrand'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers,
+            request ID, and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: mailing.brand
+      x-manyforge-method: get
+      tags:
+      - MailingBrand
+    put:
+      operationId: putMailingBrand
+      description: Creates or fully replaces the mailing brand. Empty colors fall back to the defaults and an empty
+        font_stack means system. The stored logo is kept; manage it through the logo sub-resource.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailingBrandInput'
+      responses:
+        '200':
+          $ref: '#/components/responses/MailingBrand'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: JSON request body exceeds 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers,
+            request ID, and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: mailing.brand
+      x-manyforge-method: replace
+      tags:
+      - MailingBrand
+    delete:
+      operationId: deleteMailingBrand
+      description: Deletes the brand and its stored logo. Subsequent renders use the default look.
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers,
+            request ID, and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: mailing.brand
+      x-manyforge-method: delete
+      tags:
+      - MailingBrand
+  /api/v1/businesses/{id}/mailing/brand/logo:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    put:
+      operationId: putMailingBrandLogo
+      description: Stores the brand logo from the multipart `file` part. The declared part Content-Type is ignored;
+        the bytes are sniffed and must be an image (PNG, JPEG, GIF or WebP). Decodable images wider or taller than
+        2000 px are rejected and logo_width is derived from the natural width (at most 240 px). Requires a saved
+        brand and configured blob storage (see the blob_storage setup check).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MailingBrandLogoUpload'
+      responses:
+        '200':
+          $ref: '#/components/responses/MailingBrand'
+        '400':
+          description: 'VALIDATION: missing or empty file part, unsupported or undecodable image, oversized
+            dimensions, or logo storage not configured'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '413':
+          description: Multipart body exceeds 512 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers,
+            request ID, and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: mailing.brand
+      x-manyforge-method: uploadLogo
+      tags:
+      - MailingBrand
+    delete:
+      operationId: deleteMailingBrandLogo
+      description: Removes the stored logo and returns the brand; rendered mail falls back to the text header.
+      responses:
+        '200':
+          $ref: '#/components/responses/MailingBrand'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers,
+            request ID, and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: mailing.brand
+      x-manyforge-method: deleteLogo
+      tags:
+      - MailingBrand
   /api/v1/businesses/{id}/mailing/sending-profile/verify:
     parameters:
     - $ref: '#/components/parameters/BusinessID'
@@ -12970,6 +13269,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/SendingProfile'
+    MailingBrand:
+      description: Mailing brand
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MailingBrand'
     PublicBadRequest:
       description: Invalid public request
       content:
@@ -13229,7 +13534,7 @@ components:
       properties:
         id:
           type: string
-          enum: [outbound_enabled, mailing_key, public_url, smtp_relay, dkim_key]
+          enum: [outbound_enabled, mailing_key, public_url, smtp_relay, dkim_key, blob_storage]
         label:
           type: string
         status:
@@ -13245,6 +13550,135 @@ components:
           items:
             type: string
             enum: [relay, resend, ses]
+    MailingBrandColors:
+      type: object
+      description: Lowercase '#rrggbb' colors. An empty value on input selects the default for that slot.
+      required: [background, surface, text, accent, header_background, header_text]
+      properties:
+        background:
+          type: string
+          pattern: '^(#[0-9a-f]{6})?$'
+        surface:
+          type: string
+          pattern: '^(#[0-9a-f]{6})?$'
+        text:
+          type: string
+          pattern: '^(#[0-9a-f]{6})?$'
+        accent:
+          type: string
+          pattern: '^(#[0-9a-f]{6})?$'
+        header_background:
+          type: string
+          pattern: '^(#[0-9a-f]{6})?$'
+        header_text:
+          type: string
+          pattern: '^(#[0-9a-f]{6})?$'
+    MailingBrandLogo:
+      type: object
+      required: [url, content_type]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Absolute public logo URL (/m/b/{bid}/logo?v=...) embedded in rendered mail.
+        content_type:
+          type: string
+          description: Image media type sniffed at upload.
+    MailingBrand:
+      type: object
+      required: [id, business_id, tenant_root_id, name, logo, logo_width, colors, font_stack, footer_markdown, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        business_id:
+          type: string
+          format: uuid
+        tenant_root_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        logo:
+          allOf:
+          - $ref: '#/components/schemas/MailingBrandLogo'
+          nullable: true
+        logo_width:
+          type: integer
+          minimum: 40
+          maximum: 600
+          description: Rendered logo width in px.
+        colors:
+          $ref: '#/components/schemas/MailingBrandColors'
+        font_stack:
+          type: string
+          enum: [system, serif, mono]
+        footer_markdown:
+          type: string
+          maxLength: 4096
+          description: Markdown rendered above the postal address; raw HTML is disabled.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MailingBrandInput:
+      type: object
+      description: Full replacement of the brand fields. The stored logo is never changed by this body.
+      required: [name, colors, font_stack, footer_markdown]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        colors:
+          $ref: '#/components/schemas/MailingBrandColors'
+        font_stack:
+          type: string
+          description: Font stack for the rendered mail. The server also treats an empty string as system.
+          enum: [system, serif, mono]
+        footer_markdown:
+          type: string
+          maxLength: 4096
+        logo_width:
+          type: integer
+          minimum: 40
+          maximum: 600
+          nullable: true
+          description: Rendered logo width in px. Omitted or null keeps the current width (160 on create).
+    MailingBrandLogoUpload:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: Image bytes (PNG, JPEG, GIF or WebP). The part Content-Type is ignored.
+      description: 'Multipart logo upload: a single nonempty file part of at most 512 KiB total body size.'
+    PublicMailingBrand:
+      type: object
+      required: [name, logo_url, colors]
+      properties:
+        name:
+          type: string
+        logo_url:
+          type: string
+          format: uri
+          nullable: true
+        colors:
+          $ref: '#/components/schemas/MailingBrandColors'
+    PublicMailingBrandEnvelope:
+      type: object
+      required: [brand]
+      properties:
+        brand:
+          allOf:
+          - $ref: '#/components/schemas/PublicMailingBrand'
+          nullable: true
+          description: Null for unknown or revoked keys and for businesses without a saved brand.
     AICredential:
       type: object
       description: Non-secret view of a stored AI-provider credential. The API key is write-only and never returned.
@@ -18136,6 +18570,11 @@ components:
         postal_address:
           type: string
           nullable: true
+        brand:
+          allOf:
+          - $ref: '#/components/schemas/MailingBrandInput'
+          nullable: true
+          description: Optional override of the stored brand fields for this preview only. The stored logo is kept.
     PreviewOutput:
       type: object
       required:

@@ -137,6 +137,7 @@ describe('MailingCampaignEditorComponent', () => {
       next_cursor: null,
     });
     http.expectOne(`${BASE}/sending-profile`).flush(profileResponse);
+    http.expectOne(`${BASE}/brand`).flush(null, { status: 404, statusText: 'Not Found' });
     fixture.detectChanges();
     return fixture;
   }

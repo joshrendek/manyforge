@@ -19,11 +19,13 @@ from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
+from manyforge.models.mailing_brand_input import MailingBrandInput
 
 
 class PreviewInput(Model):
     """PreviewInput wire model. Unspecified fields are never sent."""
     body_markdown: str | UnsetType = Field(default=UNSET, alias="body_markdown")
+    brand: MailingBrandInput | None | UnsetType = Field(default=UNSET, alias="brand")
     from_name: str | None | UnsetType = Field(default=UNSET, alias="from_name")
     postal_address: str | None | UnsetType = Field(default=UNSET, alias="postal_address")
     preheader: str | None | UnsetType = Field(default=UNSET, alias="preheader")

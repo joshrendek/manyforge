@@ -13,10 +13,12 @@
 // Template derived from OpenAPI Generator 7.25.0 (Apache-2.0).
 import { convertModel, type JsonValue } from '../model-support.js';
 
+import type { MailingBrandInput } from './MailingBrandInput.js';
 
 
 export interface PreviewInput {
     bodyMarkdown?: string;
+    brand?: MailingBrandInput | null;
     fromName?: string | null;
     postalAddress?: string | null;
     preheader?: string | null;

@@ -29,6 +29,7 @@ func (h *Handler) ReadRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/mailing/lists/{lid}/subscribers/{sid}", h.getSubscriber)
 	r.Get("/businesses/{id}/mailing/lists/{lid}/keys", h.listKeys)
 	r.Get("/businesses/{id}/mailing/sending-profile", h.getProfile)
+	r.Get("/businesses/{id}/mailing/brand", h.getBrand)
 	r.Get("/businesses/{id}/mailing/templates", h.listTemplates)
 	r.Get("/businesses/{id}/mailing/templates/{tid}", h.getTemplate)
 	r.Get("/businesses/{id}/mailing/campaigns", h.listCampaigns)
@@ -50,6 +51,10 @@ func (h *Handler) WriteRoutes(r chi.Router) {
 	r.Delete("/businesses/{id}/mailing/lists/{lid}/keys/{kid}", h.revokeKey)
 	r.Put("/businesses/{id}/mailing/sending-profile", h.putProfile)
 	r.Delete("/businesses/{id}/mailing/sending-profile", h.deleteProfile)
+	r.Put("/businesses/{id}/mailing/brand", h.putBrand)
+	r.Delete("/businesses/{id}/mailing/brand", h.deleteBrand)
+	r.Put("/businesses/{id}/mailing/brand/logo", h.putBrandLogo)
+	r.Delete("/businesses/{id}/mailing/brand/logo", h.deleteBrandLogo)
 	r.Post("/businesses/{id}/mailing/templates", h.createTemplate)
 	r.Post("/businesses/{id}/mailing/templates/preview", h.preview)
 	r.Patch("/businesses/{id}/mailing/templates/{tid}", h.updateTemplate)
@@ -155,10 +160,11 @@ type suppressionBody struct {
 	Reason string `json:"reason"`
 }
 type previewBody struct {
-	BodyMarkdown  string  `json:"body_markdown"`
-	Preheader     *string `json:"preheader"`
-	FromName      *string `json:"from_name"`
-	PostalAddress *string `json:"postal_address"`
+	BodyMarkdown  string     `json:"body_markdown"`
+	Preheader     *string    `json:"preheader"`
+	FromName      *string    `json:"from_name"`
+	PostalAddress *string    `json:"postal_address"`
+	Brand         *brandBody `json:"brand"`
 }
 type testSendBody struct {
 	To string `json:"to"`
@@ -607,7 +613,10 @@ func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &body) {
 		return
 	}
-	v, err := h.svc.Preview(r.Context(), pid, ids[0], PreviewInput(body))
+	v, err := h.svc.Preview(r.Context(), pid, ids[0], PreviewInput{
+		BodyMarkdown: body.BodyMarkdown, Preheader: body.Preheader, FromName: body.FromName,
+		PostalAddress: body.PostalAddress, Brand: body.Brand.input(),
+	})
 	write(w, r, http.StatusOK, v, err)
 }
 

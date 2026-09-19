@@ -259,6 +259,7 @@ func main() {
 		PublicBaseURL:        cfg.PublicBaseURL,
 		SMTPConfigured:       cfg.OutboundProvider == "smtp" && cfg.SMTPHost != "",
 		DKIMKeyConfigured:    len(cfg.DKIMMasterKey) > 0,
+		BlobStoreConfigured:  cfg.BlobURL != "",
 	})
 
 	var mailingSealer *mfcrypto.Sealer
@@ -658,6 +659,11 @@ func main() {
 		logger.Warn("MANYFORGE_BLOB_URL unset; inbound attachments disabled")
 	}
 	tenSvc.Blob = blobStore
+	// mailingSvc is nil when the mailing master key is unset; the brand logo
+	// endpoints are unreachable in that mode so there is nothing to wire.
+	if mailingSvc != nil {
+		mailingSvc.Blob = blobStore
+	}
 
 	// US1 inbound ingestion. The reply-token key degrades gracefully when unset in
 	// dev (nil key ⇒ threading falls back to RFC822 headers; the webhook path does

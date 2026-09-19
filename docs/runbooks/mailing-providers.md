@@ -212,6 +212,33 @@ Delivery is at least once: a process crash after a provider accepts a message bu
 before completion is recorded can cause a retry. Resend deduplicates the stable
 delivery ID; SES and relay recipients may receive a duplicate in that narrow window.
 
+## Brand logos
+
+**Mailing → Brand** (`/mailing/brand`) stores one brand per business: name, six
+layout colors, font stack, and a Markdown footer. Campaign, automation, template
+preview, and confirm-subscription mail read the brand when the message is
+rendered, not when the campaign is created, so a brand edit applies to sends
+still in flight in the same way a changed `from_name` does. Sub-businesses
+configure their own brand; there is no inheritance.
+
+Logo upload requires `MANYFORGE_BLOB_URL` (the same object store used for
+support attachments). Without it, brand name, colors, and footer still work; the
+wizard's informational `blob_storage` check ("Logo storage configured") reports
+blocked and the logo uploader is hidden, while sending is unaffected. Logos are
+sniffed image bytes (PNG, JPEG, GIF, WebP) up to 512 KiB and 2000 px per side,
+stored under `{tenant}/{business}/brand/{brand}/logo`; deleting the brand or
+logo removes the object.
+
+Mail embeds the logo as `{public origin}/m/b/{brand-id}/logo?v={hash}`. That
+route is served **outside the public ingest rate limiter** because email-client
+image proxies fetch it in bursts, and it answers with
+`Cache-Control: public, max-age=31536000, immutable` plus a content-hash `ETag`;
+a replaced logo gets a new `?v=` value, so proxy caches never need purging.
+`GET /api/v1/mailing/public/{key}/brand` feeds the hosted subscribe form and
+returns `{"brand": null}` for unbranded businesses and unknown keys alike.
+Hosted confirmation and unsubscribe pages stay unbranded so their responses
+remain byte-identical for valid and invalid tokens.
+
 ## Reporting definitions and history
 
 `GET /api/v1/mailing/reporting` is an authenticated, aggregate-only read across

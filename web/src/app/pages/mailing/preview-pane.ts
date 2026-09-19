@@ -7,7 +7,12 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { MailingPreview, MailingPreviewInput, MailingService } from '../../core/mailing.service';
+import {
+  MailingBrandInput,
+  MailingPreview,
+  MailingPreviewInput,
+  MailingService,
+} from '../../core/mailing.service';
 import { MarkdownPreview } from '../../ui/markdown-preview/markdown-preview';
 import { Spinner } from '../../ui/spinner/spinner';
 import { MailingContentDraft } from './content-editor';
@@ -107,6 +112,8 @@ export class MailingPreviewPaneComponent implements OnChanges, OnDestroy {
   @Input({ required: true }) content!: MailingContentDraft;
   @Input() fromName: string | null = null;
   @Input() postalAddress: string | null = null;
+  /** Unsaved brand fields rendered in place of the stored brand; the stored logo is kept. */
+  @Input() brand: MailingBrandInput | null = null;
 
   mode = signal<'html' | 'text'>('html');
   preview = signal<MailingPreview>({ html: '', text: '' });
@@ -136,6 +143,7 @@ export class MailingPreviewPaneComponent implements OnChanges, OnDestroy {
       from_name: this.fromName,
       postal_address: this.postalAddress,
     };
+    if (this.brand) body.brand = this.brand;
     this.loading.set(true);
     this.error.set('');
     const request =

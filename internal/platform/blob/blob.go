@@ -69,6 +69,13 @@ func Key(tenantRootID, businessID, ticketID, attachmentID uuid.UUID) string {
 	return fmt.Sprintf("%s/%s/%s/%s", tenantRootID, businessID, ticketID, attachmentID)
 }
 
+// BrandLogoKey builds the tenant-scoped storage key for a mailing brand logo (Spec 016).
+// The key is stable per brand: re-uploads overwrite in place and the sha256 in the
+// public URL's ?v= query invalidates caches.
+func BrandLogoKey(tenantRootID, businessID, brandID uuid.UUID) string {
+	return fmt.Sprintf("%s/%s/brand/%s/logo", tenantRootID, businessID, brandID)
+}
+
 // ErrUnsupportedType is returned when a sniffed content type is outside the allowlist.
 var ErrUnsupportedType = errors.New("attachment content type not allowed")
 

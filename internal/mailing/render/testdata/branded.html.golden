@@ -1,0 +1,40 @@
+<!DOCTYPE html><html lang="en"><head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light"/>
+  <title>Email from Acme &amp; Sons</title>
+  <style>
+    body { margin: 0; }
+    .shell { width: 100%; padding: 28px 12px; }
+    .card { max-width: 640px; margin: 0 auto; border: 1px solid #dfe5ea; border-radius: 12px; overflow: hidden; }
+    .brand { padding: 20px 28px; border-bottom: 1px solid #e8edf1; font-weight: 700; }
+    .preheader { display: none !important; max-height: 0; overflow: hidden; opacity: 0; color: transparent; }
+    .content { padding: 28px; }
+    .content img { max-width: 100%; height: auto; }
+    .content a { color: #ffb454; }
+    .footer { max-width: 640px; margin: 16px auto 0; color: #667480; font-size: 13px; text-align: center; }
+    .footer a { color: #52616d; }
+    .footer-custom { margin-bottom: 12px; }
+    .footer-custom a { color: #ffb454; }
+  </style>
+</head>
+<body bgcolor="#101418" style="margin:0;background:#101418;color:#e6edf3;font:16px/1.55 Georgia, &#34;Times New Roman&#34;, Times, serif">
+  <span class="preheader" aria-hidden="true">A small update</span>
+  <main class="shell" role="main">
+    <div class="card" style="background:#1b2229;font-family:Georgia, &#34;Times New Roman&#34;, Times, serif">
+      <div class="brand" style="background:#0b0e11;color:#ffffff"><img src="https://hub.example/m/b/0b9f3f2e-1c3a-4d8f-9a1e-6f2d3c4b5a60/logo?v=0123456789abcdef" width="200" alt="Acme &lt;Brand&gt;" style="display:block;border:0;max-width:100%;height:auto"/></div>
+      <div class="content"><h1>Hello Ada</h1>
+<p>Visit <a href="https://hub.example/m/c/token?to=https://example.com/a?q=1">our site</a>.</p>
+</div>
+    </div>
+    <footer class="footer" role="contentinfo">
+      <div class="footer-custom"><p>You get this because you joined <a href="https://hub.example/m/c/token?to=https://example.com/why">Acme</a>.</p>
+<!-- raw HTML omitted -->
+</div>
+      <div>10 Main St &lt;Suite 2&gt;</div>
+      <div><a href="https://hub.example/m/u/token">Unsubscribe from Acme &amp; Sons emails</a></div>
+    </footer>
+  </main>
+
+
+<img src="https://hub.example/m/o/token" width="1" height="1" alt="" style="display:none!important"/></body></html>

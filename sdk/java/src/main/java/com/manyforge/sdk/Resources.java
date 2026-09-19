@@ -329,6 +329,7 @@ public final class Resources {
   public static class BusinessMailing {
     protected final Transport transport;
     protected final String binding;
+    private final BusinessMailingBrand brand;
     private final BusinessMailingCampaigns campaigns;
     private final BusinessMailingDeliveries deliveries;
     private final BusinessMailingEvents events;
@@ -341,6 +342,7 @@ public final class Resources {
     private final BusinessMailingTemplates templates;
     public BusinessMailing(Transport transport, String binding) {
       this.transport = Objects.requireNonNull(transport); this.binding = binding;
+      this.brand = new BusinessMailingBrand(transport, binding);
       this.campaigns = new BusinessMailingCampaigns(transport, binding);
       this.deliveries = new BusinessMailingDeliveries(transport, binding);
       this.events = new BusinessMailingEvents(transport, binding);
@@ -352,6 +354,7 @@ public final class Resources {
       this.suppressions = new BusinessMailingSuppressions(transport, binding);
       this.templates = new BusinessMailingTemplates(transport, binding);
     }
+    public BusinessMailingBrand brand() { return brand; }
     public BusinessMailingCampaigns campaigns() { return campaigns; }
     public BusinessMailingDeliveries deliveries() { return deliveries; }
     public BusinessMailingEvents events() { return events; }
@@ -362,6 +365,11 @@ public final class Resources {
     public BusinessMailingSubscribers subscribers() { return subscribers; }
     public BusinessMailingSuppressions suppressions() { return suppressions; }
     public BusinessMailingTemplates templates() { return templates; }
+  }
+  public static class BusinessMailingBrand extends BusinessMailingBrandResource {
+    public BusinessMailingBrand(Transport transport, String binding) {
+      super(transport, binding);
+    }
   }
   public static class BusinessMailingCampaigns extends BusinessMailingCampaignsResource {
     private final BusinessMailingCampaignsStats stats;

@@ -52,7 +52,7 @@ export class App {
   readonly activeRoute = computed(() => {
     const url = this.currentUrl().split(/[?#]/)[0];
     const destination = this.scopedListRoute() ?? url;
-    if (/^\/mailing\/(templates|sending|suppression)(\/|$)/.test(destination)) return '/mailing/lists';
+    if (/^\/mailing\/(templates|sending|suppression|brand)(\/|$)/.test(destination)) return '/mailing/lists';
     let active: string | undefined;
     for (const item of NAV_ITEMS) {
       if ((destination === item.route || destination.startsWith(item.route + '/'))

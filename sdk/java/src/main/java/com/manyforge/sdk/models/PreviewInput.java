@@ -27,6 +27,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.manyforge.sdk.models.MailingBrandInput;
 import java.util.Arrays;
 import org.openapitools.jackson.nullable.JsonNullable;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -37,7 +38,7 @@ import java.util.NoSuchElementException;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "body_markdown", "from_name", "postal_address", "preheader" })
+@JsonPropertyOrder({ "body_markdown", "brand", "from_name", "postal_address", "preheader" })
 @com.manyforge.sdk.ModelShape(required = {  }, nonNullable = { "body_markdown",  })
 public class PreviewInput {
 
@@ -47,6 +48,13 @@ public class PreviewInput {
   public String getBodyMarkdown() { return bodyMarkdown.orElse(null); }
   public JsonNullable<String> bodyMarkdownPresence() { return bodyMarkdown; }
   public PreviewInput bodyMarkdown(String value) { this.bodyMarkdown = JsonNullable.of(value); return this; }
+
+  @JsonProperty("brand")
+  private JsonNullable<MailingBrandInput> brand = JsonNullable.undefined();
+
+  public MailingBrandInput getBrand() { return brand.orElse(null); }
+  public JsonNullable<MailingBrandInput> brandPresence() { return brand; }
+  public PreviewInput brand(MailingBrandInput value) { this.brand = JsonNullable.of(value); return this; }
 
   @JsonProperty("from_name")
   private JsonNullable<String> fromName = JsonNullable.undefined();
@@ -72,6 +80,7 @@ public class PreviewInput {
   public static final class Builder {
     private final PreviewInput value = new PreviewInput();
     public Builder bodyMarkdown(String field) { value.bodyMarkdown(field); return this; }
+    public Builder brand(MailingBrandInput field) { value.brand(field); return this; }
     public Builder fromName(String field) { value.fromName(field); return this; }
     public Builder postalAddress(String field) { value.postalAddress(field); return this; }
     public Builder preheader(String field) { value.preheader(field); return this; }

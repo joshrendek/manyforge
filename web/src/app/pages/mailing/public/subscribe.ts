@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
+import { PublicMailingBrand } from '../../../core/mailing.service';
 import { PublicMailingService } from '../../../core/public-mailing.service';
 import { MailingPublicDoneComponent, MailingPublicShellComponent } from './public-shared';
 
@@ -10,7 +11,11 @@ import { MailingPublicDoneComponent, MailingPublicShellComponent } from './publi
   standalone: true,
   imports: [FormsModule, MailingPublicDoneComponent, MailingPublicShellComponent],
   template: `
-    <app-mailing-public-shell>
+    <app-mailing-public-shell
+      [brandName]="brand()?.name ?? null"
+      [brandLogoUrl]="brand()?.logo_url ?? null"
+      [accentColor]="brand()?.colors?.accent ?? null"
+    >
       @if (done()) {
         <app-mailing-public-done
           heading="Check your inbox"
@@ -113,11 +118,18 @@ export class MailingSubscribeComponent implements OnInit {
   submitting = signal(false);
   done = signal(false);
   networkError = signal(false);
+  brand = signal<PublicMailingBrand | null>(null);
 
   ngOnInit(): void {
     this.key = this.route.snapshot.paramMap.get('key') ?? '';
     this.listName = this.route.snapshot.queryParamMap.get('name')?.trim() || 'our mailing list';
     this.done.set(this.route.snapshot.queryParamMap.get('state') === 'check-inbox');
+    if (!this.key) return;
+    // Branding is decorative: any failure keeps the generic header.
+    this.mailing.brand(this.key).subscribe({
+      next: ({ brand }) => this.brand.set(brand),
+      error: () => this.brand.set(null),
+    });
   }
 
   submit(): void {

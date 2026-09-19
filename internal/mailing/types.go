@@ -24,6 +24,7 @@ import (
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
 	"github.com/manyforge/manyforge/internal/platform/audit"
+	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
@@ -49,6 +50,7 @@ type Service struct {
 		Invalidate(uuid.UUID)
 	}
 	Renderer        *mailrender.Renderer
+	Blob            blob.Store
 	OutboundLimiter ratelimit.Limiter
 	MessageDomain   string
 	Logger          *slog.Logger
@@ -209,6 +211,55 @@ type SendingProfileInput struct {
 	SESRegion           *string
 	SESConfigurationSet *string
 	SNSTopicARN         *string
+}
+
+// BrandColors are the six layout colors as lowercase "#rrggbb" strings.
+type BrandColors struct {
+	Background       string `json:"background"`
+	Surface          string `json:"surface"`
+	Text             string `json:"text"`
+	Accent           string `json:"accent"`
+	HeaderBackground string `json:"header_background"`
+	HeaderText       string `json:"header_text"`
+}
+
+// BrandLogo is the public, cache-busted logo reference embedded in rendered mail.
+type BrandLogo struct {
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
+}
+
+// Brand is the per-business mailing brand (Spec 016). Logo is nil when none is stored.
+type Brand struct {
+	ID             uuid.UUID   `json:"id"`
+	BusinessID     uuid.UUID   `json:"business_id"`
+	TenantRootID   uuid.UUID   `json:"tenant_root_id"`
+	Name           string      `json:"name"`
+	Logo           *BrandLogo  `json:"logo"`
+	LogoWidth      int         `json:"logo_width"`
+	Colors         BrandColors `json:"colors"`
+	FontStack      string      `json:"font_stack"`
+	FooterMarkdown string      `json:"footer_markdown"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+}
+
+// BrandInput is a full replacement of the editable brand fields. Empty colors fall
+// back to the defaults, an empty font stack to system; a nil LogoWidth keeps the
+// stored width (160 on create).
+type BrandInput struct {
+	Name           string
+	Colors         BrandColors
+	FontStack      string
+	FooterMarkdown string
+	LogoWidth      *int
+}
+
+// PublicBrand is the principal-less subset served to hosted signup pages.
+type PublicBrand struct {
+	Name    string      `json:"name"`
+	LogoURL *string     `json:"logo_url"`
+	Colors  BrandColors `json:"colors"`
 }
 
 type Template struct {

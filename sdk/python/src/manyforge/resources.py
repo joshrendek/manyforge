@@ -35,6 +35,7 @@ from manyforge.api.business_feedback_posts_resource import BusinessFeedbackPosts
 from manyforge.api.business_inbox_email_domains_resource import BusinessInboxEmailDomainsResource, AsyncBusinessInboxEmailDomainsResource
 from manyforge.api.business_inbox_inbound_addresses_resource import BusinessInboxInboundAddressesResource, AsyncBusinessInboxInboundAddressesResource
 from manyforge.api.business_invitations_resource import BusinessInvitationsResource, AsyncBusinessInvitationsResource
+from manyforge.api.business_mailing_brand_resource import BusinessMailingBrandResource, AsyncBusinessMailingBrandResource
 from manyforge.api.business_mailing_campaigns_resource import BusinessMailingCampaignsResource, AsyncBusinessMailingCampaignsResource
 from manyforge.api.business_mailing_campaigns_stats_resource import BusinessMailingCampaignsStatsResource, AsyncBusinessMailingCampaignsStatsResource
 from manyforge.api.business_mailing_deliveries_resource import BusinessMailingDeliveriesResource, AsyncBusinessMailingDeliveriesResource
@@ -196,6 +197,11 @@ class BusinessInboxEmailDomainsScope(BusinessInboxEmailDomainsResource):
         self._bindings = MappingProxyType(dict(bindings or {}))
 
 class BusinessInboxInboundAddressesScope(BusinessInboxInboundAddressesResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class BusinessMailingBrandScope(BusinessMailingBrandResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
@@ -560,6 +566,10 @@ class BusinessMailingScope(object):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def brand(self) -> BusinessMailingBrandScope:
+        return BusinessMailingBrandScope(self._transport, self._bindings)
 
     @property
     def campaigns(self) -> BusinessMailingCampaignsScope:
@@ -928,6 +938,11 @@ class AsyncBusinessInboxInboundAddressesScope(AsyncBusinessInboxInboundAddresses
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class AsyncBusinessMailingBrandScope(AsyncBusinessMailingBrandResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class AsyncBusinessMailingCampaignsScope(AsyncBusinessMailingCampaignsResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -1288,6 +1303,10 @@ class AsyncBusinessMailingScope(object):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def brand(self) -> AsyncBusinessMailingBrandScope:
+        return AsyncBusinessMailingBrandScope(self._transport, self._bindings)
 
     @property
     def campaigns(self) -> AsyncBusinessMailingCampaignsScope:

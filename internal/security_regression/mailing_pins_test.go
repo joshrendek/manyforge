@@ -60,6 +60,73 @@ func TestPin_MailingCoreTenantBoundary(t *testing.T) {
 	}
 }
 
+// Spec 016 brand lives in its own migration; the same tenant-boundary shape is pinned here
+// because TestPin_MailingCoreTenantBoundary reads 0124 only.
+func TestPin_MailingBrandTenantBoundary(t *testing.T) {
+	up := mustRead(t, "../../migrations/0138_mailing_brand.up.sql")
+	const table = "mailing_brand"
+	for _, check := range []string{
+		"CREATE TABLE " + table,
+		"ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY",
+		"CREATE POLICY " + table + "_rls ON " + table + " FOR ALL",
+		"CREATE TRIGGER " + table + "_troot_immutable",
+		"BEFORE INSERT OR UPDATE OR DELETE ON " + table,
+		"('" + table + "', 'mailing', 'drain_fence_then_rewrite', 1)",
+		"CONSTRAINT mailing_brand_business_fk",
+		"CONSTRAINT mailing_brand_business_uniq UNIQUE (business_id)",
+	} {
+		if !strings.Contains(up, check) {
+			t.Errorf("%s missing %q", table, check)
+		}
+	}
+	if got := strings.Count(up, "authorized_businesses(current_principal())"); got < 2 {
+		t.Errorf("brand migration has %d authorized_businesses predicates, want USING + WITH CHECK", got)
+	}
+	if strings.Contains(up, "authorized_tenants") {
+		t.Fatal("mailing_brand is business-scoped; authorized_tenants must not appear")
+	}
+	for _, fn := range []string{"mailing_brand_context", "mailing_public_brand_logo"} {
+		start := strings.Index(up, "CREATE FUNCTION "+fn+"(")
+		if start < 0 {
+			t.Errorf("missing principal-less brand function %s", fn)
+			continue
+		}
+		body := up[start:]
+		end := strings.Index(body, "$$;")
+		if end < 0 || !strings.Contains(body[:end], "SECURITY DEFINER") || !strings.Contains(body[:end], "SET search_path = public") {
+			t.Errorf("function %s is not a search-path-pinned SECURITY DEFINER", fn)
+		}
+		if !strings.Contains(up, "REVOKE ALL ON FUNCTION "+fn+"(") {
+			t.Errorf("function %s retains default PUBLIC execute", fn)
+		}
+	}
+	if !strings.Contains(up, "WHERE b.id = p_brand_id AND b.logo_blob_key IS NOT NULL") {
+		t.Error("public logo lookup must hide logo-less brands so the route is not a brand-existence oracle")
+	}
+	queries := mustRead(t, "../../db/query/mailing_brand.sql")
+	for _, name := range []string{"GetMailingBrand", "UpsertMailingBrand", "SetMailingBrandLogo", "ClearMailingBrandLogo", "DeleteMailingBrand"} {
+		marker := "-- name: " + name + " "
+		start := strings.Index(queries, marker)
+		if start < 0 {
+			t.Errorf("missing query %s", name)
+			continue
+		}
+		rest := queries[start+len(marker):]
+		if end := strings.Index(rest, "-- name: "); end >= 0 {
+			rest = rest[:end]
+		}
+		if !strings.Contains(rest, "tenant_root_id") {
+			t.Errorf("query %s lacks tenant_root_id predicate", name)
+		}
+	}
+	handler := mustRead(t, "../mailing/brand.go")
+	for _, pin := range []string{"blob.Sniff(content)", `strings.HasPrefix(contentType, "image/")`, "image.DecodeConfig", "maxBrandLogoDimension", "sha256.Sum256(content)", "blob.BrandLogoKey("} {
+		if !strings.Contains(handler, pin) {
+			t.Errorf("brand logo upload missing pin %q", pin)
+		}
+	}
+}
+
 func TestPin_MailingQueriesKeepTenantPredicate(t *testing.T) {
 	b, err := os.ReadFile("../../db/query/mailing.sql")
 	if err != nil {

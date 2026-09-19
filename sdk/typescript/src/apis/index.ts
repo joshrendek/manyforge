@@ -31,6 +31,7 @@ export * from './BusinessFeedbackPostsApi.js';
 export * from './BusinessInboxEmailDomainsApi.js';
 export * from './BusinessInboxInboundAddressesApi.js';
 export * from './BusinessInvitationsApi.js';
+export * from './BusinessMailingBrandApi.js';
 export * from './BusinessMailingCampaignsApi.js';
 export * from './BusinessMailingCampaignsStatsApi.js';
 export * from './BusinessMailingDeliveriesApi.js';

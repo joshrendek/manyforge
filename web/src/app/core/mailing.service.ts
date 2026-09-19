@@ -250,11 +250,56 @@ export interface MailingSuppression {
   created_at: string;
 }
 
+export type MailingBrandFontStack = 'system' | 'serif' | 'mono';
+
+export interface MailingBrandColors {
+  background: string;
+  surface: string;
+  text: string;
+  accent: string;
+  header_background: string;
+  header_text: string;
+}
+
+export interface MailingBrandLogo {
+  url: string;
+  content_type: string;
+}
+
+export interface MailingBrand {
+  id: string;
+  business_id: string;
+  tenant_root_id: string;
+  name: string;
+  logo: MailingBrandLogo | null;
+  logo_width: number;
+  colors: MailingBrandColors;
+  font_stack: MailingBrandFontStack;
+  footer_markdown: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MailingBrandInput {
+  name: string;
+  colors: MailingBrandColors;
+  font_stack: MailingBrandFontStack;
+  footer_markdown: string;
+  logo_width?: number;
+}
+
+export interface PublicMailingBrand {
+  name: string;
+  logo_url: string | null;
+  colors: MailingBrandColors;
+}
+
 export interface MailingPreviewInput {
   body_markdown: string;
   preheader?: string | null;
   from_name?: string | null;
   postal_address?: string | null;
+  brand?: MailingBrandInput;
 }
 
 export interface MailingPreview {
@@ -477,6 +522,28 @@ export class MailingService {
 
   testSendingProfile(businessId: string, to: string): Observable<void> {
     return this.http.post<void>(`${this.base(businessId)}/sending-profile/test-send`, { to });
+  }
+
+  getBrand(businessId: string): Observable<MailingBrand> {
+    return this.http.get<MailingBrand>(`${this.base(businessId)}/brand`);
+  }
+
+  putBrand(businessId: string, body: MailingBrandInput): Observable<MailingBrand> {
+    return this.http.put<MailingBrand>(`${this.base(businessId)}/brand`, body);
+  }
+
+  deleteBrand(businessId: string): Observable<void> {
+    return this.http.delete<void>(`${this.base(businessId)}/brand`);
+  }
+
+  uploadBrandLogo(businessId: string, file: File | Blob): Observable<MailingBrand> {
+    const form = new FormData();
+    form.append('file', file);
+    return this.http.put<MailingBrand>(`${this.base(businessId)}/brand/logo`, form);
+  }
+
+  deleteBrandLogo(businessId: string): Observable<MailingBrand> {
+    return this.http.delete<MailingBrand>(`${this.base(businessId)}/brand/logo`);
   }
 
   listTemplates(businessId: string, cursor?: string): Observable<Page<MailingTemplate>> {

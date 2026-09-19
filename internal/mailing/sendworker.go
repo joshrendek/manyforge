@@ -69,12 +69,13 @@ type workerProfile struct {
 	provider               mailprovider.Profile
 	fromName               string
 	replyTo, postalAddress *string
+	brand                  *workerBrand
 }
 
 type compiledCacheKey struct {
-	contentKind                    string
-	contentID, profileID           uuid.UUID
-	contentVersion, profileVersion int64
+	contentKind                                  string
+	contentID, profileID, brandID                uuid.UUID
+	contentVersion, profileVersion, brandVersion int64
 }
 
 type compiledCacheEntry struct {
@@ -131,7 +132,8 @@ func (c *compiledContentCache) put(key compiledCacheKey, value mailrender.Compil
 	for existingKey, element := range c.entries {
 		if (existingKey.contentKind == key.contentKind && existingKey.contentID == key.contentID &&
 			existingKey.contentVersion != key.contentVersion) ||
-			(existingKey.profileID == key.profileID && existingKey.profileVersion != key.profileVersion) {
+			(existingKey.profileID == key.profileID && existingKey.profileVersion != key.profileVersion) ||
+			(key.brandID != uuid.Nil && existingKey.brandID == key.brandID && existingKey.brandVersion != key.brandVersion) {
 			c.remove(element)
 		}
 	}
@@ -507,13 +509,18 @@ func (w *SendWorker) compile(d claimedDelivery, p workerProfile) (mailrender.Com
 		contentVersion: d.ContentUpdatedAt.UnixNano(),
 		profileID:      p.provider.ID, profileVersion: p.provider.UpdatedAt.UnixNano(),
 	}
+	input := mailrender.Input{BodyMarkdown: d.BodyMarkdown,
+		FromName: p.fromName, Preheader: stringValue(d.Preheader),
+		PostalAddress: stringValue(p.postalAddress)}
+	if p.brand != nil {
+		key.brandID, key.brandVersion = p.brand.id, p.brand.updatedAt.UnixNano()
+		input.Brand = p.brand.render
+	}
 	cache := w.compiledCache()
 	if cached, ok := cache.get(key); ok {
 		return cached, nil
 	}
-	compiled, err := w.Service.Renderer.Compile(mailrender.Input{BodyMarkdown: d.BodyMarkdown,
-		FromName: p.fromName, Preheader: stringValue(d.Preheader),
-		PostalAddress: stringValue(p.postalAddress)})
+	compiled, err := w.Service.Renderer.Compile(input)
 	if err == nil {
 		cache.put(key, compiled)
 	}
@@ -534,13 +541,22 @@ func (s *Service) resolveSystemProfile(ctx context.Context, id uuid.UUID, byBusi
 	if byBusiness {
 		function = "mailing_business_profile_context"
 	}
+	var businessID uuid.UUID
 	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT profile_id, updated_at, mode::text, from_email::text,
+		if err := tx.QueryRow(ctx, `SELECT profile_id, business_id, updated_at, mode::text, from_email::text,
 			from_name, reply_to::text, postal_address, email_domain_id, secret_ref,
 			credential_sealed, ses_region, ses_configuration_set
 			FROM `+function+`($1)`, id).Scan(
-			&p.provider.ID, &updated, &mode, &fromEmail, &p.fromName, &p.replyTo,
-			&p.postalAddress, &emailDomainID, &secretRef, &sealed, &sesRegion, &sesConfig)
+			&p.provider.ID, &businessID, &updated, &mode, &fromEmail, &p.fromName, &p.replyTo,
+			&p.postalAddress, &emailDomainID, &secretRef, &sealed, &sesRegion, &sesConfig); err != nil {
+			return err
+		}
+		brand, err := s.queryBrandContext(ctx, tx, businessID)
+		if err != nil {
+			return err
+		}
+		p.brand = brand
+		return nil
 	})
 	if err != nil {
 		return workerProfile{}, fmt.Errorf("mailing profile context: %w", err)

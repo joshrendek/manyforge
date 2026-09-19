@@ -221,6 +221,12 @@ from .list_patch import ListPatch
 from .login_request import LoginRequest
 from .logout_request import LogoutRequest
 from .magic_link_request import MagicLinkRequest
+from .mailing_brand import MailingBrand
+from .mailing_brand_colors import MailingBrandColors
+from .mailing_brand_input import MailingBrandInput
+from .mailing_brand_input_properties_font_stack_enum import MailingBrandInputPropertiesFontStackEnum
+from .mailing_brand_logo import MailingBrandLogo
+from .mailing_brand_properties_font_stack_enum import MailingBrandPropertiesFontStackEnum
 from .mailing_event_rate_limit_error import MailingEventRateLimitError
 from .mailing_ingress_error import MailingIngressError
 from .mailing_list import MailingList

@@ -1525,3 +1525,27 @@ CREATE TABLE mailing_reporting_list (
     ended_at timestamptz,
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business(id, tenant_root_id) ON DELETE CASCADE
 );
+
+CREATE TABLE mailing_brand (
+    id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id       uuid NOT NULL,
+    tenant_root_id    uuid NOT NULL,
+    name              text NOT NULL,
+    logo_blob_key     text,
+    logo_content_type text,
+    logo_sha256       bytea,
+    logo_width        integer NOT NULL DEFAULT 160,
+    color_background  text NOT NULL DEFAULT '#f4f6f8',
+    color_surface     text NOT NULL DEFAULT '#ffffff',
+    color_text        text NOT NULL DEFAULT '#17212b',
+    color_accent      text NOT NULL DEFAULT '#1769aa',
+    color_header_bg   text NOT NULL DEFAULT '#ffffff',
+    color_header_text text NOT NULL DEFAULT '#17212b',
+    font_stack        text NOT NULL DEFAULT 'system',
+    footer_markdown   text NOT NULL DEFAULT '',
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (business_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
+);

@@ -176,6 +176,12 @@ export const routes: Routes = [
       import('./pages/mailing/sending-profile').then((m) => m.MailingSendingProfileComponent),
   },
   {
+    path: 'mailing/brand',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/mailing/brand-settings').then((m) => m.MailingBrandSettingsComponent),
+  },
+  {
     path: 'mailing/suppression',
     canActivate: [authGuard],
     loadComponent: () =>
