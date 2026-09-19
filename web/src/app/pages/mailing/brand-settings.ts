@@ -516,9 +516,9 @@ export class MailingBrandSettingsComponent implements OnInit {
 
   /** Empty when a logo may be uploaded; otherwise the reason the uploader is disabled. */
   logoUploadBlocker(): string {
-    const check = this.setup()?.checks.find((item) => item.id === 'blob_storage');
-    if (check && check.status === 'blocked') {
-      return `Logo storage is not configured on this instance. ${check.action || 'Ask an administrator to configure blob storage.'}`;
+    const storage = this.setup()?.logo_storage;
+    if (storage && !storage.ready) {
+      return `Logo storage is not configured on this instance. ${storage.action || 'Ask an administrator to configure blob storage.'}`;
     }
     if (!this.brand()) return 'Save the brand before uploading a logo.';
     return '';

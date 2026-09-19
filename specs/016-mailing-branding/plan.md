@@ -76,7 +76,7 @@ proxies and browsers rarely hit the origin.
 
 1. **Backend core:** migration 0138 up/down, `db/schema.sql`, sqlc queries and
    generated code, `blob.BrandLogoKey`, domain types, `brand.go`, handler
-   routes, setup check `blob_storage` and `SetupConfig.BlobStoreConfigured`,
+   routes, setup `logo_storage` status and `SetupConfig.BlobStoreConfigured`,
    `main.go` wiring (`mailingSvc.Blob`), public brand and logo handlers,
    security and merge-inventory pins, brand integration tests.
 2. **Render, worker, preview:** `mailrender.Brand`, `Colors`,
@@ -89,7 +89,7 @@ proxies and browsers rarely hit the origin.
    `GET /m/b/{bid}/logo` caching and 304 handling, public-by-key brand with
    `max-age=300`, and tests proving the limiter does not wrap the logo route.
 4. **Frontend:** `MailingBrandSettingsComponent` with color, font, footer,
-   logo uploader gated on `blob_storage` and a saved brand, live preview with
+   logo uploader gated on `logo_storage.ready` and a saved brand, live preview with
    override, delete; `MailingService` brand methods; "Brand" links from
    campaigns and lists; "Branded as {name}" chips in campaign and template
    editors; subscribe page header from the public brand endpoint; unit specs.

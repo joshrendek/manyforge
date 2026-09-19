@@ -6592,6 +6592,27 @@
         ],
         "type": "object"
       },
+      "MailingLogoStorage": {
+        "description": "Brand-logo object-storage readiness. Only the logo uploader depends on it.",
+        "properties": {
+          "action": {
+            "description": "Corrective action for an instance administrator; empty when storage is ready.",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "message",
+          "action"
+        ],
+        "type": "object"
+      },
       "MailingReport": {
         "properties": {
           "active_automations": {
@@ -6708,6 +6729,14 @@
               "$ref": "#/components/schemas/MailingSetupCheck"
             },
             "type": "array"
+          },
+          "logo_storage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MailingLogoStorage"
+              }
+            ],
+            "description": "Brand-logo object storage. Reported separately from checks because it never blocks sending."
           }
         },
         "required": [
@@ -6727,8 +6756,7 @@
               "mailing_key",
               "public_url",
               "smtp_relay",
-              "dkim_key",
-              "blob_storage"
+              "dkim_key"
             ],
             "type": "string"
           },
@@ -20616,7 +20644,7 @@
         }
       ],
       "put": {
-        "description": "Stores the brand logo from the multipart `file` part. The declared part Content-Type is ignored; the bytes are sniffed and must be an image (PNG, JPEG, GIF or WebP). Decodable images wider or taller than 2000 px are rejected and logo_width is derived from the natural width (at most 240 px). Requires a saved brand and configured blob storage (see the blob_storage setup check).",
+        "description": "Stores the brand logo from the multipart `file` part. The declared part Content-Type is ignored; the bytes are sniffed and must be an image (PNG, JPEG, GIF or WebP). Decodable images wider or taller than 2000 px are rejected and logo_width is derived from the natural width (at most 240 px). Requires a saved brand and configured blob storage (see logo_storage on the mailing setup response).",
         "operationId": "putMailingBrandLogo",
         "requestBody": {
           "content": {

@@ -30,7 +30,6 @@ export const MailingSetupCheckIdEnum = {
     PublicUrl: 'public_url',
     SmtpRelay: 'smtp_relay',
     DkimKey: 'dkim_key',
-    BlobStorage: 'blob_storage',
 
 } as const;
 export type MailingSetupCheckIdEnum = typeof MailingSetupCheckIdEnum[keyof typeof MailingSetupCheckIdEnum] | (string & {});

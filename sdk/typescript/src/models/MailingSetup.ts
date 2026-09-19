@@ -14,10 +14,12 @@
 import { convertModel, type JsonValue } from '../model-support.js';
 
 import type { MailingSetupCheck } from './MailingSetupCheck.js';
+import type { MailingLogoStorage } from './MailingLogoStorage.js';
 
 
 export interface MailingSetup {
     checks: Array<MailingSetupCheck>;
+    logoStorage?: MailingLogoStorage;
 }
 
 

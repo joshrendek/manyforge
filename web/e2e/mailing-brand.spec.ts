@@ -50,15 +50,12 @@ function setup(blobStorage: 'ready' | 'blocked') {
         action: '',
         required_for: ['relay', 'resend', 'ses'],
       })),
-      {
-        id: 'blob_storage',
-        label: 'Logo storage configured',
-        status: blobStorage,
-        message: 'Brand logo uploads require object storage.',
-        action: blobStorage === 'blocked' ? 'Set MANYFORGE_BLOB_URL.' : '',
-        required_for: [],
-      },
     ],
+    logo_storage: {
+      ready: blobStorage === 'ready',
+      message: 'Brand logo uploads require object storage.',
+      action: blobStorage === 'blocked' ? 'Set MANYFORGE_BLOB_URL.' : '',
+    },
   };
 }
 

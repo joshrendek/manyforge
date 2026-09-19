@@ -28,6 +28,4 @@ class MailingSetupCheckPropertiesIdEnum(OpenEnum):
 
     DKIM_KEY = 'dkim_key'
 
-    BLOB_STORAGE = 'blob_storage'
-
 

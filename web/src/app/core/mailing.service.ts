@@ -105,8 +105,15 @@ export interface MailingSetupCheck {
   required_for: MailingSendingMode[];
 }
 
+export interface MailingLogoStorage {
+  ready: boolean;
+  message: string;
+  action: string;
+}
+
 export interface MailingSetup {
   checks: MailingSetupCheck[];
+  logo_storage?: MailingLogoStorage;
 }
 
 export interface MailingSendingProfile {

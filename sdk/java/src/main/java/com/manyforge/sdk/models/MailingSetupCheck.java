@@ -58,8 +58,6 @@ public static final class IdEnum {
 
   public static final IdEnum DKIM_KEY = new IdEnum("dkim_key");
 
-  public static final IdEnum BLOB_STORAGE = new IdEnum("blob_storage");
-
   private final String value;
   @JsonCreator(mode = JsonCreator.Mode.DELEGATING) public IdEnum(String value) { this.value = value; }
   @JsonValue public String getValue() { return value; }

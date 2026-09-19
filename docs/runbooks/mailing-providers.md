@@ -223,9 +223,10 @@ configure their own brand; there is no inheritance.
 
 Logo upload requires `MANYFORGE_BLOB_URL` (the same object store used for
 support attachments). Without it, brand name, colors, and footer still work; the
-wizard's informational `blob_storage` check ("Logo storage configured") reports
-blocked and the logo uploader is hidden, while sending is unaffected. Logos are
-sniffed image bytes (PNG, JPEG, GIF, WebP) up to 512 KiB and 2000 px per side,
+setup response's informational `logo_storage.ready` is false (with an `action`
+for the administrator) and the logo uploader is disabled, while sending is
+unaffected. Logos are sniffed image bytes (PNG, JPEG, GIF, WebP) up to 512 KiB
+and 2000 px per side,
 stored under `{tenant}/{business}/brand/{brand}/logo`; deleting the brand or
 logo removes the object.
 

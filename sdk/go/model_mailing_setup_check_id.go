@@ -22,6 +22,4 @@ const (
 	MailingSetupCheckIdSMTP_RELAY MailingSetupCheckId = "smtp_relay"
 
 	MailingSetupCheckIdDKIM_KEY MailingSetupCheckId = "dkim_key"
-
-	MailingSetupCheckIdBLOB_STORAGE MailingSetupCheckId = "blob_storage"
 )

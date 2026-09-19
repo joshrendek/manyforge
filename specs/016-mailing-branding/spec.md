@@ -72,9 +72,10 @@ branded business shows that brand's logo, name, and accent color.
 - **FR-008**: The preview endpoints MUST accept an optional `brand` object with
   the PUT shape that overrides the stored fields for that render, keeping the
   stored logo.
-- **FR-009**: The setup wizard MUST report a `blob_storage` check ("Logo
-  storage configured") that is informational (`required_for: []`) and never
-  blocks sending.
+- **FR-009**: The mailing setup response MUST report brand-logo object-storage
+  readiness as a `logo_storage` object (`ready`, `message`, `action`) alongside
+  `checks`. It is informational: it never blocks sending, and it is not a setup
+  check because every check in that list gates a send mode.
 - **FR-010**: `GET /api/v1/mailing/public/{key}/brand` MUST always answer 200
   with `{"brand": PublicBrand | null}` and `Cache-Control: public, max-age=300`,
   returning `null` for unknown or revoked keys and for unbranded businesses so

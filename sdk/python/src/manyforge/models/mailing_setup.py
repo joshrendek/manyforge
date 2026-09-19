@@ -16,14 +16,16 @@ from typing import Any, ClassVar, Dict, List, Optional, Union
 from pydantic import Field, StrictBool, StrictBytes, StrictFloat, StrictInt, StrictStr, RootModel, field_validator, model_validator
 from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 
-from pydantic import BaseModel, ConfigDict
-from typing import Any, ClassVar, Dict, List
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, ClassVar, Dict, List, Optional
+from manyforge.models.mailing_logo_storage import MailingLogoStorage
 from manyforge.models.mailing_setup_check import MailingSetupCheck
 
 
 class MailingSetup(Model):
     """MailingSetup wire model. Unspecified fields are never sent."""
     checks: List[MailingSetupCheck] = Field(..., alias="checks")
+    logo_storage: MailingLogoStorage | UnsetType = Field(default=UNSET, alias="logo_storage")
 
 
 

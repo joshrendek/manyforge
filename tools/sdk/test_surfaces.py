@@ -56,6 +56,39 @@ class SurfaceCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(compare_surfaces(base, revision), [])
         self.assertEqual(compare_surfaces(revision, base), [])
 
+    def test_union_member_order_is_not_a_change_but_membership_is(self):
+        # The TypeScript checker prints a union in type-registration order, which shifts
+        # when unrelated declarations are generated. Consumers are unaffected.
+        reordered = deepcopy(self.base)
+        reordered["languages"]["typescript"]["symbols"]["Client"]["members"]["label"]["type"] = "UNSET | string"
+        self.assertEqual(compare_surfaces(self.base, reordered), [])
+        narrowed = deepcopy(self.base)
+        narrowed["languages"]["typescript"]["symbols"]["Client"]["members"]["label"]["type"] = "string"
+        self.assertNotEqual(compare_surfaces(self.base, narrowed), [])
+        nested = snapshot({"kind": "class", "members": {"data": {"kind": "field", "required": True,
+            "type": "Record<string, A | B> | Uint8Array<ArrayBufferLike>"}}})
+        swapped = snapshot({"kind": "class", "members": {"data": {"kind": "field", "required": True,
+            "type": "Uint8Array<ArrayBufferLike> | Record<string, A | B>"}}})
+        self.assertEqual(compare_surfaces(nested, swapped), [])
+        widened = snapshot({"kind": "class", "members": {"data": {"kind": "field", "required": True,
+            "type": "Record<string, A> | Uint8Array<ArrayBufferLike>"}}})
+        self.assertNotEqual(compare_surfaces(nested, widened), [])
+
+    def test_scoped_resource_container_accepts_new_members_only(self):
+        # A new scoped resource appears as an added member of an inline object type.
+        base = snapshot({"kind": "type", "members": {"mailing": {"kind": "field", "required": True,
+            "type": "{ readonly campaigns: Readonly<CampaignsApi>; readonly lists: Readonly<ListsApi>; }"}}})
+        added = snapshot({"kind": "type", "members": {"mailing": {"kind": "field", "required": True,
+            "type": "{ readonly brand: Readonly<BrandApi>; readonly campaigns: Readonly<CampaignsApi>; readonly lists: Readonly<ListsApi>; }"}}})
+        self.assertEqual(compare_surfaces(base, added), [])
+        for breaking in (
+            "{ readonly campaigns: Readonly<CampaignsApi>; }",
+            "{ readonly campaigns: Readonly<OtherApi>; readonly lists: Readonly<ListsApi>; }",
+        ):
+            with self.subTest(type=breaking):
+                revision = snapshot({"kind": "type", "members": {"mailing": {"kind": "field", "required": True, "type": breaking}}})
+                self.assertNotEqual(compare_surfaces(base, revision), [])
+
     def test_optional_trailing_parameter_preserves_existing_calls(self):
         revision = deepcopy(self.base)
         params = revision["languages"]["typescript"]["symbols"]["Client"]["members"]["list"]["signatures"][0]["params"]
