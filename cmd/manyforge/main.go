@@ -764,7 +764,15 @@ func main() {
 	}
 	// SMTP retains per-business custom DKIM identities. API transports use their
 	// configured verified From identity while retaining the support Reply-To token.
-	sendSub := notify.SendSubscriber{Sender: sharedMail.Sender, Logger: logger, Metrics: metrics}
+	sendSub := notify.SendSubscriber{
+		Sender: sharedMail.Sender, Logger: logger, Metrics: metrics,
+		Suppression: notify.DBSuppression{DB: database},
+	}
+	// Spec 017: replies for a business with a Resend support identity go through
+	// that business's profile. Assign only a non-nil service (no typed-nil interface).
+	if mailingSvc != nil {
+		sendSub.ProfileSender = mailingSvc
+	}
 	if cfg.OutboundProvider == "smtp" {
 		sendSub.Sealer = dkimSealer
 	}

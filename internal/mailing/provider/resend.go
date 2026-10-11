@@ -75,12 +75,24 @@ func (r *Resend) Send(ctx context.Context, mail notify.Mail) (SendResult, error)
 	if mail.ReplyTo != "" {
 		payload["reply_to"] = mail.ReplyTo
 	}
-	headers := make(map[string]string, len(mail.ExtraHeaders)+2)
+	headers := make(map[string]string, len(mail.ExtraHeaders)+4)
 	for key, value := range mail.ExtraHeaders {
 		headers[key] = value
 	}
 	if mail.MessageID != "" {
 		headers["Message-ID"] = "<" + mail.MessageID + ">"
+	}
+	// Threading headers, formatted exactly as BuildMIME writes them, so a support
+	// reply threads under the customer's message (spec 017).
+	if mail.InReplyTo != "" {
+		headers["In-Reply-To"] = "<" + mail.InReplyTo + ">"
+	}
+	if len(mail.References) > 0 {
+		refs := make([]string, len(mail.References))
+		for i, ref := range mail.References {
+			refs[i] = "<" + ref + ">"
+		}
+		headers["References"] = strings.Join(refs, " ")
 	}
 	if mail.AutoSubmitted != "" {
 		headers["Auto-Submitted"] = mail.AutoSubmitted

@@ -118,7 +118,7 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 		// A transient/infra failure: reschedule — UNLESS this is the final delivery, in which case
 		// rescheduling would dead-letter the outbox row while the approval lingers 'approved'
 		// forever. On exhaustion, record a terminal failure with the reason instead (manyforge-sa8).
-		if isFinalAttempt(ev) {
+		if ev.IsFinalAttempt() {
 			e.markTerminalFailure(ctx, p, run, safeMsg(ierr))
 			return nil
 		}
@@ -155,11 +155,4 @@ func (e *ApprovalExecutor) Handle(ctx context.Context, _ pgx.Tx, ev events.Event
 func (e *ApprovalExecutor) markTerminalFailure(ctx context.Context, p approvalEventPayload, run AgentRun, reason string) {
 	_, _ = e.Approvals.MarkFailed(ctx, p.AgentPrincipalID, p.BusinessID, p.ApprovalID, reason)
 	_ = e.Auditor.Run(ctx, p.AgentPrincipalID, run, "agent.approval.failed", map[string]any{"approval_id": p.ApprovalID}, map[string]any{"tool": p.Tool, "detail": reason}, "failed")
-}
-
-// isFinalAttempt reports whether this delivery is the outbox worker's last try before it would
-// dead-letter the event. MaxAttempts is zero on the in-process Bus path (no retry budget), so
-// that path never short-circuits to a terminal failure here.
-func isFinalAttempt(ev events.Event) bool {
-	return ev.MaxAttempts > 0 && ev.Attempts+1 >= ev.MaxAttempts
 }

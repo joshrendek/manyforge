@@ -734,3 +734,47 @@ func TestNewSESValidatesStaticConfiguration(t *testing.T) {
 		}
 	}
 }
+
+// Spec 017 F3: a threaded support reply carries In-Reply-To and References in the
+// Resend request headers so the customer's client threads it under their message.
+func TestResendSendCarriesThreadingHeaders(t *testing.T) {
+	var headers map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		headers, _ = body["headers"].(map[string]any)
+		_, _ = io.WriteString(w, `{"id":"resend-thread"}`)
+	}))
+	defer server.Close()
+	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
+	if _, err := r.Send(context.Background(), notify.Mail{
+		From: "support@example.com", To: "ada@example.net", Subject: "Re: Help", BodyText: "hi",
+		MessageID: "m-2@example.com", InReplyTo: "parent-1@example.com",
+		References: []string{"root-0@example.com", "parent-1@example.com"},
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	want := map[string]any{
+		"Message-ID":  "<m-2@example.com>",
+		"In-Reply-To": "<parent-1@example.com>",
+		"References":  "<root-0@example.com> <parent-1@example.com>",
+	}
+	if fmt.Sprint(headers) != fmt.Sprint(want) {
+		t.Fatalf("headers = %#v, want %#v", headers, want)
+	}
+
+	headers = nil
+	if _, err := r.Send(context.Background(), notify.Mail{
+		From: "support@example.com", To: "ada@example.net", Subject: "Hello", BodyText: "hi", MessageID: "m-3@example.com",
+	}); err != nil {
+		t.Fatalf("Send unthreaded: %v", err)
+	}
+	if _, ok := headers["In-Reply-To"]; ok {
+		t.Fatalf("unthreaded mail carried In-Reply-To: %#v", headers)
+	}
+	if _, ok := headers["References"]; ok {
+		t.Fatalf("unthreaded mail carried References: %#v", headers)
+	}
+}
