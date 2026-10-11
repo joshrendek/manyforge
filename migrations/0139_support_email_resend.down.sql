@@ -5,6 +5,7 @@ DROP FUNCTION IF EXISTS mailing_received_webhook_state(uuid, text);
 DROP FUNCTION IF EXISTS support_audit_inbound_dropped(uuid, text, text, text);
 DROP FUNCTION IF EXISTS set_message_dropped_attachments(uuid, uuid, jsonb);
 DROP FUNCTION IF EXISTS get_resend_support_identity(uuid, uuid);
+DROP FUNCTION IF EXISTS support_business_receives_via_resend(uuid);
 DROP FUNCTION IF EXISTS resolve_inbound_address_for_business(uuid, citext);
 ALTER TABLE ticket_message
     DROP CONSTRAINT IF EXISTS ticket_message_dropped_attachments_chk,

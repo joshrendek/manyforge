@@ -57,6 +57,26 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
     LIMIT 1;
 $$;
 
+-- R12 gate for Resend-received mail: true only when the business has a custom
+-- inbound address on a verified provider_route domain it owns. Checked before
+-- any Receiving API call, so a campaign-only business is never fetched from.
+CREATE FUNCTION support_business_receives_via_resend(p_business_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM inbound_address ia
+        JOIN email_domain ed
+          ON ed.id = ia.email_domain_id
+         AND ed.tenant_root_id = ia.tenant_root_id
+        WHERE ia.business_id = p_business_id
+          AND ed.business_id = p_business_id
+          AND ia.kind = 'custom'
+          AND ed.mode = 'provider_route'
+          AND ed.verified_at IS NOT NULL
+    );
+$$;
+
 -- Outbound identity for support replies (R10-R12). Returns a row whenever the
 -- business has a verified provider_route domain with a custom address AND a
 -- resend-mode profile in ANY status, so an unverified profile makes the caller
@@ -262,6 +282,7 @@ $$;
 
 REVOKE ALL ON FUNCTION resolve_inbound_address_for_business(uuid, citext) FROM PUBLIC;
 REVOKE ALL ON FUNCTION get_resend_support_identity(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION support_business_receives_via_resend(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION set_message_dropped_attachments(uuid, uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION support_audit_inbound_dropped(uuid, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_received_webhook_state(uuid, text) FROM PUBLIC;
@@ -269,6 +290,7 @@ REVOKE ALL ON FUNCTION mailing_record_received_webhook(uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION mailing_list_verified_resend_profiles(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION resolve_inbound_address_for_business(uuid, citext) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION get_resend_support_identity(uuid, uuid) TO manyforge_app;
+GRANT EXECUTE ON FUNCTION support_business_receives_via_resend(uuid) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION set_message_dropped_attachments(uuid, uuid, jsonb) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION support_audit_inbound_dropped(uuid, text, text, text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_received_webhook_state(uuid, text) TO manyforge_app;

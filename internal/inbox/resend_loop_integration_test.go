@@ -40,10 +40,11 @@ import (
 var loopReplyKey = []byte("loop-reply-token-key-0123456789abcdef")
 
 type loopResend struct {
-	mu     sync.Mutex
-	server *httptest.Server
-	raws   map[string][]byte
-	sent   []map[string]any
+	mu      sync.Mutex
+	server  *httptest.Server
+	raws    map[string][]byte
+	sent    []map[string]any
+	fetches int
 }
 
 func newLoopResend(t *testing.T) *loopResend {
@@ -54,6 +55,7 @@ func newLoopResend(t *testing.T) *loopResend {
 		defer f.mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/emails/receiving/"):
+			f.fetches++
 			id := strings.TrimPrefix(r.URL.Path, "/emails/receiving/")
 			if _, ok := f.raws[id]; !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -86,6 +88,13 @@ func (f *loopResend) sends() []map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]map[string]any(nil), f.sent...)
+}
+
+// fetchCount returns how many Receiving API metadata fetches were served.
+func (f *loopResend) fetchCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fetches
 }
 
 type loopFixture struct {
@@ -295,5 +304,35 @@ func TestResendLoopRedeliveryAfterPartialFailureCreatesNoDuplicate(t *testing.T)
 	}
 	if n := f.count(t, "SELECT count(*) FROM mailing_provider_webhook_delivery WHERE external_event_id='evt-p'"); n != 1 {
 		t.Fatalf("delivery rows = %d, want 1 (re-recorded)", n)
+	}
+}
+
+// I1 / R12: a business whose Resend profile receives mail but which has no custom
+// address on a verified provider_route domain (campaign-only) is never fetched
+// from Resend and never audited; the event is still recorded and acknowledged.
+func TestResendReceivedForCampaignOnlyBusinessFetchesNothing(t *testing.T) {
+	for name, strip := range map[string]string{
+		"no custom address": "DELETE FROM inbound_address WHERE business_id=$1 AND kind='custom'",
+		"unverified domain": "UPDATE email_domain SET verified_at=NULL WHERE business_id=$1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLoopFixture(t)
+			if _, err := f.tdb.Super.Exec(f.ctx, strip, f.business); err != nil {
+				t.Fatal(err)
+			}
+			f.receive(t, "evt-c", "em_c", customerMail("ada@customer.test", f.address, "c@customer.test", "", "hello"))
+			if n := f.resend.fetchCount(); n != 0 {
+				t.Fatalf("Receiving API fetches = %d, want 0", n)
+			}
+			if n := f.count(t, "SELECT count(*) FROM audit_entry WHERE business_id=$1 AND action='ticket.inbound_dropped'", f.business); n != 0 {
+				t.Fatalf("inbound_dropped audit rows = %d, want 0", n)
+			}
+			if n := f.count(t, "SELECT count(*) FROM ticket WHERE business_id=$1", f.business); n != 0 {
+				t.Fatalf("tickets = %d, want 0", n)
+			}
+			if n := f.count(t, "SELECT count(*) FROM mailing_provider_webhook_delivery WHERE profile_id=$1 AND external_event_id='evt-c'", f.profileID); n != 1 {
+				t.Fatalf("delivery rows = %d, want 1 (recorded as processed)", n)
+			}
+		})
 	}
 }

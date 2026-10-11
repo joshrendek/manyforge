@@ -13,7 +13,7 @@ func TestPin_MF017DefinersAndGlobalUniqueness(t *testing.T) {
 		"resolve_inbound_address_for_business", "get_resend_support_identity",
 		"set_message_dropped_attachments", "support_audit_inbound_dropped",
 		"mailing_received_webhook_state", "mailing_record_received_webhook",
-		"mailing_list_verified_resend_profiles",
+		"mailing_list_verified_resend_profiles", "support_business_receives_via_resend",
 	} {
 		body := mf017SQLFunction(t, mig, fn)
 		if !strings.Contains(body, "SECURITY DEFINER") || !strings.Contains(body, "SET search_path = ") {

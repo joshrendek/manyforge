@@ -27,7 +27,7 @@ func (h *WebhookHandler) resendClient(apiKey string) *mailprovider.Resend {
 }
 
 // handleResendReceived processes a signature-valid email.received (spec 017).
-// Order matters for R5: fetch → download → ingest → record. Any failure before
+// Order matters for R5: support gate → fetch → download → ingest → record. Any failure before
 // the record answers 503 and writes nothing, so Resend's retry is processed; a
 // retry after ingest-but-before-record re-ingests and is absorbed by ingest's
 // (tenant_root_id, message_id) dedupe.
@@ -46,6 +46,20 @@ func (h *WebhookHandler) handleResendReceived(w http.ResponseWriter, r *http.Req
 	}
 	if state != "new" {
 		h.authenticatedOK(w) // seen (already processed) or ignored (unverified/fenced profile)
+		return
+	}
+	receives, err := h.businessReceivesViaResend(ctx, wc.businessID)
+	if err != nil {
+		h.logger().ErrorContext(ctx, "mailing Resend received support lookup failed", "profile_id", wc.profileID, "err", err)
+		h.retryableFailure(w)
+		return
+	}
+	if !receives {
+		// R12: a business without Resend support mail sees no change, so nothing
+		// is fetched from its Resend account and nothing is audited.
+		h.logger().DebugContext(ctx, "mailing Resend email.received for a business without support addresses",
+			"profile_id", wc.profileID, "event_id", eventID)
+		h.finishReceived(w, r, wc, eventID)
 		return
 	}
 	if strings.TrimSpace(payload.Data.EmailID) == "" {
@@ -124,6 +138,16 @@ func (h *WebhookHandler) receivedState(ctx context.Context, profileID uuid.UUID,
 		return tx.QueryRow(ctx, "SELECT mailing_received_webhook_state($1, $2)", profileID, eventID).Scan(&state)
 	})
 	return state, err
+}
+
+// businessReceivesViaResend reports whether the business has a custom inbound
+// address on a verified provider_route domain it owns (R12 gate).
+func (h *WebhookHandler) businessReceivesViaResend(ctx context.Context, businessID uuid.UUID) (bool, error) {
+	var receives bool
+	err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, "SELECT support_business_receives_via_resend($1)", businessID).Scan(&receives)
+	})
+	return receives, err
 }
 
 func (h *WebhookHandler) recordReceived(ctx context.Context, profileID uuid.UUID, eventID string) error {

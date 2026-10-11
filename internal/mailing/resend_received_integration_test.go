@@ -151,6 +151,7 @@ func newReceivedHarness(t *testing.T) *receivedHarness {
 	t.Cleanup(func() { tdb.Close(context.Background()) })
 	seed := seedMailingTenant(ctx, t, tdb)
 	fx := seedWebhookFixture(ctx, t, tdb, seed)
+	seedSupportAddress(ctx, t, tdb, seed.businessID)
 	inbound := &fakeInbound{}
 	fake := newFakeResend(t, testRaw)
 	fake.secret = "whsec_" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x51}, 32))
@@ -166,6 +167,25 @@ func newReceivedHarness(t *testing.T) *receivedHarness {
 	h.PublicRoutes(router)
 	return &receivedHarness{ctx: ctx, tdb: tdb, seed: seed, fx: fx, h: h, router: router,
 		inbound: inbound, fake: fake, key: bytes.Repeat([]byte{0x51}, 32)}
+}
+
+// seedSupportAddress gives the business a custom address on a verified
+// provider_route domain, so email.received passes the R12 support gate.
+func seedSupportAddress(ctx context.Context, t *testing.T, tdb *testdb.TestDB, businessID uuid.UUID) {
+	t.Helper()
+	domainID := uuid.New()
+	if _, err := tdb.Super.Exec(ctx, `INSERT INTO email_domain
+		(id,business_id,tenant_root_id,domain,mode,verify_token,verified_at,spf_state,created_at,updated_at)
+		VALUES ($1,$2,$2,'support.example.test','provider_route','mf-verify=seed',now(),'unknown',now(),now())`,
+		domainID, businessID); err != nil {
+		t.Fatalf("seed email_domain: %v", err)
+	}
+	if _, err := tdb.Super.Exec(ctx, `INSERT INTO inbound_address
+		(id,business_id,tenant_root_id,address,kind,email_domain_id,created_at,updated_at)
+		VALUES ($1,$2,$2,'support@support.example.test','custom',$3,now(),now())`,
+		uuid.New(), businessID, domainID); err != nil {
+		t.Fatalf("seed inbound_address: %v", err)
+	}
 }
 
 func (rh *receivedHarness) post(t *testing.T, eventID string, key []byte) int {
@@ -362,5 +382,20 @@ func TestResendReceivedBadSignatureFetchesNothing(t *testing.T) {
 	}
 	if rh.fake.hits() != 0 || rh.inbound.count() != 0 || rh.recorded(t, "evt-r11") != 0 {
 		t.Fatalf("fetches=%d ingests=%d, want 0/0", rh.fake.hits(), rh.inbound.count())
+	}
+}
+
+// I1 / R12: without a custom address on a verified provider_route domain the
+// event is acknowledged and recorded with no Receiving API call and no ingest.
+func TestResendReceivedSkipsBusinessWithoutSupportAddress(t *testing.T) {
+	rh := newReceivedHarness(t)
+	if _, err := rh.tdb.Super.Exec(rh.ctx, `UPDATE email_domain SET mode='forward_in' WHERE business_id=$1`, rh.seed.businessID); err != nil {
+		t.Fatal(err)
+	}
+	if code := rh.post(t, "evt-r12", rh.key); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if rh.fake.hits() != 0 || rh.inbound.count() != 0 || rh.recorded(t, "evt-r12") != 1 {
+		t.Fatalf("fetches=%d ingests=%d recorded=%d, want 0/0/1", rh.fake.hits(), rh.inbound.count(), rh.recorded(t, "evt-r12"))
 	}
 }

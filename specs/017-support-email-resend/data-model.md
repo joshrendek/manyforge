@@ -67,6 +67,15 @@ Returns `(inbound_address_id, business_id, tenant_root_id, email_domain_id)` onl
 Used by the Resend source to enforce the same-business rule (R4) without
 widening the app role's read access.
 
+### `support_business_receives_via_resend(p_business_id uuid) -> boolean`
+
+True only when the business has a `custom` inbound address on a verified
+`provider_route` email domain it owns. The `email.received` handler calls it
+after the idempotency check and before any Receiving API call. When it is false
+(a campaign-only business), the event is recorded as processed and acknowledged
+with no fetch, no download, and no audit row, so that business sees no change
+and spends none of its Resend API rate limit (R12).
+
 ### `get_resend_support_identity(p_business_id uuid, p_tenant_root_id uuid)`
 
 Returns `(profile_id, from_address, profile_status)` when the business has a
@@ -131,4 +140,4 @@ webhook sweep (R1).
 
 ## Down migration
 
-Drops both indexes, all eight functions, and the `dropped_attachments` column.
+Drops both indexes, all nine functions, and the `dropped_attachments` column.

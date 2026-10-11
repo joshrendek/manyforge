@@ -110,6 +110,7 @@ func assertSupportEmailResendObjects(t *testing.T, ctx context.Context, database
 			WHERE table_name='ticket_message' AND column_name='dropped_attachments')`,
 		"resolve for business": `SELECT to_regprocedure('resolve_inbound_address_for_business(uuid,citext)') IS NOT NULL`,
 		"resend identity":      `SELECT to_regprocedure('get_resend_support_identity(uuid,uuid)') IS NOT NULL`,
+		"resend support gate":  `SELECT to_regprocedure('support_business_receives_via_resend(uuid)') IS NOT NULL`,
 		"dropped setter":       `SELECT to_regprocedure('set_message_dropped_attachments(uuid,uuid,jsonb)') IS NOT NULL`,
 		"drop audit":           `SELECT to_regprocedure('support_audit_inbound_dropped(uuid,text,text,text)') IS NOT NULL`,
 		"received state":       `SELECT to_regprocedure('mailing_received_webhook_state(uuid,text)') IS NOT NULL`,
