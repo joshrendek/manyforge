@@ -129,6 +129,17 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                 </ul>
               }
 
+              @if (m.dropped_attachments?.length) {
+                <ul class="attachments dropped" data-testid="dropped-attachments">
+                  @for (d of m.dropped_attachments; track $index) {
+                    <li class="attachment" data-testid="dropped-attachment">
+                      <span class="filename">{{ d.filename || '(unnamed)' }}</span>
+                      <span class="muted">not stored · {{ d.detected_type }} · {{ d.size }} bytes</span>
+                    </li>
+                  }
+                </ul>
+              }
+
               @if (m.direction === 'inbound') {
                 <div class="auth-flags" data-testid="auth-flags">
                   <span class="flag" [class]="m.spf_result" data-testid="spf-result"
@@ -566,6 +577,10 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
       }
       .attachment .filename {
         font-weight: 600;
+      }
+      .attachments.dropped .filename {
+        text-decoration: line-through;
+        color: var(--mf-text-muted);
       }
       .muted {
         color: var(--mf-text-muted);

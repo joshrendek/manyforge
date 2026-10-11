@@ -13,6 +13,7 @@ import { StatusPill } from '../../ui/status-pill/status-pill';
 import { EmptyState } from '../../ui/empty-state/empty-state';
 import { Spinner } from '../../ui/spinner/spinner';
 import { Tone } from '../../ui/status';
+import { DnsChecklistRow, resendDnsChecklist } from './resend-dns';
 
 const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'];
 
@@ -130,6 +131,13 @@ function dkimSpfTone(s: string): Tone {
                   [label]="d.mode"
                   data-testid="domain-mode"
                 />
+                @if (d.mode === 'provider_route') {
+                  <mf-status-pill
+                    [tone]="'neutral'"
+                    label="Received via Resend"
+                    data-testid="received-via-resend"
+                  />
+                }
                 <mf-status-pill
                   [tone]="verificationTone(d.verification)"
                   [label]="d.verification"
@@ -147,7 +155,7 @@ function dkimSpfTone(s: string): Tone {
                 />
               </div>
 
-              @if (d.verification !== 'verified') {
+              @if (d.verification !== 'verified' && d.mode !== 'provider_route') {
                 <div class="mf-dns-challenge" data-testid="dns-challenge">
                   <p class="mf-dns-intro">
                     Publish these DNS records, then verify. Verification reads public DNS — changes
@@ -185,23 +193,44 @@ function dkimSpfTone(s: string): Tone {
                       <code data-testid="challenge-mx-hint">{{ d.dns_challenge.mx_hint }}</code>
                     </div>
                   }
+                </div>
+              }
 
-                  <div class="mf-challenge-actions">
-                    <button
-                      type="button"
-                      class="mf-btn mf-btn-ghost mf-btn-sm"
-                      data-testid="verify-domain"
-                      [disabled]="verifyingId() !== null"
-                      (click)="verify(d)"
-                    >
-                      {{ verifyingId() === d.id ? 'Checking DNS…' : 'Verify' }}
-                    </button>
-                    @if (verifyHintId() === d.id) {
-                      <span class="mf-hint" data-testid="verify-hint">
-                        Not verified yet — re-check that the records are published and try again.
-                      </span>
-                    }
-                  </div>
+              @if (d.mode === 'provider_route') {
+                <div class="mf-dns-challenge" data-testid="resend-dns-checklist">
+                  <p class="mf-dns-intro">
+                    Publish these records under {{ d.domain }}, verify the domain in Resend, then
+                    verify here. Nothing changes at your apex domain.
+                  </p>
+                  @for (r of checklist(d); track r.name + r.type) {
+                    <div class="mf-dns-rec" data-testid="resend-dns-row">
+                      <span class="mf-dns-kind">{{ r.purpose }} ({{ r.type }})</span>
+                      <code>{{ r.name }}</code>
+                      <code>{{ r.value }}</code>
+                      @if (r.note) {
+                        <span class="mf-hint">{{ r.note }}</span>
+                      }
+                    </div>
+                  }
+                </div>
+              }
+
+              @if (d.verification !== 'verified') {
+                <div class="mf-challenge-actions">
+                  <button
+                    type="button"
+                    class="mf-btn mf-btn-ghost mf-btn-sm"
+                    data-testid="verify-domain"
+                    [disabled]="verifyingId() !== null"
+                    (click)="verify(d)"
+                  >
+                    {{ verifyingId() === d.id ? 'Checking DNS…' : 'Verify' }}
+                  </button>
+                  @if (verifyHintId() === d.id) {
+                    <span class="mf-hint" data-testid="verify-hint">
+                      Not verified yet — re-check that the records are published and try again.
+                    </span>
+                  }
                 </div>
               }
             </div>
@@ -375,6 +404,10 @@ export class InboxSettingsComponent implements OnInit {
   // Template tone helpers
   readonly verificationTone = verificationTone;
   readonly dkimSpfTone = dkimSpfTone;
+
+  protected checklist(d: EmailDomain): DnsChecklistRow[] {
+    return resendDnsChecklist(d);
+  }
 
   readonly modes = MODES;
 
