@@ -41,7 +41,9 @@ selector.
 
 ```sql
 ALTER TABLE ticket_message
-    ADD COLUMN dropped_attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
+    ADD COLUMN dropped_attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+    ADD CONSTRAINT ticket_message_dropped_attachments_chk CHECK (
+        jsonb_typeof(dropped_attachments) = 'array' AND jsonb_array_length(dropped_attachments) <= 50);
 ```
 
 Each element is `{"filename": text, "detected_type": text, "size": int}`. No
@@ -49,25 +51,56 @@ bytes are retained. Shown on the message in the ticket view.
 
 ## New functions
 
+All functions are `SECURITY DEFINER` with a pinned `search_path`,
+`REVOKE ALL FROM PUBLIC`, and `GRANT EXECUTE TO manyforge_app`. Support-side
+functions use `search_path = public` (so `citext` stays case-insensitive);
+mailing-side functions use `pg_catalog` with `public.`-qualified names.
+
 ### `resolve_inbound_address_for_business(p_business_id uuid, p_address citext)`
 
-`SECURITY DEFINER`, `REVOKE ALL FROM PUBLIC`, `GRANT EXECUTE TO manyforge_app`.
-Returns the matching inbound address id only when:
+Returns `(inbound_address_id, business_id, tenant_root_id, email_domain_id)` only when:
 
-- the address is a `custom` row with that exact address (`citext`, so case-insensitive),
+- the address is a `custom` row with that address (`citext`, case-insensitive),
 - its business is `p_business_id`, and
-- its `email_domain` has `verified_at IS NOT NULL`.
+- its `email_domain` is owned by `p_business_id` and has `verified_at IS NOT NULL`.
 
 Used by the Resend source to enforce the same-business rule (R4) without
 widening the app role's read access.
 
-### `get_resend_support_identity(p_business_id uuid)`
+### `get_resend_support_identity(p_business_id uuid, p_tenant_root_id uuid)`
 
-`SECURITY DEFINER`. Returns `(profile_id, from_address)` when the business has a
-verified `mode = 'resend'` sending profile **and** a verified
-`provider_route` email domain with a custom inbound address. The earliest
-created custom address wins. Returns no row otherwise; the caller then uses the
-shared transport (R12).
+Returns `(profile_id, from_address, profile_status)` when the business has a
+`mode = 'resend'` sending profile in **any** status **and** a verified
+`provider_route` email domain with a custom inbound address (earliest created
+address wins). Returning the row for a non-verified profile lets the caller
+refuse to send instead of silently falling back to the shared transport (R11).
+No row means no Resend setup, so the caller uses the shared transport (R12).
+
+### `set_message_dropped_attachments(p_message_id uuid, p_tenant_root_id uuid, p_dropped jsonb) -> boolean`
+
+Sets `dropped_attachments` on an inbound message (array, at most 50 elements)
+from the principal-less ingest transaction (R15).
+
+### `support_audit_inbound_dropped(p_business_id uuid, p_source text, p_reason text, p_event_id text) -> boolean`
+
+Writes one `ticket.inbound_dropped` `audit_entry` for the business. `p_reason`
+is `no_owned_recipient` or `route_lost`. No recipient address is stored (R4).
+
+### `mailing_received_webhook_state(p_profile_id uuid, p_event_id text) -> text`
+
+`ignored` for an unknown, non-resend, non-verified, fenced, or non-operational
+profile or an invalid event id; `seen` when a live delivery row exists; else `new` (R5).
+
+### `mailing_record_received_webhook(p_profile_id uuid, p_event_id text) -> boolean`
+
+Records an `email.received` event as `applied` in
+`mailing_provider_webhook_delivery` (7-day expiry, idempotent on
+`(profile_id, external_event_id)`), after the fetch and ingest succeeded (R5).
+
+### `mailing_list_verified_resend_profiles(p_limit integer) -> TABLE(profile_id uuid)`
+
+Bounded (at most 1000) list of verified Resend profiles for the boot-time
+webhook sweep (R1).
 
 ## Unchanged, relied upon
 
@@ -85,4 +118,4 @@ shared transport (R12).
 
 ## Down migration
 
-Drops both indexes, both functions, and the `dropped_attachments` column.
+Drops both indexes, all seven functions, and the `dropped_attachments` column.

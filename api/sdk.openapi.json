@@ -17072,6 +17072,9 @@
           "404": {
             "$ref": "#/components/responses/SupportCRMNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/SupportCRMConflict"
+          },
           "500": {
             "content": {
               "application/json": {

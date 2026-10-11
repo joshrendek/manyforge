@@ -512,3 +512,67 @@ func TestIdentityOutboundSendIdentitySelection(t *testing.T) {
 		t.Errorf("dkim_private_key_ref = %v, want non-empty", dkimRef)
 	}
 }
+
+// Spec 017 R7: a verified email domain is unique across all businesses. Two
+// tenants may both start verification (UNIQUE is per-tenant for unverified rows),
+// but once one verifies, the other's verify is a 409 conflict and its row stays
+// unverified.
+func TestIdentityVerifyEmailDomainGlobalConflict(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	first := seedReadTenant(ctx, t, tdb)
+	second := seedReadTenant(ctx, t, tdb)
+	resolver := newStubResolver()
+	svc := newIdentityService(tdb, resolver)
+
+	domain := uniqueDomain("shared")
+	edFirst, err := svc.CreateEmailDomain(ctx, first.owner, first.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatalf("first CreateEmailDomain: %v", err)
+	}
+	edSecond, err := svc.CreateEmailDomain(ctx, second.owner, second.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatalf("second CreateEmailDomain (unverified rows may collide across tenants): %v", err)
+	}
+	resolver.records["_manyforge."+domain] = []string{
+		edFirst.DNSChallenge.VerificationTXT.Value,
+		edSecond.DNSChallenge.VerificationTXT.Value,
+	}
+
+	if got, err := svc.VerifyEmailDomain(ctx, first.owner, first.master, edFirst.ID); err != nil || got.Verification != "verified" {
+		t.Fatalf("first verify = %+v, %v; want verified", got, err)
+	}
+	_, err = svc.VerifyEmailDomain(ctx, second.owner, second.master, edSecond.ID)
+	if !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("second verify error = %v, want ErrConflict (409)", err)
+	}
+	if va, _, _ := emailDomainRow(ctx, t, tdb, edSecond.ID); va != nil {
+		t.Fatalf("conflicting domain persisted verified_at = %v, want NULL", va)
+	}
+}
+
+// Spec 017 R8: Resend signs mail for a provider_route domain, so ManyForge's own
+// DKIM selector is informational and is reported as "unknown", never "pending".
+func TestIdentityProviderRouteDKIMIsInformational(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	resolver := newStubResolver()
+	svc := newIdentityService(tdb, resolver)
+
+	domain := uniqueDomain("resend")
+	ed, err := svc.CreateEmailDomain(ctx, rt.owner, rt.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatalf("CreateEmailDomain: %v", err)
+	}
+	if ed.DKIMState != "unknown" {
+		t.Fatalf("create dkim_state = %q, want unknown", ed.DKIMState)
+	}
+	resolver.records["_manyforge."+domain] = []string{ed.DNSChallenge.VerificationTXT.Value}
+	verified, err := svc.VerifyEmailDomain(ctx, rt.owner, rt.master, ed.ID)
+	if err != nil || verified.Verification != "verified" || verified.DKIMState != "unknown" {
+		t.Fatalf("verify = %+v, %v; want verified with dkim_state unknown", verified, err)
+	}
+	list, _, err := svc.ListEmailDomains(ctx, rt.owner, rt.master, Pagination{})
+	if err != nil || len(list) != 1 || list[0].DKIMState != "unknown" {
+		t.Fatalf("list = %+v, %v; want one domain with dkim_state unknown", list, err)
+	}
+}

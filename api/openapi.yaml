@@ -1364,6 +1364,8 @@ paths:
                 type: string
         '404':
           $ref: '#/components/responses/SupportCRMNotFound'
+        '409':
+          $ref: '#/components/responses/SupportCRMConflict'
         '401':
           description: Missing or invalid bearer access token.
           content:

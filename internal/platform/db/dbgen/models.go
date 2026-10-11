@@ -2197,6 +2197,7 @@ type TicketMessage struct {
 	SourceApprovalItemID pgtype.UUID              `json:"source_approval_item_id"`
 	ConnectorID          pgtype.UUID              `json:"connector_id"`
 	ExternalID           *string                  `json:"external_id"`
+	DroppedAttachments   []byte                   `json:"dropped_attachments"`
 }
 
 type TicketTag struct {
