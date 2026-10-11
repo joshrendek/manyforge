@@ -97,12 +97,17 @@ func (r *Resend) DownloadReceivedRaw(ctx context.Context, rawURL string, maxByte
 	if err != nil {
 		return nil, ErrReceivedRawUnavailable
 	}
+	// Fail closed: the pre-signed URL is caller-influenced, so production must
+	// supply an SSRF-guarded RawClient. Only the test opt-in may fall back.
 	base := r.RawClient
 	if base == nil {
+		if !r.AllowInsecureRawURL {
+			return nil, ErrReceivedRawUnavailable
+		}
 		base = r.Client
-	}
-	if base == nil {
-		base = http.DefaultClient
+		if base == nil {
+			base = http.DefaultClient
+		}
 	}
 	// Shallow copy: the shared client is never mutated. Redirects stay https-only
 	// and bounded, so a signed URL cannot be bounced to http or around forever.
@@ -123,7 +128,12 @@ func (r *Resend) DownloadReceivedRaw(ctx context.Context, rawURL string, maxByte
 		}
 		var netErr net.Error
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("provider: resend raw transport: %w", ctx.Err())
+			// ctx.Err() is nil when http.Client.Timeout (not ctx) expired.
+			cause := ctx.Err()
+			if cause == nil {
+				cause = context.DeadlineExceeded
+			}
+			return nil, fmt.Errorf("provider: resend raw transport: %w", cause)
 		}
 		var urlErr *url.Error
 		if errors.As(err, &urlErr) && errors.As(urlErr.Err, &netErr) {

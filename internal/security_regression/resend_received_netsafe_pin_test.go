@@ -14,8 +14,19 @@ func TestResendReceivedRawDownloadUsesNetsafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "mailingWebhookH.RawDownloadClient = netsafe.NewClient(") {
-		t.Fatal("cmd/manyforge/main.go must set mailingWebhookH.RawDownloadClient to a netsafe client (SSRF guard)")
+	// Ignore comment lines so a commented-out assignment cannot satisfy the pin.
+	var assigns []string
+	for _, line := range strings.Split(string(src), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "//") {
+			continue
+		}
+		if strings.HasPrefix(line, "mailingWebhookH.RawDownloadClient") {
+			assigns = append(assigns, line)
+		}
+	}
+	if len(assigns) != 1 || !strings.HasPrefix(assigns[0], "mailingWebhookH.RawDownloadClient = netsafe.NewClient(") {
+		t.Fatalf("cmd/manyforge/main.go must assign mailingWebhookH.RawDownloadClient exactly once, to a netsafe client (SSRF guard); got %q", assigns)
 	}
 }
 

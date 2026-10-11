@@ -55,11 +55,27 @@ type fakeResend struct {
 	server     *httptest.Server
 	raw        []byte
 	metaStatus int
+	rawStatus  int
 	metaHits   int
 	auth       []string
 	events     []string
 	secret     string
 	patches    int
+}
+
+func (f *fakeResend) setMetaStatus(code int) { f.mu.Lock(); defer f.mu.Unlock(); f.metaStatus = code }
+func (f *fakeResend) setRawStatus(code int)  { f.mu.Lock(); defer f.mu.Unlock(); f.rawStatus = code }
+func (f *fakeResend) hits() int              { f.mu.Lock(); defer f.mu.Unlock(); return f.metaHits }
+func (f *fakeResend) patchCount() int        { f.mu.Lock(); defer f.mu.Unlock(); return f.patches }
+func (f *fakeResend) lastAuth() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.auth[len(f.auth)-1]
+}
+func (f *fakeResend) eventList() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strings.Join(f.events, ",")
 }
 
 func newFakeResend(t *testing.T, raw []byte) *fakeResend {
@@ -83,6 +99,10 @@ func newFakeResend(t *testing.T, raw []byte) *fakeResend {
 				"raw": map[string]any{"download_url": f.server.URL + "/raw/" + id, "expires_at": "2099-01-01T00:00:00Z"},
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/raw/"):
+			if f.rawStatus != 0 {
+				w.WriteHeader(f.rawStatus)
+				return
+			}
 			if r.Header.Get("Authorization") != "" {
 				t.Errorf("raw download carried Authorization")
 			}
@@ -204,8 +224,8 @@ func TestResendReceivedIngestsThenRecords(t *testing.T) {
 	if rh.recorded(t, "evt-r1") != 1 {
 		t.Fatal("delivery row not recorded after a successful ingest")
 	}
-	if code := rh.post(t, "evt-r1", rh.key); code != http.StatusOK || rh.inbound.count() != 1 || rh.fake.metaHits != 1 {
-		t.Fatalf("redelivery status=%d ingests=%d fetches=%d, want 200/1/1", code, rh.inbound.count(), rh.fake.metaHits)
+	if code := rh.post(t, "evt-r1", rh.key); code != http.StatusOK || rh.inbound.count() != 1 || rh.fake.hits() != 1 {
+		t.Fatalf("redelivery status=%d ingests=%d fetches=%d, want 200/1/1", code, rh.inbound.count(), rh.fake.hits())
 	}
 }
 
@@ -213,14 +233,14 @@ func TestResendReceivedIngestsThenRecords(t *testing.T) {
 // retry is processed instead of discarded as a duplicate.
 func TestResendReceivedFetchFailureIsRetriedNotRecorded(t *testing.T) {
 	rh := newReceivedHarness(t)
-	rh.fake.metaStatus = http.StatusInternalServerError
+	rh.fake.setMetaStatus(http.StatusInternalServerError)
 	if code := rh.post(t, "evt-r2", rh.key); code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", code)
 	}
 	if rh.recorded(t, "evt-r2") != 0 || rh.inbound.count() != 0 {
 		t.Fatal("failed fetch was recorded or ingested")
 	}
-	rh.fake.metaStatus = 0
+	rh.fake.setMetaStatus(0)
 	if code := rh.post(t, "evt-r2", rh.key); code != http.StatusOK || rh.inbound.count() != 1 || rh.recorded(t, "evt-r2") != 1 {
 		t.Fatalf("retry status=%d ingests=%d recorded=%d, want 200/1/1", code, rh.inbound.count(), rh.recorded(t, "evt-r2"))
 	}
@@ -259,7 +279,7 @@ func TestResendReceivedUsesCurrentCredentialAfterRotation(t *testing.T) {
 	if code := rh.post(t, "evt-r5", rh.key); code != http.StatusOK {
 		t.Fatalf("status = %d", code)
 	}
-	if got := rh.fake.auth[len(rh.fake.auth)-1]; got != "Bearer re_rotated" {
+	if got := rh.fake.lastAuth(); got != "Bearer re_rotated" {
 		t.Fatalf("fetch authorization = %q, want the rotated key", got)
 	}
 	newKey := bytes.Repeat([]byte{0x52}, 32)
@@ -277,8 +297,8 @@ func TestResendReceivedIgnoredForUnverifiedProfile(t *testing.T) {
 	if _, err := rh.tdb.Super.Exec(rh.ctx, `UPDATE mailing_sending_profile SET status='unverified' WHERE id=$1`, rh.fx.profileID); err != nil {
 		t.Fatal(err)
 	}
-	if code := rh.post(t, "evt-r7", rh.key); code != http.StatusOK || rh.fake.metaHits != 0 || rh.inbound.count() != 0 {
-		t.Fatalf("status=%d fetches=%d ingests=%d, want 200/0/0", code, rh.fake.metaHits, rh.inbound.count())
+	if code := rh.post(t, "evt-r7", rh.key); code != http.StatusOK || rh.fake.hits() != 0 || rh.inbound.count() != 0 {
+		t.Fatalf("status=%d fetches=%d ingests=%d, want 200/0/0", code, rh.fake.hits(), rh.inbound.count())
 	}
 }
 
@@ -289,10 +309,58 @@ func TestUpgradeReceivingEventsPatchesLegacyWebhook(t *testing.T) {
 	if err := rh.h.UpgradeReceivingEvents(rh.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if rh.fake.patches != 1 || !strings.Contains(strings.Join(rh.fake.events, ","), "email.received") {
-		t.Fatalf("patches=%d events=%v", rh.fake.patches, rh.fake.events)
+	if rh.fake.patchCount() != 1 || !strings.Contains(rh.fake.eventList(), "email.received") {
+		t.Fatalf("patches=%d events=%v", rh.fake.patchCount(), rh.fake.eventList())
 	}
-	if err := rh.h.UpgradeReceivingEvents(rh.ctx); err != nil || rh.fake.patches != 1 {
-		t.Fatalf("second sweep patches=%d err=%v, want read-only", rh.fake.patches, err)
+	if err := rh.h.UpgradeReceivingEvents(rh.ctx); err != nil || rh.fake.patchCount() != 1 {
+		t.Fatalf("second sweep patches=%d err=%v, want read-only", rh.fake.patchCount(), err)
+	}
+}
+
+// Gone (metadata 404) is permanent: acknowledged and recorded, never ingested.
+func TestResendReceivedGoneIsAcknowledged(t *testing.T) {
+	rh := newReceivedHarness(t)
+	rh.fake.setMetaStatus(http.StatusNotFound)
+	if code := rh.post(t, "evt-r8", rh.key); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if rh.inbound.count() != 0 || rh.recorded(t, "evt-r8") != 1 {
+		t.Fatalf("ingests=%d recorded=%d, want 0/1", rh.inbound.count(), rh.recorded(t, "evt-r8"))
+	}
+}
+
+// A raw-download 5xx is transient: 503, nothing recorded, the retry succeeds.
+func TestResendReceivedDownloadFailureIsRetriedNotRecorded(t *testing.T) {
+	rh := newReceivedHarness(t)
+	rh.fake.setRawStatus(http.StatusBadGateway)
+	if code := rh.post(t, "evt-r9", rh.key); code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", code)
+	}
+	if rh.recorded(t, "evt-r9") != 0 || rh.inbound.count() != 0 {
+		t.Fatal("failed download was recorded or ingested")
+	}
+	rh.fake.setRawStatus(0)
+	if code := rh.post(t, "evt-r9", rh.key); code != http.StatusOK || rh.inbound.count() != 1 || rh.recorded(t, "evt-r9") != 1 {
+		t.Fatalf("retry status=%d ingests=%d recorded=%d, want 200/1/1", code, rh.inbound.count(), rh.recorded(t, "evt-r9"))
+	}
+}
+
+// A rejected credential (401) still answers 503 so Resend retries.
+func TestResendReceivedRejectedCredentialIsRetried(t *testing.T) {
+	rh := newReceivedHarness(t)
+	rh.fake.setMetaStatus(http.StatusUnauthorized)
+	if code := rh.post(t, "evt-r10", rh.key); code != http.StatusServiceUnavailable || rh.recorded(t, "evt-r10") != 0 {
+		t.Fatalf("status=%d recorded=%d, want 503/0", code, rh.recorded(t, "evt-r10"))
+	}
+}
+
+// A bad signature is rejected before any Receiving API call.
+func TestResendReceivedBadSignatureFetchesNothing(t *testing.T) {
+	rh := newReceivedHarness(t)
+	if code := rh.post(t, "evt-r11", bytes.Repeat([]byte{0x99}, 32)); code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", code)
+	}
+	if rh.fake.hits() != 0 || rh.inbound.count() != 0 || rh.recorded(t, "evt-r11") != 0 {
+		t.Fatalf("fetches=%d ingests=%d, want 0/0", rh.fake.hits(), rh.inbound.count())
 	}
 }

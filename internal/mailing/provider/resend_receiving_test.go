@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestResendGetReceivedEmailParsesRawURL(t *testing.T) {
@@ -270,5 +271,30 @@ func TestResendDownloadMalformedLocationDoesNotLeakSignedURL(t *testing.T) {
 	_, err := r.DownloadReceivedRaw(context.Background(), tlsSrv.URL+"/raw?sig=topsecret", 1024)
 	if err == nil || strings.Contains(err.Error(), "topsecret") {
 		t.Fatalf("error = %v, must not contain the signed URL", err)
+	}
+}
+
+func TestResendDownloadFailsClosedWithoutRawClient(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer server.Close()
+	r := &Resend{Client: server.Client()}
+	if _, err := r.DownloadReceivedRaw(context.Background(), server.URL+"/raw", 1024); !errors.Is(err, ErrReceivedRawUnavailable) {
+		t.Fatalf("error = %v, want ErrReceivedRawUnavailable", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("download reached the network %d times without a RawClient", hits.Load())
+	}
+}
+
+func TestResendDownloadClientTimeoutKeepsDeadlineSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	r := &Resend{RawClient: &http.Client{Timeout: 50 * time.Millisecond}, AllowInsecureRawURL: true}
+	_, err := r.DownloadReceivedRaw(context.Background(), server.URL+"/raw", 1024)
+	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "%!w") {
+		t.Fatalf("error = %v, want a wrapped context.DeadlineExceeded", err)
 	}
 }

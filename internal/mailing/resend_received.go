@@ -6,11 +6,17 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
+)
+
+const (
+	receivingUpgradeLimit   = 1000
+	receivingUpgradeTimeout = 2 * time.Minute
 )
 
 func (h *WebhookHandler) resendClient(apiKey string) *mailprovider.Resend {
@@ -88,6 +94,15 @@ func (h *WebhookHandler) skipOrRetry(w http.ResponseWriter, r *http.Request, wc 
 		h.finishReceived(w, r, wc, eventID)
 		return true
 	}
+	var httpErr *mailprovider.HTTPError
+	if stage == "fetch" && errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) {
+		// Permanent until the operator fixes the credential; mail is lost once
+		// Resend stops retrying, so make it alertable.
+		h.logger().ErrorContext(ctx, "resend receiving credential rejected",
+			"profile_id", wc.profileID, "event_id", eventID, "status", httpErr.StatusCode)
+		h.retryableFailure(w)
+		return true
+	}
 	h.logger().WarnContext(ctx, "mailing Resend received email "+stage+" failed",
 		"profile_id", wc.profileID, "event_id", eventID, "err", err)
 	h.retryableFailure(w)
@@ -136,9 +151,11 @@ func hasPlusTag(addrs []string) bool {
 // not stop the sweep. A webhook whose signing secret changed is reported, because
 // the stored secret would no longer verify its events.
 func (h *WebhookHandler) UpgradeReceivingEvents(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, receivingUpgradeTimeout)
+	defer cancel()
 	var ids []uuid.UUID
 	if err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, "SELECT profile_id FROM mailing_list_verified_resend_profiles($1)", 1000)
+		rows, err := tx.Query(ctx, "SELECT profile_id FROM mailing_list_verified_resend_profiles($1)", receivingUpgradeLimit)
 		if err != nil {
 			return err
 		}
@@ -153,6 +170,10 @@ func (h *WebhookHandler) UpgradeReceivingEvents(ctx context.Context) error {
 		return rows.Err()
 	}); err != nil {
 		return err
+	}
+	if len(ids) >= receivingUpgradeLimit {
+		h.logger().WarnContext(ctx, "mailing Resend receiving upgrade hit the profile cap; later profiles are not upgraded",
+			"limit", receivingUpgradeLimit)
 	}
 	for _, id := range ids {
 		if err := h.upgradeProfileEvents(ctx, id); err != nil {
