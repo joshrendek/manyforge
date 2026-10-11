@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,12 +23,12 @@ import (
 )
 
 const (
-	defaultPageSize      = 50
-	maxPageSize          = 100
-	maxAutomationVersions = 100
+	defaultPageSize         = 50
+	maxPageSize             = 100
+	maxAutomationVersions   = 100
 	maxContentSnapshotBytes = 1048576
-	cursorKind           = "automation"
-	versionCursorKind    = "automation-version"
+	cursorKind              = "automation"
+	versionCursorKind       = "automation-version"
 )
 
 var emptyGraph = Graph{Nodes: []Node{}, Edges: []Edge{}}

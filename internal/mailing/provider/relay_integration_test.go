@@ -4,9 +4,9 @@ package provider
 
 import (
 	"context"
-	"errors"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"

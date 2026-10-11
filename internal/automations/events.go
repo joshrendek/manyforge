@@ -2,9 +2,9 @@ package automations
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,7 +22,7 @@ import (
 
 const (
 	maxEventPropertiesBytes = 65536
-	maxEventFutureSkew       = 5 * time.Minute
+	maxEventFutureSkew      = 5 * time.Minute
 )
 
 func (s *Service) CreateEvent(ctx context.Context, principalID, businessID uuid.UUID, input EventInput) (EventView, error) {
