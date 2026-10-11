@@ -634,4 +634,22 @@ func TestIdentityVerifyEmailDomainTakesOverStaleIncumbent(t *testing.T) {
 		first.master, edFirst.ID).Scan(&audits); err != nil || audits != 1 {
 		t.Fatalf("verification_lost audits = %d, %v; want 1", audits, err)
 	}
+	var listed string
+	if err := tdb.Super.QueryRow(ctx, `SELECT new_value->'removed_addresses'->>0 FROM audit_entry
+		WHERE business_id=$1 AND action='email_domain.verification_lost' AND target_id=$2`,
+		first.master, edFirst.ID).Scan(&listed); err != nil || listed != address {
+		t.Fatalf("audit removed address = %q, %v; want %q", listed, err, address)
+	}
+
+	// The claimant can now claim the same local part and mail routes to it.
+	claimed, err := svc.CreateInboundAddress(ctx, second.owner, second.master, CreateInboundAddressInput{Address: address, EmailDomainID: edSecond.ID})
+	if err != nil {
+		t.Fatalf("claimant CreateInboundAddress after takeover: %v", err)
+	}
+	var routed uuid.UUID
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT inbound_address_id FROM resolve_inbound_address_for_business($1, $2)`, second.master, address).Scan(&routed)
+	}); err != nil || routed != claimed.ID {
+		t.Fatalf("claimant resolve = %v, %v; want %v", routed, err, claimed.ID)
+	}
 }

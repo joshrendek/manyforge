@@ -29,6 +29,8 @@ func TestMF017DomainTakeoverIsScopedDefiner(t *testing.T) {
 		"v_claimant.verify_token = ANY",        // claimant must prove control now
 		"v_incumbent.verify_token = ANY",       // incumbent still proving control blocks takeover
 		"business_id = p_claimant_business_id", // claimant ownership predicate in SQL
+		"DELETE FROM inbound_address",          // incumbent's custom rows must not lock out the claimant
+		"'removed_addresses'",                  // and the removal is audited
 		"'email_domain.verification_lost'",     // demotion is audited on the incumbent
 	} {
 		if !strings.Contains(body, want) {

@@ -83,7 +83,7 @@ globally unique, a business that lost DNS control would otherwise block the real
 owner forever. `VerifyEmailDomain` calls this before marking the claimant
 verified, passing the TXT values it observed at `_manyforge.<domain>`. The
 function (not the caller) decides: it demotes the incumbent (`verified_at = NULL`,
-audited as `email_domain.verification_lost` on the incumbent's business) only when
+audited as `email_domain.verification_lost` on the incumbent's business, with its custom inbound addresses deleted and listed in the audit `removed_addresses`, because the custom-address unique index ignores verification and would otherwise lock the claimant out) only when
 the claimant's unverified, caller-owned row has its token among the observed
 values AND the incumbent's token is not. Returns true only when it demoted. In
 every other case it changes nothing, and the subsequent mark hits the unique

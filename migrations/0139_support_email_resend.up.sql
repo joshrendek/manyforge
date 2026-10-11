@@ -222,6 +222,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
     v_claimant email_domain%ROWTYPE;
     v_incumbent email_domain%ROWTYPE;
+    v_removed text[];
 BEGIN
     SELECT * INTO v_claimant FROM email_domain
      WHERE id = p_claimant_id AND business_id = p_claimant_business_id
@@ -237,12 +238,23 @@ BEGIN
         RETURN false;
     END IF;
     UPDATE email_domain SET verified_at = NULL, updated_at = now() WHERE id = v_incumbent.id;
+    -- The custom-address unique index ignores verification, so the demoted
+    -- incumbent's addresses would lock the claimant out of the same local parts.
+    -- Nothing references inbound_address by id (no FKs; tenant merge only counts rows).
+    WITH gone AS (
+        DELETE FROM inbound_address
+         WHERE email_domain_id = v_incumbent.id AND kind = 'custom'
+        RETURNING address
+    )
+    SELECT COALESCE(array_agg(address::text ORDER BY address), '{}') INTO v_removed FROM gone;
     INSERT INTO audit_entry (id, business_id, tenant_root_id, actor_principal_id, action,
                              target_type, target_id, old_value, new_value, created_at)
     VALUES (gen_random_uuid(), v_incumbent.business_id, v_incumbent.tenant_root_id, p_actor,
             'email_domain.verification_lost', 'email_domain', v_incumbent.id,
             jsonb_build_object('domain', v_incumbent.domain, 'verified', true),
-            jsonb_build_object('domain', v_incumbent.domain, 'verified', false, 'reason', 'taken_over_by_dns_proof'),
+            jsonb_build_object('domain', v_incumbent.domain, 'verified', false, 'reason', 'taken_over_by_dns_proof',
+                               'removed_address_count', COALESCE(array_length(v_removed, 1), 0),
+                               'removed_addresses', to_jsonb(v_removed)),
             now());
     RETURN true;
 END;
