@@ -124,7 +124,7 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                   @for (a of m.attachments; track a.id) {
                     <li class="attachment" data-testid="attachment">
                       <span class="filename">{{ a.filename }}</span>
-                      <span class="muted">{{ a.content_type }} · {{ a.size }} bytes</span>
+                      <span class="muted">{{ a.content_type }} · {{ bytes(a.size) }}</span>
                     </li>
                   }
                 </ul>
