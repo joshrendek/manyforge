@@ -42,7 +42,7 @@ import java.util.UUID;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
 @JsonPropertyOrder({ "attachments", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id" })
-@com.manyforge.sdk.ModelShape(required = { "attachments", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id",  }, nonNullable = { "attachments", "created_at", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "references", "spf_result", "ticket_id",  })
+@com.manyforge.sdk.ModelShape(required = { "attachments", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id",  }, nonNullable = { "attachments", "created_at", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "references", "spf_result", "ticket_id",  })
 public class TicketMessage {
 
   @JsonProperty("attachments")

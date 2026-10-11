@@ -38,7 +38,7 @@ class TicketMessage(Model):
     direction: MessageDirection = Field(..., alias="direction")
     dkim_result: DnsRecordState = Field(..., alias="dkim_result")
     dmarc_result: DnsRecordState = Field(..., alias="dmarc_result")
-    dropped_attachments: List[DroppedAttachment] = Field(..., alias="dropped_attachments")
+    dropped_attachments: List[DroppedAttachment] | UnsetType = Field(default=UNSET, alias="dropped_attachments")
     id: UUID = Field(..., alias="id")
     in_reply_to: str | None = Field(..., alias="in_reply_to")
     message_id: str | None = Field(..., alias="message_id")

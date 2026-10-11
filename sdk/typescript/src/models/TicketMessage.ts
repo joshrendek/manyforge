@@ -29,7 +29,7 @@ export interface TicketMessage {
     direction: MessageDirection;
     dkimResult: DnsRecordState;
     dmarcResult: DnsRecordState;
-    droppedAttachments: Array<DroppedAttachment>;
+    droppedAttachments?: Array<DroppedAttachment>;
     id: string;
     inReplyTo: string | null;
     messageId: string | null;

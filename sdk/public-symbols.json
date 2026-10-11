@@ -31886,12 +31886,12 @@
                 {
                   "name": "9",
                   "required": true,
-                  "type": "[]github.com/joshrendek/manyforge/sdk/go.DroppedAttachment"
+                  "type": "string"
                 },
                 {
                   "name": "10",
                   "required": true,
-                  "type": "string"
+                  "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
                 },
                 {
                   "name": "11",
@@ -31901,20 +31901,15 @@
                 {
                   "name": "12",
                   "required": true,
-                  "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+                  "type": "[]string"
                 },
                 {
                   "name": "13",
                   "required": true,
-                  "type": "[]string"
-                },
-                {
-                  "name": "14",
-                  "required": true,
                   "type": "github.com/joshrendek/manyforge/sdk/go.DnsRecordState"
                 },
                 {
-                  "name": "15",
+                  "name": "14",
                   "required": true,
                   "type": "string"
                 }
@@ -43024,10 +43019,10 @@
             },
             "DroppedAttachments": {
               "embedded": false,
-              "json": "dropped_attachments",
+              "json": "dropped_attachments,omitzero",
               "kind": "field",
-              "required": true,
-              "type": "[]github.com/joshrendek/manyforge/sdk/go.DroppedAttachment"
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[[]github.com/joshrendek/manyforge/sdk/go.DroppedAttachment]"
             },
             "Id": {
               "embedded": false,
@@ -168775,7 +168770,6 @@
             "direction",
             "dkim_result",
             "dmarc_result",
-            "dropped_attachments",
             "id",
             "in_reply_to",
             "message_id",
@@ -294900,8 +294894,8 @@
             "dropped_attachments": {
               "alias": "dropped_attachments",
               "kind": "field",
-              "required": true,
-              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
+              "required": false,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment] | manyforge.model_support.UnsetType"
             },
             "from_dict": {
               "binding": "class",
@@ -297118,8 +297112,8 @@
             "dropped_attachments": {
               "alias": "dropped_attachments",
               "kind": "field",
-              "required": true,
-              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
+              "required": false,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment] | manyforge.model_support.UnsetType"
             },
             "from_dict": {
               "binding": "class",
@@ -366660,8 +366654,8 @@
             "dropped_attachments": {
               "alias": "dropped_attachments",
               "kind": "field",
-              "required": true,
-              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
+              "required": false,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment] | manyforge.model_support.UnsetType"
             },
             "from_dict": {
               "binding": "class",
@@ -495861,8 +495855,8 @@
             "dropped_attachments": {
               "alias": "dropped_attachments",
               "kind": "field",
-              "required": true,
-              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
+              "required": false,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment] | manyforge.model_support.UnsetType"
             },
             "from_dict": {
               "binding": "class",
@@ -496231,8 +496225,8 @@
             "dropped_attachments": {
               "alias": "dropped_attachments",
               "kind": "field",
-              "required": true,
-              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
+              "required": false,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment] | manyforge.model_support.UnsetType"
             },
             "from_dict": {
               "binding": "class",
@@ -585883,8 +585877,8 @@
             "droppedAttachments": {
               "kind": "field",
               "readonly": false,
-              "required": true,
-              "type": "DroppedAttachment[]"
+              "required": false,
+              "type": "DroppedAttachment[] | undefined"
             },
             "id": {
               "kind": "field",
@@ -612418,8 +612412,8 @@
             "droppedAttachments": {
               "kind": "field",
               "readonly": false,
-              "required": true,
-              "type": "DroppedAttachment[]"
+              "required": false,
+              "type": "DroppedAttachment[] | undefined"
             },
             "id": {
               "kind": "field",
@@ -639056,8 +639050,8 @@
             "droppedAttachments": {
               "kind": "field",
               "readonly": false,
-              "required": true,
-              "type": "DroppedAttachment[]"
+              "required": false,
+              "type": "DroppedAttachment[] | undefined"
             },
             "id": {
               "kind": "field",
@@ -678613,8 +678607,8 @@
             "droppedAttachments": {
               "kind": "field",
               "readonly": false,
-              "required": true,
-              "type": "DroppedAttachment[]"
+              "required": false,
+              "type": "DroppedAttachment[] | undefined"
             },
             "id": {
               "kind": "field",
@@ -705148,8 +705142,8 @@
             "droppedAttachments": {
               "kind": "field",
               "readonly": false,
-              "required": true,
-              "type": "DroppedAttachment[]"
+              "required": false,
+              "type": "DroppedAttachment[] | undefined"
             },
             "id": {
               "kind": "field",
@@ -731786,8 +731780,8 @@
             "droppedAttachments": {
               "kind": "field",
               "readonly": false,
-              "required": true,
-              "type": "DroppedAttachment[]"
+              "required": false,
+              "type": "DroppedAttachment[] | undefined"
             },
             "id": {
               "kind": "field",

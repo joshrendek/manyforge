@@ -21304,7 +21304,6 @@ components:
       - body_text
       - body_html
       - attachments
-      - dropped_attachments
       - spf_result
       - dkim_result
       - dmarc_result
