@@ -1,3 +1,4 @@
+DROP FUNCTION IF EXISTS email_domain_takeover_stale(uuid, uuid, text[], uuid);
 DROP FUNCTION IF EXISTS mailing_list_verified_resend_profiles(integer);
 DROP FUNCTION IF EXISTS mailing_record_received_webhook(uuid, text);
 DROP FUNCTION IF EXISTS mailing_received_webhook_state(uuid, text);

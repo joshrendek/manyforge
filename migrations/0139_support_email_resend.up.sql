@@ -210,6 +210,44 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     LIMIT GREATEST(0, LEAST(COALESCE(p_limit, 0), 1000));
 $$;
 
+-- MF-017 domain takeover-on-stale-verification. The global unique index would let
+-- a business that once verified a domain hold it forever. When a claimant proves
+-- control NOW (its token is among the observed TXT values) and the incumbent's
+-- token is no longer published, demote the incumbent so the claimant can verify.
+-- The app role never reads the incumbent row: the observed TXT values are passed
+-- in and the decision is made here. Returns true only when an incumbent was demoted.
+CREATE FUNCTION email_domain_takeover_stale(p_claimant_id uuid, p_claimant_business_id uuid, p_observed_txt text[], p_actor uuid)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+    v_claimant email_domain%ROWTYPE;
+    v_incumbent email_domain%ROWTYPE;
+BEGIN
+    SELECT * INTO v_claimant FROM email_domain
+     WHERE id = p_claimant_id AND business_id = p_claimant_business_id
+       AND verified_at IS NULL;
+    IF NOT FOUND OR NOT (v_claimant.verify_token = ANY (COALESCE(p_observed_txt, '{}'))) THEN
+        RETURN false;
+    END IF;
+    SELECT * INTO v_incumbent FROM email_domain
+     WHERE domain = v_claimant.domain AND verified_at IS NOT NULL
+       AND id <> v_claimant.id
+     FOR UPDATE;
+    IF NOT FOUND OR v_incumbent.verify_token = ANY (COALESCE(p_observed_txt, '{}')) THEN
+        RETURN false;
+    END IF;
+    UPDATE email_domain SET verified_at = NULL, updated_at = now() WHERE id = v_incumbent.id;
+    INSERT INTO audit_entry (id, business_id, tenant_root_id, actor_principal_id, action,
+                             target_type, target_id, old_value, new_value, created_at)
+    VALUES (gen_random_uuid(), v_incumbent.business_id, v_incumbent.tenant_root_id, p_actor,
+            'email_domain.verification_lost', 'email_domain', v_incumbent.id,
+            jsonb_build_object('domain', v_incumbent.domain, 'verified', true),
+            jsonb_build_object('domain', v_incumbent.domain, 'verified', false, 'reason', 'taken_over_by_dns_proof'),
+            now());
+    RETURN true;
+END;
+$$;
+
 REVOKE ALL ON FUNCTION resolve_inbound_address_for_business(uuid, citext) FROM PUBLIC;
 REVOKE ALL ON FUNCTION get_resend_support_identity(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION set_message_dropped_attachments(uuid, uuid, jsonb) FROM PUBLIC;
@@ -224,3 +262,5 @@ GRANT EXECUTE ON FUNCTION support_audit_inbound_dropped(uuid, text, text, text) 
 GRANT EXECUTE ON FUNCTION mailing_received_webhook_state(uuid, text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_record_received_webhook(uuid, text) TO manyforge_app;
 GRANT EXECUTE ON FUNCTION mailing_list_verified_resend_profiles(integer) TO manyforge_app;
+REVOKE ALL ON FUNCTION email_domain_takeover_stale(uuid, uuid, text[], uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION email_domain_takeover_stale(uuid, uuid, text[], uuid) TO manyforge_app;

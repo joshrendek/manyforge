@@ -114,6 +114,7 @@ func assertSupportEmailResendObjects(t *testing.T, ctx context.Context, database
 		"drop audit":           `SELECT to_regprocedure('support_audit_inbound_dropped(uuid,text,text,text)') IS NOT NULL`,
 		"received state":       `SELECT to_regprocedure('mailing_received_webhook_state(uuid,text)') IS NOT NULL`,
 		"received record":      `SELECT to_regprocedure('mailing_record_received_webhook(uuid,text)') IS NOT NULL`,
+		"domain takeover":      `SELECT to_regprocedure('email_domain_takeover_stale(uuid,uuid,text[],uuid)') IS NOT NULL`,
 		"profile sweep list":   `SELECT to_regprocedure('mailing_list_verified_resend_profiles(integer)') IS NOT NULL`,
 	}
 	for name, q := range checks {

@@ -338,12 +338,22 @@ func (s *IdentityService) VerifyEmailDomain(ctx context.Context, principalID, bu
 
 		// Ownership TXT poll.
 		published := false
-		if recs, _ := s.Resolver.LookupTXT(ctx, "_manyforge."+row.Domain); containsExact(recs, row.VerifyToken) {
+		recs, _ := s.Resolver.LookupTXT(ctx, "_manyforge."+row.Domain)
+		if containsExact(recs, row.VerifyToken) {
 			published = true
 		}
 
 		alreadyVerified := row.VerifiedAt.Valid
 		if published && !alreadyVerified {
+			// MF-017: a verified domain is globally unique. If another business holds it
+			// but no longer publishes its token while we do, the DEFINER demotes the
+			// stale incumbent (audited) so this claim can proceed; otherwise the mark
+			// below hits the unique index and maps to 409.
+			var demoted bool
+			if terr := tx.QueryRow(ctx, `SELECT email_domain_takeover_stale($1, $2, $3, $4)`,
+				row.ID, businessID, recs, principalID).Scan(&demoted); terr != nil {
+				return terr
+			}
 			if uerr := q.MarkEmailDomainVerified(ctx, dbgen.MarkEmailDomainVerifiedParams{
 				ID: row.ID, BusinessID: businessID, TenantRootID: row.TenantRootID,
 			}); uerr != nil {

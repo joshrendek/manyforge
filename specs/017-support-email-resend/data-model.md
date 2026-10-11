@@ -76,6 +76,19 @@ address wins). Returning the row for a non-verified profile lets the caller
 refuse to send instead of silently falling back to the shared transport (R11).
 No row means no Resend setup, so the caller uses the shared transport (R12).
 
+### `email_domain_takeover_stale(p_claimant_id uuid, p_claimant_business_id uuid, p_observed_txt text[], p_actor uuid) -> boolean`
+
+MF-017 domain takeover-on-stale-verification. Because verified domains are
+globally unique, a business that lost DNS control would otherwise block the real
+owner forever. `VerifyEmailDomain` calls this before marking the claimant
+verified, passing the TXT values it observed at `_manyforge.<domain>`. The
+function (not the caller) decides: it demotes the incumbent (`verified_at = NULL`,
+audited as `email_domain.verification_lost` on the incumbent's business) only when
+the claimant's unverified, caller-owned row has its token among the observed
+values AND the incumbent's token is not. Returns true only when it demoted. In
+every other case it changes nothing, and the subsequent mark hits the unique
+index and surfaces as 409. The app role never reads the incumbent row.
+
 ### `set_message_dropped_attachments(p_message_id uuid, p_tenant_root_id uuid, p_dropped jsonb) -> boolean`
 
 Sets `dropped_attachments` on an inbound message (array, at most 50 elements)
@@ -118,4 +131,4 @@ webhook sweep (R1).
 
 ## Down migration
 
-Drops both indexes, all seven functions, and the `dropped_attachments` column.
+Drops both indexes, all eight functions, and the `dropped_attachments` column.

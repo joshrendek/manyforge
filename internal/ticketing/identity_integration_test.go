@@ -576,3 +576,62 @@ func TestIdentityProviderRouteDKIMIsInformational(t *testing.T) {
 		t.Fatalf("list = %+v, %v; want one domain with dkim_state unknown", list, err)
 	}
 }
+
+// MF-017 domain takeover-on-stale-verification: when the incumbent no longer
+// publishes its token and the claimant does, the claimant verifies, the incumbent
+// is demoted (audited) and its custom address stops routing.
+func TestIdentityVerifyEmailDomainTakesOverStaleIncumbent(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	first := seedReadTenant(ctx, t, tdb)
+	second := seedReadTenant(ctx, t, tdb)
+	resolver := newStubResolver()
+	svc := newIdentityService(tdb, resolver)
+
+	domain := uniqueDomain("stale")
+	edFirst, err := svc.CreateEmailDomain(ctx, first.owner, first.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edSecond, err := svc.CreateEmailDomain(ctx, second.owner, second.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.records["_manyforge."+domain] = []string{edFirst.DNSChallenge.VerificationTXT.Value}
+	if got, err := svc.VerifyEmailDomain(ctx, first.owner, first.master, edFirst.ID); err != nil || got.Verification != "verified" {
+		t.Fatalf("incumbent verify = %+v, %v", got, err)
+	}
+	address := "support@" + domain
+	if _, err := svc.CreateInboundAddress(ctx, first.owner, first.master, CreateInboundAddressInput{Address: address, EmailDomainID: edFirst.ID}); err != nil {
+		t.Fatalf("incumbent address: %v", err)
+	}
+	resolves := func() bool {
+		var n int
+		if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM resolve_inbound_address_for_business($1, $2)`, first.master, address).Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+	if !resolves() {
+		t.Fatal("incumbent address should resolve before takeover")
+	}
+
+	// Incumbent lost DNS control: only the claimant's token is published now.
+	resolver.records["_manyforge."+domain] = []string{edSecond.DNSChallenge.VerificationTXT.Value}
+	if got, err := svc.VerifyEmailDomain(ctx, second.owner, second.master, edSecond.ID); err != nil || got.Verification != "verified" {
+		t.Fatalf("claimant verify = %+v, %v; want verified", got, err)
+	}
+	if va, _, _ := emailDomainRow(ctx, t, tdb, edFirst.ID); va != nil {
+		t.Fatalf("incumbent verified_at = %v, want NULL after takeover", va)
+	}
+	if resolves() {
+		t.Fatal("incumbent custom address still resolves after takeover")
+	}
+	var audits int
+	if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FROM audit_entry
+		WHERE business_id=$1 AND action='email_domain.verification_lost' AND target_id=$2`,
+		first.master, edFirst.ID).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("verification_lost audits = %d, %v; want 1", audits, err)
+	}
+}
