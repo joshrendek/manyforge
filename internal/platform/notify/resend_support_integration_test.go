@@ -3,8 +3,11 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -63,6 +66,30 @@ func seedResendIdentity(ctx context.Context, t *testing.T, tdb *testdb.TestDB, s
 	return customAddr, profileID
 }
 
+// captureLog returns a JSON logger and the buffer it writes to.
+func captureLog() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewJSONHandler(&buf, nil)), &buf
+}
+
+// assertFinalFailureLog checks the one final-attempt log line carries the stable
+// reason class and none of the recipient, reply token, or body.
+func assertFinalFailureLog(t *testing.T, buf *bytes.Buffer, st sendTenant, reason string) {
+	t.Helper()
+	out := buf.String()
+	if got := strings.Count(out, "reply failed on final attempt"); got != 1 {
+		t.Fatalf("final-attempt log lines = %d, want 1:\n%s", got, out)
+	}
+	if !strings.Contains(out, `"reason":"`+reason+`"`) {
+		t.Fatalf("final-attempt log missing reason %q:\n%s", reason, out)
+	}
+	for _, secret := range []string{st.recipient, st.replyToken, st.replyBody} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("log leaked %q:\n%s", secret, out)
+		}
+	}
+}
+
 func handleWith(ctx context.Context, t *testing.T, tdb *testdb.TestDB, sub SendSubscriber, ev events.Event) error {
 	t.Helper()
 	return tdb.App.WithTx(ctx, func(tx pgx.Tx) error { return sub.Handle(ctx, tx, ev) })
@@ -107,7 +134,8 @@ func TestSendResendProfileFailureRetriesThenFails(t *testing.T) {
 	seedResendIdentity(ctx, t, tdb, st, "verified")
 	shared := &captureSender{}
 	profile := &captureProfileSender{err: errors.New("provider: http 403 validation_error: ")}
-	sub := SendSubscriber{Sender: shared, ProfileSender: profile}
+	logger, logs := captureLog()
+	sub := SendSubscriber{Sender: shared, ProfileSender: profile, Logger: logger}
 
 	ev := repliedEvent(t, st)
 	ev.Attempts, ev.MaxAttempts = 0, 3
@@ -127,6 +155,7 @@ func TestSendResendProfileFailureRetriesThenFails(t *testing.T) {
 	if shared.calls != 0 {
 		t.Fatalf("shared transport used %d times, want 0 (no fallback)", shared.calls)
 	}
+	assertFinalFailureLog(t, logs, st, "send_error")
 }
 
 // R11: an unverified profile does not fall back either.
@@ -136,7 +165,8 @@ func TestSendResendProfileUnverifiedNoFallback(t *testing.T) {
 	seedResendIdentity(ctx, t, tdb, st, "error")
 	shared := &captureSender{}
 	profile := &captureProfileSender{}
-	sub := SendSubscriber{Sender: shared, ProfileSender: profile}
+	logger, logs := captureLog()
+	sub := SendSubscriber{Sender: shared, ProfileSender: profile, Logger: logger}
 	ev := repliedEvent(t, st)
 	ev.Attempts, ev.MaxAttempts = 9, 10
 	if err := handleWith(ctx, t, tdb, sub, ev); err != nil {
@@ -148,6 +178,7 @@ func TestSendResendProfileUnverifiedNoFallback(t *testing.T) {
 	if got := deliveryState(ctx, t, tdb, st.messageRowID); got != "failed" {
 		t.Fatalf("delivery_state = %q, want failed", got)
 	}
+	assertFinalFailureLog(t, logs, st, "profile_unverified")
 }
 
 func TestSendResendSuppressedRecipient(t *testing.T) {
@@ -171,7 +202,8 @@ func TestSendSharedTransportFinalAttemptMarksFailed(t *testing.T) {
 	st := seedSendTenant(ctx, t, tdb, "pending")
 	shared := &captureSender{err: errors.New("relay down")}
 	profile := &captureProfileSender{}
-	sub := SendSubscriber{Sender: shared, ProfileSender: profile}
+	logger, logs := captureLog()
+	sub := SendSubscriber{Sender: shared, ProfileSender: profile, Logger: logger}
 	ev := repliedEvent(t, st)
 	ev.Attempts, ev.MaxAttempts = 9, 10
 	if err := handleWith(ctx, t, tdb, sub, ev); err != nil {
@@ -183,6 +215,7 @@ func TestSendSharedTransportFinalAttemptMarksFailed(t *testing.T) {
 	if got := deliveryState(ctx, t, tdb, st.messageRowID); got != "failed" {
 		t.Fatalf("delivery_state = %q, want failed", got)
 	}
+	assertFinalFailureLog(t, logs, st, "send_error")
 }
 
 type failingSuppression struct{}
@@ -198,11 +231,15 @@ func TestSendResendSuppressionErrorFinalAttemptMarksFailed(t *testing.T) {
 	st := seedSendTenant(ctx, t, tdb, "pending")
 	seedResendIdentity(ctx, t, tdb, st, "verified")
 	profile := &captureProfileSender{}
-	sub := SendSubscriber{Sender: &captureSender{}, ProfileSender: profile, Suppression: failingSuppression{}}
+	logger, logs := captureLog()
+	sub := SendSubscriber{Sender: &captureSender{}, ProfileSender: profile, Suppression: failingSuppression{}, Logger: logger}
 	ev := repliedEvent(t, st)
 	ev.Attempts, ev.MaxAttempts = 0, 3
 	if err := handleWith(ctx, t, tdb, sub, ev); err == nil {
 		t.Fatal("non-final suppression error returned nil, want an error so the worker retries")
+	}
+	if got := deliveryState(ctx, t, tdb, st.messageRowID); got != "pending" {
+		t.Fatalf("after non-final suppression error delivery_state = %q, want pending", got)
 	}
 	ev.Attempts = 2
 	if err := handleWith(ctx, t, tdb, sub, ev); err != nil {
@@ -214,4 +251,5 @@ func TestSendResendSuppressionErrorFinalAttemptMarksFailed(t *testing.T) {
 	if got := deliveryState(ctx, t, tdb, st.messageRowID); got != "failed" {
 		t.Fatalf("delivery_state = %q, want failed", got)
 	}
+	assertFinalFailureLog(t, logs, st, "suppression_lookup")
 }

@@ -158,13 +158,6 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 	// our stable Reply-To token (threads a reply back rather than spawning a new
 	// ticket), and the inbound side's is_auto_reply guard bounds machine loops.
 
-	// Outbound identity selection (FR-013): if this business owns a VERIFIED custom
-	// email_domain with a generated DKIM key + a custom inbound_address, send FROM
-	// that address and DKIM-sign as that domain. Otherwise keep the system From and
-	// leave Mail.DKIM nil. get_send_identity (DEFINER 0023) bypasses RLS — this tx is
-	// principal-less, exactly like the get_send_context read above. Custom signing is
-	// strictly best-effort: a miss, a nil Sealer, a decrypt failure, or a malformed
-	// key NEVER fails the send — it falls back to the always-available system identity.
 	// Spec 017: a business with a Resend support identity replies through its own
 	// profile from its custom address. That path never falls back to the shared
 	// transport (R11): a different From domain would break threading and alignment.
@@ -176,6 +169,13 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 		return s.sendViaSupportProfile(ctx, tx, e, p, mail, identity)
 	}
 
+	// Outbound identity selection (FR-013): if this business owns a VERIFIED custom
+	// email_domain with a generated DKIM key + a custom inbound_address, send FROM
+	// that address and DKIM-sign as that domain. Otherwise keep the system From and
+	// leave Mail.DKIM nil. get_send_identity (DEFINER 0023) bypasses RLS — this tx is
+	// principal-less, exactly like the get_send_context read above. Custom signing is
+	// strictly best-effort: a miss, a nil Sealer, a decrypt failure, or a malformed
+	// key NEVER fails the send — it falls back to the always-available system identity.
 	s.selectCustomIdentity(ctx, tx, &mail, p.BusinessID, e.TenantRootID)
 
 	if serr := s.Sender.Send(ctx, mail); serr != nil {
@@ -194,7 +194,7 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 		if e.IsFinalAttempt() {
 			// R13: record the terminal outcome so the UI shows Delivery failed instead
 			// of a reply stuck pending after the worker dead-letters the event.
-			return s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "failed", "delivery failed after retries")
+			return s.markFinalFailure(ctx, tx, e, p, "shared", failSendError, "delivery failed after retries")
 		}
 		return fmt.Errorf("notify: send: dispatch: %w", serr)
 	}
@@ -300,9 +300,10 @@ func (s SendSubscriber) sendViaSupportProfile(ctx context.Context, tx pgx.Tx, e 
 	if s.Suppression != nil {
 		suppressed, err := s.Suppression.IsSuppressed(ctx, mail.To)
 		if err != nil {
+			s.Metrics.Inc(observability.MetricOutboundFailed)
 			if e.IsFinalAttempt() {
 				// The lookup runs outside tx, so tx is still usable for the terminal mark.
-				return s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "failed", "support profile delivery failed")
+				return s.markFinalFailure(ctx, tx, e, p, "support_profile", failSuppressionLookup, "support profile delivery failed")
 			}
 			return fmt.Errorf("notify: send: suppression check: %w", err)
 		}
@@ -312,27 +313,47 @@ func (s SendSubscriber) sendViaSupportProfile(ctx context.Context, tx pgx.Tx, e 
 		}
 	}
 
-	var serr error
+	var (
+		serr   error
+		reason string
+	)
 	switch {
 	case s.ProfileSender == nil:
-		serr = errors.New("support profile sender not configured")
+		serr, reason = errors.New("support profile sender not configured"), failSenderUnconfigured
 	case id.profileStatus != "verified":
-		serr = errors.New("support sending profile is not verified")
+		serr, reason = errors.New("support sending profile is not verified"), failProfileUnverified
 	default:
-		serr = s.ProfileSender.SendSupportReply(ctx, id.profileID, mail)
+		serr, reason = s.ProfileSender.SendSupportReply(ctx, id.profileID, mail), failSendError
 	}
 	if serr != nil {
 		s.Metrics.Inc(observability.MetricOutboundFailed)
 		if e.IsFinalAttempt() {
-			s.logger().WarnContext(ctx, "send: support profile delivery failed on final attempt",
-				"message_row_id", p.MessageRowID, "business_id", p.BusinessID)
-			return s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "failed", "support profile delivery failed")
+			return s.markFinalFailure(ctx, tx, e, p, "support_profile", reason, "support profile delivery failed")
 		}
 		return fmt.Errorf("notify: send: support profile dispatch: %w", serr)
 	}
 	s.Metrics.Inc(observability.MetricOutboundSent)
 	s.logger().InfoContext(ctx, "notify: reply sent via support profile", "message_id", p.RFCMessageID)
 	return s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "sent", "")
+}
+
+// Stable reason classes for a reply marked failed on its final attempt. They are
+// log fields for alerting, so keep them fixed.
+const (
+	failSuppressionLookup  = "suppression_lookup"
+	failSendError          = "send_error"
+	failProfileUnverified  = "profile_unverified"
+	failSenderUnconfigured = "profile_sender_unconfigured"
+)
+
+// markFinalFailure records the terminal 'failed' outcome of a reply's last attempt
+// (R13) and logs it once with a stable reason class. Only IDs are logged: never the
+// recipient, the body, or the reply token.
+func (s SendSubscriber) markFinalFailure(ctx context.Context, tx pgx.Tx, e events.Event, p repliedPayload, transport, reason, errReason string) error {
+	s.logger().WarnContext(ctx, "send: reply failed on final attempt",
+		"reason", reason, "transport", transport, "message_row_id", p.MessageRowID,
+		"business_id", p.BusinessID, "event_id", e.ID, "attempts", e.Attempts+1)
+	return s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "failed", errReason)
 }
 
 func (s SendSubscriber) logger() *slog.Logger {

@@ -125,11 +125,7 @@ func BuildMIME(m Mail) ([]byte, error) {
 		h("In-Reply-To", "<"+m.InReplyTo+">")
 	}
 	if len(m.References) > 0 {
-		refs := make([]string, len(m.References))
-		for i, r := range m.References {
-			refs[i] = "<" + r + ">"
-		}
-		h("References", strings.Join(refs, " "))
+		h("References", ReferencesHeader(m.References))
 	}
 	h("Reply-To", m.ReplyTo)
 	h("Auto-Submitted", m.AutoSubmitted)
@@ -215,4 +211,15 @@ func signDKIM(raw []byte, cfg DKIMConfig) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// ReferencesHeader formats a thread chain as the RFC 5322 References value
+// ("<a> <b>"). BuildMIME and the API transports share it so every transport threads
+// identically.
+func ReferencesHeader(refs []string) string {
+	ids := make([]string, len(refs))
+	for i, r := range refs {
+		ids[i] = "<" + r + ">"
+	}
+	return strings.Join(ids, " ")
 }

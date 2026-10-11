@@ -82,17 +82,13 @@ func (r *Resend) Send(ctx context.Context, mail notify.Mail) (SendResult, error)
 	if mail.MessageID != "" {
 		headers["Message-ID"] = "<" + mail.MessageID + ">"
 	}
-	// Threading headers, formatted exactly as BuildMIME writes them, so a support
+	// Threading headers, formatted as BuildMIME writes them, so a support
 	// reply threads under the customer's message (spec 017).
 	if mail.InReplyTo != "" {
 		headers["In-Reply-To"] = "<" + mail.InReplyTo + ">"
 	}
 	if len(mail.References) > 0 {
-		refs := make([]string, len(mail.References))
-		for i, ref := range mail.References {
-			refs[i] = "<" + ref + ">"
-		}
-		headers["References"] = strings.Join(refs, " ")
+		headers["References"] = notify.ReferencesHeader(mail.References)
 	}
 	if mail.AutoSubmitted != "" {
 		headers["Auto-Submitted"] = mail.AutoSubmitted
