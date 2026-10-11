@@ -1,11 +1,24 @@
 package inbox
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/ticketing"
 )
+
+// fileStore opens a throwaway file:// blob store, so allowed parts are staged.
+func fileStore(t *testing.T) blob.Store {
+	t.Helper()
+	store, err := blob.Open(context.Background(), "file://"+t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
 
 func TestSanitizeAttachmentFilenameStripsControlsAndBounds(t *testing.T) {
 	if got := sanitizeAttachmentFilename("bad\x00na\x07me\x7f.exe"); got != "badname.exe" {
@@ -21,7 +34,7 @@ func TestSanitizeAttachmentFilenameStripsControlsAndBounds(t *testing.T) {
 }
 
 func TestSniffAttachmentsDropsDisallowedAndOversized(t *testing.T) {
-	svc := &Service{cfg: Config{AttachmentMaxBytes: 64}}
+	svc := &Service{blob: fileStore(t), cfg: Config{AttachmentMaxBytes: 64}}
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
 	elf := []byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	big := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 100)...)
@@ -51,5 +64,20 @@ func TestSniffAttachmentsBoundsDroppedList(t *testing.T) {
 	_, dropped := svc.sniffAttachments(parts)
 	if len(dropped) != maxDroppedAttachments {
 		t.Fatalf("dropped len = %d, want %d (CHECK caps the column at 50)", len(dropped), maxDroppedAttachments)
+	}
+}
+
+// I2a: with no blob store (MANYFORGE_BLOB_URL unset) an allowed part cannot be
+// stored, so it is recorded as dropped rather than discarded without a trace.
+func TestSniffAttachmentsWithoutBlobStoreDropsAllowedParts(t *testing.T) {
+	svc := &Service{cfg: Config{AttachmentMaxBytes: 64}}
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
+	staged, dropped := svc.sniffAttachments([]ParsedAttachment{{FileName: "shot.png", Content: png}})
+	if len(staged) != 0 {
+		t.Fatalf("staged = %+v, want none without a blob store", staged)
+	}
+	want := ticketing.DroppedAttachment{Filename: "shot.png", DetectedType: "image/png", Size: int64(len(png))}
+	if len(dropped) != 1 || dropped[0] != want {
+		t.Fatalf("dropped = %+v, want [%+v]", dropped, want)
 	}
 }

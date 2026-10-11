@@ -10898,7 +10898,7 @@
             "$ref": "#/components/schemas/DnsRecordState"
           },
           "dropped_attachments": {
-            "description": "Inbound attachments that were not stored because their sniffed type is not allowed or they exceed the size cap (spec 017 R15). No bytes are retained.",
+            "description": "Inbound attachments that were not stored because their sniffed type is not allowed, they exceed the size cap, or attachment storage is not configured (spec 017 R15). No bytes are retained.",
             "items": {
               "$ref": "#/components/schemas/DroppedAttachment"
             },

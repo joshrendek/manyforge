@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -116,5 +117,49 @@ func TestIngestDroppedAttachmentFilenameWithNULStillIngests(t *testing.T) {
 	var dropped []ticketing.DroppedAttachment
 	if err := json.Unmarshal(raw, &dropped); err != nil || len(dropped) != 1 || dropped[0].Filename != "badname.exe" {
 		t.Fatalf("dropped = %+v (%v), want filename badname.exe", dropped, err)
+	}
+}
+
+// I2a: with attachments disabled (no blob store) the allowlisted PNG is recorded
+// as dropped alongside the disallowed part, so the thread shows both as not stored.
+func TestIngestWithoutBlobStoreRecordsAllowedAttachmentAsDropped(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	ten := seedIngestTenant(ctx, t, tdb)
+	svc := NewService(tdb.App, nil, Config{
+		ReplyTokenKey:       []byte("test-reply-token-key-0123456789ab"),
+		AttachmentMaxBytes:  25 << 20,
+		InboundSystemDomain: systemDomain,
+	}, slog.New(slog.NewTextHandler(nopWriter{}, nil)))
+
+	res, err := svc.Ingest(ctx, RawMessage{
+		Provider: "webhook:test", EnvelopeRecipient: ten.address, EnvelopeSender: "ada@example.com",
+		ReceivedAt: time.Now(),
+		Raw:        mixedAttachmentMessage(ten.address, "ada@example.com", "screenshot", "noblob-1@example.com", "utf-8''invoice.exe"),
+	})
+	if err != nil {
+		t.Fatalf("ingest without a blob store: %v", err)
+	}
+	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM attachment WHERE ticket_message_id=$1", res.MessageID); n != 0 {
+		t.Fatalf("stored attachments = %d, want 0 without a blob store", n)
+	}
+	var raw []byte
+	if err := tdb.Super.QueryRow(ctx, "SELECT dropped_attachments FROM ticket_message WHERE id=$1", res.MessageID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var dropped []ticketing.DroppedAttachment
+	if err := json.Unmarshal(raw, &dropped); err != nil {
+		t.Fatal(err)
+	}
+	want := []ticketing.DroppedAttachment{
+		{Filename: "ok.png", DetectedType: "image/png", Size: int64(len(replayPNG))},
+		{Filename: "invoice.exe", DetectedType: "application/octet-stream", Size: int64(len(dropELF))},
+	}
+	if len(dropped) != len(want) || dropped[0] != want[0] || dropped[1] != want[1] {
+		t.Fatalf("dropped = %+v, want %+v", dropped, want)
 	}
 }

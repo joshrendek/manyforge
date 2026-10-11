@@ -124,7 +124,8 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 	if perr != nil {
 		// Soft parse failure: enmime recovered a usable (possibly empty) view. We
 		// proceed (FR: degrade safely) but record it for diagnostics.
-		s.logger.WarnContext(ctx, "inbox: parse degraded", "err", perr, "provider", msg.Provider)
+		// Fixed message only: parser errors can echo header content (addresses).
+		s.logger.WarnContext(ctx, "inbox: parse degraded", "provider", msg.Provider)
 	}
 
 	// MIME-sniff every attachment FIRST, before any DB or blob write. A disallowed
@@ -347,8 +348,9 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 // (FR-007) and enforces the per-attachment size cap, BEFORE any DB/blob write. A
 // disallowed or lying part (declared type ignored) or an over-cap part is DROPPED
 // and described in the returned dropped list; the rest of the message still
-// ingests (spec 017 R15). Zero-byte parts are skipped (the attachment table CHECK
-// requires size > 0).
+// ingests (spec 017 R15). With no blob store configured every part is dropped
+// that way. Zero-byte parts are skipped (the attachment table CHECK requires
+// size > 0).
 func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachment, []ticketing.DroppedAttachment) {
 	if len(parts) == 0 {
 		return nil, nil
@@ -361,7 +363,9 @@ func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachmen
 		}
 		size := int64(len(p.Content))
 		ct, err := blob.Sniff(p.Content) // declared type ignored; bytes decide
-		if err != nil || (s.cfg.AttachmentMaxBytes > 0 && size > s.cfg.AttachmentMaxBytes) {
+		// No blob store ⇒ attachments disabled: an allowed part cannot be stored
+		// either, so it is recorded as dropped instead of vanishing without trace.
+		if err != nil || (s.cfg.AttachmentMaxBytes > 0 && size > s.cfg.AttachmentMaxBytes) || s.blob == nil {
 			if len(dropped) < maxDroppedAttachments {
 				dropped = append(dropped, ticketing.DroppedAttachment{
 					Filename:     sanitizeAttachmentFilename(p.FileName),

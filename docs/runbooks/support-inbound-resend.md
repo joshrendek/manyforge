@@ -39,7 +39,8 @@ key and no longer verify. Those replies still thread by `In-Reply-To`/`Reference
 Optional, closes `manyforge-g97y`: set `blob.url` (for example
 `s3://manyforge-attachments?region=us-east-1`) in the HelmRelease values. If the
 bucket needs static credentials, set `secrets.blob.secretName` to a Secret holding
-`access-key-id` and `secret-access-key`.
+`access-key-id` and `secret-access-key`. Without it, every inbound attachment
+is recorded as dropped and the thread shows it as "not stored".
 
 ## After deploying
 

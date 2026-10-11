@@ -650,8 +650,8 @@ func main() {
 
 	// Attachment object store (SL-E). A configured MANYFORGE_BLOB_URL opens the
 	// file://|s3:// bucket; empty (dev) leaves the store nil — NewService tolerates
-	// a nil store by emitting no attachment rows, so nothing references a blob that
-	// is never written.
+	// a nil store by emitting no attachment rows (each part is recorded as a dropped
+	// attachment instead), so nothing references a blob that is never written.
 	var blobStore blob.Store
 	if cfg.BlobURL != "" {
 		b, err := blob.Open(ctx, cfg.BlobURL)
