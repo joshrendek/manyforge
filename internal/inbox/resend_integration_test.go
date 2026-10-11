@@ -126,6 +126,54 @@ func TestReceiveResendDropsUnverifiedDomain(t *testing.T) {
 	if n := ticketCount(ctx, t, tdb, own.business); n != 0 {
 		t.Fatalf("tickets = %d, want 0 for an unverified domain", n)
 	}
+	if n := countSuper(ctx, t, tdb.Super, `SELECT count(*) FROM audit_entry
+		WHERE business_id=$1 AND action='ticket.inbound_dropped' AND inputs->>'event_id'='evt-unverified'`, own.business); n != 1 {
+		t.Fatalf("drop audits = %d, want 1", n)
+	}
+}
+
+// The audit records source/reason/event id only, never an address.
+func TestReceiveResendDropAuditHasNoAddress(t *testing.T) {
+	ctx, tdb, svc := startResendDB(t)
+	own := seedResendTenant(ctx, t, tdb, false)
+	raw := resendRaw("ada@customer.test", own.address, "", "x", "rs-10@customer.test", "", "text/plain", "x")
+	if err := svc.ReceiveResend(ctx, own.business, "evt-noaddr", nil, raw); err != nil {
+		t.Fatal(err)
+	}
+	if n := countSuper(ctx, t, tdb.Super, `SELECT count(*) FROM audit_entry
+		WHERE business_id=$1 AND action='ticket.inbound_dropped'
+		AND (inputs::text ILIKE '%'||$2||'%' OR inputs::text ILIKE '%customer.test%')`, own.business, own.domain); n != 0 {
+		t.Fatalf("audit inputs contain an address")
+	}
+}
+
+// A malformed event id is an acknowledged, audited drop, never a retry loop.
+func TestReceiveResendOversizedEventIDIsAcknowledged(t *testing.T) {
+	ctx, tdb, svc := startResendDB(t)
+	own := seedResendTenant(ctx, t, tdb, true)
+	raw := resendRaw("ada@customer.test", "x@foreign.example", "", "x", "rs-11@customer.test", "", "text/plain", "x")
+	if err := svc.ReceiveResend(ctx, own.business, strings.Repeat("e", 600), nil, raw); err != nil {
+		t.Fatalf("ReceiveResend: %v", err)
+	}
+	if n := countSuper(ctx, t, tdb.Super, `SELECT count(*) FROM audit_entry
+		WHERE business_id=$1 AND action='ticket.inbound_dropped'`, own.business); n != 1 {
+		t.Fatalf("drop audits = %d, want 1", n)
+	}
+}
+
+// The route vanishing between pick and ingest is an audited drop (route_lost).
+func TestReceiveResendRouteLostIsAuditedDrop(t *testing.T) {
+	ctx, tdb, svc := startResendDB(t)
+	own := seedResendTenant(ctx, t, tdb, true)
+	other := seedResendTenant(ctx, t, tdb, true)
+	raw := resendRaw("ada@customer.test", other.address, "", "x", "rs-12@customer.test", "", "text/plain", "x")
+	if err := svc.ingestResend(ctx, own.business, "evt-lost", other.address, "ada@customer.test", raw); err != nil {
+		t.Fatalf("ingestResend: %v", err)
+	}
+	if n := countSuper(ctx, t, tdb.Super, `SELECT count(*) FROM audit_entry
+		WHERE business_id=$1 AND inputs->>'reason'='route_lost' AND inputs->>'event_id'='evt-lost'`, own.business); n != 1 {
+		t.Fatalf("route_lost audits = %d, want 1", n)
+	}
 }
 
 // Scenario 4: a reply that drops In-Reply-To/References still threads by the

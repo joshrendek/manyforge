@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -22,5 +23,24 @@ func TestResendCandidatesDedupesAndBounds(t *testing.T) {
 	}
 	if got := resendCandidates(many); len(got) != maxResendCandidates {
 		t.Fatalf("len = %d, want the %d cap", len(got), maxResendCandidates)
+	}
+}
+
+func TestEnvelopeAddressesParsesDisplayNamesAndSkipsJunk(t *testing.T) {
+	got := envelopeAddresses([]string{`"Garden Support" <support@x.test>`, "bare@x.test", "not an address", ""})
+	want := []string{"support@x.test", "bare@x.test"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("addresses = %v, want %v", got, want)
+	}
+}
+
+func TestAuditableEventID(t *testing.T) {
+	if auditableEventID("evt-1") != "evt-1" {
+		t.Fatal("valid id changed")
+	}
+	for _, bad := range []string{strings.Repeat("a", 501), "a\x00b", "a\nb", "\xff\xfe"} {
+		if auditableEventID(bad) != "" {
+			t.Fatalf("id %q should be dropped", bad)
+		}
 	}
 }
