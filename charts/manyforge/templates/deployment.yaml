@@ -114,6 +114,27 @@ spec:
                   name: {{ .Values.secrets.masterKeys.secretName }}
                   key: {{ .Values.secrets.masterKeys.mailingKey }}
                   optional: true
+            # HMAC key for support reply tokens (spec 017 R14). Optional at the pod
+            # level so a missing key surfaces as the app's explicit startup error
+            # rather than CreateContainerConfigError.
+            - name: MANYFORGE_INBOUND_REPLY_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.masterKeys.secretName }}
+                  key: {{ .Values.secrets.masterKeys.inboundReplyTokenKey }}
+                  optional: true
+            {{- if .Values.secrets.blob.secretName }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.blob.secretName }}
+                  key: {{ .Values.secrets.blob.accessKeyIDKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.blob.secretName }}
+                  key: {{ .Values.secrets.blob.secretAccessKeyKey }}
+            {{- end }}
             {{- include "manyforge.outboundMailSecretEnv" . | nindent 12 }}
             {{- if .Values.secrets.inbound.secretName }}
             - name: MANYFORGE_INBOUND_WEBHOOK_SECRET

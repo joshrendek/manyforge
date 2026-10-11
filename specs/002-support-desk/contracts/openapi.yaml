@@ -462,6 +462,7 @@ components:
         body_text: { type: [string, "null"] }
         body_html: { type: [string, "null"] }
         attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' } }
+        dropped_attachments: { type: array, items: { type: object, properties: { filename: { type: string }, detected_type: { type: string }, size: { type: integer } } }, description: inbound attachments dropped instead of stored (spec 017 R15) }
         spf_result: { $ref: '#/components/schemas/DnsRecordState' }
         dkim_result: { $ref: '#/components/schemas/DnsRecordState' }
         dmarc_result: { $ref: '#/components/schemas/DnsRecordState' }

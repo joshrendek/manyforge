@@ -39,7 +39,7 @@ func (q *Queries) BlankTicketAttachments(ctx context.Context, arg BlankTicketAtt
 
 const blankTicketMessages = `-- name: BlankTicketMessages :execrows
 UPDATE ticket_message
-SET body_text = '', body_html = NULL
+SET body_text = '', body_html = NULL, dropped_attachments = '[]'::jsonb
 WHERE ticket_id = $1 AND business_id = $2
 `
 
@@ -48,7 +48,8 @@ type BlankTicketMessagesParams struct {
 	BusinessID uuid.UUID `json:"business_id"`
 }
 
-// BlankTicketMessages blanks every message body on a ticket (FR-014). Returns the
+// BlankTicketMessages blanks every message body on a ticket (FR-014) and clears the
+// recorded dropped-attachment list (its filenames are requester PII; spec 017 R15). Returns the
 // number of messages blanked — the audit scope count. Scoped to (ticket_id, business_id).
 func (q *Queries) BlankTicketMessages(ctx context.Context, arg BlankTicketMessagesParams) (int64, error) {
 	result, err := q.db.Exec(ctx, blankTicketMessages, arg.TicketID, arg.BusinessID)
@@ -111,7 +112,7 @@ func (q *Queries) DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsPara
 }
 
 const getOutboundMessageByApproval = `-- name: GetOutboundMessageByApproval :one
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments FROM ticket_message
 WHERE source_approval_item_id = $1 AND business_id = $2
 `
 
@@ -145,6 +146,7 @@ func (q *Queries) GetOutboundMessageByApproval(ctx context.Context, arg GetOutbo
 		&i.SourceApprovalItemID,
 		&i.ConnectorID,
 		&i.ExternalID,
+		&i.DroppedAttachments,
 	)
 	return i, err
 }
@@ -286,7 +288,7 @@ INSERT INTO ticket_message (
 VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8,
     $9)
 ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments
 `
 
 type InsertNoteMessageParams struct {
@@ -342,6 +344,7 @@ func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessagePa
 		&i.SourceApprovalItemID,
 		&i.ConnectorID,
 		&i.ExternalID,
+		&i.DroppedAttachments,
 	)
 	return i, err
 }
@@ -354,7 +357,7 @@ INSERT INTO ticket_message (
 VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending',
     $11)
 ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments
 `
 
 type InsertOutboundMessageParams struct {
@@ -410,6 +413,7 @@ func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundM
 		&i.SourceApprovalItemID,
 		&i.ConnectorID,
 		&i.ExternalID,
+		&i.DroppedAttachments,
 	)
 	return i, err
 }
@@ -547,7 +551,7 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, arg ListAttach
 
 const listMessages = `-- name: ListMessages :many
 
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
 ORDER BY created_at ASC, id ASC
@@ -594,6 +598,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 			&i.SourceApprovalItemID,
 			&i.ConnectorID,
 			&i.ExternalID,
+			&i.DroppedAttachments,
 		); err != nil {
 			return nil, err
 		}
@@ -606,7 +611,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 }
 
 const listMessagesAfter = `-- name: ListMessagesAfter :many
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
   AND (ticket_message.created_at, ticket_message.id) > ($3::timestamptz, $4::uuid)
@@ -658,6 +663,7 @@ func (q *Queries) ListMessagesAfter(ctx context.Context, arg ListMessagesAfterPa
 			&i.SourceApprovalItemID,
 			&i.ConnectorID,
 			&i.ExternalID,
+			&i.DroppedAttachments,
 		); err != nil {
 			return nil, err
 		}

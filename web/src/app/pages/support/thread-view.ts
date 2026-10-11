@@ -15,6 +15,7 @@ import {
 import { AuthService, Profile } from '../../core/auth.service';
 import { Agent, AgentsService } from '../../core/agents.service';
 import { ToastService } from '../../ui/toast/toast.service';
+import { formatBytes } from './format-bytes';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { StatusPill } from '../../ui/status-pill/status-pill';
 import { Spinner } from '../../ui/spinner/spinner';
@@ -123,7 +124,18 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                   @for (a of m.attachments; track a.id) {
                     <li class="attachment" data-testid="attachment">
                       <span class="filename">{{ a.filename }}</span>
-                      <span class="muted">{{ a.content_type }} · {{ a.size }} bytes</span>
+                      <span class="muted">{{ a.content_type }} · {{ bytes(a.size) }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+
+              @if (m.dropped_attachments.length) {
+                <ul class="attachments dropped" data-testid="dropped-attachments">
+                  @for (d of m.dropped_attachments; track $index) {
+                    <li class="attachment" data-testid="dropped-attachment">
+                      <span class="filename">{{ d.filename || '(unnamed)' }}</span>
+                      <span class="muted">not stored · {{ d.detected_type }} · {{ bytes(d.size) }}</span>
                     </li>
                   }
                 </ul>
@@ -567,6 +579,10 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
       .attachment .filename {
         font-weight: 600;
       }
+      .attachments.dropped .filename {
+        text-decoration: line-through;
+        color: var(--mf-text-muted);
+      }
       .muted {
         color: var(--mf-text-muted);
       }
@@ -662,6 +678,8 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
   ],
 })
 export class ThreadViewComponent implements OnInit {
+  protected readonly bytes = formatBytes;
+
   private route = inject(ActivatedRoute);
   private api = inject(TicketService);
   private auth = inject(AuthService);

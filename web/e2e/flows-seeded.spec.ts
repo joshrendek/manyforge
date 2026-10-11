@@ -68,6 +68,7 @@ function msg(over: Record<string, unknown>) {
     dmarc_result: 'unknown',
     delivery_state: null,
     attachments: [],
+    dropped_attachments: [],
     created_at: '2026-06-02T17:34:14Z',
     ...over,
   };

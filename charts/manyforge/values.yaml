@@ -157,6 +157,11 @@ publicBaseURL: ""
 # Example: ["https://app.customer.example"]
 publicIngestAllowedOrigins: []
 
+# Attachment object storage -> MANYFORGE_BLOB_URL (file:///… or s3://bucket?region=…).
+# Empty disables attachment storage (inbound attachments are then not stored).
+blob:
+  url: ""
+
 mailing:
   rateRPS: 10
   rateBurst: 50
@@ -259,6 +264,9 @@ secrets:
     # AES-256 key sealing mailing provider credentials and list/token material.
     # Optional: if absent the mailing API is disabled and the app still boots.
     mailingKey: mailing
+    # HMAC key minting/verifying support reply tokens (spec 017 R14). Production
+    # refuses to start without it. Add the key to this Secret BEFORE upgrading.
+    inboundReplyTokenKey: inbound-reply-token
   # Owner-role DSN for the migrate Job — distinct from the app DSN above,
   # since migrations need DDL privileges the app role should not have.
   migrateDatabase:
@@ -281,3 +289,9 @@ secrets:
     secretName: ""
     webhookSecretKey: webhook-secret
     bounceSecretKey: bounce-secret
+  # Optional S3 credentials for blob.url (read by the AWS SDK default chain).
+  # Leave secretName empty for file:// storage or for IRSA/instance credentials.
+  blob:
+    secretName: ""
+    accessKeyIDKey: access-key-id
+    secretAccessKeyKey: secret-access-key

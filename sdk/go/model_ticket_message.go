@@ -12,21 +12,22 @@ package manyforge
 import "time"
 
 type TicketMessage struct {
-	Attachments       []Attachment                         `json:"attachments"`
-	AuthorPrincipalId Optional[string]                     `json:"author_principal_id,omitzero"`
-	BodyHtml          Optional[string]                     `json:"body_html,omitzero"`
-	BodyText          Optional[string]                     `json:"body_text,omitzero"`
-	CreatedAt         time.Time                            `json:"created_at"`
-	DeliveryState     Optional[TicketMessageDeliveryState] `json:"delivery_state,omitzero"`
-	Direction         MessageDirection                     `json:"direction"`
-	DkimResult        DnsRecordState                       `json:"dkim_result"`
-	DmarcResult       DnsRecordState                       `json:"dmarc_result"`
-	Id                string                               `json:"id"`
-	InReplyTo         Optional[string]                     `json:"in_reply_to,omitzero"`
-	MessageId         Optional[string]                     `json:"message_id,omitzero"`
-	References        []string                             `json:"references"`
-	SpfResult         DnsRecordState                       `json:"spf_result"`
-	TicketId          string                               `json:"ticket_id"`
+	Attachments        []Attachment                         `json:"attachments"`
+	AuthorPrincipalId  Optional[string]                     `json:"author_principal_id,omitzero"`
+	BodyHtml           Optional[string]                     `json:"body_html,omitzero"`
+	BodyText           Optional[string]                     `json:"body_text,omitzero"`
+	CreatedAt          time.Time                            `json:"created_at"`
+	DeliveryState      Optional[TicketMessageDeliveryState] `json:"delivery_state,omitzero"`
+	Direction          MessageDirection                     `json:"direction"`
+	DkimResult         DnsRecordState                       `json:"dkim_result"`
+	DmarcResult        DnsRecordState                       `json:"dmarc_result"`
+	DroppedAttachments Optional[[]DroppedAttachment]        `json:"dropped_attachments,omitzero"`
+	Id                 string                               `json:"id"`
+	InReplyTo          Optional[string]                     `json:"in_reply_to,omitzero"`
+	MessageId          Optional[string]                     `json:"message_id,omitzero"`
+	References         []string                             `json:"references"`
+	SpfResult          DnsRecordState                       `json:"spf_result"`
+	TicketId           string                               `json:"ticket_id"`
 }
 
 // NewTicketMessage assigns only the supplied required fields, never schema defaults.
@@ -55,7 +56,7 @@ func (o *TicketMessage) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "attachments", "created_at", "direction", "dkim_result", "dmarc_result", "id", "references", "spf_result", "ticket_id"); err != nil {
+	if err := nonNullFields(fields, "attachments", "created_at", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "references", "spf_result", "ticket_id"); err != nil {
 		return err
 	}
 	type plain TicketMessage

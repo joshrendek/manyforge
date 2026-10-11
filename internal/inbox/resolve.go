@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
@@ -68,9 +69,36 @@ func resolveRecipient(ctx context.Context, tx pgx.Tx, address string) (route, er
 		address,
 	).Scan(&r.businessID, &r.tenantRootID, &emailDomain)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return route{}, errNoRoute
 		}
+		return route{}, err
+	}
+	if emailDomain != nil {
+		r.emailDomainID = *emailDomain
+	}
+	return r, nil
+}
+
+// resolveRecipientForBusiness maps a normalized recipient to its route only when
+// it is a custom address on a verified domain owned by businessID, via the
+// resolve_inbound_address_for_business SECURITY DEFINER (0139). A miss (unknown,
+// unverified, or owned by another business) is errNoRoute, never a distinguishable
+// error (no oracle, and the same-business rule of spec 017 R4).
+func resolveRecipientForBusiness(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, address string) (route, error) {
+	var (
+		r           route
+		addressID   uuid.UUID
+		emailDomain *uuid.UUID
+	)
+	err := tx.QueryRow(ctx,
+		"SELECT inbound_address_id, business_id, tenant_root_id, email_domain_id FROM resolve_inbound_address_for_business($1, $2)",
+		businessID, address,
+	).Scan(&addressID, &r.businessID, &r.tenantRootID, &emailDomain)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return route{}, errNoRoute
+	}
+	if err != nil {
 		return route{}, err
 	}
 	if emailDomain != nil {

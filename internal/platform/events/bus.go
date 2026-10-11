@@ -66,6 +66,13 @@ type Event struct {
 	MaxAttempts int32
 }
 
+// IsFinalAttempt reports whether this delivery is the outbox worker's last try before it would
+// dead-letter the event. MaxAttempts is zero on the in-process Bus path (no retry budget), so
+// that path never short-circuits to a terminal failure.
+func (e Event) IsFinalAttempt() bool {
+	return e.MaxAttempts > 0 && e.Attempts+1 >= e.MaxAttempts
+}
+
 // Handler processes one event. It runs inside the worker's transaction (use tx
 // for DB writes that must commit atomically with marking the event processed)
 // and MUST be idempotent: delivery is at-least-once, so dedupe on Event.ID for

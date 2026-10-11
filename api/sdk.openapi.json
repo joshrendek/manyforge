@@ -4724,6 +4724,28 @@
         },
         "type": "object"
       },
+      "DroppedAttachment": {
+        "description": "An inbound attachment that was dropped instead of stored (spec 017 R15).",
+        "properties": {
+          "detected_type": {
+            "description": "content type sniffed from the bytes (the declared type is never trusted)",
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filename",
+          "detected_type",
+          "size"
+        ],
+        "type": "object"
+      },
       "DurationWaitConfig": {
         "additionalProperties": false,
         "properties": {
@@ -10874,6 +10896,13 @@
           },
           "dmarc_result": {
             "$ref": "#/components/schemas/DnsRecordState"
+          },
+          "dropped_attachments": {
+            "description": "Inbound attachments that were not stored because their sniffed type is not allowed, they exceed the size cap, or attachment storage is not configured (spec 017 R15). No bytes are retained.",
+            "items": {
+              "$ref": "#/components/schemas/DroppedAttachment"
+            },
+            "type": "array"
           },
           "id": {
             "format": "uuid",
@@ -17071,6 +17100,9 @@
           },
           "404": {
             "$ref": "#/components/responses/SupportCRMNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/SupportCRMConflict"
           },
           "500": {
             "content": {

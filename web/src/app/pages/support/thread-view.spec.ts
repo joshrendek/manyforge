@@ -409,6 +409,7 @@ function makeMessage(over: Partial<TicketMessage> = {}): TicketMessage {
     dkim_result: 'pass',
     dmarc_result: 'pass',
     attachments: [],
+    dropped_attachments: [],
     created_at: '2024-01-01T00:00:00Z',
     ...over,
   } as TicketMessage;
@@ -553,3 +554,51 @@ describe('ThreadViewComponent (Task 20 UI redesign)', () => {
 function makeTicketTv(over: Partial<Ticket> = {}): Ticket {
   return makeTicket(over);
 }
+
+describe('ThreadViewComponent dropped attachments (spec 017)', () => {
+  let fixture: ComponentFixture<ThreadViewComponent>;
+  let mock: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        {
+          provide: ActivatedRoute,
+          useValue: { snapshot: { paramMap: new Map([['businessId', biz], ['tid', tid]]) } },
+        },
+      ],
+    });
+    mock = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => mock.verify());
+
+  it('lists dropped attachments on the message without offering a download', () => {
+    fixture = TestBed.createComponent(ThreadViewComponent);
+    fixture.detectChanges();
+    mock.expectOne('/api/v1/me').flush({ id: myPid, email: 'me@x.test', display_name: 'Me', email_verified: true, status: 'active' });
+    mock.expectOne(`/api/v1/businesses/${biz}/assignable-members`).flush({ items: [], next_cursor: null });
+    mock.expectOne(`/api/v1/businesses/${biz}/agents`).flush({ items: [] });
+    mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`).flush(makeTicket());
+    const message: TicketMessage = {
+      id: 'm1', ticket_id: tid, direction: 'inbound', message_id: '<m1@x>', in_reply_to: null, references: [],
+      author_principal_id: null, body_text: 'see attached', body_html: null, attachments: [],
+      dropped_attachments: [{ filename: 'invoice.exe', detected_type: 'application/octet-stream', size: 24 }],
+      spf_result: 'pass', dkim_result: 'pass', dmarc_result: 'pass', created_at: '2026-10-10T00:00:00Z',
+    };
+    mock
+      .expectOne((r) => r.url === `/api/v1/businesses/${biz}/tickets/${tid}/messages`)
+      .flush({ items: [message], next_cursor: null });
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const rows = el.querySelectorAll('[data-testid="dropped-attachment"]');
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain('invoice.exe');
+    expect(rows[0].textContent).toContain('not stored');
+    expect(rows[0].textContent).toContain('24 bytes');
+    expect(rows[0].querySelector('a')).toBeNull();
+  });
+});

@@ -148,21 +148,22 @@ type attachmentResp struct {
 }
 
 type messageResp struct {
-	ID                string           `json:"id"`
-	TicketID          string           `json:"ticket_id"`
-	Direction         string           `json:"direction"`
-	MessageID         *string          `json:"message_id"`
-	InReplyTo         *string          `json:"in_reply_to"`
-	References        []string         `json:"references"`
-	AuthorPrincipalID *string          `json:"author_principal_id"`
-	BodyText          *string          `json:"body_text"`
-	BodyHTML          *string          `json:"body_html"`
-	Attachments       []attachmentResp `json:"attachments"`
-	SPFResult         string           `json:"spf_result"`
-	DKIMResult        string           `json:"dkim_result"`
-	DMARCResult       string           `json:"dmarc_result"`
-	DeliveryState     *string          `json:"delivery_state"`
-	CreatedAt         string           `json:"created_at"`
+	ID                 string              `json:"id"`
+	TicketID           string              `json:"ticket_id"`
+	Direction          string              `json:"direction"`
+	MessageID          *string             `json:"message_id"`
+	InReplyTo          *string             `json:"in_reply_to"`
+	References         []string            `json:"references"`
+	AuthorPrincipalID  *string             `json:"author_principal_id"`
+	BodyText           *string             `json:"body_text"`
+	BodyHTML           *string             `json:"body_html"`
+	Attachments        []attachmentResp    `json:"attachments"`
+	DroppedAttachments []DroppedAttachment `json:"dropped_attachments"`
+	SPFResult          string              `json:"spf_result"`
+	DKIMResult         string              `json:"dkim_result"`
+	DMARCResult        string              `json:"dmarc_result"`
+	DeliveryState      *string             `json:"delivery_state"`
+	CreatedAt          string              `json:"created_at"`
 }
 
 const rfc3339 = "2006-01-02T15:04:05.999999999Z07:00"
@@ -218,22 +219,27 @@ func toMessageResp(m Message) messageResp {
 	if refs == nil {
 		refs = []string{}
 	}
+	dropped := m.DroppedAttachments
+	if dropped == nil {
+		dropped = []DroppedAttachment{}
+	}
 	return messageResp{
-		ID:                m.ID.String(),
-		TicketID:          m.TicketID.String(),
-		Direction:         m.Direction,
-		MessageID:         m.MessageID,
-		InReplyTo:         m.InReplyTo,
-		References:        refs,
-		AuthorPrincipalID: uuidStrPtr(m.AuthorPrincipalID),
-		BodyText:          m.BodyText,
-		BodyHTML:          m.BodyHTML,
-		Attachments:       atts,
-		SPFResult:         m.SPFResult,
-		DKIMResult:        m.DKIMResult,
-		DMARCResult:       m.DMARCResult,
-		DeliveryState:     m.DeliveryState,
-		CreatedAt:         m.CreatedAt.UTC().Format(rfc3339),
+		ID:                 m.ID.String(),
+		TicketID:           m.TicketID.String(),
+		Direction:          m.Direction,
+		MessageID:          m.MessageID,
+		InReplyTo:          m.InReplyTo,
+		References:         refs,
+		AuthorPrincipalID:  uuidStrPtr(m.AuthorPrincipalID),
+		BodyText:           m.BodyText,
+		BodyHTML:           m.BodyHTML,
+		Attachments:        atts,
+		DroppedAttachments: dropped,
+		SPFResult:          m.SPFResult,
+		DKIMResult:         m.DKIMResult,
+		DMARCResult:        m.DMARCResult,
+		DeliveryState:      m.DeliveryState,
+		CreatedAt:          m.CreatedAt.UTC().Format(rfc3339),
 	}
 }
 

@@ -13,6 +13,7 @@
 // Template derived from OpenAPI Generator 7.25.0 (Apache-2.0).
 import { convertModel, type JsonValue } from '../model-support.js';
 
+import type { DroppedAttachment } from './DroppedAttachment.js';
 import type { MessageDirection } from './MessageDirection.js';
 import type { Attachment } from './Attachment.js';
 import type { DnsRecordState } from './DnsRecordState.js';
@@ -28,6 +29,7 @@ export interface TicketMessage {
     direction: MessageDirection;
     dkimResult: DnsRecordState;
     dmarcResult: DnsRecordState;
+    droppedAttachments?: Array<DroppedAttachment>;
     id: string;
     inReplyTo: string | null;
     messageId: string | null;

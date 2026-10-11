@@ -52,6 +52,8 @@ data:
   MANYFORGE_MAILING_FANOUT_PER_CAMPAIGN: {{ .Values.mailing.fanoutPerCampaign | quote }}
   MANYFORGE_MAILING_ROLLUP_BATCH: {{ .Values.mailing.rollupBatch | quote }}
   MANYFORGE_MAILING_MESSAGE_DOMAIN: {{ .Values.mailing.messageDomain | quote }}
+  # Attachment object storage (spec 017 R16). Empty disables attachment storage.
+  MANYFORGE_BLOB_URL: {{ .Values.blob.url | quote }}
   # Explicit trust-boundary opt-in. Enable only when Cloudflare is the sole public path to origin.
   MANYFORGE_TRUST_CF_IPCOUNTRY: {{ .Values.analytics.trustCloudflareCountryHeader | quote }}
   # Also enforced in-process so a false→true rollout cannot trust headers before ingress reloads.

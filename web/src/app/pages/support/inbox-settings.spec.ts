@@ -494,4 +494,40 @@ describe('InboxSettingsComponent (US4)', () => {
     expect(q('.mf-card')).not.toBeNull();
     document.documentElement.setAttribute('data-theme', 'light');
   });
+
+  it('shows the Resend checklist and "Received via Resend" for a provider_route domain', () => {
+    loadWith([mockEmailDomain({ mode: 'provider_route', dkim_state: 'unknown' })], []);
+    expect(text('received-via-resend')).toBe('Received via Resend');
+    expect(all('resend-dns-checklist').length).toBe(1);
+    expect(all('resend-dns-row').length).toBe(5);
+    // The ManyForge DKIM record is not offered: Resend signs this domain.
+    expect(all('challenge-dkim-name').length).toBe(0);
+    expect(all('verify-domain').length).toBe(1);
+  });
+
+  it('keeps the Resend checklist visible after the domain is verified', () => {
+    loadWith(
+      [mockEmailDomain({ mode: 'provider_route', verification: 'verified', verified_at: '2026-10-10T00:00:00Z' })],
+      [],
+    );
+    expect(all('resend-dns-checklist').length).toBe(1);
+    expect(all('verify-domain').length).toBe(0);
+  });
+
+  it('does not show the Resend checklist for other modes', () => {
+    loadWith([mockEmailDomain({ mode: 'forward_in' })], []);
+    expect(all('resend-dns-checklist').length).toBe(0);
+    expect(all('received-via-resend').length).toBe(0);
+  });
+
+  it('a provider_route row shows the Resend-aware verify hint after a failed verify', () => {
+    loadWith([mockEmailDomain({ mode: 'provider_route' })], []);
+    cmp.verify(cmp.domains()[0]);
+    mock
+      .expectOne(`${domainsUrl}/ed1/verify`)
+      .flush(mockEmailDomain({ mode: 'provider_route', verification: 'unverified' }));
+    fixture.detectChanges();
+    expect(all('verify-hint').length).toBe(1);
+    expect(text('verify-hint')).toContain('verify the domain in Resend');
+  });
 });

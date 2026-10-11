@@ -57,6 +57,13 @@ export interface Ticket {
   updated_at: string;
 }
 
+// An inbound attachment that was dropped instead of stored (spec 017 R15).
+export interface DroppedAttachment {
+  filename: string;
+  detected_type: string;
+  size: number;
+}
+
 export interface TicketMessage {
   id: string;
   ticket_id: string;
@@ -72,6 +79,9 @@ export interface TicketMessage {
   body_text: string | null;
   body_html: string | null;
   attachments: Attachment[];
+  // Inbound attachments not stored (disallowed type, over the size cap, or no
+  // attachment storage configured). Always present; empty when none.
+  dropped_attachments: DroppedAttachment[];
   spf_result: DnsRecordState;
   dkim_result: DnsRecordState;
   dmarc_result: DnsRecordState;

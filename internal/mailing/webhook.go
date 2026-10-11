@@ -26,6 +26,13 @@ const (
 
 var errWebhookUnauthorized = errors.New("mailing webhook: unauthorized")
 
+// ResendInboundReceiver ingests a raw message Resend received for one business
+// (spec 017). *inbox.Service implements it. A nil error covers ingested,
+// duplicate, and dropped messages; an error asks Resend to retry.
+type ResendInboundReceiver interface {
+	ReceiveResend(ctx context.Context, businessID uuid.UUID, eventID string, envelopeRecipients []string, raw []byte) error
+}
+
 // WebhookHandler accepts provider-authenticated, principal-less delivery events.
 // Every database read and write goes through a search-path-pinned SECURITY DEFINER.
 type WebhookHandler struct {
@@ -34,6 +41,15 @@ type WebhookHandler struct {
 	Logger *slog.Logger
 	SNS    *snsverify.Verifier
 	Now    func() time.Time
+
+	// Spec 017 inbound support mail (email.received). Inbound nil => email.received
+	// answers 503 so Resend retries until the deployment is wired.
+	Inbound             ResendInboundReceiver
+	ResendBaseURL       string       // empty => https://api.resend.com
+	ResendHTTPClient    *http.Client // Receiving API + webhook calls
+	RawDownloadClient   *http.Client // pre-signed raw URL fetch; production: netsafe client
+	AllowInsecureRawURL bool         // tests only
+	MaxReceivedBytes    int64        // MANYFORGE_INBOUND_MAX_BYTES
 
 	maxBytes int64
 }
@@ -54,6 +70,7 @@ func (h *WebhookHandler) PublicRoutes(r chi.Router) {
 
 type webhookContext struct {
 	profileID           uuid.UUID
+	businessID          uuid.UUID
 	provider            string
 	credentialSealed    *string
 	snsTopicARN         *string
@@ -106,10 +123,10 @@ func (h *WebhookHandler) loadContext(ctx context.Context, profileID uuid.UUID) (
 	}
 	err := h.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
-			SELECT profile_id, provider, credential_sealed, sns_topic_arn,
+			SELECT profile_id, business_id, provider, credential_sealed, sns_topic_arn,
 			       ses_region, ses_configuration_set, feedback_status, updated_at
 			FROM mailing_webhook_context($1)`, profileID).Scan(
-			&out.profileID, &out.provider, &out.credentialSealed, &out.snsTopicARN,
+			&out.profileID, &out.businessID, &out.provider, &out.credentialSealed, &out.snsTopicARN,
 			&out.sesRegion, &out.sesConfigurationSet, &out.feedbackStatus, &out.updatedAt,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {

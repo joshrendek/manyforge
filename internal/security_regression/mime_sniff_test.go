@@ -3,8 +3,8 @@
 // Finding MF-002-MIME-SNIFF (doc_support.go / SC-007 / FR-007): an attachment's
 // DECLARED Content-Type is never trusted. A part that declares image/png but
 // whose bytes sniff to a disallowed type (an ELF executable, outside the
-// allowlist) is rejected BEFORE any row is persisted — no ticket, no message, no
-// attachment is written.
+// allowlist) is never persisted as an attachment; since spec 017 R15 the message
+// itself still ingests and records the drop.
 
 package security_regression
 
@@ -95,7 +95,14 @@ func TestLyingAttachmentRejectedBeforePersistence(t *testing.T) {
 
 	// Lying attachment: ingest may error or drop the part; either way nothing of
 	// it is persisted as an attachment.
-	_, _ = svc.Ingest(ctx, ingestAttachment(ctx, ten, "Mallory <mallory@example.com>", "gift", "mime-bad@example.com", elfBytes))
+	resBad, err := svc.Ingest(ctx, ingestAttachment(ctx, ten, "Mallory <mallory@example.com>", "gift", "mime-bad@example.com", elfBytes))
+	if err != nil {
+		t.Fatalf("spec 017 R15: a lying attachment must not fail the whole message: %v", err)
+	}
+	if n := countSuperInt(ctx, t, tdb.Super,
+		"SELECT jsonb_array_length(dropped_attachments) FROM ticket_message WHERE id=$1", resBad.MessageID); n != 1 {
+		t.Errorf("dropped_attachments length = %d, want 1 (the lying part is recorded, never stored)", n)
+	}
 	if n := countSuperInt(ctx, t, tdb.Super, "SELECT count(*) FROM attachment WHERE business_id=$1", ten.business); n != 0 {
 		t.Errorf("attachment count after lying attachment = %d, want 0 — a disallowed/lying type must never be persisted", n)
 	}

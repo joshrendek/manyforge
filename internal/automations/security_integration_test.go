@@ -13,16 +13,16 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/manyforge/manyforge/internal/automations"
 	"github.com/jackc/pgx/v5"
+	"github.com/manyforge/manyforge/internal/automations"
 	"github.com/manyforge/manyforge/internal/mailing"
 	mailprovider "github.com/manyforge/manyforge/internal/mailing/provider"
 	mailrender "github.com/manyforge/manyforge/internal/mailing/render"
 	mailtoken "github.com/manyforge/manyforge/internal/mailing/token"
-	"github.com/manyforge/manyforge/internal/platform/notify"
-	"github.com/manyforge/manyforge/migrations"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/platform/notify"
+	"github.com/manyforge/manyforge/migrations"
 )
 
 func TestAutomationSendAuthz005ServiceRejectsWriteOnlyPrincipal(t *testing.T) {
@@ -802,9 +802,9 @@ func TestAutomationFence002SendWorkerDoesNotCallProviderAfterPause(t *testing.T)
 	}
 	ports := mailing.AutomationPorts{MessageDomain: "mail.example.test"}
 	stepper := automations.Stepper{
-		DB: fixture.database.App,
+		DB:   fixture.database.App,
 		Deps: automations.Deps{Subscribers: ports, Sender: ports, Steps: automations.SQLStepStore{}},
-		Now: func() time.Time { return time.Now().UTC() },
+		Now:  func() time.Time { return time.Now().UTC() },
 	}
 	if err := stepper.Tick(fixture.ctx); err != nil {
 		t.Fatal(err)
@@ -969,9 +969,9 @@ func TestAutomationSendAuthz005ActivationSnapshotFeedsDeliveryClaim(t *testing.T
 
 	ports := mailing.AutomationPorts{MessageDomain: "mail.example.test"}
 	stepper := automations.Stepper{
-		DB: fixture.database.App,
+		DB:   fixture.database.App,
 		Deps: automations.Deps{Subscribers: ports, Sender: ports, Steps: automations.SQLStepStore{}},
-		Now: func() time.Time { return time.Now().UTC() },
+		Now:  func() time.Time { return time.Now().UTC() },
 	}
 	if err := stepper.Tick(fixture.ctx); err != nil {
 		t.Fatal(err)

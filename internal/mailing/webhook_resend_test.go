@@ -90,3 +90,12 @@ func svixSignature(key []byte, id, timestamp string, body []byte) string {
 	mac.Write(body)
 	return "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
+
+func TestHasPlusTag(t *testing.T) {
+	if !hasPlusTag([]string{"a@x.test", "support+Tok@x.test"}) {
+		t.Fatal("plus tag not detected")
+	}
+	if hasPlusTag([]string{"a@x.test", "+@", "no-at-sign+x"}) {
+		t.Fatal("false positive")
+	}
+}

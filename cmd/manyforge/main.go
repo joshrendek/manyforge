@@ -108,6 +108,12 @@ func main() {
 		return
 	}
 
+	// Serve-only requirements (the migrate Job above does not carry them).
+	if err := cfg.ValidateServe(); err != nil {
+		logger.Error("load config", "err", err)
+		os.Exit(1)
+	}
+
 	ctx := context.Background()
 	database, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -644,8 +650,8 @@ func main() {
 
 	// Attachment object store (SL-E). A configured MANYFORGE_BLOB_URL opens the
 	// file://|s3:// bucket; empty (dev) leaves the store nil — NewService tolerates
-	// a nil store by emitting no attachment rows, so nothing references a blob that
-	// is never written.
+	// a nil store by emitting no attachment rows (each part is recorded as a dropped
+	// attachment instead), so nothing references a blob that is never written.
 	var blobStore blob.Store
 	if cfg.BlobURL != "" {
 		b, err := blob.Open(ctx, cfg.BlobURL)
@@ -677,6 +683,22 @@ func main() {
 		InboundSystemDomain: cfg.InboundSystemDomain,
 	}, logger)
 	inboxWebhookH.Metrics = metrics
+	// Spec 017: Resend-received support mail. The per-profile Resend webhook
+	// (mounted in the public ingress group) loads the received email's metadata with
+	// the profile's own credential, then downloads the raw message from its
+	// pre-signed URL without the API key and ingests it through inboxSvc. That URL
+	// is provider-supplied, so it is fetched with an SSRF-guarded client.
+	if mailingWebhookH != nil {
+		mailingWebhookH.Inbound = inboxSvc
+		mailingWebhookH.ResendHTTPClient = &http.Client{Timeout: 30 * time.Second}
+		mailingWebhookH.RawDownloadClient = netsafe.NewClient(60 * time.Second)
+		mailingWebhookH.MaxReceivedBytes = cfg.InboundMaxBytes
+		go func() {
+			if err := mailingWebhookH.UpgradeReceivingEvents(ctx); err != nil {
+				logger.Warn("mailing Resend receiving upgrade sweep failed", "err", err)
+			}
+		}()
+	}
 	// US2 hard-bounce intake (T040): a provider-signed (separate InboundBounceSecret)
 	// webhook that suppresses the bounced recipient (global email_suppression) and
 	// marks the correlated outbound message failed via a DEFINER. Mounted next to the
@@ -743,7 +765,15 @@ func main() {
 	}
 	// SMTP retains per-business custom DKIM identities. API transports use their
 	// configured verified From identity while retaining the support Reply-To token.
-	sendSub := notify.SendSubscriber{Sender: sharedMail.Sender, Logger: logger, Metrics: metrics}
+	sendSub := notify.SendSubscriber{
+		Sender: sharedMail.Sender, Logger: logger, Metrics: metrics,
+		Suppression: notify.DBSuppression{DB: database},
+	}
+	// Spec 017: replies for a business with a Resend support identity go through
+	// that business's profile. Assign only a non-nil service (no typed-nil interface).
+	if mailingSvc != nil {
+		sendSub.ProfileSender = mailingSvc
+	}
 	if cfg.OutboundProvider == "smtp" {
 		sendSub.Sealer = dkimSealer
 	}

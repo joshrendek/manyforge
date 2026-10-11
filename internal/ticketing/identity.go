@@ -236,7 +236,7 @@ func (s *IdentityService) CreateEmailDomain(ctx context.Context, principalID, bu
 	if err != nil {
 		return EmailDomain{}, mapIdentityErr(err)
 	}
-	return s.toEmailDomain(row, "pending"), nil
+	return s.toEmailDomain(row, dkimStateForMode(row.Mode, "pending")), nil
 }
 
 // dkimSelector builds a per-domain selector "mf" + 8 hex chars (4 random bytes).
@@ -297,9 +297,19 @@ func (s *IdentityService) ListEmailDomains(ctx context.Context, principalID, bus
 // (Active DKIM probing happens in VerifyEmailDomain, not on every list read.)
 func (s *IdentityService) dkimStateForList(r dbgen.EmailDomain) string {
 	if r.VerifiedAt.Valid {
-		return "pass"
+		return dkimStateForMode(r.Mode, "pass")
 	}
-	return "pending"
+	return dkimStateForMode(r.Mode, "pending")
+}
+
+// dkimStateForMode reports ManyForge's DKIM probe as informational ("unknown")
+// for a Resend-received provider_route domain: Resend signs that mail, so
+// ManyForge's own selector is never published there (spec 017 R8).
+func dkimStateForMode(mode dbgen.EmailDomainMode, computed string) string {
+	if mode == dbgen.EmailDomainModeProviderRoute {
+		return "unknown"
+	}
+	return computed
 }
 
 // VerifyEmailDomain polls the DNS TXT records to verify a domain (T056). It loads
@@ -328,12 +338,22 @@ func (s *IdentityService) VerifyEmailDomain(ctx context.Context, principalID, bu
 
 		// Ownership TXT poll.
 		published := false
-		if recs, _ := s.Resolver.LookupTXT(ctx, "_manyforge."+row.Domain); containsExact(recs, row.VerifyToken) {
+		recs, _ := s.Resolver.LookupTXT(ctx, "_manyforge."+row.Domain)
+		if containsExact(recs, row.VerifyToken) {
 			published = true
 		}
 
 		alreadyVerified := row.VerifiedAt.Valid
 		if published && !alreadyVerified {
+			// MF-017: a verified domain is globally unique. If another business holds it
+			// but no longer publishes its token while we do, the DEFINER demotes the
+			// stale incumbent (audited) so this claim can proceed; otherwise the mark
+			// below hits the unique index and maps to 409.
+			var demoted bool
+			if terr := tx.QueryRow(ctx, `SELECT email_domain_takeover_stale($1, $2, $3, $4)`,
+				row.ID, businessID, recs, principalID).Scan(&demoted); terr != nil {
+				return terr
+			}
 			if uerr := q.MarkEmailDomainVerified(ctx, dbgen.MarkEmailDomainVerifiedParams{
 				ID: row.ID, BusinessID: businessID, TenantRootID: row.TenantRootID,
 			}); uerr != nil {
@@ -360,7 +380,7 @@ func (s *IdentityService) VerifyEmailDomain(ctx context.Context, principalID, bu
 			}
 		}
 
-		out = s.toEmailDomain(row, dkimState)
+		out = s.toEmailDomain(row, dkimStateForMode(row.Mode, dkimState))
 		return nil
 	})
 	if err != nil {

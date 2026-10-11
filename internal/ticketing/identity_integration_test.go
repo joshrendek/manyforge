@@ -512,3 +512,144 @@ func TestIdentityOutboundSendIdentitySelection(t *testing.T) {
 		t.Errorf("dkim_private_key_ref = %v, want non-empty", dkimRef)
 	}
 }
+
+// Spec 017 R7: a verified email domain is unique across all businesses. Two
+// tenants may both start verification (UNIQUE is per-tenant for unverified rows),
+// but once one verifies, the other's verify is a 409 conflict and its row stays
+// unverified.
+func TestIdentityVerifyEmailDomainGlobalConflict(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	first := seedReadTenant(ctx, t, tdb)
+	second := seedReadTenant(ctx, t, tdb)
+	resolver := newStubResolver()
+	svc := newIdentityService(tdb, resolver)
+
+	domain := uniqueDomain("shared")
+	edFirst, err := svc.CreateEmailDomain(ctx, first.owner, first.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatalf("first CreateEmailDomain: %v", err)
+	}
+	edSecond, err := svc.CreateEmailDomain(ctx, second.owner, second.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatalf("second CreateEmailDomain (unverified rows may collide across tenants): %v", err)
+	}
+	resolver.records["_manyforge."+domain] = []string{
+		edFirst.DNSChallenge.VerificationTXT.Value,
+		edSecond.DNSChallenge.VerificationTXT.Value,
+	}
+
+	if got, err := svc.VerifyEmailDomain(ctx, first.owner, first.master, edFirst.ID); err != nil || got.Verification != "verified" {
+		t.Fatalf("first verify = %+v, %v; want verified", got, err)
+	}
+	_, err = svc.VerifyEmailDomain(ctx, second.owner, second.master, edSecond.ID)
+	if !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("second verify error = %v, want ErrConflict (409)", err)
+	}
+	if va, _, _ := emailDomainRow(ctx, t, tdb, edSecond.ID); va != nil {
+		t.Fatalf("conflicting domain persisted verified_at = %v, want NULL", va)
+	}
+}
+
+// Spec 017 R8: Resend signs mail for a provider_route domain, so ManyForge's own
+// DKIM selector is informational and is reported as "unknown", never "pending".
+func TestIdentityProviderRouteDKIMIsInformational(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	resolver := newStubResolver()
+	svc := newIdentityService(tdb, resolver)
+
+	domain := uniqueDomain("resend")
+	ed, err := svc.CreateEmailDomain(ctx, rt.owner, rt.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatalf("CreateEmailDomain: %v", err)
+	}
+	if ed.DKIMState != "unknown" {
+		t.Fatalf("create dkim_state = %q, want unknown", ed.DKIMState)
+	}
+	resolver.records["_manyforge."+domain] = []string{ed.DNSChallenge.VerificationTXT.Value}
+	verified, err := svc.VerifyEmailDomain(ctx, rt.owner, rt.master, ed.ID)
+	if err != nil || verified.Verification != "verified" || verified.DKIMState != "unknown" {
+		t.Fatalf("verify = %+v, %v; want verified with dkim_state unknown", verified, err)
+	}
+	list, _, err := svc.ListEmailDomains(ctx, rt.owner, rt.master, Pagination{})
+	if err != nil || len(list) != 1 || list[0].DKIMState != "unknown" {
+		t.Fatalf("list = %+v, %v; want one domain with dkim_state unknown", list, err)
+	}
+}
+
+// MF-017 domain takeover-on-stale-verification: when the incumbent no longer
+// publishes its token and the claimant does, the claimant verifies, the incumbent
+// is demoted (audited) and its custom address stops routing.
+func TestIdentityVerifyEmailDomainTakesOverStaleIncumbent(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	first := seedReadTenant(ctx, t, tdb)
+	second := seedReadTenant(ctx, t, tdb)
+	resolver := newStubResolver()
+	svc := newIdentityService(tdb, resolver)
+
+	domain := uniqueDomain("stale")
+	edFirst, err := svc.CreateEmailDomain(ctx, first.owner, first.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edSecond, err := svc.CreateEmailDomain(ctx, second.owner, second.master, CreateEmailDomainInput{Domain: domain, Mode: "provider_route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.records["_manyforge."+domain] = []string{edFirst.DNSChallenge.VerificationTXT.Value}
+	if got, err := svc.VerifyEmailDomain(ctx, first.owner, first.master, edFirst.ID); err != nil || got.Verification != "verified" {
+		t.Fatalf("incumbent verify = %+v, %v", got, err)
+	}
+	address := "support@" + domain
+	if _, err := svc.CreateInboundAddress(ctx, first.owner, first.master, CreateInboundAddressInput{Address: address, EmailDomainID: edFirst.ID}); err != nil {
+		t.Fatalf("incumbent address: %v", err)
+	}
+	resolves := func() bool {
+		var n int
+		if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM resolve_inbound_address_for_business($1, $2)`, first.master, address).Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+	if !resolves() {
+		t.Fatal("incumbent address should resolve before takeover")
+	}
+
+	// Incumbent lost DNS control: only the claimant's token is published now.
+	resolver.records["_manyforge."+domain] = []string{edSecond.DNSChallenge.VerificationTXT.Value}
+	if got, err := svc.VerifyEmailDomain(ctx, second.owner, second.master, edSecond.ID); err != nil || got.Verification != "verified" {
+		t.Fatalf("claimant verify = %+v, %v; want verified", got, err)
+	}
+	if va, _, _ := emailDomainRow(ctx, t, tdb, edFirst.ID); va != nil {
+		t.Fatalf("incumbent verified_at = %v, want NULL after takeover", va)
+	}
+	if resolves() {
+		t.Fatal("incumbent custom address still resolves after takeover")
+	}
+	var audits int
+	if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FROM audit_entry
+		WHERE business_id=$1 AND action='email_domain.verification_lost' AND target_id=$2`,
+		first.master, edFirst.ID).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("verification_lost audits = %d, %v; want 1", audits, err)
+	}
+	var listed string
+	if err := tdb.Super.QueryRow(ctx, `SELECT new_value->'removed_addresses'->>0 FROM audit_entry
+		WHERE business_id=$1 AND action='email_domain.verification_lost' AND target_id=$2`,
+		first.master, edFirst.ID).Scan(&listed); err != nil || listed != address {
+		t.Fatalf("audit removed address = %q, %v; want %q", listed, err, address)
+	}
+
+	// The claimant can now claim the same local part and mail routes to it.
+	claimed, err := svc.CreateInboundAddress(ctx, second.owner, second.master, CreateInboundAddressInput{Address: address, EmailDomainID: edSecond.ID})
+	if err != nil {
+		t.Fatalf("claimant CreateInboundAddress after takeover: %v", err)
+	}
+	var routed uuid.UUID
+	if err := tdb.App.WithTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT inbound_address_id FROM resolve_inbound_address_for_business($1, $2)`, second.master, address).Scan(&routed)
+	}); err != nil || routed != claimed.ID {
+		t.Fatalf("claimant resolve = %v, %v; want %v", routed, err, claimed.ID)
+	}
+}

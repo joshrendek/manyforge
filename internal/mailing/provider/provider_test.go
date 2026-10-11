@@ -217,7 +217,7 @@ func TestResendEnsureWebhookCreatesExactFeedbackRoute(t *testing.T) {
 	if !wasCreated || postCalls != 1 || got.ID != "wh_123" || got.SigningSecret == "" {
 		t.Fatalf("created webhook = %+v/%v posts=%d", got, wasCreated, postCalls)
 	}
-	if gotEndpoint != endpoint || !containsStrings(gotEvents, "email.bounced", "email.complained") {
+	if gotEndpoint != endpoint || !containsStrings(gotEvents, "email.bounced", "email.complained", "email.received") {
 		t.Fatalf("create payload endpoint=%q events=%v", gotEndpoint, gotEvents)
 	}
 }
@@ -230,11 +230,11 @@ func TestResendEnsureWebhookReconcilesLostCreateResponseWithoutSecondPost(t *tes
 		case req.Method == http.MethodGet && req.URL.Path == "/webhooks":
 			data := []any{}
 			if created {
-				data = append(data, map[string]any{"id": "wh_lost", "status": "enabled", "endpoint": endpoint, "events": []string{"email.bounced", "email.complained"}})
+				data = append(data, map[string]any{"id": "wh_lost", "status": "enabled", "endpoint": endpoint, "events": []string{"email.bounced", "email.complained", "email.received"}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"has_more": false, "data": data})
 		case req.Method == http.MethodGet && req.URL.Path == "/webhooks/wh_lost":
-			_, _ = io.WriteString(w, `{"id":"wh_lost","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`)
+			_, _ = io.WriteString(w, `{"id":"wh_lost","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained","email.received"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`)
 		case req.Method == http.MethodPost && req.URL.Path == "/webhooks":
 			postCalls++
 			created = true
@@ -272,13 +272,13 @@ func TestResendEnsureWebhookRetainsReconciliationPathAfterLostResponseAndListFai
 			case 2:
 				http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 			default:
-				_, _ = io.WriteString(w, `{"has_more":false,"data":[{"id":"wh_recovered","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained"]}]}`)
+				_, _ = io.WriteString(w, `{"has_more":false,"data":[{"id":"wh_recovered","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained","email.received"]}]}`)
 			}
 		case req.Method == http.MethodPost && req.URL.Path == "/webhooks":
 			postCalls++
 			panic(http.ErrAbortHandler)
 		case req.Method == http.MethodGet && req.URL.Path == "/webhooks/wh_recovered":
-			_, _ = io.WriteString(w, `{"id":"wh_recovered","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="} `)
+			_, _ = io.WriteString(w, `{"id":"wh_recovered","status":"enabled","endpoint":"`+endpoint+`","events":["email.bounced","email.complained","email.received"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="} `)
 		default:
 			t.Fatalf("request = %s %s", req.Method, req.URL.Path)
 		}
@@ -308,14 +308,14 @@ func TestResendEnsureWebhookCanonicalizesDuplicateExactEndpoints(t *testing.T) {
 		case req.Method == http.MethodGet && req.URL.Path == "/webhooks":
 			data := make([]map[string]any, 0, len(hooks))
 			for id := range hooks {
-				data = append(data, map[string]any{"id": id, "status": "enabled", "endpoint": endpoint, "events": []string{"email.bounced", "email.complained"}})
+				data = append(data, map[string]any{"id": id, "status": "enabled", "endpoint": endpoint, "events": []string{"email.bounced", "email.complained", "email.received"}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"has_more": false, "data": data})
 		case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/webhooks/"):
 			id := strings.TrimPrefix(req.URL.Path, "/webhooks/")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": id, "status": "enabled", "endpoint": endpoint,
-				"events":         []string{"email.bounced", "email.complained"},
+				"events":         []string{"email.bounced", "email.complained", "email.received"},
 				"signing_secret": "whsec_" + base64.StdEncoding.EncodeToString([]byte(id+"-0123456789abcdef")),
 			})
 		case req.Method == http.MethodDelete:
@@ -342,9 +342,9 @@ func TestResendEnsureWebhookRejectsWrongExistingRoute(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/webhooks":
-			_, _ = io.WriteString(w, `{"has_more":false,"data":[{"id":"wh_123","status":"enabled","endpoint":"https://attacker.test/hook","events":["email.bounced","email.complained"]}]}`)
+			_, _ = io.WriteString(w, `{"has_more":false,"data":[{"id":"wh_123","status":"enabled","endpoint":"https://attacker.test/hook","events":["email.bounced","email.complained","email.received"]}]}`)
 		case req.Method == http.MethodGet:
-			_, _ = io.WriteString(w, `{"id":"wh_123","status":"enabled","endpoint":"https://attacker.test/hook","events":["email.bounced","email.complained"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`)
+			_, _ = io.WriteString(w, `{"id":"wh_123","status":"enabled","endpoint":"https://attacker.test/hook","events":["email.bounced","email.complained","email.received"],"signing_secret":"whsec_MDEyMzQ1Njc4OWFiY2RlZg=="}`)
 		case req.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
@@ -416,7 +416,7 @@ func TestResendEnsureWebhookGuardsEveryRemoteMutation(t *testing.T) {
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"id": id, "endpoint": endpoint, "status": status,
-						"events":         []string{"email.bounced", "email.complained"},
+						"events":         []string{"email.bounced", "email.complained", "email.received"},
 						"signing_secret": "whsec_MDEyMzQ1Njc4OWFiY2RlZg==",
 					})
 				case req.Method == http.MethodPost && req.URL.Path == "/webhooks":
@@ -732,5 +732,49 @@ func TestNewSESValidatesStaticConfiguration(t *testing.T) {
 		if _, err := NewSES(context.Background(), profile, nil, nil); err == nil {
 			t.Fatalf("NewSES(%+v) succeeded", profile)
 		}
+	}
+}
+
+// Spec 017 F3: a threaded support reply carries In-Reply-To and References in the
+// Resend request headers so the customer's client threads it under their message.
+func TestResendSendCarriesThreadingHeaders(t *testing.T) {
+	var headers map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		headers, _ = body["headers"].(map[string]any)
+		_, _ = io.WriteString(w, `{"id":"resend-thread"}`)
+	}))
+	defer server.Close()
+	r := &Resend{APIKey: "re_test", BaseURL: server.URL, Client: server.Client()}
+	if _, err := r.Send(context.Background(), notify.Mail{
+		From: "support@example.com", To: "ada@example.net", Subject: "Re: Help", BodyText: "hi",
+		MessageID: "m-2@example.com", InReplyTo: "parent-1@example.com",
+		References: []string{"root-0@example.com", "parent-1@example.com"},
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	want := map[string]any{
+		"Message-ID":  "<m-2@example.com>",
+		"In-Reply-To": "<parent-1@example.com>",
+		"References":  "<root-0@example.com> <parent-1@example.com>",
+	}
+	if fmt.Sprint(headers) != fmt.Sprint(want) {
+		t.Fatalf("headers = %#v, want %#v", headers, want)
+	}
+
+	headers = nil
+	if _, err := r.Send(context.Background(), notify.Mail{
+		From: "support@example.com", To: "ada@example.net", Subject: "Hello", BodyText: "hi", MessageID: "m-3@example.com",
+	}); err != nil {
+		t.Fatalf("Send unthreaded: %v", err)
+	}
+	if _, ok := headers["In-Reply-To"]; ok {
+		t.Fatalf("unthreaded mail carried In-Reply-To: %#v", headers)
+	}
+	if _, ok := headers["References"]; ok {
+		t.Fatalf("unthreaded mail carried References: %#v", headers)
 	}
 }

@@ -109,8 +109,9 @@ type sniffedAttachment struct {
 // Security ordering (intentional):
 //  1. Parse (degrades safely; soft errors ignored).
 //  2. Synthesize a deterministic Message-ID for header-less mail (idempotency).
-//  3. MIME-SNIFF every attachment BEFORE any DB/blob write; a single disallowed or
-//     lying part rejects the WHOLE message with ZERO rows/blobs (FR-007/SC-007).
+//  3. MIME-SNIFF every attachment BEFORE any DB/blob write; a disallowed, lying,
+//     or over-cap part is DROPPED (never stored) and recorded on the message, and
+//     the rest of the message ingests (FR-007, spec 017 R15).
 //  4. Verify the plus/VERP reply token → p_hint_ticket (HMAC, server-key only).
 //  5. In ONE principal-less tx: resolve recipient (no-oracle on miss) → store
 //     sniffed attachments → ingest_inbound_message (DEFINER: scope re-assertion,
@@ -123,15 +124,14 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 	if perr != nil {
 		// Soft parse failure: enmime recovered a usable (possibly empty) view. We
 		// proceed (FR: degrade safely) but record it for diagnostics.
-		s.logger.WarnContext(ctx, "inbox: parse degraded", "err", perr, "provider", msg.Provider)
+		// Fixed message only: parser errors can echo header content (addresses).
+		s.logger.WarnContext(ctx, "inbox: parse degraded", "provider", msg.Provider)
 	}
 
 	// MIME-sniff every attachment FIRST, before any DB or blob write. A disallowed
-	// or lying part rejects the whole message; nothing is persisted (FR-007/SC-007).
-	staged, err := s.sniffAttachments(parsed.Attachments)
-	if err != nil {
-		return IngestResult{}, err
-	}
+	// or lying part is dropped (never stored) and recorded; the message still
+	// ingests (FR-007, spec 017 R15).
+	staged, dropped := s.sniffAttachments(parsed.Attachments)
 
 	// HMAC-verified reply-token hint (nil when absent/forged); the address token is
 	// stripped during resolution below.
@@ -149,7 +149,13 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 
 	var result IngestResult
 	txErr := s.db.WithTx(ctx, func(tx pgx.Tx) error {
-		r, err := resolveRecipient(ctx, tx, normalizedAddr)
+		var r route
+		var err error
+		if msg.RestrictToBusiness != uuid.Nil {
+			r, err = resolveRecipientForBusiness(ctx, tx, msg.RestrictToBusiness, normalizedAddr)
+		} else {
+			r, err = resolveRecipient(ctx, tx, normalizedAddr)
+		}
 		if err != nil {
 			return err // errNoRoute (no rows written) or a real DB error
 		}
@@ -271,6 +277,14 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			return nil
 		}
 
+		// Spec 017 R15: describe attachments that were not stored on the message.
+		if len(dropped) > 0 && out.MessageID != uuid.Nil {
+			if err := recordDroppedAttachments(ctx, tx, out.MessageID, r.tenantRootID, dropped); err != nil {
+				return err
+			}
+			s.logger.InfoContext(ctx, "inbox: attachments dropped", "count", len(dropped), "provider", msg.Provider)
+		}
+
 		// Spec 005 Phase B: record the inbound-driven CRM activity timeline entries —
 		// a one-time ticket_created (only when out.Created) and an email_received per
 		// fresh inbound message — anchored on the ticket requester's contact (resolved
@@ -332,34 +346,44 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 
 // sniffAttachments MIME-sniffs every parsed attachment against the blob allowlist
 // (FR-007) and enforces the per-attachment size cap, BEFORE any DB/blob write. A
-// single disallowed/lying part (declared type ignored) or over-cap part fails the
-// whole message so nothing is persisted (SC-007). Zero-byte parts are skipped (the
-// attachment table CHECK requires size > 0).
-func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachment, error) {
+// disallowed or lying part (declared type ignored) or an over-cap part is DROPPED
+// and described in the returned dropped list; the rest of the message still
+// ingests (spec 017 R15). With no blob store configured every part is dropped
+// that way. Zero-byte parts are skipped (the attachment table CHECK requires
+// size > 0).
+func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachment, []ticketing.DroppedAttachment) {
 	if len(parts) == 0 {
 		return nil, nil
 	}
 	out := make([]sniffedAttachment, 0, len(parts))
+	var dropped []ticketing.DroppedAttachment
 	for _, p := range parts {
 		if len(p.Content) == 0 {
 			continue // nothing to store; CHECK (size > 0) would reject anyway
 		}
-		if s.cfg.AttachmentMaxBytes > 0 && int64(len(p.Content)) > s.cfg.AttachmentMaxBytes {
-			return nil, fmt.Errorf("inbox: attachment %q exceeds size cap: %w", p.FileName, blob.ErrUnsupportedType)
-		}
+		size := int64(len(p.Content))
 		ct, err := blob.Sniff(p.Content) // declared type ignored; bytes decide
-		if err != nil {
-			return nil, fmt.Errorf("inbox: attachment %q rejected: %w", p.FileName, err)
+		// No blob store ⇒ attachments disabled: an allowed part cannot be stored
+		// either, so it is recorded as dropped instead of vanishing without trace.
+		if err != nil || (s.cfg.AttachmentMaxBytes > 0 && size > s.cfg.AttachmentMaxBytes) || s.blob == nil {
+			if len(dropped) < maxDroppedAttachments {
+				dropped = append(dropped, ticketing.DroppedAttachment{
+					Filename:     sanitizeAttachmentFilename(p.FileName),
+					DetectedType: blob.Detect(p.Content),
+					Size:         size,
+				})
+			}
+			continue
 		}
 		out = append(out, sniffedAttachment{
 			id:          uuid.New(),
 			filename:    p.FileName,
 			contentType: ct,
-			size:        int64(len(p.Content)),
+			size:        size,
 			content:     p.Content,
 		})
 	}
-	return out, nil
+	return out, dropped
 }
 
 // buildAttachmentMeta assigns each staged attachment its tenant-scoped blob key

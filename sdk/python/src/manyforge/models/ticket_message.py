@@ -22,6 +22,7 @@ from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 from manyforge.models.attachment import Attachment
 from manyforge.models.dns_record_state import DnsRecordState
+from manyforge.models.dropped_attachment import DroppedAttachment
 from manyforge.models.message_direction import MessageDirection
 from manyforge.models.ticket_message_properties_delivery_state_enum import TicketMessagePropertiesDeliveryStateEnum
 
@@ -37,6 +38,7 @@ class TicketMessage(Model):
     direction: MessageDirection = Field(..., alias="direction")
     dkim_result: DnsRecordState = Field(..., alias="dkim_result")
     dmarc_result: DnsRecordState = Field(..., alias="dmarc_result")
+    dropped_attachments: List[DroppedAttachment] | UnsetType = Field(default=UNSET, alias="dropped_attachments")
     id: UUID = Field(..., alias="id")
     in_reply_to: str | None = Field(..., alias="in_reply_to")
     message_id: str | None = Field(..., alias="message_id")

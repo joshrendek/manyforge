@@ -110,7 +110,7 @@ func smtpCapture(t *testing.T, reject bool) (*wireCapture, string, int) {
 			}
 			capture.requests.Add(1)
 			func() {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 				reader := textproto.NewReader(bufio.NewReader(conn))
 				_, _ = fmt.Fprint(conn, "220 localhost ESMTP\r\n")

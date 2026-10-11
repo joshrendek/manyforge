@@ -27,6 +27,11 @@ func TestRedactIsSoftDeletePinned(t *testing.T) {
 	if !strings.Contains(sql, "UPDATE ticket\nSET subject = '', redacted_at = now()") {
 		t.Error("redact pin: RedactTicket is no longer the soft UPDATE (subject='', redacted_at=now()) — Principle VI/FR-014")
 	}
+	// Spec 017 R15: redaction also clears the recorded dropped-attachment list (its
+	// filenames are requester PII).
+	if !strings.Contains(sql, "SET body_text = '', body_html = NULL, dropped_attachments = '[]'::jsonb") {
+		t.Error("redact pin: BlankTicketMessages no longer clears dropped_attachments — dropped filenames would survive redaction")
+	}
 	// ...and there is NO hard DELETE of the ticket table anywhere (the \b word boundary
 	// excludes the legitimate `DELETE FROM ticket_tag`, since '_' is a word character).
 	if regexp.MustCompile(`(?i)DELETE\s+FROM\s+ticket\b`).MatchString(sql) {

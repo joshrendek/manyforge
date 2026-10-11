@@ -1,7 +1,7 @@
 -- sqlc schema input: TABLE definitions only, mirroring migrations/ (the runtime
 -- source of truth). Triggers, RLS policies, roles, and functions live in the
 -- migrations and are intentionally excluded here so sqlc's parser stays happy.
--- Keep this in sync with migrations/0001..0124 when table shapes change.
+-- Keep this in sync with migrations/0001..0139 when table shapes change.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 
@@ -254,12 +254,15 @@ CREATE TABLE ticket_message (
     source_approval_item_id uuid,
     connector_id        uuid,
     external_id         text,
+    dropped_attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
     UNIQUE (tenant_root_id, message_id),
     UNIQUE (id, tenant_root_id),
     CONSTRAINT ticket_message_connector_external_chk CHECK (connector_id IS NULL OR external_id IS NOT NULL)
 );
 CREATE UNIQUE INDEX ticket_external_idx ON ticket (connector_id, external_id) WHERE connector_id IS NOT NULL;
 CREATE UNIQUE INDEX ticket_message_external_idx ON ticket_message (connector_id, external_id) WHERE connector_id IS NOT NULL;
+CREATE UNIQUE INDEX email_domain_verified_global_uq ON email_domain (domain) WHERE verified_at IS NOT NULL;
+CREATE UNIQUE INDEX inbound_address_custom_global_uq ON inbound_address (address) WHERE kind = 'custom';
 CREATE UNIQUE INDEX ticket_message_source_approval_idx ON ticket_message (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL;
 
 CREATE TABLE attachment (

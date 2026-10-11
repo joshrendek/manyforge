@@ -85,7 +85,7 @@ func TestEmailDomainEndpointContract(t *testing.T) {
 			t.Fatalf("002 openapi: missing POST /businesses/{id}/email-domains/{did}/verify")
 		}
 		codes := responseCodesFor(t, opNode, "POST /businesses/{id}/email-domains/{did}/verify")
-		for _, code := range []string{"200", "404"} {
+		for _, code := range []string{"200", "404", "409"} {
 			if _, ok := codes[code]; !ok {
 				t.Errorf("002 openapi: POST /businesses/{id}/email-domains/{did}/verify must document response %s", code)
 			}
