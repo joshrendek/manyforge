@@ -684,9 +684,10 @@ func main() {
 	}, logger)
 	inboxWebhookH.Metrics = metrics
 	// Spec 017: Resend-received support mail. The per-profile Resend webhook
-	// (mounted in the public ingress group) fetches the raw message with the
-	// profile's own credential and ingests it through inboxSvc. The raw URL is
-	// pre-signed and caller-influenced, so it is fetched with an SSRF-guarded client.
+	// (mounted in the public ingress group) loads the received email's metadata with
+	// the profile's own credential, then downloads the raw message from its
+	// pre-signed URL without the API key and ingests it through inboxSvc. That URL
+	// is provider-supplied, so it is fetched with an SSRF-guarded client.
 	if mailingWebhookH != nil {
 		mailingWebhookH.Inbound = inboxSvc
 		mailingWebhookH.ResendHTTPClient = &http.Client{Timeout: 30 * time.Second}

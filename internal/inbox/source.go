@@ -58,7 +58,7 @@ type RawMessage struct {
 	// consumes.
 	Raw []byte
 
-	// RestrictToBusiness, when non-nil, routes ONLY to a custom inbound address on
+	// RestrictToBusiness, when set (not uuid.Nil), routes ONLY to a custom inbound address on
 	// a verified domain owned by this business (spec 017 R4, Resend-received mail).
 	// A recipient owned by any other business resolves as no-route.
 	RestrictToBusiness uuid.UUID

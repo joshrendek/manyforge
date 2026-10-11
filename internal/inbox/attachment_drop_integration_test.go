@@ -88,6 +88,17 @@ func TestIngestDropsDisallowedAttachmentAndKeepsMessage(t *testing.T) {
 	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM ticket_message WHERE ticket_id=$1", res.TicketID); n != 1 {
 		t.Fatalf("messages after replay = %d, want 1", n)
 	}
+	var rawAfter []byte
+	if err := tdb.Super.QueryRow(ctx, "SELECT dropped_attachments FROM ticket_message WHERE id=$1", res.MessageID).Scan(&rawAfter); err != nil {
+		t.Fatal(err)
+	}
+	var droppedAfter []ticketing.DroppedAttachment
+	if err := json.Unmarshal(rawAfter, &droppedAfter); err != nil {
+		t.Fatal(err)
+	}
+	if len(droppedAfter) != 1 || droppedAfter[0] != want {
+		t.Fatalf("dropped after replay = %+v, want [%+v] unchanged", droppedAfter, want)
+	}
 }
 
 // A NUL or control byte in an attachment filename must not fail the ingest

@@ -44,7 +44,7 @@ func TestSniffAttachmentsDropsDisallowedAndOversized(t *testing.T) {
 		{FileName: "huge.png", Content: big},
 		{FileName: "empty.txt", Content: nil},
 	})
-	if len(staged) != 1 || staged[0].filename != "ok.png" || staged[0].contentType != "image/png" {
+	if len(staged) != 1 || staged[0].filename != "ok.png" || staged[0].contentType != "image/png" || staged[0].size != int64(len(png)) {
 		t.Fatalf("staged = %+v, want only ok.png", staged)
 	}
 	if len(dropped) != 2 ||
