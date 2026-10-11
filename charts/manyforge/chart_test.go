@@ -186,3 +186,56 @@ func renderedSource(t *testing.T, output, source string) string {
 	}
 	return document
 }
+
+// Spec 017 R16: the reply-token secret comes from the master-keys Secret (never
+// the ConfigMap), MANYFORGE_BLOB_URL is plain config, and optional S3 credentials
+// come from a named Secret only when one is configured.
+func TestSupportEmailSecretAndBlobWiring(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		blobSecret bool
+	}{
+		{"with-blob-credentials", true},
+		{"without-blob-credentials", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := map[string]string{"blob.url": "s3://support-attachments"}
+			if tc.blobSecret {
+				settings["secrets.blob.secretName"] = "blob-credentials"
+			}
+			output := renderChart(t, settings)
+			var configMap struct {
+				Data map[string]string `yaml:"data"`
+			}
+			if err := yaml.Unmarshal([]byte(renderedSource(t, output, "templates/configmap.yaml")), &configMap); err != nil {
+				t.Fatal(err)
+			}
+			if got := configMap.Data["MANYFORGE_BLOB_URL"]; got != "s3://support-attachments" {
+				t.Fatalf("MANYFORGE_BLOB_URL = %q, want s3://support-attachments", got)
+			}
+			for _, key := range []string{"MANYFORGE_INBOUND_REPLY_TOKEN_SECRET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} {
+				if _, exists := configMap.Data[key]; exists {
+					t.Fatalf("credential %s must never appear in the ConfigMap", key)
+				}
+			}
+			app := workloadEnv(t, renderedSource(t, output, "templates/deployment.yaml"), configMap.Data)
+			reply := app["MANYFORGE_INBOUND_REPLY_TOKEN_SECRET"]
+			if reply.Value != "" || reply.ValueFrom.SecretKeyRef == nil ||
+				*reply.ValueFrom.SecretKeyRef != (chartSecretRef{"manyforge-masterkeys", "inbound-reply-token"}) {
+				t.Fatalf("reply-token env = %+v, want secretKeyRef manyforge-masterkeys/inbound-reply-token", reply)
+			}
+			for key, want := range map[string]chartSecretRef{
+				"AWS_ACCESS_KEY_ID":     {"blob-credentials", "access-key-id"},
+				"AWS_SECRET_ACCESS_KEY": {"blob-credentials", "secret-access-key"},
+			} {
+				got, exists := app[key]
+				if exists != tc.blobSecret {
+					t.Fatalf("%s present = %v, want %v", key, exists, tc.blobSecret)
+				}
+				if exists && (got.ValueFrom.SecretKeyRef == nil || *got.ValueFrom.SecretKeyRef != want) {
+					t.Fatalf("%s = %+v, want secretKeyRef %+v", key, got, want)
+				}
+			}
+		})
+	}
+}

@@ -108,6 +108,12 @@ func main() {
 		return
 	}
 
+	// Serve-only requirements (the migrate Job above does not carry them).
+	if err := cfg.ValidateServe(); err != nil {
+		logger.Error("load config", "err", err)
+		os.Exit(1)
+	}
+
 	ctx := context.Background()
 	database, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {

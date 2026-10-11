@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -554,6 +555,17 @@ func Load() (Config, error) {
 	cfg.SandboxPullSecret = env("MANYFORGE_SANDBOX_PULL_SECRET", "ghcr-auth")
 
 	return cfg, nil
+}
+
+// ValidateServe checks settings the long-running server requires but the
+// `manyforge migrate` Job does not (the Job loads the same config without
+// inbound secrets). Spec 017 R14: an empty reply-token HMAC key lets anyone forge
+// a reply token and inject a message into any ticket of a business.
+func (cfg Config) ValidateServe() error {
+	if cfg.Environment == "production" && len(cfg.InboundReplyTokenSecret) == 0 {
+		return errors.New("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: required in production")
+	}
+	return nil
 }
 
 // ValidateOutbound checks the selected shared provider without disclosing input values.
