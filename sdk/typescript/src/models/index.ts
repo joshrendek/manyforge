@@ -120,6 +120,7 @@ export * from './DnsRecordState.js';
 export * from './DnsTxtRecord.js';
 export * from './DraftNode.js';
 export * from './DraftNodeInput.js';
+export * from './DroppedAttachment.js';
 export * from './DurationWaitConfig.js';
 export * from './Edge.js';
 export * from './EmailAutomationEventInput.js';

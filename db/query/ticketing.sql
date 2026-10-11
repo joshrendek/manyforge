@@ -252,11 +252,12 @@ SET subject = '', redacted_at = now(), updated_at = now()
 WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL
 RETURNING tenant_root_id, redacted_at;
 
--- BlankTicketMessages blanks every message body on a ticket (FR-014). Returns the
+-- BlankTicketMessages blanks every message body on a ticket (FR-014) and clears the
+-- recorded dropped-attachment list (its filenames are requester PII; spec 017 R15). Returns the
 -- number of messages blanked — the audit scope count. Scoped to (ticket_id, business_id).
 -- name: BlankTicketMessages :execrows
 UPDATE ticket_message
-SET body_text = '', body_html = NULL
+SET body_text = '', body_html = NULL, dropped_attachments = '[]'::jsonb
 WHERE ticket_id = $1 AND business_id = $2;
 
 -- ListTicketAttachmentBlobs returns the blob key of every attachment on a ticket

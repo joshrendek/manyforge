@@ -28,7 +28,8 @@ type Querier interface {
 	// purged out-of-band via attachment.purge). Returns the count blanked — the audit
 	// scope count. Joined through ticket_message so it stays scoped to one ticket.
 	BlankTicketAttachments(ctx context.Context, arg BlankTicketAttachmentsParams) (int64, error)
-	// BlankTicketMessages blanks every message body on a ticket (FR-014). Returns the
+	// BlankTicketMessages blanks every message body on a ticket (FR-014) and clears the
+	// recorded dropped-attachment list (its filenames are requester PII; spec 017 R15). Returns the
 	// number of messages blanked — the audit scope count. Scoped to (ticket_id, business_id).
 	BlankTicketMessages(ctx context.Context, arg BlankTicketMessagesParams) (int64, error)
 	// BumpTicketActivity touches the denormalized last_message_at/updated_at after a

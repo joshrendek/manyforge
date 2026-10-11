@@ -39,7 +39,7 @@ func (q *Queries) BlankTicketAttachments(ctx context.Context, arg BlankTicketAtt
 
 const blankTicketMessages = `-- name: BlankTicketMessages :execrows
 UPDATE ticket_message
-SET body_text = '', body_html = NULL
+SET body_text = '', body_html = NULL, dropped_attachments = '[]'::jsonb
 WHERE ticket_id = $1 AND business_id = $2
 `
 
@@ -48,7 +48,8 @@ type BlankTicketMessagesParams struct {
 	BusinessID uuid.UUID `json:"business_id"`
 }
 
-// BlankTicketMessages blanks every message body on a ticket (FR-014). Returns the
+// BlankTicketMessages blanks every message body on a ticket (FR-014) and clears the
+// recorded dropped-attachment list (its filenames are requester PII; spec 017 R15). Returns the
 // number of messages blanked — the audit scope count. Scoped to (ticket_id, business_id).
 func (q *Queries) BlankTicketMessages(ctx context.Context, arg BlankTicketMessagesParams) (int64, error) {
 	result, err := q.db.Exec(ctx, blankTicketMessages, arg.TicketID, arg.BusinessID)

@@ -14830,6 +14830,22 @@ components:
       - content_type
       - size
       - blob_key
+    DroppedAttachment:
+      type: object
+      description: An inbound attachment that was dropped instead of stored (spec 017 R15).
+      properties:
+        filename:
+          type: string
+        detected_type:
+          type: string
+          description: content type sniffed from the bytes (the declared type is never trusted)
+        size:
+          type: integer
+          format: int64
+      required:
+      - filename
+      - detected_type
+      - size
     AuditEntry:
       type: object
       properties:
@@ -21254,6 +21270,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Attachment'
+        dropped_attachments:
+          type: array
+          description: Inbound attachments that were not stored because their sniffed type is not allowed or they exceed the size cap (spec 017 R15). No bytes are retained.
+          items:
+            $ref: '#/components/schemas/DroppedAttachment'
         spf_result:
           $ref: '#/components/schemas/DnsRecordState'
         dkim_result:
@@ -21283,6 +21304,7 @@ components:
       - body_text
       - body_html
       - attachments
+      - dropped_attachments
       - spf_result
       - dkim_result
       - dmarc_result

@@ -147,6 +147,7 @@ from .dns_record_state import DnsRecordState
 from .dns_txt_record import DnsTxtRecord
 from .draft_node import DraftNode
 from .draft_node_input import DraftNodeInput
+from .dropped_attachment import DroppedAttachment
 from .duration_wait_config import DurationWaitConfig
 from .duration_wait_config_properties_mode_enum import DurationWaitConfigPropertiesModeEnum
 from .edge import Edge

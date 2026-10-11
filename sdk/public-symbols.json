@@ -16181,6 +16181,54 @@
             }
           ]
         },
+        "DroppedAttachment": {
+          "alias": false,
+          "kind": "type",
+          "members": {
+            "DetectedType": {
+              "embedded": false,
+              "json": "detected_type",
+              "kind": "field",
+              "required": true,
+              "type": "string"
+            },
+            "Filename": {
+              "embedded": false,
+              "json": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "string"
+            },
+            "Size": {
+              "embedded": false,
+              "json": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int64"
+            },
+            "pointer:UnmarshalJSON": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "[]byte"
+                    }
+                  ],
+                  "returns": [
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": false
+                }
+              ]
+            }
+          },
+          "representation": "struct",
+          "type_parameters": []
+        },
         "DurationWaitConfig": {
           "alias": false,
           "kind": "type",
@@ -25475,6 +25523,35 @@
             }
           ]
         },
+        "NewDroppedAttachment": {
+          "kind": "function",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "type": "string"
+                },
+                {
+                  "name": "1",
+                  "required": true,
+                  "type": "string"
+                },
+                {
+                  "name": "2",
+                  "required": true,
+                  "type": "int64"
+                }
+              ],
+              "returns": [
+                "*github.com/joshrendek/manyforge/sdk/go.DroppedAttachment"
+              ],
+              "type_parameters": [],
+              "variadic": false
+            }
+          ]
+        },
         "NewDurationWaitConfig": {
           "kind": "function",
           "signatures": [
@@ -31809,12 +31886,12 @@
                 {
                   "name": "9",
                   "required": true,
-                  "type": "string"
+                  "type": "[]github.com/joshrendek/manyforge/sdk/go.DroppedAttachment"
                 },
                 {
                   "name": "10",
                   "required": true,
-                  "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+                  "type": "string"
                 },
                 {
                   "name": "11",
@@ -31824,15 +31901,20 @@
                 {
                   "name": "12",
                   "required": true,
-                  "type": "[]string"
+                  "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
                 },
                 {
                   "name": "13",
                   "required": true,
-                  "type": "github.com/joshrendek/manyforge/sdk/go.DnsRecordState"
+                  "type": "[]string"
                 },
                 {
                   "name": "14",
+                  "required": true,
+                  "type": "github.com/joshrendek/manyforge/sdk/go.DnsRecordState"
+                },
+                {
+                  "name": "15",
                   "required": true,
                   "type": "string"
                 }
@@ -42939,6 +43021,13 @@
               "kind": "field",
               "required": true,
               "type": "github.com/joshrendek/manyforge/sdk/go.DnsRecordState"
+            },
+            "DroppedAttachments": {
+              "embedded": false,
+              "json": "dropped_attachments",
+              "kind": "field",
+              "required": true,
+              "type": "[]github.com/joshrendek/manyforge/sdk/go.DroppedAttachment"
             },
             "Id": {
               "embedded": false,
@@ -92966,6 +93055,245 @@
                     }
                   ],
                   "returns": "public com.manyforge.sdk.models.DraftNodeInput$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.models.DroppedAttachment": {
+          "declaration": "public class com.manyforge.sdk.models.DroppedAttachment",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.models.DroppedAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "detectedType": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.DroppedAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "detectedTypePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "filename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.DroppedAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "filenamePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "getDetectedType": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "getFilename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "getSize": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.Long",
+                  "throws": ""
+                }
+              ]
+            },
+            "size": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.Long"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.DroppedAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "sizePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.Long>",
+                  "throws": ""
+                }
+              ]
+            }
+          },
+          "model_fields": [
+            "detected_type",
+            "filename",
+            "size"
+          ],
+          "non_nullable_fields": [
+            "detected_type",
+            "filename",
+            "size"
+          ],
+          "required_fields": [
+            "detected_type",
+            "filename",
+            "size"
+          ]
+        },
+        "com.manyforge.sdk.models.DroppedAttachment$Builder": {
+          "declaration": "public final class com.manyforge.sdk.models.DroppedAttachment$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.models.DroppedAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "detectedType": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.DroppedAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "filename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.DroppedAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "size": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.Long"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.DroppedAttachment$Builder",
                   "throws": ""
                 }
               ]
@@ -168034,6 +168362,34 @@
                 }
               ]
             },
+            "droppedAttachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.DroppedAttachment>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.TicketMessage",
+                  "throws": ""
+                }
+              ]
+            },
+            "droppedAttachmentsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.util.List<com.manyforge.sdk.models.DroppedAttachment>>",
+                  "throws": ""
+                }
+              ]
+            },
             "getAttachments": {
               "kind": "method",
               "required": false,
@@ -168129,6 +168485,17 @@
                 {
                   "params": [],
                   "returns": "public com.manyforge.sdk.models.DnsRecordState",
+                  "throws": ""
+                }
+              ]
+            },
+            "getDroppedAttachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.util.List<com.manyforge.sdk.models.DroppedAttachment>",
                   "throws": ""
                 }
               ]
@@ -168378,6 +168745,7 @@
             "direction",
             "dkim_result",
             "dmarc_result",
+            "dropped_attachments",
             "id",
             "in_reply_to",
             "message_id",
@@ -168391,6 +168759,7 @@
             "direction",
             "dkim_result",
             "dmarc_result",
+            "dropped_attachments",
             "id",
             "references",
             "spf_result",
@@ -168406,6 +168775,7 @@
             "direction",
             "dkim_result",
             "dmarc_result",
+            "dropped_attachments",
             "id",
             "in_reply_to",
             "message_id",
@@ -168586,6 +168956,23 @@
                       "name": "0",
                       "required": true,
                       "type": "com.manyforge.sdk.models.DnsRecordState"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.TicketMessage$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "droppedAttachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.DroppedAttachment>"
                     }
                   ],
                   "returns": "public com.manyforge.sdk.models.TicketMessage$Builder",
@@ -294510,6 +294897,12 @@
               "required": true,
               "type": "manyforge.models.dns_record_state.DnsRecordState"
             },
+            "dropped_attachments": {
+              "alias": "dropped_attachments",
+              "kind": "field",
+              "required": true,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
+            },
             "from_dict": {
               "binding": "class",
               "kind": "method",
@@ -296721,6 +297114,12 @@
               "kind": "field",
               "required": true,
               "type": "manyforge.models.dns_record_state.DnsRecordState"
+            },
+            "dropped_attachments": {
+              "alias": "dropped_attachments",
+              "kind": "field",
+              "required": true,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
             },
             "from_dict": {
               "binding": "class",
@@ -338322,6 +338721,138 @@
             }
           }
         },
+        "manyforge.models.DroppedAttachment": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "detected_type": {
+              "alias": "detected_type",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "size": {
+              "alias": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.DurationWaitConfig": {
           "bases": [
             "manyforge.model_support.Model"
@@ -366125,6 +366656,12 @@
               "kind": "field",
               "required": true,
               "type": "manyforge.models.dns_record_state.DnsRecordState"
+            },
+            "dropped_attachments": {
+              "alias": "dropped_attachments",
+              "kind": "field",
+              "required": true,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
             },
             "from_dict": {
               "binding": "class",
@@ -415891,6 +416428,275 @@
           "type": "manyforge.model_support.UnsetType"
         },
         "manyforge.models.draft_node_input.UnsetType": {
+          "bases": [
+            "object"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.dropped_attachment.DroppedAttachment": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "detected_type": {
+              "alias": "detected_type",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "size": {
+              "alias": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.dropped_attachment.JsonValue": {
+          "kind": "value",
+          "type": "JsonValue"
+        },
+        "manyforge.models.dropped_attachment.Model": {
+          "bases": [
+            "pydantic.main.BaseModel"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.dropped_attachment.OpenEnum": {
+          "bases": [
+            "str",
+            "enum.Enum"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.dropped_attachment.UNSET": {
+          "kind": "value",
+          "type": "manyforge.model_support.UnsetType"
+        },
+        "manyforge.models.dropped_attachment.UnsetType": {
           "bases": [
             "object"
           ],
@@ -494711,6 +495517,138 @@
             }
           }
         },
+        "manyforge.models.ticket_message.DroppedAttachment": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "detected_type": {
+              "alias": "detected_type",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "size": {
+              "alias": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.ticket_message.JsonValue": {
           "kind": "value",
           "type": "JsonValue"
@@ -494919,6 +495857,12 @@
               "kind": "field",
               "required": true,
               "type": "manyforge.models.dns_record_state.DnsRecordState"
+            },
+            "dropped_attachments": {
+              "alias": "dropped_attachments",
+              "kind": "field",
+              "required": true,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
             },
             "from_dict": {
               "binding": "class",
@@ -495283,6 +496227,12 @@
               "kind": "field",
               "required": true,
               "type": "manyforge.models.dns_record_state.DnsRecordState"
+            },
+            "dropped_attachments": {
+              "alias": "dropped_attachments",
+              "kind": "field",
+              "required": true,
+              "type": "list[manyforge.models.dropped_attachment.DroppedAttachment]"
             },
             "from_dict": {
               "binding": "class",
@@ -551664,6 +552614,44 @@
             }
           ]
         },
+        "import:index.DroppedAttachment": {
+          "kind": "export",
+          "target": "type:DroppedAttachment"
+        },
+        "import:index.DroppedAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "DroppedAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:index.DroppedAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "DroppedAttachment"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:index.DurationWaitConfig": {
           "kind": "export",
           "target": "type:DurationWaitConfig"
@@ -577168,6 +578156,31 @@
           },
           "type_parameters": []
         },
+        "import:index.type:DroppedAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "detectedType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "import:index.type:DurationWaitConfig": {
           "bases": [],
           "kind": "interface",
@@ -584867,6 +585880,12 @@
               "required": true,
               "type": "DnsRecordState"
             },
+            "droppedAttachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "DroppedAttachment[]"
+            },
             "id": {
               "kind": "field",
               "readonly": false,
@@ -590198,6 +591217,44 @@
                   "required": true,
                   "rest": false,
                   "type": "DraftNode"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.DroppedAttachment": {
+          "kind": "export",
+          "target": "type:DroppedAttachment"
+        },
+        "import:public.DroppedAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "DroppedAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.DroppedAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "DroppedAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -604080,6 +605137,31 @@
           },
           "type_parameters": []
         },
+        "import:public.type:DroppedAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "detectedType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "import:public.type:DurationWaitConfig": {
           "bases": [],
           "kind": "interface",
@@ -611333,6 +612415,12 @@
               "required": true,
               "type": "DnsRecordState"
             },
+            "droppedAttachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "DroppedAttachment[]"
+            },
             "id": {
               "kind": "field",
               "readonly": false,
@@ -616639,6 +617727,44 @@
                   "required": true,
                   "rest": false,
                   "type": "DraftNode"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.DroppedAttachment": {
+          "kind": "export",
+          "target": "type:DroppedAttachment"
+        },
+        "import:server.DroppedAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "DroppedAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.DroppedAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "DroppedAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -630545,6 +631671,31 @@
           },
           "type_parameters": []
         },
+        "import:server.type:DroppedAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "detectedType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "import:server.type:DurationWaitConfig": {
           "bases": [],
           "kind": "interface",
@@ -637902,6 +639053,12 @@
               "required": true,
               "type": "DnsRecordState"
             },
+            "droppedAttachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "DroppedAttachment[]"
+            },
             "id": {
               "kind": "field",
               "readonly": false,
@@ -644180,6 +645337,44 @@
                   "required": true,
                   "rest": false,
                   "type": "DraftNode"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.DroppedAttachment": {
+          "kind": "export",
+          "target": "type:DroppedAttachment"
+        },
+        "require:index.DroppedAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "DroppedAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.DroppedAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "DroppedAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -669691,6 +670886,31 @@
           },
           "type_parameters": []
         },
+        "require:index.type:DroppedAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "detectedType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "require:index.type:DurationWaitConfig": {
           "bases": [],
           "kind": "interface",
@@ -677390,6 +678610,12 @@
               "required": true,
               "type": "DnsRecordState"
             },
+            "droppedAttachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "DroppedAttachment[]"
+            },
             "id": {
               "kind": "field",
               "readonly": false,
@@ -682721,6 +683947,44 @@
                   "required": true,
                   "rest": false,
                   "type": "DraftNode"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.DroppedAttachment": {
+          "kind": "export",
+          "target": "type:DroppedAttachment"
+        },
+        "require:public.DroppedAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "DroppedAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.DroppedAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "DroppedAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -696603,6 +697867,31 @@
           },
           "type_parameters": []
         },
+        "require:public.type:DroppedAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "detectedType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "require:public.type:DurationWaitConfig": {
           "bases": [],
           "kind": "interface",
@@ -703856,6 +705145,12 @@
               "required": true,
               "type": "DnsRecordState"
             },
+            "droppedAttachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "DroppedAttachment[]"
+            },
             "id": {
               "kind": "field",
               "readonly": false,
@@ -709162,6 +710457,44 @@
                   "required": true,
                   "rest": false,
                   "type": "DraftNode"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.DroppedAttachment": {
+          "kind": "export",
+          "target": "type:DroppedAttachment"
+        },
+        "require:server.DroppedAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "DroppedAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.DroppedAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "DroppedAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -723068,6 +724401,31 @@
           },
           "type_parameters": []
         },
+        "require:server.type:DroppedAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "detectedType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "require:server.type:DurationWaitConfig": {
           "bases": [],
           "kind": "interface",
@@ -730424,6 +731782,12 @@
               "readonly": false,
               "required": true,
               "type": "DnsRecordState"
+            },
+            "droppedAttachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "DroppedAttachment[]"
             },
             "id": {
               "kind": "field",

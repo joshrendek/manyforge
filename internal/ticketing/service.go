@@ -115,6 +115,16 @@ type Attachment struct {
 	BlobKey     string
 }
 
+// DroppedAttachment describes an inbound attachment that was not stored (spec 017
+// R15): its sniffed type is outside the allowlist or it exceeded the size cap. No
+// bytes exist for it. The json tags are the persisted jsonb shape AND the API shape;
+// the inbox ingest path records this same type.
+type DroppedAttachment struct {
+	Filename     string `json:"filename"`
+	DetectedType string `json:"detected_type"`
+	Size         int64  `json:"size"`
+}
+
 // Message is the API view of one entry in a ticket thread, with SPF/DKIM/DMARC
 // projected from the stored auth_results jsonb into three typed fields.
 type Message struct {
@@ -128,9 +138,11 @@ type Message struct {
 	BodyText          *string
 	BodyHTML          *string
 	Attachments       []Attachment
-	SPFResult         string
-	DKIMResult        string
-	DMARCResult       string
+	// DroppedAttachments is never nil (always a JSON array in the API).
+	DroppedAttachments []DroppedAttachment
+	SPFResult          string
+	DKIMResult         string
+	DMARCResult        string
 	// DeliveryState is the outbound lifecycle (pending|sent|failed); nil for
 	// inbound messages and notes. delivery_error is intentionally NEVER exposed.
 	DeliveryState *string
@@ -279,7 +291,11 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 				SourceApprovalItemID: db.PGUUID(*in.IdempotencyKey), BusinessID: businessID,
 			})
 			if perr == nil {
-				out = toMessage(prior, nil)
+				m, merr := toMessage(prior, nil)
+				if merr != nil {
+					return merr
+				}
+				out = m
 				return nil
 			}
 			if !errors.Is(perr, pgx.ErrNoRows) {
@@ -439,7 +455,11 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 			}
 		}
 
-		out = toMessage(row, nil)
+		m, merr := toMessage(row, nil)
+		if merr != nil {
+			return merr
+		}
+		out = m
 		return nil
 	})
 	if err != nil {
@@ -485,7 +505,11 @@ func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID
 				SourceApprovalItemID: db.PGUUID(*in.IdempotencyKey), BusinessID: businessID,
 			})
 			if perr == nil {
-				out = toMessage(prior, nil)
+				m, merr := toMessage(prior, nil)
+				if merr != nil {
+					return merr
+				}
+				out = m
 				return nil
 			}
 			if !errors.Is(perr, pgx.ErrNoRows) {
@@ -562,7 +586,11 @@ func (s *Service) AddNote(ctx context.Context, principalID, businessID, ticketID
 			return err
 		}
 
-		out = toMessage(row, nil)
+		m, merr := toMessage(row, nil)
+		if merr != nil {
+			return merr
+		}
+		out = m
 		return nil
 	})
 	if err != nil {
@@ -990,7 +1018,11 @@ func (s *Service) ListMessages(ctx context.Context, principalID, businessID, tic
 		}
 		items := make([]Message, 0, len(rows))
 		for _, r := range rows {
-			items = append(items, toMessage(r, atts[r.ID]))
+			m, merr := toMessage(r, atts[r.ID])
+			if merr != nil {
+				return merr
+			}
+			items = append(items, m)
 		}
 		out.Items = items
 		if next {
@@ -1159,7 +1191,7 @@ func toRequester(r dbgen.Requester) Requester {
 	}
 }
 
-func toMessage(m dbgen.TicketMessage, atts []Attachment) Message {
+func toMessage(m dbgen.TicketMessage, atts []Attachment) (Message, error) {
 	spf, dkim, dmarc := projectAuthResults(m.AuthResults)
 	refs := m.References
 	if refs == nil {
@@ -1173,23 +1205,33 @@ func toMessage(m dbgen.TicketMessage, atts []Attachment) Message {
 		v := m.MessageID
 		mid = &v
 	}
-	return Message{
-		ID:                m.ID,
-		TicketID:          m.TicketID,
-		Direction:         string(m.Direction),
-		MessageID:         mid,
-		InReplyTo:         m.InReplyTo,
-		References:        refs,
-		AuthorPrincipalID: pgUUIDPtr(m.AuthorPrincipalID),
-		BodyText:          m.BodyText,
-		BodyHTML:          m.BodyHtml,
-		Attachments:       atts,
-		SPFResult:         spf,
-		DKIMResult:        dkim,
-		DMARCResult:       dmarc,
-		DeliveryState:     deliveryStatePtr(m.DeliveryState),
-		CreatedAt:         m.CreatedAt,
+	dropped := []DroppedAttachment{}
+	if len(m.DroppedAttachments) > 0 {
+		if err := json.Unmarshal(m.DroppedAttachments, &dropped); err != nil {
+			return Message{}, fmt.Errorf("ticketing: decode dropped_attachments of message %s: %w", m.ID, err)
+		}
+		if dropped == nil {
+			dropped = []DroppedAttachment{} // stored JSON null
+		}
 	}
+	return Message{
+		ID:                 m.ID,
+		TicketID:           m.TicketID,
+		Direction:          string(m.Direction),
+		MessageID:          mid,
+		InReplyTo:          m.InReplyTo,
+		References:         refs,
+		AuthorPrincipalID:  pgUUIDPtr(m.AuthorPrincipalID),
+		BodyText:           m.BodyText,
+		BodyHTML:           m.BodyHtml,
+		Attachments:        atts,
+		DroppedAttachments: dropped,
+		SPFResult:          spf,
+		DKIMResult:         dkim,
+		DMARCResult:        dmarc,
+		DeliveryState:      deliveryStatePtr(m.DeliveryState),
+		CreatedAt:          m.CreatedAt,
+	}, nil
 }
 
 // deliveryStatePtr maps the nullable delivery_state enum onto an optional string

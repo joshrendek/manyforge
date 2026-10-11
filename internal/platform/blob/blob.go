@@ -91,13 +91,20 @@ var allowedTypes = map[string]bool{
 	"application/zip": true,
 }
 
+// Detect returns the base sniffed content type of content (parameters stripped)
+// WITHOUT applying the allowlist. It describes a rejected attachment; Sniff is the
+// gate that decides what may be stored.
+func Detect(content []byte) string {
+	ct := http.DetectContentType(content) // e.g. "image/png" or "text/plain; charset=utf-8"
+	return strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])
+}
+
 // Sniff determines the content type from the first 512 bytes and validates it
 // against the allowlist (FR-007). A spoofed declared type is irrelevant: a file
 // whose bytes sniff outside the allowlist is rejected with ErrUnsupportedType
 // before any row or object is written.
 func Sniff(content []byte) (string, error) {
-	ct := http.DetectContentType(content) // e.g. "image/png" or "text/plain; charset=utf-8"
-	base := strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])
+	base := Detect(content)
 	if !allowedTypes[base] {
 		return "", fmt.Errorf("%q: %w", base, ErrUnsupportedType)
 	}

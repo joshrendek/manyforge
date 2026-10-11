@@ -47,6 +47,13 @@ func TestRedactTicket(t *testing.T) {
 		t.Fatalf("seed attachment: %v", err)
 	}
 
+	// A recorded dropped attachment (spec 017 R15): its filename is requester PII.
+	if _, err := tdb.Super.Exec(ctx,
+		`UPDATE ticket_message SET dropped_attachments = '[{"filename":"secret-invoice.exe","detected_type":"application/octet-stream","size":9}]'::jsonb WHERE id=$1`,
+		msg2); err != nil {
+		t.Fatalf("seed dropped_attachments: %v", err)
+	}
+
 	// Redact as the owner (owner preset → tickets.delete).
 	if err := svc.RedactTicket(ctx, rt.owner, rt.master, ticketID); err != nil {
 		t.Fatalf("RedactTicket: %v", err)
@@ -90,6 +97,10 @@ func TestRedactTicket(t *testing.T) {
 	if nonBlank := countSuper(ctx, t, tdb.Super,
 		`SELECT count(*) FROM ticket_message WHERE ticket_id=$1 AND COALESCE(body_text,'') <> ''`, ticketID); nonBlank != 0 {
 		t.Errorf("%d message bodies still non-blank, want 0", nonBlank)
+	}
+	if n := countSuper(ctx, t, tdb.Super,
+		`SELECT count(*) FROM ticket_message WHERE ticket_id=$1 AND dropped_attachments <> '[]'::jsonb`, ticketID); n != 0 {
+		t.Errorf("%d messages still carry dropped_attachments after redact, want 0 (filenames are PII)", n)
 	}
 	var filename, gotBlob string
 	if err := tdb.Super.QueryRow(ctx,
