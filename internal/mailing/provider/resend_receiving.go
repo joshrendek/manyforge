@@ -5,10 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// maxRawRedirects bounds how many redirects a raw download follows.
+const maxRawRedirects = 3
+
+// errRawRedirectRejected carries no URL: redirect targets may be signed.
+var errRawRedirectRejected = errors.New("provider: raw download redirect rejected")
 
 var (
 	// ErrReceivedEmailTooLarge marks a received message (or its metadata) larger
@@ -90,19 +97,39 @@ func (r *Resend) DownloadReceivedRaw(ctx context.Context, rawURL string, maxByte
 	if err != nil {
 		return nil, ErrReceivedRawUnavailable
 	}
-	client := r.RawClient
-	if client == nil {
-		client = r.Client
+	base := r.RawClient
+	if base == nil {
+		base = r.Client
 	}
-	if client == nil {
-		client = http.DefaultClient
+	if base == nil {
+		base = http.DefaultClient
+	}
+	// Shallow copy: the shared client is never mutated. Redirects stay https-only
+	// and bounded, so a signed URL cannot be bounced to http or around forever.
+	client := *base
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > maxRawRedirects {
+			return errRawRedirectRejected
+		}
+		if req.URL.Scheme != "https" && (!r.AllowInsecureRawURL || req.URL.Scheme != "http") {
+			return errRawRedirectRejected
+		}
+		return nil
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(err, errRawRedirectRejected) {
+			return nil, ErrReceivedRawUnavailable
+		}
+		var netErr net.Error
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("provider: resend raw transport: %w", ctx.Err())
+		}
 		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
+		if errors.As(err, &urlErr) && errors.As(urlErr.Err, &netErr) {
 			return nil, fmt.Errorf("provider: resend raw transport: %w", urlErr.Err)
 		}
+		// Anything else (e.g. a malformed Location) may embed the signed URL.
 		return nil, errors.New("provider: resend raw transport failed")
 	}
 	defer func() { _ = resp.Body.Close() }()

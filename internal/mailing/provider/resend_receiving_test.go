@@ -224,3 +224,51 @@ func TestResendGetReceivedEmailOversizedErrorResponseIsRetryable(t *testing.T) {
 		t.Fatalf("error = %v, want a retryable 503 HTTPError, not the too-large sentinel", err)
 	}
 }
+
+func TestResendDownloadRejectsHTTPSDowngradeRedirect(t *testing.T) {
+	var plainHits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { plainHits.Add(1) }))
+	defer plain.Close()
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, plain.URL+"/raw?sig=topsecret", http.StatusFound)
+	}))
+	defer tlsSrv.Close()
+	r := &Resend{Client: tlsSrv.Client()}
+	_, err := r.DownloadReceivedRaw(context.Background(), tlsSrv.URL+"/raw?sig=topsecret", 1024)
+	if !errors.Is(err, ErrReceivedRawUnavailable) || strings.Contains(err.Error(), "topsecret") {
+		t.Fatalf("error = %v, want ErrReceivedRawUnavailable without the signed URL", err)
+	}
+	if plainHits.Load() != 0 {
+		t.Fatalf("downgrade target was hit %d times", plainHits.Load())
+	}
+}
+
+func TestResendDownloadCapsRedirectHops(t *testing.T) {
+	var hits atomic.Int32
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, req, "/raw?sig=topsecret", http.StatusFound)
+	}))
+	defer tlsSrv.Close()
+	r := &Resend{Client: tlsSrv.Client()}
+	_, err := r.DownloadReceivedRaw(context.Background(), tlsSrv.URL+"/raw?sig=topsecret", 1024)
+	if !errors.Is(err, ErrReceivedRawUnavailable) || strings.Contains(err.Error(), "topsecret") {
+		t.Fatalf("error = %v, want ErrReceivedRawUnavailable", err)
+	}
+	if hits.Load() > maxRawRedirects+1 {
+		t.Fatalf("followed %d requests, want at most %d", hits.Load(), maxRawRedirects+1)
+	}
+}
+
+func TestResendDownloadMalformedLocationDoesNotLeakSignedURL(t *testing.T) {
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "https://x.test/%zz?sig=topsecret")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer tlsSrv.Close()
+	r := &Resend{Client: tlsSrv.Client()}
+	_, err := r.DownloadReceivedRaw(context.Background(), tlsSrv.URL+"/raw?sig=topsecret", 1024)
+	if err == nil || strings.Contains(err.Error(), "topsecret") {
+		t.Fatalf("error = %v, must not contain the signed URL", err)
+	}
+}
