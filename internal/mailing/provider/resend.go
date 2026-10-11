@@ -19,6 +19,13 @@ import (
 
 const defaultResendBaseURL = "https://api.resend.com"
 
+// ResendWebhookEvents is the event set every ManyForge-provisioned Resend webhook
+// subscribes to: delivery feedback (spec 013) plus inbound mail (spec 017 R1).
+var ResendWebhookEvents = []string{"email.bounced", "email.complained", "email.received"}
+
+// errResendResponseTooLarge marks a successful Resend API response over the read bound.
+var errResendResponseTooLarge = errors.New("provider: resend response exceeds the read bound")
+
 // Resend delivers structured messages through the Resend HTTP API. An empty
 // BaseURL selects the public Resend endpoint.
 type Resend struct {
@@ -26,6 +33,11 @@ type Resend struct {
 	FromEmail string
 	BaseURL   string
 	Client    *http.Client
+	// RawClient fetches pre-signed raw-message URLs (spec 017). Production wires an
+	// SSRF-guarded netsafe client; nil falls back to Client.
+	RawClient *http.Client
+	// AllowInsecureRawURL permits http raw URLs. Tests only (fake Resend server).
+	AllowInsecureRawURL bool
 }
 
 type ResendWebhook struct {
@@ -135,7 +147,7 @@ func (r *Resend) EnsureWebhook(ctx context.Context, endpoint, existingID string,
 		Events   []string `json:"events"`
 	}{
 		Endpoint: endpoint,
-		Events:   []string{"email.bounced", "email.complained"},
+		Events:   ResendWebhookEvents,
 	}
 	var created resendWebhookResponse
 	if err := beforeMutation(ctx); err != nil {
@@ -202,7 +214,28 @@ func (r *Resend) reconcileWebhooks(ctx context.Context, endpoint, existingID str
 			return ResendWebhook{}, false, err
 		}
 	}
-	return ResendWebhook{ID: candidates[0].ID, SigningSecret: candidates[0].SigningSecret}, true, nil
+	chosen := candidates[0]
+	if !containsResendEvents(chosen.Events, ResendWebhookEvents...) {
+		// Spec 017 R1: a webhook provisioned before email.received existed is
+		// upgraded in place, so its id (and signing secret) survive.
+		if err := beforeMutation(ctx); err != nil {
+			return ResendWebhook{}, false, err
+		}
+		if err := r.patchWebhookEvents(ctx, chosen.ID, unionEvents(chosen.Events, ResendWebhookEvents)); err != nil {
+			return ResendWebhook{}, false, err
+		}
+		refreshed, err := r.webhookDetail(ctx, chosen.ID)
+		if err != nil {
+			return ResendWebhook{}, false, err
+		}
+		if refreshed.ID != chosen.ID || refreshed.Endpoint != endpoint ||
+			!containsResendEvents(refreshed.Events, ResendWebhookEvents...) ||
+			!validResendSigningSecret(refreshed.SigningSecret) {
+			return ResendWebhook{}, false, ErrResendWebhook
+		}
+		chosen = refreshed
+	}
+	return ResendWebhook{ID: chosen.ID, SigningSecret: chosen.SigningSecret}, true, nil
 }
 func (r *Resend) CleanupWebhooks(ctx context.Context, endpoint, existingID string, requireMatch bool) error {
 	matches, err := r.listCleanupMatches(ctx, endpoint, existingID)
@@ -290,6 +323,13 @@ func validResendSigningSecret(secret string) bool {
 }
 
 func (r *Resend) do(ctx context.Context, method, path string, body any, idempotencyKey string, out any) error {
+	return r.doLimited(ctx, method, path, body, idempotencyKey, out, 1<<20)
+}
+
+// doLimited is do with a caller-chosen bound on a successful response body. The
+// status is classified before the bound applies, so an oversized error response
+// is still a classified HTTPError rather than a "too large" outcome.
+func (r *Resend) doLimited(ctx context.Context, method, path string, body any, idempotencyKey string, out any, limit int64) error {
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -323,17 +363,22 @@ func (r *Resend) do(ctx context.Context, method, path string, body any, idempote
 		return fmt.Errorf("provider: resend transport: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return fmt.Errorf("provider: resend response: %w", err)
-	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Best effort: only the error name is used, so a truncated body is fine.
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		var detail struct {
 			Name, Message string
 			StatusCode    int `json:"statusCode"`
 		}
 		_ = json.Unmarshal(raw, &detail)
 		return &HTTPError{StatusCode: resp.StatusCode, Code: detail.Name}
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return fmt.Errorf("provider: resend response: %w", err)
+	}
+	if int64(len(raw)) > limit {
+		return errResendResponseTooLarge
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
