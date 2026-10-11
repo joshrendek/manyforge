@@ -1,6 +1,7 @@
 package mailing
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -34,21 +35,12 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wc, err := h.loadContext(r.Context(), profileID)
-	if err != nil || wc.provider != "resend" || wc.credentialSealed == nil || h.Sealer == nil {
-		h.unauthorized(w)
-		return
-	}
-	credential, err := h.Sealer.Open(*wc.credentialSealed)
 	if err != nil {
-		h.logger().ErrorContext(r.Context(), "mailing Resend webhook credential unseal failed", "profile_id", profileID)
 		h.unauthorized(w)
 		return
 	}
-	defer clear(credential)
-	var creds resendStoredCredentials
-	if json.Unmarshal(credential, &creds) != nil || creds.Version != 2 ||
-		strings.TrimSpace(creds.WebhookID) == "" || creds.WebhookSecret == "" {
-		h.logger().ErrorContext(r.Context(), "mailing Resend webhook credential is invalid", "profile_id", profileID)
+	creds, err := h.openResendCredentials(r.Context(), wc)
+	if err != nil {
 		h.unauthorized(w)
 		return
 	}
@@ -65,6 +57,10 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		h.authenticatedOK(w)
 		return
 	}
+	if payload.Type == "email.received" {
+		h.handleResendReceived(w, r, wc, creds.APIKey, eventID, payload)
+		return
+	}
 	events := mapResendEvent(payload)
 	if err := h.recordAndApply(r.Context(), wc, "resend", eventID, body, events); err != nil {
 		h.logger().ErrorContext(r.Context(), "mailing Resend webhook apply failed", "profile_id", profileID, "event_type", payload.Type, "err", err)
@@ -72,6 +68,27 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.authenticatedOK(w)
+}
+
+// openResendCredentials unseals and validates a profile's v2 Resend bundle.
+// Failures are logged without secret material and collapse to unauthorized.
+func (h *WebhookHandler) openResendCredentials(ctx context.Context, wc webhookContext) (resendStoredCredentials, error) {
+	if wc.provider != "resend" || wc.credentialSealed == nil || h.Sealer == nil {
+		return resendStoredCredentials{}, errWebhookUnauthorized
+	}
+	credential, err := h.Sealer.Open(*wc.credentialSealed)
+	if err != nil {
+		h.logger().ErrorContext(ctx, "mailing Resend webhook credential unseal failed", "profile_id", wc.profileID)
+		return resendStoredCredentials{}, errWebhookUnauthorized
+	}
+	defer clear(credential)
+	var creds resendStoredCredentials
+	if json.Unmarshal(credential, &creds) != nil || creds.Version != 2 ||
+		strings.TrimSpace(creds.WebhookID) == "" || creds.WebhookSecret == "" {
+		h.logger().ErrorContext(ctx, "mailing Resend webhook credential is invalid", "profile_id", wc.profileID)
+		return resendStoredCredentials{}, errWebhookUnauthorized
+	}
+	return creds, nil
 }
 
 func verifySvix(secret, messageID, timestamp, signatures string, body []byte, now time.Time) error {

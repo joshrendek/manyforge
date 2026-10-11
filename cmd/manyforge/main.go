@@ -683,6 +683,21 @@ func main() {
 		InboundSystemDomain: cfg.InboundSystemDomain,
 	}, logger)
 	inboxWebhookH.Metrics = metrics
+	// Spec 017: Resend-received support mail. The per-profile Resend webhook
+	// (mounted in the public ingress group) fetches the raw message with the
+	// profile's own credential and ingests it through inboxSvc. The raw URL is
+	// pre-signed and caller-influenced, so it is fetched with an SSRF-guarded client.
+	if mailingWebhookH != nil {
+		mailingWebhookH.Inbound = inboxSvc
+		mailingWebhookH.ResendHTTPClient = &http.Client{Timeout: 30 * time.Second}
+		mailingWebhookH.RawDownloadClient = netsafe.NewClient(60 * time.Second)
+		mailingWebhookH.MaxReceivedBytes = cfg.InboundMaxBytes
+		go func() {
+			if err := mailingWebhookH.UpgradeReceivingEvents(ctx); err != nil {
+				logger.Warn("mailing Resend receiving upgrade sweep failed", "err", err)
+			}
+		}()
+	}
 	// US2 hard-bounce intake (T040): a provider-signed (separate InboundBounceSecret)
 	// webhook that suppresses the bounced recipient (global email_suppression) and
 	// marks the correlated outbound message failed via a DEFINER. Mounted next to the
