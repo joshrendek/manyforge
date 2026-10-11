@@ -130,7 +130,7 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                 </ul>
               }
 
-              @if (m.dropped_attachments?.length) {
+              @if (m.dropped_attachments.length) {
                 <ul class="attachments dropped" data-testid="dropped-attachments">
                   @for (d of m.dropped_attachments; track $index) {
                     <li class="attachment" data-testid="dropped-attachment">

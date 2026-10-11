@@ -409,6 +409,7 @@ function makeMessage(over: Partial<TicketMessage> = {}): TicketMessage {
     dkim_result: 'pass',
     dmarc_result: 'pass',
     attachments: [],
+    dropped_attachments: [],
     created_at: '2024-01-01T00:00:00Z',
     ...over,
   } as TicketMessage;

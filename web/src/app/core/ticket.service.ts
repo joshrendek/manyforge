@@ -79,8 +79,9 @@ export interface TicketMessage {
   body_text: string | null;
   body_html: string | null;
   attachments: Attachment[];
-  // Inbound attachments not stored (disallowed type or over the size cap).
-  dropped_attachments?: DroppedAttachment[];
+  // Inbound attachments not stored (disallowed type, over the size cap, or no
+  // attachment storage configured). Always present; empty when none.
+  dropped_attachments: DroppedAttachment[];
   spf_result: DnsRecordState;
   dkim_result: DnsRecordState;
   dmarc_result: DnsRecordState;
