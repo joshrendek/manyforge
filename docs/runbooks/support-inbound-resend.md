@@ -58,16 +58,18 @@ to `@garden.gg` keeps going to Microsoft 365.
 
 ### Cloudflare records to add (garden.gg example)
 
-Add these in the `garden.gg` zone. Copy the values from the Resend domain page
-and the ManyForge checklist; the names below are what Cloudflare shows.
+Add these in the `garden.gg` zone. Do not type Resend values from memory or
+from this page: copy each value (and MX priority) exactly as shown in
+**Resend → Domains → support.garden.gg**, and the verify token from the ManyForge
+checklist. The names below are what Cloudflare shows.
 
 | Type | Name | Value | Notes |
 |---|---|---|---|
-| `TXT` | `_manyforge.support` | `mf-verify=…` (shown in ManyForge) | ManyForge domain ownership |
-| `MX` | `support` | Resend's inbound MX host, priority as shown | receiving; must be the lowest priority on that name |
-| `TXT` | `resend._domainkey.support` | Resend's DKIM public key | DKIM for replies sent from the subdomain |
-| `MX` | `send.support` | Resend's bounce MX (`feedback-smtp.<region>.amazonses.com`), priority 10 | Return-Path / bounces |
-| `TXT` | `send.support` | `v=spf1 include:amazonses.com ~all` (as shown by Resend) | SPF for the Return-Path domain |
+| `TXT` | `_manyforge.support` | `<mf-verify token from ManyForge>` | ManyForge domain ownership |
+| `MX` | `support` | `<receiving MX value and priority from Resend>` | receiving; if other MX records exist on this name, give Resend's MX the lowest priority number (highest priority) so it is tried first |
+| `TXT` | `resend._domainkey.support` | `<DKIM value from Resend>` | DKIM for replies sent from the subdomain |
+| `MX` | `send.support` | `<feedback MX value and priority from Resend>` | Return-Path / bounces |
+| `TXT` | `send.support` | `<SPF value from Resend>` | SPF for the Return-Path domain |
 
 All records are **DNS only** (grey cloud). Cloudflare cannot proxy MX or TXT
 records anyway.

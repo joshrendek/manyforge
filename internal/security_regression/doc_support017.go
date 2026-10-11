@@ -1,10 +1,13 @@
 package security_regression
 
 // Spec 017 (Support Email via Resend) security-regression finding IDs. Each pin
-// file carries one ID in its header comment. Some were pinned by earlier tasks:
-// MF-017-RECORD-AFTER-INGEST and the netsafe half of MF-017-RAW-DOWNLOAD live in
-// resend_received_netsafe_pin_test.go, the domain takeover in
-// mf017_domain_takeover_pin_test.go.
+// file carries one ID in its header comment. Two findings are split across files:
+// MF-017-RECORD-AFTER-INGEST across resend_received_netsafe_pin_test.go (ingest
+// before record, single record call site) and mf017_record_after_ingest_pin_test.go
+// (seen-event short-circuit, no direct record); MF-017-RAW-DOWNLOAD across
+// resend_received_netsafe_pin_test.go (production netsafe client) and
+// mf017_raw_download_pin_test.go (the download boundary). The domain takeover is
+// pinned in mf017_domain_takeover_pin_test.go.
 const (
 	// FindingReplyTokenSecret — production refuses to serve with an empty
 	// reply-token HMAC key (R14); the migrate Job is unaffected.

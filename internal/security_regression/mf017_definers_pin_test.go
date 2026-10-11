@@ -2,6 +2,7 @@
 package security_regression
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -18,8 +19,14 @@ func TestPin_MF017DefinersAndGlobalUniqueness(t *testing.T) {
 		if !strings.Contains(body, "SECURITY DEFINER") || !strings.Contains(body, "SET search_path = ") {
 			t.Errorf("%s is not a search-path-pinned SECURITY DEFINER", fn)
 		}
-		if !strings.Contains(mig, "REVOKE ALL ON FUNCTION "+fn+"(") || !strings.Contains(mig, "GRANT EXECUTE ON FUNCTION "+fn+"(") {
-			t.Errorf("%s must REVOKE PUBLIC and GRANT manyforge_app", fn)
+		// Whole statements, so `FROM nobody` / `TO someone_else` cannot satisfy the pin.
+		revoke := regexp.MustCompile(`(?m)^REVOKE ALL ON FUNCTION ` + regexp.QuoteMeta(fn) + `\([^)]*\) FROM PUBLIC;$`)
+		grant := regexp.MustCompile(`(?m)^GRANT EXECUTE ON FUNCTION ` + regexp.QuoteMeta(fn) + `\([^)]*\) TO manyforge_app;$`)
+		if !revoke.MatchString(mig) {
+			t.Errorf("%s must REVOKE ALL ... FROM PUBLIC", fn)
+		}
+		if !grant.MatchString(mig) {
+			t.Errorf("%s must GRANT EXECUTE ... TO manyforge_app", fn)
 		}
 	}
 	for _, pin := range []string{

@@ -80,6 +80,14 @@ func newLoopResend(t *testing.T) *loopResend {
 	return f
 }
 
+// sends returns a copy of the captured POST /emails bodies, read under the lock
+// the server goroutine appends with.
+func (f *loopResend) sends() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.sent...)
+}
+
 type loopFixture struct {
 	ctx        context.Context
 	tdb        *testdb.TestDB
@@ -231,10 +239,11 @@ func TestResendSupportLoop(t *testing.T) {
 	if err := f.tdb.App.WithTx(f.ctx, func(tx pgx.Tx) error { return f.sendSub.Handle(f.ctx, tx, ev) }); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if f.shared.calls != 0 || len(f.resend.sent) != 1 {
-		t.Fatalf("shared calls=%d resend sends=%d, want 0/1", f.shared.calls, len(f.resend.sent))
+	sends := f.resend.sends()
+	if f.shared.calls != 0 || len(sends) != 1 {
+		t.Fatalf("shared calls=%d resend sends=%d, want 0/1", f.shared.calls, len(sends))
 	}
-	sent := f.resend.sent[0]
+	sent := sends[0]
 	wantReplyTo := "support+" + token + "@" + f.domain
 	if sent["from"] != f.address || sent["reply_to"] != wantReplyTo {
 		t.Fatalf("sent from=%v reply_to=%v, want %s / %s", sent["from"], sent["reply_to"], f.address, wantReplyTo)
@@ -248,7 +257,7 @@ func TestResendSupportLoop(t *testing.T) {
 		t.Fatalf("sent References = %q, want it to contain <c1@customer.test>", refs)
 	}
 	var rfcID string
-	if err := f.tdb.Super.QueryRow(f.ctx, "SELECT message_id, delivery_state::text FROM ticket_message WHERE id=$1", reply.ID).Scan(&rfcID, new(string)); err != nil {
+	if err := f.tdb.Super.QueryRow(f.ctx, "SELECT message_id FROM ticket_message WHERE id=$1", reply.ID).Scan(&rfcID); err != nil {
 		t.Fatal(err)
 	}
 	if f.count(t, "SELECT count(*) FROM ticket_message WHERE id=$1 AND delivery_state='sent'", reply.ID) != 1 {

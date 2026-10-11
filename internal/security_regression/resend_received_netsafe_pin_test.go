@@ -1,4 +1,6 @@
-// Finding: spec 017 — the pre-signed Resend raw-message URL is caller-influenced,
+// Findings MF-017-RAW-DOWNLOAD + MF-017-RECORD-AFTER-INGEST (doc_support017.go).
+//
+// Spec 017: the pre-signed Resend raw-message URL is caller-influenced,
 // so production MUST fetch it with the SSRF-guarded netsafe client, and an
 // event is recorded only after a successful ingest (R5).
 package security_regression
