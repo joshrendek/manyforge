@@ -75,8 +75,11 @@ subdomain it owns. Using garden.gg, the first business to onboard:
   `resend`.
 - **R3.** Recipients are taken from the raw message's `To` and `Cc` headers,
   restricted to addresses on email domains owned by the profile's business. The
-  `+token` reply tag is read from those headers. The webhook payload's `to` list
-  is a cross-check only.
+  `+token` reply tag is read from those headers. When no owned address appears
+  in `To`/`Cc` (a Bcc'd support address), the recipient may be taken from the
+  authenticated Receiving API's `received_for`/`to`, still restricted to the
+  business's own verified custom addresses. The webhook payload's `to` list is
+  never used for routing.
 - **R4. Same-business rule.** A message ingests only into an inbound address
   owned by the business that owns the receiving profile. Mail whose recipients
   belong to another business, or to no one, is dropped with an audit log entry

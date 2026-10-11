@@ -148,7 +148,13 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 
 	var result IngestResult
 	txErr := s.db.WithTx(ctx, func(tx pgx.Tx) error {
-		r, err := resolveRecipient(ctx, tx, normalizedAddr)
+		var r route
+		var err error
+		if msg.RestrictToBusiness != uuid.Nil {
+			r, err = resolveRecipientForBusiness(ctx, tx, msg.RestrictToBusiness, normalizedAddr)
+		} else {
+			r, err = resolveRecipient(ctx, tx, normalizedAddr)
+		}
 		if err != nil {
 			return err // errNoRoute (no rows written) or a real DB error
 		}

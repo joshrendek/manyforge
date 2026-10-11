@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jhillyerd/enmime/v2"
 )
 
@@ -55,6 +57,11 @@ type RawMessage struct {
 	// by its adapter in T028; this slice always holds the MIME bytes that [Parse]
 	// consumes.
 	Raw []byte
+
+	// RestrictToBusiness, when non-nil, routes ONLY to a custom inbound address on
+	// a verified domain owned by this business (spec 017 R4, Resend-received mail).
+	// A recipient owned by any other business resolves as no-route.
+	RestrictToBusiness uuid.UUID
 }
 
 // Address is a parsed sender/recipient: the bare email plus an optional display
