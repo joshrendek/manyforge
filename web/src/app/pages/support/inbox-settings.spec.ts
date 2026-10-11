@@ -519,4 +519,15 @@ describe('InboxSettingsComponent (US4)', () => {
     expect(all('resend-dns-checklist').length).toBe(0);
     expect(all('received-via-resend').length).toBe(0);
   });
+
+  it('a provider_route row shows the Resend-aware verify hint after a failed verify', () => {
+    loadWith([mockEmailDomain({ mode: 'provider_route' })], []);
+    cmp.verify(cmp.domains()[0]);
+    mock
+      .expectOne(`${domainsUrl}/ed1/verify`)
+      .flush(mockEmailDomain({ mode: 'provider_route', verification: 'unverified' }));
+    fixture.detectChanges();
+    expect(all('verify-hint').length).toBe(1);
+    expect(text('verify-hint')).toContain('verify the domain in Resend');
+  });
 });

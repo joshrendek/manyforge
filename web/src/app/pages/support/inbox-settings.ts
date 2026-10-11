@@ -228,7 +228,7 @@ function dkimSpfTone(s: string): Tone {
                   </button>
                   @if (verifyHintId() === d.id) {
                     <span class="mf-hint" data-testid="verify-hint">
-                      Not verified yet — re-check that the records are published and try again.
+                      Not verified yet — re-check that the records are published (for Resend domains, verify the domain in Resend first) and try again.
                     </span>
                   }
                 </div>

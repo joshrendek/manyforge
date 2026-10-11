@@ -15,6 +15,7 @@ import {
 import { AuthService, Profile } from '../../core/auth.service';
 import { Agent, AgentsService } from '../../core/agents.service';
 import { ToastService } from '../../ui/toast/toast.service';
+import { formatBytes } from './format-bytes';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { StatusPill } from '../../ui/status-pill/status-pill';
 import { Spinner } from '../../ui/spinner/spinner';
@@ -134,7 +135,7 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                   @for (d of m.dropped_attachments; track $index) {
                     <li class="attachment" data-testid="dropped-attachment">
                       <span class="filename">{{ d.filename || '(unnamed)' }}</span>
-                      <span class="muted">not stored · {{ d.detected_type }} · {{ d.size }} bytes</span>
+                      <span class="muted">not stored · {{ d.detected_type }} · {{ bytes(d.size) }}</span>
                     </li>
                   }
                 </ul>
@@ -677,6 +678,8 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
   ],
 })
 export class ThreadViewComponent implements OnInit {
+  protected readonly bytes = formatBytes;
+
   private route = inject(ActivatedRoute);
   private api = inject(TicketService);
   private auth = inject(AuthService);

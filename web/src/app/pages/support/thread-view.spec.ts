@@ -597,6 +597,7 @@ describe('ThreadViewComponent dropped attachments (spec 017)', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].textContent).toContain('invoice.exe');
     expect(rows[0].textContent).toContain('not stored');
+    expect(rows[0].textContent).toContain('24 bytes');
     expect(rows[0].querySelector('a')).toBeNull();
   });
 });

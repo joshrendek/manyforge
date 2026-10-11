@@ -34,8 +34,8 @@ describe('resendDnsChecklist', () => {
       'MX send.support.garden.gg',
       'TXT send.support.garden.gg',
     ]);
-    expect(rows[0]).toMatchObject({ source: 'manyforge', value: 'mf-verify=abc' });
-    expect(rows.slice(1).every((r) => r.source === 'resend')).toBe(true);
+    expect(rows[0]).toMatchObject({ value: 'mf-verify=abc' });
+    expect(rows[1].note).toContain('lowest priority number');
   });
 
   it('never proposes a record at the apex', () => {

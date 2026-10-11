@@ -4,8 +4,6 @@ import { Page, expect, test } from '@playwright/test';
 // dropped attachments in the thread. The /api/v1 surface is mocked.
 const BIZ_ID = 'biz-1';
 const TICKET_ID = 'tkt-1';
-// Screenshots for the task report land in the repo root; they are never committed.
-const SHOT_DIR = '..';
 
 const business = {
   id: BIZ_ID,
@@ -87,7 +85,6 @@ test('provider_route domain shows the Resend DNS checklist and the Received via 
   await expect(row.getByTestId('challenge-dkim-name')).toHaveCount(0);
   await expect(row.getByTestId('verify-domain')).toHaveCount(1);
   await expect(row.getByTestId('verify-domain')).toBeVisible();
-  await page.screenshot({ path: `${SHOT_DIR}/support-resend-dns-checklist.png`, fullPage: true });
 });
 
 test('a dropped attachment is listed on the inbound message as not stored', async ({ page }) => {
@@ -145,5 +142,4 @@ test('a dropped attachment is listed on the inbound message as not stored', asyn
   await expect(dropped).toHaveCount(1);
   await expect(dropped).toContainText('invoice.exe');
   await expect(dropped).toContainText('not stored');
-  await page.screenshot({ path: `${SHOT_DIR}/support-dropped-attachments.png`, fullPage: true });
 });
