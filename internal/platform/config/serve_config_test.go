@@ -34,3 +34,13 @@ func TestLoadInProductionStillAllowsMigrateWithoutReplyTokenSecret(t *testing.T)
 		t.Fatalf("Load in production without reply-token secret: %v", err)
 	}
 }
+
+// A whitespace-only secret (e.g. `echo | kubectl create secret`) is as forgeable as an empty one.
+func TestValidateServeRejectsWhitespaceOnlyReplyTokenSecret(t *testing.T) {
+	for _, secret := range []string{"   ", "\n", " \t\r\n"} {
+		cfg := Config{Environment: "production", InboundReplyTokenSecret: []byte(secret)}
+		if err := cfg.ValidateServe(); err == nil {
+			t.Fatalf("ValidateServe accepted whitespace-only secret %q", secret)
+		}
+	}
+}

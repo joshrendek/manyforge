@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -562,7 +563,7 @@ func Load() (Config, error) {
 // inbound secrets). Spec 017 R14: an empty reply-token HMAC key lets anyone forge
 // a reply token and inject a message into any ticket of a business.
 func (cfg Config) ValidateServe() error {
-	if cfg.Environment == "production" && len(cfg.InboundReplyTokenSecret) == 0 {
+	if cfg.Environment == "production" && len(bytes.TrimSpace(cfg.InboundReplyTokenSecret)) == 0 {
 		return errors.New("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: required in production")
 	}
 	return nil
