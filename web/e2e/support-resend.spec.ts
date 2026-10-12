@@ -1,7 +1,8 @@
 import { Page, expect, test } from '@playwright/test';
 
-// Spec 017 UI regression: the Resend DNS checklist on a provider_route domain and
-// dropped attachments in the thread. The /api/v1 surface is mocked.
+// Spec 017 UI regression: the Resend DNS checklist on a provider_route domain, the
+// per-address "send replies as" override, and dropped attachments in the thread.
+// The /api/v1 surface is mocked.
 const BIZ_ID = 'biz-1';
 const TICKET_ID = 'tkt-1';
 
@@ -85,6 +86,69 @@ test('provider_route domain shows the Resend DNS checklist and the Received via 
   await expect(row.getByTestId('challenge-dkim-name')).toHaveCount(0);
   await expect(row.getByTestId('verify-domain')).toHaveCount(1);
   await expect(row.getByTestId('verify-domain')).toBeVisible();
+});
+
+test('a custom address saves, rejects, and clears its send-as address', async ({ page }) => {
+  await installBase(page);
+  const custom = {
+    id: 'ia-custom',
+    business_id: BIZ_ID,
+    tenant_root_id: 'root-1',
+    address: 'support@support.garden.example',
+    kind: 'custom',
+    email_domain_id: 'ed-resend',
+    send_as: null as string | null,
+    active: true,
+    created_at: '2026-10-10T00:00:00Z',
+  };
+  const system = { ...custom, id: 'ia-system', address: 'b-1@inbound.localhost', kind: 'system', email_domain_id: null };
+  const patches: unknown[] = [];
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/email-domains`, (route) =>
+    route.fulfill({ json: { items: [{ ...resendDomain, verification: 'verified' }], next_cursor: null } }),
+  );
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/inbound-addresses`, (route) =>
+    route.fulfill({ json: { items: [system, custom], next_cursor: null } }),
+  );
+  await page.route(`**/api/v1/businesses/${BIZ_ID}/inbound-addresses/${custom.id}`, async (route) => {
+    const body = route.request().postDataJSON() as { send_as: string | null };
+    patches.push({ method: route.request().method(), body });
+    if (body.send_as && !body.send_as.endsWith('@garden.example')) {
+      return route.fulfill({
+        status: 400,
+        json: { code: 'VALIDATION', message: 'send_as must be on the domain of the verified Resend sending profile' },
+      });
+    }
+    custom.send_as = body.send_as;
+    return route.fulfill({ json: custom });
+  });
+
+  await page.goto(`/support/${BIZ_ID}/settings/inbox`);
+  const rows = page.getByTestId('address-row');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).getByTestId('send-as')).toHaveCount(0);
+  const row = rows.nth(1);
+  const input = row.getByTestId('send-as-input');
+  await expect(input).toHaveValue('');
+
+  await input.fill('help@elsewhere.example');
+  await row.getByTestId('send-as-save').click();
+  await expect(row.getByTestId('send-as-error')).toContainText('verified Resend sending profile');
+  await expect(row.getByTestId('send-as-current')).toHaveCount(0);
+
+  await input.fill('support@garden.example');
+  await row.getByTestId('send-as-save').click();
+  await expect(row.getByTestId('send-as-current')).toHaveText('Replies from support@garden.example');
+  await expect(row.getByTestId('send-as-error')).toHaveCount(0);
+  await expect(input).toHaveValue('support@garden.example');
+
+  await input.fill('');
+  await row.getByTestId('send-as-save').click();
+  await expect(row.getByTestId('send-as-current')).toHaveCount(0);
+  expect(patches).toEqual([
+    { method: 'PATCH', body: { send_as: 'help@elsewhere.example' } },
+    { method: 'PATCH', body: { send_as: 'support@garden.example' } },
+    { method: 'PATCH', body: { send_as: null } },
+  ]);
 });
 
 test('a dropped attachment is listed on the inbound message as not stored', async ({ page }) => {

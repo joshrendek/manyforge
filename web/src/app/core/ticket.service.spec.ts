@@ -350,4 +350,14 @@ describe('TicketService', () => {
     req.flush(created);
     expect(out).toEqual(created);
   });
+  it('updateInboundAddressSendAs() PATCHes {send_as} and returns the InboundAddress', () => {
+    let out: InboundAddress | undefined;
+    svc.updateInboundAddressSendAs(biz, 'ia1', null).subscribe((r) => (out = r));
+    const req = mock.expectOne(`/api/v1/businesses/${biz}/inbound-addresses/ia1`);
+    expect(req.request.method).toBe('PATCH');
+    expect(req.request.body).toEqual({ send_as: null });
+    const updated = mockInboundAddress();
+    req.flush(updated);
+    expect(out).toEqual(updated);
+  });
 });
