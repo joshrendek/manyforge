@@ -115,3 +115,34 @@ WHERE business_id = $1
   AND (created_at, id) > (sqlc.arg('cur_created_at')::timestamptz, sqlc.arg('cur_id')::uuid)
 ORDER BY created_at ASC, id ASC
 LIMIT sqlc.arg('lim');
+
+-- GetInboundAddressForUpdate row-locks one of the business's inbound addresses so
+-- the send-as audit snapshots the value the UPDATE replaces. Unknown /
+-- other-business ⇒ pgx.ErrNoRows ⇒ ErrNotFound.
+-- name: GetInboundAddressForUpdate :one
+SELECT * FROM inbound_address
+WHERE id = $1 AND business_id = $2
+FOR UPDATE;
+
+-- SetInboundAddressSendAs sets (or, with a NULL send_as, clears) a custom
+-- address's "send replies as" override (spec 017 addendum). The domain rule is
+-- enforced in this single statement: a non-NULL send_as must be on the domain of
+-- the SAME business's verified Resend sending profile from_email. Zero rows ⇒ the
+-- address is unknown/foreign/system or the domain does not qualify; the service
+-- tells the two apart from its prior locked read.
+-- name: SetInboundAddressSendAs :one
+UPDATE inbound_address ia
+SET send_as = sqlc.narg('send_as')::citext, updated_at = now()
+WHERE ia.id = sqlc.arg('id')::uuid
+  AND ia.business_id = sqlc.arg('business_id')::uuid
+  AND ia.tenant_root_id = sqlc.arg('tenant_root_id')::uuid
+  AND ia.kind = 'custom'
+  AND (sqlc.narg('send_as')::citext IS NULL OR EXISTS (
+      SELECT 1 FROM mailing_sending_profile p
+      WHERE p.business_id = ia.business_id
+        AND p.tenant_root_id = ia.tenant_root_id
+        AND p.mode = 'resend'
+        AND p.status = 'verified'
+        AND lower(split_part(p.from_email::text, '@', 2)) = lower(split_part(sqlc.narg('send_as')::text, '@', 2))
+  ))
+RETURNING ia.*;
