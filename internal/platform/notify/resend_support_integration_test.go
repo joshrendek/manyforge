@@ -126,6 +126,28 @@ func TestSendViaResendSupportProfile(t *testing.T) {
 	}
 }
 
+// Spec 017 addendum: a send_as override changes only From; Reply-To keeps the
+// custom (Resend-routed) address's plus-token form.
+func TestSendViaResendSupportProfileUsesSendAs(t *testing.T) {
+	ctx, tdb := startSendDB(t)
+	st := seedSendTenant(ctx, t, tdb, "pending")
+	customAddr, _ := seedResendIdentity(ctx, t, tdb, st, "verified")
+	sendAs := "help@apex-" + st.master.String()[:8] + ".example.com"
+	if _, err := tdb.Super.Exec(ctx, "UPDATE inbound_address SET send_as=$1 WHERE address=$2", sendAs, customAddr); err != nil {
+		t.Fatalf("set send_as: %v", err)
+	}
+	profile := &captureProfileSender{}
+	sub := SendSubscriber{Sender: &captureSender{}, ProfileSender: profile, Suppression: staticSuppression{}}
+
+	if err := handleWith(ctx, t, tdb, sub, repliedEvent(t, st)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	wantReplyTo := "support+" + st.replyToken + "@" + customAddr[len("support@"):]
+	if profile.calls != 1 || profile.last.From != sendAs || profile.last.ReplyTo != wantReplyTo {
+		t.Fatalf("calls=%d From=%q ReplyTo=%q, want 1 / %q / %q", profile.calls, profile.last.From, profile.last.ReplyTo, sendAs, wantReplyTo)
+	}
+}
+
 // R11 + R13: a failing profile retries (pending) and, on the final attempt, marks
 // failed — never falling back to the shared transport.
 func TestSendResendProfileFailureRetriesThenFails(t *testing.T) {

@@ -1390,7 +1390,7 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				h.ticketing.DeleteRoutes(td)
 			})
 			// US4 inbox-management slice: custom email-domain create/list/verify +
-			// custom inbound-address create/list, all gated on inbox.manage (migration-0015
+			// custom inbound-address create/list/send-as update, all gated on inbox.manage (migration-0015
 			// catalog). Same RLS-bound 404-on-lacking-perm semantics as the other groups.
 			pr.Group(func(im chi.Router) {
 				im.Use(h.inboxManage)

@@ -265,20 +265,23 @@ func (s SendSubscriber) selectCustomIdentity(ctx context.Context, tx pgx.Tx, mai
 	}
 }
 
-// resendSupportIdentity is one get_resend_support_identity row.
+// resendSupportIdentity is one get_resend_support_identity row. fromAddress is
+// the From header (the address's send_as override when set, 0140); inboundAddress
+// is the Resend-routed custom address that customer replies must reach.
 type resendSupportIdentity struct {
-	profileID     uuid.UUID
-	fromAddress   string
-	profileStatus string
+	profileID      uuid.UUID
+	fromAddress    string
+	profileStatus  string
+	inboundAddress string
 }
 
 // resendSupportIdentity reads the business's Resend support identity through the
-// principal-less DEFINER (0139). No row ⇒ today's shared-transport behavior (R12).
+// principal-less DEFINER (0139, send_as in 0140). No row ⇒ today's shared-transport behavior (R12).
 func (s SendSubscriber) resendSupportIdentity(ctx context.Context, tx pgx.Tx, businessID, tenantRootID uuid.UUID) (resendSupportIdentity, bool, error) {
 	var id resendSupportIdentity
 	err := tx.QueryRow(ctx,
-		"SELECT profile_id, from_address, profile_status FROM get_resend_support_identity($1, $2)",
-		businessID, tenantRootID).Scan(&id.profileID, &id.fromAddress, &id.profileStatus)
+		"SELECT profile_id, from_address, profile_status, inbound_address FROM get_resend_support_identity($1, $2)",
+		businessID, tenantRootID).Scan(&id.profileID, &id.fromAddress, &id.profileStatus, &id.inboundAddress)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return resendSupportIdentity{}, false, nil
 	}
@@ -289,11 +292,12 @@ func (s SendSubscriber) resendSupportIdentity(ctx context.Context, tx pgx.Tx, bu
 }
 
 // sendViaSupportProfile delivers through the business's Resend profile with
-// From = the custom address and Reply-To = its plus-addressed token form (R10).
+// From = the custom address (or its send_as override) and Reply-To = the custom
+// address's plus-addressed token form (R10), so replies always thread via Resend.
 // Failures retry; the final attempt marks the reply failed (R13). Never falls back.
 func (s SendSubscriber) sendViaSupportProfile(ctx context.Context, tx pgx.Tx, e events.Event, p repliedPayload, mail Mail, id resendSupportIdentity) error {
 	mail.From = id.fromAddress
-	mail.ReplyTo = verpAddress(id.fromAddress, p.ReplyToken)
+	mail.ReplyTo = verpAddress(id.inboundAddress, p.ReplyToken)
 	mail.EnvelopeFrom = id.fromAddress
 	mail.DKIM = nil // Resend signs for the domain
 

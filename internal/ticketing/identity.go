@@ -122,7 +122,8 @@ type InboundAddress struct {
 	Address       string     `json:"address"`
 	Kind          string     `json:"kind"` // system|custom
 	EmailDomainID *uuid.UUID `json:"email_domain_id"`
-	Active        bool       `json:"active"` // always true in this slice
+	SendAs        *string    `json:"send_as"` // custom only: the From for agent replies; nil ⇒ Address
+	Active        bool       `json:"active"`  // always true in this slice
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
@@ -455,6 +456,75 @@ func (s *IdentityService) CreateInboundAddress(ctx context.Context, principalID,
 	return out, nil
 }
 
+// maxSendAsLen is the RFC 5321 path limit, mirrored by inbound_address_send_as_chk.
+const maxSendAsLen = 254
+
+// SetInboundAddressSendAs sets or clears (sendAs nil or blank) a custom inbound
+// address's "send replies as" override (spec 017 addendum). Agent replies then go
+// out From send_as while Reply-To stays on the inbound address. A send_as must be
+// on the domain of the business's verified Resend sending profile; that rule is
+// enforced in the UPDATE itself, so a profile change cannot race the check. The
+// prior value is read under a row lock and audited with the new one in the same tx.
+// Unknown/foreign address → 404; system address or a non-qualifying domain → 400.
+func (s *IdentityService) SetInboundAddressSendAs(ctx context.Context, principalID, businessID, addressID uuid.UUID, sendAs *string) (InboundAddress, error) {
+	var next *string
+	if sendAs != nil {
+		if v := strings.ToLower(strings.TrimSpace(*sendAs)); v != "" {
+			if len(v) > maxSendAsLen || !looksLikeEmail(v) {
+				return InboundAddress{}, fmt.Errorf("ticketing: send_as must be an email address: %w", errs.ErrValidation)
+			}
+			next = &v
+		}
+	}
+
+	var out InboundAddress
+	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		cur, gerr := q.GetInboundAddressForUpdate(ctx, dbgen.GetInboundAddressForUpdateParams{ID: addressID, BusinessID: businessID})
+		if gerr != nil {
+			return gerr
+		}
+		if cur.Kind != dbgen.InboundAddressKindCustom {
+			return fmt.Errorf("ticketing: send_as applies only to custom addresses: %w", errs.ErrValidation)
+		}
+
+		row, uerr := q.SetInboundAddressSendAs(ctx, dbgen.SetInboundAddressSendAsParams{
+			SendAs:       next,
+			ID:           addressID,
+			BusinessID:   businessID,
+			TenantRootID: cur.TenantRootID,
+		})
+		if errors.Is(uerr, pgx.ErrNoRows) {
+			// The row is locked and custom, so only the domain predicate can miss.
+			return fmt.Errorf("ticketing: send_as must be on the domain of the verified Resend sending profile: %w", errs.ErrValidation)
+		}
+		if uerr != nil {
+			return uerr
+		}
+
+		targetType := "inbound_address"
+		if aerr := audit.Write(ctx, tx, audit.Entry{
+			BusinessID:       &businessID,
+			TenantRootID:     &row.TenantRootID,
+			ActorPrincipalID: &principalID,
+			Action:           "inbound_address.send_as_updated",
+			TargetType:       &targetType,
+			TargetID:         &row.ID,
+			OldValue:         map[string]any{"send_as": cur.SendAs},
+			NewValue:         map[string]any{"send_as": next},
+		}); aerr != nil {
+			return aerr
+		}
+
+		out = toInboundAddress(row)
+		return nil
+	})
+	if err != nil {
+		return InboundAddress{}, mapIdentityErr(err)
+	}
+	return out, nil
+}
+
 // ListInboundAddresses returns a keyset page of a business's inbound addresses
 // (system and custom), oldest first.
 func (s *IdentityService) ListInboundAddresses(ctx context.Context, principalID, businessID uuid.UUID, p Pagination) ([]InboundAddress, string, error) {
@@ -555,6 +625,7 @@ func toInboundAddress(r dbgen.InboundAddress) InboundAddress {
 		Address:       r.Address,
 		Kind:          string(r.Kind),
 		EmailDomainID: pgUUIDPtr(r.EmailDomainID),
+		SendAs:        r.SendAs,
 		Active:        true,
 		CreatedAt:     r.CreatedAt,
 	}

@@ -221,7 +221,36 @@ func customerMail(from, to, messageID, inReplyTo, body string) []byte {
 
 func TestResendSupportLoop(t *testing.T) {
 	f := newLoopFixture(t)
+	assertResendSupportLoop(t, f, f.address)
+}
 
+// Spec 017 addendum: with a send-as set (support@<apex>, forwarded by the mail host
+// into the Resend-routed support.<apex> address), replies go out From the apex
+// address while Reply-To and threading stay on the Resend-routed domain.
+func TestResendSupportLoopSendsAsApexAddress(t *testing.T) {
+	f := newLoopFixture(t)
+	apex := "apex-" + f.business.String()[:8] + ".example.com"
+	sendAs := "support@" + apex
+	if _, err := f.tdb.Super.Exec(f.ctx, "UPDATE mailing_sending_profile SET from_email=$1 WHERE id=$2", sendAs, f.profileID); err != nil {
+		t.Fatal(err)
+	}
+	var addressID uuid.UUID
+	if err := f.tdb.Super.QueryRow(f.ctx, "SELECT id FROM inbound_address WHERE address=$1", f.address).Scan(&addressID); err != nil {
+		t.Fatal(err)
+	}
+	identity := &ticketing.IdentityService{DB: f.tdb.App}
+	got, err := identity.SetInboundAddressSendAs(f.ctx, f.owner, f.business, addressID, &sendAs)
+	if err != nil || got.SendAs == nil || *got.SendAs != sendAs {
+		t.Fatalf("SetInboundAddressSendAs = %v / %v, want %s", got.SendAs, err, sendAs)
+	}
+	assertResendSupportLoop(t, f, sendAs)
+}
+
+// assertResendSupportLoop drives customer mail in, an agent reply out, and two
+// customer replies back, asserting the reply's From is wantFrom while Reply-To and
+// threading stay on the fixture's Resend-routed address.
+func assertResendSupportLoop(t *testing.T, f *loopFixture, wantFrom string) {
+	t.Helper()
 	// 1. Customer writes in.
 	f.receive(t, "evt-1", "em_1", customerMail("Ada <ada@customer.test>", "Garden Support <"+f.address+">", "c1@customer.test", "", "Where are my seeds?"))
 	if n := f.count(t, "SELECT count(*) FROM ticket WHERE business_id=$1", f.business); n != 1 {
@@ -254,8 +283,8 @@ func TestResendSupportLoop(t *testing.T) {
 	}
 	sent := sends[0]
 	wantReplyTo := "support+" + token + "@" + f.domain
-	if sent["from"] != f.address || sent["reply_to"] != wantReplyTo {
-		t.Fatalf("sent from=%v reply_to=%v, want %s / %s", sent["from"], sent["reply_to"], f.address, wantReplyTo)
+	if sent["from"] != wantFrom || sent["reply_to"] != wantReplyTo {
+		t.Fatalf("sent from=%v reply_to=%v, want %s / %s", sent["from"], sent["reply_to"], wantFrom, wantReplyTo)
 	}
 	// The reply must thread under the customer's first message.
 	headers, _ := sent["headers"].(map[string]any)
