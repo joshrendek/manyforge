@@ -128,8 +128,13 @@ func TestIdentitySetInboundAddressSendAsRequiresVerifiedProfile(t *testing.T) {
 	svc := newIdentityService(tdb, newStubResolver())
 	apex, addrID := seedSendAsFixture(ctx, t, tdb, rt, "unverified")
 
-	if _, err := svc.SetInboundAddressSendAs(ctx, rt.owner, rt.master, addrID, strp("support@"+apex)); !errors.Is(err, errs.ErrValidation) {
+	_, err := svc.SetInboundAddressSendAs(ctx, rt.owner, rt.master, addrID, strp("support@"+apex))
+	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("unverified profile: want ErrValidation, got %v", err)
+	}
+	// The message reaches the settings UI verbatim, so it must stay operator-readable.
+	if want := "send_as must be on the domain of the verified Resend sending profile"; err.Error() != want {
+		t.Fatalf("validation message = %q, want %q", err.Error(), want)
 	}
 	if n := countSuper(ctx, t, tdb.Super, `SELECT count(*) FROM inbound_address WHERE id=$1 AND send_as IS NOT NULL`, addrID); n != 0 {
 		t.Fatal("send_as persisted against an unverified profile")

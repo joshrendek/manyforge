@@ -471,7 +471,7 @@ func (s *IdentityService) SetInboundAddressSendAs(ctx context.Context, principal
 	if sendAs != nil {
 		if v := strings.ToLower(strings.TrimSpace(*sendAs)); v != "" {
 			if len(v) > maxSendAsLen || !looksLikeEmail(v) {
-				return InboundAddress{}, fmt.Errorf("ticketing: send_as must be an email address: %w", errs.ErrValidation)
+				return InboundAddress{}, errValidation("send_as must be an email address")
 			}
 			next = &v
 		}
@@ -485,7 +485,7 @@ func (s *IdentityService) SetInboundAddressSendAs(ctx context.Context, principal
 			return gerr
 		}
 		if cur.Kind != dbgen.InboundAddressKindCustom {
-			return fmt.Errorf("ticketing: send_as applies only to custom addresses: %w", errs.ErrValidation)
+			return errValidation("send_as applies only to custom addresses")
 		}
 
 		row, uerr := q.SetInboundAddressSendAs(ctx, dbgen.SetInboundAddressSendAsParams{
@@ -496,7 +496,7 @@ func (s *IdentityService) SetInboundAddressSendAs(ctx context.Context, principal
 		})
 		if errors.Is(uerr, pgx.ErrNoRows) {
 			// The row is locked and custom, so only the domain predicate can miss.
-			return fmt.Errorf("ticketing: send_as must be on the domain of the verified Resend sending profile: %w", errs.ErrValidation)
+			return errValidation("send_as must be on the domain of the verified Resend sending profile")
 		}
 		if uerr != nil {
 			return uerr
