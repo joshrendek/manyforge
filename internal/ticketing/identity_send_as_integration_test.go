@@ -96,7 +96,10 @@ func TestIdentitySetInboundAddressSendAs(t *testing.T) {
 	}
 
 	// A domain other than the verified profile's → 400, value unchanged.
-	for _, bad := range []string{"support@evil.example.com", "support@support." + apex, "not-an-email", "a@b@" + apex} {
+	// Interior whitespace on the right domain would pass the domain rule but fails
+	// inbound_address_send_as_chk; it must be a 400, never a CHECK violation (500).
+	for _, bad := range []string{"support@evil.example.com", "support@support." + apex, "not-an-email", "a@b@" + apex,
+		"sup port@" + apex, "sup\tport@" + apex, "sup\u00a0port@" + apex} {
 		if _, err := svc.SetInboundAddressSendAs(ctx, rt.owner, rt.master, addrID, strp(bad)); !errors.Is(err, errs.ErrValidation) {
 			t.Errorf("send_as %q: want ErrValidation, got %v", bad, err)
 		}

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -459,6 +460,24 @@ func (s *IdentityService) CreateInboundAddress(ctx context.Context, principalID,
 // maxSendAsLen is the RFC 5321 path limit, mirrored by inbound_address_send_as_chk.
 const maxSendAsLen = 254
 
+// validSendAs reports whether v (already trimmed + lowercased) passes
+// inbound_address_send_as_chk, so a bad value is a 400 rather than a CHECK
+// violation (500). It is at least as strict as the CHECK: byte length (≥ the
+// CHECK's character length), no whitespace/control/non-graphic rune anywhere
+// (the CHECK forbids [:space:]), and the looksLikeEmail shape (one @, an RFC
+// domain with a dot).
+func validSendAs(v string) bool {
+	if len(v) > maxSendAsLen {
+		return false
+	}
+	for _, r := range v {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || !unicode.IsGraphic(r) {
+			return false
+		}
+	}
+	return looksLikeEmail(v)
+}
+
 // SetInboundAddressSendAs sets or clears (sendAs nil or blank) a custom inbound
 // address's "send replies as" override (spec 017 addendum). Agent replies then go
 // out From send_as while Reply-To stays on the inbound address. A send_as must be
@@ -470,7 +489,7 @@ func (s *IdentityService) SetInboundAddressSendAs(ctx context.Context, principal
 	var next *string
 	if sendAs != nil {
 		if v := strings.ToLower(strings.TrimSpace(*sendAs)); v != "" {
-			if len(v) > maxSendAsLen || !looksLikeEmail(v) {
+			if !validSendAs(v) {
 				return InboundAddress{}, errValidation("send_as must be an email address")
 			}
 			next = &v
