@@ -162,6 +162,16 @@
           "type": "string"
         }
       },
+      "addressId": {
+        "description": "inbound-address id",
+        "in": "path",
+        "name": "addressId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
       "cursor": {
         "description": "keyset cursor",
         "in": "query",
@@ -5575,6 +5585,12 @@
           },
           "kind": {
             "$ref": "#/components/schemas/InboundAddressKind"
+          },
+          "send_as": {
+            "description": "custom only — the From address for agent replies (Reply-To stays on address); null when unset",
+            "format": "email",
+            "nullable": true,
+            "type": "string"
           },
           "tenant_root_id": {
             "format": "uuid",
@@ -11317,6 +11333,20 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "UpdateInboundAddress": {
+        "properties": {
+          "send_as": {
+            "description": "must be on the domain of the business's verified Resend sending profile; null or \"\" clears it",
+            "maxLength": 254,
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "send_as"
+        ],
         "type": "object"
       },
       "UpdateMCPServerRequest": {
@@ -18796,6 +18826,146 @@
         "x-manyforge-audience": "management",
         "x-manyforge-business-param": "id",
         "x-manyforge-method": "create",
+        "x-manyforge-resource": "inbox.inboundAddresses"
+      }
+    },
+    "/api/v1/businesses/{id}/inbound-addresses/{addressId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/id"
+        },
+        {
+          "$ref": "#/components/parameters/addressId"
+        }
+      ],
+      "patch": {
+        "operationId": "InboxInboundAddressesUpdate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateInboundAddress"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboundAddress"
+                }
+              }
+            },
+            "description": "updated",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Request correlation identifier when available.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/SupportCRMValidationError"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Request correlation identifier when available.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SupportCRMNotFound"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "JSON request body exceeds the 1 MiB handler limit.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Request correlation identifier when available.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Request correlation identifier when available.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Tenant maintenance is in progress; request cannot proceed.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Request correlation identifier when available.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Unexpected HTTP error. Intermediaries may return non-JSON bodies; preserve the actual status, headers and bounded raw body.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Request correlation identifier when available.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Set or clear a custom inbound address's \"send replies as\" address (spec 017 addendum). Agent replies are sent From send_as while Reply-To stays on the inbound address. send_as must be on the domain of the business's verified Resend sending profile; null or \"\" clears it. Audited in-transaction. Requires inbox.manage. 404 if the business or address is unknown/unauthorized.\n",
+        "tags": [
+          "InboxInboundAddresses"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "update",
         "x-manyforge-resource": "inbox.inboundAddresses"
       }
     },

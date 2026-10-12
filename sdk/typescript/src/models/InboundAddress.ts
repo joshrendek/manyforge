@@ -24,6 +24,7 @@ export interface InboundAddress {
     emailDomainId: string | null;
     id: string;
     kind: InboundAddressKind;
+    sendAs?: string | null;
     tenantRootId: string;
 }
 

@@ -280,6 +280,14 @@
   },
   {
     "audience": "management",
+    "businessParam": "id",
+    "method": "update",
+    "operationId": "InboxInboundAddressesUpdate",
+    "pagination": null,
+    "resource": "inbox.inboundAddresses"
+  },
+  {
+    "audience": "management",
     "businessParam": null,
     "method": "accept",
     "operationId": "InvitationsAccept",

@@ -339,6 +339,7 @@ export * from './UpdateAgentRequest.js';
 export * from './UpdateCompany.js';
 export * from './UpdateConnector.js';
 export * from './UpdateContact.js';
+export * from './UpdateInboundAddress.js';
 export * from './UpdateMCPServerRequest.js';
 export * from './ValidNode.js';
 export * from './ValidationResult.js';

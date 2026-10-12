@@ -16,6 +16,7 @@ import { decodeJSON, type JsonValue } from '../model-support.js';
 import type { CreateInboundAddress } from '../models/CreateInboundAddress.js';
 import type { InboundAddress } from '../models/InboundAddress.js';
 import type { InboundAddressPage } from '../models/InboundAddressPage.js';
+import type { UpdateInboundAddress } from '../models/UpdateInboundAddress.js';
 
 
 export interface BusinessInboxInboundAddressesCreateParams {
@@ -30,6 +31,15 @@ export interface BusinessInboxInboundAddressesListParams {
     cursor?: string;
 
     limit?: number;
+
+}
+
+
+export interface BusinessInboxInboundAddressesUpdateParams {
+
+    addressId: string;
+
+    body: UpdateInboundAddress;
 
 }
 
@@ -84,5 +94,24 @@ export class BusinessInboxInboundAddressesApi extends Resource {
             seen.add(next);
             cursor = next;
         }
+    }
+    update(params: BusinessInboxInboundAddressesUpdateParams, options?: RequestOptions): Promise<InboundAddress> {
+        return this.transport.request({
+            operationId: 'InboxInboundAddressesUpdate',
+            method: 'PATCH',
+            path: '/api/v1/businesses/{id}/inbound-addresses/{addressId}',
+            pathParams: { ...this.scope, 'addressId': String(params.addressId),  },
+            query: [],
+            headers: {  },
+            authenticated: true,
+            audience: 'management',
+            body: params.body,
+            bodySchema: {"$ref":"#/components/schemas/UpdateInboundAddress"},
+            contentType: 'application/json',
+
+            response: 'json',
+            responseSchema: {"$ref":"#/components/schemas/InboundAddress"},
+            decode: (text: string) => decodeJSON<InboundAddress>(text, {"$ref":"#/components/schemas/InboundAddress"}),
+        }, options);
     }
 }

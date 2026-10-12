@@ -32,6 +32,7 @@ class InboundAddress(Model):
     email_domain_id: UUID | None = Field(..., alias="email_domain_id")
     id: UUID = Field(..., alias="id")
     kind: InboundAddressKind = Field(..., alias="kind")
+    send_as: str | None | UnsetType = Field(default=UNSET, alias="send_as")
     tenant_root_id: UUID = Field(..., alias="tenant_root_id")
 
 

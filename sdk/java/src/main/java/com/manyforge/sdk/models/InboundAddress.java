@@ -31,12 +31,16 @@ import com.manyforge.sdk.models.InboundAddressKind;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.UUID;
+import org.openapitools.jackson.nullable.JsonNullable;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import org.openapitools.jackson.nullable.JsonNullable;
+import java.util.NoSuchElementException;
 
 
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "active", "address", "business_id", "created_at", "email_domain_id", "id", "kind", "tenant_root_id" })
+@JsonPropertyOrder({ "active", "address", "business_id", "created_at", "email_domain_id", "id", "kind", "send_as", "tenant_root_id" })
 @com.manyforge.sdk.ModelShape(required = { "active", "address", "business_id", "created_at", "email_domain_id", "id", "kind", "tenant_root_id",  }, nonNullable = { "active", "address", "business_id", "created_at", "id", "kind", "tenant_root_id",  })
 public class InboundAddress {
 
@@ -89,6 +93,13 @@ public class InboundAddress {
   public JsonNullable<InboundAddressKind> kindPresence() { return kind; }
   public InboundAddress kind(InboundAddressKind value) { this.kind = JsonNullable.of(value); return this; }
 
+  @JsonProperty("send_as")
+  private JsonNullable<String> sendAs = JsonNullable.undefined();
+
+  public String getSendAs() { return sendAs.orElse(null); }
+  public JsonNullable<String> sendAsPresence() { return sendAs; }
+  public InboundAddress sendAs(String value) { this.sendAs = JsonNullable.of(value); return this; }
+
   @JsonProperty("tenant_root_id")
   private JsonNullable<UUID> tenantRootId = JsonNullable.undefined();
 
@@ -105,6 +116,7 @@ public class InboundAddress {
     public Builder emailDomainId(UUID field) { value.emailDomainId(field); return this; }
     public Builder id(UUID field) { value.id(field); return this; }
     public Builder kind(InboundAddressKind field) { value.kind(field); return this; }
+    public Builder sendAs(String field) { value.sendAs(field); return this; }
     public Builder tenantRootId(UUID field) { value.tenantRootId(field); return this; }
     public InboundAddress build() { return value; }
   }

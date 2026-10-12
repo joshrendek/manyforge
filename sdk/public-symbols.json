@@ -8374,6 +8374,41 @@
                   "variadic": true
                 }
               ]
+            },
+            "pointer:Update": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "context.Context"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "string"
+                    },
+                    {
+                      "name": "2",
+                      "required": true,
+                      "type": "github.com/joshrendek/manyforge/sdk/go.UpdateInboundAddress"
+                    },
+                    {
+                      "name": "3",
+                      "required": false,
+                      "type": "[]github.com/joshrendek/manyforge/sdk/go.RequestOption"
+                    }
+                  ],
+                  "returns": [
+                    "github.com/joshrendek/manyforge/sdk/go.InboundAddress",
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": true
+                }
+              ]
             }
           },
           "representation": "struct",
@@ -18324,6 +18359,13 @@
               "kind": "field",
               "required": true,
               "type": "github.com/joshrendek/manyforge/sdk/go.InboundAddressKind"
+            },
+            "SendAs": {
+              "embedded": false,
+              "json": "send_as,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
             },
             "TenantRootId": {
               "embedded": false,
@@ -32168,6 +32210,25 @@
             }
           ]
         },
+        "NewUpdateInboundAddress": {
+          "kind": "function",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+                }
+              ],
+              "returns": [
+                "*github.com/joshrendek/manyforge/sdk/go.UpdateInboundAddress"
+              ],
+              "type_parameters": [],
+              "variadic": false
+            }
+          ]
+        },
         "NewUpdateMCPServerRequest": {
           "kind": "function",
           "signatures": [
@@ -44177,6 +44238,40 @@
             "DisplayName": {
               "embedded": false,
               "json": "display_name,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+            },
+            "pointer:UnmarshalJSON": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "[]byte"
+                    }
+                  ],
+                  "returns": [
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": false
+                }
+              ]
+            }
+          },
+          "representation": "struct",
+          "type_parameters": []
+        },
+        "UpdateInboundAddress": {
+          "alias": false,
+          "kind": "type",
+          "members": {
+            "SendAs": {
+              "embedded": false,
+              "json": "send_as,omitzero",
               "kind": "field",
               "required": false,
               "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
@@ -103341,6 +103436,17 @@
                 }
               ]
             },
+            "getSendAs": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
             "getTenantRootId": {
               "kind": "method",
               "required": false,
@@ -103408,6 +103514,34 @@
                 }
               ]
             },
+            "sendAs": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.InboundAddress",
+                  "throws": ""
+                }
+              ]
+            },
+            "sendAsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
             "tenantRootId": {
               "kind": "method",
               "required": false,
@@ -103445,6 +103579,7 @@
             "email_domain_id",
             "id",
             "kind",
+            "send_as",
             "tenant_root_id"
           ],
           "non_nullable_fields": [
@@ -103605,6 +103740,23 @@
                       "name": "0",
                       "required": true,
                       "type": "com.manyforge.sdk.models.InboundAddressKind"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.InboundAddress$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "sendAs": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
                     }
                   ],
                   "returns": "public com.manyforge.sdk.models.InboundAddress$Builder",
@@ -173697,6 +173849,125 @@
             }
           }
         },
+        "com.manyforge.sdk.models.UpdateInboundAddress": {
+          "declaration": "public class com.manyforge.sdk.models.UpdateInboundAddress",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.models.UpdateInboundAddress$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "getSendAs": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "sendAs": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.UpdateInboundAddress",
+                  "throws": ""
+                }
+              ]
+            },
+            "sendAsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            }
+          },
+          "model_fields": [
+            "send_as"
+          ],
+          "non_nullable_fields": [],
+          "required_fields": [
+            "send_as"
+          ]
+        },
+        "com.manyforge.sdk.models.UpdateInboundAddress$Builder": {
+          "declaration": "public final class com.manyforge.sdk.models.UpdateInboundAddress$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.models.UpdateInboundAddress",
+                  "throws": ""
+                }
+              ]
+            },
+            "sendAs": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.UpdateInboundAddress$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
         "com.manyforge.sdk.models.UpdateMCPServerRequest": {
           "declaration": "public class com.manyforge.sdk.models.UpdateMCPServerRequest",
           "kind": "class",
@@ -189597,6 +189868,72 @@
                   "throws": ""
                 }
               ]
+            },
+            "update": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "com.manyforge.sdk.RequestOptions"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.InboundAddress",
+                  "throws": ""
+                },
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.InboundAddress",
+                  "throws": ""
+                }
+              ]
+            },
+            "updateAsync": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "com.manyforge.sdk.RequestOptions"
+                    }
+                  ],
+                  "returns": "public java.util.concurrent.CompletableFuture<com.manyforge.sdk.models.InboundAddress>",
+                  "throws": ""
+                },
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams"
+                    }
+                  ],
+                  "returns": "public java.util.concurrent.CompletableFuture<com.manyforge.sdk.models.InboundAddress>",
+                  "throws": ""
+                }
+              ]
             }
           }
         },
@@ -189757,6 +190094,96 @@
                     }
                   ],
                   "returns": "public com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesListParams$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams": {
+          "declaration": "public final class com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams",
+          "kind": "class",
+          "members": {
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "toBuilder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams$Builder": {
+          "declaration": "public final class com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "addressId": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams",
+                  "throws": ""
+                }
+              ]
+            },
+            "updateInboundAddress": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.models.UpdateInboundAddress"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.BusinessInboxInboundAddressesResource$BusinessInboxInboundAddressesUpdateParams$Builder",
                   "throws": ""
                 }
               ]
@@ -255227,6 +255654,37 @@
                   "returns": "manyforge.models.inbound_address_page.InboundAddressPage"
                 }
               ]
+            },
+            "update": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "address_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "update_inbound_address",
+                      "required": true,
+                      "type": "manyforge.models.update_inbound_address.UpdateInboundAddress"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.models.inbound_address.InboundAddress"
+                }
+              ]
             }
           }
         },
@@ -255528,6 +255986,37 @@
                     }
                   ],
                   "returns": "manyforge.models.inbound_address_page.InboundAddressPage"
+                }
+              ]
+            },
+            "update": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "address_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "update_inbound_address",
+                      "required": true,
+                      "type": "manyforge.models.update_inbound_address.UpdateInboundAddress"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.models.inbound_address.InboundAddress"
                 }
               ]
             }
@@ -255870,6 +256359,12 @@
                   "returns": "Any"
                 }
               ]
+            },
+            "send_as": {
+              "alias": "send_as",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | str"
             },
             "serialize_supplied": {
               "binding": "instance",
@@ -256419,6 +256914,126 @@
           ],
           "kind": "class",
           "members": {}
+        },
+        "manyforge.api.business_inbox_inbound_addresses_resource.UpdateInboundAddress": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "send_as": {
+              "alias": "send_as",
+              "kind": "field",
+              "required": true,
+              "type": "None | str"
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
         },
         "manyforge.api.business_inbox_inbound_addresses_resource.Upload": {
           "bases": [
@@ -342929,6 +343544,12 @@
                 }
               ]
             },
+            "send_as": {
+              "alias": "send_as",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | str"
+            },
             "serialize_supplied": {
               "binding": "instance",
               "kind": "method",
@@ -368694,6 +369315,126 @@
                   "returns": "Any"
                 }
               ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.UpdateInboundAddress": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "send_as": {
+              "alias": "send_as",
+              "kind": "field",
+              "required": true,
+              "type": "None | str"
             },
             "serialize_supplied": {
               "binding": "instance",
@@ -428111,6 +428852,12 @@
                 }
               ]
             },
+            "send_as": {
+              "alias": "send_as",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | str"
+            },
             "serialize_supplied": {
               "binding": "instance",
               "kind": "method",
@@ -428582,6 +429329,12 @@
                   "returns": "Any"
                 }
               ]
+            },
+            "send_as": {
+              "alias": "send_as",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | str"
             },
             "serialize_supplied": {
               "binding": "instance",
@@ -501895,6 +502648,263 @@
             }
           }
         },
+        "manyforge.models.update_inbound_address.JsonValue": {
+          "kind": "value",
+          "type": "JsonValue"
+        },
+        "manyforge.models.update_inbound_address.Model": {
+          "bases": [
+            "pydantic.main.BaseModel"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.update_inbound_address.OpenEnum": {
+          "bases": [
+            "str",
+            "enum.Enum"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.update_inbound_address.UNSET": {
+          "kind": "value",
+          "type": "manyforge.model_support.UnsetType"
+        },
+        "manyforge.models.update_inbound_address.UnsetType": {
+          "bases": [
+            "object"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.update_inbound_address.UpdateInboundAddress": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "send_as": {
+              "alias": "send_as",
+              "kind": "field",
+              "required": true,
+              "type": "None | str"
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.update_mcp_server_request.JsonValue": {
           "kind": "value",
           "type": "JsonValue"
@@ -512974,6 +513984,37 @@
                   "returns": "manyforge.models.inbound_address_page.InboundAddressPage"
                 }
               ]
+            },
+            "update": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "address_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "update_inbound_address",
+                      "required": true,
+                      "type": "manyforge.models.update_inbound_address.UpdateInboundAddress"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.models.inbound_address.InboundAddress"
+                }
+              ]
             }
           }
         },
@@ -513092,6 +514133,37 @@
                     }
                   ],
                   "returns": "manyforge.models.inbound_address_page.InboundAddressPage"
+                }
+              ]
+            },
+            "update": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "address_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "update_inbound_address",
+                      "required": true,
+                      "type": "manyforge.models.update_inbound_address.UpdateInboundAddress"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.models.inbound_address.InboundAddress"
                 }
               ]
             }
@@ -532935,6 +534007,37 @@
                   "returns": "manyforge.models.inbound_address_page.InboundAddressPage"
                 }
               ]
+            },
+            "update": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "address_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "update_inbound_address",
+                      "required": true,
+                      "type": "manyforge.models.update_inbound_address.UpdateInboundAddress"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.models.inbound_address.InboundAddress"
+                }
+              ]
             }
           }
         },
@@ -533053,6 +534156,37 @@
                     }
                   ],
                   "returns": "manyforge.models.inbound_address_page.InboundAddressPage"
+                }
+              ]
+            },
+            "update": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "address_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "update_inbound_address",
+                      "required": true,
+                      "type": "manyforge.models.update_inbound_address.UpdateInboundAddress"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.models.inbound_address.InboundAddress"
                 }
               ]
             }
@@ -549891,6 +551025,10 @@
           "kind": "export",
           "target": "type:BusinessInboxInboundAddressesListParams"
         },
+        "import:index.BusinessInboxInboundAddressesUpdateParams": {
+          "kind": "export",
+          "target": "type:BusinessInboxInboundAddressesUpdateParams"
+        },
         "import:index.BusinessInvitationsApi": {
           "kind": "export",
           "target": "class:BusinessInvitationsApi"
@@ -561534,6 +562672,44 @@
             }
           ]
         },
+        "import:index.UpdateInboundAddress": {
+          "kind": "export",
+          "target": "type:UpdateInboundAddress"
+        },
+        "import:index.UpdateInboundAddressFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "UpdateInboundAddress",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:index.UpdateInboundAddressToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "UpdateInboundAddress"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:index.UpdateMCPServerRequest": {
           "kind": "export",
           "target": "type:UpdateMCPServerRequest"
@@ -565404,6 +566580,30 @@
               "readonly": true,
               "required": false,
               "type": "Transport"
+            },
+            "update": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "rest": false,
+                      "type": "BusinessInboxInboundAddressesUpdateParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": false,
+                      "rest": false,
+                      "type": "RequestOptions | undefined"
+                    }
+                  ],
+                  "returns": "Promise<InboundAddress>",
+                  "type_parameters": []
+                }
+              ]
             }
           },
           "signatures": [
@@ -574706,6 +575906,25 @@
           },
           "type_parameters": []
         },
+        "import:index.type:BusinessInboxInboundAddressesUpdateParams": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "addressId": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "body": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "UpdateInboundAddress"
+            }
+          },
+          "type_parameters": []
+        },
         "import:index.type:BusinessInvitationsCreateParams": {
           "bases": [],
           "kind": "interface",
@@ -579094,6 +580313,12 @@
               "readonly": false,
               "required": true,
               "type": "InboundAddressKind"
+            },
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | null | undefined"
             },
             "tenantRootId": {
               "kind": "field",
@@ -586335,6 +587560,19 @@
               "readonly": false,
               "required": false,
               "type": "string | null | undefined"
+            }
+          },
+          "type_parameters": []
+        },
+        "import:index.type:UpdateInboundAddress": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string | null"
             }
           },
           "type_parameters": []
@@ -599972,6 +601210,44 @@
             }
           ]
         },
+        "import:public.UpdateInboundAddress": {
+          "kind": "export",
+          "target": "type:UpdateInboundAddress"
+        },
+        "import:public.UpdateInboundAddressFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "UpdateInboundAddress",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.UpdateInboundAddressToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "UpdateInboundAddress"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:public.UpdateMCPServerRequest": {
           "kind": "export",
           "target": "type:UpdateMCPServerRequest"
@@ -606135,6 +607411,12 @@
               "readonly": false,
               "required": true,
               "type": "InboundAddressKind"
+            },
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | null | undefined"
             },
             "tenantRootId": {
               "kind": "field",
@@ -612870,6 +614152,19 @@
               "readonly": false,
               "required": false,
               "type": "string | null | undefined"
+            }
+          },
+          "type_parameters": []
+        },
+        "import:public.type:UpdateInboundAddress": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string | null"
             }
           },
           "type_parameters": []
@@ -626494,6 +627789,44 @@
             }
           ]
         },
+        "import:server.UpdateInboundAddress": {
+          "kind": "export",
+          "target": "type:UpdateInboundAddress"
+        },
+        "import:server.UpdateInboundAddressFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "UpdateInboundAddress",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.UpdateInboundAddressToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "UpdateInboundAddress"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:server.UpdateMCPServerRequest": {
           "kind": "export",
           "target": "type:UpdateMCPServerRequest"
@@ -632669,6 +634002,12 @@
               "readonly": false,
               "required": true,
               "type": "InboundAddressKind"
+            },
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | null | undefined"
             },
             "tenantRootId": {
               "kind": "field",
@@ -639512,6 +640851,19 @@
           },
           "type_parameters": []
         },
+        "import:server.type:UpdateInboundAddress": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string | null"
+            }
+          },
+          "type_parameters": []
+        },
         "import:server.type:UpdateMCPServerRequest": {
           "bases": [],
           "kind": "interface",
@@ -642620,6 +643972,10 @@
         "require:index.BusinessInboxInboundAddressesListParams": {
           "kind": "export",
           "target": "type:BusinessInboxInboundAddressesListParams"
+        },
+        "require:index.BusinessInboxInboundAddressesUpdateParams": {
+          "kind": "export",
+          "target": "type:BusinessInboxInboundAddressesUpdateParams"
         },
         "require:index.BusinessInvitationsApi": {
           "kind": "export",
@@ -654264,6 +655620,44 @@
             }
           ]
         },
+        "require:index.UpdateInboundAddress": {
+          "kind": "export",
+          "target": "type:UpdateInboundAddress"
+        },
+        "require:index.UpdateInboundAddressFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "UpdateInboundAddress",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.UpdateInboundAddressToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "UpdateInboundAddress"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "require:index.UpdateMCPServerRequest": {
           "kind": "export",
           "target": "type:UpdateMCPServerRequest"
@@ -658134,6 +659528,30 @@
               "readonly": true,
               "required": false,
               "type": "Transport"
+            },
+            "update": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "rest": false,
+                      "type": "BusinessInboxInboundAddressesUpdateParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": false,
+                      "rest": false,
+                      "type": "RequestOptions | undefined"
+                    }
+                  ],
+                  "returns": "Promise<InboundAddress>",
+                  "type_parameters": []
+                }
+              ]
             }
           },
           "signatures": [
@@ -667436,6 +668854,25 @@
           },
           "type_parameters": []
         },
+        "require:index.type:BusinessInboxInboundAddressesUpdateParams": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "addressId": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "body": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "UpdateInboundAddress"
+            }
+          },
+          "type_parameters": []
+        },
         "require:index.type:BusinessInvitationsCreateParams": {
           "bases": [],
           "kind": "interface",
@@ -671824,6 +673261,12 @@
               "readonly": false,
               "required": true,
               "type": "InboundAddressKind"
+            },
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | null | undefined"
             },
             "tenantRootId": {
               "kind": "field",
@@ -679065,6 +680508,19 @@
               "readonly": false,
               "required": false,
               "type": "string | null | undefined"
+            }
+          },
+          "type_parameters": []
+        },
+        "require:index.type:UpdateInboundAddress": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string | null"
             }
           },
           "type_parameters": []
@@ -692702,6 +694158,44 @@
             }
           ]
         },
+        "require:public.UpdateInboundAddress": {
+          "kind": "export",
+          "target": "type:UpdateInboundAddress"
+        },
+        "require:public.UpdateInboundAddressFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "UpdateInboundAddress",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.UpdateInboundAddressToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "UpdateInboundAddress"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "require:public.UpdateMCPServerRequest": {
           "kind": "export",
           "target": "type:UpdateMCPServerRequest"
@@ -698865,6 +700359,12 @@
               "readonly": false,
               "required": true,
               "type": "InboundAddressKind"
+            },
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | null | undefined"
             },
             "tenantRootId": {
               "kind": "field",
@@ -705600,6 +707100,19 @@
               "readonly": false,
               "required": false,
               "type": "string | null | undefined"
+            }
+          },
+          "type_parameters": []
+        },
+        "require:public.type:UpdateInboundAddress": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string | null"
             }
           },
           "type_parameters": []
@@ -719224,6 +720737,44 @@
             }
           ]
         },
+        "require:server.UpdateInboundAddress": {
+          "kind": "export",
+          "target": "type:UpdateInboundAddress"
+        },
+        "require:server.UpdateInboundAddressFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "UpdateInboundAddress",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.UpdateInboundAddressToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "UpdateInboundAddress"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "require:server.UpdateMCPServerRequest": {
           "kind": "export",
           "target": "type:UpdateMCPServerRequest"
@@ -725399,6 +726950,12 @@
               "readonly": false,
               "required": true,
               "type": "InboundAddressKind"
+            },
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | null | undefined"
             },
             "tenantRootId": {
               "kind": "field",
@@ -732238,6 +733795,19 @@
               "readonly": false,
               "required": false,
               "type": "string | null | undefined"
+            }
+          },
+          "type_parameters": []
+        },
+        "require:server.type:UpdateInboundAddress": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "sendAs": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string | null"
             }
           },
           "type_parameters": []
