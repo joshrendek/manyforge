@@ -383,5 +383,13 @@ func verpAddress(sysAddr, token string) string {
 	if at < 0 {
 		return sysAddr
 	}
+	// RFC 5321 caps the local part at 64 octets and Resend rejects longer
+	// addresses outright. Past the cap, send the plain address: threading then
+	// rides In-Reply-To/References instead of every reply failing.
+	if at+1+len(token) > maxLocalPartLen {
+		return sysAddr
+	}
 	return sysAddr[:at] + "+" + token + sysAddr[at:]
 }
+
+const maxLocalPartLen = 64
