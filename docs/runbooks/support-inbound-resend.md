@@ -86,13 +86,42 @@ records anyway.
    another business already verified that domain (see Troubleshooting).
 6. Add the inbound address `support@support.garden.gg`.
 7. Optional, to reply as the apex address ([addendum](../../specs/017-support-email-resend/addendum-send-as.md)):
-   in Microsoft 365, forward `support@garden.gg` to `support@support.garden.gg`
-   (a mail flow rule or mailbox forwarding that keeps the original message).
+   in Microsoft 365, route `support@garden.gg` to `support@support.garden.gg`
+   with a mail flow rule (see [Microsoft 365: route the apex address](#microsoft-365-route-the-apex-address)).
    Then, in **Support → Inbox settings**, set **Send replies as** on
    `support@support.garden.gg` to `support@garden.gg`. This is only accepted
    when the business's verified Resend sending profile sends from `@garden.gg`.
    Replies then show `From: support@garden.gg`, and Reply-To stays
    `support+<token>@support.garden.gg`.
+
+### Microsoft 365: route the apex address
+
+Use an Exchange **mail flow rule**, not mailbox forwarding. Microsoft's outbound
+anti-spam policy blocks automatic external forwarding by default ("Automatic -
+System-controlled"), so mailbox forwarding bounces with `550 5.7.520 Access
+denied, Your organization does not allow external forwarding`. Allowing it needs a
+custom outbound policy, which in turn needs *organization customization*; the
+"complete the setup process for your organization" prompt often errors out or takes
+up to an hour. Admin mail flow rules are not subject to that policy and need no
+setup.
+
+1. Exchange admin center → **Recipients → Mailboxes → Add a shared mailbox**:
+   `support@garden.gg` (no license needed). If the address is taken, remove the
+   alias from whichever mailbox holds it first.
+2. **Mail flow → Rules → Add a rule → Create a new rule**:
+   - Name: `support@garden.gg → support portal`
+   - Apply this rule if: **The recipient → is this person** → `support@garden.gg`
+   - Do the following: **Add recipients → to the Bcc box** →
+     `support@support.garden.gg` (keeps a copy in the shared mailbox; use
+     **Redirect the message to** if you don't want one)
+   - Save, then **Enable** the rule. Exchange saves new rules as **Disabled**; until
+     you turn it on, mail just lands in the shared mailbox and never reaches Resend
+     (check **Mail flow → Rules**: Status must read *Enabled*).
+3. Leave **Mail flow settings → Email forwarding** on the mailbox **off**. With
+   both the rule and forwarding, every message is delivered twice (and the
+   forwarded copy bounces with 5.7.520).
+4. Do **not** enable automatic forwarding in the *Default* outbound anti-spam
+   policy instead: that allows external forwarding for every mailbox in the tenant.
 
 ### Note for spec 018 (support portal)
 

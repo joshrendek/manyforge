@@ -1,11 +1,12 @@
 # Spec 017 addendum: "Send replies as" address
 
-**Status:** Implemented on `feat/support-send-as` (migration 0140)
+**Status:** Implemented (PR #110, migration 0140); live on hub
 
 ## Why
 
 garden.gg publishes `support@garden.gg`. Its apex mail stays on Microsoft 365,
-which forwards that mailbox to the Resend-routed `support@support.garden.gg`. With
+which routes that mailbox to the Resend-routed `support@support.garden.gg`
+(an Exchange mail flow rule; see the runbook). With
 spec 017 alone, agent replies come From `support@support.garden.gg`, so customers
 see a different address from the one they wrote to. Replies should show
 `From: support@garden.gg` while `Reply-To: support+<token>@support.garden.gg`
