@@ -47,6 +47,37 @@ func (q *Queries) GetEmailDomain(ctx context.Context, arg GetEmailDomainParams) 
 	return i, err
 }
 
+const getInboundAddressForUpdate = `-- name: GetInboundAddressForUpdate :one
+SELECT id, business_id, tenant_root_id, address, kind, email_domain_id, created_at, updated_at, send_as FROM inbound_address
+WHERE id = $1 AND business_id = $2
+FOR UPDATE
+`
+
+type GetInboundAddressForUpdateParams struct {
+	ID         uuid.UUID `json:"id"`
+	BusinessID uuid.UUID `json:"business_id"`
+}
+
+// GetInboundAddressForUpdate row-locks one of the business's inbound addresses so
+// the send-as audit snapshots the value the UPDATE replaces. Unknown /
+// other-business ⇒ pgx.ErrNoRows ⇒ ErrNotFound.
+func (q *Queries) GetInboundAddressForUpdate(ctx context.Context, arg GetInboundAddressForUpdateParams) (InboundAddress, error) {
+	row := q.db.QueryRow(ctx, getInboundAddressForUpdate, arg.ID, arg.BusinessID)
+	var i InboundAddress
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Address,
+		&i.Kind,
+		&i.EmailDomainID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SendAs,
+	)
+	return i, err
+}
+
 const insertCustomInboundAddress = `-- name: InsertCustomInboundAddress :one
 
 INSERT INTO inbound_address (
@@ -64,7 +95,7 @@ FROM email_domain ed
 WHERE ed.id = $3::uuid
   AND ed.business_id = $4::uuid
   AND ed.verified_at IS NOT NULL
-RETURNING id, business_id, tenant_root_id, address, kind, email_domain_id, created_at, updated_at
+RETURNING id, business_id, tenant_root_id, address, kind, email_domain_id, created_at, updated_at, send_as
 `
 
 type InsertCustomInboundAddressParams struct {
@@ -100,6 +131,7 @@ func (q *Queries) InsertCustomInboundAddress(ctx context.Context, arg InsertCust
 		&i.EmailDomainID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SendAs,
 	)
 	return i, err
 }
@@ -289,7 +321,7 @@ func (q *Queries) ListEmailDomainsAfter(ctx context.Context, arg ListEmailDomain
 }
 
 const listInboundAddresses = `-- name: ListInboundAddresses :many
-SELECT id, business_id, tenant_root_id, address, kind, email_domain_id, created_at, updated_at FROM inbound_address
+SELECT id, business_id, tenant_root_id, address, kind, email_domain_id, created_at, updated_at, send_as FROM inbound_address
 WHERE business_id = $1
 ORDER BY created_at ASC, id ASC
 LIMIT $2
@@ -321,6 +353,7 @@ func (q *Queries) ListInboundAddresses(ctx context.Context, arg ListInboundAddre
 			&i.EmailDomainID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SendAs,
 		); err != nil {
 			return nil, err
 		}
@@ -333,7 +366,7 @@ func (q *Queries) ListInboundAddresses(ctx context.Context, arg ListInboundAddre
 }
 
 const listInboundAddressesAfter = `-- name: ListInboundAddressesAfter :many
-SELECT id, business_id, tenant_root_id, address, kind, email_domain_id, created_at, updated_at FROM inbound_address
+SELECT id, business_id, tenant_root_id, address, kind, email_domain_id, created_at, updated_at, send_as FROM inbound_address
 WHERE business_id = $1
   AND (created_at, id) > ($2::timestamptz, $3::uuid)
 ORDER BY created_at ASC, id ASC
@@ -371,6 +404,7 @@ func (q *Queries) ListInboundAddressesAfter(ctx context.Context, arg ListInbound
 			&i.EmailDomainID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SendAs,
 		); err != nil {
 			return nil, err
 		}
@@ -402,4 +436,57 @@ type MarkEmailDomainVerifiedParams struct {
 func (q *Queries) MarkEmailDomainVerified(ctx context.Context, arg MarkEmailDomainVerifiedParams) error {
 	_, err := q.db.Exec(ctx, markEmailDomainVerified, arg.ID, arg.BusinessID, arg.TenantRootID)
 	return err
+}
+
+const setInboundAddressSendAs = `-- name: SetInboundAddressSendAs :one
+UPDATE inbound_address ia
+SET send_as = $1::citext, updated_at = now()
+WHERE ia.id = $2::uuid
+  AND ia.business_id = $3::uuid
+  AND ia.tenant_root_id = $4::uuid
+  AND ia.kind = 'custom'
+  AND ($1::citext IS NULL OR EXISTS (
+      SELECT 1 FROM mailing_sending_profile p
+      WHERE p.business_id = ia.business_id
+        AND p.tenant_root_id = ia.tenant_root_id
+        AND p.mode = 'resend'
+        AND p.status = 'verified'
+        AND lower(split_part(p.from_email::text, '@', 2)) = lower(split_part($1::text, '@', 2))
+  ))
+RETURNING ia.id, ia.business_id, ia.tenant_root_id, ia.address, ia.kind, ia.email_domain_id, ia.created_at, ia.updated_at, ia.send_as
+`
+
+type SetInboundAddressSendAsParams struct {
+	SendAs       *string   `json:"send_as"`
+	ID           uuid.UUID `json:"id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+}
+
+// SetInboundAddressSendAs sets (or, with a NULL send_as, clears) a custom
+// address's "send replies as" override (spec 017 addendum). The domain rule is
+// enforced in this single statement: a non-NULL send_as must be on the domain of
+// the SAME business's verified Resend sending profile from_email. Zero rows ⇒ the
+// address is unknown/foreign/system or the domain does not qualify; the service
+// tells the two apart from its prior locked read.
+func (q *Queries) SetInboundAddressSendAs(ctx context.Context, arg SetInboundAddressSendAsParams) (InboundAddress, error) {
+	row := q.db.QueryRow(ctx, setInboundAddressSendAs,
+		arg.SendAs,
+		arg.ID,
+		arg.BusinessID,
+		arg.TenantRootID,
+	)
+	var i InboundAddress
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.TenantRootID,
+		&i.Address,
+		&i.Kind,
+		&i.EmailDomainID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SendAs,
+	)
+	return i, err
 }

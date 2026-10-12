@@ -24,6 +24,7 @@ import com.manyforge.sdk.models.Error;
 import com.manyforge.sdk.models.InboundAddress;
 import com.manyforge.sdk.models.InboundAddressPage;
 import java.util.UUID;
+import com.manyforge.sdk.models.UpdateInboundAddress;
 
 public class BusinessInboxInboundAddressesResource {
   protected final Transport transport;
@@ -128,5 +129,58 @@ public class BusinessInboxInboundAddressesResource {
   public Iterable<InboundAddress> iter(BusinessInboxInboundAddressesListParams params, RequestOptions options) {
     return Pages.iterate(params.cursor, cursor -> list(params.toBuilder().cursor(cursor).build(), options), page -> page.getItems(), page -> page.getNextCursor());
   }
+
+  public static final class BusinessInboxInboundAddressesUpdateParams {
+
+    private final UUID addressId;
+
+    private final UpdateInboundAddress updateInboundAddress;
+
+    private BusinessInboxInboundAddressesUpdateParams(Builder builder) {
+
+      this.addressId = builder.addressId;
+
+      this.updateInboundAddress = builder.updateInboundAddress;
+
+    }
+    public static Builder builder() { return new Builder(); }
+    public Builder toBuilder() {
+      Builder builder = new Builder();
+
+      builder.addressId = addressId;
+
+      builder.updateInboundAddress = updateInboundAddress;
+
+      return builder;
+    }
+    public static final class Builder {
+
+      private UUID addressId;
+      public Builder addressId(UUID value) { this.addressId = value; return this; }
+
+      private UpdateInboundAddress updateInboundAddress;
+      public Builder updateInboundAddress(UpdateInboundAddress value) { this.updateInboundAddress = value; return this; }
+
+      public BusinessInboxInboundAddressesUpdateParams build() { return new BusinessInboxInboundAddressesUpdateParams(this); }
+    }
+  }
+  private Request<InboundAddress> updateRequest(BusinessInboxInboundAddressesUpdateParams params) {
+    Objects.requireNonNull(params, "params");
+    List<Request.Parameter> parameters = new ArrayList<>();
+
+    parameters.add(new Request.Parameter("id", "path", Objects.requireNonNull(binding, "resource binding"), ""));
+
+    Objects.requireNonNull(params.addressId, "addressId");
+
+    parameters.add(new Request.Parameter("addressId", "path", params.addressId, ""));
+
+    Objects.requireNonNull(params.updateInboundAddress, "updateInboundAddress");
+
+    return new Request<>("PATCH", "/api/v1/businesses/{id}/inbound-addresses/{addressId}", parameters, params.updateInboundAddress, "application/json", true, "management", false, null, new TypeReference<InboundAddress>() {});
+  }
+  public InboundAddress update(BusinessInboxInboundAddressesUpdateParams params) { return update(params, RequestOptions.DEFAULT); }
+  public InboundAddress update(BusinessInboxInboundAddressesUpdateParams params, RequestOptions options) { return transport.send(updateRequest(params), options); }
+  public CompletableFuture<InboundAddress> updateAsync(BusinessInboxInboundAddressesUpdateParams params) { return updateAsync(params, RequestOptions.DEFAULT); }
+  public CompletableFuture<InboundAddress> updateAsync(BusinessInboxInboundAddressesUpdateParams params, RequestOptions options) { return transport.sendAsync(updateRequest(params), options); }
 
 }

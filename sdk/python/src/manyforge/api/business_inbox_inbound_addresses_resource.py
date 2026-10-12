@@ -23,6 +23,7 @@ from uuid import UUID
 from manyforge.models.create_inbound_address import CreateInboundAddress
 from manyforge.models.inbound_address import InboundAddress
 from manyforge.models.inbound_address_page import InboundAddressPage
+from manyforge.models.update_inbound_address import UpdateInboundAddress
 
 from manyforge.models import InboundAddress
 
@@ -130,6 +131,42 @@ class BusinessInboxInboundAddressesResource:
                 raise PaginationError("Server returned a repeated cursor")
             seen.add(next_cursor)
 
+    def update(
+        self,
+        *,
+
+        address_id: UUID,
+
+        update_inbound_address: UpdateInboundAddress,
+
+        request_options: RequestOptions | None = None,
+    ) -> InboundAddress:
+        request = Request(
+            operation_id="InboxInboundAddressesUpdate",
+            method="PATCH",
+            path="/api/v1/businesses/{id}/inbound-addresses/{addressId}",
+            authenticated=True,
+            response=TypeAdapter(InboundAddress),
+            path_parameters={
+                "id": self._bindings["id"],
+                "addressId": address_id,
+            },
+            query=(
+            ),
+            headers={
+            },
+            body=update_inbound_address,
+            form={
+            },
+
+            content_type="application/json",
+
+
+            accept="application/json",
+
+        )
+        return self._transport.request(request, request_options=request_options)
+
 class AsyncBusinessInboxInboundAddressesResource:
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -233,4 +270,40 @@ class AsyncBusinessInboxInboundAddressesResource:
             if next_cursor in seen:
                 raise PaginationError("Server returned a repeated cursor")
             seen.add(next_cursor)
+
+    async def update(
+        self,
+        *,
+
+        address_id: UUID,
+
+        update_inbound_address: UpdateInboundAddress,
+
+        request_options: RequestOptions | None = None,
+    ) -> InboundAddress:
+        request = Request(
+            operation_id="InboxInboundAddressesUpdate",
+            method="PATCH",
+            path="/api/v1/businesses/{id}/inbound-addresses/{addressId}",
+            authenticated=True,
+            response=TypeAdapter(InboundAddress),
+            path_parameters={
+                "id": self._bindings["id"],
+                "addressId": address_id,
+            },
+            query=(
+            ),
+            headers={
+            },
+            body=update_inbound_address,
+            form={
+            },
+
+            content_type="application/json",
+
+
+            accept="application/json",
+
+        )
+        return await self._transport.request(request, request_options=request_options)
 

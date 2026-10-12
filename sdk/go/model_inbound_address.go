@@ -19,6 +19,7 @@ type InboundAddress struct {
 	EmailDomainId Optional[string]   `json:"email_domain_id,omitzero"`
 	Id            string             `json:"id"`
 	Kind          InboundAddressKind `json:"kind"`
+	SendAs        Optional[string]   `json:"send_as,omitzero"`
 	TenantRootId  string             `json:"tenant_root_id"`
 }
 

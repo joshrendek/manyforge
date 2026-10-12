@@ -1,7 +1,7 @@
 -- sqlc schema input: TABLE definitions only, mirroring migrations/ (the runtime
 -- source of truth). Triggers, RLS policies, roles, and functions live in the
 -- migrations and are intentionally excluded here so sqlc's parser stays happy.
--- Keep this in sync with migrations/0001..0139 when table shapes change.
+-- Keep this in sync with migrations/0001..0140 when table shapes change.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 
@@ -184,6 +184,7 @@ CREATE TABLE inbound_address (
     email_domain_id uuid,
     created_at      timestamptz NOT NULL,
     updated_at      timestamptz NOT NULL,
+    send_as         citext,
     UNIQUE (tenant_root_id, address)
 );
 

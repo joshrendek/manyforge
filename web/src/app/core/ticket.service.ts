@@ -173,7 +173,8 @@ export interface EmailDomain {
 
 // InboundAddress is a routing entry: the auto-provisioned system address plus any
 // custom addresses bound to a verified email domain. email_domain_id is null for
-// kind=system.
+// kind=system. send_as (custom only, spec 017 addendum) is the From for agent
+// replies; Reply-To stays on address. Optional: older servers omit it.
 export interface InboundAddress {
   id: string;
   business_id: string;
@@ -181,6 +182,7 @@ export interface InboundAddress {
   address: string;
   kind: 'system' | 'custom';
   email_domain_id: string | null;
+  send_as?: string | null;
   active: boolean;
   created_at: string;
 }
@@ -345,6 +347,20 @@ export class TicketService {
     return this.http.post<InboundAddress>(
       `/api/v1/businesses/${businessId}/inbound-addresses`,
       body,
+    );
+  }
+
+  // PATCH /businesses/{id}/inbound-addresses/{addressId} — set or clear (null) a
+  // custom address's "send replies as" address. 400 when it is not on the domain
+  // of the business's verified Resend sending profile; 404 unknown/unauthorized.
+  updateInboundAddressSendAs(
+    businessId: string,
+    addressId: string,
+    sendAs: string | null,
+  ): Observable<InboundAddress> {
+    return this.http.patch<InboundAddress>(
+      `/api/v1/businesses/${businessId}/inbound-addresses/${addressId}`,
+      { send_as: sendAs },
     );
   }
 }

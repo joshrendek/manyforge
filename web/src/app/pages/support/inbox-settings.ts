@@ -46,6 +46,7 @@ function dkimSpfTone(s: string): Tone {
 // challenge records to publish and a Verify button; (3) the inbound-address list
 // (system + custom) with an add-address form whose domain <select> is the business's
 // VERIFIED domains only (the backend 409s on an unverified domain regardless).
+// Custom rows also carry a "Send replies as" field (spec 017 addendum).
 @Component({
   selector: 'app-inbox-settings',
   imports: [FormsModule, RouterLink, PageHeader, StatusPill, EmptyState, Spinner],
@@ -296,7 +297,47 @@ function dkimSpfTone(s: string): Tone {
                 @if (!a.active) {
                   <mf-status-pill [tone]="'danger'" label="inactive" data-testid="address-inactive" />
                 }
+                @if (a.send_as) {
+                  <mf-status-pill
+                    [tone]="'neutral'"
+                    [label]="'Replies from ' + a.send_as"
+                    data-testid="send-as-current"
+                  />
+                }
               </div>
+              @if (a.kind === 'custom') {
+                <div class="mf-send-as" data-testid="send-as">
+                  <div class="mf-field" style="flex:1 1 220px">
+                    <label [for]="'send-as-' + a.id">Send replies as</label>
+                    <input
+                      type="text"
+                      class="mf-input"
+                      [id]="'send-as-' + a.id"
+                      data-testid="send-as-input"
+                      placeholder="support@acme.com"
+                      autocomplete="off"
+                      [(ngModel)]="sendAsDrafts[a.id]"
+                      [disabled]="savingSendAsId() !== null"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    class="mf-btn mf-btn-ghost mf-btn-sm"
+                    data-testid="send-as-save"
+                    [disabled]="savingSendAsId() !== null"
+                    (click)="saveSendAs(a)"
+                  >
+                    {{ savingSendAsId() === a.id ? 'Saving…' : 'Save' }}
+                  </button>
+                </div>
+                <span class="mf-hint">
+                  Leave empty to reply from {{ a.address }}. Must be on your verified Resend sending
+                  domain; customer replies still come back to this address.
+                </span>
+                @if (sendAsErrorId() === a.id) {
+                  <p class="mf-err" data-testid="send-as-error">{{ sendAsError() }}</p>
+                }
+              }
             </div>
           } @empty {
             <mf-empty-state title="No inbound addresses yet." data-testid="address-empty" />
@@ -388,6 +429,13 @@ function dkimSpfTone(s: string): Tone {
         border-radius: var(--mf-radius-sm);
         padding: 2px var(--mf-space-2);
       }
+      .mf-send-as {
+        display: flex;
+        gap: var(--mf-space-3);
+        flex-wrap: wrap;
+        align-items: flex-end;
+        width: 100%;
+      }
       .mf-challenge-actions {
         display: flex;
         align-items: center;
@@ -429,6 +477,13 @@ export class InboxSettingsComponent implements OnInit {
   // so the spinner + "re-check DNS" hint scope to a single row.
   verifyingId = signal<string | null>(null);
   verifyHintId = signal<string | null>(null);
+
+  // Per-address "send replies as" drafts (keyed by address id), the address whose
+  // save is in flight, and the address whose last save failed with sendAsError.
+  sendAsDrafts: Record<string, string> = {};
+  savingSendAsId = signal<string | null>(null);
+  sendAsErrorId = signal<string | null>(null);
+  sendAsError = signal('');
 
   // Form drafts.
   domainDraft = '';
@@ -472,7 +527,9 @@ export class InboxSettingsComponent implements OnInit {
   private loadAddresses(): void {
     this.api.listInboundAddresses(this.businessId).subscribe({
       next: (page) => {
-        this.addresses.set(page.items ?? []);
+        const items = page.items ?? [];
+        this.addresses.set(items);
+        this.sendAsDrafts = Object.fromEntries(items.map((a) => [a.id, a.send_as ?? '']));
         this.loading.set(false);
       },
       error: (e: HttpErrorResponse) => {
@@ -554,6 +611,27 @@ export class InboxSettingsComponent implements OnInit {
       });
   }
 
+  // Save (or clear, when empty) a custom address's send-as. The backend owns the
+  // domain rule; its 400 message is safe to show and is scoped to this row.
+  saveSendAs(a: InboundAddress): void {
+    if (this.savingSendAsId() !== null) return;
+    const value = (this.sendAsDrafts[a.id] ?? '').trim();
+    this.savingSendAsId.set(a.id);
+    this.sendAsErrorId.set(null);
+    this.api.updateInboundAddressSendAs(this.businessId, a.id, value || null).subscribe({
+      next: (updated) => {
+        this.addresses.update((cur) => cur.map((x) => (x.id === updated.id ? updated : x)));
+        this.sendAsDrafts[updated.id] = updated.send_as ?? '';
+        this.savingSendAsId.set(null);
+      },
+      error: (e: HttpErrorResponse) => {
+        this.savingSendAsId.set(null);
+        this.sendAsErrorId.set(a.id);
+        this.sendAsError.set(this.describeSendAsError(e));
+      },
+    });
+  }
+
   // ── error copy ──────────────────────────────────────────────────────────
   // No-oracle: 403/404 both map to the same generic message (mirrors the other
   // support pages). 400 carries safe validation detail; 409 is a stateful conflict.
@@ -578,6 +656,17 @@ export class InboxSettingsComponent implements OnInit {
   private describeVerifyError(e: HttpErrorResponse): string {
     if (e.status === 403 || e.status === 404) return "You don't have access to do that.";
     return 'Could not verify the domain. Please try again.';
+  }
+
+  private describeSendAsError(e: HttpErrorResponse): string {
+    if (e.status === 400) {
+      const msg = (e.error as { message?: string } | null)?.message;
+      return msg
+        ? `That send-as address was rejected: ${msg}`
+        : 'That send-as address was rejected. It must be on your verified Resend sending domain.';
+    }
+    if (e.status === 403 || e.status === 404) return "You don't have access to do that.";
+    return 'Could not save the send-as address. Please try again.';
   }
 
   private describeAddressError(e: HttpErrorResponse): string {

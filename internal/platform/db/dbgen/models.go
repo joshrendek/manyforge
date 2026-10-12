@@ -1633,6 +1633,7 @@ type InboundAddress struct {
 	EmailDomainID pgtype.UUID        `json:"email_domain_id"`
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
+	SendAs        *string            `json:"send_as"`
 }
 
 type Invitation struct {

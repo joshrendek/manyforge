@@ -438,6 +438,7 @@ from .update_company import UpdateCompany
 from .update_connector import UpdateConnector
 from .update_connector_properties_status_enum import UpdateConnectorPropertiesStatusEnum
 from .update_contact import UpdateContact
+from .update_inbound_address import UpdateInboundAddress
 from .update_mcp_server_request import UpdateMCPServerRequest
 from .valid_node import ValidNode
 from .validation_result import ValidationResult

@@ -7,7 +7,8 @@ package security_regression
 // (seen-event short-circuit, no direct record); MF-017-RAW-DOWNLOAD across
 // resend_received_netsafe_pin_test.go (production netsafe client) and
 // mf017_raw_download_pin_test.go (the download boundary). The domain takeover is
-// pinned in mf017_domain_takeover_pin_test.go.
+// pinned in mf017_domain_takeover_pin_test.go; the send-as addendum in
+// mf017_send_as_domain_pin_test.go.
 const (
 	// FindingReplyTokenSecret — production refuses to serve with an empty
 	// reply-token HMAC key (R14); the migrate Job is unaffected.
@@ -27,4 +28,8 @@ const (
 	// FindingDefiners — 0139's functions are search-path-pinned DEFINERs with
 	// PUBLIC execute revoked, and verified domains are globally unique (R7).
 	FindingDefiners = "MF-017-DEFINERS"
+	// FindingSendAsDomain — a send_as override is accepted only on the domain of
+	// the same business's verified Resend profile, enforced in the UPDATE itself;
+	// Reply-To stays on the Resend-routed inbound address (spec 017 addendum).
+	FindingSendAsDomain = "MF-017-SEND-AS-DOMAIN"
 )

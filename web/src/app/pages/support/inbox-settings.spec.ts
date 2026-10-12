@@ -530,4 +530,68 @@ describe('InboxSettingsComponent (US4)', () => {
     expect(all('verify-hint').length).toBe(1);
     expect(text('verify-hint')).toContain('verify the domain in Resend');
   });
+  it('send-as is offered on custom addresses only and prefilled with the current value', async () => {
+    loadWith(
+      [],
+      [
+        mockInboundAddress(),
+        mockInboundAddress({
+          id: 'ia2',
+          address: 'support@support.acme.com',
+          kind: 'custom',
+          email_domain_id: 'ed1',
+          send_as: 'support@acme.com',
+        }),
+      ],
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(all('send-as').length).toBe(1);
+    expect(text('send-as-current')).toBe('Replies from support@acme.com');
+    const input = fixture.nativeElement.querySelector('[data-testid="send-as-input"]') as HTMLInputElement;
+    expect(input.value).toBe('support@acme.com');
+  });
+
+  it('send-as Save PATCHes the trimmed value, and an empty draft clears it', () => {
+    const custom = mockInboundAddress({ id: 'ia2', address: 'support@support.acme.com', kind: 'custom' });
+    loadWith([], [custom]);
+
+    cmp.sendAsDrafts['ia2'] = '  support@acme.com ';
+    cmp.saveSendAs(custom);
+    let req = mock.expectOne(`${addressesUrl}/ia2`);
+    expect(req.request.method).toBe('PATCH');
+    expect(req.request.body).toEqual({ send_as: 'support@acme.com' });
+    req.flush({ ...custom, send_as: 'support@acme.com' });
+    fixture.detectChanges();
+    expect(cmp.addresses()[0].send_as).toBe('support@acme.com');
+    expect(text('send-as-current')).toBe('Replies from support@acme.com');
+
+    cmp.sendAsDrafts['ia2'] = '';
+    cmp.saveSendAs(cmp.addresses()[0]);
+    req = mock.expectOne(`${addressesUrl}/ia2`);
+    expect(req.request.body).toEqual({ send_as: null });
+    req.flush({ ...custom, send_as: null });
+    fixture.detectChanges();
+    expect(all('send-as-current').length).toBe(0);
+  });
+
+  it('a send-as 400 shows the server message on that row', () => {
+    const custom = mockInboundAddress({ id: 'ia2', address: 'support@support.acme.com', kind: 'custom' });
+    loadWith([], [custom]);
+
+    cmp.sendAsDrafts['ia2'] = 'support@evil.example';
+    cmp.saveSendAs(custom);
+    mock.expectOne(`${addressesUrl}/ia2`).flush(
+      {
+        code: 'VALIDATION',
+        message: 'send_as must be on the domain of the verified Resend sending profile',
+      },
+      { status: 400, statusText: 'Bad Request' },
+    );
+    fixture.detectChanges();
+    expect(text('send-as-error')).toContain(
+      'send_as must be on the domain of the verified Resend sending profile',
+    );
+    expect(cmp.savingSendAsId()).toBeNull();
+  });
 });

@@ -71,3 +71,17 @@ func (r *BusinessInboxInboundAddressesResource) Iter(ctx context.Context, params
 		return page.Items, next, nil
 	})
 }
+
+// Update invokes InboxInboundAddressesUpdate.
+func (r *BusinessInboxInboundAddressesResource) Update(ctx context.Context, addressId string, body UpdateInboundAddress, options ...RequestOption) (InboundAddress, error) {
+	path := "/api/v1/businesses/{id}/inbound-addresses/{addressId}"
+	path = strings.ReplaceAll(path, "{"+"id"+"}", url.PathEscape(fmt.Sprint(r.binding)))
+	path = strings.ReplaceAll(path, "{"+"addressId"+"}", url.PathEscape(fmt.Sprint(addressId)))
+	request := Request{OperationID: "InboxInboundAddressesUpdate", Method: "PATCH", Path: path, Query: url.Values{}, Headers: map[string]string{}, Authenticated: true, Audience: "management", Signing: "", BodyKey: ""}
+	request.Body = body
+
+	var result InboundAddress
+	err := r.transport.Do(ctx, request, &result, options...)
+	return result, err
+
+}

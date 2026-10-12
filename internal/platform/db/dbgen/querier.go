@@ -294,6 +294,10 @@ type Querier interface {
 	GetFeedbackBoard(ctx context.Context, arg GetFeedbackBoardParams) (FeedbackBoard, error)
 	GetFeedbackPost(ctx context.Context, arg GetFeedbackPostParams) (FeedbackPost, error)
 	GetGithubAppConfig(ctx context.Context) (GetGithubAppConfigRow, error)
+	// GetInboundAddressForUpdate row-locks one of the business's inbound addresses so
+	// the send-as audit snapshots the value the UPDATE replaces. Unknown /
+	// other-business ⇒ pgx.ErrNoRows ⇒ ErrNotFound.
+	GetInboundAddressForUpdate(ctx context.Context, arg GetInboundAddressForUpdateParams) (InboundAddress, error)
 	GetListSubscriber(ctx context.Context, arg GetListSubscriberParams) (ListSubscriber, error)
 	// GetMCPServerByID loads an MCP server by (id, business_id) — the ownership
 	// predicate. RLS scopes rows to the caller's authorized businesses; the explicit
@@ -854,6 +858,13 @@ type Querier interface {
 	// attempts and leave these columns alone.
 	SetCodeReviewUsage(ctx context.Context, arg SetCodeReviewUsageParams) error
 	SetFeedbackPostStatus(ctx context.Context, arg SetFeedbackPostStatusParams) (FeedbackPost, error)
+	// SetInboundAddressSendAs sets (or, with a NULL send_as, clears) a custom
+	// address's "send replies as" override (spec 017 addendum). The domain rule is
+	// enforced in this single statement: a non-NULL send_as must be on the domain of
+	// the SAME business's verified Resend sending profile from_email. Zero rows ⇒ the
+	// address is unknown/foreign/system or the domain does not qualify; the service
+	// tells the two apart from its prior locked read.
+	SetInboundAddressSendAs(ctx context.Context, arg SetInboundAddressSendAsParams) (InboundAddress, error)
 	SetMailingBrandLogo(ctx context.Context, arg SetMailingBrandLogoParams) (MailingBrand, error)
 	// Resend provisioning performs provider I/O before this CAS. Persist the
 	// provider-generated webhook credential and readiness atomically.

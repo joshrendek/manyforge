@@ -85,6 +85,14 @@ records anyway.
 5. Verify the domain in Resend, then click **Verify** in ManyForge. A 409 means
    another business already verified that domain (see Troubleshooting).
 6. Add the inbound address `support@support.garden.gg`.
+7. Optional, to reply as the apex address ([addendum](../../specs/017-support-email-resend/addendum-send-as.md)):
+   in Microsoft 365, forward `support@garden.gg` to `support@support.garden.gg`
+   (a mail flow rule or mailbox forwarding that keeps the original message).
+   Then, in **Support → Inbox settings**, set **Send replies as** on
+   `support@support.garden.gg` to `support@garden.gg`. This is only accepted
+   when the business's verified Resend sending profile sends from `@garden.gg`.
+   Replies then show `From: support@garden.gg`, and Reply-To stays
+   `support+<token>@support.garden.gg`.
 
 ### Note for spec 018 (support portal)
 

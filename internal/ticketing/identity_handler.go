@@ -1,6 +1,7 @@
 package ticketing
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -13,7 +14,7 @@ import (
 
 // IdentityHandler exposes the US4 inbox-management surface (custom email domains +
 // their verification + custom inbound addresses) over HTTP. Routes are thin: parse +
-// validate input, call the service, project the OpenAPI schema, write JSON. All five
+// validate input, call the service, project the OpenAPI schema, write JSON. All six
 // endpoints are gated on inbox.manage by RequirePermission middleware mounted in
 // cmd/manyforge (RLS-bound 404-on-lacking-perm, no oracle); the service additionally
 // enforces the ownership predicate in SQL.
@@ -26,7 +27,7 @@ func NewIdentityHandler(svc *IdentityService) *IdentityHandler {
 	return &IdentityHandler{svc: svc}
 }
 
-// Routes mounts the five inbox-management endpoints. The caller wraps these with
+// Routes mounts the six inbox-management endpoints. The caller wraps these with
 // httpx.RequirePermission("inbox.manage", …) so each is gated identically.
 func (h *IdentityHandler) Routes(r chi.Router) {
 	r.Get("/businesses/{id}/email-domains", h.listEmailDomains)
@@ -34,6 +35,7 @@ func (h *IdentityHandler) Routes(r chi.Router) {
 	r.Post("/businesses/{id}/email-domains/{did}/verify", h.verifyEmailDomain)
 	r.Get("/businesses/{id}/inbound-addresses", h.listInboundAddresses)
 	r.Post("/businesses/{id}/inbound-addresses", h.createInboundAddress)
+	r.Patch("/businesses/{id}/inbound-addresses/{addressId}", h.updateInboundAddress)
 }
 
 // --- request DTOs: exact OpenAPI component schemas ---
@@ -46,6 +48,12 @@ type createEmailDomainBody struct {
 type createInboundAddressBody struct {
 	Address       string `json:"address"`
 	EmailDomainID string `json:"email_domain_id"`
+}
+
+// updateInboundAddressBody is the PATCH payload. send_as is required so an empty
+// body never silently clears it: a string sets it, null (or "") clears it.
+type updateInboundAddressBody struct {
+	SendAs json.RawMessage `json:"send_as"`
 }
 
 // --- response DTOs: exact OpenAPI component schemas ---
@@ -83,6 +91,7 @@ type inboundAddressResp struct {
 	Address       string  `json:"address"`
 	Kind          string  `json:"kind"`
 	EmailDomainID *string `json:"email_domain_id"`
+	SendAs        *string `json:"send_as"`
 	Active        bool    `json:"active"`
 	CreatedAt     string  `json:"created_at"`
 }
@@ -121,6 +130,7 @@ func toInboundAddressResp(a InboundAddress) inboundAddressResp {
 		Address:       a.Address,
 		Kind:          a.Kind,
 		EmailDomainID: uuidStrPtr(a.EmailDomainID),
+		SendAs:        a.SendAs,
 		Active:        a.Active,
 		CreatedAt:     a.CreatedAt.UTC().Format(rfc3339),
 	}
@@ -263,6 +273,43 @@ func (h *IdentityHandler) createInboundAddress(w http.ResponseWriter, r *http.Re
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, toInboundAddressResp(a))
+}
+
+func (h *IdentityHandler) updateInboundAddress(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	bid, err := pathUUID(r, "id")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	aid, err := pathUUID(r, "addressId")
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	var body updateInboundAddressBody
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if len(body.SendAs) == 0 {
+		httpx.WriteError(w, r, errValidation("send_as required (null to clear)"))
+		return
+	}
+	var sendAs *string
+	if err := json.Unmarshal(body.SendAs, &sendAs); err != nil {
+		httpx.WriteError(w, r, errValidation("send_as must be a string or null"))
+		return
+	}
+	a, err := h.svc.SetInboundAddressSendAs(r.Context(), pid, bid, aid, sendAs)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toInboundAddressResp(a))
 }
 
 // nextCursorJSON renders an empty cursor as a literal JSON null (matching the
