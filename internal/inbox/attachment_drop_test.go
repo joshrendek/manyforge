@@ -142,7 +142,7 @@ func TestSniffAttachmentsCapsAcceptedCount(t *testing.T) {
 // SECREVIEW-M5: the aggregate decoded size of ACCEPTED attachments is capped; a
 // part that would push the total over the budget is dropped, not stored.
 func TestSniffAttachmentsCapsAcceptedTotalBytes(t *testing.T) {
-	part := make([]byte, maxAcceptedAttachmentBytes/2-1)
+	part := make([]byte, maxAcceptedAttachmentBytes/2-64) // two fit, leaving room for d.png
 	copy(part, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'})
 	small := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
 	// Per-attachment cap is out of the way so only the aggregate budget applies.
