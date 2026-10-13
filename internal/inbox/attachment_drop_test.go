@@ -104,6 +104,71 @@ func TestSniffAttachmentsSanitizesAllowedFilename(t *testing.T) {
 	}
 }
 
+// SECREVIEW-M5: the number of ACCEPTED (stored) attachments is capped, so one
+// message cannot fan out into thousands of attachment rows and blob Puts inside
+// the ingest transaction. Parts beyond the cap are recorded as dropped.
+func TestSniffAttachmentsCapsAcceptedCount(t *testing.T) {
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
+	svc := &Service{blob: fileStore(t), cfg: Config{AttachmentMaxBytes: 1 << 20}}
+	const extra = 5
+	parts := make([]ParsedAttachment, maxAcceptedAttachments+extra)
+	for i := range parts {
+		parts[i] = ParsedAttachment{FileName: "p.png", Content: png}
+	}
+	parts[maxAcceptedAttachments] = ParsedAttachment{FileName: "first-over.png", Content: png}
+	staged, dropped := svc.sniffAttachments(parts)
+	if len(staged) != maxAcceptedAttachments {
+		t.Fatalf("staged %d, want the cap %d", len(staged), maxAcceptedAttachments)
+	}
+	if len(dropped) != extra {
+		t.Fatalf("dropped %d, want %d over-cap parts recorded", len(dropped), extra)
+	}
+	want := ticketing.DroppedAttachment{Filename: "first-over.png", DetectedType: "image/png", Size: int64(len(png))}
+	if dropped[0] != want {
+		t.Fatalf("dropped[0] = %+v, want %+v", dropped[0], want)
+	}
+
+	// A flood far beyond both caps still yields bounded output.
+	flood := make([]ParsedAttachment, 5000)
+	for i := range flood {
+		flood[i] = ParsedAttachment{FileName: "f.png", Content: png}
+	}
+	staged, dropped = svc.sniffAttachments(flood)
+	if len(staged) != maxAcceptedAttachments || len(dropped) != maxDroppedAttachments {
+		t.Fatalf("flood: staged=%d dropped=%d, want %d/%d", len(staged), len(dropped), maxAcceptedAttachments, maxDroppedAttachments)
+	}
+}
+
+// SECREVIEW-M5: the aggregate decoded size of ACCEPTED attachments is capped; a
+// part that would push the total over the budget is dropped, not stored.
+func TestSniffAttachmentsCapsAcceptedTotalBytes(t *testing.T) {
+	part := make([]byte, maxAcceptedAttachmentBytes/2-1)
+	copy(part, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'})
+	small := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
+	// Per-attachment cap is out of the way so only the aggregate budget applies.
+	svc := &Service{blob: fileStore(t), cfg: Config{AttachmentMaxBytes: maxAcceptedAttachmentBytes}}
+	staged, dropped := svc.sniffAttachments([]ParsedAttachment{
+		{FileName: "a.png", Content: part},
+		{FileName: "b.png", Content: part},
+		{FileName: "c.png", Content: part}, // would exceed the aggregate budget
+		{FileName: "d.png", Content: small},
+	})
+	var total int64
+	for _, s := range staged {
+		total += s.size
+	}
+	if total > maxAcceptedAttachmentBytes {
+		t.Fatalf("accepted %d bytes, over the %d budget", total, maxAcceptedAttachmentBytes)
+	}
+	if len(staged) != 3 || staged[0].filename != "a.png" || staged[1].filename != "b.png" || staged[2].filename != "d.png" {
+		t.Fatalf("staged = %d parts, want a.png, b.png and the small d.png that still fits", len(staged))
+	}
+	want := ticketing.DroppedAttachment{Filename: "c.png", DetectedType: "image/png", Size: int64(len(part))}
+	if len(dropped) != 1 || dropped[0] != want {
+		t.Fatalf("dropped = %+v, want [%+v]", dropped, want)
+	}
+}
+
 // I2a: with no blob store (MANYFORGE_BLOB_URL unset) an allowed part cannot be
 // stored, so it is recorded as dropped rather than discarded without a trace.
 func TestSniffAttachmentsWithoutBlobStoreDropsAllowedParts(t *testing.T) {

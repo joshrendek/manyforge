@@ -17,6 +17,19 @@ import (
 // maxDroppedAttachments matches the ticket_message.dropped_attachments CHECK.
 const maxDroppedAttachments = 50
 
+// SECREVIEW-M5: hard caps on what ONE inbound message may store. Every accepted
+// part becomes an attachment row and a blob Put made serially while the ingest
+// transaction is open, so without a count cap a sub-30 MiB message of thousands of
+// tiny PNGs fans out into thousands of rows and object-store requests. 50 parts is
+// far beyond real support mail; 25 MiB total matches the default per-attachment cap
+// (MANYFORGE_ATTACHMENT_MAX_BYTES) and sits under the 30 MiB raw-message cap, so it
+// only bites on abuse. Parts over either cap are dropped and recorded like any
+// other dropped attachment (bounded by maxDroppedAttachments).
+const (
+	maxAcceptedAttachments     = 50
+	maxAcceptedAttachmentBytes = 25 << 20
+)
+
 // maxAttachmentFilenameRunes bounds an attacker-controlled attachment filename,
 // whether it is stored on an attachment row or kept for display on a drop.
 const maxAttachmentFilenameRunes = 255
