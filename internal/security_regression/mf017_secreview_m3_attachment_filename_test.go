@@ -1,7 +1,7 @@
 // Finding: SECREVIEW-M3 — valid attachment filenames were not sanitized.
 //
 // An allowlisted attachment kept its raw, attacker-controlled filename. An RFC
-// 2231 filename*=UTF-8''bad%00name.png decodes to a NUL, which Postgres jsonb
+// 2231 extended filename* parameter of bad%00name.png decodes to a NUL, which Postgres jsonb
 // rejects, so ingest failed, the Resend webhook answered 503, and Resend retried
 // the same poison message forever. Every staged (stored) filename must go through
 // the same sanitizer + length bound the dropped list already used.

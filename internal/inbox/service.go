@@ -376,8 +376,10 @@ func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachmen
 			continue
 		}
 		out = append(out, sniffedAttachment{
-			id:          uuid.New(),
-			filename:    p.FileName,
+			id: uuid.New(),
+			// SECREVIEW-M3: the stored name is attacker-controlled too; a raw NUL
+			// would make the jsonb metadata (and so the whole ingest) fail forever.
+			filename:    sanitizeAttachmentFilename(p.FileName),
 			contentType: ct,
 			size:        size,
 			content:     p.Content,
