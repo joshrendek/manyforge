@@ -107,9 +107,12 @@ type ParsedEmail struct {
 
 	Attachments []ParsedAttachment
 
-	// Auth holds the best-effort SPF/DKIM/DMARC verdicts parsed from
-	// Authentication-Results (FR-019: flagged, never used to reject).
-	Auth AuthResults
+	// AuthenticationResults holds every Authentication-Results header value in
+	// header order (topmost, i.e. most recently prepended, first). They are
+	// UNTRUSTED as parsed — any sender can write one — so verdicts are derived
+	// only via trustedAuthResults against the configured authserv-ids
+	// (SECREVIEW-M6; FR-019: flagged, never used to reject).
+	AuthenticationResults []string
 
 	// Auto holds the auto-reply loop-guard signals (FR-018).
 	Auto AutoHeaders
@@ -125,7 +128,8 @@ type ParsedAttachment struct {
 }
 
 // AuthResults is the best-effort SPF/DKIM/DMARC verdict triple extracted from the
-// first Authentication-Results header. Each field is the lowercase mechanism
+// first Authentication-Results header with a trusted authserv-id (see
+// trustedAuthResults). Each field is the lowercase mechanism
 // result (e.g. "pass", "fail", "none", "softfail") or "" when the mechanism was
 // not reported. These are recorded for display and flagging only — inbound mail
 // is never rejected on them (FR-019).
@@ -195,7 +199,7 @@ func Parse(raw []byte) (parsed *ParsedEmail, err error) {
 	}
 
 	pe.Attachments = collectAttachments(env)
-	pe.Auth = parseAuthResults(env.GetHeader("Authentication-Results"))
+	pe.AuthenticationResults = env.GetHeaderValues("Authentication-Results")
 	pe.Auto = parseAutoHeaders(env)
 
 	// enmime accumulates non-fatal parse warnings in env.Errors; the structured
@@ -281,6 +285,47 @@ func parseReferences(s string) []string {
 		return nil
 	}
 	return out
+}
+
+// trustedAuthResults returns the verdicts of the FIRST Authentication-Results
+// header whose authserv-id is in trusted (case-insensitive), or zero (unknown)
+// verdicts when none is. Any sender can write an Authentication-Results header,
+// so only the trusted receiving hop's is believed (SECREVIEW-M6). The receiving
+// MTA prepends its header, so the topmost trusted one is its own; a forged header
+// reusing the trusted id sits below it and is never reached.
+func trustedAuthResults(headers, trusted []string) AuthResults {
+	for _, h := range headers {
+		id := authservID(h)
+		if id == "" {
+			continue
+		}
+		for _, t := range trusted {
+			if strings.EqualFold(id, strings.TrimSpace(t)) {
+				return parseAuthResults(h)
+			}
+		}
+	}
+	return AuthResults{}
+}
+
+// authservID extracts the authserv-id of an Authentication-Results value: the
+// first token before the first ';' (RFC 8601 section 2.2; an optional version
+// number may follow it). It returns "" when the value does not start with a bare
+// id (e.g. a leading comment or a method clause), so such a header is untrusted.
+func authservID(header string) string {
+	head, _, ok := strings.Cut(header, ";")
+	if !ok {
+		return ""
+	}
+	fields := strings.Fields(head)
+	if len(fields) == 0 {
+		return ""
+	}
+	id := fields[0]
+	if strings.ContainsAny(id, "()=\"") {
+		return ""
+	}
+	return id
 }
 
 // parseAuthResults does a best-effort parse of an Authentication-Results header

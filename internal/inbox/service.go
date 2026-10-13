@@ -31,6 +31,10 @@ type Config struct {
 	// the maximum auto-generated inbound messages one requester may produce within
 	// the loop window before further ones are suppressed. <= 0 uses the default.
 	LoopGuardMaxAutoReplies int
+	// TrustedAuthservIDs are the Authentication-Results authserv-ids whose
+	// SPF/DKIM/DMARC verdicts are believed (SECREVIEW-M6), e.g. "amazonses.com"
+	// for Resend's receiving pipeline. Empty trusts none: every verdict is unknown.
+	TrustedAuthservIDs []string
 }
 
 // IngestResult reports the outcome of ingesting one inbound message. TicketID and
@@ -176,10 +180,13 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			return err
 		}
 
+		// SECREVIEW-M6: only the trusted receiving hop's verdicts are stored; a
+		// sender-supplied header yields unknown, never a forged "pass".
+		auth := trustedAuthResults(parsed.AuthenticationResults, s.cfg.TrustedAuthservIDs)
 		authResults, err := json.Marshal(map[string]string{
-			"spf":   parsed.Auth.SPF,
-			"dkim":  parsed.Auth.DKIM,
-			"dmarc": parsed.Auth.DMARC,
+			"spf":   auth.SPF,
+			"dkim":  auth.DKIM,
+			"dmarc": auth.DMARC,
 		})
 		if err != nil {
 			return fmt.Errorf("inbox: marshal auth_results: %w", err)

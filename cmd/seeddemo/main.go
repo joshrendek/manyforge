@@ -112,6 +112,7 @@ func run() error {
 		ReplyTokenKey:       cfg.InboundReplyTokenSecret,
 		AttachmentMaxBytes:  cfg.AttachmentMaxBytes,
 		InboundSystemDomain: cfg.InboundSystemDomain,
+		TrustedAuthservIDs:  cfg.InboundTrustedAuthservIDs,
 	}, logger)
 
 	created, dup := 0, 0
