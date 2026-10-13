@@ -4,6 +4,7 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -310,7 +311,9 @@ func Load() (Config, error) {
 	cfg.InboundBounceSecret = os.Getenv("MANYFORGE_INBOUND_BOUNCE_SECRET")
 	// Reply-token HMAC key: purpose-separated from the webhook + JWT secrets so a
 	// leak of one cannot forge the others. Decoded as raw bytes (the string is the
-	// key material); empty in dev is tolerated (threading falls back to headers).
+	// key material). Production requires it; when set it must be >= 32 bytes, and an
+	// unset dev key is replaced by an ephemeral random one on the serve path
+	// (ValidateServe + EnsureReplyTokenKey, SECREVIEW-L1).
 	cfg.InboundReplyTokenSecret = []byte(os.Getenv("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET"))
 	// System inbound-address HMAC key (FR-001): derives the unguessable localpart of
 	// the auto-provisioned b-…@<domain> address. Purpose-separated from the reply-token
@@ -562,11 +565,43 @@ func Load() (Config, error) {
 // `manyforge migrate` Job does not (the Job loads the same config without
 // inbound secrets). Spec 017 R14: an empty reply-token HMAC key lets anyone forge
 // a reply token and inject a message into any ticket of a business.
+//
+// SECREVIEW-L1: whenever the key is set (in ANY environment) it must carry at
+// least MinReplyTokenKeyBytes of non-whitespace-trimmed material — a short key is
+// brute-forceable offline from a single legitimate token. Non-production may leave
+// it unset; the serve path then installs an ephemeral random key via
+// EnsureReplyTokenKey so nothing ever signs or verifies with an empty key.
 func (cfg Config) ValidateServe() error {
 	if cfg.Environment == "production" && len(bytes.TrimSpace(cfg.InboundReplyTokenSecret)) == 0 {
 		return errors.New("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: required in production")
 	}
+	if len(cfg.InboundReplyTokenSecret) > 0 && len(bytes.TrimSpace(cfg.InboundReplyTokenSecret)) < MinReplyTokenKeyBytes {
+		return fmt.Errorf("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: must be at least %d bytes", MinReplyTokenKeyBytes)
+	}
 	return nil
+}
+
+// MinReplyTokenKeyBytes is the minimum reply-token HMAC key length (SECREVIEW-L1).
+const MinReplyTokenKeyBytes = 32
+
+// EnsureReplyTokenKey installs a random, process-lifetime reply-token key when
+// none is configured outside production (SECREVIEW-L1), and reports whether it
+// did so the caller can log a warning. Tokens minted under the ephemeral key stop
+// verifying after a restart; threading then falls back to RFC 822 headers. Call
+// it only after ValidateServe, which refuses an unset key in production.
+func (cfg *Config) EnsureReplyTokenKey() (bool, error) {
+	if len(cfg.InboundReplyTokenSecret) > 0 {
+		return false, nil
+	}
+	if cfg.Environment == "production" {
+		return false, errors.New("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: required in production")
+	}
+	key := make([]byte, MinReplyTokenKeyBytes)
+	if _, err := rand.Read(key); err != nil {
+		return false, fmt.Errorf("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: generate ephemeral key: %w", err)
+	}
+	cfg.InboundReplyTokenSecret = key
+	return true, nil
 }
 
 // ValidateOutbound checks the selected shared provider without disclosing input values.

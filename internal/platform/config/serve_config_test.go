@@ -25,6 +25,58 @@ func TestValidateServeToleratesEmptySecretInDevelopment(t *testing.T) {
 	}
 }
 
+// SECREVIEW-L1: a set reply-token key shorter than 32 bytes is brute-forceable
+// offline from one legitimate token, so it is refused in every environment.
+func TestValidateServeRejectsShortReplyTokenSecretInEveryEnvironment(t *testing.T) {
+	for _, env := range []string{"production", "development", "staging", ""} {
+		for _, key := range []string{"x", strings.Repeat("k", 31), "  " + strings.Repeat("k", 30) + "  "} {
+			cfg := Config{Environment: env, InboundReplyTokenSecret: []byte(key)}
+			err := cfg.ValidateServe()
+			if err == nil || !strings.Contains(err.Error(), "at least 32 bytes") {
+				t.Fatalf("env %q key len %d: ValidateServe error = %v, want a minimum-length error", env, len(key), err)
+			}
+		}
+		cfg := Config{Environment: env, InboundReplyTokenSecret: []byte(strings.Repeat("k", 32))}
+		if err := cfg.ValidateServe(); err != nil {
+			t.Fatalf("env %q 32-byte key: %v", env, err)
+		}
+	}
+}
+
+// SECREVIEW-L1: an unset dev key is replaced by a random 32-byte key, never left empty.
+func TestEnsureReplyTokenKeyGeneratesEphemeralKeyInDevelopment(t *testing.T) {
+	cfg := Config{Environment: "development"}
+	generated, err := cfg.EnsureReplyTokenKey()
+	if err != nil || !generated {
+		t.Fatalf("EnsureReplyTokenKey = %v, %v; want generated", generated, err)
+	}
+	if len(cfg.InboundReplyTokenSecret) != MinReplyTokenKeyBytes {
+		t.Fatalf("generated key length = %d, want %d", len(cfg.InboundReplyTokenSecret), MinReplyTokenKeyBytes)
+	}
+	if err := cfg.ValidateServe(); err != nil {
+		t.Fatalf("generated key fails ValidateServe: %v", err)
+	}
+	other := Config{Environment: "development"}
+	if _, err := other.EnsureReplyTokenKey(); err != nil {
+		t.Fatal(err)
+	}
+	if string(other.InboundReplyTokenSecret) == string(cfg.InboundReplyTokenSecret) {
+		t.Fatal("two generated keys are identical; want random")
+	}
+}
+
+func TestEnsureReplyTokenKeyKeepsConfiguredKeyAndRefusesUnsetProduction(t *testing.T) {
+	key := []byte(strings.Repeat("k", 40))
+	cfg := Config{Environment: "development", InboundReplyTokenSecret: key}
+	if generated, err := cfg.EnsureReplyTokenKey(); err != nil || generated || string(cfg.InboundReplyTokenSecret) != string(key) {
+		t.Fatalf("configured key replaced: generated=%v err=%v", generated, err)
+	}
+	prod := Config{Environment: "production"}
+	if generated, err := prod.EnsureReplyTokenKey(); err == nil || generated || len(prod.InboundReplyTokenSecret) != 0 {
+		t.Fatalf("production without key: generated=%v err=%v; want refusal", generated, err)
+	}
+}
+
 // The migrate Job loads config in production without the reply-token secret, so
 // Load itself must keep accepting an empty secret; only the serve path refuses.
 func TestLoadInProductionStillAllowsMigrateWithoutReplyTokenSecret(t *testing.T) {

@@ -113,6 +113,15 @@ func main() {
 		logger.Error("load config", "err", err)
 		os.Exit(1)
 	}
+	// SECREVIEW-L1: never sign or verify reply tokens with an empty (public) key.
+	// Outside production an unset key is replaced by a random per-process one; the
+	// key itself is never logged.
+	if generated, err := cfg.EnsureReplyTokenKey(); err != nil {
+		logger.Error("load config", "err", err)
+		os.Exit(1)
+	} else if generated {
+		logger.Warn("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET unset; using an ephemeral random reply-token key (reply tokens stop verifying after restart)")
+	}
 
 	ctx := context.Background()
 	database, err := db.Open(ctx, cfg.DatabaseURL)
@@ -671,9 +680,9 @@ func main() {
 		mailingSvc.Blob = blobStore
 	}
 
-	// US1 inbound ingestion. The reply-token key degrades gracefully when unset in
-	// dev (nil key ⇒ threading falls back to RFC822 headers; the webhook path does
-	// not verify reply tokens, so this never panics).
+	// US1 inbound ingestion. The reply-token key is always non-empty here:
+	// ValidateServe requires a >= 32-byte key in production, and EnsureReplyTokenKey
+	// substitutes an ephemeral random key in dev when unset (SECREVIEW-L1).
 	inboxSvc := inbox.NewService(database, blobStore, inbox.Config{
 		ReplyTokenKey:       cfg.InboundReplyTokenSecret,
 		AttachmentMaxBytes:  cfg.AttachmentMaxBytes,

@@ -2,6 +2,7 @@ package ticketing
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -32,16 +33,32 @@ const (
 )
 
 // SignReplyToken issues the reply token for a ticket.
+//
+// SECREVIEW-L1: HMAC under an empty key is HMAC under a publicly known key, so an
+// empty serverKey never produces a verifiable token. Instead the signature is
+// random bytes: the token keeps its shape and stays unique (ticket.reply_token is
+// UNIQUE per tenant root), but it can never verify — VerifyReplyToken rejects an
+// empty key outright — so threading falls back to RFC 822 headers. Serve-path
+// configuration guarantees a >= 32-byte key; this guards bare/test wiring.
 func SignReplyToken(ticketID uuid.UUID, serverKey []byte) string {
 	id := ticketID[:]
 	enc := base64.RawURLEncoding
-	return enc.EncodeToString(id) + "." + enc.EncodeToString(hmacSum(serverKey, id)[:replyTokenSigLen])
+	sig := make([]byte, replyTokenSigLen)
+	if len(serverKey) == 0 {
+		_, _ = rand.Read(sig)
+	} else {
+		copy(sig, hmacSum(serverKey, id))
+	}
+	return enc.EncodeToString(id) + "." + enc.EncodeToString(sig)
 }
 
 // VerifyReplyToken returns the ticket id encoded in token iff its HMAC verifies
 // under serverKey. The signature comparison is constant-time; a forged, tampered,
 // or malformed token returns ok=false and must be ignored by threading.
 func VerifyReplyToken(token string, serverKey []byte) (uuid.UUID, bool) {
+	if len(serverKey) == 0 {
+		return uuid.Nil, false // SECREVIEW-L1: an empty key is public; never verify under it
+	}
 	enc := base64.RawURLEncoding
 	dot := strings.IndexByte(token, '.')
 	if dot <= 0 || dot == len(token)-1 {
