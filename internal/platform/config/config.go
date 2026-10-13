@@ -67,6 +67,7 @@ type Config struct {
 
 	// InboundTrustedAuthservIDs are the Authentication-Results authserv-ids whose
 	// SPF/DKIM/DMARC verdicts are shown to agents (lower-cased); empty trusts none.
+	// Resend-received mail only: other inbound transports trust none.
 	InboundTrustedAuthservIDs []string
 
 	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
