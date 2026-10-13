@@ -154,6 +154,15 @@ type Config struct {
 	MailingRollupBatch       int
 	MailingMessageDomain     string
 
+	// Mailing provider webhooks (SES/Resend, SECREVIEW-M1). Provider egress IPs are
+	// shared across every tenant, so the pre-auth per-IP ceiling is generous (it only
+	// bounds unsigned junk); the real budget is per sending profile, applied after
+	// the provider signature verifies.
+	MailingWebhookIPRateRPS        float64
+	MailingWebhookIPRateBurst      float64
+	MailingWebhookProfileRateRPS   float64
+	MailingWebhookProfileRateBurst float64
+
 	// InstanceOperatorPrincipal gates instance setup routes (GitHub App manifest
 	// creation, etc.). MANYFORGE_INSTANCE_OPERATOR_PRINCIPAL (UUID). uuid.Nil when
 	// unset — setup routes reject everyone (404, no oracle). The operator finds
@@ -443,6 +452,18 @@ func Load() (Config, error) {
 	}
 	if cfg.MailingRateBurst, err = envFloat("MANYFORGE_MAILING_RATE_BURST", 50); err != nil || cfg.MailingRateBurst <= 0 {
 		return Config{}, fmt.Errorf("MANYFORGE_MAILING_RATE_BURST: must be a positive number")
+	}
+	if cfg.MailingWebhookIPRateRPS, err = envFloat("MANYFORGE_MAILING_WEBHOOK_IP_RATE_RPS", 50); err != nil || cfg.MailingWebhookIPRateRPS <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_WEBHOOK_IP_RATE_RPS: must be a positive number")
+	}
+	if cfg.MailingWebhookIPRateBurst, err = envFloat("MANYFORGE_MAILING_WEBHOOK_IP_RATE_BURST", 200); err != nil || cfg.MailingWebhookIPRateBurst < 1 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_WEBHOOK_IP_RATE_BURST: must be at least 1")
+	}
+	if cfg.MailingWebhookProfileRateRPS, err = envFloat("MANYFORGE_MAILING_WEBHOOK_PROFILE_RATE_RPS", 20); err != nil || cfg.MailingWebhookProfileRateRPS <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_WEBHOOK_PROFILE_RATE_RPS: must be a positive number")
+	}
+	if cfg.MailingWebhookProfileRateBurst, err = envFloat("MANYFORGE_MAILING_WEBHOOK_PROFILE_RATE_BURST", 200); err != nil || cfg.MailingWebhookProfileRateBurst < 1 {
+		return Config{}, fmt.Errorf("MANYFORGE_MAILING_WEBHOOK_PROFILE_RATE_BURST: must be at least 1")
 	}
 	if cfg.MailingSendBatch, err = envInt("MANYFORGE_MAILING_SEND_BATCH", 100); err != nil || cfg.MailingSendBatch <= 0 {
 		return Config{}, fmt.Errorf("MANYFORGE_MAILING_SEND_BATCH: must be a positive integer")

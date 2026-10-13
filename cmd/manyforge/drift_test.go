@@ -77,6 +77,7 @@ func testHandlers() apiHandlers {
 		authLimit:        noop,
 		tenantMergeLimit: noop,
 		ingestLimit:      noop,
+		mailingHookLimit: noop,
 		ticketsRead:      noop,
 		ticketsReply:     noop,
 		ticketsWrite:     noop,
