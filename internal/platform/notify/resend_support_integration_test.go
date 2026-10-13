@@ -132,7 +132,13 @@ func TestSendViaResendSupportProfileUsesSendAs(t *testing.T) {
 	ctx, tdb := startSendDB(t)
 	st := seedSendTenant(ctx, t, tdb, "pending")
 	customAddr, _ := seedResendIdentity(ctx, t, tdb, st, "verified")
-	sendAs := "help@apex-" + st.master.String()[:8] + ".example.com"
+	apex := "apex-" + st.master.String()[:8] + ".example.com"
+	sendAs := "help@" + apex
+	// send_as is only honoured on the verified profile's From domain (0142,
+	// SECREVIEW-L2), so the profile sends From the apex, as in production.
+	if _, err := tdb.Super.Exec(ctx, "UPDATE mailing_sending_profile SET from_email=$1 WHERE business_id=$2", "support@"+apex, st.master); err != nil {
+		t.Fatalf("set profile from_email: %v", err)
+	}
 	if _, err := tdb.Super.Exec(ctx, "UPDATE inbound_address SET send_as=$1 WHERE address=$2", sendAs, customAddr); err != nil {
 		t.Fatalf("set send_as: %v", err)
 	}

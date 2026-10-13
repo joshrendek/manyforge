@@ -113,6 +113,15 @@ func main() {
 		logger.Error("load config", "err", err)
 		os.Exit(1)
 	}
+	// SECREVIEW-L1: never sign or verify reply tokens with an empty (public) key.
+	// Outside production an unset key is replaced by a random per-process one; the
+	// key itself is never logged.
+	if generated, err := cfg.EnsureReplyTokenKey(); err != nil {
+		logger.Error("load config", "err", err)
+		os.Exit(1)
+	} else if generated {
+		logger.Warn("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET unset; using an ephemeral random reply-token key (reply tokens stop verifying after restart)")
+	}
 
 	ctx := context.Background()
 	database, err := db.Open(ctx, cfg.DatabaseURL)
@@ -671,13 +680,14 @@ func main() {
 		mailingSvc.Blob = blobStore
 	}
 
-	// US1 inbound ingestion. The reply-token key degrades gracefully when unset in
-	// dev (nil key ⇒ threading falls back to RFC822 headers; the webhook path does
-	// not verify reply tokens, so this never panics).
+	// US1 inbound ingestion. The reply-token key is always non-empty here:
+	// ValidateServe requires a >= 32-byte key in production, and EnsureReplyTokenKey
+	// substitutes an ephemeral random key in dev when unset (SECREVIEW-L1).
 	inboxSvc := inbox.NewService(database, blobStore, inbox.Config{
 		ReplyTokenKey:       cfg.InboundReplyTokenSecret,
 		AttachmentMaxBytes:  cfg.AttachmentMaxBytes,
 		InboundSystemDomain: cfg.InboundSystemDomain,
+		TrustedAuthservIDs:  cfg.InboundTrustedAuthservIDs,
 	}, logger)
 	inboxWebhookH := inbox.NewWebhookHandler(inboxSvc, cfg.InboundWebhookSecret, cfg.InboundMaxBytes, inbox.Config{
 		InboundSystemDomain: cfg.InboundSystemDomain,
@@ -879,6 +889,20 @@ func main() {
 	// the bare client IP through inbox.IPRateLimitKey so the two share one bucket.
 	ingestIPKey := func(r *http.Request) string { return inbox.IPRateLimitKey(ratelimit.ClientIP(r, trusted)) }
 	ingestHTTP := httpx.RateLimit(ingestIPLimiter, ingestIPKey)
+	// SECREVIEW-M1: mailing provider webhooks (SES/Resend) arrive from provider
+	// egress IPs shared by EVERY tenant, so they must not sit behind the low
+	// end-user ingest bucket above (one flooded support address would 429 every
+	// other business's delivery/bounce/received events). They get a generous
+	// pre-auth per-IP ceiling that only bounds unsigned junk, and a per-sending-
+	// profile budget applied in-handler after the provider signature verifies.
+	// Both are the sweeping TokenBucket, so key cardinality stays bounded.
+	mailingWebhookIPLimiter := ratelimit.NewTokenBucket(cfg.MailingWebhookIPRateRPS, cfg.MailingWebhookIPRateBurst)
+	mailingWebhookHTTP := httpx.RateLimit(mailingWebhookIPLimiter, func(r *http.Request) string {
+		return ratelimit.ClientIP(r, trusted)
+	})
+	if mailingWebhookH != nil {
+		mailingWebhookH.ProfileLimiter = ratelimit.NewTokenBucket(cfg.MailingWebhookProfileRateRPS, cfg.MailingWebhookProfileRateBurst)
+	}
 	if mailingPublicH != nil {
 		mailingPublicH.ClientIP = func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
 		mailingPublicH.PerKey = ratelimit.NewTokenBucket(cfg.IngestRateRPS, cfg.IngestRateBurst)
@@ -897,6 +921,7 @@ func main() {
 		authLimit:        httpx.RateLimit(authLimiter, ipKey),
 		tenantMergeLimit: httpx.RateLimit(tenantMergeLimiter, tenantMergeKey),
 		ingestLimit:      ingestHTTP,
+		mailingHookLimit: mailingWebhookHTTP,
 		ticketsRead:      httpx.RequirePermission(database, permResolve, authz.PermTicketsRead, businessIDFromPath),
 		ticketsReply:     httpx.RequirePermission(database, permResolve, authz.PermTicketsReply, businessIDFromPath),
 		ticketsWrite:     httpx.RequirePermission(database, permResolve, authz.PermTicketsWrite, businessIDFromPath),
@@ -1160,6 +1185,9 @@ type apiHandlers struct {
 	authLimit        func(http.Handler) http.Handler
 	tenantMergeLimit func(http.Handler) http.Handler
 	ingestLimit      func(http.Handler) http.Handler
+	// mailingHookLimit is the generous pre-auth per-IP ceiling for the mailing
+	// provider webhooks, which deliberately do NOT sit behind ingestLimit (SECREVIEW-M1).
+	mailingHookLimit func(http.Handler) http.Handler
 	ticketsRead      func(http.Handler) http.Handler
 	ticketsReply     func(http.Handler) http.Handler
 	ticketsWrite     func(http.Handler) http.Handler
@@ -1332,10 +1360,18 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			if h.mailingPublic != nil {
 				h.mailingPublic.PublicRoutes(ingress)
 			}
-			if h.mailingWebhook != nil {
-				h.mailingWebhook.PublicRoutes(ingress)
-			}
 		})
+		// Mailing provider webhooks (SES/Resend): public, provider-signature-authed.
+		// Deliberately OUTSIDE the ingest group above — provider egress IPs are shared
+		// across tenants, so the low per-IP ingest bucket would let one flooded
+		// tenant starve every other (SECREVIEW-M1). The group carries only a generous
+		// pre-auth per-IP ceiling; the per-profile budget runs after verification.
+		if h.mailingWebhook != nil {
+			r.Group(func(provider chi.Router) {
+				provider.Use(h.mailingHookLimit)
+				h.mailingWebhook.PublicRoutes(provider)
+			})
+		}
 		// Only public feedback/telemetry opt into browser CORS. Their route-local
 		// middleware wraps the SAME shared ingest limiter, exposing actual 429s
 		// while answering preflights before limiter or key/database access.

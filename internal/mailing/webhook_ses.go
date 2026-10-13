@@ -53,6 +53,9 @@ func (h *WebhookHandler) handleSES(w http.ResponseWriter, r *http.Request) {
 		h.unauthorized(w)
 		return
 	}
+	if !h.allowProfile(w, profileID) {
+		return
+	}
 
 	switch envelope.Type {
 	case "SubscriptionConfirmation":

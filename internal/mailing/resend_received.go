@@ -30,7 +30,8 @@ func (h *WebhookHandler) resendClient(apiKey string) *mailprovider.Resend {
 // Order matters for R5: support gate → fetch → download → ingest → record. Any failure before
 // the record answers 503 and writes nothing, so Resend's retry is processed; a
 // retry after ingest-but-before-record re-ingests and is absorbed by ingest's
-// (tenant_root_id, message_id) dedupe.
+// (business_id, message_id) dedupe, which migration 0141 serializes with an
+// advisory lock so a concurrent redelivery cannot leave an empty ticket.
 func (h *WebhookHandler) handleResendReceived(w http.ResponseWriter, r *http.Request, wc webhookContext, apiKey, eventID string, payload resendWebhook) {
 	ctx := r.Context()
 	if h.Inbound == nil {

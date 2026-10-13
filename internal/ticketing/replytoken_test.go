@@ -95,3 +95,35 @@ func TestReplyTokenRejectsOtherSignatureLengths(t *testing.T) {
 		}
 	}
 }
+
+// SECREVIEW-L1: HMAC under an empty key is HMAC under a public key. An empty key
+// must never produce a verifiable token, and must never verify one.
+func TestReplyTokenRefusesEmptyKey(t *testing.T) {
+	tid := uuid.New()
+	// A token an attacker computes with the public empty key.
+	enc := base64.RawURLEncoding
+	forged := enc.EncodeToString(tid[:]) + "." + enc.EncodeToString(hmacSum(nil, tid[:])[:replyTokenSigLen])
+	for _, key := range [][]byte{nil, {}} {
+		if _, ok := VerifyReplyToken(forged, key); ok {
+			t.Fatal("VerifyReplyToken accepted a token under an empty key")
+		}
+		tok := SignReplyToken(tid, key)
+		if tok == forged {
+			t.Fatal("SignReplyToken with an empty key produced the public-key HMAC token")
+		}
+		if _, ok := VerifyReplyToken(tok, key); ok {
+			t.Fatal("empty-key token verified under an empty key")
+		}
+		if _, ok := VerifyReplyToken(tok, []byte("any-real-server-key-0123456789abcdef")); ok {
+			t.Fatal("empty-key token verified under a real key")
+		}
+	}
+	// Empty-key tokens stay unique (ticket.reply_token is UNIQUE per tenant root) and well-formed.
+	a, b := SignReplyToken(tid, nil), SignReplyToken(tid, nil)
+	if a == b {
+		t.Fatal("empty-key tokens collide")
+	}
+	if len(a) != len(SignReplyToken(tid, []byte("k"))) {
+		t.Fatalf("empty-key token length %d differs from a signed token", len(a))
+	}
+}

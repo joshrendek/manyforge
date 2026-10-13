@@ -37,7 +37,7 @@ func hintTicket(plusToken string, serverKey []byte) uuid.UUID {
 // deterministic one when the inbound message carries no usable header id (research
 // R4). The synthetic id is a content hash over stable, tenant-scoped fields so a
 // re-delivery of the SAME header-less message collides on the
-// ticket_message(tenant_root_id, message_id) unique index and is an idempotent
+// ticket_message(business_id, message_id) unique index (0141) and is an idempotent
 // no-op (FR-005/SC-002) — while two genuinely distinct header-less messages get
 // distinct ids and thread independently.
 //
@@ -50,8 +50,9 @@ func resolveMessageID(parsed *ParsedEmail, tenantRootID uuid.UUID, sender string
 		return id
 	}
 	h := sha256.New()
-	// Tenant-scoped: the same bytes in two tenants must not collide (idempotency is
-	// per-tenant; the unique index is (tenant_root_id, message_id)). h.Write never
+	// Tenant-scoped: the same bytes in two tenants must not collide. (Idempotency is
+	// per business since 0141 — unique (business_id, message_id) — so a tenant-scoped
+	// id still dedupes within each business.) h.Write never
 	// errors (hash.Hash contract), so the return is intentionally not checked.
 	bh := sha256.Sum256([]byte(parsed.TextBody + "\x00" + parsed.HTMLBody))
 	stable := strings.Join([]string{

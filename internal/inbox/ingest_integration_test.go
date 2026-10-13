@@ -78,6 +78,7 @@ func newIngestService(ctx context.Context, t *testing.T, tdb *testdb.TestDB) *Se
 		ReplyTokenKey:       []byte("test-reply-token-key-0123456789ab"),
 		AttachmentMaxBytes:  25 << 20,
 		InboundSystemDomain: systemDomain,
+		TrustedAuthservIDs:  []string{"amazonses.com"},
 	}
 	return NewService(tdb.App, store, cfg, slog.New(slog.NewTextHandler(nopWriter{}, nil)))
 }
