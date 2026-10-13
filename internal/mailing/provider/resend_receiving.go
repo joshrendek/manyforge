@@ -14,6 +14,19 @@ import (
 // maxRawRedirects bounds how many redirects a raw download follows.
 const maxRawRedirects = 3
 
+// DefaultMaxReceivedBytes is the hard ceiling applied when a caller passes a
+// non-positive size cap (SECREVIEW-L3): a misconfigured or unset limit must never
+// mean "unlimited". It matches the MANYFORGE_INBOUND_MAX_BYTES default.
+const DefaultMaxReceivedBytes int64 = 30 << 20
+
+// receivedBytesCap returns maxBytes, or DefaultMaxReceivedBytes when it is not positive.
+func receivedBytesCap(maxBytes int64) int64 {
+	if maxBytes <= 0 {
+		return DefaultMaxReceivedBytes
+	}
+	return maxBytes
+}
+
 // errRawRedirectRejected carries no URL: redirect targets may be signed.
 var errRawRedirectRejected = errors.New("provider: raw download redirect rejected")
 
@@ -58,10 +71,7 @@ func (r *Resend) GetReceivedEmail(ctx context.Context, id string, maxRawBytes in
 	if id == "" || len(id) > 200 {
 		return ReceivedEmail{}, ErrReceivedEmailGone
 	}
-	limit := int64(1 << 20)
-	if maxRawBytes > 0 {
-		limit += 2 * maxRawBytes
-	}
+	limit := int64(1<<20) + 2*receivedBytesCap(maxRawBytes)
 	var resp resendReceivedEmailResponse
 	err := r.doLimited(ctx, http.MethodGet, "/emails/receiving/"+url.PathEscape(id)+"?html_format=cid", nil, "", &resp, limit)
 	var httpErr *HTTPError
@@ -146,18 +156,17 @@ func (r *Resend) DownloadReceivedRaw(ctx context.Context, rawURL string, maxByte
 	if resp.StatusCode != http.StatusOK {
 		return nil, &HTTPError{StatusCode: resp.StatusCode}
 	}
-	if maxBytes > 0 && resp.ContentLength > maxBytes {
+	// SECREVIEW-L3: the cap is never optional; a non-positive maxBytes gets the
+	// hard default ceiling instead of an unbounded read.
+	maxBytes = receivedBytesCap(maxBytes)
+	if resp.ContentLength > maxBytes {
 		return nil, ErrReceivedEmailTooLarge
 	}
-	reader := io.Reader(resp.Body)
-	if maxBytes > 0 {
-		reader = io.LimitReader(resp.Body, maxBytes+1)
-	}
-	raw, err := io.ReadAll(reader)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, errors.New("provider: resend raw read failed")
 	}
-	if maxBytes > 0 && int64(len(raw)) > maxBytes {
+	if int64(len(raw)) > maxBytes {
 		return nil, ErrReceivedEmailTooLarge
 	}
 	return raw, nil

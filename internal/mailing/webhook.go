@@ -17,6 +17,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/crypto"
 	appdb "github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
+	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 )
 
 const (
@@ -51,6 +52,12 @@ type WebhookHandler struct {
 	AllowInsecureRawURL bool         // tests only
 	MaxReceivedBytes    int64        // MANYFORGE_INBOUND_MAX_BYTES
 
+	// ProfileLimiter is the post-authentication budget, keyed by sending-profile
+	// id (SECREVIEW-M1). Provider egress IPs are shared by every tenant, so the
+	// pre-auth per-IP limiter is only a generous ceiling for unsigned junk; this
+	// is what stops one flooded profile from starving the others. Nil disables it.
+	ProfileLimiter ratelimit.Limiter
+
 	maxBytes int64
 }
 
@@ -61,8 +68,9 @@ func NewWebhookHandler(database *appdb.DB, sealer *crypto.Sealer, logger *slog.L
 	}
 }
 
-// PublicRoutes mounts both provider endpoints in the public ingress group. The
-// caller supplies the shared per-IP ingress limiter.
+// PublicRoutes mounts both provider endpoints. The caller supplies the
+// provider-webhook pre-auth per-IP ceiling (NOT the low end-user ingest limiter,
+// SECREVIEW-M1); the per-profile budget is applied in-handler after verification.
 func (h *WebhookHandler) PublicRoutes(r chi.Router) {
 	r.Post("/inbound/mailing/{profileID}/ses", h.handleSES)
 	r.Post("/inbound/mailing/{profileID}/resend", h.handleResend)
@@ -215,6 +223,19 @@ func (h *WebhookHandler) unauthorized(w http.ResponseWriter) {
 }
 
 func (h *WebhookHandler) authenticatedOK(w http.ResponseWriter) { w.WriteHeader(http.StatusOK) }
+
+// allowProfile spends one token of the authenticated profile's budget. It must
+// run only AFTER the provider signature verifies, so unsigned traffic cannot
+// drain a real profile's bucket. Over budget answers 429 in the shared
+// RATE_LIMITED shape; the provider retries later.
+func (h *WebhookHandler) allowProfile(w http.ResponseWriter, profileID uuid.UUID) bool {
+	if h.ProfileLimiter == nil || h.ProfileLimiter.Allow(profileID.String()) {
+		return true
+	}
+	w.Header().Set("Retry-After", "1")
+	httpx.WriteJSON(w, http.StatusTooManyRequests, httpx.ErrorBody{Code: "RATE_LIMITED", Message: "too many requests"})
+	return false
+}
 
 func (h *WebhookHandler) now() time.Time {
 	if h.Now != nil {

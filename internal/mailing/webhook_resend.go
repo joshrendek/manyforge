@@ -50,6 +50,9 @@ func (h *WebhookHandler) handleResend(w http.ResponseWriter, r *http.Request) {
 		h.unauthorized(w)
 		return
 	}
+	if !h.allowProfile(w, profileID) {
+		return
+	}
 
 	var payload resendWebhook
 	if err := json.Unmarshal(body, &payload); err != nil {
