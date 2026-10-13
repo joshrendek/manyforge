@@ -182,7 +182,7 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 
 		// SECREVIEW-M6: only the trusted receiving hop's verdicts are stored; a
 		// sender-supplied header yields unknown, never a forged "pass".
-		auth := trustedAuthResults(parsed.AuthenticationResults, s.cfg.TrustedAuthservIDs)
+		auth := trustedAuthResults(parsed.AuthenticationResults, s.trustedAuthservFor(msg.Provider))
 		authResults, err := json.Marshal(map[string]string{
 			"spf":   auth.SPF,
 			"dkim":  auth.DKIM,
@@ -364,6 +364,19 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 // cap is dropped like any other (a later, smaller part that still fits the byte
 // budget is accepted), so one message cannot fan out into unbounded attachment
 // rows and blob Puts inside the ingest transaction.
+// trustedAuthservFor returns the authserv-ids whose verdicts are believed for a
+// message from the given transport (SECREVIEW-M6). Only the Resend path has a
+// known receiving hop (SES stamps "amazonses.com" above anything the sender
+// wrote). On the SMTP receiver and the JSON /inbound webhook there is no such hop,
+// so a sender-written "amazonses.com" header would sit on top; nothing is trusted
+// there and every verdict is unknown.
+func (s *Service) trustedAuthservFor(provider string) []string {
+	if provider == resendSource {
+		return s.cfg.TrustedAuthservIDs
+	}
+	return nil
+}
+
 func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachment, []ticketing.DroppedAttachment) {
 	if len(parts) == 0 {
 		return nil, nil

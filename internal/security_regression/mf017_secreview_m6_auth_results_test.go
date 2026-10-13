@@ -7,7 +7,9 @@
 // in the agent UI. Verdicts are now taken only from the first header whose
 // authserv-id is in MANYFORGE_INBOUND_TRUSTED_AUTHSERV_IDS (default
 // amazonses.com, the id Resend's receiving pipeline stamps); with none trusted
-// every verdict is unknown.
+// every verdict is unknown. The trust applies only to the Resend path: the SMTP
+// receiver and JSON /inbound webhook have no SES hop above the sender's headers,
+// so they trust none.
 //
 // Behavioural coverage: internal/inbox/source_auth_test.go, the integration test
 // internal/inbox/auth_results_integration_test.go, and
@@ -35,8 +37,12 @@ func TestPin_SECREVIEW_M6_AuthResultsFromTrustedAuthservOnly(t *testing.T) {
 
 	svc := mustRead(t, "../inbox/service.go")
 	ingest := mf017Slice(t, svc, "func (s *Service) Ingest(", "func (s *Service) sniffAttachments(")
-	if !strings.Contains(ingest, "trustedAuthResults(parsed.AuthenticationResults, s.cfg.TrustedAuthservIDs)") {
-		t.Error("Ingest must store only the trusted-authserv verdicts")
+	if !strings.Contains(ingest, "trustedAuthResults(parsed.AuthenticationResults, s.trustedAuthservFor(msg.Provider))") {
+		t.Error("Ingest must store only the trusted-authserv verdicts for the message's transport")
+	}
+	scope := mf017Slice(t, svc, "func (s *Service) trustedAuthservFor(", "\n}\n")
+	if !strings.Contains(scope, "if provider == resendSource {") || !strings.Contains(scope, "return nil") {
+		t.Error("only the Resend path may trust the configured authserv-ids; SMTP and the JSON webhook trust none")
 	}
 
 	cfg := mustRead(t, "../platform/config/config.go")

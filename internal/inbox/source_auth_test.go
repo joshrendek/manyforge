@@ -90,3 +90,22 @@ func TestTrustedAuthResults_NoneTrustedIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// SECREVIEW-M6: the configured trust applies only to Resend-received mail. On
+// the SMTP receiver and the JSON webhook a sender-written "amazonses.com" header
+// is the topmost one, so it must not be believed.
+func TestTrustedAuthservForScopesTrustToResend(t *testing.T) {
+	s := &Service{cfg: Config{TrustedAuthservIDs: []string{"amazonses.com"}}}
+	forged := []string{"amazonses.com; spf=pass smtp.mailfrom=ceo@victim.example; dkim=pass header.i=@victim.example; dmarc=pass header.from=victim.example"}
+
+	got := trustedAuthResults(forged, s.trustedAuthservFor(resendSource))
+	if got.SPF != "pass" || got.DKIM != "pass" || got.DMARC != "pass" {
+		t.Fatalf("resend path: want the SES verdicts, got %+v", got)
+	}
+	for _, provider := range []string{"smtp", "webhook:postmark", ""} {
+		got := trustedAuthResults(forged, s.trustedAuthservFor(provider))
+		if got != (AuthResults{}) && (got.SPF != "unknown" || got.DKIM != "unknown" || got.DMARC != "unknown") {
+			t.Errorf("provider %q: forged header must not be trusted, got %+v", provider, got)
+		}
+	}
+}
