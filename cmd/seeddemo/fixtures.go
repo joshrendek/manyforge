@@ -2,7 +2,7 @@ package main
 
 // conversation is one ticket: the first message opens it; each subsequent message
 // threads onto it via In-Reply-To. Message-IDs are STABLE so re-running the seed is
-// an idempotent no-op (the DEFINER dedupes on (tenant_root_id, message_id)).
+// an idempotent no-op (the DEFINER dedupes on (business_id, message_id)).
 type seedMsg struct {
 	From      string // RFC5322 From (display + addr)
 	Subject   string

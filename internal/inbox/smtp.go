@@ -243,9 +243,9 @@ func (s *smtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 //     retries rather than bouncing a real customer's mail).
 //
 // Multi-RCPT: we ingest ONCE PER accepted recipient. ingest_inbound_message is
-// idempotent on (tenant_root_id, message_id), so distinct recipients in the same
-// tenant that share a Message-ID dedupe to one ticket_message; recipients in
-// different tenants each get their own (correctly scoped) ticket. Reading the body
+// idempotent on (business_id, message_id) (0141), so distinct recipients in the
+// same business that share a Message-ID dedupe to one ticket_message; recipients
+// in different businesses (sibling or other-tenant) each get their own ticket. Reading the body
 // once and replaying the bytes keeps each ingest independent and correct.
 func (s *smtpSession) Data(r io.Reader) error {
 	if len(s.recipients) == 0 {
