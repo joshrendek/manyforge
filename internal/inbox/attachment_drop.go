@@ -17,8 +17,9 @@ import (
 // maxDroppedAttachments matches the ticket_message.dropped_attachments CHECK.
 const maxDroppedAttachments = 50
 
-// maxDroppedFilenameRunes bounds an attacker-controlled filename kept for display.
-const maxDroppedFilenameRunes = 255
+// maxAttachmentFilenameRunes bounds an attacker-controlled attachment filename,
+// whether it is stored on an attachment row or kept for display on a drop.
+const maxAttachmentFilenameRunes = 255
 
 // sanitizeAttachmentFilename drops invalid UTF-8 and control characters (Postgres
 // jsonb rejects \u0000, which would otherwise fail the whole ingest) and bounds
@@ -26,7 +27,7 @@ const maxDroppedFilenameRunes = 255
 func sanitizeAttachmentFilename(name string) string {
 	var b strings.Builder
 	runes := 0
-	for len(name) > 0 && runes < maxDroppedFilenameRunes {
+	for len(name) > 0 && runes < maxAttachmentFilenameRunes {
 		r, size := utf8.DecodeRuneInString(name)
 		name = name[size:]
 		if r == utf8.RuneError && size <= 1 {
