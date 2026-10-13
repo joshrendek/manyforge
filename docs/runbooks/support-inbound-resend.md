@@ -132,23 +132,27 @@ above and break inbound mail.
 
 ## Live verification (hub)
 
-1. Send a real email to `support@support.garden.gg`. A ticket appears in garden.gg's queue.
-2. Reply from the ticket. The customer receives it from `support@support.garden.gg`
-   with `Reply-To: support+<token>@support.garden.gg`, DKIM-aligned to the subdomain.
+1. Send a real email to `support@garden.gg` (through the M365 mail flow rule) or
+   straight to `support@support.garden.gg`. A ticket appears in garden.gg's queue.
+2. Reply from the ticket. The customer receives it From `support@garden.gg` (the
+   Send-as address; `support@support.garden.gg` without it) with
+   `Reply-To: support+<token>@support.garden.gg`. The token is 45 chars, so the
+   local part is 53 octets; Resend rejects a Reply-To over 64 octets with 422.
 3. Reply from the customer's mail client. The message lands on the same ticket.
 4. `dig MX garden.gg` and `dig TXT garden.gg` show the same values as before rollout.
 
 ## Observed: does Resend's webhook `to` preserve +token?
 
-> **PLACEHOLDER — fill in after the live test.** Nothing below has been observed yet.
+Observed in the garden.gg live round trip on 2026-10-12 (Resend us-east-1), from
+the `mailing Resend inbound recipients observed` log line:
 
-On live-verification step 3, search the logs for
-`mailing Resend inbound recipients observed` and record what you see:
-
-- Webhook payload `to` keeps `+token` tags (`webhook_to_has_plus_tag`): **TBD**
-- Receiving API `to` keeps `+token` tags (`api_to_has_plus_tag`): **TBD**
-- `PATCH /webhooks/{id}` kept the signing secret (no `signing secret changed` warning): **TBD**
-- Observed on (date, Resend region): **TBD**
+- Mail routed in by the M365 rule (to `support@support.garden.gg`, no tag): both
+  `false`, as expected.
+- Customer reply to `support+<token>@support.garden.gg`:
+  `webhook_to_has_plus_tag=true`, `api_to_has_plus_tag=true`. The reply was sent
+  with no In-Reply-To/References and still threaded onto the original ticket, so
+  the `+token` survives Resend end to end.
+- No `signing secret changed` warning was logged.
 
 Routing does not depend on these answers. Recipients are read from the raw
 message's `To`/`Cc` headers first; the authenticated Receiving API's
