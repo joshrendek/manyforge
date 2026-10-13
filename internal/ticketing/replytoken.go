@@ -17,15 +17,25 @@ import (
 // never use a raw resource id as an auth token). A [#<token>] subject tag was also
 // specced (R4) but is NOT built; threading rides the Reply-To VERP token only.
 //
-// Format: base64url(ticketID[16]) "." base64url(HMAC_SHA256(serverKey, ticketID[16])).
+// Format: base64url(ticketID[16]) "." base64url(HMAC_SHA256(serverKey, ticketID[16])[:16]).
 // The id is recoverable from the token, but only a holder of serverKey can forge a
 // valid signature, so a requester cannot inject into another ticket by guessing.
+//
+// The signature is truncated to 128 bits so the token is 45 chars and
+// "support+<token>" stays inside the RFC 5321 64-octet local-part limit. Resend
+// rejects a longer Reply-To with 422 validation_error. Tokens minted before the
+// truncation carry the full 32-byte signature; VerifyReplyToken still accepts
+// them so replies to mail already sent keep threading.
+const (
+	replyTokenSigLen       = 16
+	legacyReplyTokenSigLen = sha256.Size
+)
 
 // SignReplyToken issues the reply token for a ticket.
 func SignReplyToken(ticketID uuid.UUID, serverKey []byte) string {
 	id := ticketID[:]
 	enc := base64.RawURLEncoding
-	return enc.EncodeToString(id) + "." + enc.EncodeToString(hmacSum(serverKey, id))
+	return enc.EncodeToString(id) + "." + enc.EncodeToString(hmacSum(serverKey, id)[:replyTokenSigLen])
 }
 
 // VerifyReplyToken returns the ticket id encoded in token iff its HMAC verifies
@@ -55,7 +65,10 @@ func VerifyReplyToken(token string, serverKey []byte) (uuid.UUID, bool) {
 	if enc.EncodeToString(id) != idPart || enc.EncodeToString(sig) != sigPart {
 		return uuid.Nil, false
 	}
-	if subtle.ConstantTimeCompare(sig, hmacSum(serverKey, id)) != 1 {
+	if len(sig) != replyTokenSigLen && len(sig) != legacyReplyTokenSigLen {
+		return uuid.Nil, false
+	}
+	if subtle.ConstantTimeCompare(sig, hmacSum(serverKey, id)[:len(sig)]) != 1 {
 		return uuid.Nil, false
 	}
 	tid, err := uuid.FromBytes(id)

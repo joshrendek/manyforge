@@ -166,3 +166,29 @@ func nonCanonicalVariant(seg string) (string, bool) {
 	}
 	return "", false
 }
+
+// TestReplyTokenShortSignatureNotBruteForceable (MF-002-THREAD-IDEMPOTENCY, no
+// infra). The signature was truncated to 128 bits so the VERP Reply-To fits in
+// 64 octets, and the verifier compares against hmac[:len(sig)] to keep legacy
+// 32-byte tokens valid. That comparison is only safe while the verifier also
+// pins len(sig) to 16 or 32: otherwise a 1-byte signature verifies against
+// hmac[:1], and an attacker who knows a ticket id forges a token in at most 256
+// tries. Try every 1-byte signature and require that none verifies.
+func TestReplyTokenShortSignatureNotBruteForceable(t *testing.T) {
+	serverKey := make([]byte, 32)
+	if _, err := rand.Read(serverKey); err != nil {
+		t.Fatalf("gen server key: %v", err)
+	}
+	tid := uuid.New()
+	enc := base64.RawURLEncoding
+	idPart := enc.EncodeToString(tid[:])
+	for b := 0; b < 256; b++ {
+		tok := idPart + "." + enc.EncodeToString([]byte{byte(b)})
+		if _, ok := ticketing.VerifyReplyToken(tok, serverKey); ok {
+			t.Fatalf("1-byte signature %#x verified: short-signature brute force is possible", b)
+		}
+	}
+	if good := ticketing.SignReplyToken(tid, serverKey); len(good) > 64-len("support+") {
+		t.Fatalf("token %q too long for a 64-octet VERP local part", good)
+	}
+}
