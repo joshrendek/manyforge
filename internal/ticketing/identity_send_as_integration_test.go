@@ -194,3 +194,50 @@ func TestIdentitySetInboundAddressSendAsOwnership(t *testing.T) {
 		t.Errorf("system address: want ErrValidation, got %v", err)
 	}
 }
+
+// TestResendIdentityRevalidatesSendAsDomain (SECREVIEW-L2) — send_as is checked
+// against the profile domain only when it is written. If the profile's from_email
+// later moves to another domain, get_resend_support_identity must stop using the
+// stale send_as and fall back to the inbound address (it re-checks at read time).
+func TestResendIdentityRevalidatesSendAsDomain(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	rt := seedReadTenant(ctx, t, tdb)
+	svc := newIdentityService(tdb, newStubResolver())
+	apex, addrID := seedSendAsFixture(ctx, t, tdb, rt, "verified")
+	inboundAddr := "support@support." + apex
+	sendAs := "support@" + apex
+
+	if _, err := svc.SetInboundAddressSendAs(ctx, rt.owner, rt.master, addrID, strp(sendAs)); err != nil {
+		t.Fatalf("SetInboundAddressSendAs: %v", err)
+	}
+	if from, _ := resendIdentityFrom(ctx, t, tdb, rt); from != sendAs {
+		t.Fatalf("identity with matching profile = %q, want %q", from, sendAs)
+	}
+
+	// Case-only difference in the profile domain still matches.
+	if _, err := tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile SET from_email=$1 WHERE business_id=$2`,
+		"Support@"+strings.ToUpper(apex), rt.master); err != nil {
+		t.Fatal(err)
+	}
+	if from, _ := resendIdentityFrom(ctx, t, tdb, rt); from != sendAs {
+		t.Fatalf("identity with case-different profile domain = %q, want %q", from, sendAs)
+	}
+
+	// Rotate the profile to another domain: the stale send_as is no longer used.
+	if _, err := tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile SET from_email=$1 WHERE business_id=$2`,
+		"support@rotated-"+apex, rt.master); err != nil {
+		t.Fatal(err)
+	}
+	if from, inbound := resendIdentityFrom(ctx, t, tdb, rt); from != inboundAddr || inbound != inboundAddr {
+		t.Fatalf("identity after profile domain change = %q / %q, want %q for both", from, inbound, inboundAddr)
+	}
+
+	// Back on the original domain but no longer verified: send_as is not used either.
+	if _, err := tdb.Super.Exec(ctx, `UPDATE mailing_sending_profile SET from_email=$1, status='unverified' WHERE business_id=$2`,
+		sendAs, rt.master); err != nil {
+		t.Fatal(err)
+	}
+	if from, _ := resendIdentityFrom(ctx, t, tdb, rt); from != inboundAddr {
+		t.Fatalf("identity with unverified profile = %q, want %q", from, inboundAddr)
+	}
+}
