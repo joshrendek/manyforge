@@ -327,6 +327,10 @@ func Load() (Config, error) {
 	if cfg.InboundMaxBytes, err = envInt64("MANYFORGE_INBOUND_MAX_BYTES", 30<<20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_INBOUND_MAX_BYTES: %w", err)
 	}
+	// SECREVIEW-L3: zero/negative would disable the raw-message download cap.
+	if cfg.InboundMaxBytes <= 0 {
+		return Config{}, fmt.Errorf("MANYFORGE_INBOUND_MAX_BYTES: must be a positive number of bytes")
+	}
 	if cfg.AttachmentMaxBytes, err = envInt64("MANYFORGE_ATTACHMENT_MAX_BYTES", 25<<20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_ATTACHMENT_MAX_BYTES: %w", err)
 	}
