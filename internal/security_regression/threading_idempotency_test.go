@@ -146,7 +146,7 @@ func TestVerifyReplyTokenNonCanonicalEncoding(t *testing.T) {
 // SAME bytes as seg but is NOT seg, by replacing seg's final character with an
 // alphabet char whose extra trailing bits differ. ok=false if no such char exists
 // (only when the segment's final char carries no spare bits — not the case for the
-// 16-byte id or 32-byte HMAC segments here).
+// 16-byte id or the 16-byte truncated / 32-byte legacy HMAC segments).
 func nonCanonicalVariant(seg string) (string, bool) {
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 	want, err := base64.RawURLEncoding.DecodeString(seg)
