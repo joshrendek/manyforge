@@ -24,6 +24,11 @@ ALTER TABLE ticket_message
     ADD CONSTRAINT ticket_message_business_id_message_id_key UNIQUE (business_id, message_id);
 ALTER TABLE ticket_message
     DROP CONSTRAINT ticket_message_tenant_root_id_message_id_key;
+-- The dropped UNIQUE also served the threading lookup in ingest_inbound_message
+-- (tm.tenant_root_id + tm.message_id = ANY(...)) and the tenant-merge preflight
+-- join; keep a plain (non-unique) index on the same columns for those plans.
+CREATE INDEX ticket_message_tenant_root_message_id_idx
+    ON ticket_message (tenant_root_id, message_id);
 
 CREATE OR REPLACE FUNCTION ingest_inbound_message(
     p_business_id    uuid,

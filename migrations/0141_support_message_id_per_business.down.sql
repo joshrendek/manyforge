@@ -203,6 +203,7 @@ REVOKE ALL ON FUNCTION ingest_inbound_message(uuid, uuid, citext, citext, text, 
 GRANT EXECUTE ON FUNCTION ingest_inbound_message(uuid, uuid, citext, citext, text, text, text, text,
     text[], text, text, jsonb, boolean, uuid, uuid, text, jsonb, text, integer) TO manyforge_app;
 
+DROP INDEX ticket_message_tenant_root_message_id_idx;
 ALTER TABLE ticket_message
     ADD CONSTRAINT ticket_message_tenant_root_id_message_id_key UNIQUE (tenant_root_id, message_id);
 ALTER TABLE ticket_message
