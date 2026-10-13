@@ -24,12 +24,12 @@ func TestIngestStoresOnlyTrustedAuthResults(t *testing.T) {
 	ten := seedIngestTenant(ctx, t, tdb)
 	svc := newIngestService(ctx, t, tdb) // trusts amazonses.com
 
-	stored := func(messageID, authHeaders string) map[string]string {
+	stored := func(provider, messageID, authHeaders string) map[string]string {
 		t.Helper()
 		raw := []byte("From: CEO <ceo@victim.example>\r\nTo: " + ten.address + "\r\n" +
 			"Subject: urgent\r\nMessage-ID: <" + messageID + ">\r\n" + authHeaders + "\r\nbody\r\n")
 		res, err := svc.Ingest(ctx, RawMessage{
-			Provider: "webhook:test", EnvelopeRecipient: ten.address, EnvelopeSender: "ceo@victim.example",
+			Provider: provider, EnvelopeRecipient: ten.address, EnvelopeSender: "ceo@victim.example",
 			ReceivedAt: time.Now(), Raw: raw,
 		})
 		if err != nil {
@@ -46,16 +46,24 @@ func TestIngestStoresOnlyTrustedAuthResults(t *testing.T) {
 		return m
 	}
 
-	forged := stored("forged@victim.example",
+	forged := stored(resendSource, "forged@victim.example",
 		"Authentication-Results: attacker.invalid; spf=pass; dkim=pass; dmarc=pass\r\n")
 	if forged["spf"] != "" || forged["dkim"] != "" || forged["dmarc"] != "" {
 		t.Fatalf("forged-only auth_results = %v, want unknown (empty) verdicts", forged)
 	}
 
-	real := stored("real@victim.example",
+	real := stored(resendSource, "real@victim.example",
 		"Authentication-Results: attacker.invalid; spf=pass; dkim=pass; dmarc=pass\r\n"+
 			"Authentication-Results: amazonses.com; spf=fail smtp.mailfrom=victim.example; dkim=none; dmarc=fail header.from=victim.example\r\n")
 	if real["spf"] != "fail" || real["dkim"] != "none" || real["dmarc"] != "fail" {
 		t.Fatalf("auth_results = %v, want the trusted amazonses.com verdicts", real)
+	}
+
+	// Off the Resend path there is no SES hop above the sender's headers, so even
+	// a header naming the trusted authserv-id is sender-written: nothing is trusted.
+	webhook := stored("webhook:test", "webhook@victim.example",
+		"Authentication-Results: amazonses.com; spf=pass; dkim=pass; dmarc=pass\r\n")
+	if webhook["spf"] != "" || webhook["dkim"] != "" || webhook["dmarc"] != "" {
+		t.Fatalf("webhook auth_results = %v, want unknown (empty) verdicts", webhook)
 	}
 }
