@@ -31,6 +31,10 @@ type Config struct {
 	// the maximum auto-generated inbound messages one requester may produce within
 	// the loop window before further ones are suppressed. <= 0 uses the default.
 	LoopGuardMaxAutoReplies int
+	// TrustedAuthservIDs are the Authentication-Results authserv-ids whose
+	// SPF/DKIM/DMARC verdicts are believed (SECREVIEW-M6), e.g. "amazonses.com"
+	// for Resend's receiving pipeline. Empty trusts none: every verdict is unknown.
+	TrustedAuthservIDs []string
 }
 
 // IngestResult reports the outcome of ingesting one inbound message. TicketID and
@@ -176,10 +180,13 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 			return err
 		}
 
+		// SECREVIEW-M6: only the trusted receiving hop's verdicts are stored; a
+		// sender-supplied header yields unknown, never a forged "pass".
+		auth := trustedAuthResults(parsed.AuthenticationResults, s.cfg.TrustedAuthservIDs)
 		authResults, err := json.Marshal(map[string]string{
-			"spf":   parsed.Auth.SPF,
-			"dkim":  parsed.Auth.DKIM,
-			"dmarc": parsed.Auth.DMARC,
+			"spf":   auth.SPF,
+			"dkim":  auth.DKIM,
+			"dmarc": auth.DMARC,
 		})
 		if err != nil {
 			return fmt.Errorf("inbox: marshal auth_results: %w", err)
@@ -351,33 +358,53 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 // ingests (spec 017 R15). With no blob store configured every part is dropped
 // that way. Zero-byte parts are skipped (the attachment table CHECK requires
 // size > 0).
+//
+// SECREVIEW-M5: at most maxAcceptedAttachments parts totalling at most
+// maxAcceptedAttachmentBytes are staged. An allowed part that would exceed either
+// cap is dropped like any other (a later, smaller part that still fits the byte
+// budget is accepted), so one message cannot fan out into unbounded attachment
+// rows and blob Puts inside the ingest transaction.
 func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachment, []ticketing.DroppedAttachment) {
 	if len(parts) == 0 {
 		return nil, nil
 	}
-	out := make([]sniffedAttachment, 0, len(parts))
+	out := make([]sniffedAttachment, 0, min(len(parts), maxAcceptedAttachments))
 	var dropped []ticketing.DroppedAttachment
+	var acceptedBytes int64
+	drop := func(p ParsedAttachment) {
+		if len(dropped) < maxDroppedAttachments {
+			dropped = append(dropped, ticketing.DroppedAttachment{
+				Filename:     sanitizeAttachmentFilename(p.FileName),
+				DetectedType: blob.Detect(p.Content),
+				Size:         int64(len(p.Content)),
+			})
+		}
+	}
 	for _, p := range parts {
 		if len(p.Content) == 0 {
 			continue // nothing to store; CHECK (size > 0) would reject anyway
+		}
+		if len(out) >= maxAcceptedAttachments && len(dropped) >= maxDroppedAttachments {
+			break // both bounded lists are full; nothing further can be recorded
 		}
 		size := int64(len(p.Content))
 		ct, err := blob.Sniff(p.Content) // declared type ignored; bytes decide
 		// No blob store ⇒ attachments disabled: an allowed part cannot be stored
 		// either, so it is recorded as dropped instead of vanishing without trace.
 		if err != nil || (s.cfg.AttachmentMaxBytes > 0 && size > s.cfg.AttachmentMaxBytes) || s.blob == nil {
-			if len(dropped) < maxDroppedAttachments {
-				dropped = append(dropped, ticketing.DroppedAttachment{
-					Filename:     sanitizeAttachmentFilename(p.FileName),
-					DetectedType: blob.Detect(p.Content),
-					Size:         size,
-				})
-			}
+			drop(p)
 			continue
 		}
+		if len(out) >= maxAcceptedAttachments || acceptedBytes+size > maxAcceptedAttachmentBytes {
+			drop(p)
+			continue
+		}
+		acceptedBytes += size
 		out = append(out, sniffedAttachment{
-			id:          uuid.New(),
-			filename:    p.FileName,
+			id: uuid.New(),
+			// SECREVIEW-M3: the stored name is attacker-controlled too; a raw NUL
+			// would make the jsonb metadata (and so the whole ingest) fail forever.
+			filename:    sanitizeAttachmentFilename(p.FileName),
 			contentType: ct,
 			size:        size,
 			content:     p.Content,

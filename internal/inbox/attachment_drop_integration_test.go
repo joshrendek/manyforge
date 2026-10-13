@@ -174,3 +174,51 @@ func TestIngestWithoutBlobStoreRecordsAllowedAttachmentAsDropped(t *testing.T) {
 		t.Fatalf("dropped = %+v, want %+v", dropped, want)
 	}
 }
+
+// pngOnlyMessage carries one allowlisted PNG whose filename parameter is given
+// verbatim (e.g. an RFC 2231 extended value).
+func pngOnlyMessage(to, from, messageID, filenameParam string) []byte {
+	return []byte("From: " + from + "\r\n" +
+		"To: " + to + "\r\n" +
+		"Subject: allowed png\r\n" +
+		"Date: Mon, 02 Jan 2006 15:04:05 -0700\r\n" +
+		"Message-ID: <" + messageID + ">\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=BOUND\r\n\r\n" +
+		"--BOUND\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nsee attached\r\n" +
+		"--BOUND\r\nContent-Type: image/png\r\n" +
+		"Content-Disposition: attachment; " + filenameParam + "\r\nContent-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(replayPNG) + "\r\n" +
+		"--BOUND--\r\n")
+}
+
+// SECREVIEW-M3: an ALLOWED attachment whose RFC 2231 filename decodes to a NUL
+// must still ingest and be stored (with the control byte stripped). Before the
+// fix the raw name reached the jsonb attachment metadata, Postgres rejected
+// \u0000, and the webhook 503'd into a permanent provider retry loop.
+func TestIngestStoredAttachmentFilenameWithNULStillIngests(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	ten := seedIngestTenant(ctx, t, tdb)
+	svc := newIngestService(ctx, t, tdb)
+
+	res, err := svc.Ingest(ctx, RawMessage{
+		Provider: "webhook:test", EnvelopeRecipient: ten.address, EnvelopeSender: "mallory@example.com",
+		ReceivedAt: time.Now(),
+		Raw:        pngOnlyMessage(ten.address, "mallory@example.com", "stored-nul@example.com", "filename*=UTF-8''bad%00name.png"),
+	})
+	if err != nil {
+		t.Fatalf("ingest of an allowed attachment with a NUL filename must succeed: %v", err)
+	}
+	var filename string
+	if err := tdb.Super.QueryRow(ctx, "SELECT filename FROM attachment WHERE ticket_message_id=$1", res.MessageID).Scan(&filename); err != nil {
+		t.Fatalf("stored attachment: %v", err)
+	}
+	if filename != "badname.png" {
+		t.Fatalf("stored filename = %q, want badname.png", filename)
+	}
+}

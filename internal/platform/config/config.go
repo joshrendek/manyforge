@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,6 +63,10 @@ type Config struct {
 	DKIMKeyPath             string // path to the default DKIM private key for verified custom sending identities
 	InboundMaxBytes         int64  // max inbound message size (SMTP MaxMessageBytes + webhook body cap), FR-007/FR-020
 	AttachmentMaxBytes      int64  // per-attachment size cap, FR-007
+
+	// InboundTrustedAuthservIDs are the Authentication-Results authserv-ids whose
+	// SPF/DKIM/DMARC verdicts are shown to agents (lower-cased); empty trusts none.
+	InboundTrustedAuthservIDs []string
 
 	IngestRateRPS     float64 // per-recipient inbound ingestion refill rate (loop/abuse bound, FR-018/FR-020)
 	IngestRateBurst   float64 // per-recipient inbound ingestion burst allowance
@@ -323,6 +328,16 @@ func Load() (Config, error) {
 
 	if cfg.InboundMaxBytes, err = envInt64("MANYFORGE_INBOUND_MAX_BYTES", 30<<20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_INBOUND_MAX_BYTES: %w", err)
+	}
+	// SECREVIEW-M6: Authentication-Results verdicts are believed only from these
+	// authserv-ids. Unset uses the id Resend's receiving pipeline stamps; an
+	// explicitly empty value trusts none (every verdict shows as unknown).
+	trustedAuthserv, ok := os.LookupEnv("MANYFORGE_INBOUND_TRUSTED_AUTHSERV_IDS")
+	if !ok {
+		trustedAuthserv = defaultInboundTrustedAuthservIDs
+	}
+	if cfg.InboundTrustedAuthservIDs, err = parseAuthservIDs(trustedAuthserv); err != nil {
+		return Config{}, fmt.Errorf("MANYFORGE_INBOUND_TRUSTED_AUTHSERV_IDS: %w", err)
 	}
 	if cfg.AttachmentMaxBytes, err = envInt64("MANYFORGE_ATTACHMENT_MAX_BYTES", 25<<20); err != nil {
 		return Config{}, fmt.Errorf("MANYFORGE_ATTACHMENT_MAX_BYTES: %w", err)
@@ -625,6 +640,32 @@ func defaultEnvironment() string {
 		return "production"
 	}
 	return "development"
+}
+
+// defaultInboundTrustedAuthservIDs is the authserv-id Resend's inbound pipeline
+// (Amazon SES) stamps as the topmost Authentication-Results header, verified
+// against real Resend-received mail.
+const defaultInboundTrustedAuthservIDs = "amazonses.com"
+
+// parseAuthservIDs splits a comma-separated authserv-id list, trimming,
+// lower-casing and de-duplicating entries and skipping empty ones. An id is a
+// single token (a domain name), so whitespace, ';', '=', quotes and comments are
+// rejected rather than silently widening or breaking the match.
+func parseAuthservIDs(raw string) ([]string, error) {
+	var out []string
+	for _, entry := range strings.Split(raw, ",") {
+		id := strings.ToLower(strings.TrimSpace(entry))
+		if id == "" {
+			continue
+		}
+		if strings.ContainsAny(id, " \t;=\"()") {
+			return nil, fmt.Errorf("invalid authserv-id %q", id)
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 func envInt(key string, def int) (int, error) {

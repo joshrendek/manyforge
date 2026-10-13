@@ -118,15 +118,17 @@ func TestParse_WellFormed(t *testing.T) {
 	if len(att.Content) == 0 {
 		t.Error("attachment Content is empty, want decoded bytes")
 	}
-	// Authentication-Results parsed into typed fields (FR-019).
-	if pe.Auth.SPF != "pass" {
-		t.Errorf("Auth.SPF = %q, want pass", pe.Auth.SPF)
+	// Authentication-Results parsed into typed fields (FR-019) once its
+	// authserv-id is trusted (SECREVIEW-M6).
+	auth := trustedAuthResults(pe.AuthenticationResults, []string{"mx.acme.test"})
+	if auth.SPF != "pass" {
+		t.Errorf("Auth.SPF = %q, want pass", auth.SPF)
 	}
-	if pe.Auth.DKIM != "pass" {
-		t.Errorf("Auth.DKIM = %q, want pass", pe.Auth.DKIM)
+	if auth.DKIM != "pass" {
+		t.Errorf("Auth.DKIM = %q, want pass", auth.DKIM)
 	}
-	if pe.Auth.DMARC != "fail" {
-		t.Errorf("Auth.DMARC = %q, want fail", pe.Auth.DMARC)
+	if auth.DMARC != "fail" {
+		t.Errorf("Auth.DMARC = %q, want fail", auth.DMARC)
 	}
 	// Not an auto-reply.
 	if pe.Auto.IsAutoReply {
@@ -228,7 +230,7 @@ func TestParse_AuthResultsAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	if pe.Auth.SPF != "" || pe.Auth.DKIM != "" || pe.Auth.DMARC != "" {
-		t.Errorf("Auth = %+v, want all empty when Authentication-Results absent", pe.Auth)
+	if auth := trustedAuthResults(pe.AuthenticationResults, []string{"mx.acme.test"}); auth != (AuthResults{}) {
+		t.Errorf("Auth = %+v, want all empty when Authentication-Results absent", auth)
 	}
 }

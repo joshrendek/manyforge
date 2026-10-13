@@ -678,6 +678,7 @@ func main() {
 		ReplyTokenKey:       cfg.InboundReplyTokenSecret,
 		AttachmentMaxBytes:  cfg.AttachmentMaxBytes,
 		InboundSystemDomain: cfg.InboundSystemDomain,
+		TrustedAuthservIDs:  cfg.InboundTrustedAuthservIDs,
 	}, logger)
 	inboxWebhookH := inbox.NewWebhookHandler(inboxSvc, cfg.InboundWebhookSecret, cfg.InboundMaxBytes, inbox.Config{
 		InboundSystemDomain: cfg.InboundSystemDomain,
