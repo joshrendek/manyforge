@@ -1261,9 +1261,12 @@ func deliveryStatePtr(s dbgen.NullMessageDeliveryState) *string {
 }
 
 // projectAuthResults maps the stored {spf,dkim,dmarc} verdict triple onto the
-// DnsRecordState enum [unknown, pending, pass, fail]. Only "pass"/"fail"/"pending"
-// pass through; everything else (none, softfail, empty, missing, malformed) is
-// "unknown" — flagged, never trusted as a verdict (FR-019).
+// DnsRecordState enum [unknown, pending, pass, fail, none]. "pass"/"fail"/"pending"
+// pass through, as does "none" (RFC 8601: the sender's domain publishes no
+// policy/record, e.g. no DMARC record) so it is not confused with an unreadable
+// verdict; everything else (softfail, neutral, empty, missing, malformed) is
+// "unknown" — flagged, never trusted as a verdict (FR-019). This is the ONLY
+// producer of "none": DNS record checks (dkim_state/spf_state) never emit it.
 func projectAuthResults(raw []byte) (spf, dkim, dmarc string) {
 	spf, dkim, dmarc = "unknown", "unknown", "unknown"
 	if len(raw) == 0 {
@@ -1282,7 +1285,7 @@ func projectAuthResults(raw []byte) (spf, dkim, dmarc string) {
 
 func normState(s string) string {
 	switch s {
-	case "pass", "fail", "pending", "unknown":
+	case "pass", "fail", "pending", "unknown", "none":
 		return s
 	default:
 		return "unknown"
