@@ -37,4 +37,7 @@ const (
 
 	PermTelemetryRead  = "telemetry.read"
 	PermTelemetryWrite = "telemetry.write"
+
+	PermWorkRead  = "work.read"
+	PermWorkWrite = "work.write"
 )

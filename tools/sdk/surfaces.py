@@ -109,6 +109,16 @@ def _same_type(old: object, new: object) -> bool:
     return all(name in new_members and _same_type(declared, new_members[name]) for name, declared in old_members.items())
 
 
+def _is_resource_container(path: str, node: dict) -> bool:
+    """A TypeScript `*Resources` type alias (BusinessResources, ...) is output-only.
+
+    The SDK constructs it (createBusinessResources) and consumers only read from it, so a
+    new top-level resource group is additive exactly like a scoped resource joining an
+    inline object member. Request/response model types are not containers and still fail.
+    """
+    return path.startswith("typescript.") and node.get("kind") == "type" and path.endswith("Resources")
+
+
 def _compare_node(old: dict, new: dict, path: str, errors: list[str]) -> None:
     for key, value in old.items():
         if key not in new:
@@ -120,7 +130,7 @@ def _compare_node(old: dict, new: dict, path: str, errors: list[str]) -> None:
                 else:
                     _compare_node(member, new[key][name], f"{path}.{name}", errors)
             for name, member in new[key].items():
-                if name not in value and member.get("required", False):
+                if name not in value and member.get("required", False) and not _is_resource_container(path, old):
                     errors.append(f"{path}.{name}: added required member")
         elif key == "signatures":
             for signature in value:

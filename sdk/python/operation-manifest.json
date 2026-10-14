@@ -539,6 +539,86 @@
     "pagination": null
   },
   {
+    "operationId": "WorkProjectsCreate",
+    "resource": "work.projects",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkProjectsGet",
+    "resource": "work.projects",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkProjectsList",
+    "resource": "work.projects",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkSummaryGet",
+    "resource": "work.summary",
+    "method": "get",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkTasksCreate",
+    "resource": "work.tasks",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkTasksList",
+    "resource": "work.tasks",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkTasksUpdate",
+    "resource": "work.tasks",
+    "method": "update",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkTokensCreate",
+    "resource": "work.tokens",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkTokensList",
+    "resource": "work.tokens",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "WorkTokensRevoke",
+    "resource": "work.tokens",
+    "method": "revoke",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
     "operationId": "activateAutomationVersion",
     "resource": "automations.versions",
     "method": "activate",

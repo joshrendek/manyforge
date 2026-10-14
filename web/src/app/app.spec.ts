@@ -74,4 +74,23 @@ describe('App shell', () => {
     const badge = f.nativeElement.querySelector('[data-testid="nav-approvals"] .nav-badge');
     expect(badge?.textContent).toContain('2');
   });
+
+  it('shows the open operator-task count on the Work nav and tolerates a failing summary', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('mf_access', 'tok');
+    localStorage.setItem('mf-current-business', 'b1');
+    const f = TestBed.createComponent(App);
+    f.detectChanges();
+    mock.expectOne('/api/v1/me').flush({ id: '1', email: 'a@b.c', display_name: 'A', email_verified: true, status: 'active' });
+    vi.advanceTimersByTime(0);
+    mock.expectOne('/api/v1/businesses/b1/work/summary').flush({ open_operator: 3, open_agent: 1, in_progress: 0 });
+    f.detectChanges();
+    const badge = () => f.nativeElement.querySelector('[data-testid="nav-work"] .nav-badge');
+    expect(badge()?.textContent).toContain('3');
+
+    vi.advanceTimersByTime(20000);
+    mock.expectOne('/api/v1/businesses/b1/work/summary').flush('x', { status: 500, statusText: 'err' });
+    f.detectChanges();
+    expect(badge()).toBeNull();
+  });
 });

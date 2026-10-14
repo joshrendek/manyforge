@@ -85,3 +85,14 @@ db-smoke:
 
 tidy:
 	$(GO) mod tidy
+
+# mf — the Work Board CLI (spec 018). build-mf writes bin/mf; install-mf puts it on $GOBIN.
+MF_LDFLAGS := -X main.version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+.PHONY: build-mf install-mf
+
+build-mf:
+	$(GO) build -ldflags "$(MF_LDFLAGS)" -o bin/mf ./cmd/mf
+
+install-mf:
+	$(GO) install -ldflags "$(MF_LDFLAGS)" ./cmd/mf

@@ -448,6 +448,29 @@ from .vote_result import VoteResult
 from .wait_config import WaitConfig
 from .wait_node import WaitNode
 from .wait_node_properties_kind_enum import WaitNodePropertiesKindEnum
+from .work_project import WorkProject
+from .work_project_counts import WorkProjectCounts
+from .work_project_create import WorkProjectCreate
+from .work_project_list import WorkProjectList
+from .work_summary import WorkSummary
+from .work_task import WorkTask
+from .work_task_create import WorkTaskCreate
+from .work_task_create_properties_lane_enum import WorkTaskCreatePropertiesLaneEnum
+from .work_task_create_properties_status_enum import WorkTaskCreatePropertiesStatusEnum
+from .work_task_create_properties_type_enum import WorkTaskCreatePropertiesTypeEnum
+from .work_task_fields import WorkTaskFields
+from .work_task_fields_properties_lane_enum import WorkTaskFieldsPropertiesLaneEnum
+from .work_task_fields_properties_status_enum import WorkTaskFieldsPropertiesStatusEnum
+from .work_task_fields_properties_type_enum import WorkTaskFieldsPropertiesTypeEnum
+from .work_task_list import WorkTaskList
+from .work_task_patch import WorkTaskPatch
+from .work_task_properties_lane_enum import WorkTaskPropertiesLaneEnum
+from .work_task_properties_status_enum import WorkTaskPropertiesStatusEnum
+from .work_task_properties_type_enum import WorkTaskPropertiesTypeEnum
+from .work_token import WorkToken
+from .work_token_create import WorkTokenCreate
+from .work_token_created import WorkTokenCreated
+from .work_token_list import WorkTokenList
 
 from pydantic import BaseModel as _BaseModel
 for _model in tuple(globals().values()):

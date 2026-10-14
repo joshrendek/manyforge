@@ -12792,8 +12792,530 @@ paths:
       x-manyforge-method: get
       tags:
       - Analytics
+  /api/v1/businesses/{id}/work/summary:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    get:
+      operationId: WorkSummaryGet
+      description: Requires `work.read`. Open-work tallies across every project in the business (the navigation badge).
+      responses:
+        '200':
+          description: Work summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkSummary'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.summary
+      x-manyforge-method: get
+      tags:
+      - WorkSummary
+  /api/v1/businesses/{id}/work/projects:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    get:
+      operationId: WorkProjectsList
+      description: Requires `work.read`. Lists every work project in the business with its board counts. Complete list, ordered
+        by name.
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkProjectList'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.projects
+      x-manyforge-method: list
+      tags:
+      - WorkProjects
+    post:
+      operationId: WorkProjectsCreate
+      description: Requires `work.write`. Creates a work project. slug defaults to the slugified name and key_prefix to the
+        first eight alphanumerics of the slug (leading digits skipped). A duplicate slug in the business is 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkProjectCreate'
+      responses:
+        '201':
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkProject'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Duplicate project slug
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: JSON request body exceeds 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.projects
+      x-manyforge-method: create
+      tags:
+      - WorkProjects
+  /api/v1/businesses/{id}/work/projects/{pid}:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    - $ref: '#/components/parameters/WorkProjectRef'
+    get:
+      operationId: WorkProjectsGet
+      description: Requires `work.read`. Reads one work project, addressed by id or slug, with its board counts.
+      responses:
+        '200':
+          description: Project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkProject'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.projects
+      x-manyforge-method: get
+      tags:
+      - WorkProjects
+  /api/v1/businesses/{id}/work/projects/{pid}/tasks:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    - $ref: '#/components/parameters/WorkProjectRef'
+    get:
+      operationId: WorkTasksList
+      description: 'Requires `work.read`. Lists the project board: open tasks plus tasks closed in the last 14 days (every task
+        with include_closed=true), ordered by priority then creation, capped at 2000.'
+      parameters:
+      - name: include_closed
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: Tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTaskList'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.tasks
+      x-manyforge-method: list
+      tags:
+      - WorkTasks
+    post:
+      operationId: WorkTasksCreate
+      description: 'Requires `work.write`. Creates a task with a server-generated key (<key_prefix>-<6 base36>). Defaults: lane
+        agent, status todo, priority 2, type task.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkTaskCreate'
+      responses:
+        '201':
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTask'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: JSON request body exceeds 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.tasks
+      x-manyforge-method: create
+      tags:
+      - WorkTasks
+  /api/v1/businesses/{id}/work/projects/{pid}/tasks/{key}:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    - $ref: '#/components/parameters/WorkProjectRef'
+    - $ref: '#/components/parameters/WorkTaskKey'
+    patch:
+      operationId: WorkTasksUpdate
+      description: Requires `work.write`. Patches only the fields sent. An optional note is appended to notes as "[<RFC3339>
+        <author>] <text>", authored by the caller's display name. Status done/canceled stamps closed_at; any other status clears
+        it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkTaskPatch'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTask'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: JSON request body exceeds 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.tasks
+      x-manyforge-method: update
+      tags:
+      - WorkTasks
+  /api/v1/businesses/{id}/work/projects/{pid}/tokens:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    - $ref: '#/components/parameters/WorkProjectRef'
+    get:
+      operationId: WorkTokensList
+      description: Requires `work.write`. Lists the project's work tokens, newest first. Hashes and plaintext are never returned.
+      responses:
+        '200':
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTokenList'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.tokens
+      x-manyforge-method: list
+      tags:
+      - WorkTokens
+    post:
+      operationId: WorkTokensCreate
+      description: Requires `work.write`. Issues a project-scoped mfw_ work token for the mf CLI, acting as the caller. The
+        plaintext token is returned exactly once; only its SHA-256 hash is stored. The token stops working if the caller loses
+        work.write on the business.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkTokenCreate'
+      responses:
+        '201':
+          description: Created token (plaintext shown once)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTokenCreated'
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: JSON request body exceeds 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.tokens
+      x-manyforge-method: create
+      tags:
+      - WorkTokens
+  /api/v1/businesses/{id}/work/projects/{pid}/tokens/{tid}:
+    parameters:
+    - $ref: '#/components/parameters/BusinessID'
+    - $ref: '#/components/parameters/WorkProjectRef'
+    - $ref: '#/components/parameters/WorkTokenID'
+    delete:
+      operationId: WorkTokensRevoke
+      description: Requires `work.write`. Revokes a work token (idempotent). Subsequent syncs with it return 401.
+      responses:
+        '204':
+          description: Revoked
+        '404':
+          $ref: '#/components/responses/AgentsNotFound'
+        '401':
+          description: Missing or invalid bearer access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-business-param: id
+      x-manyforge-audience: management
+      x-manyforge-resource: work.tokens
+      x-manyforge-method: revoke
+      tags:
+      - WorkTokens
+  /api/v1/work/sync:
+    post:
+      operationId: WorkSync
+      description: 'mf CLI sync, authenticated by a project-scoped work token sent as "Authorization: Bearer mfw_<token>" (not
+        a session JWT). Ops apply in order, each in its own savepoint: a failing op is reported in results and skipped. create
+        on an existing key is a conflict; update patches only the fields sent; note appends an entry authored by op.author (default
+        "agent"). The response carries every task with rev > since (full snapshots, at most 5000; more=true means sync again
+        from rev). Every token problem — missing, unknown, revoked, or an issuer that lost work.write — is the same 401.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkSyncRequest'
+      responses:
+        '200':
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkSyncResponse'
+        '400':
+          description: Invalid JSON body, negative since, or more than 1000 ops
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing, unknown or revoked work token, or its issuer lost access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request body exceeds 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Per-IP or per-token rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            Retry-After:
+              schema:
+                type: string
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Tenant maintenance in progress; retry later
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID,
+            and bounded raw body.
+      x-manyforge-audience: callback
+      x-manyforge-resource: work.sync
+      x-manyforge-method: sync
+      tags:
+      - WorkSync
 components:
   parameters:
+    WorkProjectRef:
+      name: pid
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Work project id (UUID) or slug.
+    WorkTaskKey:
+      name: key
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(\.[0-9]{1,4}){0,3}$
+      description: Task key.
+    WorkTokenID:
+      name: tid
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     PublicIngestKey:
       name: key
       in: path
@@ -13538,6 +14060,461 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    WorkSummary:
+      type: object
+      required:
+      - open_operator
+      - open_agent
+      - in_progress
+      properties:
+        open_operator:
+          type: integer
+        open_agent:
+          type: integer
+        in_progress:
+          type: integer
+    WorkProjectCounts:
+      type: object
+      required:
+      - backlog
+      - todo
+      - in_progress
+      - blocked
+      - operator_open
+      properties:
+        backlog:
+          type: integer
+        todo:
+          type: integer
+        in_progress:
+          type: integer
+        blocked:
+          type: integer
+        operator_open:
+          type: integer
+    WorkProject:
+      type: object
+      required:
+      - id
+      - slug
+      - name
+      - key_prefix
+      - created_at
+      - counts
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        key_prefix:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        counts:
+          $ref: '#/components/schemas/WorkProjectCounts'
+    WorkProjectList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkProject'
+    WorkProjectCreate:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        slug:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+        key_prefix:
+          type: string
+          pattern: ^[a-z][a-z0-9]{0,11}$
+    WorkTask:
+      type: object
+      required:
+      - key
+      - title
+      - description
+      - notes
+      - lane
+      - status
+      - priority
+      - type
+      - assignee
+      - labels
+      - blocked_by
+      - rev
+      - created_at
+      - updated_at
+      - closed_at
+      properties:
+        key:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        notes:
+          type: string
+          description: Append-only; entries are "[<RFC3339> <author>] <text>" joined by newlines.
+        lane:
+          type: string
+          enum:
+          - agent
+          - operator
+        status:
+          type: string
+          enum:
+          - backlog
+          - todo
+          - in_progress
+          - blocked
+          - done
+          - canceled
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 4
+          description: 0 = critical
+        type:
+          type: string
+          enum:
+          - task
+          - bug
+          - feature
+          - chore
+        assignee:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        blocked_by:
+          type: array
+          items:
+            type: string
+        rev:
+          type: integer
+          format: int64
+          description: Global write sequence; the sync cursor.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+    WorkTaskList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkTask'
+    WorkTaskCreate:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        description:
+          type: string
+          maxLength: 20000
+        lane:
+          type: string
+          enum:
+          - agent
+          - operator
+        status:
+          type: string
+          enum:
+          - backlog
+          - todo
+          - in_progress
+          - blocked
+          - done
+          - canceled
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 4
+          description: 0 = critical
+        type:
+          type: string
+          enum:
+          - task
+          - bug
+          - feature
+          - chore
+        assignee:
+          type: string
+          maxLength: 200
+        labels:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 64
+        blocked_by:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(\.[0-9]{1,4}){0,3}$
+      required:
+      - title
+    WorkTaskFields:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        description:
+          type: string
+          maxLength: 20000
+        lane:
+          type: string
+          enum:
+          - agent
+          - operator
+        status:
+          type: string
+          enum:
+          - backlog
+          - todo
+          - in_progress
+          - blocked
+          - done
+          - canceled
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 4
+          description: 0 = critical
+        type:
+          type: string
+          enum:
+          - task
+          - bug
+          - feature
+          - chore
+        assignee:
+          type: string
+          maxLength: 200
+        labels:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 64
+        blocked_by:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(\.[0-9]{1,4}){0,3}$
+    WorkTaskPatch:
+      allOf:
+      - $ref: '#/components/schemas/WorkTaskFields'
+      - type: object
+        properties:
+          note:
+            type: string
+            minLength: 1
+            maxLength: 10000
+            description: Appended to notes, authored by the caller.
+    WorkToken:
+      type: object
+      required:
+      - id
+      - name
+      - prefix
+      - created_at
+      - last_used_at
+      - revoked_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+          description: First 12 characters of the token, for recognition.
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+    WorkTokenList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkToken'
+    WorkTokenCreate:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    WorkTokenCreated:
+      type: object
+      required:
+      - id
+      - name
+      - prefix
+      - created_at
+      - token
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+          description: First 12 characters of the token, for recognition.
+        created_at:
+          type: string
+          format: date-time
+        token:
+          type: string
+          description: Plaintext mfw_ token. Returned only here.
+    WorkSyncOpFields:
+      description: Task fields for create/update ops. Unknown fields fail the op. created_at and closed_at are
+        accepted on create only (an mf import preserving original timestamps); closed_at applies only when the
+        task is created done or canceled.
+      allOf:
+      - $ref: '#/components/schemas/WorkTaskFields'
+      - type: object
+        properties:
+          created_at:
+            type: string
+            format: date-time
+          closed_at:
+            type: string
+            format: date-time
+    WorkSyncOp:
+      type: object
+      required:
+      - op
+      - key
+      properties:
+        op:
+          type: string
+          enum:
+          - create
+          - update
+          - note
+        key:
+          type: string
+          pattern: ^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(\.[0-9]{1,4}){0,3}$
+          description: For create, must start with "<project key_prefix>-".
+        fields:
+          $ref: '#/components/schemas/WorkSyncOpFields'
+        text:
+          type: string
+          maxLength: 10000
+          description: 'note ops: the entry text.'
+        author:
+          type: string
+          maxLength: 100
+          description: 'note ops: the entry author (default "agent").'
+    WorkSyncRequest:
+      type: object
+      properties:
+        since:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Return tasks with rev greater than this cursor.
+        ops:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/WorkSyncOp'
+    WorkSyncProject:
+      type: object
+      required:
+      - slug
+      - name
+      - key_prefix
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        key_prefix:
+          type: string
+    WorkSyncOpResult:
+      type: object
+      required:
+      - key
+      - ok
+      properties:
+        key:
+          type: string
+        ok:
+          type: boolean
+        error:
+          type: string
+    WorkSyncResponse:
+      type: object
+      required:
+      - rev
+      - project
+      - tasks
+      - results
+      - more
+      properties:
+        rev:
+          type: integer
+          format: int64
+          description: 'New cursor: the rev of the last task returned, else since.'
+        project:
+          $ref: '#/components/schemas/WorkSyncProject'
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkTask'
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkSyncOpResult'
+        more:
+          type: boolean
+          description: True when the 5000-task page cap was hit; sync again from rev.
     MailingReportRate:
       type: object
       required: [numerator, denominator, percent]
@@ -21939,3 +22916,8 @@ tags:
 - name: Tickets
 - name: TicketsAssignableMembers
 - name: TicketsMessages
+- name: WorkProjects
+- name: WorkSummary
+- name: WorkSync
+- name: WorkTasks
+- name: WorkTokens

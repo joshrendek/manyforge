@@ -31,11 +31,20 @@ COPY . .
 RUN rm -rf internal/webui/dist && mkdir -p internal/webui/dist
 COPY --from=web /web/dist/manyforge-web/browser/ internal/webui/dist/
 RUN CGO_ENABLED=0 go build -tags ui_embed -trimpath -ldflags="-s -w" -o /manyforge ./cmd/manyforge
+# Work Board CLI (spec 018): cross-compiled for every platform internal/clidist
+# serves at /cli/mf/{os}/{arch}, so repos and sandboxes can install `mf` from
+# their own instance (curl <instance>/cli/install.sh | sh).
+ARG MF_VERSION=image
+RUN mkdir -p /cli && for p in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do \
+      CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build -trimpath \
+        -ldflags="-s -w -X main.version=${MF_VERSION}" -o /cli/mf-${p%/*}-${p#*/} ./cmd/mf || exit 1; \
+    done
 
 # 3. Runtime
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /manyforge /manyforge
 COPY --from=build /src/migrations /migrations
+COPY --from=build /cli /cli
 USER nonroot:nonroot
 WORKDIR /
 EXPOSE 8080

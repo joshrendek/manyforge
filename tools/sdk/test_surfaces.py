@@ -89,6 +89,26 @@ class SurfaceCompatibilityTests(unittest.TestCase):
                 revision = snapshot({"kind": "type", "members": {"mailing": {"kind": "field", "required": True, "type": breaking}}})
                 self.assertNotEqual(compare_surfaces(base, revision), [])
 
+    def test_new_top_level_resource_group_is_additive_on_resource_containers_only(self):
+        member = {"kind": "field", "required": True, "type": "Readonly<TicketsApi>"}
+        added = {"kind": "field", "required": True, "type": "{ readonly tasks: Readonly<WorkTasksApi>; }"}
+        for name, ok in (("import:index.type:BusinessResources", True), ("import:index.type:TicketCreate", False)):
+            with self.subTest(symbol=name):
+                base, revision = snapshot({"kind": "type", "members": {"tickets": member}}), None
+                revision = deepcopy(base)
+                for snap in (base, revision):
+                    for language in LANGUAGES:
+                        symbols = snap["languages"][language]["symbols"]
+                        symbols[name] = symbols.pop("Client")
+                revision["languages"]["typescript"]["symbols"][name]["members"]["work"] = added
+                errors = compare_surfaces(base, revision)
+                self.assertEqual(errors == [], ok, errors)
+        # Removing a resource group from a container still breaks.
+        base = snapshot({"kind": "type", "members": {"tickets": member, "work": added}})
+        revision = deepcopy(base)
+        del revision["languages"]["typescript"]["symbols"]["Client"]["members"]["work"]
+        self.assertNotEqual(compare_surfaces(base, revision), [])
+
     def test_optional_trailing_parameter_preserves_existing_calls(self):
         revision = deepcopy(self.base)
         params = revision["languages"]["typescript"]["symbols"]["Client"]["members"]["list"]["signatures"][0]["params"]

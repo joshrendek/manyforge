@@ -2208,3 +2208,52 @@ type TicketTag struct {
 	TenantRootID uuid.UUID `json:"tenant_root_id"`
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+type WorkProject struct {
+	ID           uuid.UUID   `json:"id"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	Slug         string      `json:"slug"`
+	Name         string      `json:"name"`
+	KeyPrefix    string      `json:"key_prefix"`
+	CreatedBy    pgtype.UUID `json:"created_by"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+}
+
+type WorkTask struct {
+	ID                 uuid.UUID          `json:"id"`
+	BusinessID         uuid.UUID          `json:"business_id"`
+	TenantRootID       uuid.UUID          `json:"tenant_root_id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	Key                string             `json:"key"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description"`
+	Notes              string             `json:"notes"`
+	Lane               string             `json:"lane"`
+	Status             string             `json:"status"`
+	Priority           int16              `json:"priority"`
+	Type               string             `json:"type"`
+	Assignee           string             `json:"assignee"`
+	Labels             []string           `json:"labels"`
+	BlockedBy          []string           `json:"blocked_by"`
+	Rev                int64              `json:"rev"`
+	CreatedByPrincipal pgtype.UUID        `json:"created_by_principal"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	ClosedAt           pgtype.Timestamptz `json:"closed_at"`
+}
+
+type WorkToken struct {
+	ID           uuid.UUID          `json:"id"`
+	BusinessID   uuid.UUID          `json:"business_id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	ProjectID    uuid.UUID          `json:"project_id"`
+	Name         string             `json:"name"`
+	TokenHash    string             `json:"token_hash"`
+	TokenPrefix  string             `json:"token_prefix"`
+	PrincipalID  uuid.UUID          `json:"principal_id"`
+	CreatedAt    time.Time          `json:"created_at"`
+	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt    pgtype.Timestamptz `json:"revoked_at"`
+}

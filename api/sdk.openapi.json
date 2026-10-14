@@ -162,6 +162,34 @@
           "type": "string"
         }
       },
+      "WorkProjectRef": {
+        "description": "Work project id (UUID) or slug.",
+        "in": "path",
+        "name": "pid",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "WorkTaskKey": {
+        "description": "Task key.",
+        "in": "path",
+        "name": "key",
+        "required": true,
+        "schema": {
+          "pattern": "^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(\\.[0-9]{1,4}){0,3}$",
+          "type": "string"
+        }
+      },
+      "WorkTokenID": {
+        "in": "path",
+        "name": "tid",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
       "addressId": {
         "description": "inbound-address id",
         "in": "path",
@@ -11524,6 +11552,486 @@
           "id",
           "kind",
           "config"
+        ],
+        "type": "object"
+      },
+      "WorkProject": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/WorkProjectCounts"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "key_prefix": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "key_prefix",
+          "created_at",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "WorkProjectCounts": {
+        "properties": {
+          "backlog": {
+            "type": "integer"
+          },
+          "blocked": {
+            "type": "integer"
+          },
+          "in_progress": {
+            "type": "integer"
+          },
+          "operator_open": {
+            "type": "integer"
+          },
+          "todo": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "backlog",
+          "todo",
+          "in_progress",
+          "blocked",
+          "operator_open"
+        ],
+        "type": "object"
+      },
+      "WorkProjectCreate": {
+        "properties": {
+          "key_prefix": {
+            "pattern": "^[a-z][a-z0-9]{0,11}$",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "slug": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "WorkProjectList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkProject"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "WorkSummary": {
+        "properties": {
+          "in_progress": {
+            "type": "integer"
+          },
+          "open_agent": {
+            "type": "integer"
+          },
+          "open_operator": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open_operator",
+          "open_agent",
+          "in_progress"
+        ],
+        "type": "object"
+      },
+      "WorkTask": {
+        "properties": {
+          "assignee": {
+            "type": "string"
+          },
+          "blocked_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "closed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "lane": {
+            "enum": [
+              "agent",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "notes": {
+            "description": "Append-only; entries are \"[<RFC3339> <author>] <text>\" joined by newlines.",
+            "type": "string"
+          },
+          "priority": {
+            "description": "0 = critical",
+            "maximum": 4,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rev": {
+            "description": "Global write sequence; the sync cursor.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "todo",
+              "in_progress",
+              "blocked",
+              "done",
+              "canceled"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "task",
+              "bug",
+              "feature",
+              "chore"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "description",
+          "notes",
+          "lane",
+          "status",
+          "priority",
+          "type",
+          "assignee",
+          "labels",
+          "blocked_by",
+          "rev",
+          "created_at",
+          "updated_at",
+          "closed_at"
+        ],
+        "type": "object"
+      },
+      "WorkTaskCreate": {
+        "properties": {
+          "assignee": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "blocked_by": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(\\.[0-9]{1,4}){0,3}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "description": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "lane": {
+            "enum": [
+              "agent",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "priority": {
+            "description": "0 = critical",
+            "maximum": 4,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "todo",
+              "in_progress",
+              "blocked",
+              "done",
+              "canceled"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "task",
+              "bug",
+              "feature",
+              "chore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
+      "WorkTaskFields": {
+        "properties": {
+          "assignee": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "blocked_by": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(\\.[0-9]{1,4}){0,3}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "description": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "labels": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "lane": {
+            "enum": [
+              "agent",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "priority": {
+            "description": "0 = critical",
+            "maximum": 4,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "backlog",
+              "todo",
+              "in_progress",
+              "blocked",
+              "done",
+              "canceled"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "task",
+              "bug",
+              "feature",
+              "chore"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "WorkTaskList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkTask"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "WorkTaskPatch": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WorkTaskFields"
+          },
+          {
+            "properties": {
+              "note": {
+                "description": "Appended to notes, authored by the caller.",
+                "maxLength": 10000,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "WorkToken": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "description": "First 12 characters of the token, for recognition.",
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at",
+          "last_used_at",
+          "revoked_at"
+        ],
+        "type": "object"
+      },
+      "WorkTokenCreate": {
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "WorkTokenCreated": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "description": "First 12 characters of the token, for recognition.",
+            "type": "string"
+          },
+          "token": {
+            "description": "Plaintext mfw_ token. Returned only here.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at",
+          "token"
+        ],
+        "type": "object"
+      },
+      "WorkTokenList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkToken"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       }
@@ -27460,6 +27968,671 @@
         "x-manyforge-resource": "businesses"
       }
     },
+    "/api/v1/businesses/{id}/work/projects": {
+      "get": {
+        "description": "Requires `work.read`. Lists every work project in the business with its board counts. Complete list, ordered by name.",
+        "operationId": "WorkProjectsList",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkProjectList"
+                }
+              }
+            },
+            "description": "Projects"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkProjects"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "list",
+        "x-manyforge-resource": "work.projects"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        }
+      ],
+      "post": {
+        "description": "Requires `work.write`. Creates a work project. slug defaults to the slugified name and key_prefix to the first eight alphanumerics of the slug (leading digits skipped). A duplicate slug in the business is 409.",
+        "operationId": "WorkProjectsCreate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkProject"
+                }
+              }
+            },
+            "description": "Created project"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Duplicate project slug"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "JSON request body exceeds 1 MiB"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkProjects"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "create",
+        "x-manyforge-resource": "work.projects"
+      }
+    },
+    "/api/v1/businesses/{id}/work/projects/{pid}": {
+      "get": {
+        "description": "Requires `work.read`. Reads one work project, addressed by id or slug, with its board counts.",
+        "operationId": "WorkProjectsGet",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkProject"
+                }
+              }
+            },
+            "description": "Project"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkProjects"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "get",
+        "x-manyforge-resource": "work.projects"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        },
+        {
+          "$ref": "#/components/parameters/WorkProjectRef"
+        }
+      ]
+    },
+    "/api/v1/businesses/{id}/work/projects/{pid}/tasks": {
+      "get": {
+        "description": "Requires `work.read`. Lists the project board: open tasks plus tasks closed in the last 14 days (every task with include_closed=true), ordered by priority then creation, capped at 2000.",
+        "operationId": "WorkTasksList",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_closed",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkTaskList"
+                }
+              }
+            },
+            "description": "Tasks"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkTasks"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "list",
+        "x-manyforge-resource": "work.tasks"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        },
+        {
+          "$ref": "#/components/parameters/WorkProjectRef"
+        }
+      ],
+      "post": {
+        "description": "Requires `work.write`. Creates a task with a server-generated key (<key_prefix>-<6 base36>). Defaults: lane agent, status todo, priority 2, type task.",
+        "operationId": "WorkTasksCreate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkTaskCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkTask"
+                }
+              }
+            },
+            "description": "Created task"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "JSON request body exceeds 1 MiB"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkTasks"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "create",
+        "x-manyforge-resource": "work.tasks"
+      }
+    },
+    "/api/v1/businesses/{id}/work/projects/{pid}/tasks/{key}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        },
+        {
+          "$ref": "#/components/parameters/WorkProjectRef"
+        },
+        {
+          "$ref": "#/components/parameters/WorkTaskKey"
+        }
+      ],
+      "patch": {
+        "description": "Requires `work.write`. Patches only the fields sent. An optional note is appended to notes as \"[<RFC3339> <author>] <text>\", authored by the caller's display name. Status done/canceled stamps closed_at; any other status clears it.",
+        "operationId": "WorkTasksUpdate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkTaskPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkTask"
+                }
+              }
+            },
+            "description": "Updated task"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "JSON request body exceeds 1 MiB"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkTasks"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "update",
+        "x-manyforge-resource": "work.tasks"
+      }
+    },
+    "/api/v1/businesses/{id}/work/projects/{pid}/tokens": {
+      "get": {
+        "description": "Requires `work.write`. Lists the project's work tokens, newest first. Hashes and plaintext are never returned.",
+        "operationId": "WorkTokensList",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkTokenList"
+                }
+              }
+            },
+            "description": "Tokens"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkTokens"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "list",
+        "x-manyforge-resource": "work.tokens"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        },
+        {
+          "$ref": "#/components/parameters/WorkProjectRef"
+        }
+      ],
+      "post": {
+        "description": "Requires `work.write`. Issues a project-scoped mfw_ work token for the mf CLI, acting as the caller. The plaintext token is returned exactly once; only its SHA-256 hash is stored. The token stops working if the caller loses work.write on the business.",
+        "operationId": "WorkTokensCreate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkTokenCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkTokenCreated"
+                }
+              }
+            },
+            "description": "Created token (plaintext shown once)"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "JSON request body exceeds 1 MiB"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkTokens"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "create",
+        "x-manyforge-resource": "work.tokens"
+      }
+    },
+    "/api/v1/businesses/{id}/work/projects/{pid}/tokens/{tid}": {
+      "delete": {
+        "description": "Requires `work.write`. Revokes a work token (idempotent). Subsequent syncs with it return 401.",
+        "operationId": "WorkTokensRevoke",
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkTokens"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "revoke",
+        "x-manyforge-resource": "work.tokens"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        },
+        {
+          "$ref": "#/components/parameters/WorkProjectRef"
+        },
+        {
+          "$ref": "#/components/parameters/WorkTokenID"
+        }
+      ]
+    },
+    "/api/v1/businesses/{id}/work/summary": {
+      "get": {
+        "description": "Requires `work.read`. Open-work tallies across every project in the business (the navigation badge).",
+        "operationId": "WorkSummaryGet",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkSummary"
+                }
+              }
+            },
+            "description": "Work summary"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer access token"
+          },
+          "404": {
+            "$ref": "#/components/responses/AgentsNotFound"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "default": {
+            "description": "Unexpected HTTP or proxy failure; body may be empty or non-JSON. Preserve status, headers, request ID, and bounded raw body."
+          }
+        },
+        "tags": [
+          "WorkSummary"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "get",
+        "x-manyforge-resource": "work.summary"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/BusinessID"
+        }
+      ]
+    },
     "/api/v1/feedback/public/{key}/posts": {
       "get": {
         "operationId": "publicListFeedbackPosts",
@@ -29402,6 +30575,18 @@
     },
     {
       "name": "TicketsMessages"
+    },
+    {
+      "name": "WorkProjects"
+    },
+    {
+      "name": "WorkSummary"
+    },
+    {
+      "name": "WorkTasks"
+    },
+    {
+      "name": "WorkTokens"
     }
   ]
 }
