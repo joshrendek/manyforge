@@ -63,6 +63,10 @@ from manyforge.api.business_telemetry_clients_move_targets_resource import Busin
 from manyforge.api.business_tickets_resource import BusinessTicketsResource, AsyncBusinessTicketsResource
 from manyforge.api.business_tickets_assignable_members_resource import BusinessTicketsAssignableMembersResource, AsyncBusinessTicketsAssignableMembersResource
 from manyforge.api.business_tickets_messages_resource import BusinessTicketsMessagesResource, AsyncBusinessTicketsMessagesResource
+from manyforge.api.business_work_projects_resource import BusinessWorkProjectsResource, AsyncBusinessWorkProjectsResource
+from manyforge.api.business_work_summary_resource import BusinessWorkSummaryResource, AsyncBusinessWorkSummaryResource
+from manyforge.api.business_work_tasks_resource import BusinessWorkTasksResource, AsyncBusinessWorkTasksResource
+from manyforge.api.business_work_tokens_resource import BusinessWorkTokensResource, AsyncBusinessWorkTokensResource
 from manyforge.api.feedback_posts_resource import FeedbackPostsResource, AsyncFeedbackPostsResource
 from manyforge.api.mailing_mailing_resource import MailingMailingResource, AsyncMailingMailingResource
 from manyforge.api.mailing_server_mailing_events_resource import MailingServerMailingEventsResource, AsyncMailingServerMailingEventsResource
@@ -298,6 +302,26 @@ class BusinessTicketsMessagesScope(BusinessTicketsMessagesResource):
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class BusinessWorkProjectsScope(BusinessWorkProjectsResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class BusinessWorkSummaryScope(BusinessWorkSummaryResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class BusinessWorkTasksScope(BusinessWorkTasksResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class BusinessWorkTokensScope(BusinessWorkTokensResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class RootGithubAppInstallUrlScope(RootGithubAppInstallUrlResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -422,6 +446,10 @@ class BusinessScope(object):
     @property
     def tickets(self) -> BusinessTicketsScope:
         return BusinessTicketsScope(self._transport, self._bindings)
+
+    @property
+    def work(self) -> BusinessWorkScope:
+        return BusinessWorkScope(self._transport, self._bindings)
 
 class BusinessAccountingScope(BusinessAccountingResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -679,6 +707,27 @@ class BusinessTicketsScope(BusinessTicketsResource):
     @property
     def messages(self) -> BusinessTicketsMessagesScope:
         return BusinessTicketsMessagesScope(self._transport, self._bindings)
+
+class BusinessWorkScope(object):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def projects(self) -> BusinessWorkProjectsScope:
+        return BusinessWorkProjectsScope(self._transport, self._bindings)
+
+    @property
+    def summary(self) -> BusinessWorkSummaryScope:
+        return BusinessWorkSummaryScope(self._transport, self._bindings)
+
+    @property
+    def tasks(self) -> BusinessWorkTasksScope:
+        return BusinessWorkTasksScope(self._transport, self._bindings)
+
+    @property
+    def tokens(self) -> BusinessWorkTokensScope:
+        return BusinessWorkTokensScope(self._transport, self._bindings)
 
 class FeedbackScope(object):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -1035,6 +1084,26 @@ class AsyncBusinessTicketsMessagesScope(AsyncBusinessTicketsMessagesResource):
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class AsyncBusinessWorkProjectsScope(AsyncBusinessWorkProjectsResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncBusinessWorkSummaryScope(AsyncBusinessWorkSummaryResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncBusinessWorkTasksScope(AsyncBusinessWorkTasksResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncBusinessWorkTokensScope(AsyncBusinessWorkTokensResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class AsyncRootGithubAppInstallUrlScope(AsyncRootGithubAppInstallUrlResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -1159,6 +1228,10 @@ class AsyncBusinessScope(object):
     @property
     def tickets(self) -> AsyncBusinessTicketsScope:
         return AsyncBusinessTicketsScope(self._transport, self._bindings)
+
+    @property
+    def work(self) -> AsyncBusinessWorkScope:
+        return AsyncBusinessWorkScope(self._transport, self._bindings)
 
 class AsyncBusinessAccountingScope(AsyncBusinessAccountingResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -1416,6 +1489,27 @@ class AsyncBusinessTicketsScope(AsyncBusinessTicketsResource):
     @property
     def messages(self) -> AsyncBusinessTicketsMessagesScope:
         return AsyncBusinessTicketsMessagesScope(self._transport, self._bindings)
+
+class AsyncBusinessWorkScope(object):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def projects(self) -> AsyncBusinessWorkProjectsScope:
+        return AsyncBusinessWorkProjectsScope(self._transport, self._bindings)
+
+    @property
+    def summary(self) -> AsyncBusinessWorkSummaryScope:
+        return AsyncBusinessWorkSummaryScope(self._transport, self._bindings)
+
+    @property
+    def tasks(self) -> AsyncBusinessWorkTasksScope:
+        return AsyncBusinessWorkTasksScope(self._transport, self._bindings)
+
+    @property
+    def tokens(self) -> AsyncBusinessWorkTokensScope:
+        return AsyncBusinessWorkTokensScope(self._transport, self._bindings)
 
 class AsyncFeedbackScope(object):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:

@@ -29,6 +29,7 @@ import (
 	"github.com/manyforge/manyforge/internal/analytics"
 	"github.com/manyforge/manyforge/internal/authz"
 	"github.com/manyforge/manyforge/internal/automations"
+	"github.com/manyforge/manyforge/internal/clidist"
 	"github.com/manyforge/manyforge/internal/codexoauth"
 	"github.com/manyforge/manyforge/internal/connectors"
 	"github.com/manyforge/manyforge/internal/connectors/jira"
@@ -61,6 +62,7 @@ import (
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
 	"github.com/manyforge/manyforge/internal/webui"
+	"github.com/manyforge/manyforge/internal/work"
 	"github.com/manyforge/manyforge/migrations"
 
 	"github.com/google/uuid"
@@ -322,6 +324,13 @@ func main() {
 	// raw events, so the dashboard does not slow down as volume grows.
 	analyticsSvc := analytics.NewService(database)
 	analyticsH := analytics.NewHandler(analyticsSvc)
+	// Spec 018 Work Board: the management API (work.read / work.write) plus the `mf sync`
+	// endpoint, which authenticates a project-scoped mfw_ token and runs as its issuer. Agents
+	// sync after every mutation, so the per-token budget is generous; it bounds a leaked or
+	// runaway token rather than normal use.
+	workSvc := &work.Service{DB: database}
+	workH := work.NewHandler(workSvc)
+	workSyncH := work.NewSyncHandler(workSvc, ratelimit.NewTokenBucket(work.SyncTokenRateRPS, work.SyncTokenRateBurst))
 
 	// US2 agent-runtime: agent definition CRUD. Each Create also mints the agent's
 	// kind='agent' principal (its acting identity). Gated by agents.configure
@@ -964,6 +973,17 @@ func main() {
 		analyticsPublic:  analyticsPublicH,
 		codingReviews:    codingH,
 		githubApp:        githubAppH,
+		work:             workH,
+		workSync:         workSyncH,
+		workRead:         httpx.RequirePermission(database, permResolve, authz.PermWorkRead, businessIDFromPath),
+		workWrite:        httpx.RequirePermission(database, permResolve, authz.PermWorkWrite, businessIDFromPath),
+		// Pre-auth per-IP ceiling for `mf sync`. Deliberately NOT the shared ingest bucket
+		// (2 rps): several agents behind one NAT each sync after every mutation. The
+		// per-token budget inside the handler is the tighter, post-auth bound.
+		workSyncLimit: httpx.RateLimit(
+			ratelimit.NewTokenBucket(workSyncIPRateRPS, workSyncIPRateBurst),
+			func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) },
+		),
 	})
 
 	// Same-origin Angular SPA (Task 1.2). Only registered in ui_embed builds —
@@ -971,6 +991,11 @@ func main() {
 	// never need a built frontend. chi is a trie matched by specificity, not
 	// registration order: "/api/v1/*", "/healthz", "/readyz", and "/metrics"
 	// above all win over this catch-all regardless of where it's mounted.
+	// Work Board CLI downloads (spec 018): /cli/install.sh and /cli/mf/{os}/{arch},
+	// served from the binaries the image builds into /cli. Mounted beside the SPA,
+	// outside /api/v1, because they are plain files rather than API operations.
+	(&clidist.Handler{Dir: "/cli", BaseURL: cfg.PublicBaseURL}).Routes(mux)
+
 	if h, ok := webui.Handler(); ok {
 		mux.Handle("/*", h)
 	}
@@ -1307,7 +1332,24 @@ type apiHandlers struct {
 	// (operator gate / in-handler perm gate applied inside the route methods), and the
 	// per-business install-url behind the connectors.manage {id}-path gate.
 	githubApp *githubapp.Handler
+
+	// work is the Spec 018 Work Board management handler; workRead / workWrite gate its read
+	// slice (work.read) and its mutation + token-management slice (work.write), same
+	// RLS-bound 404-on-lacking-perm semantics as the other groups.
+	work      *work.Handler
+	workRead  func(http.Handler) http.Handler
+	workWrite func(http.Handler) http.Handler
+	// workSync is the token-authenticated `mf sync` endpoint, mounted in its own public group
+	// (NOT under RequireAuth) behind workSyncLimit, a pre-auth per-IP ceiling.
+	workSync      *work.SyncHandler
+	workSyncLimit func(http.Handler) http.Handler
 }
+
+// Pre-auth per-IP budget for POST /api/v1/work/sync.
+const (
+	workSyncIPRateRPS   = 20
+	workSyncIPRateBurst = 60
+)
 
 // mountAPIRoutes registers every /api/v1 route onto mux. It is the single source of
 // truth for the route table, shared by main (runtime) and the OpenAPI-drift test
@@ -1379,6 +1421,17 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			h.feedbackPublic.PublicRoutes(public, h.ingestLimit)
 			h.telemetryPublic.PublicRoutes(public, h.ingestLimit)
 		})
+		// Spec 018 `mf sync`: public (no JWT), authenticated in-handler by a project-scoped
+		// mfw_ work token and re-authorized as the token's issuer. Guard on nil so a
+		// zero-value apiHandlers does not panic.
+		if h.workSync != nil {
+			r.Group(func(ws chi.Router) {
+				if h.workSyncLimit != nil {
+					ws.Use(h.workSyncLimit)
+				}
+				h.workSync.Routes(ws)
+			})
+		}
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
 			h.account.ProtectedRoutes(pr)
@@ -1504,6 +1557,12 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				fw.Use(h.feedbackWrite)
 				h.feedback.WriteRoutes(fw)
 			})
+			// Spec 018 Work Board: projects/tasks/summary reads gated on work.read; task and
+			// project mutations plus work-token management gated on work.write.
+			if h.work != nil {
+				pr.Group(func(wr chi.Router) { wr.Use(h.workRead); h.work.ReadRoutes(wr) })
+				pr.Group(func(ww chi.Router) { ww.Use(h.workWrite); h.work.WriteRoutes(ww) })
+			}
 			if h.mailingSetup != nil {
 				pr.Group(func(mr chi.Router) { mr.Use(h.mailingRead); h.mailingSetup.ReadRoutes(mr) })
 			}

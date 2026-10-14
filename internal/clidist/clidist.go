@@ -10,7 +10,7 @@
 package clidist
 
 import (
-	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,7 +55,7 @@ func (h *Handler) binary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil || st.IsDir() {
 		http.NotFound(w, r)
@@ -78,7 +78,7 @@ func (h *Handler) installScript(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	fmt.Fprint(w, InstallScript(base))
+	_, _ = io.WriteString(w, InstallScript(base))
 }
 
 // InstallScript renders the installer for an instance at base.

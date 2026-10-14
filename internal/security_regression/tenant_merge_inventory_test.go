@@ -96,6 +96,9 @@ var tenantMergeTableInventory = map[string]string{
 	"ticket":                            "direct_root_rewrite",
 	"ticket_message":                    "direct_root_rewrite",
 	"ticket_tag":                        "direct_root_rewrite",
+	"work_project":                      "drain_fence_then_rewrite",
+	"work_task":                         "drain_fence_then_rewrite",
+	"work_token":                        "drain_fence_then_rewrite",
 }
 
 // tenantMergeTenantFKInventory is the reviewed set of composite/root foreign
@@ -213,6 +216,11 @@ var tenantMergeTenantFKInventory = map[string]bool{
 	"ticket_message.ticket_message_ticket_id_tenant_root_id_fkey":                                    true,
 	"ticket_tag.ticket_tag_business_id_tenant_root_id_fkey":                                          true,
 	"ticket_tag.ticket_tag_ticket_id_tenant_root_id_fkey":                                            true,
+	"work_project.work_project_business_fk":                                                          true,
+	"work_task.work_task_business_fk":                                                                true,
+	"work_task.work_task_project_fk":                                                                 true,
+	"work_token.work_token_business_fk":                                                              true,
+	"work_token.work_token_project_fk":                                                               true,
 }
 
 // The two deliberate RLS exceptions are still deny-by-default or global by
@@ -308,6 +316,9 @@ var tenantMergeImmutabilityInventory = map[string]string{
 	"ticket.ticket_troot_immutable":                                                           "support_tenant_root_immutable",
 	"ticket_message.ticket_message_troot_immutable":                                           "support_tenant_root_immutable",
 	"ticket_tag.ticket_tag_troot_immutable":                                                   "support_tenant_root_immutable",
+	"work_project.work_project_troot_immutable":                                               "support_tenant_root_immutable",
+	"work_task.work_task_troot_immutable":                                                     "support_tenant_root_immutable",
+	"work_token.work_token_troot_immutable":                                                   "support_tenant_root_immutable",
 }
 
 func TestTenantMergeInventoryCoversEveryTenantRootTable(t *testing.T) {

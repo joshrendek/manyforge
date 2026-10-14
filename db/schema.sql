@@ -1553,3 +1553,64 @@ CREATE TABLE mailing_brand (
     UNIQUE (business_id),
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
 );
+
+CREATE SEQUENCE work_task_rev_seq;
+
+CREATE TABLE work_project (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    slug           text NOT NULL,
+    name           text NOT NULL,
+    key_prefix     text NOT NULL,
+    created_by     uuid,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (business_id, slug),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id)
+);
+
+CREATE TABLE work_task (
+    id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id          uuid NOT NULL,
+    tenant_root_id       uuid NOT NULL,
+    project_id           uuid NOT NULL,
+    key                  text NOT NULL,
+    title                text NOT NULL,
+    description          text NOT NULL DEFAULT '',
+    notes                text NOT NULL DEFAULT '',
+    lane                 text NOT NULL DEFAULT 'agent',
+    status               text NOT NULL DEFAULT 'todo',
+    priority             smallint NOT NULL DEFAULT 2,
+    type                 text NOT NULL DEFAULT 'task',
+    assignee             text NOT NULL DEFAULT '',
+    labels               text[] NOT NULL DEFAULT '{}',
+    blocked_by           text[] NOT NULL DEFAULT '{}',
+    rev                  bigint NOT NULL,
+    created_by_principal uuid,
+    created_at           timestamptz NOT NULL DEFAULT now(),
+    updated_at           timestamptz NOT NULL DEFAULT now(),
+    closed_at            timestamptz,
+    UNIQUE (id, tenant_root_id),
+    UNIQUE (project_id, key),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (project_id, tenant_root_id) REFERENCES work_project (id, tenant_root_id) ON DELETE CASCADE
+);
+
+CREATE TABLE work_token (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    project_id     uuid NOT NULL,
+    name           text NOT NULL,
+    token_hash     text NOT NULL UNIQUE,
+    token_prefix   text NOT NULL,
+    principal_id   uuid NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    last_used_at   timestamptz,
+    revoked_at     timestamptz,
+    UNIQUE (id, tenant_root_id),
+    FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
+    FOREIGN KEY (project_id, tenant_root_id) REFERENCES work_project (id, tenant_root_id) ON DELETE CASCADE
+);

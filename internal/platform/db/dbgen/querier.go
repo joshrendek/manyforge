@@ -361,6 +361,11 @@ type Querier interface {
 	// UUID-existence oracle). The agent read/write tools resolve a native ticket's external handle
 	// through this before calling the connector.
 	GetTicketConnectorRef(ctx context.Context, arg GetTicketConnectorRefParams) (GetTicketConnectorRefRow, error)
+	GetWorkProject(ctx context.Context, arg GetWorkProjectParams) (WorkProject, error)
+	GetWorkProjectBySlug(ctx context.Context, arg GetWorkProjectBySlugParams) (WorkProject, error)
+	GetWorkProjectCounts(ctx context.Context, arg GetWorkProjectCountsParams) (GetWorkProjectCountsRow, error)
+	GetWorkSummary(ctx context.Context, arg GetWorkSummaryParams) (GetWorkSummaryRow, error)
+	GetWorkTaskByKey(ctx context.Context, arg GetWorkTaskByKeyParams) (WorkTask, error)
 	HasOwnerRole(ctx context.Context, arg HasOwnerRoleParams) (bool, error)
 	IncrementFeedbackPostVoteCount(ctx context.Context, arg IncrementFeedbackPostVoteCountParams) (int32, error)
 	// Agent runtime (spec 003 US1a) — per-business BYO provider credential queries.
@@ -539,6 +544,25 @@ type Querier interface {
 	// InsertTicketTag inserts one tag for a ticket (the second half of tag
 	// replacement). PK (ticket_id, tag); the service dedups before calling.
 	InsertTicketTag(ctx context.Context, arg InsertTicketTagParams) error
+	// Work Board queries (spec 018). work_project/work_task/work_token are BUSINESS-scoped tables.
+	// Every query runs inside the caller's RLS principal context (db.WithPrincipal) — for the
+	// token-authenticated sync path that principal is the token's issuer. In addition, every
+	// id-taking query also filters on tenant_root_id, pushing the ownership predicate into SQL
+	// (dual enforcement) so a foreign-tenant id matches zero rows ⇒ ErrNotFound (no oracle).
+	//
+	// rev is drawn from work_task_rev_seq on EVERY insert/update. Callers must hold the parent
+	// project row lock (LockWorkProject) first so a project's rev order equals its commit order.
+	// The token plaintext never reaches SQL: InsertWorkToken stores the SHA-256 hash and no query
+	// here returns token_hash.
+	// ---- projects ----
+	InsertWorkProject(ctx context.Context, arg InsertWorkProjectParams) (WorkProject, error)
+	// ---- tasks ----
+	// InsertWorkTask stamps closed_at when a task is created already done/canceled. created_at /
+	// closed_at may be supplied by a sync create (an `mf` import preserving original timestamps);
+	// NULL means now(), and closed_at is ignored unless the status is closed.
+	InsertWorkTask(ctx context.Context, arg InsertWorkTaskParams) (WorkTask, error)
+	// ---- tokens ----
+	InsertWorkToken(ctx context.Context, arg InsertWorkTokenParams) (InsertWorkTokenRow, error)
 	IsAccountVerifiedByPrincipal(ctx context.Context, id uuid.UUID) (bool, error)
 	// True if candidate ($2) is the node ($1) itself or a descendant of it.
 	IsDescendant(ctx context.Context, arg IsDescendantParams) (bool, error)
@@ -754,7 +778,16 @@ type Querier interface {
 	// Run-path: the discovery loop reads this under the AGENT principal (RLS scopes it to the
 	// agent's business) to classify discovered tools.
 	ListToolPoliciesByServer(ctx context.Context, mcpServerID uuid.UUID) ([]ListToolPoliciesByServerRow, error)
+	ListWorkProjectsWithCounts(ctx context.Context, arg ListWorkProjectsWithCountsParams) ([]ListWorkProjectsWithCountsRow, error)
+	// ListWorkTasks is the board view: open tasks plus those closed in the last 14 days, unless
+	// include_closed.
+	ListWorkTasks(ctx context.Context, arg ListWorkTasksParams) ([]WorkTask, error)
+	// ListWorkTasksSince is the sync pull: every task whose rev moved past the client's cursor.
+	ListWorkTasksSince(ctx context.Context, arg ListWorkTasksSinceParams) ([]WorkTask, error)
+	ListWorkTokens(ctx context.Context, arg ListWorkTokensParams) ([]ListWorkTokensRow, error)
 	LockAutomationVersion(ctx context.Context, arg LockAutomationVersionParams) (AutomationVersion, error)
+	// LockWorkProject serializes every task write in a project (web UI and sync alike).
+	LockWorkProject(ctx context.Context, arg LockWorkProjectParams) (WorkProject, error)
 	// Idempotency claim: flip approved -> executed iff still approved. Zero rows means a
 	// prior delivery already executed it (or it was denied) -> the executor skips.
 	MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExecutedParams) (ApprovalItem, error)
@@ -835,6 +868,8 @@ type Querier interface {
 	RevokeMailingListKey(ctx context.Context, arg RevokeMailingListKeyParams) (MailingListKey, error)
 	RevokeRefreshFamily(ctx context.Context, familyID uuid.UUID) error
 	RevokeTelemetryClient(ctx context.Context, arg RevokeTelemetryClientParams) (TelemetryClient, error)
+	// RevokeWorkToken is idempotent: an already-revoked token keeps its original revoked_at.
+	RevokeWorkToken(ctx context.Context, arg RevokeWorkTokenParams) (RevokeWorkTokenRow, error)
 	// Invitation lifecycle queries. Create/list/revoke/resend run under the inviter's
 	// principal (a member with members.manage), so RLS scopes them to the business.
 	// Acceptance is handled by the accept_invitation() SECURITY DEFINER function
@@ -958,6 +993,10 @@ type Querier interface {
 	// updated_at but NEVER last_message_at — triage is not a message. Scoped to
 	// (id, business_id, tenant_root_id) for dual enforcement; runs in the caller's tx.
 	UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatusParams) error
+	// UpdateWorkTask is the single patch statement shared by the web PATCH and sync `update`/`note`
+	// ops: a NULL narg preserves the column. note_entry is appended to notes (newline-joined).
+	// status → done/canceled stamps closed_at (keeping an earlier stamp); any other status clears it.
+	UpdateWorkTask(ctx context.Context, arg UpdateWorkTaskParams) (WorkTask, error)
 	// UpsertCodexCredential creates or replaces the codex credential on a successful connect. Mirrors
 	// InsertAIProviderCredential's tenant_root_id derivation; ON CONFLICT (business_id, provider)
 	// replaces the token set + account id/plan/expiry (a re-connect after a manual-token credential).

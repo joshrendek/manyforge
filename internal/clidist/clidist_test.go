@@ -26,7 +26,7 @@ func get(t *testing.T, url string) (*http.Response, string) {
 	if err != nil {
 		t.Fatalf("get %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var b strings.Builder
 	buf := make([]byte, 4096)
 	for {

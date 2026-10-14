@@ -34,6 +34,7 @@ import (
 	"github.com/manyforge/manyforge/internal/telemetry"
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
+	"github.com/manyforge/manyforge/internal/work"
 )
 
 // normalizePath collapses every `{param}` segment to `{}` and trims a trailing
@@ -120,6 +121,11 @@ func testHandlers() apiHandlers {
 		connectors:       connectors.NewHandler(&connectors.Service{}),
 		connWebhookH:     connectors.NewWebhookHandler(nil, nil, nil, nil),
 		connectorsManage: noop,
+		work:             work.NewHandler(&work.Service{}),
+		workRead:         noop,
+		workWrite:        noop,
+		workSync:         work.NewSyncHandler(&work.Service{}, nil),
+		workSyncLimit:    noop,
 	}
 }
 

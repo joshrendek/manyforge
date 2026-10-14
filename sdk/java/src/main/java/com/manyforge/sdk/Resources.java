@@ -39,6 +39,7 @@ public final class Resources {
     private final BusinessRoles roles;
     private final BusinessTelemetry telemetry;
     private final BusinessTickets tickets;
+    private final BusinessWork work;
     public Business(Transport transport, String binding) {
       this.transport = Objects.requireNonNull(transport); this.binding = binding;
       this.accounting = new BusinessAccounting(transport, binding);
@@ -66,6 +67,7 @@ public final class Resources {
       this.roles = new BusinessRoles(transport, binding);
       this.telemetry = new BusinessTelemetry(transport, binding);
       this.tickets = new BusinessTickets(transport, binding);
+      this.work = new BusinessWork(transport, binding);
     }
     public BusinessAccounting accounting() { return accounting; }
     public BusinessAgentRuns agentRuns() { return agentRuns; }
@@ -92,6 +94,7 @@ public final class Resources {
     public BusinessRoles roles() { return roles; }
     public BusinessTelemetry telemetry() { return telemetry; }
     public BusinessTickets tickets() { return tickets; }
+    public BusinessWork work() { return work; }
   }
   public static class BusinessAccounting extends BusinessAccountingResource {
     public BusinessAccounting(Transport transport, String binding) {
@@ -537,6 +540,45 @@ public final class Resources {
   }
   public static class BusinessTicketsMessages extends BusinessTicketsMessagesResource {
     public BusinessTicketsMessages(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class BusinessWork {
+    protected final Transport transport;
+    protected final String binding;
+    private final BusinessWorkProjects projects;
+    private final BusinessWorkSummary summary;
+    private final BusinessWorkTasks tasks;
+    private final BusinessWorkTokens tokens;
+    public BusinessWork(Transport transport, String binding) {
+      this.transport = Objects.requireNonNull(transport); this.binding = binding;
+      this.projects = new BusinessWorkProjects(transport, binding);
+      this.summary = new BusinessWorkSummary(transport, binding);
+      this.tasks = new BusinessWorkTasks(transport, binding);
+      this.tokens = new BusinessWorkTokens(transport, binding);
+    }
+    public BusinessWorkProjects projects() { return projects; }
+    public BusinessWorkSummary summary() { return summary; }
+    public BusinessWorkTasks tasks() { return tasks; }
+    public BusinessWorkTokens tokens() { return tokens; }
+  }
+  public static class BusinessWorkProjects extends BusinessWorkProjectsResource {
+    public BusinessWorkProjects(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class BusinessWorkSummary extends BusinessWorkSummaryResource {
+    public BusinessWorkSummary(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class BusinessWorkTasks extends BusinessWorkTasksResource {
+    public BusinessWorkTasks(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class BusinessWorkTokens extends BusinessWorkTokensResource {
+    public BusinessWorkTokens(Transport transport, String binding) {
       super(transport, binding);
     }
   }

@@ -541,6 +541,86 @@
   {
     "audience": "management",
     "businessParam": "id",
+    "method": "create",
+    "operationId": "WorkProjectsCreate",
+    "pagination": null,
+    "resource": "work.projects"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "get",
+    "operationId": "WorkProjectsGet",
+    "pagination": null,
+    "resource": "work.projects"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "list",
+    "operationId": "WorkProjectsList",
+    "pagination": null,
+    "resource": "work.projects"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "get",
+    "operationId": "WorkSummaryGet",
+    "pagination": null,
+    "resource": "work.summary"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "create",
+    "operationId": "WorkTasksCreate",
+    "pagination": null,
+    "resource": "work.tasks"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "list",
+    "operationId": "WorkTasksList",
+    "pagination": null,
+    "resource": "work.tasks"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "update",
+    "operationId": "WorkTasksUpdate",
+    "pagination": null,
+    "resource": "work.tasks"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "create",
+    "operationId": "WorkTokensCreate",
+    "pagination": null,
+    "resource": "work.tokens"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "list",
+    "operationId": "WorkTokensList",
+    "pagination": null,
+    "resource": "work.tokens"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "revoke",
+    "operationId": "WorkTokensRevoke",
+    "pagination": null,
+    "resource": "work.tokens"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
     "method": "activate",
     "operationId": "activateAutomationVersion",
     "pagination": null,
