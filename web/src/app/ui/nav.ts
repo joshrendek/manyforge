@@ -1,7 +1,7 @@
 import {
   BarChart3, Bot, Building2, CheckCheck, GitBranch, GitPullRequest, Inbox, KeyRound,
   LayoutGrid, LucideIconData, Mail, MessageSquare, Plug, Receipt, Send, Server,
-  SlidersHorizontal, Users, Workflow,
+  SlidersHorizontal, SquareKanban, Users, Workflow,
 } from 'lucide-angular';
 
 export interface NavItem {
@@ -22,6 +22,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { label: 'Dashboard', route: '/dashboard', testid: 'nav-dashboard', icon: LayoutGrid },
     { label: 'Support', route: '/support', testid: 'nav-support', icon: Inbox },
     { label: 'Approvals', route: '/approvals', testid: 'nav-approvals', icon: CheckCheck },
+    { label: 'Work', route: '/work', testid: 'nav-work', icon: SquareKanban },
   ] },
   { label: 'Agents & Review', items: [
     { label: 'Agents', route: '/agents', testid: 'nav-agents', icon: Bot },

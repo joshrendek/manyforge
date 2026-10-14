@@ -43,6 +43,20 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/approvals/queue').then((m) => m.ApprovalsQueueComponent),
   },
   {
+    path: 'work',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/work/projects-list').then((m) => m.WorkProjectsListComponent),
+  },
+  {
+    // Business-scoped like the other detail routes, so switching business in the shell
+    // returns to /work instead of leaving a foreign project on screen.
+    path: 'work/:businessId/:pid',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./pages/work/project-board').then((m) => m.WorkProjectBoardComponent),
+  },
+  {
     path: 'credentials',
     pathMatch: 'full',
     redirectTo: 'credentials/ai',

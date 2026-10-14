@@ -8,6 +8,7 @@ import { AuthService, Profile } from './core/auth.service';
 import { BusinessService } from './core/business.service';
 import { ConnectorsService } from './core/connectors.service';
 import { CurrentBusinessService } from './core/current-business.service';
+import { WorkService } from './core/work.service';
 import { NAV_GROUPS, NAV_ITEMS } from './ui/nav';
 import { ThemeToggle } from './ui/theme-toggle/theme-toggle';
 import { ToastHost } from './ui/toast/toast';
@@ -24,6 +25,7 @@ export class App {
   private router = inject(Router);
   private approvals = inject(ApprovalsService);
   private connectors = inject(ConnectorsService);
+  private work = inject(WorkService);
   private businessApi = inject(BusinessService);
   private toasts = inject(ToastService);
   readonly currentBusiness = inject(CurrentBusinessService);
@@ -38,10 +40,12 @@ export class App {
   readonly navGroupsWithBadge = computed(() => {
     const approvals = this.approvals.pendingCount();
     const degraded = this.connectors.degradedCount();
+    const operatorAsks = this.work.openOperatorCount();
     const hasBusiness = !!this.currentBusiness.businessId();
     return NAV_GROUPS.map((group) => ({ ...group, items: group.items.map((item) => {
       const badge = item.route === '/approvals' ? approvals
-        : item.route === '/credentials/connector' ? degraded : 0;
+        : item.route === '/credentials/connector' ? degraded
+        : item.route === '/work' ? operatorAsks : 0;
       return hasBusiness && badge > 0 ? { ...item, badge } : item;
     }) }));
   });
@@ -99,6 +103,7 @@ export class App {
       untracked(() => {
         this.approvals.pendingCount.set(0);
         this.connectors.degradedCount.set(0);
+        this.work.openOperatorCount.set(0);
       });
       if (!authenticated || !id) return;
       const requests = new Subscription();
@@ -107,6 +112,9 @@ export class App {
       ))).subscribe());
       requests.add(timer(0, 20000).pipe(switchMap(() => this.connectors.list(id).pipe(
         catchError(() => { this.connectors.degradedCount.set(0); return EMPTY; }),
+      ))).subscribe());
+      requests.add(timer(0, 20000).pipe(switchMap(() => this.work.summary(id).pipe(
+        catchError(() => { this.work.openOperatorCount.set(0); return EMPTY; }),
       ))).subscribe());
       onCleanup(() => requests.unsubscribe());
     });
