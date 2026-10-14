@@ -69,4 +69,21 @@ describe('WorkService', () => {
     svc.revokeToken('b1', 'p1', 't1').subscribe();
     expect(mock.expectOne(`${base}/projects/p1/tokens/t1`).request.method).toBe('DELETE');
   });
+
+  it('refuses path segments that could traverse to another API route (404, no request)', () => {
+    const cases: [string, () => import('rxjs').Observable<unknown>][] = [
+      ['business ..', () => svc.listProjects('..')],
+      ['business with slash', () => svc.listProjects('b1/../../account')],
+      ['project ..', () => svc.listTasks('b1', '..')],
+      ['project encoded', () => svc.getProject('b1', '%2e%2e')],
+      ['task key ..', () => svc.updateTask('b1', 'p1', '..', { status: 'done' })],
+      ['token id ..', () => svc.revokeToken('b1', 'p1', '../../tokens')],
+    ];
+    for (const [name, call] of cases) {
+      let status = 0;
+      call().subscribe({ error: (e) => (status = e.status) });
+      expect(status, name).toBe(404);
+    }
+    mock.verify();
+  });
 });

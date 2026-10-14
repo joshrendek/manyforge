@@ -1,6 +1,6 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
-import { Observable, tap } from 'rxjs';
+import { Observable, tap, throwError } from 'rxjs';
 
 // Work Board (spec 018): per-business work projects whose tasks live in an `agent` lane (picked
 // up by coding agents through the `mf` CLI) or an `operator` lane (things only a human can do).
@@ -89,6 +89,36 @@ export interface WorkSummary {
   in_progress: number;
 }
 
+// Route params (businessId, project id, task key, token id) reach these URLs
+// straight from the address bar. encodeURIComponent leaves `..` intact, so a
+// crafted link could walk the authenticated request onto another API path
+// (client-side path traversal). Every segment must match its known shape.
+// Ids and slugs: no `.`, `/`, `%`, `?` or `#`, so nothing can climb or re-route.
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const KEY_RE = /^[a-z][a-z0-9]{0,11}-[a-z0-9]{2,16}(?:\.[0-9]{1,4}){0,3}$/;
+
+export class InvalidPathSegmentError extends Error {}
+
+export function segment(value: string, shape: RegExp): string {
+  if (!shape.test(value)) {
+    throw new InvalidPathSegmentError(`invalid path segment: ${JSON.stringify(value)}`);
+  }
+  return encodeURIComponent(value);
+}
+
+// guard turns a rejected segment into the same 404 the API returns for an
+// unknown resource, so callers' existing error handling applies.
+function guard<T>(build: () => Observable<T>): Observable<T> {
+  try {
+    return build();
+  } catch (e) {
+    if (e instanceof InvalidPathSegmentError) {
+      return throwError(() => new HttpErrorResponse({ status: 404, statusText: 'Not Found' }));
+    }
+    throw e;
+  }
+}
+
 @Injectable({ providedIn: 'root' })
 export class WorkService {
   private http = inject(HttpClient);
@@ -96,17 +126,19 @@ export class WorkService {
   readonly openOperatorCount = signal(0);
 
   private base(businessId: string): string {
-    return `/api/v1/businesses/${businessId}/work`;
+    return `/api/v1/businesses/${segment(businessId, ID_RE)}/work`;
   }
 
   private project(businessId: string, projectId: string): string {
-    return `${this.base(businessId)}/projects/${encodeURIComponent(projectId)}`;
+    return `${this.base(businessId)}/projects/${segment(projectId, ID_RE)}`;
   }
 
   summary(businessId: string): Observable<WorkSummary> {
-    return this.http
-      .get<WorkSummary>(`${this.base(businessId)}/summary`)
-      .pipe(tap((r) => this.openOperatorCount.set(r.open_operator ?? 0)));
+    return guard(() =>
+      this.http
+        .get<WorkSummary>(`${this.base(businessId)}/summary`)
+        .pipe(tap((r) => this.openOperatorCount.set(r.open_operator ?? 0))),
+    );
   }
 
   // Re-reads the badge after a mutation; failures zero it like the shell's poll does.
@@ -115,18 +147,20 @@ export class WorkService {
   }
 
   listProjects(businessId: string): Observable<{ items: WorkProject[] }> {
-    return this.http.get<{ items: WorkProject[] }>(`${this.base(businessId)}/projects`);
+    return guard(() =>
+      this.http.get<{ items: WorkProject[] }>(`${this.base(businessId)}/projects`),
+    );
   }
 
   createProject(
     businessId: string,
     body: { name: string; slug?: string; key_prefix?: string },
   ): Observable<WorkProject> {
-    return this.http.post<WorkProject>(`${this.base(businessId)}/projects`, body);
+    return guard(() => this.http.post<WorkProject>(`${this.base(businessId)}/projects`, body));
   }
 
   getProject(businessId: string, projectId: string): Observable<WorkProject> {
-    return this.http.get<WorkProject>(this.project(businessId, projectId));
+    return guard(() => this.http.get<WorkProject>(this.project(businessId, projectId)));
   }
 
   listTasks(
@@ -135,7 +169,9 @@ export class WorkService {
     opts: { includeClosed?: boolean } = {},
   ): Observable<{ items: WorkTask[] }> {
     const q = opts.includeClosed ? '?include_closed=true' : '';
-    return this.http.get<{ items: WorkTask[] }>(`${this.project(businessId, projectId)}/tasks${q}`);
+    return guard(() =>
+      this.http.get<{ items: WorkTask[] }>(`${this.project(businessId, projectId)}/tasks${q}`),
+    );
   }
 
   createTask(
@@ -143,7 +179,9 @@ export class WorkService {
     projectId: string,
     body: WorkTaskFields & { title: string },
   ): Observable<WorkTask> {
-    return this.http.post<WorkTask>(`${this.project(businessId, projectId)}/tasks`, body);
+    return guard(() =>
+      this.http.post<WorkTask>(`${this.project(businessId, projectId)}/tasks`, body),
+    );
   }
 
   updateTask(
@@ -152,25 +190,33 @@ export class WorkService {
     key: string,
     patch: WorkTaskPatch,
   ): Observable<WorkTask> {
-    return this.http.patch<WorkTask>(
-      `${this.project(businessId, projectId)}/tasks/${encodeURIComponent(key)}`,
-      patch,
+    return guard(() =>
+      this.http.patch<WorkTask>(
+        `${this.project(businessId, projectId)}/tasks/${segment(key, KEY_RE)}`,
+        patch,
+      ),
     );
   }
 
   listTokens(businessId: string, projectId: string): Observable<{ items: WorkToken[] }> {
-    return this.http.get<{ items: WorkToken[] }>(`${this.project(businessId, projectId)}/tokens`);
+    return guard(() =>
+      this.http.get<{ items: WorkToken[] }>(`${this.project(businessId, projectId)}/tokens`),
+    );
   }
 
   createToken(businessId: string, projectId: string, name: string): Observable<CreatedWorkToken> {
-    return this.http.post<CreatedWorkToken>(`${this.project(businessId, projectId)}/tokens`, {
-      name,
-    });
+    return guard(() =>
+      this.http.post<CreatedWorkToken>(`${this.project(businessId, projectId)}/tokens`, {
+        name,
+      }),
+    );
   }
 
   revokeToken(businessId: string, projectId: string, tokenId: string): Observable<void> {
-    return this.http.delete<void>(
-      `${this.project(businessId, projectId)}/tokens/${encodeURIComponent(tokenId)}`,
+    return guard(() =>
+      this.http.delete<void>(
+        `${this.project(businessId, projectId)}/tokens/${segment(tokenId, ID_RE)}`,
+      ),
     );
   }
 }
