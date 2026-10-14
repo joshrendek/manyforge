@@ -49,8 +49,8 @@ func TestSniffAttachmentsDropsDisallowedAndOversized(t *testing.T) {
 		t.Fatalf("staged = %+v, want only ok.png", staged)
 	}
 	if len(dropped) != 2 ||
-		dropped[0] != (ticketing.DroppedAttachment{Filename: "run.exe", DetectedType: "application/octet-stream", Size: int64(len(elf))}) ||
-		dropped[1] != (ticketing.DroppedAttachment{Filename: "huge.png", DetectedType: "image/png", Size: int64(len(big))}) {
+		dropped[0] != (ticketing.DroppedAttachment{Filename: "run.exe", DetectedType: "application/octet-stream", Size: int64(len(elf)), Reason: ticketing.DropReasonDisallowedType}) ||
+		dropped[1] != (ticketing.DroppedAttachment{Filename: "huge.png", DetectedType: "image/png", Size: int64(len(big)), Reason: ticketing.DropReasonTooLarge}) {
 		t.Fatalf("dropped = %+v", dropped)
 	}
 }
@@ -123,7 +123,7 @@ func TestSniffAttachmentsCapsAcceptedCount(t *testing.T) {
 	if len(dropped) != extra {
 		t.Fatalf("dropped %d, want %d over-cap parts recorded", len(dropped), extra)
 	}
-	want := ticketing.DroppedAttachment{Filename: "first-over.png", DetectedType: "image/png", Size: int64(len(png))}
+	want := ticketing.DroppedAttachment{Filename: "first-over.png", DetectedType: "image/png", Size: int64(len(png)), Reason: ticketing.DropReasonLimitExceeded}
 	if dropped[0] != want {
 		t.Fatalf("dropped[0] = %+v, want %+v", dropped[0], want)
 	}
@@ -163,7 +163,7 @@ func TestSniffAttachmentsCapsAcceptedTotalBytes(t *testing.T) {
 	if len(staged) != 3 || staged[0].filename != "a.png" || staged[1].filename != "b.png" || staged[2].filename != "d.png" {
 		t.Fatalf("staged = %d parts, want a.png, b.png and the small d.png that still fits", len(staged))
 	}
-	want := ticketing.DroppedAttachment{Filename: "c.png", DetectedType: "image/png", Size: int64(len(part))}
+	want := ticketing.DroppedAttachment{Filename: "c.png", DetectedType: "image/png", Size: int64(len(part)), Reason: ticketing.DropReasonLimitExceeded}
 	if len(dropped) != 1 || dropped[0] != want {
 		t.Fatalf("dropped = %+v, want [%+v]", dropped, want)
 	}
@@ -178,8 +178,41 @@ func TestSniffAttachmentsWithoutBlobStoreDropsAllowedParts(t *testing.T) {
 	if len(staged) != 0 {
 		t.Fatalf("staged = %+v, want none without a blob store", staged)
 	}
-	want := ticketing.DroppedAttachment{Filename: "shot.png", DetectedType: "image/png", Size: int64(len(png))}
+	want := ticketing.DroppedAttachment{Filename: "shot.png", DetectedType: "image/png", Size: int64(len(png)), Reason: ticketing.DropReasonStorageDisabled}
 	if len(dropped) != 1 || dropped[0] != want {
 		t.Fatalf("dropped = %+v, want [%+v]", dropped, want)
+	}
+}
+
+// manyforge-22zq: every drop path records why, so the thread can tell a
+// disallowed type from an over-cap part. A disallowed part with no blob store is
+// still reported as a disallowed type (the more specific reason wins).
+func TestSniffAttachmentsRecordsDropReason(t *testing.T) {
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
+	elf := []byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	big := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 100)...)
+	over := make([]ParsedAttachment, maxAcceptedAttachments+1)
+	for i := range over {
+		over[i] = ParsedAttachment{FileName: "p.png", Content: png}
+	}
+	cases := []struct {
+		name  string
+		svc   *Service
+		parts []ParsedAttachment
+		want  string
+	}{
+		{"disallowed type", &Service{blob: fileStore(t), cfg: Config{AttachmentMaxBytes: 64}}, []ParsedAttachment{{FileName: "x.exe", Content: elf}}, ticketing.DropReasonDisallowedType},
+		{"disallowed type without store", &Service{cfg: Config{AttachmentMaxBytes: 64}}, []ParsedAttachment{{FileName: "x.exe", Content: elf}}, ticketing.DropReasonDisallowedType},
+		{"too large", &Service{blob: fileStore(t), cfg: Config{AttachmentMaxBytes: 64}}, []ParsedAttachment{{FileName: "big.png", Content: big}}, ticketing.DropReasonTooLarge},
+		{"storage disabled", &Service{cfg: Config{AttachmentMaxBytes: 64}}, []ParsedAttachment{{FileName: "a.png", Content: png}}, ticketing.DropReasonStorageDisabled},
+		{"count limit", &Service{blob: fileStore(t), cfg: Config{AttachmentMaxBytes: 64}}, over, ticketing.DropReasonLimitExceeded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, dropped := tc.svc.sniffAttachments(tc.parts)
+			if len(dropped) != 1 || dropped[0].Reason != tc.want {
+				t.Fatalf("dropped = %+v, want one with reason %q", dropped, tc.want)
+			}
+		})
 	}
 }

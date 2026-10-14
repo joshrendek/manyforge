@@ -34,6 +34,8 @@ public final class DnsRecordState {
 
   public static final DnsRecordState FAIL = new DnsRecordState("fail");
 
+  public static final DnsRecordState NONE = new DnsRecordState("none");
+
   private final String value;
   @JsonCreator(mode = JsonCreator.Mode.DELEGATING) public DnsRecordState(String value) { this.value = value; }
   @JsonValue public String getValue() { return value; }

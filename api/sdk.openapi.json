@@ -4671,12 +4671,13 @@
         "type": "string"
       },
       "DnsRecordState": {
-        "description": "observed state of a DNS-backed check (DKIM/SPF) at last verification (FR-013/FR-019).",
+        "description": "observed state of a DNS-backed check (DKIM/SPF) at last verification (FR-013/FR-019), or a message authentication verdict (spf/dkim/dmarc_result). none — the sender's domain publishes no policy; message authentication results only (DNS record checks never report it).",
         "enum": [
           "unknown",
           "pending",
           "pass",
-          "fail"
+          "fail",
+          "none"
         ],
         "type": "string"
       },
@@ -4742,6 +4743,16 @@
             "type": "string"
           },
           "filename": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "why the attachment was not stored: disallowed_type (sniffed type outside the allowlist), too_large (over the per-attachment size cap), limit_exceeded (over the per-message attachment count or total-size cap), storage_disabled (no attachment storage configured). Absent on attachments dropped before the reason was recorded; treat as unknown.",
+            "enum": [
+              "disallowed_type",
+              "too_large",
+              "limit_exceeded",
+              "storage_disabled"
+            ],
             "type": "string"
           },
           "size": {

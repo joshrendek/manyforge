@@ -20,4 +20,6 @@ const (
 	DnsRecordStatePASS DnsRecordState = "pass"
 
 	DnsRecordStateFAIL DnsRecordState = "fail"
+
+	DnsRecordStateNONE DnsRecordState = "none"
 )

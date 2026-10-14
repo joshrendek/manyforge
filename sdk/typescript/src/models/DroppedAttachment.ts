@@ -18,8 +18,18 @@ import { convertModel, type JsonValue } from '../model-support.js';
 export interface DroppedAttachment {
     detectedType: string;
     filename: string;
+    reason?: DroppedAttachmentReasonEnum;
     size: bigint;
 }
+
+export const DroppedAttachmentReasonEnum = {
+    DisallowedType: 'disallowed_type',
+    TooLarge: 'too_large',
+    LimitExceeded: 'limit_exceeded',
+    StorageDisabled: 'storage_disabled',
+
+} as const;
+export type DroppedAttachmentReasonEnum = typeof DroppedAttachmentReasonEnum[keyof typeof DroppedAttachmentReasonEnum] | (string & {});
 
 
 

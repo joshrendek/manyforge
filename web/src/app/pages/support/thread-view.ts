@@ -16,6 +16,7 @@ import { AuthService, Profile } from '../../core/auth.service';
 import { Agent, AgentsService } from '../../core/agents.service';
 import { ToastService } from '../../ui/toast/toast.service';
 import { formatBytes } from './format-bytes';
+import { authVerdictLabel, authVerdictTitle, droppedReasonLabel } from './message-labels';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { StatusPill } from '../../ui/status-pill/status-pill';
 import { Spinner } from '../../ui/spinner/spinner';
@@ -135,7 +136,10 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                   @for (d of m.dropped_attachments; track $index) {
                     <li class="attachment" data-testid="dropped-attachment">
                       <span class="filename">{{ d.filename || '(unnamed)' }}</span>
-                      <span class="muted">not stored · {{ d.detected_type }} · {{ bytes(d.size) }}</span>
+                      <span class="muted"
+                        ><span data-testid="dropped-reason">{{ droppedReason(d.reason) }}</span> ·
+                        {{ d.detected_type }} · {{ bytes(d.size) }}</span
+                      >
                     </li>
                   }
                 </ul>
@@ -143,14 +147,26 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
 
               @if (m.direction === 'inbound') {
                 <div class="auth-flags" data-testid="auth-flags">
-                  <span class="flag" [class]="m.spf_result" data-testid="spf-result"
-                    >SPF: {{ m.spf_result }}</span
+                  <span
+                    class="flag"
+                    [class]="m.spf_result"
+                    [attr.title]="authTitle('spf', m.spf_result)"
+                    data-testid="spf-result"
+                    >SPF: {{ authLabel('spf', m.spf_result) }}</span
                   >
-                  <span class="flag" [class]="m.dkim_result" data-testid="dkim-result"
-                    >DKIM: {{ m.dkim_result }}</span
+                  <span
+                    class="flag"
+                    [class]="m.dkim_result"
+                    [attr.title]="authTitle('dkim', m.dkim_result)"
+                    data-testid="dkim-result"
+                    >DKIM: {{ authLabel('dkim', m.dkim_result) }}</span
                   >
-                  <span class="flag" [class]="m.dmarc_result" data-testid="dmarc-result"
-                    >DMARC: {{ m.dmarc_result }}</span
+                  <span
+                    class="flag"
+                    [class]="m.dmarc_result"
+                    [attr.title]="authTitle('dmarc', m.dmarc_result)"
+                    data-testid="dmarc-result"
+                    >DMARC: {{ authLabel('dmarc', m.dmarc_result) }}</span
                   >
                 </div>
               }
@@ -611,6 +627,13 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
         color: var(--mf-danger-text);
         border-color: var(--mf-danger);
       }
+      /* none: nothing published to check against — neutral, unlike fail, and
+         solid where unknown is muted. */
+      .auth-flags .flag.none {
+        color: var(--mf-text);
+        border-color: var(--mf-border-strong);
+        background: var(--mf-surface-2);
+      }
 
       .message-empty {
         list-style: none;
@@ -679,6 +702,9 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
 })
 export class ThreadViewComponent implements OnInit {
   protected readonly bytes = formatBytes;
+  protected readonly droppedReason = droppedReasonLabel;
+  protected readonly authLabel = authVerdictLabel;
+  protected readonly authTitle = authVerdictTitle;
 
   private route = inject(ActivatedRoute);
   private api = inject(TicketService);

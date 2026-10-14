@@ -116,14 +116,30 @@ type Attachment struct {
 }
 
 // DroppedAttachment describes an inbound attachment that was not stored (spec 017
-// R15): its sniffed type is outside the allowlist or it exceeded the size cap. No
-// bytes exist for it. The json tags are the persisted jsonb shape AND the API shape;
-// the inbox ingest path records this same type.
+// R15). No bytes exist for it. The json tags are the persisted jsonb shape AND the
+// API shape; the inbox ingest path records this same type. Reason says why it was
+// dropped (one of the DropReason* values); rows stored before the field existed
+// have none, so it is omitted from the JSON and readers treat it as unknown.
 type DroppedAttachment struct {
 	Filename     string `json:"filename"`
 	DetectedType string `json:"detected_type"`
 	Size         int64  `json:"size"`
+	Reason       string `json:"reason,omitempty"`
 }
+
+// Why an inbound attachment was dropped (DroppedAttachment.Reason).
+const (
+	// DropReasonDisallowedType: the sniffed type is outside the blob allowlist.
+	DropReasonDisallowedType = "disallowed_type"
+	// DropReasonTooLarge: the part exceeds the per-attachment size cap.
+	DropReasonTooLarge = "too_large"
+	// DropReasonLimitExceeded: storing the part would exceed the per-message
+	// attachment count or total-size cap (SECREVIEW-M5).
+	DropReasonLimitExceeded = "limit_exceeded"
+	// DropReasonStorageDisabled: no blob store is configured, so no attachment
+	// can be stored at all.
+	DropReasonStorageDisabled = "storage_disabled"
+)
 
 // Message is the API view of one entry in a ticket thread, with SPF/DKIM/DMARC
 // projected from the stored auth_results jsonb into three typed fields.
@@ -1245,9 +1261,12 @@ func deliveryStatePtr(s dbgen.NullMessageDeliveryState) *string {
 }
 
 // projectAuthResults maps the stored {spf,dkim,dmarc} verdict triple onto the
-// DnsRecordState enum [unknown, pending, pass, fail]. Only "pass"/"fail"/"pending"
-// pass through; everything else (none, softfail, empty, missing, malformed) is
-// "unknown" — flagged, never trusted as a verdict (FR-019).
+// DnsRecordState enum [unknown, pending, pass, fail, none]. "pass"/"fail"/"pending"
+// pass through, as does "none" (RFC 8601: the sender's domain publishes no
+// policy/record, e.g. no DMARC record) so it is not confused with an unreadable
+// verdict; everything else (softfail, neutral, empty, missing, malformed) is
+// "unknown" — flagged, never trusted as a verdict (FR-019). This is the ONLY
+// producer of "none": DNS record checks (dkim_state/spf_state) never emit it.
 func projectAuthResults(raw []byte) (spf, dkim, dmarc string) {
 	spf, dkim, dmarc = "unknown", "unknown", "unknown"
 	if len(raw) == 0 {
@@ -1266,7 +1285,7 @@ func projectAuthResults(raw []byte) (spf, dkim, dmarc string) {
 
 func normState(s string) string {
 	switch s {
-	case "pass", "fail", "pending", "unknown":
+	case "pass", "fail", "pending", "unknown", "none":
 		return s
 	default:
 		return "unknown"

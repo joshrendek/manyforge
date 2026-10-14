@@ -10,8 +10,9 @@ import { Observable } from 'rxjs';
 export type TicketStatus = 'new' | 'open' | 'pending' | 'solved' | 'closed';
 export type TicketPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type MessageDirection = 'inbound' | 'outbound' | 'note';
-// Used for spf/dkim/dmarc result fields.
-export type DnsRecordState = 'unknown' | 'pending' | 'pass' | 'fail';
+// Used for spf/dkim/dmarc result fields. 'none' (the sender's domain publishes
+// no policy/record) only appears on message auth verdicts, never on DNS checks.
+export type DnsRecordState = 'unknown' | 'pending' | 'pass' | 'fail' | 'none';
 
 // ── Component schemas (openapi.yaml:352-404) ───────────────────────────────
 
@@ -58,10 +59,13 @@ export interface Ticket {
 }
 
 // An inbound attachment that was dropped instead of stored (spec 017 R15).
+// Why it was dropped; absent on drops recorded before the API carried a reason.
+export type DroppedAttachmentReason = 'disallowed_type' | 'too_large' | 'limit_exceeded' | 'storage_disabled';
 export interface DroppedAttachment {
   filename: string;
   detected_type: string;
   size: number;
+  reason?: DroppedAttachmentReason;
 }
 
 export interface TicketMessage {

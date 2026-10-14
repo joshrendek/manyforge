@@ -26,4 +26,6 @@ class DnsRecordState(OpenEnum):
 
     FAIL = 'fail'
 
+    NONE = 'none'
+
 
