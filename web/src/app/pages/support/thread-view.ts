@@ -16,7 +16,7 @@ import { AuthService, Profile } from '../../core/auth.service';
 import { Agent, AgentsService } from '../../core/agents.service';
 import { ToastService } from '../../ui/toast/toast.service';
 import { formatBytes } from './format-bytes';
-import { authVerdictLabel, authVerdictTitle, droppedReasonLabel } from './message-labels';
+import { authFlag, droppedReasonLabel } from './message-labels';
 import { PageHeader } from '../../ui/page-header/page-header';
 import { StatusPill } from '../../ui/status-pill/status-pill';
 import { Spinner } from '../../ui/spinner/spinner';
@@ -147,26 +147,17 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
 
               @if (m.direction === 'inbound') {
                 <div class="auth-flags" data-testid="auth-flags">
-                  <span
-                    class="flag"
-                    [class]="m.spf_result"
-                    [attr.title]="authTitle('spf', m.spf_result)"
-                    data-testid="spf-result"
-                    >SPF: {{ authLabel('spf', m.spf_result) }}</span
+                  @let spf = authFlag(m, 'spf');
+                  <span class="flag" [class]="spf.cls" [attr.title]="spf.title" data-testid="spf-result"
+                    >SPF: {{ spf.label }}</span
                   >
-                  <span
-                    class="flag"
-                    [class]="m.dkim_result"
-                    [attr.title]="authTitle('dkim', m.dkim_result)"
-                    data-testid="dkim-result"
-                    >DKIM: {{ authLabel('dkim', m.dkim_result) }}</span
+                  @let dkim = authFlag(m, 'dkim');
+                  <span class="flag" [class]="dkim.cls" [attr.title]="dkim.title" data-testid="dkim-result"
+                    >DKIM: {{ dkim.label }}</span
                   >
-                  <span
-                    class="flag"
-                    [class]="m.dmarc_result"
-                    [attr.title]="authTitle('dmarc', m.dmarc_result)"
-                    data-testid="dmarc-result"
-                    >DMARC: {{ authLabel('dmarc', m.dmarc_result) }}</span
+                  @let dmarc = authFlag(m, 'dmarc');
+                  <span class="flag" [class]="dmarc.cls" [attr.title]="dmarc.title" data-testid="dmarc-result"
+                    >DMARC: {{ dmarc.label }}</span
                   >
                 </div>
               }
@@ -703,8 +694,7 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
 export class ThreadViewComponent implements OnInit {
   protected readonly bytes = formatBytes;
   protected readonly droppedReason = droppedReasonLabel;
-  protected readonly authLabel = authVerdictLabel;
-  protected readonly authTitle = authVerdictTitle;
+  protected readonly authFlag = authFlag;
 
   private route = inject(ActivatedRoute);
   private api = inject(TicketService);

@@ -10,9 +10,16 @@ import { Observable } from 'rxjs';
 export type TicketStatus = 'new' | 'open' | 'pending' | 'solved' | 'closed';
 export type TicketPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type MessageDirection = 'inbound' | 'outbound' | 'note';
-// Used for spf/dkim/dmarc result fields. 'none' (the sender's domain publishes
-// no policy/record) only appears on message auth verdicts, never on DNS checks.
-export type DnsRecordState = 'unknown' | 'pending' | 'pass' | 'fail' | 'none';
+// Used for spf/dkim/dmarc result fields.
+export type DnsRecordState = 'unknown' | 'pending' | 'pass' | 'fail';
+// Raw recorded RFC 8601 verdict token per mechanism (pass, fail, none, softfail,
+// neutral, temperror, permerror, policy; more may appear). Omitted per
+// mechanism when not reported.
+export interface MessageAuthVerdicts {
+  spf?: string;
+  dkim?: string;
+  dmarc?: string;
+}
 
 // ── Component schemas (openapi.yaml:352-404) ───────────────────────────────
 
@@ -89,6 +96,8 @@ export interface TicketMessage {
   spf_result: DnsRecordState;
   dkim_result: DnsRecordState;
   dmarc_result: DnsRecordState;
+  // Finer-grained verdicts (e.g. dmarc "none"); absent when none were recorded.
+  auth_verdicts?: MessageAuthVerdicts | null;
   // Outbound delivery state (pending|sent|failed); null for inbound/note (US2).
   delivery_state?: 'pending' | 'sent' | 'failed' | null;
   created_at: string;

@@ -1,4 +1,4 @@
-import { DnsRecordState, DroppedAttachmentReason } from '../../core/ticket.service';
+import { DroppedAttachmentReason, TicketMessage } from '../../core/ticket.service';
 
 // droppedReasonLabel says why an inbound attachment was not stored. Drops
 // recorded before the API carried a reason (or with a reason this client does
@@ -20,30 +20,28 @@ export function droppedReasonLabel(reason: DroppedAttachmentReason | string | nu
 
 export type AuthMechanism = 'spf' | 'dkim' | 'dmarc';
 
-// authVerdictLabel renders a message authentication verdict. "none" means the
-// sender's domain publishes nothing to check against, which is not the same as
-// a failure or an unreadable result, so it gets its own wording per mechanism.
-export function authVerdictLabel(mechanism: AuthMechanism, state: DnsRecordState): string {
-  if (state !== 'none') return state;
-  switch (mechanism) {
-    case 'spf':
-      return 'no record';
-    case 'dkim':
-      return 'unsigned';
-    case 'dmarc':
-      return 'no policy';
-  }
+export interface AuthFlag {
+  label: string;
+  // CSS modifier (the verdict token): pass / fail / none are styled; anything
+  // else (unknown, softfail, ...) stays muted.
+  cls: string;
+  title: string | null;
 }
 
-// authVerdictTitle is the hover text for a "none" verdict; other states need none.
-export function authVerdictTitle(mechanism: AuthMechanism, state: DnsRecordState): string | null {
-  if (state !== 'none') return null;
-  switch (mechanism) {
-    case 'spf':
-      return "The sender's domain publishes no SPF record.";
-    case 'dkim':
-      return 'The message carries no DKIM signature.';
-    case 'dmarc':
-      return "The sender's domain publishes no DMARC policy.";
-  }
+const NONE_LABEL: Record<AuthMechanism, string> = { spf: 'no record', dkim: 'unsigned', dmarc: 'no policy' };
+const NONE_TITLE: Record<AuthMechanism, string> = {
+  spf: "The sender's domain publishes no SPF record.",
+  dkim: 'The message carries no DKIM signature.',
+  dmarc: "The sender's domain publishes no DMARC policy.",
+};
+
+// authFlag renders one message authentication verdict. The raw recorded token in
+// auth_verdicts wins when present (it distinguishes "none" — nothing published to
+// check against — from an unreadable result); otherwise the coarse *_result
+// field is used. "none" is worded per mechanism and styled neutrally, apart
+// from both fail and unknown.
+export function authFlag(m: TicketMessage, mech: AuthMechanism): AuthFlag {
+  const verdict = m.auth_verdicts?.[mech] || m[`${mech}_result`];
+  if (verdict === 'none') return { label: NONE_LABEL[mech], cls: 'none', title: NONE_TITLE[mech] };
+  return { label: verdict, cls: verdict, title: null };
 }

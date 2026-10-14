@@ -544,8 +544,16 @@ describe('ThreadViewComponent (Task 20 UI redesign)', () => {
     expect(q('[data-testid="dmarc-result"]')).not.toBeNull();
   });
 
-  it('shows a "none" DMARC verdict as no policy, styled apart from unknown and fail', () => {
-    boot(makeTicketTv(), [makeMessage({ direction: 'inbound', spf_result: 'pass', dkim_result: 'unknown', dmarc_result: 'none' })]);
+  it('shows a recorded "none" DMARC verdict as no policy, styled apart from unknown and fail', () => {
+    boot(makeTicketTv(), [
+      makeMessage({
+        direction: 'inbound',
+        spf_result: 'pass',
+        dkim_result: 'unknown',
+        dmarc_result: 'unknown',
+        auth_verdicts: { spf: 'pass', dmarc: 'none' },
+      }),
+    ]);
     const dmarc = q('[data-testid="dmarc-result"]') as HTMLElement;
     expect(dmarc.textContent).toContain('DMARC: no policy');
     expect(dmarc.classList.contains('none')).toBe(true);

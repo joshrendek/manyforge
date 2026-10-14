@@ -193,7 +193,8 @@ test('dropped attachments are listed with why they were not stored, and DMARC no
     ],
     spf_result: 'pass',
     dkim_result: 'pass',
-    dmarc_result: 'none',
+    dmarc_result: 'unknown',
+    auth_verdicts: { spf: 'pass', dkim: 'pass', dmarc: 'none' },
     delivery_state: null,
     created_at: '2026-10-10T00:00:00Z',
   };
