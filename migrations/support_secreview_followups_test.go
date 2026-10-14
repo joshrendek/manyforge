@@ -55,3 +55,34 @@ func TestSupportIngestAttachmentCapsMigrationDownUp(t *testing.T) {
 	}
 	check("after re-up", true)
 }
+
+// manyforge-jkgj: 0144 removes the ticket_message_id_collision blocker from
+// tenant_merge_reconciliation_plan; down restores it; re-up removes it again. The
+// function keeps its DEFINER/search_path and stays un-granted to PUBLIC.
+func TestTenantMergeMessageIDMigrationDownUp(t *testing.T) {
+	ctx := context.Background()
+	database, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close(ctx)
+
+	check := func(stage string, wantBlocker bool) {
+		t.Helper()
+		blocker, definer, pinned, _, publicExec := functionShape(ctx, t, database,
+			"tenant_merge_reconciliation_plan", "'ticket_message_id_collision'")
+		if blocker != wantBlocker || !definer || !pinned || publicExec {
+			t.Fatalf("%s: blocker=%v definer=%v search_path=%v public-exec=%v, want %v/true/true/false",
+				stage, blocker, definer, pinned, publicExec, wantBlocker)
+		}
+	}
+	check("after up", false)
+	if _, err := database.Super.Exec(ctx, readMigration(t, "0144_tenant_merge_message_id_per_business.down.sql")); err != nil {
+		t.Fatalf("0144 down: %v", err)
+	}
+	check("after down", true)
+	if _, err := database.Super.Exec(ctx, readMigration(t, "0144_tenant_merge_message_id_per_business.up.sql")); err != nil {
+		t.Fatalf("0144 up: %v", err)
+	}
+	check("after re-up", false)
+}

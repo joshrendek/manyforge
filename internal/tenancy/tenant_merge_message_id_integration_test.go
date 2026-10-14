@@ -4,6 +4,9 @@ package tenancy_test
 
 import (
 	"context"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +62,38 @@ func TestTenantMergeAllowsSharedMessageIDAcrossTenants(t *testing.T) {
 	}
 	t.Cleanup(func() { tdb.Close(context.Background()) })
 	svc := &tenancy.Service{DB: tdb.App}
+
+	// Dropping the blocker rests on ticket_message having no unique key that a
+	// tenant_root_id rewrite could make collide. Pin the full set so a new one forces
+	// a review of the merge preflight.
+	rows, err := tdb.Super.Query(ctx, `
+		SELECT pg_get_indexdef(i.indexrelid)
+		FROM pg_index i
+		WHERE i.indrelid = 'ticket_message'::regclass AND i.indisunique
+		ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uniques []string
+	for rows.Next() {
+		var def string
+		if err := rows.Scan(&def); err != nil {
+			t.Fatal(err)
+		}
+		uniques = append(uniques, def[strings.Index(def, " USING "):])
+	}
+	rows.Close()
+	wantUniques := []string{
+		" USING btree (business_id, message_id)",
+		" USING btree (connector_id, external_id) WHERE (connector_id IS NOT NULL)",
+		" USING btree (id)",
+		" USING btree (id, tenant_root_id)",
+		" USING btree (source_approval_item_id) WHERE (source_approval_item_id IS NOT NULL)",
+	}
+	sort.Strings(uniques)
+	if !reflect.DeepEqual(uniques, wantUniques) {
+		t.Fatalf("ticket_message unique keys = %q, want %q; re-check the merge preflight's Message-ID policy", uniques, wantUniques)
+	}
 
 	actor, sourceRoot := seedFounder(ctx, t, tdb, "merge-mid-source@x.test")
 	_, destinationRoot := seedFounder(ctx, t, tdb, "merge-mid-destination@x.test")
