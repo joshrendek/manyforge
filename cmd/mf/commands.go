@@ -142,9 +142,15 @@ func cmdLogin(a *app, args []string) error {
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
+	fromRepo := false
 	if r, err := a.openRepo(); err == nil {
-		if *server == "" {
-			*server = r.cfg.Server
+		switch {
+		case *server == "":
+			*server, fromRepo = r.cfg.Server, true
+		case r.cfg.Server != "" && !sameOrigin(*server, r.cfg.Server):
+			// The token is sent wherever .mf/config.json points; refuse to bind it
+			// to a server other than the one the operator named.
+			return usagef("--server %s does not match this repo's server %s (.mf/config.json)", *server, r.cfg.Server)
 		}
 		if *project == "" {
 			*project = r.cfg.Project
@@ -169,6 +175,9 @@ func cmdLogin(a *app, args []string) error {
 		return err
 	}
 	fprintf(a.stdout, "mf: token saved for %s project %q in %s\n", strings.TrimRight(*server, "/"), *project, path)
+	if fromRepo {
+		fprintf(a.stderr, "mf: the server came from .mf/config.json — make sure %s is your ManyForge instance (pass --server to pin it)\n", strings.TrimRight(*server, "/"))
+	}
 	return nil
 }
 
@@ -662,7 +671,7 @@ func cmdSetup(a *app, args []string) error {
 		root = r.root
 	}
 	path := filepath.Join(root, ".claude", "settings.json")
-	changed, err := installClaudeHooks(path)
+	changed, err := installClaudeHooks(root, path)
 	if err != nil {
 		return err
 	}

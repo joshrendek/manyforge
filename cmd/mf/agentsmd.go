@@ -67,6 +67,9 @@ func upsertAgentDocs(root string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := insideRoot(root, real); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
 		if !slices.Contains(targets, real) {
 			targets = append(targets, real)
 		}
@@ -104,7 +107,10 @@ const primeCommand = "mf prime"
 // installClaudeHooks merges `mf prime` into the SessionStart and PreCompact
 // hooks of a Claude Code settings.json, preserving every other key and hook.
 // It reports whether the file changed.
-func installClaudeHooks(path string) (bool, error) {
+func installClaudeHooks(root, path string) (bool, error) {
+	if err := insideRootIfExists(root, path); err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
@@ -168,4 +174,40 @@ func hasPrimeHook(entries []any) bool {
 		}
 	}
 	return false
+}
+
+// insideRoot rejects a resolved path outside the repo root. A cloned repo
+// controls its own symlinks, so following CLAUDE.md -> ~/.bashrc (or a
+// .claude -> ~ link) would turn `mf init` into a write anywhere in $HOME.
+func insideRoot(root, real string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(realRoot, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("resolves outside the repository (%s); refusing to write", real)
+	}
+	return nil
+}
+
+// insideRootIfExists applies insideRoot to the deepest existing ancestor of
+// path (path itself when it exists), so a symlinked parent directory is
+// caught before MkdirAll/write follow it.
+func insideRootIfExists(root, path string) error {
+	p := path
+	for {
+		if _, err := os.Lstat(p); err == nil {
+			real, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				return err
+			}
+			return insideRoot(root, real)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return nil
+		}
+		p = parent
+	}
 }
