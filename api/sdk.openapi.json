@@ -4744,6 +4744,16 @@
           "filename": {
             "type": "string"
           },
+          "reason": {
+            "description": "why the attachment was not stored: disallowed_type (sniffed type outside the allowlist), too_large (over the per-attachment size cap), limit_exceeded (over the per-message attachment count or total-size cap), storage_disabled (no attachment storage configured). Absent on attachments dropped before the reason was recorded; treat as unknown.",
+            "enum": [
+              "disallowed_type",
+              "too_large",
+              "limit_exceeded",
+              "storage_disabled"
+            ],
+            "type": "string"
+          },
           "size": {
             "format": "int64",
             "type": "integer"
@@ -6933,6 +6943,21 @@
         "required": [
           "status"
         ],
+        "type": "object"
+      },
+      "MessageAuthVerdicts": {
+        "description": "Per-mechanism RFC 8601 result tokens for an inbound message. Each value is one of pass, fail, none, softfail, neutral, temperror, permerror or policy (none: nothing published to check, e.g. no DMARC policy or no DKIM signature). Further RFC 8601 tokens may be added later, so treat unrecognised values as unknown. A mechanism is omitted when it was not reported.",
+        "properties": {
+          "dkim": {
+            "type": "string"
+          },
+          "dmarc": {
+            "type": "string"
+          },
+          "spf": {
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "MessageDirection": {
@@ -10874,6 +10899,15 @@
               "$ref": "#/components/schemas/Attachment"
             },
             "type": "array"
+          },
+          "auth_verdicts": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MessageAuthVerdicts"
+              }
+            ],
+            "description": "Raw message authentication verdicts as recorded from the trusted Authentication-Results header, finer-grained than spf_result/dkim_result/dmarc_result (e.g. dmarc \"none\" when the sender's domain publishes no DMARC policy). Omitted when no verdict was recorded.",
+            "nullable": true
           },
           "author_principal_id": {
             "description": "member who authored an outbound reply or note; null for inbound",

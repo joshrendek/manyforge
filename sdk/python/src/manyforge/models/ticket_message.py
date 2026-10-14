@@ -23,6 +23,7 @@ from uuid import UUID
 from manyforge.models.attachment import Attachment
 from manyforge.models.dns_record_state import DnsRecordState
 from manyforge.models.dropped_attachment import DroppedAttachment
+from manyforge.models.message_auth_verdicts import MessageAuthVerdicts
 from manyforge.models.message_direction import MessageDirection
 from manyforge.models.ticket_message_properties_delivery_state_enum import TicketMessagePropertiesDeliveryStateEnum
 
@@ -30,6 +31,7 @@ from manyforge.models.ticket_message_properties_delivery_state_enum import Ticke
 class TicketMessage(Model):
     """TicketMessage wire model. Unspecified fields are never sent."""
     attachments: List[Attachment] = Field(..., alias="attachments")
+    auth_verdicts: MessageAuthVerdicts | None | UnsetType = Field(default=UNSET, alias="auth_verdicts")
     author_principal_id: UUID | None = Field(..., alias="author_principal_id")
     body_html: str | None = Field(..., alias="body_html")
     body_text: str | None = Field(..., alias="body_text")

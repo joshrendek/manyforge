@@ -53,3 +53,28 @@ func TestToMessageRejectsCorruptDroppedAttachments(t *testing.T) {
 		t.Fatal("corrupt dropped_attachments must surface an error, not be swallowed")
 	}
 }
+
+// manyforge-22zq: the drop reason round-trips to the API, and a row stored before
+// the field existed omits it (the client treats a missing reason as unknown).
+func TestToMessageProjectsDropReason(t *testing.T) {
+	m := dbgen.TicketMessage{
+		ID: uuid.New(),
+		DroppedAttachments: []byte(`[{"filename":"a.png","detected_type":"image/png","size":3,"reason":"limit_exceeded"},` +
+			`{"filename":"old.exe","detected_type":"application/octet-stream","size":4}]`),
+	}
+	got, err := toMessage(m, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.DroppedAttachments) != 2 || got.DroppedAttachments[0].Reason != DropReasonLimitExceeded || got.DroppedAttachments[1].Reason != "" {
+		t.Fatalf("DroppedAttachments = %+v", got.DroppedAttachments)
+	}
+	raw, err := json.Marshal(toMessageResp(got))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"size":3,"reason":"limit_exceeded"}`) ||
+		!strings.Contains(string(raw), `{"filename":"old.exe","detected_type":"application/octet-stream","size":4}`) {
+		t.Fatalf("response JSON = %s", raw)
+	}
+}

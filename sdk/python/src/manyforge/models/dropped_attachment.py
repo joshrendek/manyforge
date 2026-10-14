@@ -17,13 +17,15 @@ from pydantic import Field, StrictBool, StrictBytes, StrictFloat, StrictInt, Str
 from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
+from manyforge.models.dropped_attachment_properties_reason_enum import DroppedAttachmentPropertiesReasonEnum
 
 
 class DroppedAttachment(Model):
     """DroppedAttachment wire model. Unspecified fields are never sent."""
     detected_type: str = Field(..., alias="detected_type")
     filename: str = Field(..., alias="filename")
+    reason: DroppedAttachmentPropertiesReasonEnum | UnsetType = Field(default=UNSET, alias="reason")
     size: StrictInt = Field(..., alias="size")
 
 

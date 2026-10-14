@@ -200,6 +200,7 @@ export * from './MemberPage.js';
 export * from './MemberUpdateRequest.js';
 export * from './MergeRequest.js';
 export * from './MergeResult.js';
+export * from './MessageAuthVerdicts.js';
 export * from './MessageDirection.js';
 export * from './ModelError.js';
 export * from './Node.js';

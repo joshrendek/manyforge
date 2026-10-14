@@ -116,14 +116,30 @@ type Attachment struct {
 }
 
 // DroppedAttachment describes an inbound attachment that was not stored (spec 017
-// R15): its sniffed type is outside the allowlist or it exceeded the size cap. No
-// bytes exist for it. The json tags are the persisted jsonb shape AND the API shape;
-// the inbox ingest path records this same type.
+// R15). No bytes exist for it. The json tags are the persisted jsonb shape AND the
+// API shape; the inbox ingest path records this same type. Reason says why it was
+// dropped (one of the DropReason* values); rows stored before the field existed
+// have none, so it is omitted from the JSON and readers treat it as unknown.
 type DroppedAttachment struct {
 	Filename     string `json:"filename"`
 	DetectedType string `json:"detected_type"`
 	Size         int64  `json:"size"`
+	Reason       string `json:"reason,omitempty"`
 }
+
+// Why an inbound attachment was dropped (DroppedAttachment.Reason).
+const (
+	// DropReasonDisallowedType: the sniffed type is outside the blob allowlist.
+	DropReasonDisallowedType = "disallowed_type"
+	// DropReasonTooLarge: the part exceeds the per-attachment size cap.
+	DropReasonTooLarge = "too_large"
+	// DropReasonLimitExceeded: storing the part would exceed the per-message
+	// attachment count or total-size cap (SECREVIEW-M5).
+	DropReasonLimitExceeded = "limit_exceeded"
+	// DropReasonStorageDisabled: no blob store is configured, so no attachment
+	// can be stored at all.
+	DropReasonStorageDisabled = "storage_disabled"
+)
 
 // Message is the API view of one entry in a ticket thread, with SPF/DKIM/DMARC
 // projected from the stored auth_results jsonb into three typed fields.
@@ -143,6 +159,9 @@ type Message struct {
 	SPFResult          string
 	DKIMResult         string
 	DMARCResult        string
+	// AuthVerdicts is the finer-grained recorded verdict per mechanism; nil when
+	// none was recorded.
+	AuthVerdicts *AuthVerdicts
 	// DeliveryState is the outbound lifecycle (pending|sent|failed); nil for
 	// inbound messages and notes. delivery_error is intentionally NEVER exposed.
 	DeliveryState *string
@@ -1229,6 +1248,7 @@ func toMessage(m dbgen.TicketMessage, atts []Attachment) (Message, error) {
 		SPFResult:          spf,
 		DKIMResult:         dkim,
 		DMARCResult:        dmarc,
+		AuthVerdicts:       projectAuthVerdicts(m.AuthResults),
 		DeliveryState:      deliveryStatePtr(m.DeliveryState),
 		CreatedAt:          m.CreatedAt,
 	}, nil
@@ -1244,22 +1264,31 @@ func deliveryStatePtr(s dbgen.NullMessageDeliveryState) *string {
 	return &v
 }
 
+// storedAuthResults is the {spf,dkim,dmarc} verdict triple the inbox stores in
+// ticket_message.auth_results (lowercase RFC 8601 result tokens).
+type storedAuthResults struct {
+	SPF   string `json:"spf"`
+	DKIM  string `json:"dkim"`
+	DMARC string `json:"dmarc"`
+}
+
+func decodeAuthResults(raw []byte) (storedAuthResults, bool) {
+	var v storedAuthResults
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil {
+		return storedAuthResults{}, false
+	}
+	return v, true
+}
+
 // projectAuthResults maps the stored {spf,dkim,dmarc} verdict triple onto the
 // DnsRecordState enum [unknown, pending, pass, fail]. Only "pass"/"fail"/"pending"
 // pass through; everything else (none, softfail, empty, missing, malformed) is
-// "unknown" — flagged, never trusted as a verdict (FR-019).
+// "unknown" — flagged, never trusted as a verdict (FR-019). The enum is frozen
+// for SDK compatibility; finer verdicts go out via projectAuthVerdicts.
 func projectAuthResults(raw []byte) (spf, dkim, dmarc string) {
-	spf, dkim, dmarc = "unknown", "unknown", "unknown"
-	if len(raw) == 0 {
-		return
-	}
-	var v struct {
-		SPF   string `json:"spf"`
-		DKIM  string `json:"dkim"`
-		DMARC string `json:"dmarc"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return
+	v, ok := decodeAuthResults(raw)
+	if !ok {
+		return "unknown", "unknown", "unknown"
 	}
 	return normState(v.SPF), normState(v.DKIM), normState(v.DMARC)
 }
@@ -1271,6 +1300,43 @@ func normState(s string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// AuthVerdicts carries the recorded RFC 8601 result token per mechanism
+// (manyforge-clk7), e.g. dmarc "none" when the sender's domain publishes no DMARC
+// policy. A mechanism with no allow-listed token is empty (omitted in JSON).
+type AuthVerdicts struct {
+	SPF   string `json:"spf,omitempty"`
+	DKIM  string `json:"dkim,omitempty"`
+	DMARC string `json:"dmarc,omitempty"`
+}
+
+// rfc8601Results is the allow-list of result tokens surfaced in AuthVerdicts
+// (RFC 8601 section 2.7). Anything else stored is dropped rather than echoed.
+var rfc8601Results = map[string]bool{
+	"pass": true, "fail": true, "none": true, "softfail": true,
+	"neutral": true, "temperror": true, "permerror": true, "policy": true,
+}
+
+func verdictToken(s string) string {
+	if rfc8601Results[s] {
+		return s
+	}
+	return ""
+}
+
+// projectAuthVerdicts returns the allow-listed stored verdicts, or nil when no
+// mechanism has one (no stored results, malformed jsonb, or only unknown tokens).
+func projectAuthVerdicts(raw []byte) *AuthVerdicts {
+	v, ok := decodeAuthResults(raw)
+	if !ok {
+		return nil
+	}
+	out := AuthVerdicts{SPF: verdictToken(v.SPF), DKIM: verdictToken(v.DKIM), DMARC: verdictToken(v.DMARC)}
+	if out == (AuthVerdicts{}) {
+		return nil
+	}
+	return &out
 }
 
 // --- arg/null helpers ---

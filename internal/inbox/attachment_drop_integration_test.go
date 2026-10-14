@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,7 +78,7 @@ func TestIngestDropsDisallowedAttachmentAndKeepsMessage(t *testing.T) {
 	if err := json.Unmarshal(raw, &dropped); err != nil {
 		t.Fatal(err)
 	}
-	want := ticketing.DroppedAttachment{Filename: "invoice.exe", DetectedType: "application/octet-stream", Size: int64(len(dropELF))}
+	want := ticketing.DroppedAttachment{Filename: "invoice.exe", DetectedType: "application/octet-stream", Size: int64(len(dropELF)), Reason: ticketing.DropReasonDisallowedType}
 	if len(dropped) != 1 || dropped[0] != want {
 		t.Fatalf("dropped = %+v, want [%+v]", dropped, want)
 	}
@@ -167,8 +169,8 @@ func TestIngestWithoutBlobStoreRecordsAllowedAttachmentAsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []ticketing.DroppedAttachment{
-		{Filename: "ok.png", DetectedType: "image/png", Size: int64(len(replayPNG))},
-		{Filename: "invoice.exe", DetectedType: "application/octet-stream", Size: int64(len(dropELF))},
+		{Filename: "ok.png", DetectedType: "image/png", Size: int64(len(replayPNG)), Reason: ticketing.DropReasonStorageDisabled},
+		{Filename: "invoice.exe", DetectedType: "application/octet-stream", Size: int64(len(dropELF)), Reason: ticketing.DropReasonDisallowedType},
 	}
 	if len(dropped) != len(want) || dropped[0] != want[0] || dropped[1] != want[1] {
 		t.Fatalf("dropped = %+v, want %+v", dropped, want)
@@ -220,5 +222,57 @@ func TestIngestStoredAttachmentFilenameWithNULStillIngests(t *testing.T) {
 	}
 	if filename != "badname.png" {
 		t.Fatalf("stored filename = %q, want badname.png", filename)
+	}
+}
+
+// manyforge-22zq: a part dropped by the SECREVIEW-M5 accepted-count cap is
+// recorded with reason limit_exceeded (not indistinguishable from a disallowed
+// type), and the parts under the cap are stored.
+func TestIngestRecordsOverCapAttachmentAsLimitExceeded(t *testing.T) {
+	ctx := context.Background()
+	tdb, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tdb.Close(context.Background()) })
+	ten := seedIngestTenant(ctx, t, tdb)
+	svc := newIngestService(ctx, t, tdb)
+
+	var b strings.Builder
+	b.WriteString("From: ada@example.com\r\nTo: " + ten.address + "\r\nSubject: many\r\n" +
+		"Date: Mon, 02 Jan 2006 15:04:05 -0700\r\nMessage-ID: <cap-1@example.com>\r\n" +
+		"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=BOUND\r\n\r\n" +
+		"--BOUND\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nlots attached\r\n")
+	enc := base64.StdEncoding.EncodeToString(replayPNG)
+	for i := 0; i <= maxAcceptedAttachments; i++ {
+		b.WriteString("--BOUND\r\nContent-Type: image/png\r\nContent-Disposition: attachment; filename=\"" +
+			fmt.Sprintf("p%02d.png", i) + "\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + enc + "\r\n")
+	}
+	b.WriteString("--BOUND--\r\n")
+
+	res, err := svc.Ingest(ctx, RawMessage{
+		Provider: "webhook:test", EnvelopeRecipient: ten.address, EnvelopeSender: "ada@example.com",
+		ReceivedAt: time.Now(), Raw: []byte(b.String()),
+	})
+	if err != nil {
+		t.Fatalf("ingest over the attachment cap must succeed: %v", err)
+	}
+	if n := countSuper(ctx, t, tdb.Super, "SELECT count(*) FROM attachment WHERE ticket_message_id=$1", res.MessageID); n != maxAcceptedAttachments {
+		t.Fatalf("stored attachments = %d, want the cap %d", n, maxAcceptedAttachments)
+	}
+	var raw []byte
+	if err := tdb.Super.QueryRow(ctx, "SELECT dropped_attachments FROM ticket_message WHERE id=$1", res.MessageID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var dropped []ticketing.DroppedAttachment
+	if err := json.Unmarshal(raw, &dropped); err != nil {
+		t.Fatal(err)
+	}
+	want := ticketing.DroppedAttachment{
+		Filename: fmt.Sprintf("p%02d.png", maxAcceptedAttachments), DetectedType: "image/png",
+		Size: int64(len(replayPNG)), Reason: ticketing.DropReasonLimitExceeded,
+	}
+	if len(dropped) != 1 || dropped[0] != want {
+		t.Fatalf("dropped = %+v, want [%+v]", dropped, want)
 	}
 }

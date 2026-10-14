@@ -457,6 +457,9 @@ func TestListMessagesWithAttachmentsAndAuth(t *testing.T) {
 	if m.SPFResult != "pass" || m.DKIMResult != "pass" || m.DMARCResult != "pass" {
 		t.Errorf("auth results not projected: spf=%q dkim=%q dmarc=%q", m.SPFResult, m.DKIMResult, m.DMARCResult)
 	}
+	if m.AuthVerdicts == nil || *m.AuthVerdicts != (AuthVerdicts{SPF: "pass", DKIM: "pass", DMARC: "pass"}) {
+		t.Errorf("auth verdicts not projected: %+v", m.AuthVerdicts)
+	}
 	if len(m.Attachments) != 1 || m.Attachments[0].Filename != "invoice.pdf" || m.Attachments[0].ContentType != "application/pdf" {
 		t.Errorf("attachment not projected: %+v", m.Attachments)
 	}

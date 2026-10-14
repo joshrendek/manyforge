@@ -14930,6 +14930,20 @@ components:
       - content_type
       - size
       - blob_key
+    MessageAuthVerdicts:
+      type: object
+      description: >-
+        Per-mechanism RFC 8601 result tokens for an inbound message. Each value is one of pass, fail, none,
+        softfail, neutral, temperror, permerror or policy (none: nothing published to check, e.g. no DMARC
+        policy or no DKIM signature). Further RFC 8601 tokens may be added later, so treat unrecognised
+        values as unknown. A mechanism is omitted when it was not reported.
+      properties:
+        spf:
+          type: string
+        dkim:
+          type: string
+        dmarc:
+          type: string
     DroppedAttachment:
       type: object
       description: An inbound attachment that was dropped instead of stored (spec 017 R15).
@@ -14942,6 +14956,18 @@ components:
         size:
           type: integer
           format: int64
+        reason:
+          type: string
+          enum:
+          - disallowed_type
+          - too_large
+          - limit_exceeded
+          - storage_disabled
+          description: >-
+            why the attachment was not stored: disallowed_type (sniffed type outside the allowlist),
+            too_large (over the per-attachment size cap), limit_exceeded (over the per-message attachment
+            count or total-size cap), storage_disabled (no attachment storage configured). Absent on
+            attachments dropped before the reason was recorded; treat as unknown.
       required:
       - filename
       - detected_type
@@ -21396,6 +21422,14 @@ components:
           $ref: '#/components/schemas/DnsRecordState'
         dmarc_result:
           $ref: '#/components/schemas/DnsRecordState'
+        auth_verdicts:
+          allOf:
+          - $ref: '#/components/schemas/MessageAuthVerdicts'
+          nullable: true
+          description: >-
+            Raw message authentication verdicts as recorded from the trusted Authentication-Results header,
+            finer-grained than spf_result/dkim_result/dmarc_result (e.g. dmarc "none" when the sender's
+            domain publishes no DMARC policy). Omitted when no verdict was recorded.
         delivery_state:
           type: string
           enum:

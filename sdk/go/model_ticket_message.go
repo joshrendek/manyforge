@@ -13,6 +13,7 @@ import "time"
 
 type TicketMessage struct {
 	Attachments        []Attachment                         `json:"attachments"`
+	AuthVerdicts       Optional[MessageAuthVerdicts]        `json:"auth_verdicts,omitzero"`
 	AuthorPrincipalId  Optional[string]                     `json:"author_principal_id,omitzero"`
 	BodyHtml           Optional[string]                     `json:"body_html,omitzero"`
 	BodyText           Optional[string]                     `json:"body_text,omitzero"`

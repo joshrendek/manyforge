@@ -50,11 +50,22 @@ func TestEnsureReplyTokenKeyGeneratesEphemeralKeyInDevelopment(t *testing.T) {
 	if err != nil || !generated {
 		t.Fatalf("EnsureReplyTokenKey = %v, %v; want generated", generated, err)
 	}
-	if len(cfg.InboundReplyTokenSecret) != MinReplyTokenKeyBytes {
-		t.Fatalf("generated key length = %d, want %d", len(cfg.InboundReplyTokenSecret), MinReplyTokenKeyBytes)
+	if len(cfg.InboundReplyTokenSecret) != 2*MinReplyTokenKeyBytes {
+		t.Fatalf("generated key length = %d, want %d (hex of %d random bytes)", len(cfg.InboundReplyTokenSecret), 2*MinReplyTokenKeyBytes, MinReplyTokenKeyBytes)
 	}
 	if err := cfg.ValidateServe(); err != nil {
 		t.Fatalf("generated key fails ValidateServe: %v", err)
+	}
+	// Raw random bytes used to fail ValidateServe ~5% of the time when they began
+	// or ended in a whitespace byte; every generated key must pass.
+	for i := 0; i < 500; i++ {
+		c := Config{Environment: "development"}
+		if _, err := c.EnsureReplyTokenKey(); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.ValidateServe(); err != nil {
+			t.Fatalf("generated key %d fails ValidateServe: %v", i, err)
+		}
 	}
 	other := Config{Environment: "development"}
 	if _, err := other.EnsureReplyTokenKey(); err != nil {

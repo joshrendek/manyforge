@@ -162,6 +162,7 @@ type messageResp struct {
 	SPFResult          string              `json:"spf_result"`
 	DKIMResult         string              `json:"dkim_result"`
 	DMARCResult        string              `json:"dmarc_result"`
+	AuthVerdicts       *AuthVerdicts       `json:"auth_verdicts,omitempty"`
 	DeliveryState      *string             `json:"delivery_state"`
 	CreatedAt          string              `json:"created_at"`
 }
@@ -238,6 +239,7 @@ func toMessageResp(m Message) messageResp {
 		SPFResult:          m.SPFResult,
 		DKIMResult:         m.DKIMResult,
 		DMARCResult:        m.DMARCResult,
+		AuthVerdicts:       m.AuthVerdicts,
 		DeliveryState:      m.DeliveryState,
 		CreatedAt:          m.CreatedAt.UTC().Format(rfc3339),
 	}

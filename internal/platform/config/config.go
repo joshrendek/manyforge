@@ -637,11 +637,13 @@ func (cfg *Config) EnsureReplyTokenKey() (bool, error) {
 	if cfg.Environment == "production" {
 		return false, errors.New("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: required in production")
 	}
-	key := make([]byte, MinReplyTokenKeyBytes)
-	if _, err := rand.Read(key); err != nil {
+	raw := make([]byte, MinReplyTokenKeyBytes)
+	if _, err := rand.Read(raw); err != nil {
 		return false, fmt.Errorf("MANYFORGE_INBOUND_REPLY_TOKEN_SECRET: generate ephemeral key: %w", err)
 	}
-	cfg.InboundReplyTokenSecret = key
+	// Hex-encode so the key has no whitespace bytes: ValidateServe measures the
+	// trimmed key, and raw random bytes ending in 0x20/\t/\n would come up short.
+	cfg.InboundReplyTokenSecret = []byte(hex.EncodeToString(raw))
 	return true, nil
 }
 

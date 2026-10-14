@@ -351,19 +351,6 @@ func (s *Service) Ingest(ctx context.Context, msg RawMessage) (IngestResult, err
 	return result, nil
 }
 
-// sniffAttachments MIME-sniffs every parsed attachment against the blob allowlist
-// (FR-007) and enforces the per-attachment size cap, BEFORE any DB/blob write. A
-// disallowed or lying part (declared type ignored) or an over-cap part is DROPPED
-// and described in the returned dropped list; the rest of the message still
-// ingests (spec 017 R15). With no blob store configured every part is dropped
-// that way. Zero-byte parts are skipped (the attachment table CHECK requires
-// size > 0).
-//
-// SECREVIEW-M5: at most maxAcceptedAttachments parts totalling at most
-// maxAcceptedAttachmentBytes are staged. An allowed part that would exceed either
-// cap is dropped like any other (a later, smaller part that still fits the byte
-// budget is accepted), so one message cannot fan out into unbounded attachment
-// rows and blob Puts inside the ingest transaction.
 // trustedAuthservFor returns the authserv-ids whose verdicts are believed for a
 // message from the given transport (SECREVIEW-M6). Only the Resend path has a
 // known receiving hop (SES stamps "amazonses.com" above anything the sender
@@ -377,6 +364,19 @@ func (s *Service) trustedAuthservFor(provider string) []string {
 	return nil
 }
 
+// sniffAttachments MIME-sniffs every parsed attachment against the blob allowlist
+// (FR-007) and enforces the per-attachment size cap, BEFORE any DB/blob write. A
+// disallowed or lying part (declared type ignored) or an over-cap part is DROPPED
+// and described in the returned dropped list, tagged with why
+// (ticketing.DropReason*); the rest of the message still ingests (spec 017 R15).
+// With no blob store configured every part is dropped that way. Zero-byte parts
+// are skipped (the attachment table CHECK requires size > 0).
+//
+// SECREVIEW-M5: at most maxAcceptedAttachments parts totalling at most
+// maxAcceptedAttachmentBytes are staged. An allowed part that would exceed either
+// cap is dropped with reason limit_exceeded (a later, smaller part that still fits
+// the byte budget is accepted), so one message cannot fan out into unbounded
+// attachment rows and blob Puts inside the ingest transaction.
 func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachment, []ticketing.DroppedAttachment) {
 	if len(parts) == 0 {
 		return nil, nil
@@ -384,12 +384,13 @@ func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachmen
 	out := make([]sniffedAttachment, 0, min(len(parts), maxAcceptedAttachments))
 	var dropped []ticketing.DroppedAttachment
 	var acceptedBytes int64
-	drop := func(p ParsedAttachment) {
+	drop := func(p ParsedAttachment, reason string) {
 		if len(dropped) < maxDroppedAttachments {
 			dropped = append(dropped, ticketing.DroppedAttachment{
 				Filename:     sanitizeAttachmentFilename(p.FileName),
 				DetectedType: blob.Detect(p.Content),
 				Size:         int64(len(p.Content)),
+				Reason:       reason,
 			})
 		}
 	}
@@ -402,14 +403,20 @@ func (s *Service) sniffAttachments(parts []ParsedAttachment) ([]sniffedAttachmen
 		}
 		size := int64(len(p.Content))
 		ct, err := blob.Sniff(p.Content) // declared type ignored; bytes decide
-		// No blob store ⇒ attachments disabled: an allowed part cannot be stored
-		// either, so it is recorded as dropped instead of vanishing without trace.
-		if err != nil || (s.cfg.AttachmentMaxBytes > 0 && size > s.cfg.AttachmentMaxBytes) || s.blob == nil {
-			drop(p)
+		switch {
+		case err != nil:
+			drop(p, ticketing.DropReasonDisallowedType)
 			continue
-		}
-		if len(out) >= maxAcceptedAttachments || acceptedBytes+size > maxAcceptedAttachmentBytes {
-			drop(p)
+		case s.cfg.AttachmentMaxBytes > 0 && size > s.cfg.AttachmentMaxBytes:
+			drop(p, ticketing.DropReasonTooLarge)
+			continue
+		case s.blob == nil:
+			// No blob store ⇒ attachments disabled: an allowed part cannot be stored
+			// either, so it is recorded as dropped instead of vanishing without trace.
+			drop(p, ticketing.DropReasonStorageDisabled)
+			continue
+		case len(out) >= maxAcceptedAttachments || acceptedBytes+size > maxAcceptedAttachmentBytes:
+			drop(p, ticketing.DropReasonLimitExceeded)
 			continue
 		}
 		acceptedBytes += size

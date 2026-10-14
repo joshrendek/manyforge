@@ -15,12 +15,14 @@ import { convertModel, type JsonValue } from '../model-support.js';
 
 import type { DroppedAttachment } from './DroppedAttachment.js';
 import type { MessageDirection } from './MessageDirection.js';
+import type { MessageAuthVerdicts } from './MessageAuthVerdicts.js';
 import type { Attachment } from './Attachment.js';
 import type { DnsRecordState } from './DnsRecordState.js';
 
 
 export interface TicketMessage {
     attachments: Array<Attachment>;
+    authVerdicts?: MessageAuthVerdicts | null;
     authorPrincipalId: string | null;
     bodyHtml: string | null;
     bodyText: string | null;

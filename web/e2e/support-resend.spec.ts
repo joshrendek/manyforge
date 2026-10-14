@@ -151,7 +151,7 @@ test('a custom address saves, rejects, and clears its send-as address', async ({
   ]);
 });
 
-test('a dropped attachment is listed on the inbound message as not stored', async ({ page }) => {
+test('dropped attachments are listed with why they were not stored, and DMARC none reads as no policy', async ({ page }) => {
   await installBase(page);
   const ticket = {
     id: TICKET_ID,
@@ -187,10 +187,14 @@ test('a dropped attachment is listed on the inbound message as not stored', asyn
     body_text: 'invoice attached',
     body_html: null,
     attachments: [],
-    dropped_attachments: [{ filename: 'invoice.exe', detected_type: 'application/octet-stream', size: 24 }],
+    dropped_attachments: [
+      { filename: 'invoice.exe', detected_type: 'application/octet-stream', size: 24, reason: 'disallowed_type' },
+      { filename: 'photo-51.png', detected_type: 'image/png', size: 2048, reason: 'limit_exceeded' },
+    ],
     spf_result: 'pass',
     dkim_result: 'pass',
-    dmarc_result: 'pass',
+    dmarc_result: 'unknown',
+    auth_verdicts: { spf: 'pass', dkim: 'pass', dmarc: 'none' },
     delivery_state: null,
     created_at: '2026-10-10T00:00:00Z',
   };
@@ -203,7 +207,15 @@ test('a dropped attachment is listed on the inbound message as not stored', asyn
 
   await page.goto(`/support/${BIZ_ID}/${TICKET_ID}`);
   const dropped = page.getByTestId('dropped-attachment');
-  await expect(dropped).toHaveCount(1);
-  await expect(dropped).toContainText('invoice.exe');
-  await expect(dropped).toContainText('not stored');
+  await expect(dropped).toHaveCount(2);
+  await expect(dropped.nth(0)).toContainText('invoice.exe');
+  await expect(dropped.nth(0)).toContainText('not stored: file type not allowed');
+  await expect(dropped.nth(1)).toContainText('photo-51.png');
+  await expect(dropped.nth(1)).toContainText('not stored: attachment limit reached');
+
+  // manyforge-clk7: a sender with no DMARC record shows "no policy", not "unknown".
+  const dmarc = page.getByTestId('dmarc-result');
+  await expect(dmarc).toHaveText(/DMARC: no policy/i);
+  await expect(dmarc).toHaveClass(/\bnone\b/);
+  await expect(dmarc).toHaveAttribute('title', /no DMARC policy/);
 });

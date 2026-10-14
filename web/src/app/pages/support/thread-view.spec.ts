@@ -544,6 +544,26 @@ describe('ThreadViewComponent (Task 20 UI redesign)', () => {
     expect(q('[data-testid="dmarc-result"]')).not.toBeNull();
   });
 
+  it('shows a recorded "none" DMARC verdict as no policy, styled apart from unknown and fail', () => {
+    boot(makeTicketTv(), [
+      makeMessage({
+        direction: 'inbound',
+        spf_result: 'pass',
+        dkim_result: 'unknown',
+        dmarc_result: 'unknown',
+        auth_verdicts: { spf: 'pass', dmarc: 'none' },
+      }),
+    ]);
+    const dmarc = q('[data-testid="dmarc-result"]') as HTMLElement;
+    expect(dmarc.textContent).toContain('DMARC: no policy');
+    expect(dmarc.classList.contains('none')).toBe(true);
+    expect(dmarc.classList.contains('fail')).toBe(false);
+    expect(dmarc.getAttribute('title')).toContain('no DMARC policy');
+    const dkim = q('[data-testid="dkim-result"]') as HTMLElement;
+    expect(dkim.textContent).toContain('DKIM: unknown');
+    expect(dkim.getAttribute('title')).toBeNull();
+  });
+
   it('dark-theme: .mf-card is present', () => {
     document.documentElement.setAttribute('data-theme', 'dark');
     boot();
@@ -600,5 +620,37 @@ describe('ThreadViewComponent dropped attachments (spec 017)', () => {
     expect(rows[0].textContent).toContain('not stored');
     expect(rows[0].textContent).toContain('24 bytes');
     expect(rows[0].querySelector('a')).toBeNull();
+  });
+
+  it('labels each dropped attachment with why it was not stored', () => {
+    fixture = TestBed.createComponent(ThreadViewComponent);
+    fixture.detectChanges();
+    mock.expectOne('/api/v1/me').flush({ id: myPid, email: 'me@x.test', display_name: 'Me', email_verified: true, status: 'active' });
+    mock.expectOne(`/api/v1/businesses/${biz}/assignable-members`).flush({ items: [], next_cursor: null });
+    mock.expectOne(`/api/v1/businesses/${biz}/agents`).flush({ items: [] });
+    mock.expectOne(`/api/v1/businesses/${biz}/tickets/${tid}`).flush(makeTicket());
+    const message: TicketMessage = {
+      id: 'm1', ticket_id: tid, direction: 'inbound', message_id: '<m1@x>', in_reply_to: null, references: [],
+      author_principal_id: null, body_text: 'see attached', body_html: null, attachments: [],
+      dropped_attachments: [
+        { filename: 'invoice.exe', detected_type: 'application/octet-stream', size: 24, reason: 'disallowed_type' },
+        { filename: 'scan.png', detected_type: 'image/png', size: 24, reason: 'too_large' },
+        { filename: 'p51.png', detected_type: 'image/png', size: 24, reason: 'limit_exceeded' },
+        { filename: 'old.bin', detected_type: 'application/octet-stream', size: 24 },
+      ],
+      spf_result: 'pass', dkim_result: 'pass', dmarc_result: 'pass', created_at: '2026-10-10T00:00:00Z',
+    };
+    mock
+      .expectOne((r) => r.url === `/api/v1/businesses/${biz}/tickets/${tid}/messages`)
+      .flush({ items: [message], next_cursor: null });
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const reasons = Array.from(el.querySelectorAll('[data-testid="dropped-reason"]')).map((r) => r.textContent?.trim());
+    expect(reasons).toEqual([
+      'not stored: file type not allowed',
+      'not stored: too large',
+      'not stored: attachment limit reached',
+      'not stored',
+    ]);
   });
 });

@@ -30,18 +30,23 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import com.manyforge.sdk.models.Attachment;
 import com.manyforge.sdk.models.DnsRecordState;
 import com.manyforge.sdk.models.DroppedAttachment;
+import com.manyforge.sdk.models.MessageAuthVerdicts;
 import com.manyforge.sdk.models.MessageDirection;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import org.openapitools.jackson.nullable.JsonNullable;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import org.openapitools.jackson.nullable.JsonNullable;
+import java.util.NoSuchElementException;
 
 
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "attachments", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id" })
+@JsonPropertyOrder({ "attachments", "auth_verdicts", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id" })
 @com.manyforge.sdk.ModelShape(required = { "attachments", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id",  }, nonNullable = { "attachments", "created_at", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "references", "spf_result", "ticket_id",  })
 public class TicketMessage {
 
@@ -51,6 +56,13 @@ public class TicketMessage {
   public List<Attachment> getAttachments() { return attachments.orElse(null); }
   public JsonNullable<List<Attachment>> attachmentsPresence() { return attachments; }
   public TicketMessage attachments(List<Attachment> value) { this.attachments = JsonNullable.of(value); return this; }
+
+  @JsonProperty("auth_verdicts")
+  private JsonNullable<MessageAuthVerdicts> authVerdicts = JsonNullable.undefined();
+
+  public MessageAuthVerdicts getAuthVerdicts() { return authVerdicts.orElse(null); }
+  public JsonNullable<MessageAuthVerdicts> authVerdictsPresence() { return authVerdicts; }
+  public TicketMessage authVerdicts(MessageAuthVerdicts value) { this.authVerdicts = JsonNullable.of(value); return this; }
 
   @JsonProperty("author_principal_id")
   private JsonNullable<UUID> authorPrincipalId = JsonNullable.undefined();
@@ -182,6 +194,7 @@ public static final class DeliveryStateEnum {
   public static final class Builder {
     private final TicketMessage value = new TicketMessage();
     public Builder attachments(List<Attachment> field) { value.attachments(field); return this; }
+    public Builder authVerdicts(MessageAuthVerdicts field) { value.authVerdicts(field); return this; }
     public Builder authorPrincipalId(UUID field) { value.authorPrincipalId(field); return this; }
     public Builder bodyHtml(String field) { value.bodyHtml(field); return this; }
     public Builder bodyText(String field) { value.bodyText(field); return this; }

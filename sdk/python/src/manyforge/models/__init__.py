@@ -148,6 +148,7 @@ from .dns_txt_record import DnsTxtRecord
 from .draft_node import DraftNode
 from .draft_node_input import DraftNodeInput
 from .dropped_attachment import DroppedAttachment
+from .dropped_attachment_properties_reason_enum import DroppedAttachmentPropertiesReasonEnum
 from .duration_wait_config import DurationWaitConfig
 from .duration_wait_config_properties_mode_enum import DurationWaitConfigPropertiesModeEnum
 from .edge import Edge
@@ -255,6 +256,7 @@ from .member_update_request import MemberUpdateRequest
 from .merge_request import MergeRequest
 from .merge_result import MergeResult
 from .merge_result_properties_status_enum import MergeResultPropertiesStatusEnum
+from .message_auth_verdicts import MessageAuthVerdicts
 from .message_direction import MessageDirection
 from .node import Node
 from .node_input import NodeInput
