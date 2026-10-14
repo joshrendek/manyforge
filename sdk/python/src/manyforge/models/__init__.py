@@ -256,6 +256,7 @@ from .member_update_request import MemberUpdateRequest
 from .merge_request import MergeRequest
 from .merge_result import MergeResult
 from .merge_result_properties_status_enum import MergeResultPropertiesStatusEnum
+from .message_auth_verdicts import MessageAuthVerdicts
 from .message_direction import MessageDirection
 from .node import Node
 from .node_input import NodeInput

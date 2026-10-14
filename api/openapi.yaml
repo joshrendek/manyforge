@@ -14930,6 +14930,20 @@ components:
       - content_type
       - size
       - blob_key
+    MessageAuthVerdicts:
+      type: object
+      description: >-
+        Per-mechanism RFC 8601 result tokens for an inbound message. Each value is one of pass, fail, none,
+        softfail, neutral, temperror, permerror or policy (none: nothing published to check, e.g. no DMARC
+        policy or no DKIM signature). Further RFC 8601 tokens may be added later, so treat unrecognised
+        values as unknown. A mechanism is omitted when it was not reported.
+      properties:
+        spf:
+          type: string
+        dkim:
+          type: string
+        dmarc:
+          type: string
     DroppedAttachment:
       type: object
       description: An inbound attachment that was dropped instead of stored (spec 017 R15).
@@ -16719,11 +16733,7 @@ components:
       - pending
       - pass
       - fail
-      - none
-      description: >-
-        observed state of a DNS-backed check (DKIM/SPF) at last verification (FR-013/FR-019), or a
-        message authentication verdict (spf/dkim/dmarc_result). none — the sender's domain publishes no
-        policy; message authentication results only (DNS record checks never report it).
+      description: observed state of a DNS-backed check (DKIM/SPF) at last verification (FR-013/FR-019).
     DnsTxtRecord:
       type: object
       properties:
@@ -21412,6 +21422,14 @@ components:
           $ref: '#/components/schemas/DnsRecordState'
         dmarc_result:
           $ref: '#/components/schemas/DnsRecordState'
+        auth_verdicts:
+          allOf:
+          - $ref: '#/components/schemas/MessageAuthVerdicts'
+          nullable: true
+          description: >-
+            Raw message authentication verdicts as recorded from the trusted Authentication-Results header,
+            finer-grained than spf_result/dkim_result/dmarc_result (e.g. dmarc "none" when the sender's
+            domain publishes no DMARC policy). Omitted when no verdict was recorded.
         delivery_state:
           type: string
           enum:

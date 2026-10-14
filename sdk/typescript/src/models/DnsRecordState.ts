@@ -18,7 +18,6 @@ export const DnsRecordState = {
     Pending: 'pending',
     Pass: 'pass',
     Fail: 'fail',
-    None: 'none',
 
 } as const;
 export type DnsRecordState = typeof DnsRecordState[keyof typeof DnsRecordState] | (string & {});

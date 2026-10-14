@@ -16012,11 +16012,6 @@
           "type": "github.com/joshrendek/manyforge/sdk/go.DnsRecordState",
           "value": "\"fail\""
         },
-        "DnsRecordStateNONE": {
-          "kind": "constant",
-          "type": "github.com/joshrendek/manyforge/sdk/go.DnsRecordState",
-          "value": "\"none\""
-        },
         "DnsRecordStatePASS": {
           "kind": "constant",
           "type": "github.com/joshrendek/manyforge/sdk/go.DnsRecordState",
@@ -21811,6 +21806,54 @@
           "kind": "constant",
           "type": "github.com/joshrendek/manyforge/sdk/go.MergeResultStatus",
           "value": "\"merged\""
+        },
+        "MessageAuthVerdicts": {
+          "alias": false,
+          "kind": "type",
+          "members": {
+            "Dkim": {
+              "embedded": false,
+              "json": "dkim,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+            },
+            "Dmarc": {
+              "embedded": false,
+              "json": "dmarc,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+            },
+            "Spf": {
+              "embedded": false,
+              "json": "spf,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+            },
+            "pointer:UnmarshalJSON": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "[]byte"
+                    }
+                  ],
+                  "returns": [
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": false
+                }
+              ]
+            }
+          },
+          "representation": "struct",
+          "type_parameters": []
         },
         "MessageDirection": {
           "alias": false,
@@ -28090,6 +28133,19 @@
               ],
               "returns": [
                 "*github.com/joshrendek/manyforge/sdk/go.MergeResult"
+              ],
+              "type_parameters": [],
+              "variadic": false
+            }
+          ]
+        },
+        "NewMessageAuthVerdicts": {
+          "kind": "function",
+          "signatures": [
+            {
+              "params": [],
+              "returns": [
+                "*github.com/joshrendek/manyforge/sdk/go.MessageAuthVerdicts"
               ],
               "type_parameters": [],
               "variadic": false
@@ -43060,6 +43116,13 @@
               "kind": "field",
               "required": true,
               "type": "[]github.com/joshrendek/manyforge/sdk/go.Attachment"
+            },
+            "AuthVerdicts": {
+              "embedded": false,
+              "json": "auth_verdicts,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[github.com/joshrendek/manyforge/sdk/go.MessageAuthVerdicts]"
             },
             "AuthorPrincipalId": {
               "embedded": false,
@@ -92299,11 +92362,6 @@
               "required": false,
               "type": "public static final com.manyforge.sdk.models.DnsRecordState"
             },
-            "NONE": {
-              "kind": "field",
-              "required": false,
-              "type": "public static final com.manyforge.sdk.models.DnsRecordState"
-            },
             "PASS": {
               "kind": "field",
               "required": false,
@@ -120163,6 +120221,241 @@
                   ],
                   "returns": "public com.manyforge.sdk.models.MergeResult$StatusEnum",
                   "throws": "throws java.io.IOException"
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.models.MessageAuthVerdicts": {
+          "declaration": "public class com.manyforge.sdk.models.MessageAuthVerdicts",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.models.MessageAuthVerdicts$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "dkim": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts",
+                  "throws": ""
+                }
+              ]
+            },
+            "dkimPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "dmarc": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts",
+                  "throws": ""
+                }
+              ]
+            },
+            "dmarcPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "getDkim": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "getDmarc": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "getSpf": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "spf": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts",
+                  "throws": ""
+                }
+              ]
+            },
+            "spfPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            }
+          },
+          "model_fields": [
+            "dkim",
+            "dmarc",
+            "spf"
+          ],
+          "non_nullable_fields": [
+            "dkim",
+            "dmarc",
+            "spf"
+          ],
+          "required_fields": []
+        },
+        "com.manyforge.sdk.models.MessageAuthVerdicts$Builder": {
+          "declaration": "public final class com.manyforge.sdk.models.MessageAuthVerdicts$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts",
+                  "throws": ""
+                }
+              ]
+            },
+            "dkim": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "dmarc": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "spf": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts$Builder",
+                  "throws": ""
                 }
               ]
             }
@@ -168525,6 +168818,34 @@
                 }
               ]
             },
+            "authVerdicts": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.models.MessageAuthVerdicts"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.TicketMessage",
+                  "throws": ""
+                }
+              ]
+            },
+            "authVerdictsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<com.manyforge.sdk.models.MessageAuthVerdicts>",
+                  "throws": ""
+                }
+              ]
+            },
             "authorPrincipalId": {
               "kind": "method",
               "required": false,
@@ -168795,6 +169116,17 @@
                 {
                   "params": [],
                   "returns": "public java.util.List<com.manyforge.sdk.models.Attachment>",
+                  "throws": ""
+                }
+              ]
+            },
+            "getAuthVerdicts": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.models.MessageAuthVerdicts",
                   "throws": ""
                 }
               ]
@@ -169135,6 +169467,7 @@
           },
           "model_fields": [
             "attachments",
+            "auth_verdicts",
             "author_principal_id",
             "body_html",
             "body_text",
@@ -169206,6 +169539,23 @@
                       "name": "0",
                       "required": true,
                       "type": "java.util.List<com.manyforge.sdk.models.Attachment>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.TicketMessage$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "authVerdicts": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.models.MessageAuthVerdicts"
                     }
                   ],
                   "returns": "public com.manyforge.sdk.models.TicketMessage$Builder",
@@ -295709,6 +296059,12 @@
               "required": true,
               "type": "list[manyforge.models.attachment.Attachment]"
             },
+            "auth_verdicts": {
+              "alias": "auth_verdicts",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | manyforge.models.message_auth_verdicts.MessageAuthVerdicts"
+            },
             "author_principal_id": {
               "alias": "author_principal_id",
               "kind": "field",
@@ -297926,6 +298282,12 @@
               "kind": "field",
               "required": true,
               "type": "list[manyforge.models.attachment.Attachment]"
+            },
+            "auth_verdicts": {
+              "alias": "auth_verdicts",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | manyforge.models.message_auth_verdicts.MessageAuthVerdicts"
             },
             "author_principal_id": {
               "alias": "author_principal_id",
@@ -339162,11 +339524,6 @@
               "type": "manyforge.models.dns_record_state.DnsRecordState",
               "value": "fail"
             },
-            "NONE": {
-              "kind": "constant",
-              "type": "manyforge.models.dns_record_state.DnsRecordState",
-              "value": "none"
-            },
             "PASS": {
               "kind": "constant",
               "type": "manyforge.models.dns_record_state.DnsRecordState",
@@ -350620,6 +350977,138 @@
               "kind": "constant",
               "type": "manyforge.models.merge_result_properties_status_enum.MergeResultPropertiesStatusEnum",
               "value": "merged"
+            }
+          }
+        },
+        "manyforge.models.MessageAuthVerdicts": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "dkim": {
+              "alias": "dkim",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "dmarc": {
+              "alias": "dmarc",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "spf": {
+              "alias": "spf",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
             }
           }
         },
@@ -367513,6 +368002,12 @@
               "kind": "field",
               "required": true,
               "type": "list[manyforge.models.attachment.Attachment]"
+            },
+            "auth_verdicts": {
+              "alias": "auth_verdicts",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | manyforge.models.message_auth_verdicts.MessageAuthVerdicts"
             },
             "author_principal_id": {
               "alias": "author_principal_id",
@@ -416492,11 +416987,6 @@
               "type": "manyforge.models.dns_record_state.DnsRecordState",
               "value": "fail"
             },
-            "NONE": {
-              "kind": "constant",
-              "type": "manyforge.models.dns_record_state.DnsRecordState",
-              "value": "none"
-            },
             "PASS": {
               "kind": "constant",
               "type": "manyforge.models.dns_record_state.DnsRecordState",
@@ -419187,11 +419677,6 @@
               "kind": "constant",
               "type": "manyforge.models.dns_record_state.DnsRecordState",
               "value": "fail"
-            },
-            "NONE": {
-              "kind": "constant",
-              "type": "manyforge.models.dns_record_state.DnsRecordState",
-              "value": "none"
             },
             "PASS": {
               "kind": "constant",
@@ -448779,6 +449264,275 @@
           "type": "manyforge.model_support.UnsetType"
         },
         "manyforge.models.merge_result_properties_status_enum.UnsetType": {
+          "bases": [
+            "object"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.message_auth_verdicts.JsonValue": {
+          "kind": "value",
+          "type": "JsonValue"
+        },
+        "manyforge.models.message_auth_verdicts.MessageAuthVerdicts": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "dkim": {
+              "alias": "dkim",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "dmarc": {
+              "alias": "dmarc",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "spf": {
+              "alias": "spf",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.message_auth_verdicts.Model": {
+          "bases": [
+            "pydantic.main.BaseModel"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.message_auth_verdicts.OpenEnum": {
+          "bases": [
+            "str",
+            "enum.Enum"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.message_auth_verdicts.UNSET": {
+          "kind": "value",
+          "type": "manyforge.model_support.UnsetType"
+        },
+        "manyforge.models.message_auth_verdicts.UnsetType": {
           "bases": [
             "object"
           ],
@@ -496746,11 +497500,6 @@
               "type": "manyforge.models.dns_record_state.DnsRecordState",
               "value": "fail"
             },
-            "NONE": {
-              "kind": "constant",
-              "type": "manyforge.models.dns_record_state.DnsRecordState",
-              "value": "none"
-            },
             "PASS": {
               "kind": "constant",
               "type": "manyforge.models.dns_record_state.DnsRecordState",
@@ -496910,6 +497659,138 @@
           "kind": "value",
           "type": "JsonValue"
         },
+        "manyforge.models.ticket_message.MessageAuthVerdicts": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "dkim": {
+              "alias": "dkim",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "dmarc": {
+              "alias": "dmarc",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "spf": {
+              "alias": "spf",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.ticket_message.MessageDirection": {
           "bases": [
             "manyforge.model_support.OpenEnum"
@@ -497066,6 +497947,12 @@
               "kind": "field",
               "required": true,
               "type": "list[manyforge.models.attachment.Attachment]"
+            },
+            "auth_verdicts": {
+              "alias": "auth_verdicts",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | manyforge.models.message_auth_verdicts.MessageAuthVerdicts"
             },
             "author_principal_id": {
               "alias": "author_principal_id",
@@ -497436,6 +498323,12 @@
               "kind": "field",
               "required": true,
               "type": "list[manyforge.models.attachment.Attachment]"
+            },
+            "auth_verdicts": {
+              "alias": "auth_verdicts",
+              "kind": "field",
+              "required": false,
+              "type": "None | manyforge.model_support.UnsetType | manyforge.models.message_auth_verdicts.MessageAuthVerdicts"
             },
             "author_principal_id": {
               "alias": "author_principal_id",
@@ -557448,6 +558341,44 @@
             }
           ]
         },
+        "import:index.MessageAuthVerdicts": {
+          "kind": "export",
+          "target": "type:MessageAuthVerdicts"
+        },
+        "import:index.MessageAuthVerdictsFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "MessageAuthVerdicts",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:index.MessageAuthVerdictsToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "MessageAuthVerdicts"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:index.MessageDirection": {
           "kind": "export",
           "target": "type:MessageDirection"
@@ -579800,7 +580731,7 @@
         },
         "import:index.type:DnsRecordState": {
           "kind": "type",
-          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\" | \"none\""
+          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\""
         },
         "import:index.type:DnsTxtRecord": {
           "bases": [],
@@ -582325,6 +583256,31 @@
         "import:index.type:MergeResultStatusEnum": {
           "kind": "type",
           "type": "(string & {}) | \"merged\""
+        },
+        "import:index.type:MessageAuthVerdicts": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "dkim": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "dmarc": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "spf": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            }
+          },
+          "type_parameters": []
         },
         "import:index.type:MessageDirection": {
           "kind": "type",
@@ -587574,6 +588530,12 @@
               "readonly": false,
               "required": true,
               "type": "Attachment[]"
+            },
+            "authVerdicts": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "MessageAuthVerdicts | null | undefined"
             },
             "authorPrincipalId": {
               "kind": "field",
@@ -596185,6 +597147,44 @@
                   "required": true,
                   "rest": false,
                   "type": "MergeResult"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.MessageAuthVerdicts": {
+          "kind": "export",
+          "target": "type:MessageAuthVerdicts"
+        },
+        "import:public.MessageAuthVerdictsFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "MessageAuthVerdicts",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.MessageAuthVerdictsToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "MessageAuthVerdicts"
                 }
               ],
               "returns": "JsonValue",
@@ -606852,7 +607852,7 @@
         },
         "import:public.type:DnsRecordState": {
           "kind": "type",
-          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\" | \"none\""
+          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\""
         },
         "import:public.type:DnsTxtRecord": {
           "bases": [],
@@ -609453,6 +610453,31 @@
         "import:public.type:MergeResultStatusEnum": {
           "kind": "type",
           "type": "(string & {}) | \"merged\""
+        },
+        "import:public.type:MessageAuthVerdicts": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "dkim": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "dmarc": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "spf": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            }
+          },
+          "type_parameters": []
         },
         "import:public.type:MessageDirection": {
           "kind": "type",
@@ -614180,6 +615205,12 @@
               "readonly": false,
               "required": true,
               "type": "Attachment[]"
+            },
+            "authVerdicts": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "MessageAuthVerdicts | null | undefined"
             },
             "authorPrincipalId": {
               "kind": "field",
@@ -622766,6 +623797,44 @@
                   "required": true,
                   "rest": false,
                   "type": "MergeResult"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.MessageAuthVerdicts": {
+          "kind": "export",
+          "target": "type:MessageAuthVerdicts"
+        },
+        "import:server.MessageAuthVerdictsFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "MessageAuthVerdicts",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.MessageAuthVerdictsToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "MessageAuthVerdicts"
                 }
               ],
               "returns": "JsonValue",
@@ -633457,7 +634526,7 @@
         },
         "import:server.type:DnsRecordState": {
           "kind": "type",
-          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\" | \"none\""
+          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\""
         },
         "import:server.type:DnsTxtRecord": {
           "bases": [],
@@ -636084,6 +637153,31 @@
         "import:server.type:MergeResultStatusEnum": {
           "kind": "type",
           "type": "(string & {}) | \"merged\""
+        },
+        "import:server.type:MessageAuthVerdicts": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "dkim": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "dmarc": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "spf": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            }
+          },
+          "type_parameters": []
         },
         "import:server.type:MessageDirection": {
           "kind": "type",
@@ -640889,6 +641983,12 @@
               "readonly": false,
               "required": true,
               "type": "Attachment[]"
+            },
+            "authVerdicts": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "MessageAuthVerdicts | null | undefined"
             },
             "authorPrincipalId": {
               "kind": "field",
@@ -650431,6 +651531,44 @@
                   "required": true,
                   "rest": false,
                   "type": "MergeResult"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.MessageAuthVerdicts": {
+          "kind": "export",
+          "target": "type:MessageAuthVerdicts"
+        },
+        "require:index.MessageAuthVerdictsFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "MessageAuthVerdicts",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.MessageAuthVerdictsToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "MessageAuthVerdicts"
                 }
               ],
               "returns": "JsonValue",
@@ -672790,7 +673928,7 @@
         },
         "require:index.type:DnsRecordState": {
           "kind": "type",
-          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\" | \"none\""
+          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\""
         },
         "require:index.type:DnsTxtRecord": {
           "bases": [],
@@ -675315,6 +676453,31 @@
         "require:index.type:MergeResultStatusEnum": {
           "kind": "type",
           "type": "(string & {}) | \"merged\""
+        },
+        "require:index.type:MessageAuthVerdicts": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "dkim": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "dmarc": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "spf": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            }
+          },
+          "type_parameters": []
         },
         "require:index.type:MessageDirection": {
           "kind": "type",
@@ -680564,6 +681727,12 @@
               "readonly": false,
               "required": true,
               "type": "Attachment[]"
+            },
+            "authVerdicts": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "MessageAuthVerdicts | null | undefined"
             },
             "authorPrincipalId": {
               "kind": "field",
@@ -689175,6 +690344,44 @@
                   "required": true,
                   "rest": false,
                   "type": "MergeResult"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.MessageAuthVerdicts": {
+          "kind": "export",
+          "target": "type:MessageAuthVerdicts"
+        },
+        "require:public.MessageAuthVerdictsFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "MessageAuthVerdicts",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.MessageAuthVerdictsToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "MessageAuthVerdicts"
                 }
               ],
               "returns": "JsonValue",
@@ -699842,7 +701049,7 @@
         },
         "require:public.type:DnsRecordState": {
           "kind": "type",
-          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\" | \"none\""
+          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\""
         },
         "require:public.type:DnsTxtRecord": {
           "bases": [],
@@ -702443,6 +703650,31 @@
         "require:public.type:MergeResultStatusEnum": {
           "kind": "type",
           "type": "(string & {}) | \"merged\""
+        },
+        "require:public.type:MessageAuthVerdicts": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "dkim": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "dmarc": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "spf": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            }
+          },
+          "type_parameters": []
         },
         "require:public.type:MessageDirection": {
           "kind": "type",
@@ -707170,6 +708402,12 @@
               "readonly": false,
               "required": true,
               "type": "Attachment[]"
+            },
+            "authVerdicts": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "MessageAuthVerdicts | null | undefined"
             },
             "authorPrincipalId": {
               "kind": "field",
@@ -715756,6 +716994,44 @@
                   "required": true,
                   "rest": false,
                   "type": "MergeResult"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.MessageAuthVerdicts": {
+          "kind": "export",
+          "target": "type:MessageAuthVerdicts"
+        },
+        "require:server.MessageAuthVerdictsFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "MessageAuthVerdicts",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.MessageAuthVerdictsToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "MessageAuthVerdicts"
                 }
               ],
               "returns": "JsonValue",
@@ -726447,7 +727723,7 @@
         },
         "require:server.type:DnsRecordState": {
           "kind": "type",
-          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\" | \"none\""
+          "type": "(string & {}) | \"unknown\" | \"pending\" | \"pass\" | \"fail\""
         },
         "require:server.type:DnsTxtRecord": {
           "bases": [],
@@ -729074,6 +730350,31 @@
         "require:server.type:MergeResultStatusEnum": {
           "kind": "type",
           "type": "(string & {}) | \"merged\""
+        },
+        "require:server.type:MessageAuthVerdicts": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "dkim": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "dmarc": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "spf": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            }
+          },
+          "type_parameters": []
         },
         "require:server.type:MessageDirection": {
           "kind": "type",
@@ -733879,6 +735180,12 @@
               "readonly": false,
               "required": true,
               "type": "Attachment[]"
+            },
+            "authVerdicts": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "MessageAuthVerdicts | null | undefined"
             },
             "authorPrincipalId": {
               "kind": "field",
