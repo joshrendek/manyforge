@@ -116,14 +116,30 @@ type Attachment struct {
 }
 
 // DroppedAttachment describes an inbound attachment that was not stored (spec 017
-// R15): its sniffed type is outside the allowlist or it exceeded the size cap. No
-// bytes exist for it. The json tags are the persisted jsonb shape AND the API shape;
-// the inbox ingest path records this same type.
+// R15). No bytes exist for it. The json tags are the persisted jsonb shape AND the
+// API shape; the inbox ingest path records this same type. Reason says why it was
+// dropped (one of the DropReason* values); rows stored before the field existed
+// have none, so it is omitted from the JSON and readers treat it as unknown.
 type DroppedAttachment struct {
 	Filename     string `json:"filename"`
 	DetectedType string `json:"detected_type"`
 	Size         int64  `json:"size"`
+	Reason       string `json:"reason,omitempty"`
 }
+
+// Why an inbound attachment was dropped (DroppedAttachment.Reason).
+const (
+	// DropReasonDisallowedType: the sniffed type is outside the blob allowlist.
+	DropReasonDisallowedType = "disallowed_type"
+	// DropReasonTooLarge: the part exceeds the per-attachment size cap.
+	DropReasonTooLarge = "too_large"
+	// DropReasonLimitExceeded: storing the part would exceed the per-message
+	// attachment count or total-size cap (SECREVIEW-M5).
+	DropReasonLimitExceeded = "limit_exceeded"
+	// DropReasonStorageDisabled: no blob store is configured, so no attachment
+	// can be stored at all.
+	DropReasonStorageDisabled = "storage_disabled"
+)
 
 // Message is the API view of one entry in a ticket thread, with SPF/DKIM/DMARC
 // projected from the stored auth_results jsonb into three typed fields.
