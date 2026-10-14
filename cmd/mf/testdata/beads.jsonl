@@ -1,0 +1,9 @@
+{"_type":"memory","key":"remember","value":"not an issue"}
+{"id":"manyforge-aaa","title":"Open epic","description":"Body","acceptance_criteria":"It works","design":"Use X","status":"open","priority":1,"issue_type":"epic","labels":["web"],"created_at":"2026-01-02T03:04:05.123456-05:00","dependencies":[{"issue_id":"manyforge-aaa","depends_on_id":"manyforge-bbb","type":"blocks"},{"issue_id":"manyforge-aaa","depends_on_id":"manyforge-ccc","type":"blocks"},{"issue_id":"manyforge-aaa","depends_on_id":"manyforge-ddd","type":"parent-child"}],"comments":[{"author":"josh","text":"first comment","created_at":"2026-01-03T00:00:00Z"}],"notes":"some notes"}
+{"id":"manyforge-bbb","title":"Still open blocker","status":"in_progress","priority":null,"issue_type":null,"assignee":"claude"}
+{"id":"manyforge-ccc","title":"Closed blocker","status":"closed","priority":2,"issue_type":"bug","closed_at":"2026-01-05T00:00:00Z","close_reason":"fixed"}
+{"id":"manyforge-n6xh.5","title":"Deferred decision","status":"deferred","priority":3,"issue_type":"decision"}
+{"id":"Bad Key!","title":"invalid","status":"open"}
+{"id":"manyforge-eee","title":"Blocked","status":"blocked","priority":0,"issue_type":"chore"}
+not json at all
+
