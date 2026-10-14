@@ -33,8 +33,8 @@ import java.util.Arrays;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "detected_type", "filename", "size" })
-@com.manyforge.sdk.ModelShape(required = { "detected_type", "filename", "size",  }, nonNullable = { "detected_type", "filename", "size",  })
+@JsonPropertyOrder({ "detected_type", "filename", "reason", "size" })
+@com.manyforge.sdk.ModelShape(required = { "detected_type", "filename", "size",  }, nonNullable = { "detected_type", "filename", "reason", "size",  })
 public class DroppedAttachment {
 
   @JsonProperty("detected_type")
@@ -50,6 +50,37 @@ public class DroppedAttachment {
   public String getFilename() { return filename.orElse(null); }
   public JsonNullable<String> filenamePresence() { return filename; }
   public DroppedAttachment filename(String value) { this.filename = JsonNullable.of(value); return this; }
+@JsonDeserialize(using = ReasonEnum.Deserializer.class)
+public static final class ReasonEnum {
+
+  public static final ReasonEnum DISALLOWED_TYPE = new ReasonEnum("disallowed_type");
+
+  public static final ReasonEnum TOO_LARGE = new ReasonEnum("too_large");
+
+  public static final ReasonEnum LIMIT_EXCEEDED = new ReasonEnum("limit_exceeded");
+
+  public static final ReasonEnum STORAGE_DISABLED = new ReasonEnum("storage_disabled");
+
+  private final String value;
+  @JsonCreator(mode = JsonCreator.Mode.DELEGATING) public ReasonEnum(String value) { this.value = value; }
+  @JsonValue public String getValue() { return value; }
+  public static ReasonEnum fromValue(String value) { return new ReasonEnum(value); }
+  @Override public String toString() { return String.valueOf(value); }
+  @Override public boolean equals(Object other) { return other instanceof ReasonEnum e && Objects.equals(value, e.value); }
+  @Override public int hashCode() { return Objects.hashCode(value); }
+  public static final class Deserializer extends JsonDeserializer<ReasonEnum> {
+    @Override public ReasonEnum deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+      return new ReasonEnum(context.readValue(parser, String.class));
+    }
+  }
+}
+
+  @JsonProperty("reason")
+  private JsonNullable<ReasonEnum> reason = JsonNullable.undefined();
+
+  public ReasonEnum getReason() { return reason.orElse(null); }
+  public JsonNullable<ReasonEnum> reasonPresence() { return reason; }
+  public DroppedAttachment reason(ReasonEnum value) { this.reason = JsonNullable.of(value); return this; }
 
   @JsonProperty("size")
   private JsonNullable<Long> size = JsonNullable.undefined();
@@ -62,6 +93,7 @@ public class DroppedAttachment {
     private final DroppedAttachment value = new DroppedAttachment();
     public Builder detectedType(String field) { value.detectedType(field); return this; }
     public Builder filename(String field) { value.filename(field); return this; }
+    public Builder reason(ReasonEnum field) { value.reason(field); return this; }
     public Builder size(Long field) { value.size(field); return this; }
     public DroppedAttachment build() { return value; }
   }

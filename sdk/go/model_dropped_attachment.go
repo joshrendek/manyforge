@@ -10,9 +10,10 @@ API version: 1.0.0
 package manyforge
 
 type DroppedAttachment struct {
-	DetectedType string `json:"detected_type"`
-	Filename     string `json:"filename"`
-	Size         int64  `json:"size"`
+	DetectedType string                            `json:"detected_type"`
+	Filename     string                            `json:"filename"`
+	Reason       Optional[DroppedAttachmentReason] `json:"reason,omitzero"`
+	Size         int64                             `json:"size"`
 }
 
 // NewDroppedAttachment assigns only the supplied required fields, never schema defaults.
@@ -29,7 +30,7 @@ func (o *DroppedAttachment) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "detected_type", "filename", "size"); err != nil {
+	if err := nonNullFields(fields, "detected_type", "filename", "reason", "size"); err != nil {
 		return err
 	}
 	type plain DroppedAttachment
