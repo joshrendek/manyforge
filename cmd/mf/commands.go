@@ -138,7 +138,7 @@ func cmdInit(a *app, args []string) error {
 	}
 	if r.cfg.Server != "" {
 		if tok, _ := a.token(r); tok == "" {
-			fprintln(a.stdout, "mf: next: mf login --token mfw_…  (create a token under Work in ManyForge)")
+			fprintf(a.stdout, "mf: next: mf login --server %s --token mfw_…  (create a token under Work → Connect in ManyForge)\n", r.cfg.Server)
 		}
 	}
 	return nil

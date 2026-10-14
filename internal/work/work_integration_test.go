@@ -378,7 +378,7 @@ func TestWorkSyncEndToEnd(t *testing.T) {
 	}
 	fix := byKey["mf-aaaa01"]
 	if fix.Status != "in_progress" || fix.Assignee != "claude" || fix.Priority != 1 || fix.Title != "Fix flake" ||
-		!strings.HasSuffix(fix.Notes, " claude] found the race") {
+		!strings.HasSuffix(fix.Notes, " claude (mf)] found the race") {
 		t.Errorf("mf-aaaa01 = %+v", fix)
 	}
 	imp := byKey["mf-aaaa05"]
@@ -386,7 +386,7 @@ func TestWorkSyncEndToEnd(t *testing.T) {
 		!imp.ClosedAt.Equal(time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("imported timestamps not preserved: %+v", imp)
 	}
-	if dns := byKey["mf-aaaa04"]; dns.Lane != "operator" || !strings.HasSuffix(dns.Notes, " agent] need a human") {
+	if dns := byKey["mf-aaaa04"]; dns.Lane != "operator" || !strings.HasSuffix(dns.Notes, " agent (mf)] need a human") {
 		t.Errorf("mf-aaaa04 = %+v", dns)
 	}
 	if out.Rev != out.Tasks[len(out.Tasks)-1].Rev || out.More {
@@ -400,6 +400,25 @@ func TestWorkSyncEndToEnd(t *testing.T) {
 	code, out = c.do(tok.Token, map[string]any{"since": out.Rev})
 	if code != http.StatusOK || len(out.Tasks) != 1 || out.Tasks[0].Status != "blocked" {
 		t.Fatalf("pull after dotted-key edit: %d %+v", code, out)
+	}
+
+	// Beads ids import verbatim into a project whose key_prefix matches the beads prefix.
+	beads, err := svc.CreateProject(ctx, tn.owner, tn.businessID, work.ProjectInput{Name: "Beads import", KeyPrefix: "manyforge"})
+	if err != nil {
+		t.Fatalf("CreateProject beads: %v", err)
+	}
+	beadsTok, err := svc.CreateToken(ctx, tn.owner, tn.businessID, beads.Slug, "import")
+	if err != nil {
+		t.Fatalf("CreateToken beads: %v", err)
+	}
+	code, imported := c.do(beadsTok.Token, map[string]any{"since": 0, "ops": []map[string]any{
+		{"op": "create", "key": "manyforge-mly", "fields": map[string]any{"title": "beads parent"}},
+		{"op": "create", "key": "manyforge-n6xh.5", "fields": map[string]any{"title": "beads child", "status": "done",
+			"created_at": "2026-03-01T00:00:00Z", "closed_at": "2026-03-02T00:00:00Z"}},
+	}})
+	if code != http.StatusOK || len(imported.Results) != 2 || !imported.Results[0].OK || !imported.Results[1].OK ||
+		strings.Join(keys(imported.Tasks), ",") != "manyforge-mly,manyforge-n6xh.5" {
+		t.Fatalf("beads import: %d %+v", code, imported)
 	}
 
 	// More than 1000 ops is rejected outright.
@@ -425,8 +444,9 @@ func TestWorkSyncEndToEnd(t *testing.T) {
 		t.Fatalf("pull after web edit: %d %+v", code, out)
 	}
 
-	if n := auditCount(ctx, t, tdb, tn.businessID, "work.sync"); n != 1 {
-		t.Errorf("work.sync audit rows = %d, want 1 (pure pulls are not audited)", n)
+	// One audited push into "manyforge" plus the beads import push; pulls are not audited.
+	if n := auditCount(ctx, t, tdb, tn.businessID, "work.sync"); n != 2 {
+		t.Errorf("work.sync audit rows = %d, want 2 (pure pulls are not audited)", n)
 	}
 	var lastUsed *time.Time
 	if err := tdb.Super.QueryRow(ctx, `SELECT last_used_at FROM work_token WHERE id=$1`, tok.ID).Scan(&lastUsed); err != nil || lastUsed == nil {
@@ -484,8 +504,8 @@ func TestWorkSyncEndToEnd(t *testing.T) {
 	if n := auditCount(ctx, t, tdb, tn.businessID, "work.token.revoked"); n != 1 {
 		t.Errorf("work.token.revoked audit rows = %d, want 1", n)
 	}
-	if n := auditCount(ctx, t, tdb, tn.businessID, "work.token.created"); n != 2 {
-		t.Errorf("work.token.created audit rows = %d, want 2", n)
+	if n := auditCount(ctx, t, tdb, tn.businessID, "work.token.created"); n != 3 {
+		t.Errorf("work.token.created audit rows = %d, want 3", n)
 	}
 }
 

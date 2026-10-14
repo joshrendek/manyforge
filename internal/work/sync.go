@@ -263,7 +263,7 @@ func runOp(ctx context.Context, q *dbgen.Queries, proj dbgen.WorkProject, issuer
 		if !keyRe.MatchString(op.Key) {
 			return errValidation("invalid key")
 		}
-		entry, err := formatNote(now, op.Author, "agent", op.Text)
+		entry, err := formatNote(now, op.Author, "agent", "mf", op.Text)
 		if err != nil {
 			return err
 		}

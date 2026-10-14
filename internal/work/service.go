@@ -216,7 +216,7 @@ func (s *Service) UpdateTask(ctx context.Context, principalID, businessID uuid.U
 			if aerr != nil {
 				return aerr
 			}
-			e, ferr := formatNote(time.Now(), author, "operator", *note)
+			e, ferr := formatNote(time.Now(), author, "operator", "", *note)
 			if ferr != nil {
 				return ferr
 			}

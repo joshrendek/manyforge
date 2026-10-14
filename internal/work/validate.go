@@ -196,13 +196,13 @@ func newTaskKey(prefix string) (string, error) {
 // formatNote validates a note and renders the entry appended to a task's notes:
 // "[<RFC3339 UTC> <author>] <text>". author falls back to fallback when blank; control
 // characters (including newlines) in the author are flattened so an entry header is one line.
-func formatNote(now time.Time, author, fallback, text string) (string, error) {
+func formatNote(now time.Time, author, fallback, via, text string) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" || utf8.RuneCountInString(text) > maxNoteLen {
 		return "", errValidation(fmt.Sprintf("note text must be 1..%d characters", maxNoteLen))
 	}
 	author = strings.Join(strings.FieldsFunc(author, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r)
+		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '[' || r == ']'
 	}), " ")
 	if utf8.RuneCountInString(author) > maxAuthorLen {
 		return "", errValidation(fmt.Sprintf("note author must be at most %d characters", maxAuthorLen))
@@ -210,6 +210,13 @@ func formatNote(now time.Time, author, fallback, text string) (string, error) {
 	if author == "" {
 		author = fallback
 	}
+	if via != "" {
+		author += " (" + via + ")"
+	}
+	// Continuation lines are indented so only a real entry header ever starts a line with
+	// "[": a note body cannot forge "[<ts> <someone else>] approved" as a separate entry.
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	text = strings.ReplaceAll(text, "\n", "\n  ")
 	return fmt.Sprintf("[%s %s] %s", now.UTC().Format(time.RFC3339), author, text), nil
 }
 
