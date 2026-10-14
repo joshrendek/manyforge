@@ -61,9 +61,18 @@ func (e *testEnv) mustRun(args ...string) string {
 	return strings.TrimSpace(e.out.String())
 }
 
+// repo opens the test repo with the same state binding mf uses.
+func (e *testEnv) repo() (*repo, error) {
+	base, err := stateBase(func(k string) string { return e.env[k] })
+	if err != nil {
+		return nil, err
+	}
+	return findRepo(e.dir, base)
+}
+
 func (e *testEnv) state() *State {
 	e.t.Helper()
-	r, err := findRepo(e.dir)
+	r, err := e.repo()
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -116,7 +125,7 @@ func TestInitAndLocalLifecycle(t *testing.T) {
 	e.dir = filepath.Join(e.dir, "My-Repo.Name")
 	mkdir(t, e.dir)
 	e.mustRun("init")
-	r, _ := findRepo(e.dir)
+	r, _ := e.repo()
 	if r.cfg.KeyPrefix != "myrepona" {
 		t.Fatalf("prefix = %q", r.cfg.KeyPrefix)
 	}
@@ -194,7 +203,7 @@ func TestLoginStoresTokenOutsideRepo(t *testing.T) {
 	if strings.Contains(readFile(t, filepath.Join(e.dir, ".mf", "config.json")), "mfw_") {
 		t.Fatal("token leaked into the repo")
 	}
-	r, _ := findRepo(e.dir)
+	r, _ := e.repo()
 	var stderr strings.Builder
 	a := &app{getenv: func(k string) string { return e.env[k] }, stderr: &stderr}
 	if tok, _ := a.token(r); tok != "mfw_secret" {

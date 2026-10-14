@@ -10,8 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -95,11 +93,6 @@ func (a *app) sync(ctx context.Context, r *repo, tok string, timeout time.Durati
 	endpoint, err := syncURL(r.cfg.Server)
 	if err != nil {
 		return sum, err
-	}
-	if stateTrackedByGit(r.root) {
-		// A committed state.json is repo-supplied: its outbox would be replayed
-		// against the operator's project with the operator's token.
-		return sum, fmt.Errorf("refusing to sync: .mf/state.json is tracked by git (run `git rm --cached .mf/state.json`)")
 	}
 	var roundErr error
 	err = r.withState(func(st *State) error {
@@ -250,12 +243,4 @@ func syncURL(server string) (string, error) {
 		return "", usagef("invalid server URL %q (want https://…)", server)
 	}
 	return u.String() + "/api/v1/work/sync", nil
-}
-
-// stateTrackedByGit reports whether .mf/state.json is committed in the repo.
-// No git (or not a git repo) means it is not tracked.
-func stateTrackedByGit(root string) bool {
-	cmd := exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", filepath.Join(".mf", "state.json"))
-	cmd.Stdout, cmd.Stderr = nil, nil
-	return cmd.Run() == nil
 }

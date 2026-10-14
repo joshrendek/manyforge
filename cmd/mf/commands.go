@@ -14,9 +14,15 @@ import (
 	"time"
 )
 
-const gitignoreBody = "state.json\nstate.lock\n*.tmp\n"
+const gitignoreBody = "*.tmp\n"
 
-func (a *app) openRepo() (*repo, error) { return findRepo(a.cwd) }
+func (a *app) openRepo() (*repo, error) {
+	base, err := stateBase(a.getenv)
+	if err != nil {
+		return nil, err
+	}
+	return findRepo(a.cwd, base)
+}
 
 func (a *app) readState() (*repo, *State, error) {
 	r, err := a.openRepo()
@@ -85,7 +91,11 @@ func cmdInit(a *app, args []string) error {
 	}
 	r, err := a.openRepo()
 	if errors.Is(err, errNoRepo) {
-		r, err = &repo{root: gitRoot(a.cwd)}, nil
+		var base string
+		if base, err = stateBase(a.getenv); err == nil {
+			root := gitRoot(a.cwd)
+			r = &repo{root: root, stateDir: stateDirFor(base, root)}
+		}
 	}
 	if err != nil {
 		return err
@@ -641,7 +651,7 @@ func cmdStatus(a *app, args []string) error {
 	}
 	if *asJSON {
 		return printJSON(a.stdout, map[string]any{
-			"root": r.root, "server": r.cfg.Server, "project": r.cfg.Project, "key_prefix": r.keyPrefix(st),
+			"root": r.root, "state_dir": r.stateDir, "server": r.cfg.Server, "project": r.cfg.Project, "key_prefix": r.keyPrefix(st),
 			"token": tokSource != "", "cursor": st.Cursor, "outbox": len(st.Outbox), "counts": counts,
 		})
 	}
@@ -652,8 +662,8 @@ func cmdStatus(a *app, args []string) error {
 	if tokSource == "" {
 		tokSource = "none"
 	}
-	fprintf(a.stdout, "repo:    %s\nserver:  %s\nproject: %s\nprefix:  %s\ntoken:   %s\ncursor:  %d\noutbox:  %d pending op(s)\n",
-		r.root, server, r.cfg.Project, r.keyPrefix(st), tokSource, st.Cursor, len(st.Outbox))
+	fprintf(a.stdout, "repo:    %s\nstate:   %s\nserver:  %s\nproject: %s\nprefix:  %s\ntoken:   %s\ncursor:  %d\noutbox:  %d pending op(s)\n",
+		r.root, r.stateDir, server, r.cfg.Project, r.keyPrefix(st), tokSource, st.Cursor, len(st.Outbox))
 	var parts []string
 	for _, s := range statuses {
 		parts = append(parts, fmt.Sprintf("%s %d", s, counts[s]))

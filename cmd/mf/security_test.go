@@ -2,33 +2,35 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// A repo that commits .mf/state.json must not get its outbox replayed with
-// the operator's token.
-func TestSyncRefusesGitTrackedState(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
-	}
+// A cloned repo must not be able to seed the outbox mf replays with the
+// operator's token: state lives outside the checkout, so a planted
+// .mf/state.json is simply never read.
+func TestPlantedRepoStateIsIgnored(t *testing.T) {
 	e, srv := newSyncedEnv(t)
-	e.env["MF_OFFLINE"] = "1"
-	e.mustRun("create", "planted op")
-	delete(e.env, "MF_OFFLINE")
-	for _, args := range [][]string{{"init", "-q"}, {"add", "-f", ".mf/state.json"}} {
-		cmd := exec.Command("git", append([]string{"-C", e.dir}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
+	planted := `{"cursor":0,"tasks":{},"outbox":[{"op":"update","key":"mf-victim","fields":{"status":"canceled"}}]}`
+	if err := os.WriteFile(filepath.Join(e.dir, ".mf", "state.json"), []byte(planted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.mustRun("sync")
+	for _, req := range srv.requests() {
+		if len(req.Ops) != 0 {
+			t.Fatalf("planted ops were sent: %+v", req.Ops)
 		}
 	}
-	if code := e.run("sync"); code == 0 || !strings.Contains(e.err.String(), "tracked by git") {
-		t.Fatalf("sync exit %d stderr %q", code, e.err.String())
+	r, err := e.repo()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := len(srv.requests()); n != 0 {
-		t.Fatalf("server saw %d requests, want 0", n)
+	if strings.HasPrefix(r.stateDir, filepath.Join(e.dir, ".mf")) {
+		t.Fatalf("state dir %s is inside the checkout", r.stateDir)
+	}
+	if fi, err := os.Stat(r.statePath("state.json")); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("state.json perm: %v %v", fi, err)
 	}
 }
 

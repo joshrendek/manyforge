@@ -80,9 +80,11 @@ The web UI uses the normal session JWT and RBAC (`work.read`, `work.write`).
 
 ## CLI (`cmd/mf`)
 
-Repo files: `.mf/config.json` (server, project slug; committed), `.mf/state.json`
-(local cache, cursor, outbox; gitignored via `.mf/.gitignore`). The token comes
-from `MF_TOKEN` or `~/.config/mf/credentials.json` (keyed by server + project), and
+Repo files: `.mf/config.json` (server, project slug; committed). The local cache,
+cursor and outbox live per checkout in `$XDG_STATE_HOME/mf/<repo>-<hash>/state.json`,
+outside the repo, so a cloned repo can never plant ops that get replayed with the
+operator's token. The token comes from `MF_TOKEN` (only when `MF_SERVER` matches the
+repo's server) or `~/.config/mf/credentials.json` (keyed by server + project), and
 is never written into the repo.
 
 Commands: `init`, `prime`, `ready`, `list`, `board`, `backlog`, `operator`, `show`,

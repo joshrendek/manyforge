@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -130,7 +132,7 @@ type Op struct {
 	Author string `json:"author,omitempty"`
 }
 
-// State is .mf/state.json: the local cache, the sync cursor and the outbox.
+// State is <stateDir>/state.json: the local cache, the sync cursor and the outbox.
 type State struct {
 	Cursor  int64            `json:"cursor"`
 	Project *Project         `json:"project,omitempty"`
@@ -145,19 +147,46 @@ type Config struct {
 	KeyPrefix string `json:"key_prefix"`
 }
 
-// repo is a directory containing .mf/config.json.
+// repo is a directory containing .mf/config.json. Its local state (cache,
+// cursor, outbox) lives OUTSIDE the checkout in stateDir: a cloned repo must
+// never be able to seed the outbox that mf replays with the operator's token.
 type repo struct {
-	root string
-	cfg  Config
+	root     string
+	cfg      Config
+	stateDir string
 }
 
 var errNoRepo = errors.New("not in an mf repo (no .mf/config.json here or above); run `mf init`")
 
-func (r *repo) dir() string             { return filepath.Join(r.root, ".mf") }
-func (r *repo) path(name string) string { return filepath.Join(r.dir(), name) }
+func (r *repo) dir() string                  { return filepath.Join(r.root, ".mf") }
+func (r *repo) path(name string) string      { return filepath.Join(r.dir(), name) }
+func (r *repo) statePath(name string) string { return filepath.Join(r.stateDir, name) }
 
-// findRepo walks up from start to the nearest .mf/config.json, like git.
-func findRepo(start string) (*repo, error) {
+// stateBase is $XDG_STATE_HOME/mf, defaulting to ~/.local/state/mf.
+func stateBase(getenv func(string) string) (string, error) {
+	if d := getenv("XDG_STATE_HOME"); d != "" {
+		return filepath.Join(d, "mf"), nil
+	}
+	if h := getenv("HOME"); h != "" {
+		return filepath.Join(h, ".local", "state", "mf"), nil
+	}
+	return "", errors.New("cannot locate mf state: set HOME or XDG_STATE_HOME")
+}
+
+// stateDirFor names a checkout's state directory: readable dir name plus a
+// hash of the resolved root, so two checkouts never share an outbox.
+func stateDirFor(base, root string) string {
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		real = root
+	}
+	sum := sha256.Sum256([]byte(real))
+	return filepath.Join(base, sanitizePrefix(filepath.Base(real))+"-"+hex.EncodeToString(sum[:6]))
+}
+
+// findRepo walks up from start to the nearest .mf/config.json, like git, and
+// binds the repo's state directory under base.
+func findRepo(start, base string) (*repo, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return nil, err
@@ -165,7 +194,7 @@ func findRepo(start string) (*repo, error) {
 	for {
 		data, err := os.ReadFile(filepath.Join(dir, ".mf", "config.json"))
 		if err == nil {
-			r := &repo{root: dir}
+			r := &repo{root: dir, stateDir: stateDirFor(base, dir)}
 			if err := json.Unmarshal(data, &r.cfg); err != nil {
 				return nil, fmt.Errorf("parse .mf/config.json: %w", err)
 			}
@@ -191,14 +220,14 @@ func (r *repo) saveConfig() error {
 // reader always sees a complete file.
 func (r *repo) loadState() (*State, error) {
 	st := &State{}
-	data, err := os.ReadFile(r.path("state.json"))
+	data, err := os.ReadFile(r.statePath("state.json"))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return nil, err
 	default:
 		if err := json.Unmarshal(data, st); err != nil {
-			return nil, fmt.Errorf("parse .mf/state.json: %w", err)
+			return nil, fmt.Errorf("parse %s: %w", r.statePath("state.json"), err)
 		}
 	}
 	if st.Tasks == nil {
@@ -210,7 +239,10 @@ func (r *repo) loadState() (*State, error) {
 // withState runs a read-modify-write of state.json under the repo lock. The
 // state is saved only if fn succeeds.
 func (r *repo) withState(fn func(*State) error) error {
-	unlock, err := lockFile(r.path("state.lock"))
+	if err := os.MkdirAll(r.stateDir, 0o700); err != nil {
+		return fmt.Errorf("state dir: %w", err)
+	}
+	unlock, err := lockFile(r.statePath("state.lock"))
 	if err != nil {
 		return fmt.Errorf("lock state: %w", err)
 	}
@@ -222,7 +254,7 @@ func (r *repo) withState(fn func(*State) error) error {
 	if err := fn(st); err != nil {
 		return err
 	}
-	return writeJSONAtomic(r.path("state.json"), st, 0o644)
+	return writeJSONAtomic(r.statePath("state.json"), st, 0o600)
 }
 
 // keyPrefix prefers the server's project prefix once known, so offline-created

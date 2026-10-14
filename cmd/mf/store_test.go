@@ -126,7 +126,7 @@ func TestFindRepoWalksUp(t *testing.T) {
 	e.mustRun("init", "--no-docs")
 	sub := e.dir + "/a/b"
 	mkdir(t, sub)
-	r, err := findRepo(sub)
+	r, err := findRepo(sub, t.TempDir())
 	if err != nil || r.root != e.dir {
 		t.Fatalf("findRepo = %+v, %v", r, err)
 	}

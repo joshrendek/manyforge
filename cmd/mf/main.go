@@ -1,6 +1,8 @@
 // Command mf is the ManyForge Work Board CLI (spec 018): a light, local-first
-// task tracker for coding agents. Every repo keeps its tasks in .mf/state.json,
-// mutations queue in an outbox, and — when a server and token are configured —
+// task tracker for coding agents. .mf/config.json in the repo names the server
+// and project; the task cache and outbox live per checkout under
+// $XDG_STATE_HOME/mf (never in the repo, so a clone can't plant ops). Mutations
+// queue in the outbox, and — when a server and token are configured —
 // the outbox syncs with POST {server}/api/v1/work/sync.
 package main
 

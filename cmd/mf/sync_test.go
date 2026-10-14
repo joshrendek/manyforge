@@ -266,7 +266,7 @@ func TestPrimeNeverFails(t *testing.T) {
 // queueOps appends n update ops straight into the outbox (faster than n CLI runs).
 func queueOps(t *testing.T, e *testEnv, n int, desc string) {
 	t.Helper()
-	r, err := findRepo(e.dir)
+	r, err := e.repo()
 	if err != nil {
 		t.Fatal(err)
 	}
