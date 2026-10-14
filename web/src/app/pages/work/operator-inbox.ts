@@ -74,6 +74,7 @@ export interface WorkTaskChange {
                 type="button"
                 class="mf-btn mf-btn-primary mf-btn-sm"
                 data-testid="work-operator-done"
+                [attr.aria-label]="'Mark done: ' + t.title"
                 [disabled]="busy.has(t.key)"
                 (click)="
                   changed.emit({
@@ -90,13 +91,19 @@ export interface WorkTaskChange {
                   type="button"
                   class="mf-btn mf-btn-ghost mf-btn-sm"
                   data-testid="work-operator-start"
+                  [attr.aria-label]="'Start on: ' + t.title"
                   [disabled]="busy.has(t.key)"
                   (click)="changed.emit({ task: t, patch: { status: 'in_progress' } })"
                 >
                   I'm on it
                 </button>
               }
-              <button type="button" class="mf-btn mf-btn-ghost mf-btn-sm" (click)="opened.emit(t)">
+              <button
+                type="button"
+                class="mf-btn mf-btn-ghost mf-btn-sm"
+                [attr.aria-label]="'Details and notes: ' + t.title"
+                (click)="opened.emit(t)"
+              >
                 Details &amp; notes
               </button>
             </div>
