@@ -182,22 +182,22 @@ func (q *Queries) GetRequester(ctx context.Context, arg GetRequesterParams) (Req
 }
 
 const getRequesterForTicket = `-- name: GetRequesterForTicket :one
-SELECT r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at FROM requester r
-JOIN ticket t ON t.requester_id = r.id
-WHERE t.id = $1 AND t.business_id = $2
+SELECT r.ticket_id, r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at FROM ticket_requester_context r
+WHERE r.ticket_id = $1 AND r.business_id = $2
 `
 
 type GetRequesterForTicketParams struct {
-	ID         uuid.UUID `json:"id"`
+	TicketID   uuid.UUID `json:"ticket_id"`
 	BusinessID uuid.UUID `json:"business_id"`
 }
 
 // GetRequesterForTicket loads the embedded Requester for a ticket via its
 // requester_id, scoped to the same business. Returned inline in the Ticket schema.
-func (q *Queries) GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (Requester, error) {
-	row := q.db.QueryRow(ctx, getRequesterForTicket, arg.ID, arg.BusinessID)
-	var i Requester
+func (q *Queries) GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (TicketRequesterContext, error) {
+	row := q.db.QueryRow(ctx, getRequesterForTicket, arg.TicketID, arg.BusinessID)
+	var i TicketRequesterContext
 	err := row.Scan(
+		&i.TicketID,
 		&i.ID,
 		&i.BusinessID,
 		&i.TenantRootID,
@@ -853,14 +853,14 @@ const listTickets = `-- name: ListTickets :many
 
 SELECT
   t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url,
-  r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
+  r.ticket_id, r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
   COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
             FROM ticket_tag tt
             WHERE tt.ticket_id = t.id AND tt.business_id = t.business_id), '{}')::text[] AS tags,
   (SELECT count(*) FROM ticket_message tm
     WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
 FROM ticket t
-JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
+JOIN ticket_requester_context r ON r.ticket_id = t.id AND r.business_id = t.business_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND ($2::text = '' OR strpos(lower(t.subject), lower($2::text)) > 0)
@@ -886,10 +886,10 @@ type ListTicketsParams struct {
 }
 
 type ListTicketsRow struct {
-	Ticket       Ticket    `json:"ticket"`
-	Requester    Requester `json:"requester"`
-	Tags         []string  `json:"tags"`
-	MessageCount int64     `json:"message_count"`
+	Ticket                 Ticket                 `json:"ticket"`
+	TicketRequesterContext TicketRequesterContext `json:"ticket_requester_context"`
+	Tags                   []string               `json:"tags"`
+	MessageCount           int64                  `json:"message_count"`
 }
 
 // Ticketing read-slice queries (spec 002, T031). Plain-table keyset reads only —
@@ -942,16 +942,17 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.Ticket.ConnectorID,
 			&i.Ticket.ExternalID,
 			&i.Ticket.ExternalUrl,
-			&i.Requester.ID,
-			&i.Requester.BusinessID,
-			&i.Requester.TenantRootID,
-			&i.Requester.Email,
-			&i.Requester.DisplayName,
-			&i.Requester.ContactID,
-			&i.Requester.FirstSeenAt,
-			&i.Requester.LastSeenAt,
-			&i.Requester.CreatedAt,
-			&i.Requester.UpdatedAt,
+			&i.TicketRequesterContext.TicketID,
+			&i.TicketRequesterContext.ID,
+			&i.TicketRequesterContext.BusinessID,
+			&i.TicketRequesterContext.TenantRootID,
+			&i.TicketRequesterContext.Email,
+			&i.TicketRequesterContext.DisplayName,
+			&i.TicketRequesterContext.ContactID,
+			&i.TicketRequesterContext.FirstSeenAt,
+			&i.TicketRequesterContext.LastSeenAt,
+			&i.TicketRequesterContext.CreatedAt,
+			&i.TicketRequesterContext.UpdatedAt,
 			&i.Tags,
 			&i.MessageCount,
 		); err != nil {
@@ -968,14 +969,14 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 const listTicketsAfter = `-- name: ListTicketsAfter :many
 SELECT
   t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url,
-  r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
+  r.ticket_id, r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
   COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
             FROM ticket_tag tt
             WHERE tt.ticket_id = t.id AND tt.business_id = t.business_id), '{}')::text[] AS tags,
   (SELECT count(*) FROM ticket_message tm
     WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
 FROM ticket t
-JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
+JOIN ticket_requester_context r ON r.ticket_id = t.id AND r.business_id = t.business_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND ($2::text = '' OR strpos(lower(t.subject), lower($2::text)) > 0)
@@ -1004,10 +1005,10 @@ type ListTicketsAfterParams struct {
 }
 
 type ListTicketsAfterRow struct {
-	Ticket       Ticket    `json:"ticket"`
-	Requester    Requester `json:"requester"`
-	Tags         []string  `json:"tags"`
-	MessageCount int64     `json:"message_count"`
+	Ticket                 Ticket                 `json:"ticket"`
+	TicketRequesterContext TicketRequesterContext `json:"ticket_requester_context"`
+	Tags                   []string               `json:"tags"`
+	MessageCount           int64                  `json:"message_count"`
 }
 
 // ListTicketsAfter is the keyset continuation of ListTickets: the same filters,
@@ -1050,16 +1051,17 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 			&i.Ticket.ConnectorID,
 			&i.Ticket.ExternalID,
 			&i.Ticket.ExternalUrl,
-			&i.Requester.ID,
-			&i.Requester.BusinessID,
-			&i.Requester.TenantRootID,
-			&i.Requester.Email,
-			&i.Requester.DisplayName,
-			&i.Requester.ContactID,
-			&i.Requester.FirstSeenAt,
-			&i.Requester.LastSeenAt,
-			&i.Requester.CreatedAt,
-			&i.Requester.UpdatedAt,
+			&i.TicketRequesterContext.TicketID,
+			&i.TicketRequesterContext.ID,
+			&i.TicketRequesterContext.BusinessID,
+			&i.TicketRequesterContext.TenantRootID,
+			&i.TicketRequesterContext.Email,
+			&i.TicketRequesterContext.DisplayName,
+			&i.TicketRequesterContext.ContactID,
+			&i.TicketRequesterContext.FirstSeenAt,
+			&i.TicketRequesterContext.LastSeenAt,
+			&i.TicketRequesterContext.CreatedAt,
+			&i.TicketRequesterContext.UpdatedAt,
 			&i.Tags,
 			&i.MessageCount,
 		); err != nil {

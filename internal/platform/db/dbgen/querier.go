@@ -330,7 +330,7 @@ type Querier interface {
 	GetRequester(ctx context.Context, arg GetRequesterParams) (Requester, error)
 	// GetRequesterForTicket loads the embedded Requester for a ticket via its
 	// requester_id, scoped to the same business. Returned inline in the Ticket schema.
-	GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (Requester, error)
+	GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (TicketRequesterContext, error)
 	// The business's panel-level review config (one row per business). Absent ⇒ the caller uses
 	// the built-in defaults (dedupe on, verify off, single post).
 	GetReviewConfig(ctx context.Context, businessID uuid.UUID) (ReviewConfig, error)

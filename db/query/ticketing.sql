@@ -25,7 +25,7 @@ SELECT
   (SELECT count(*) FROM ticket_message tm
     WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
 FROM ticket t
-JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
+JOIN ticket_requester_context r ON r.ticket_id = t.id AND r.business_id = t.business_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND (sqlc.arg('search')::text = '' OR strpos(lower(t.subject), lower(sqlc.arg('search')::text)) > 0)
@@ -51,7 +51,7 @@ SELECT
   (SELECT count(*) FROM ticket_message tm
     WHERE tm.ticket_id = t.id AND tm.business_id = t.business_id) AS message_count
 FROM ticket t
-JOIN requester r ON r.id = t.requester_id AND r.tenant_root_id = t.tenant_root_id
+JOIN ticket_requester_context r ON r.ticket_id = t.id AND r.business_id = t.business_id
 WHERE t.business_id = $1
   AND t.redacted_at IS NULL
   AND (sqlc.arg('search')::text = '' OR strpos(lower(t.subject), lower(sqlc.arg('search')::text)) > 0)
@@ -88,9 +88,8 @@ WHERE ticket_id = $1 AND business_id = $2;
 -- GetRequesterForTicket loads the embedded Requester for a ticket via its
 -- requester_id, scoped to the same business. Returned inline in the Ticket schema.
 -- name: GetRequesterForTicket :one
-SELECT r.* FROM requester r
-JOIN ticket t ON t.requester_id = r.id
-WHERE t.id = $1 AND t.business_id = $2;
+SELECT r.* FROM ticket_requester_context r
+WHERE r.ticket_id = $1 AND r.business_id = $2;
 
 -- ---- ticket messages ----
 

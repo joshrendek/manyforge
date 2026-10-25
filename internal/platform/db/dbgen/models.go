@@ -2078,6 +2078,54 @@ type SubscriberTag struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type SupportPortalContact struct {
+	BusinessID         uuid.UUID          `json:"business_id"`
+	TenantRootID       uuid.UUID          `json:"tenant_root_id"`
+	ExternalID         string             `json:"external_id"`
+	DisplayName        string             `json:"display_name"`
+	VerifiedEmail      *string            `json:"verified_email"`
+	RequesterID        pgtype.UUID        `json:"requester_id"`
+	PendingEmail       *string            `json:"pending_email"`
+	ChallengeHash      []byte             `json:"challenge_hash"`
+	ChallengeNonce     pgtype.UUID        `json:"challenge_nonce"`
+	ChallengeKeyID     pgtype.UUID        `json:"challenge_key_id"`
+	ChallengeExpiresAt pgtype.Timestamptz `json:"challenge_expires_at"`
+	Attempts           int32              `json:"attempts"`
+	SendNonce          pgtype.UUID        `json:"send_nonce"`
+	LastSentAt         pgtype.Timestamptz `json:"last_sent_at"`
+	SendTimes          []time.Time        `json:"send_times"`
+}
+
+type SupportPortalKey struct {
+	ID                 uuid.UUID          `json:"id"`
+	BusinessID         uuid.UUID          `json:"business_id"`
+	TenantRootID       uuid.UUID          `json:"tenant_root_id"`
+	CreatorPrincipalID uuid.UUID          `json:"creator_principal_id"`
+	Label              string             `json:"label"`
+	TokenHash          []byte             `json:"token_hash"`
+	CreatedAt          time.Time          `json:"created_at"`
+	ExpiresAt          time.Time          `json:"expires_at"`
+	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type SupportPortalRequest struct {
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	ExternalID   string    `json:"external_id"`
+	RequestID    uuid.UUID `json:"request_id"`
+	BodyHash     []byte    `json:"body_hash"`
+	TicketID     uuid.UUID `json:"ticket_id"`
+	MessageID    uuid.UUID `json:"message_id"`
+}
+
+type SupportPortalTicket struct {
+	TicketID     uuid.UUID `json:"ticket_id"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	TenantRootID uuid.UUID `json:"tenant_root_id"`
+	ExternalID   string    `json:"external_id"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type TelemetryClient struct {
 	ID               uuid.UUID          `json:"id"`
 	BusinessID       uuid.UUID          `json:"business_id"`
@@ -2199,6 +2247,20 @@ type TicketMessage struct {
 	ConnectorID          pgtype.UUID              `json:"connector_id"`
 	ExternalID           *string                  `json:"external_id"`
 	DroppedAttachments   []byte                   `json:"dropped_attachments"`
+}
+
+type TicketRequesterContext struct {
+	TicketID     uuid.UUID   `json:"ticket_id"`
+	ID           uuid.UUID   `json:"id"`
+	BusinessID   uuid.UUID   `json:"business_id"`
+	TenantRootID uuid.UUID   `json:"tenant_root_id"`
+	Email        string      `json:"email"`
+	DisplayName  *string     `json:"display_name"`
+	ContactID    pgtype.UUID `json:"contact_id"`
+	FirstSeenAt  time.Time   `json:"first_seen_at"`
+	LastSeenAt   time.Time   `json:"last_seen_at"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
 }
 
 type TicketTag struct {
