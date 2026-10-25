@@ -1,7 +1,7 @@
 -- sqlc schema input: TABLE definitions only, mirroring migrations/ (the runtime
 -- source of truth). Triggers, RLS policies, roles, and functions live in the
 -- migrations and are intentionally excluded here so sqlc's parser stays happy.
--- Keep this in sync with migrations/0001..0140 when table shapes change.
+-- Keep this in sync with migrations/0001..0149 when table shapes change.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 
@@ -1655,4 +1655,20 @@ CREATE TABLE support_portal_request (
  CONSTRAINT portal_request_contact_fk FOREIGN KEY(business_id,tenant_root_id,external_id) REFERENCES support_portal_contact(business_id,tenant_root_id,external_id) DEFERRABLE INITIALLY IMMEDIATE,
  CONSTRAINT portal_request_ticket_fk FOREIGN KEY(ticket_id,business_id,tenant_root_id) REFERENCES support_portal_ticket(ticket_id,business_id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
  CONSTRAINT portal_request_message_fk FOREIGN KEY(message_id,tenant_root_id) REFERENCES ticket_message(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE
+);
+
+-- sqlc shape of the read-only, owner-executed security-barrier view in 0149.
+-- This is not a writable relation at runtime; requester RLS remains unchanged.
+CREATE TABLE ticket_requester_context (
+    ticket_id uuid NOT NULL,
+    id uuid NOT NULL,
+    business_id uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    email citext NOT NULL,
+    display_name text,
+    contact_id uuid,
+    first_seen_at timestamptz NOT NULL,
+    last_seen_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL
 );

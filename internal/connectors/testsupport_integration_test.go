@@ -30,6 +30,7 @@ import (
 type connSeed struct {
 	businessID  uuid.UUID
 	principalID uuid.UUID
+	operatorID  uuid.UUID
 }
 
 func newTestSealer(t *testing.T) *crypto.Sealer {
@@ -98,7 +99,7 @@ func seedConnectorTenant(ctx context.Context, t *testing.T, tdb *testdb.TestDB) 
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit seed: %v", err)
 	}
-	return connSeed{businessID: masterID, principalID: agentID}
+	return connSeed{businessID: masterID, principalID: agentID, operatorID: ownerHumanID}
 }
 
 // outboundSeed is what seedOutboundConnector returns: the shared sealer + a Registry
@@ -514,7 +515,9 @@ func seedFullConnectorEnv(t *testing.T, ctx context.Context, tdb *testdb.TestDB,
 		Webhook:       wh,
 		ConnectorID:   connID,
 		BusinessID:    seed.businessID,
-		PrincipalID:   seed.principalID,
+		// The connector agent has only business.read. Replies use the human
+		// operator's ticket permissions, matching the production HTTP route.
+		PrincipalID: seed.operatorID,
 	}
 }
 

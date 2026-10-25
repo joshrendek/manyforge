@@ -202,7 +202,7 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 			}
 			items = make([]Ticket, 0, len(rows))
 			for _, r := range rows {
-				items = append(items, buildTicket(r.Ticket, r.Requester, r.Tags, r.MessageCount))
+				items = append(items, buildTicket(r.Ticket, r.TicketRequesterContext, r.Tags, r.MessageCount))
 			}
 		} else {
 			k, perr := decodeTicketCursor(cursor)
@@ -226,7 +226,7 @@ func (s *Service) ListTickets(ctx context.Context, principalID, businessID uuid.
 			}
 			items = make([]Ticket, 0, len(rows))
 			for _, r := range rows {
-				items = append(items, buildTicket(r.Ticket, r.Requester, r.Tags, r.MessageCount))
+				items = append(items, buildTicket(r.Ticket, r.TicketRequesterContext, r.Tags, r.MessageCount))
 			}
 		}
 
@@ -328,7 +328,7 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 		}
 
 		// Recipient email: the ticket's requester (same business/tenant scope).
-		req, rerr := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: ticketID, BusinessID: businessID})
+		req, rerr := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{TicketID: ticketID, BusinessID: businessID})
 		if rerr != nil {
 			return rerr
 		}
@@ -639,7 +639,7 @@ func (s *Service) recordTicketActivity(ctx context.Context, tx pgx.Tx, q *dbgen.
 	if s.Activity == nil {
 		return nil
 	}
-	req, rerr := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: ticketID, BusinessID: businessID})
+	req, rerr := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{TicketID: ticketID, BusinessID: businessID})
 	if rerr != nil {
 		return rerr
 	}
@@ -1125,7 +1125,7 @@ func (s *Service) GetRequester(ctx context.Context, principalID, businessID, req
 // tags, and message_count are supplied by the caller (folded into the list query),
 // so it does no I/O. assembleTicket is the single-row equivalent that fetches those
 // pieces itself.
-func buildTicket(r dbgen.Ticket, req dbgen.Requester, tags []string, msgCount int64) Ticket {
+func buildTicket(r dbgen.Ticket, req dbgen.TicketRequesterContext, tags []string, msgCount int64) Ticket {
 	if tags == nil {
 		tags = []string{}
 	}
@@ -1142,7 +1142,7 @@ func buildTicket(r dbgen.Ticket, req dbgen.Requester, tags []string, msgCount in
 		Status:              string(r.Status),
 		Priority:            string(r.Priority),
 		AssigneePrincipalID: pgUUIDPtr(r.AssigneePrincipalID),
-		Requester:           toRequester(req),
+		Requester:           ticketRequester(req),
 		Tags:                tags,
 		MessageCount:        int(msgCount),
 		LastMessageAt:       lastMsg,
@@ -1156,7 +1156,7 @@ func buildTicket(r dbgen.Ticket, req dbgen.Requester, tags []string, msgCount in
 // list path folds these into one query instead (see ListTickets / buildTicket). All
 // sub-queries are scoped to the same business_id and run in the same RLS-bound tx.
 func assembleTicket(ctx context.Context, q *dbgen.Queries, r dbgen.Ticket) (Ticket, error) {
-	req, err := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{ID: r.ID, BusinessID: r.BusinessID})
+	req, err := q.GetRequesterForTicket(ctx, dbgen.GetRequesterForTicketParams{TicketID: r.ID, BusinessID: r.BusinessID})
 	if err != nil {
 		return Ticket{}, err
 	}
@@ -1196,6 +1196,13 @@ func loadAttachments(ctx context.Context, q *dbgen.Queries, businessID uuid.UUID
 		})
 	}
 	return out, nil
+}
+
+// ticketRequester projects notification identity from the authorized ticket context.
+// A sibling directory's display name, CRM link, and activity timestamps stay private.
+func ticketRequester(r dbgen.TicketRequesterContext) Requester {
+	return Requester{ID: r.ID, TenantRootID: r.TenantRootID, Email: r.Email, DisplayName: r.DisplayName,
+		ContactID: pgUUIDPtr(r.ContactID), FirstSeenAt: r.FirstSeenAt, LastSeenAt: r.LastSeenAt}
 }
 
 func toRequester(r dbgen.Requester) Requester {

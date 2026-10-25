@@ -212,3 +212,11 @@ Customer and management endpoints enforce admission/rates before body reads,
 resend failure/cancellation, creator lifecycle, two-user/two-business isolation,
 native operator replies/internal-note denial, and real provider delivery before
 calling an integration ready.
+
+### Requesters shared by sibling businesses
+
+A sender is deduplicated within the tenant. Business-only support staff can list,
+read, and reply to their own tickets even when that sender first contacted another
+business. The ticket exposes the notification email and requester ID, while sibling
+directory names, CRM links, and activity timestamps remain private. Direct requester
+directory endpoints and writes retain their original business-scoped RLS rules.
