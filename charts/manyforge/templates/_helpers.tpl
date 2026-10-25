@@ -5,6 +5,18 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/* Use the same immutable artifact for the app and pre-upgrade migration hook. */}}
+{{- define "manyforge.image" -}}
+{{- if .Values.image.digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" .Values.image.digest) -}}
+{{- fail "image.digest must be a sha256 digest with 64 lowercase hexadecimal characters" -}}
+{{- end -}}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- end -}}
+{{- end -}}
+
 {{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to

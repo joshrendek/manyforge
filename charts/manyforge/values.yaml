@@ -20,6 +20,9 @@ image:
   # comment is a Flux Image Automation setter marker: Flux rewrites this field
   # in place whenever a new image matching the `manyforge` ImagePolicy lands.
   tag: latest # {"$imagepolicy": "flux-system:manyforge:tag"}
+  # Set this in production; takes precedence over tag for the app AND migration hook.
+  # Pair with a Flux digest setter and ImagePolicy.digestReflectionPolicy.
+  digest: ""
 
 # Pulled by both the app Deployment and the migrate Job.
 # NOTE: this Secret is namespace-scoped, so it must ALSO exist, under the SAME
