@@ -87,6 +87,12 @@ type AnalyticsEvent struct {
 	OccurredAt time.Time `json:"occurred_at"`
 	Name       string    `json:"name"`
 	Props      any       `json:"props,omitempty"`
+	// Path and SessionID opt a signed pageview into page/visitor reporting. They must be
+	// supplied together with name=pageview and a verified X-Telemetry-Signature.
+	// Path is a bounded route template, never a full URL. The random per-tab UUID is
+	// consumed by daily, client-scoped HMAC derivation and is never persisted.
+	Path      string `json:"path,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // CrashEvent is one inbound crash report.

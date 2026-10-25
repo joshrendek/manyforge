@@ -8,6 +8,44 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestAppAndMigrationImageParity(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct{ name, digest, want string }{
+		{"tag-compatibility", "", "registry.example.test/manyforge:release"},
+		{"digest-precedes-tag", digest, "registry.example.test/manyforge@" + digest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output := renderChart(t, map[string]string{"image.repository": "registry.example.test/manyforge", "image.tag": "release", "image.digest": tc.digest})
+			for _, source := range []string{"templates/deployment.yaml", "templates/migrate-job.yaml"} {
+				var workload struct {
+					Spec struct {
+						Template struct {
+							Spec struct {
+								Containers []struct {
+									Image string `yaml:"image"`
+								} `yaml:"containers"`
+							} `yaml:"spec"`
+						} `yaml:"template"`
+					} `yaml:"spec"`
+				}
+				if err := yaml.Unmarshal([]byte(renderedSource(t, output, source)), &workload); err != nil {
+					t.Fatal(err)
+				}
+				if got := workload.Spec.Template.Spec.Containers; len(got) != 1 || got[0].Image != tc.want {
+					t.Fatalf("%s image = %+v, want %s", source, got, tc.want)
+				}
+			}
+		})
+	}
+	for _, digest := range []string{"latest", "sha256:abc", "sha256:" + strings.Repeat("A", 64)} {
+		cmd := exec.Command("helm", "template", "invalid", ".", "--set", "jwt.activeKid=test-key", "--set", "trustedProxyCidr=127.0.0.1/32", "--set-string", "image.digest="+digest)
+		output, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "image.digest must be a sha256 digest") {
+			t.Fatalf("invalid digest accepted or wrong error: %v %s", err, output)
+		}
+	}
+}
+
 func TestOutboundProviderEnvironmentParity(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

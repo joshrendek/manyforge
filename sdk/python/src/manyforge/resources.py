@@ -57,6 +57,7 @@ from manyforge.api.business_requesters_resource import BusinessRequestersResourc
 from manyforge.api.business_review_config_resource import BusinessReviewConfigResource, AsyncBusinessReviewConfigResource
 from manyforge.api.business_review_dimensions_resource import BusinessReviewDimensionsResource, AsyncBusinessReviewDimensionsResource
 from manyforge.api.business_roles_resource import BusinessRolesResource, AsyncBusinessRolesResource
+from manyforge.api.business_support_portal_keys_resource import BusinessSupportPortalKeysResource, AsyncBusinessSupportPortalKeysResource
 from manyforge.api.business_telemetry_clients_resource import BusinessTelemetryClientsResource, AsyncBusinessTelemetryClientsResource
 from manyforge.api.business_telemetry_clients_allowed_origins_resource import BusinessTelemetryClientsAllowedOriginsResource, AsyncBusinessTelemetryClientsAllowedOriginsResource
 from manyforge.api.business_telemetry_clients_move_targets_resource import BusinessTelemetryClientsMoveTargetsResource, AsyncBusinessTelemetryClientsMoveTargetsResource
@@ -71,6 +72,8 @@ from manyforge.api.feedback_posts_resource import FeedbackPostsResource, AsyncFe
 from manyforge.api.mailing_mailing_resource import MailingMailingResource, AsyncMailingMailingResource
 from manyforge.api.mailing_server_mailing_events_resource import MailingServerMailingEventsResource, AsyncMailingServerMailingEventsResource
 from manyforge.api.mailing_server_mailing_subscribers_resource import MailingServerMailingSubscribersResource, AsyncMailingServerMailingSubscribersResource
+from manyforge.api.mailing_server_support_portal_contact_resource import MailingServerSupportPortalContactResource, AsyncMailingServerSupportPortalContactResource
+from manyforge.api.mailing_server_support_portal_tickets_resource import MailingServerSupportPortalTicketsResource, AsyncMailingServerSupportPortalTicketsResource
 from manyforge.api.root_account_resource import RootAccountResource, AsyncRootAccountResource
 from manyforge.api.root_analytics_resource import RootAnalyticsResource, AsyncRootAnalyticsResource
 from manyforge.api.root_auth_resource import RootAuthResource, AsyncRootAuthResource
@@ -109,6 +112,16 @@ class BusinessTelemetryClientsAllowedOriginsScope(BusinessTelemetryClientsAllowe
         self._bindings = MappingProxyType(dict(bindings or {}))
 
 class BusinessTelemetryClientsMoveTargetsScope(BusinessTelemetryClientsMoveTargetsResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class MailingServerSupportPortalContactScope(MailingServerSupportPortalContactResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class MailingServerSupportPortalTicketsScope(MailingServerSupportPortalTicketsResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
@@ -279,6 +292,11 @@ class BusinessRepoConnectorsDimensionOverridesScope(BusinessRepoConnectorsDimens
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class BusinessSupportPortalKeysScope(BusinessSupportPortalKeysResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class BusinessTelemetryClientsScope(BusinessTelemetryClientsResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -321,6 +339,19 @@ class BusinessWorkTokensScope(BusinessWorkTokensResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class MailingServerSupportPortalScope(object):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def contact(self) -> MailingServerSupportPortalContactScope:
+        return MailingServerSupportPortalContactScope(self._transport, self._bindings)
+
+    @property
+    def tickets(self) -> MailingServerSupportPortalTicketsScope:
+        return MailingServerSupportPortalTicketsScope(self._transport, self._bindings)
 
 class RootGithubAppInstallUrlScope(RootGithubAppInstallUrlResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -438,6 +469,10 @@ class BusinessScope(object):
     @property
     def roles(self) -> BusinessRolesScope:
         return BusinessRolesScope(self._transport, self._bindings)
+
+    @property
+    def support(self) -> BusinessSupportScope:
+        return BusinessSupportScope(self._transport, self._bindings)
 
     @property
     def telemetry(self) -> BusinessTelemetryScope:
@@ -686,6 +721,15 @@ class BusinessRolesScope(BusinessRolesResource):
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class BusinessSupportScope(object):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def portal_keys(self) -> BusinessSupportPortalKeysScope:
+        return BusinessSupportPortalKeysScope(self._transport, self._bindings)
+
 class BusinessTelemetryScope(object):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -761,6 +805,10 @@ class MailingServerScope(object):
     def subscribers(self) -> MailingServerSubscribersScope:
         return MailingServerSubscribersScope(self._transport, self._bindings)
 
+    @property
+    def support(self) -> MailingServerSupportScope:
+        return MailingServerSupportScope(self._transport, self._bindings)
+
 class MailingServerEventsScope(MailingServerMailingEventsResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -770,6 +818,15 @@ class MailingServerSubscribersScope(MailingServerMailingSubscribersResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class MailingServerSupportScope(object):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def portal(self) -> MailingServerSupportPortalScope:
+        return MailingServerSupportPortalScope(self._transport, self._bindings)
 
 class RootScope(object):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -891,6 +948,16 @@ class AsyncBusinessTelemetryClientsAllowedOriginsScope(AsyncBusinessTelemetryCli
         self._bindings = MappingProxyType(dict(bindings or {}))
 
 class AsyncBusinessTelemetryClientsMoveTargetsScope(AsyncBusinessTelemetryClientsMoveTargetsResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncMailingServerSupportPortalContactScope(AsyncMailingServerSupportPortalContactResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncMailingServerSupportPortalTicketsScope(AsyncMailingServerSupportPortalTicketsResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
@@ -1061,6 +1128,11 @@ class AsyncBusinessRepoConnectorsDimensionOverridesScope(AsyncBusinessRepoConnec
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class AsyncBusinessSupportPortalKeysScope(AsyncBusinessSupportPortalKeysResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class AsyncBusinessTelemetryClientsScope(AsyncBusinessTelemetryClientsResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -1103,6 +1175,19 @@ class AsyncBusinessWorkTokensScope(AsyncBusinessWorkTokensResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncMailingServerSupportPortalScope(object):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def contact(self) -> AsyncMailingServerSupportPortalContactScope:
+        return AsyncMailingServerSupportPortalContactScope(self._transport, self._bindings)
+
+    @property
+    def tickets(self) -> AsyncMailingServerSupportPortalTicketsScope:
+        return AsyncMailingServerSupportPortalTicketsScope(self._transport, self._bindings)
 
 class AsyncRootGithubAppInstallUrlScope(AsyncRootGithubAppInstallUrlResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -1220,6 +1305,10 @@ class AsyncBusinessScope(object):
     @property
     def roles(self) -> AsyncBusinessRolesScope:
         return AsyncBusinessRolesScope(self._transport, self._bindings)
+
+    @property
+    def support(self) -> AsyncBusinessSupportScope:
+        return AsyncBusinessSupportScope(self._transport, self._bindings)
 
     @property
     def telemetry(self) -> AsyncBusinessTelemetryScope:
@@ -1468,6 +1557,15 @@ class AsyncBusinessRolesScope(AsyncBusinessRolesResource):
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class AsyncBusinessSupportScope(object):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def portal_keys(self) -> AsyncBusinessSupportPortalKeysScope:
+        return AsyncBusinessSupportPortalKeysScope(self._transport, self._bindings)
+
 class AsyncBusinessTelemetryScope(object):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -1543,6 +1641,10 @@ class AsyncMailingServerScope(object):
     def subscribers(self) -> AsyncMailingServerSubscribersScope:
         return AsyncMailingServerSubscribersScope(self._transport, self._bindings)
 
+    @property
+    def support(self) -> AsyncMailingServerSupportScope:
+        return AsyncMailingServerSupportScope(self._transport, self._bindings)
+
 class AsyncMailingServerEventsScope(AsyncMailingServerMailingEventsResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -1552,6 +1654,15 @@ class AsyncMailingServerSubscribersScope(AsyncMailingServerMailingSubscribersRes
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncMailingServerSupportScope(object):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def portal(self) -> AsyncMailingServerSupportPortalScope:
+        return AsyncMailingServerSupportPortalScope(self._transport, self._bindings)
 
 class AsyncRootScope(object):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:

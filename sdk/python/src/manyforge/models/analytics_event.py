@@ -19,13 +19,17 @@ from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
+from uuid import UUID
 
 
 class AnalyticsEvent(Model):
     """AnalyticsEvent wire model. Unspecified fields are never sent."""
     name: str | UnsetType = Field(default=UNSET, alias="name")
     occurred_at: datetime | UnsetType = Field(default=UNSET, alias="occurred_at")
+    path: str | UnsetType = Field(default=UNSET, alias="path")
     props: JsonValue | None | UnsetType = Field(default=UNSET, alias="props")
+    session_id: UUID | UnsetType = Field(default=UNSET, alias="session_id")
 
 
 

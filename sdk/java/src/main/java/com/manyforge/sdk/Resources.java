@@ -37,6 +37,7 @@ public final class Resources {
     private final BusinessReviewConfig reviewConfig;
     private final BusinessReviewDimensions reviewDimensions;
     private final BusinessRoles roles;
+    private final BusinessSupport support;
     private final BusinessTelemetry telemetry;
     private final BusinessTickets tickets;
     private final BusinessWork work;
@@ -65,6 +66,7 @@ public final class Resources {
       this.reviewConfig = new BusinessReviewConfig(transport, binding);
       this.reviewDimensions = new BusinessReviewDimensions(transport, binding);
       this.roles = new BusinessRoles(transport, binding);
+      this.support = new BusinessSupport(transport, binding);
       this.telemetry = new BusinessTelemetry(transport, binding);
       this.tickets = new BusinessTickets(transport, binding);
       this.work = new BusinessWork(transport, binding);
@@ -92,6 +94,7 @@ public final class Resources {
     public BusinessReviewConfig reviewConfig() { return reviewConfig; }
     public BusinessReviewDimensions reviewDimensions() { return reviewDimensions; }
     public BusinessRoles roles() { return roles; }
+    public BusinessSupport support() { return support; }
     public BusinessTelemetry telemetry() { return telemetry; }
     public BusinessTickets tickets() { return tickets; }
     public BusinessWork work() { return work; }
@@ -491,6 +494,21 @@ public final class Resources {
       super(transport, binding);
     }
   }
+  public static class BusinessSupport {
+    protected final Transport transport;
+    protected final String binding;
+    private final BusinessSupportPortalKeys portalKeys;
+    public BusinessSupport(Transport transport, String binding) {
+      this.transport = Objects.requireNonNull(transport); this.binding = binding;
+      this.portalKeys = new BusinessSupportPortalKeys(transport, binding);
+    }
+    public BusinessSupportPortalKeys portalKeys() { return portalKeys; }
+  }
+  public static class BusinessSupportPortalKeys extends BusinessSupportPortalKeysResource {
+    public BusinessSupportPortalKeys(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
   public static class BusinessTelemetry {
     protected final Transport transport;
     protected final String binding;
@@ -607,13 +625,16 @@ public final class Resources {
     protected final String binding;
     private final MailingServerEvents events;
     private final MailingServerSubscribers subscribers;
+    private final MailingServerSupport support;
     public MailingServer(Transport transport, String binding) {
       this.transport = Objects.requireNonNull(transport); this.binding = binding;
       this.events = new MailingServerEvents(transport, binding);
       this.subscribers = new MailingServerSubscribers(transport, binding);
+      this.support = new MailingServerSupport(transport, binding);
     }
     public MailingServerEvents events() { return events; }
     public MailingServerSubscribers subscribers() { return subscribers; }
+    public MailingServerSupport support() { return support; }
   }
   public static class MailingServerEvents extends MailingServerMailingEventsResource {
     public MailingServerEvents(Transport transport, String binding) {
@@ -622,6 +643,39 @@ public final class Resources {
   }
   public static class MailingServerSubscribers extends MailingServerMailingSubscribersResource {
     public MailingServerSubscribers(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class MailingServerSupport {
+    protected final Transport transport;
+    protected final String binding;
+    private final MailingServerSupportPortal portal;
+    public MailingServerSupport(Transport transport, String binding) {
+      this.transport = Objects.requireNonNull(transport); this.binding = binding;
+      this.portal = new MailingServerSupportPortal(transport, binding);
+    }
+    public MailingServerSupportPortal portal() { return portal; }
+  }
+  public static class MailingServerSupportPortal {
+    protected final Transport transport;
+    protected final String binding;
+    private final MailingServerSupportPortalContact contact;
+    private final MailingServerSupportPortalTickets tickets;
+    public MailingServerSupportPortal(Transport transport, String binding) {
+      this.transport = Objects.requireNonNull(transport); this.binding = binding;
+      this.contact = new MailingServerSupportPortalContact(transport, binding);
+      this.tickets = new MailingServerSupportPortalTickets(transport, binding);
+    }
+    public MailingServerSupportPortalContact contact() { return contact; }
+    public MailingServerSupportPortalTickets tickets() { return tickets; }
+  }
+  public static class MailingServerSupportPortalContact extends MailingServerSupportPortalContactResource {
+    public MailingServerSupportPortalContact(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class MailingServerSupportPortalTickets extends MailingServerSupportPortalTicketsResource {
+    public MailingServerSupportPortalTickets(Transport transport, String binding) {
       super(transport, binding);
     }
   }

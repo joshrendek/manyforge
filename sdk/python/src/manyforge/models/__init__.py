@@ -139,6 +139,7 @@ from .create_inbound_address import CreateInboundAddress
 from .create_mcp_server_request import CreateMCPServerRequest
 from .create_repo_connector_input import CreateRepoConnectorInput
 from .create_repo_connector_input_properties_type_enum import CreateRepoConnectorInputPropertiesTypeEnum
+from .create_support_portal_ticket201_response import CreateSupportPortalTicket201Response
 from .create_tenant_merge import CreateTenantMerge
 from .delivery import Delivery
 from .delivery_page import DeliveryPage
@@ -220,6 +221,8 @@ from .list_key_input import ListKeyInput
 from .list_key_properties_status_enum import ListKeyPropertiesStatusEnum
 from .list_page import ListPage
 from .list_patch import ListPatch
+from .list_support_portal_keys200_response import ListSupportPortalKeys200Response
+from .list_support_portal_tickets200_response import ListSupportPortalTickets200Response
 from .login_request import LoginRequest
 from .logout_request import LogoutRequest
 from .magic_link_request import MagicLinkRequest
@@ -299,6 +302,7 @@ from .relay_sending_profile_input_properties_mode_enum import RelaySendingProfil
 from .remove_tag_node import RemoveTagNode
 from .remove_tag_node_properties_kind_enum import RemoveTagNodePropertiesKindEnum
 from .reply_body import ReplyBody
+from .reply_support_portal_ticket201_response import ReplySupportPortalTicket201Response
 from .repo_connector_list import RepoConnectorList
 from .repo_connector_summary import RepoConnectorSummary
 from .repo_dimension_override import RepoDimensionOverride
@@ -343,6 +347,8 @@ from .s2_s_subscription_input import S2SSubscriptionInput
 from .send_email_config import SendEmailConfig
 from .send_email_node import SendEmailNode
 from .send_email_node_properties_kind_enum import SendEmailNodePropertiesKindEnum
+from .send_support_portal_verification200_response import SendSupportPortalVerification200Response
+from .send_support_portal_verification_request import SendSupportPortalVerificationRequest
 from .sending_profile import SendingProfile
 from .sending_profile_input import SendingProfileInput
 from .sending_profile_properties_feedback_status_enum import SendingProfilePropertiesFeedbackStatusEnum
@@ -366,6 +372,15 @@ from .subscriber_patch import SubscriberPatch
 from .subscriber_patch_status import SubscriberPatchStatus
 from .subscriber_properties_consent_source_enum import SubscriberPropertiesConsentSourceEnum
 from .subscriber_status import SubscriberStatus
+from .support_portal_contact import SupportPortalContact
+from .support_portal_key import SupportPortalKey
+from .support_portal_key_request import SupportPortalKeyRequest
+from .support_portal_message import SupportPortalMessage
+from .support_portal_message_properties_direction_enum import SupportPortalMessagePropertiesDirectionEnum
+from .support_portal_message_request import SupportPortalMessageRequest
+from .support_portal_thread import SupportPortalThread
+from .support_portal_ticket import SupportPortalTicket
+from .support_portal_ticket_request import SupportPortalTicketRequest
 from .suppression import Suppression
 from .suppression_input import SuppressionInput
 from .suppression_page import SuppressionPage
@@ -444,6 +459,8 @@ from .update_inbound_address import UpdateInboundAddress
 from .update_mcp_server_request import UpdateMCPServerRequest
 from .valid_node import ValidNode
 from .validation_result import ValidationResult
+from .verify_support_portal_contact200_response import VerifySupportPortalContact200Response
+from .verify_support_portal_contact_request import VerifySupportPortalContactRequest
 from .vote_result import VoteResult
 from .wait_config import WaitConfig
 from .wait_node import WaitNode
