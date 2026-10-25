@@ -12,6 +12,827 @@ servers:
 security:
 - bearerAuth: []
 paths:
+  /api/v1/support/portal/contact:
+    get:
+      operationId: getSupportPortalContact
+      summary: Read the authenticated customer notification contact
+      tags:
+      - SupportPortalContact
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.contact
+      x-manyforge-method: get
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^tph:[0-9a-f-]{36}$
+          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportPortalContact'
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      security: []
+  /api/v1/support/portal/contact/verification:
+    post:
+      operationId: sendSupportPortalVerification
+      summary: Send a single-use email proof code; one per minute and five per hour
+      tags:
+      - SupportPortalContact
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.contact
+      x-manyforge-method: sendVerification
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^tph:[0-9a-f-]{36}$
+          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: boolean
+                required:
+                - sent
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  maxLength: 254
+              required:
+              - email
+  /api/v1/support/portal/contact/verify:
+    post:
+      operationId: verifySupportPortalContact
+      summary: Consume an eight-digit email code; email never grants access to existing tickets
+      tags:
+      - SupportPortalContact
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.contact
+      x-manyforge-method: verify
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^tph:[0-9a-f-]{36}$
+          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified:
+                    type: boolean
+                required:
+                - verified
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  pattern: ^[0-9]{8}$
+              required:
+              - code
+  /api/v1/support/portal/tickets:
+    get:
+      operationId: listSupportPortalTickets
+      summary: List only this opaque customer’s portal tickets
+      tags:
+      - SupportPortalTickets
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.tickets
+      x-manyforge-method: list
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^tph:[0-9a-f-]{36}$
+          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tickets:
+                    type: array
+                    maxItems: 200
+                    items:
+                      $ref: '#/components/schemas/SupportPortalTicket'
+                required:
+                - tickets
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      security: []
+    post:
+      operationId: createSupportPortalTicket
+      summary: Create a native support ticket for a verified customer contact
+      tags:
+      - SupportPortalTickets
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.tickets
+      x-manyforge-method: create
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^tph:[0-9a-f-]{36}$
+          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket:
+                    $ref: '#/components/schemas/SupportPortalTicket'
+                required:
+                - ticket
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportPortalTicketRequest'
+  /api/v1/support/portal/tickets/{ticketID}:
+    get:
+      operationId: getSupportPortalThread
+      summary: Read up to 20 public messages, newest first; pass next_cursor as before
+      tags:
+      - SupportPortalTickets
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.tickets
+      x-manyforge-method: get
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^tph:[0-9a-f-]{36}$
+          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      - name: ticketID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: before
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportPortalThread'
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      security: []
+  /api/v1/support/portal/tickets/{ticketID}/messages:
+    post:
+      operationId: replySupportPortalTicket
+      summary: Append an idempotent customer message to an owned ticket
+      tags:
+      - SupportPortalTickets
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.tickets
+      x-manyforge-method: reply
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^tph:[0-9a-f-]{36}$
+          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      - name: ticketID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    $ref: '#/components/schemas/SupportPortalMessage'
+                required:
+                - message
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportPortalMessageRequest'
+  /api/v1/businesses/{id}/support/portal-keys:
+    get:
+      operationId: listSupportPortalKeys
+      summary: 'Owner: list portal credential metadata'
+      tags:
+      - SupportPortalKeys
+      x-manyforge-audience: management
+      x-manyforge-resource: support.portalKeys
+      x-manyforge-method: list
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/SupportPortalKey'
+                required:
+                - keys
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      x-manyforge-business-param: id
+    post:
+      operationId: createSupportPortalKey
+      summary: 'Owner: issue an expiring server-only portal credential'
+      tags:
+      - SupportPortalKeys
+      x-manyforge-audience: management
+      x-manyforge-resource: support.portalKeys
+      x-manyforge-method: create
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportPortalKey'
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      x-manyforge-business-param: id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportPortalKeyRequest'
+  /api/v1/businesses/{id}/support/portal-keys/{keyID}:
+    delete:
+      operationId: revokeSupportPortalKey
+      summary: 'Owner: revoke a portal credential'
+      tags:
+      - SupportPortalKeys
+      x-manyforge-audience: management
+      x-manyforge-resource: support.portalKeys
+      x-manyforge-method: revoke
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: keyID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Success
+        '400':
+          description: Invalid input, unknown fields, or body exceeds 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '401':
+          description: Invalid, expired or revoked portal credential, or ineligible creator account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '404':
+          description: Resource not visible to this customer/business.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '409':
+          description: Contact verification required, quota reached, or idempotency conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '429':
+          description: Admission or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        '503':
+          description: Support dependency unavailable; no success is implied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicError'
+        default:
+          description: Unexpected response; retain bounded body and status without assuming a JSON envelope.
+      x-manyforge-business-param: id
   /api/v1/inbound/email/{provider}:
     parameters:
     - $ref: '#/components/parameters/provider'
@@ -14060,6 +14881,154 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    SupportPortalContact:
+      type: object
+      properties:
+        email:
+          type: string
+          maxLength: 254
+        verified:
+          type: boolean
+      required:
+      - email
+      - verified
+    SupportPortalTicket:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+          maxLength: 300
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - subject
+      - status
+      - created_at
+      - updated_at
+    SupportPortalMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum:
+          - inbound
+          - outbound
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - direction
+      - body
+      - created_at
+    SupportPortalKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          maxLength: 100
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        token:
+          type: string
+          description: One-time server-only credential. Present only on creation; store securely.
+      required:
+      - id
+      - label
+      - created_at
+      - expires_at
+    SupportPortalThread:
+      type: object
+      properties:
+        ticket:
+          $ref: '#/components/schemas/SupportPortalTicket'
+        messages:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/SupportPortalMessage'
+        next_cursor:
+          type: string
+          format: uuid
+      required:
+      - ticket
+      - messages
+    SupportPortalTicketRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 300
+        body:
+          type: string
+          minLength: 1
+          maxLength: 20000
+          description: At most 20000 UTF-8 bytes.
+        idempotency_key:
+          type: string
+          format: uuid
+      required:
+      - subject
+      - body
+      - idempotency_key
+      additionalProperties: false
+    SupportPortalMessageRequest:
+      type: object
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 20000
+          description: At most 20000 UTF-8 bytes.
+        idempotency_key:
+          type: string
+          format: uuid
+      required:
+      - body
+      - idempotency_key
+      additionalProperties: false
+    SupportPortalKeyRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        expires_in_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 90
+      required:
+      - label
+      additionalProperties: false
     WorkSummary:
       type: object
       required:
@@ -15394,6 +16363,14 @@ components:
     AnalyticsEvent:
       type: object
       properties:
+        path:
+          type: string
+          maxLength: 512
+          description: Signed pageview route template, paired with session_id. No origin, query, fragment or dynamic identifier. Requires a verified server signature; unsigned enhanced events are dropped.
+        session_id:
+          type: string
+          format: uuid
+          description: Paired with path; canonical random UUID v4 per tab. Stored only as a daily tenant/business/client-scoped HMAC visitor hash. Enhanced events discard props.
         occurred_at:
           type: string
           format: date-time
@@ -22921,3 +23898,7 @@ tags:
 - name: WorkSync
 - name: WorkTasks
 - name: WorkTokens
+
+- name: SupportPortalContact
+- name: SupportPortalKeys
+- name: SupportPortalTickets

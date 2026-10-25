@@ -14,7 +14,9 @@ import "time"
 type AnalyticsEvent struct {
 	Name       Optional[string]      `json:"name,omitzero"`
 	OccurredAt Optional[time.Time]   `json:"occurred_at,omitzero"`
+	Path       Optional[string]      `json:"path,omitzero"`
 	Props      Optional[interface{}] `json:"props,omitzero"`
+	SessionId  Optional[string]      `json:"session_id,omitzero"`
 }
 
 // NewAnalyticsEvent assigns only the supplied required fields, never schema defaults.
@@ -27,7 +29,7 @@ func (o *AnalyticsEvent) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "name", "occurred_at"); err != nil {
+	if err := nonNullFields(fields, "name", "occurred_at", "path", "session_id"); err != nil {
 		return err
 	}
 	type plain AnalyticsEvent

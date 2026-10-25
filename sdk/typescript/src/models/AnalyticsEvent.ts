@@ -18,7 +18,9 @@ import { convertModel, type JsonValue } from '../model-support.js';
 export interface AnalyticsEvent {
     name?: string;
     occurredAt?: string;
+    path?: string;
     props?: JsonValue | null;
+    sessionId?: string;
 }
 
 

@@ -843,6 +843,14 @@ func main() {
 	// email verification (FR-029). The key is the trusted-proxy-aware client IP so
 	// a spoofed X-Forwarded-For cannot evade it.
 	trusted := parseTrustedCIDRs(cfg.TrustedProxyCIDR, logger)
+	portalSvc := &ticketing.PortalService{
+		DB: database, Resolve: permResolve,
+		ReplyTokenKey: cfg.InboundReplyTokenSecret, SystemDomain: cfg.InboundSystemDomain,
+	}
+	if mailingSvc != nil {
+		portalSvc.Mailer = mailingSvc
+	}
+	portalH := ticketing.NewPortalHandler(portalSvc, trusted)
 	cloudflareSources := parseSourceCIDRs(cfg.CloudflareSourceCIDR, "Cloudflare source", logger)
 	authLimiter := ratelimit.NewTokenBucket(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	ipKey := func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) }
@@ -924,6 +932,7 @@ func main() {
 		authz:            authzH,
 		invitations:      invH,
 		ticketing:        ticketH,
+		portal:           portalH,
 		identity:         identityH,
 		inboxWebhook:     inboxWebhookH,
 		bounce:           bounceH,
@@ -1193,6 +1202,7 @@ type apiHandlers struct {
 	authz        *authz.Handler
 	invitations  *invitations.Handler
 	ticketing    *ticketing.Handler
+	portal       *ticketing.PortalHandler
 	identity     *ticketing.IdentityHandler
 	inboxWebhook *inbox.Handler
 	bounce       *inbox.BounceHandler
@@ -1432,8 +1442,14 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				h.workSync.Routes(ws)
 			})
 		}
+		if h.portal != nil {
+			h.portal.CustomerRoutes(r)
+		}
 		r.Group(func(pr chi.Router) {
 			pr.Use(httpx.RequireAuth)
+			if h.portal != nil {
+				h.portal.ManagementRoutes(pr)
+			}
 			h.account.ProtectedRoutes(pr)
 			h.tenancy.ProtectedRoutes(pr)
 			pr.Group(func(merge chi.Router) {

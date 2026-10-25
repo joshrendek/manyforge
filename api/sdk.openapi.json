@@ -1804,8 +1804,18 @@
             "format": "date-time",
             "type": "string"
           },
+          "path": {
+            "description": "Signed pageview route template, paired with session_id. No origin, query, fragment or dynamic identifier. Requires a verified server signature; unsigned enhanced events are dropped.",
+            "maxLength": 512,
+            "type": "string"
+          },
           "props": {
             "description": "Arbitrary JSON event properties; scalars, arrays, objects and null are accepted."
+          },
+          "session_id": {
+            "description": "Paired with path; canonical random UUID v4 per tab. Stored only as a daily tenant/business/client-scoped HMAC visitor hash. Enhanced events discard props.",
+            "format": "uuid",
+            "type": "string"
           }
         },
         "type": "object"
@@ -9376,6 +9386,207 @@
           "complained"
         ],
         "type": "string"
+      },
+      "SupportPortalContact": {
+        "properties": {
+          "email": {
+            "maxLength": 254,
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email",
+          "verified"
+        ],
+        "type": "object"
+      },
+      "SupportPortalKey": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "token": {
+            "description": "One-time server-only credential. Present only on creation; store securely.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "created_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "SupportPortalKeyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_in_days": {
+            "default": 90,
+            "maximum": 365,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "SupportPortalMessage": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "inbound",
+              "outbound"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "body",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "SupportPortalMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "At most 20000 UTF-8 bytes.",
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "SupportPortalThread": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/SupportPortalMessage"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "next_cursor": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/SupportPortalTicket"
+          }
+        },
+        "required": [
+          "ticket",
+          "messages"
+        ],
+        "type": "object"
+      },
+      "SupportPortalTicket": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "subject",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SupportPortalTicketRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "At most 20000 UTF-8 bytes.",
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "body",
+          "idempotency_key"
+        ],
+        "type": "object"
       },
       "Suppression": {
         "properties": {
@@ -26342,6 +26553,325 @@
         "x-manyforge-resource": "roles"
       }
     },
+    "/api/v1/businesses/{id}/support/portal-keys": {
+      "get": {
+        "operationId": "listSupportPortalKeys",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "keys": {
+                      "items": {
+                        "$ref": "#/components/schemas/SupportPortalKey"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "keys"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "summary": "Owner: list portal credential metadata",
+        "tags": [
+          "SupportPortalKeys"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "list",
+        "x-manyforge-resource": "support.portalKeys"
+      },
+      "post": {
+        "operationId": "createSupportPortalKey",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupportPortalKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupportPortalKey"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "summary": "Owner: issue an expiring server-only portal credential",
+        "tags": [
+          "SupportPortalKeys"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "create",
+        "x-manyforge-resource": "support.portalKeys"
+      }
+    },
+    "/api/v1/businesses/{id}/support/portal-keys/{keyID}": {
+      "delete": {
+        "operationId": "revokeSupportPortalKey",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "keyID",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "summary": "Owner: revoke a portal credential",
+        "tags": [
+          "SupportPortalKeys"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-business-param": "id",
+        "x-manyforge-method": "revoke",
+        "x-manyforge-resource": "support.portalKeys"
+      }
+    },
     "/api/v1/businesses/{id}/telemetry/clients": {
       "get": {
         "description": "Requires `telemetry.read`. Publishable keys are returned deliberately — an operator\nneeds them to configure an SDK. Signing secrets are never returned here; only\n`has_secret` is reported. Analytics clients include asynchronously aggregated site\nhealth; collector activity and dashboard rollup freshness are separate signals.\n",
@@ -30015,6 +30545,973 @@
         "x-manyforge-resource": "permissions"
       }
     },
+    "/api/v1/support/portal/contact": {
+      "get": {
+        "operationId": "getSupportPortalContact",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "description": "Server-only business portal bearer; never expose to browsers.",
+              "pattern": "^Bearer mfsp_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-MF-External-User",
+            "required": true,
+            "schema": {
+              "description": "Immutable customer UUID supplied only by the authenticated integrating backend.",
+              "pattern": "^tph:[0-9a-f-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name, never authority.",
+            "in": "header",
+            "name": "X-MF-External-Name",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupportPortalContact"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "security": [],
+        "summary": "Read the authenticated customer notification contact",
+        "tags": [
+          "SupportPortalContact"
+        ],
+        "x-manyforge-audience": "server",
+        "x-manyforge-method": "get",
+        "x-manyforge-resource": "support.portal.contact"
+      }
+    },
+    "/api/v1/support/portal/contact/verification": {
+      "post": {
+        "operationId": "sendSupportPortalVerification",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "description": "Server-only business portal bearer; never expose to browsers.",
+              "pattern": "^Bearer mfsp_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-MF-External-User",
+            "required": true,
+            "schema": {
+              "description": "Immutable customer UUID supplied only by the authenticated integrating backend.",
+              "pattern": "^tph:[0-9a-f-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name, never authority.",
+            "in": "header",
+            "name": "X-MF-External-Name",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "email": {
+                    "maxLength": 254,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "sent": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "sent"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "security": [],
+        "summary": "Send a single-use email proof code; one per minute and five per hour",
+        "tags": [
+          "SupportPortalContact"
+        ],
+        "x-manyforge-audience": "server",
+        "x-manyforge-method": "sendVerification",
+        "x-manyforge-resource": "support.portal.contact"
+      }
+    },
+    "/api/v1/support/portal/contact/verify": {
+      "post": {
+        "operationId": "verifySupportPortalContact",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "description": "Server-only business portal bearer; never expose to browsers.",
+              "pattern": "^Bearer mfsp_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-MF-External-User",
+            "required": true,
+            "schema": {
+              "description": "Immutable customer UUID supplied only by the authenticated integrating backend.",
+              "pattern": "^tph:[0-9a-f-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name, never authority.",
+            "in": "header",
+            "name": "X-MF-External-Name",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "code": {
+                    "pattern": "^[0-9]{8}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "verified": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "verified"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "security": [],
+        "summary": "Consume an eight-digit email code; email never grants access to existing tickets",
+        "tags": [
+          "SupportPortalContact"
+        ],
+        "x-manyforge-audience": "server",
+        "x-manyforge-method": "verify",
+        "x-manyforge-resource": "support.portal.contact"
+      }
+    },
+    "/api/v1/support/portal/tickets": {
+      "get": {
+        "operationId": "listSupportPortalTickets",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "description": "Server-only business portal bearer; never expose to browsers.",
+              "pattern": "^Bearer mfsp_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-MF-External-User",
+            "required": true,
+            "schema": {
+              "description": "Immutable customer UUID supplied only by the authenticated integrating backend.",
+              "pattern": "^tph:[0-9a-f-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name, never authority.",
+            "in": "header",
+            "name": "X-MF-External-Name",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "tickets": {
+                      "items": {
+                        "$ref": "#/components/schemas/SupportPortalTicket"
+                      },
+                      "maxItems": 200,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "tickets"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "security": [],
+        "summary": "List only this opaque customer’s portal tickets",
+        "tags": [
+          "SupportPortalTickets"
+        ],
+        "x-manyforge-audience": "server",
+        "x-manyforge-method": "list",
+        "x-manyforge-resource": "support.portal.tickets"
+      },
+      "post": {
+        "operationId": "createSupportPortalTicket",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "description": "Server-only business portal bearer; never expose to browsers.",
+              "pattern": "^Bearer mfsp_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-MF-External-User",
+            "required": true,
+            "schema": {
+              "description": "Immutable customer UUID supplied only by the authenticated integrating backend.",
+              "pattern": "^tph:[0-9a-f-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name, never authority.",
+            "in": "header",
+            "name": "X-MF-External-Name",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupportPortalTicketRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "ticket": {
+                      "$ref": "#/components/schemas/SupportPortalTicket"
+                    }
+                  },
+                  "required": [
+                    "ticket"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "security": [],
+        "summary": "Create a native support ticket for a verified customer contact",
+        "tags": [
+          "SupportPortalTickets"
+        ],
+        "x-manyforge-audience": "server",
+        "x-manyforge-method": "create",
+        "x-manyforge-resource": "support.portal.tickets"
+      }
+    },
+    "/api/v1/support/portal/tickets/{ticketID}": {
+      "get": {
+        "operationId": "getSupportPortalThread",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "description": "Server-only business portal bearer; never expose to browsers.",
+              "pattern": "^Bearer mfsp_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-MF-External-User",
+            "required": true,
+            "schema": {
+              "description": "Immutable customer UUID supplied only by the authenticated integrating backend.",
+              "pattern": "^tph:[0-9a-f-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name, never authority.",
+            "in": "header",
+            "name": "X-MF-External-Name",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "ticketID",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupportPortalThread"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "security": [],
+        "summary": "Read up to 20 public messages, newest first; pass next_cursor as before",
+        "tags": [
+          "SupportPortalTickets"
+        ],
+        "x-manyforge-audience": "server",
+        "x-manyforge-method": "get",
+        "x-manyforge-resource": "support.portal.tickets"
+      }
+    },
+    "/api/v1/support/portal/tickets/{ticketID}/messages": {
+      "post": {
+        "operationId": "replySupportPortalTicket",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "description": "Server-only business portal bearer; never expose to browsers.",
+              "pattern": "^Bearer mfsp_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-MF-External-User",
+            "required": true,
+            "schema": {
+              "description": "Immutable customer UUID supplied only by the authenticated integrating backend.",
+              "pattern": "^tph:[0-9a-f-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name, never authority.",
+            "in": "header",
+            "name": "X-MF-External-Name",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "ticketID",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupportPortalMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "$ref": "#/components/schemas/SupportPortalMessage"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid input, unknown fields, or body exceeds 64 KiB."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Invalid, expired or revoked portal credential, or ineligible creator account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Resource not visible to this customer/business."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Contact verification required, quota reached, or idempotency conflict."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Admission or rate limit exceeded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Support dependency unavailable; no success is implied."
+          },
+          "default": {
+            "description": "Unexpected response; retain bounded body and status without assuming a JSON envelope."
+          }
+        },
+        "security": [],
+        "summary": "Append an idempotent customer message to an owned ticket",
+        "tags": [
+          "SupportPortalTickets"
+        ],
+        "x-manyforge-audience": "server",
+        "x-manyforge-method": "reply",
+        "x-manyforge-resource": "support.portal.tickets"
+      }
+    },
     "/api/v1/telemetry/ingest/{key}": {
       "post": {
         "description": "Authenticated by the publishable `mfk_` key in the path — no JWT. Rate-limited per IP\nand per key. Bodies are capped at 256 KiB and batches at 1000 events.\n\nThe target table is chosen from the client's REGISTERED kind, not from the request body:\nposting `crash` events with an `analytics` key stores nothing. Tenant scope likewise\ncomes from the resolved key, so `tenant_root_id` / `business_id` in a body are ignored.\n\n`occurred_at` is client-supplied and untrusted. Timestamps more than 5 minutes in the\nfuture are clamped to now; events older than 7 days (or with no timestamp) are dropped\nindividually and counted in `dropped`, so one stale event never discards a good batch.\nIt never influences storage placement — partitioning is keyed on server ingest time.\n",
@@ -30548,6 +32045,15 @@
     },
     {
       "name": "Roles"
+    },
+    {
+      "name": "SupportPortalContact"
+    },
+    {
+      "name": "SupportPortalKeys"
+    },
+    {
+      "name": "SupportPortalTickets"
     },
     {
       "name": "Telemetry"

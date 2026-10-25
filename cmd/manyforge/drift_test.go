@@ -71,6 +71,7 @@ func testHandlers() apiHandlers {
 		tenancy:          tenancy.NewHandler(&tenancy.Service{}),
 		authz:            authz.NewHandler(&authz.Service{}),
 		invitations:      invitations.NewHandler(&invitations.Service{}),
+		portal:           ticketing.NewPortalHandler(&ticketing.PortalService{}, nil),
 		ticketing:        ticketing.NewHandler(&ticketing.Service{}, nil, nil),
 		identity:         ticketing.NewIdentityHandler(&ticketing.IdentityService{}),
 		inboxWebhook:     inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),

@@ -29,6 +29,7 @@ import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.fasterxml.jackson.annotation.JsonValue;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
+import java.util.UUID;
 import org.openapitools.jackson.nullable.JsonNullable;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.openapitools.jackson.nullable.JsonNullable;
@@ -38,8 +39,8 @@ import java.util.NoSuchElementException;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "name", "occurred_at", "props" })
-@com.manyforge.sdk.ModelShape(required = {  }, nonNullable = { "name", "occurred_at",  })
+@JsonPropertyOrder({ "name", "occurred_at", "path", "props", "session_id" })
+@com.manyforge.sdk.ModelShape(required = {  }, nonNullable = { "name", "occurred_at", "path", "session_id",  })
 public class AnalyticsEvent {
 
   @JsonProperty("name")
@@ -56,18 +57,34 @@ public class AnalyticsEvent {
   public JsonNullable<OffsetDateTime> occurredAtPresence() { return occurredAt; }
   public AnalyticsEvent occurredAt(OffsetDateTime value) { this.occurredAt = JsonNullable.of(value); return this; }
 
+  @JsonProperty("path")
+  private JsonNullable<String> path = JsonNullable.undefined();
+
+  public String getPath() { return path.orElse(null); }
+  public JsonNullable<String> pathPresence() { return path; }
+  public AnalyticsEvent path(String value) { this.path = JsonNullable.of(value); return this; }
+
   @JsonProperty("props")
   private JsonNullable<Object> props = JsonNullable.undefined();
 
   public Object getProps() { return props.orElse(null); }
   public JsonNullable<Object> propsPresence() { return props; }
   public AnalyticsEvent props(Object value) { this.props = JsonNullable.of(value); return this; }
+
+  @JsonProperty("session_id")
+  private JsonNullable<UUID> sessionId = JsonNullable.undefined();
+
+  public UUID getSessionId() { return sessionId.orElse(null); }
+  public JsonNullable<UUID> sessionIdPresence() { return sessionId; }
+  public AnalyticsEvent sessionId(UUID value) { this.sessionId = JsonNullable.of(value); return this; }
   public static Builder builder() { return new Builder(); }
   public static final class Builder {
     private final AnalyticsEvent value = new AnalyticsEvent();
     public Builder name(String field) { value.name(field); return this; }
     public Builder occurredAt(OffsetDateTime field) { value.occurredAt(field); return this; }
+    public Builder path(String field) { value.path(field); return this; }
     public Builder props(Object field) { value.props(field); return this; }
+    public Builder sessionId(UUID field) { value.sessionId(field); return this; }
     public AnalyticsEvent build() { return value; }
   }
 }

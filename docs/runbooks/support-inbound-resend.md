@@ -21,17 +21,21 @@ string works:
 
 ```bash
 export KUBECONFIG=~/.kube/talos
+umask 077
+secret_work=$(mktemp -d "$HOME/.manyforge-secret.XXXXXX")
+trap 'rm -rf "$secret_work"' EXIT
+openssl rand -base64 48 > "$secret_work/inbound-reply-token"
+# The patch contains only the new data key, preserving the existing master keys.
+kubectl -n manyforge create secret generic manyforge-masterkeys \
+  --from-file=inbound-reply-token="$secret_work/inbound-reply-token" \
+  --dry-run=client -o json > "$secret_work/patch.json"
 kubectl -n manyforge patch secret manyforge-masterkeys --type=merge \
-  -p "{\"stringData\":{\"inbound-reply-token\":\"$(openssl rand -base64 48)\"}}"
-kubectl -n manyforge get secret manyforge-masterkeys -o jsonpath='{.data.inbound-reply-token}' | base64 -d | wc -c   # > 0
+  --patch-file="$secret_work/patch.json"
 ```
 
-Also add the key to the `manyforge-masterkeys` block of
-`~/dev/infra-k8s/docs/manyforge/deploy-secrets.sh` so a rebuilt cluster gets it:
-
-```bash
-  --from-literal=inbound-reply-token="$(openssl rand -base64 48)"
-```
+Bootstrap automation must also read this key from an owner-only regular file via
+`--from-file`, preserving existing keys. Never pass secret values as arguments or
+include them in rendered dry-run output.
 
 Consequence: reply tokens minted before this change were signed with an empty
 key and no longer verify. Those replies still thread by `In-Reply-To`/`References`.
@@ -169,3 +173,42 @@ payload's `to` is never used for routing.
 | Mail accepted (200) but no ticket | no recipient owned by the profile's business, or the domain is unverified | look for `audit_entry.action = 'ticket.inbound_dropped'`; verify the domain and address |
 | Reply shows **Delivery failed** | the business's Resend profile can't send (unverified, revoked key) | look for `send: reply failed on final attempt` and its `reason`; re-verify the sending profile. Replies never fall back to the shared transport |
 | Verify on Email domains returns 409 | another business already verified that domain | domains are globally unique; use a different subdomain |
+
+## Authenticated customer integrations
+
+A tenant-root or inherited locked Owner with `tickets.write` may manage
+`/api/v1/businesses/{id}/support/portal-keys`. Creation returns a server-only
+`mfsp_` bearer once; only its SHA-256 hash is stored. Keys expire after 90 days by
+default (1–365 days configurable), are revocable, and stop working when their
+human creator is deactivated, deleted, or loses permission. Up to ten active keys
+may exist per business. Rotate by issuing a replacement, updating the integrating
+backend's Secret through an owner-only file, verifying its delivery, then revoking
+the old key. Never embed this credential in a browser or use it as a URL parameter.
+
+The integrating backend sends this bearer to `/api/v1/support/portal` with
+`X-MF-External-User: tph:<canonical user UUID>` and an optional bounded display
+name in `X-MF-External-Name`. These assertions must come from its own authenticated
+session. A client-selected email, name, or UUID is not a verified customer identity.
+Contact verification sends an eight-digit code through the exact business's
+verified Resend support profile; the code expires in ten minutes, is single-use,
+and allows six attempts. Resends require one minute and are capped at five/hour.
+Send allowances commit before provider delivery; cancellation and ambiguous
+provider results consume the allowance and preserve any prior pending/verified
+contact proof. Only the matching latest accepted send may activate a new code.
+
+Portal ownership is independent of notification addresses: email proof neither
+imports existing email tickets nor grants access to another customer's thread.
+Contact replacement updates notification recipients only for already-owned portal
+tickets. Customer tickets/messages are native support records with normal
+outbox/audit behavior. Internal notes and attachments are excluded. Thread reads
+return newest-first pages, with `next_cursor` passed back as `before`; each page
+contains at most 20 complete messages. Individual messages are capped at 1 MiB
+before allocation; encoded pages are capped at 6 MiB plus envelope. Oversized
+legacy messages return an error rather than silently truncating private content.
+Consumers should allow an 8 MiB HTTP response cap and display pages chronologically.
+
+Customer and management endpoints enforce admission/rates before body reads,
+64 KiB strict JSON limits, and finite network/body deadlines. Validate creation,
+resend failure/cancellation, creator lifecycle, two-user/two-business isolation,
+native operator replies/internal-note denial, and real provider delivery before
+calling an integration ready.

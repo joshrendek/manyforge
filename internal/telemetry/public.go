@@ -151,6 +151,7 @@ func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	// A signing client fails CLOSED: if the secret is missing or cannot be opened, reject rather
 	// than silently downgrading to anonymous. A non-signing client that nevertheless sends a
 	// signature still has it verified, so a stray or forged header can never be a free pass.
+	signatureVerified := false
 	if client.requireSignature || (client.sealedSecret != nil && r.Header.Get("X-Telemetry-Signature") != "") {
 		if client.sealedSecret == nil || h.Sealer == nil {
 			h.Logger.ErrorContext(r.Context(), "signature required but no secret/sealer available",
@@ -170,6 +171,7 @@ func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 			h.unauthorized(w)
 			return
 		}
+		signatureVerified = true
 	}
 
 	var req ingestRequest
@@ -190,10 +192,10 @@ func (h *PublicHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	var accepted, dropped int
 	switch client.kind {
 	case KindAnalytics:
-		events, d := sanitizeAnalytics(req.Analytics, now)
+		events, d := sanitizeAnalytics(req.Analytics, now, signatureVerified)
 		dropped = d
 		if len(events) > 0 {
-			accepted, err = h.insertAnalytics(r.Context(), key, events)
+			accepted, err = h.insertAnalytics(r.Context(), key, events, signatureVerified)
 		}
 	case KindCrash:
 		events, d := sanitizeCrash(req.Crash, now)
@@ -239,14 +241,18 @@ func (h *PublicHandler) resolve(ctx context.Context, key string) (resolvedClient
 // insertAnalytics passes the KEY, not the already-resolved ids: the SQL function re-resolves it in
 // the same transaction as the insert, so a client revoked between the auth lookup and the write
 // cannot slip a final batch through. Returns -1 when the key no longer resolves.
-func (h *PublicHandler) insertAnalytics(ctx context.Context, key string, events []AnalyticsEvent) (int, error) {
+func (h *PublicHandler) insertAnalytics(ctx context.Context, key string, events []AnalyticsEvent, signatureVerified bool) (int, error) {
 	payload, err := json.Marshal(events)
 	if err != nil {
 		return 0, err
 	}
 	var n int
+	query := "SELECT telemetry_ingest_analytics($1,$2)"
+	if signatureVerified {
+		query = "SELECT telemetry_ingest_analytics_signed($1,$2)"
+	}
 	err = h.DB.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, "SELECT telemetry_ingest_analytics($1,$2)", key, payload).Scan(&n)
+		return tx.QueryRow(ctx, query, key, payload).Scan(&n)
 	})
 	return n, err
 }
@@ -279,13 +285,22 @@ func tooOld(occurred, now time.Time) bool {
 	return occurred.IsZero() || occurred.Before(now.Add(-maxPastAge))
 }
 
-func sanitizeAnalytics(in []AnalyticsEvent, now time.Time) ([]AnalyticsEvent, int) {
+func sanitizeAnalytics(in []AnalyticsEvent, now time.Time, signatureVerified bool) ([]AnalyticsEvent, int) {
 	out := make([]AnalyticsEvent, 0, len(in))
 	dropped := 0
 	for _, e := range in {
 		if e.Name == "" || tooOld(e.OccurredAt, now) {
 			dropped++
 			continue
+		}
+		if e.Path != "" || e.SessionID != "" {
+			if !signatureVerified || e.Name != "pageview" || !validSignedPageview(e.Path, e.SessionID) {
+				dropped++
+				continue
+			}
+			// Route/session pageviews deliberately carry no free-form properties. In particular
+			// callers cannot accidentally preserve the transient UUID in an event property.
+			e.Props = nil
 		}
 		e.OccurredAt = clampOccurredAt(e.OccurredAt, now)
 		out = append(out, e)

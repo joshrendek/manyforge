@@ -92,6 +92,10 @@ var tenantMergeTableInventory = map[string]string{
 	"role":                              "nullable_custom_role_reconciliation",
 	"secret":                            "direct_root_rewrite",
 	"subscriber_tag":                    "drain_fence_then_rewrite",
+	"support_portal_key":                "drain_fence_then_rewrite",
+	"support_portal_contact":            "drain_fence_then_rewrite",
+	"support_portal_ticket":             "drain_fence_then_rewrite",
+	"support_portal_request":            "drain_fence_then_rewrite",
 	"telemetry_client":                  "drain_fence_then_rewrite",
 	"ticket":                            "direct_root_rewrite",
 	"ticket_message":                    "direct_root_rewrite",
@@ -106,6 +110,16 @@ var tenantMergeTableInventory = map[string]string{
 // identity, rather than only a count, makes a renamed or newly-added
 // tenant-consistent relationship an explicit merge-design decision.
 var tenantMergeTenantFKInventory = map[string]bool{
+	"support_portal_key.portal_key_business_fk":                                                      true,
+	"support_portal_contact.portal_contact_business_fk":                                              true,
+	"support_portal_contact.portal_contact_requester_fk":                                             true,
+	"support_portal_contact.portal_contact_key_fk":                                                   true,
+	"support_portal_ticket.portal_ticket_native_fk":                                                  true,
+	"support_portal_ticket.portal_ticket_contact_fk":                                                 true,
+	"support_portal_ticket.portal_ticket_business_fk":                                                true,
+	"support_portal_request.portal_request_contact_fk":                                               true,
+	"support_portal_request.portal_request_ticket_fk":                                                true,
+	"support_portal_request.portal_request_message_fk":                                               true,
 	"activity_entry.activity_entry_business_id_tenant_root_id_fkey":                                  true,
 	"activity_entry.activity_entry_contact_id_tenant_root_id_fkey":                                   true,
 	"agent.agent_business_id_tenant_root_id_fkey":                                                    true,
@@ -252,6 +266,12 @@ var tenantMergeRootPayloadInventory = map[string][]string{
 // must preserve in addition to the common tenant_merge_write_fence on all
 // manifest tables.
 var tenantMergeImmutabilityInventory = map[string]string{
+	"support_portal_key.portal_root_immutable":                                                "support_tenant_root_immutable",
+	"support_portal_contact.portal_root_immutable":                                            "support_tenant_root_immutable",
+	"support_portal_ticket.portal_root_immutable":                                             "support_tenant_root_immutable",
+	"support_portal_request.portal_root_immutable":                                            "support_tenant_root_immutable",
+	"support_portal_ticket.portal_parent_scope":                                               "support_portal_parent_scope",
+	"support_portal_request.portal_parent_scope":                                              "support_portal_parent_scope",
 	"activity_entry.activity_troot_immutable":                                                 "support_tenant_root_immutable",
 	"agent.agent_troot_immutable":                                                             "support_tenant_root_immutable",
 	"agent_run.agent_run_troot_immutable":                                                     "support_tenant_root_immutable",

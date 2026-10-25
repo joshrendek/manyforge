@@ -276,3 +276,13 @@ same versioned classification. It must fail closed on:
 
 This makes schema growth an explicit tenant-merge design decision rather than a silent
 security-boundary omission.
+
+Customer portal tables (`support_portal_key`, `support_portal_contact`,
+`support_portal_ticket`, `support_portal_request`) use `drain_fence_then_rewrite`.
+All four participate in the durable write fence; composite parent FKs are
+DEFERRABLE INITIALLY IMMEDIATE and revalidate at cutover commit. Their parent-scope
+trigger permits temporary disagreement only during the existing owner-executed,
+root-bound cutover. Key hashes/IDs, business IDs, opaque customer IDs, native
+requester/ticket/message links and verified contact state remain stable. Cached
+pre-cutover portal scopes fail closed; a fresh authentication resolves the new
+root and rechecks the creator's current account and business permission.

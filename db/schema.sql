@@ -1614,3 +1614,45 @@ CREATE TABLE work_token (
     FOREIGN KEY (business_id, tenant_root_id) REFERENCES business (id, tenant_root_id),
     FOREIGN KEY (project_id, tenant_root_id) REFERENCES work_project (id, tenant_root_id) ON DELETE CASCADE
 );
+
+-- Customer portal ownership and server-only credentials.
+CREATE TABLE support_portal_key (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), business_id uuid NOT NULL, tenant_root_id uuid NOT NULL,
+ creator_principal_id uuid NOT NULL REFERENCES principal(id), label text NOT NULL CHECK(length(label) BETWEEN 1 AND 100 AND octet_length(label)<=400 AND label !~ '[[:cntrl:]]'),
+ token_hash bytea NOT NULL UNIQUE CHECK(octet_length(token_hash)=32),
+ created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, revoked_at timestamptz,
+ UNIQUE(id,business_id,tenant_root_id),
+ CONSTRAINT portal_key_business_fk FOREIGN KEY(business_id,tenant_root_id) REFERENCES business(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CHECK(expires_at > created_at AND expires_at <= created_at + interval '366 days')
+);
+CREATE TABLE support_portal_contact (
+ business_id uuid NOT NULL, tenant_root_id uuid NOT NULL, external_id text NOT NULL CHECK(external_id ~ '^tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+ display_name text NOT NULL CHECK(length(display_name)<=100 AND octet_length(display_name)<=400 AND display_name !~ '[[:cntrl:]]'),
+ verified_email text, requester_id uuid,
+ pending_email text, challenge_hash bytea, challenge_nonce uuid, challenge_key_id uuid,
+ challenge_expires_at timestamptz, attempts integer NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 6),
+ send_nonce uuid, last_sent_at timestamptz, send_times timestamptz[] NOT NULL DEFAULT '{}' CHECK(cardinality(send_times)<=5),
+ PRIMARY KEY(business_id,external_id), UNIQUE(business_id,tenant_root_id,external_id),
+ CONSTRAINT portal_contact_business_fk FOREIGN KEY(business_id,tenant_root_id) REFERENCES business(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CONSTRAINT portal_contact_requester_fk FOREIGN KEY(requester_id,tenant_root_id) REFERENCES requester(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CONSTRAINT portal_contact_key_fk FOREIGN KEY(challenge_key_id,business_id,tenant_root_id) REFERENCES support_portal_key(id,business_id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CHECK((verified_email IS NULL)=(requester_id IS NULL)),
+ CHECK(verified_email IS NULL OR octet_length(verified_email)<=254),
+ CHECK(pending_email IS NULL OR octet_length(pending_email)<=254)
+);
+CREATE TABLE support_portal_ticket (
+ ticket_id uuid PRIMARY KEY, business_id uuid NOT NULL, tenant_root_id uuid NOT NULL, external_id text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(ticket_id,business_id,tenant_root_id),
+ CONSTRAINT portal_ticket_native_fk FOREIGN KEY(ticket_id,tenant_root_id) REFERENCES ticket(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CONSTRAINT portal_ticket_contact_fk FOREIGN KEY(business_id,tenant_root_id,external_id) REFERENCES support_portal_contact(business_id,tenant_root_id,external_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CONSTRAINT portal_ticket_business_fk FOREIGN KEY(business_id,tenant_root_id) REFERENCES business(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE
+);
+CREATE TABLE support_portal_request (
+ business_id uuid NOT NULL, tenant_root_id uuid NOT NULL, external_id text NOT NULL, request_id uuid NOT NULL,
+ body_hash bytea NOT NULL CHECK(octet_length(body_hash)=32), ticket_id uuid NOT NULL, message_id uuid NOT NULL,
+ PRIMARY KEY(business_id,external_id,request_id),
+ CONSTRAINT portal_request_contact_fk FOREIGN KEY(business_id,tenant_root_id,external_id) REFERENCES support_portal_contact(business_id,tenant_root_id,external_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CONSTRAINT portal_request_ticket_fk FOREIGN KEY(ticket_id,business_id,tenant_root_id) REFERENCES support_portal_ticket(ticket_id,business_id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
+ CONSTRAINT portal_request_message_fk FOREIGN KEY(message_id,tenant_root_id) REFERENCES ticket_message(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE
+);

@@ -177,7 +177,7 @@ func TestSanitizeAnalytics_DropsBadEventsNotTheBatch(t *testing.T) {
 		{OccurredAt: now.Add(-time.Minute), Name: ""}, // missing name
 		{OccurredAt: now.Add(72 * time.Hour), Name: "future"},
 	}
-	out, dropped := sanitizeAnalytics(in, now)
+	out, dropped := sanitizeAnalytics(in, now, false)
 	if dropped != 2 {
 		t.Fatalf("expected 2 dropped, got %d", dropped)
 	}
@@ -200,7 +200,7 @@ func TestSanitizeAnalytics_DoesNotSilentlyTruncate(t *testing.T) {
 	for i := range in {
 		in[i] = AnalyticsEvent{OccurredAt: now, Name: "e"}
 	}
-	out, dropped := sanitizeAnalytics(in, now)
+	out, dropped := sanitizeAnalytics(in, now, false)
 	if len(out) != len(in) || dropped != 0 {
 		t.Fatalf("sanitize truncated silently: kept %d of %d (dropped %d); the oversize batch must "+
 			"be rejected by the handler instead", len(out), len(in), dropped)

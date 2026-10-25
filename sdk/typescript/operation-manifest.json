@@ -854,6 +854,22 @@
     "audience": "management",
     "businessParam": "id",
     "method": "create",
+    "operationId": "createSupportPortalKey",
+    "pagination": null,
+    "resource": "support.portalKeys"
+  },
+  {
+    "audience": "server",
+    "businessParam": null,
+    "method": "create",
+    "operationId": "createSupportPortalTicket",
+    "pagination": null,
+    "resource": "support.portal.tickets"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "create",
     "operationId": "createTelemetryClient",
     "pagination": null,
     "resource": "telemetry.clients"
@@ -1259,6 +1275,22 @@
     "resource": "reviewConfig"
   },
   {
+    "audience": "server",
+    "businessParam": null,
+    "method": "get",
+    "operationId": "getSupportPortalContact",
+    "pagination": null,
+    "resource": "support.portal.contact"
+  },
+  {
+    "audience": "server",
+    "businessParam": null,
+    "method": "get",
+    "operationId": "getSupportPortalThread",
+    "pagination": null,
+    "resource": "support.portal.tickets"
+  },
+  {
     "audience": "management",
     "businessParam": "id",
     "method": "importCsv",
@@ -1617,6 +1649,22 @@
     "audience": "management",
     "businessParam": "id",
     "method": "list",
+    "operationId": "listSupportPortalKeys",
+    "pagination": null,
+    "resource": "support.portalKeys"
+  },
+  {
+    "audience": "server",
+    "businessParam": null,
+    "method": "list",
+    "operationId": "listSupportPortalTickets",
+    "pagination": null,
+    "resource": "support.portal.tickets"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "list",
     "operationId": "listTelemetryClientMoveTargets",
     "pagination": null,
     "resource": "telemetry.clients.moveTargets"
@@ -1734,6 +1782,14 @@
     "resource": "automations.versions.graph"
   },
   {
+    "audience": "server",
+    "businessParam": null,
+    "method": "reply",
+    "operationId": "replySupportPortalTicket",
+    "pagination": null,
+    "resource": "support.portal.tickets"
+  },
+  {
     "audience": "management",
     "businessParam": "id",
     "method": "resume",
@@ -1777,6 +1833,14 @@
     "audience": "management",
     "businessParam": "id",
     "method": "revoke",
+    "operationId": "revokeSupportPortalKey",
+    "pagination": null,
+    "resource": "support.portalKeys"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "revoke",
     "operationId": "revokeTelemetryClient",
     "pagination": null,
     "resource": "telemetry.clients"
@@ -1796,6 +1860,14 @@
     "operationId": "sendMailingCampaign",
     "pagination": null,
     "resource": "mailing.campaigns"
+  },
+  {
+    "audience": "server",
+    "businessParam": null,
+    "method": "sendVerification",
+    "operationId": "sendSupportPortalVerification",
+    "pagination": null,
+    "resource": "support.portal.contact"
   },
   {
     "audience": "management",
@@ -2036,6 +2108,14 @@
     "operationId": "verifyMailingSendingProfile",
     "pagination": null,
     "resource": "mailing.sendingProfile"
+  },
+  {
+    "audience": "server",
+    "businessParam": null,
+    "method": "verify",
+    "operationId": "verifySupportPortalContact",
+    "pagination": null,
+    "resource": "support.portal.contact"
   },
   {
     "audience": "management",
