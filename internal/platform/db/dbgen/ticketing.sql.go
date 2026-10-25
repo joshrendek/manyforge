@@ -191,8 +191,8 @@ type GetRequesterForTicketParams struct {
 	BusinessID uuid.UUID `json:"business_id"`
 }
 
-// GetRequesterForTicket loads the embedded Requester for a ticket via its
-// requester_id, scoped to the same business. Returned inline in the Ticket schema.
+// GetRequesterForTicket loads read-only notification context for an authorized
+// ticket, using its immutable ticket ID and business ID.
 func (q *Queries) GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (TicketRequesterContext, error) {
 	row := q.db.QueryRow(ctx, getRequesterForTicket, arg.TicketID, arg.BusinessID)
 	var i TicketRequesterContext

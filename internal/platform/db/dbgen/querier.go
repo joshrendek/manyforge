@@ -328,8 +328,8 @@ type Querier interface {
 	// GetRequester loads a single requester scoped to (id, business_id) — the
 	// ownership predicate. pgx.ErrNoRows ⇒ ErrNotFound (no oracle).
 	GetRequester(ctx context.Context, arg GetRequesterParams) (Requester, error)
-	// GetRequesterForTicket loads the embedded Requester for a ticket via its
-	// requester_id, scoped to the same business. Returned inline in the Ticket schema.
+	// GetRequesterForTicket loads read-only notification context for an authorized
+	// ticket, using its immutable ticket ID and business ID.
 	GetRequesterForTicket(ctx context.Context, arg GetRequesterForTicketParams) (TicketRequesterContext, error)
 	// The business's panel-level review config (one row per business). Absent ⇒ the caller uses
 	// the built-in defaults (dedupe on, verify off, single post).

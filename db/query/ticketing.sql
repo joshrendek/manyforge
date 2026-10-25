@@ -85,8 +85,8 @@ ORDER BY tag;
 SELECT count(*) FROM ticket_message
 WHERE ticket_id = $1 AND business_id = $2;
 
--- GetRequesterForTicket loads the embedded Requester for a ticket via its
--- requester_id, scoped to the same business. Returned inline in the Ticket schema.
+-- GetRequesterForTicket loads read-only notification context for an authorized
+-- ticket, using its immutable ticket ID and business ID.
 -- name: GetRequesterForTicket :one
 SELECT r.* FROM ticket_requester_context r
 WHERE r.ticket_id = $1 AND r.business_id = $2;

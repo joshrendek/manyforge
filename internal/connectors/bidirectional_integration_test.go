@@ -23,6 +23,9 @@ package connectors
 // ->comment core.
 
 import (
+	"errors"
+	"github.com/manyforge/manyforge/internal/platform/errs"
+	"github.com/manyforge/manyforge/internal/ticketing"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,6 +56,15 @@ func TestBidirectionalRoundTrip(t *testing.T) {
 	env.deliverWebhook(t, ctx, "JIRA-RT", 1000)
 	env.runInboundOnce(t, ctx)
 	ticketID := ticketByExternal(t, ctx, tdb, env.ConnectorID, "JIRA-RT")
+	// The connector agent can inspect its business, but has no ticket-reply
+	// permission. It must not inherit the human operator's recipient projection.
+	if _, err := env.Ticketing.Reply(ctx, seed.principalID, env.BusinessID, ticketID, ticketing.ReplyInput{BodyText: "Unauthorized connector reply"}); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("business-read-only agent reply: %v", err)
+	}
+	var unauthorizedMessages int
+	if err := tdb.Super.QueryRow(ctx, `SELECT count(*) FROM ticket_message WHERE ticket_id=$1 AND direction='outbound'`, ticketID).Scan(&unauthorizedMessages); err != nil || unauthorizedMessages != 0 {
+		t.Fatal("unauthorized reply persisted an outbound message")
+	}
 
 	// (2) Outbound: an operator reply on the now-linked ticket enqueues a comment op through the
 	// real producer path (ticketing.Service.Reply -> EnqueueOutboundComment in the same tx).
