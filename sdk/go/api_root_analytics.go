@@ -56,3 +56,14 @@ func (r *RootAnalyticsResource) Mailing(ctx context.Context, params RootAnalytic
 	return result, err
 
 }
+
+// Support invokes SupportOverviewGet.
+func (r *RootAnalyticsResource) Support(ctx context.Context, options ...RequestOption) (SupportOverview, error) {
+	path := "/api/v1/support/overview"
+	request := Request{OperationID: "SupportOverviewGet", Method: "GET", Path: path, Query: url.Values{}, Headers: map[string]string{}, Authenticated: true, Audience: "management", Signing: "", BodyKey: ""}
+
+	var result SupportOverview
+	err := r.transport.Do(ctx, request, &result, options...)
+	return result, err
+
+}

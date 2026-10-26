@@ -200,9 +200,55 @@ export interface InboundAddress {
   created_at: string;
 }
 
+// ── Cross-business overview (spec 019, GET /support/overview) ──────────────
+// Definitions live in specs/019-support-overview/spec.md. tickets.read is applied per
+// business server-side, so every listed business is one the caller may open.
+export interface SupportOverviewCounts {
+  open: number;
+  new: number;
+  pending: number;
+  awaiting_reply: number;
+  unassigned: number;
+  urgent: number;
+  high: number;
+  oldest_awaiting_at: string | null;
+  created_7d: number;
+  resolved_7d: number;
+  median_first_response_seconds_7d: number | null;
+}
+
+export interface SupportOverviewBusiness extends SupportOverviewCounts {
+  business_id: string;
+  business_name: string;
+}
+
+export interface SupportOverviewTicket {
+  business_id: string;
+  business_name: string;
+  ticket_id: string;
+  subject: string;
+  status: 'new' | 'open';
+  priority: TicketPriority;
+  assigned: boolean;
+  waiting_since: string;
+}
+
+export interface SupportOverview {
+  as_of: string;
+  totals: SupportOverviewCounts;
+  businesses: SupportOverviewBusiness[];
+  attention: SupportOverviewTicket[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class TicketService {
   private http = inject(HttpClient);
+
+  // GET /support/overview — KPIs for every business where the caller holds tickets.read,
+  // plus the most urgent waiting tickets across them.
+  overview(): Observable<SupportOverview> {
+    return this.http.get<SupportOverview>('/api/v1/support/overview');
+  }
 
   // GET /businesses/{id}/tickets — keyset-paginated, optional status/priority/
   // assignee/tag/subject filters (requires tickets.read). 404 for unknown OR unauthorized.

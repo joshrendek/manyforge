@@ -16,6 +16,7 @@ import { decodeJSON, type JsonValue } from '../model-support.js';
 import type { AnalyticsOverview } from '../models/AnalyticsOverview.js';
 import type { MailingReport } from '../models/MailingReport.js';
 import type { PublicDataError } from '../models/PublicDataError.js';
+import type { SupportOverview } from '../models/SupportOverview.js';
 
 
 export interface RootAnalyticsGetParams {
@@ -28,6 +29,11 @@ export interface RootAnalyticsGetParams {
 export interface RootAnalyticsMailingParams {
 
     businessId?: string;
+
+}
+
+
+export interface RootAnalyticsSupportParams {
 
 }
 
@@ -63,6 +69,22 @@ export class RootAnalyticsApi extends Resource {
             response: 'json',
             responseSchema: {"$ref":"#/components/schemas/MailingReport"},
             decode: (text: string) => decodeJSON<MailingReport>(text, {"$ref":"#/components/schemas/MailingReport"}),
+        }, options);
+    }
+    support(params: RootAnalyticsSupportParams = {}, options?: RequestOptions): Promise<SupportOverview> {
+        return this.transport.request({
+            operationId: 'SupportOverviewGet',
+            method: 'GET',
+            path: '/api/v1/support/overview',
+            pathParams: { ...this.scope,  },
+            query: [],
+            headers: {  },
+            authenticated: true,
+            audience: 'management',
+
+            response: 'json',
+            responseSchema: {"$ref":"#/components/schemas/SupportOverview"},
+            decode: (text: string) => decodeJSON<SupportOverview>(text, {"$ref":"#/components/schemas/SupportOverview"}),
         }, options);
     }
 }

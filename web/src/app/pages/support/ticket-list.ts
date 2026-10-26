@@ -32,6 +32,9 @@ const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
     <div class="mf-card">
       <mf-page-header [eyebrow]="businessName()" title="Support" subtitle="Inbound conversations for the selected business.">
         <ng-container actions>
+          <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/support/overview" data-testid="support-overview-link"
+            >All businesses</a
+          >
           @if (businessId()) {
             <a
               class="mf-btn mf-btn-ghost mf-btn-sm"

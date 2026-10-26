@@ -27,6 +27,12 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/support/ticket-list').then((m) => m.TicketListComponent),
   },
   {
+    // Static two-segment path; declared before the :businessId routes so it never reads as an id.
+    path: 'support/overview',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/support/overview').then((m) => m.SupportOverviewComponent),
+  },
+  {
     path: 'support/:businessId/settings/inbox',
     canActivate: [authGuard],
     loadComponent: () =>
