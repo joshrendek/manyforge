@@ -9387,6 +9387,270 @@
         ],
         "type": "string"
       },
+      "SupportOverview": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "attention": {
+            "items": {
+              "$ref": "#/components/schemas/SupportOverviewTicket"
+            },
+            "maxItems": 25,
+            "type": "array"
+          },
+          "businesses": {
+            "description": "Readable businesses ordered by awaiting_reply, then open, descending, then name.",
+            "items": {
+              "$ref": "#/components/schemas/SupportOverviewBusiness"
+            },
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/SupportOverviewCounts"
+          }
+        },
+        "required": [
+          "as_of",
+          "totals",
+          "businesses",
+          "attention"
+        ],
+        "type": "object"
+      },
+      "SupportOverviewBusiness": {
+        "properties": {
+          "awaiting_reply": {
+            "description": "New or open tickets whose newest non-note message is inbound.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "business_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "business_name": {
+            "type": "string"
+          },
+          "created_7d": {
+            "description": "Tickets created in the trailing seven days.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "high": {
+            "description": "Open-set tickets at high priority.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "median_first_response_seconds_7d": {
+            "description": "Median seconds from creation to first outbound reply for tickets created in the trailing seven days; null when none was answered.",
+            "format": "double",
+            "minimum": 0,
+            "nullable": true,
+            "type": "number"
+          },
+          "new": {
+            "description": "Tickets with status new.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "oldest_awaiting_at": {
+            "description": "When the longest-waiting awaiting-reply ticket started waiting; null when none is waiting.",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "open": {
+            "description": "Tickets in the open set (new, open, pending).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending": {
+            "description": "Tickets with status pending (waiting on the customer).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resolved_7d": {
+            "description": "Solved or closed tickets last updated in the trailing seven days.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unassigned": {
+            "description": "Open-set tickets with no assignee.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "urgent": {
+            "description": "Open-set tickets at urgent priority.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "business_id",
+          "business_name",
+          "open",
+          "new",
+          "pending",
+          "awaiting_reply",
+          "unassigned",
+          "urgent",
+          "high",
+          "created_7d",
+          "resolved_7d",
+          "oldest_awaiting_at",
+          "median_first_response_seconds_7d"
+        ],
+        "type": "object"
+      },
+      "SupportOverviewCounts": {
+        "properties": {
+          "awaiting_reply": {
+            "description": "New or open tickets whose newest non-note message is inbound.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created_7d": {
+            "description": "Tickets created in the trailing seven days.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "high": {
+            "description": "Open-set tickets at high priority.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "median_first_response_seconds_7d": {
+            "description": "Median seconds from creation to first outbound reply for tickets created in the trailing seven days; null when none was answered.",
+            "format": "double",
+            "minimum": 0,
+            "nullable": true,
+            "type": "number"
+          },
+          "new": {
+            "description": "Tickets with status new.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "oldest_awaiting_at": {
+            "description": "When the longest-waiting awaiting-reply ticket started waiting; null when none is waiting.",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "open": {
+            "description": "Tickets in the open set (new, open, pending).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending": {
+            "description": "Tickets with status pending (waiting on the customer).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resolved_7d": {
+            "description": "Solved or closed tickets last updated in the trailing seven days.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unassigned": {
+            "description": "Open-set tickets with no assignee.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "urgent": {
+            "description": "Open-set tickets at urgent priority.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open",
+          "new",
+          "pending",
+          "awaiting_reply",
+          "unassigned",
+          "urgent",
+          "high",
+          "created_7d",
+          "resolved_7d",
+          "oldest_awaiting_at",
+          "median_first_response_seconds_7d"
+        ],
+        "type": "object"
+      },
+      "SupportOverviewTicket": {
+        "properties": {
+          "assigned": {
+            "type": "boolean"
+          },
+          "business_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "business_name": {
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "open"
+            ],
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "waiting_since": {
+            "description": "Time of the inbound message the customer is waiting on a reply to.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_id",
+          "business_name",
+          "ticket_id",
+          "subject",
+          "status",
+          "priority",
+          "assigned",
+          "waiting_since"
+        ],
+        "type": "object"
+      },
       "SupportPortalContact": {
         "properties": {
           "email": {
@@ -30543,6 +30807,61 @@
           "next": "next_cursor"
         },
         "x-manyforge-resource": "permissions"
+      }
+    },
+    "/api/v1/support/overview": {
+      "get": {
+        "description": "Lists every active business where the caller holds tickets.read, each with support KPIs,\nplus pooled totals and up to 25 tickets whose customer is waiting on a reply. The\npermission is applied per business in SQL; a caller with no readable business gets empty\nlists and zero totals. Redacted tickets are excluded.\n\nThe open set is new, open and pending. A ticket is awaiting reply when it is new or open\nand its newest non-note message is inbound. created_7d, resolved_7d and the median first\nresponse use a trailing seven-day window ending at as_of; resolved_7d counts solved or\nclosed tickets last updated in the window. The totals median is computed over pooled\ntickets, not averaged across businesses. Attention items are ordered by priority (urgent\nfirst), then longest waiting, and carry no message bodies or requester details.\n",
+        "operationId": "SupportOverviewGet",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupportOverview"
+                }
+              }
+            },
+            "description": "Overview for the caller's readable businesses.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication required."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error."
+          },
+          "default": {
+            "description": "Unexpected HTTP response, including non-JSON intermediary errors. Preserve status, headers, request ID and bounded raw body."
+          }
+        },
+        "summary": "Support KPIs and waiting tickets across authorized businesses",
+        "tags": [
+          "Analytics"
+        ],
+        "x-manyforge-audience": "management",
+        "x-manyforge-method": "support",
+        "x-manyforge-resource": "analytics"
       }
     },
     "/api/v1/support/portal/contact": {

@@ -13506,6 +13506,52 @@ paths:
       x-manyforge-method: mailing
       tags:
       - Analytics
+  /api/v1/support/overview:
+    get:
+      operationId: SupportOverviewGet
+      summary: Support KPIs and waiting tickets across authorized businesses
+      description: |
+        Lists every active business where the caller holds tickets.read, each with support KPIs,
+        plus pooled totals and up to 25 tickets whose customer is waiting on a reply. The
+        permission is applied per business in SQL; a caller with no readable business gets empty
+        lists and zero totals. Redacted tickets are excluded.
+
+        The open set is new, open and pending. A ticket is awaiting reply when it is new or open
+        and its newest non-note message is inbound. created_7d, resolved_7d and the median first
+        response use a trailing seven-day window ending at as_of; resolved_7d counts solved or
+        closed tickets last updated in the window. The totals median is computed over pooled
+        tickets, not averaged across businesses. Attention items are ordered by priority (urgent
+        first), then longest waiting, and carry no message bodies or requester details.
+      responses:
+        '200':
+          description: Overview for the caller's readable businesses.
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportOverview'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected HTTP response, including non-JSON intermediary errors. Preserve status, headers, request ID and bounded raw body.
+      x-manyforge-audience: management
+      x-manyforge-resource: analytics
+      x-manyforge-method: support
+      tags:
+      - Analytics
   /api/v1/analytics/overview:
     get:
       summary: Every analytics site the caller can see, across all their businesses
@@ -15505,6 +15551,212 @@ components:
           minimum: 0
           maximum: 100
           description: 100 times numerator divided by denominator; null when the denominator is zero.
+    SupportOverview:
+      type: object
+      required:
+      - as_of
+      - totals
+      - businesses
+      - attention
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        totals:
+          $ref: '#/components/schemas/SupportOverviewCounts'
+        businesses:
+          type: array
+          description: Readable businesses ordered by awaiting_reply, then open, descending, then name.
+          items:
+            $ref: '#/components/schemas/SupportOverviewBusiness'
+        attention:
+          type: array
+          maxItems: 25
+          items:
+            $ref: '#/components/schemas/SupportOverviewTicket'
+    SupportOverviewCounts:
+      type: object
+      required:
+      - open
+      - new
+      - pending
+      - awaiting_reply
+      - unassigned
+      - urgent
+      - high
+      - created_7d
+      - resolved_7d
+      - oldest_awaiting_at
+      - median_first_response_seconds_7d
+      properties:
+        open:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets in the open set (new, open, pending).
+        new:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets with status new.
+        pending:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets with status pending (waiting on the customer).
+        awaiting_reply:
+          type: integer
+          format: int64
+          minimum: 0
+          description: New or open tickets whose newest non-note message is inbound.
+        unassigned:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Open-set tickets with no assignee.
+        urgent:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Open-set tickets at urgent priority.
+        high:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Open-set tickets at high priority.
+        created_7d:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets created in the trailing seven days.
+        resolved_7d:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Solved or closed tickets last updated in the trailing seven days.
+        oldest_awaiting_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the longest-waiting awaiting-reply ticket started waiting; null when none is waiting.
+        median_first_response_seconds_7d:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          description: Median seconds from creation to first outbound reply for tickets created in the trailing seven days; null when none was answered.
+    SupportOverviewBusiness:
+      type: object
+      required:
+      - business_id
+      - business_name
+      - open
+      - new
+      - pending
+      - awaiting_reply
+      - unassigned
+      - urgent
+      - high
+      - created_7d
+      - resolved_7d
+      - oldest_awaiting_at
+      - median_first_response_seconds_7d
+      properties:
+        business_id:
+          type: string
+          format: uuid
+        business_name:
+          type: string
+        open:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets in the open set (new, open, pending).
+        new:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets with status new.
+        pending:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets with status pending (waiting on the customer).
+        awaiting_reply:
+          type: integer
+          format: int64
+          minimum: 0
+          description: New or open tickets whose newest non-note message is inbound.
+        unassigned:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Open-set tickets with no assignee.
+        urgent:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Open-set tickets at urgent priority.
+        high:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Open-set tickets at high priority.
+        created_7d:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tickets created in the trailing seven days.
+        resolved_7d:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Solved or closed tickets last updated in the trailing seven days.
+        oldest_awaiting_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the longest-waiting awaiting-reply ticket started waiting; null when none is waiting.
+        median_first_response_seconds_7d:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          description: Median seconds from creation to first outbound reply for tickets created in the trailing seven days; null when none was answered.
+    SupportOverviewTicket:
+      type: object
+      required:
+      - business_id
+      - business_name
+      - ticket_id
+      - subject
+      - status
+      - priority
+      - assigned
+      - waiting_since
+      properties:
+        business_id:
+          type: string
+          format: uuid
+        business_name:
+          type: string
+        ticket_id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+        status:
+          type: string
+          enum: [new, open]
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+        assigned:
+          type: boolean
+        waiting_since:
+          type: string
+          format: date-time
+          description: Time of the inbound message the customer is waiting on a reply to.
     MailingReport:
       type: object
       required:

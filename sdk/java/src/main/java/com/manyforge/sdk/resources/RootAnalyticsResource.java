@@ -23,6 +23,7 @@ import com.manyforge.sdk.models.AnalyticsOverview;
 import com.manyforge.sdk.models.Error;
 import com.manyforge.sdk.models.MailingReport;
 import com.manyforge.sdk.models.PublicDataError;
+import com.manyforge.sdk.models.SupportOverview;
 import java.util.UUID;
 
 public class RootAnalyticsResource {
@@ -110,5 +111,33 @@ public class RootAnalyticsResource {
   public CompletableFuture<MailingReport> mailingAsync(RootAnalyticsMailingParams params, RequestOptions options) { return transport.sendAsync(mailingRequest(params), options); }
   public MailingReport mailing() { return mailing(RootAnalyticsMailingParams.builder().build()); }
   public CompletableFuture<MailingReport> mailingAsync() { return mailingAsync(RootAnalyticsMailingParams.builder().build()); }
+
+  public static final class RootAnalyticsSupportParams {
+
+    private RootAnalyticsSupportParams(Builder builder) {
+
+    }
+    public static Builder builder() { return new Builder(); }
+    public Builder toBuilder() {
+      Builder builder = new Builder();
+
+      return builder;
+    }
+    public static final class Builder {
+
+      public RootAnalyticsSupportParams build() { return new RootAnalyticsSupportParams(this); }
+    }
+  }
+  private Request<SupportOverview> supportRequest(RootAnalyticsSupportParams params) {
+    Objects.requireNonNull(params, "params");
+    List<Request.Parameter> parameters = new ArrayList<>();
+    return new Request<>("GET", "/api/v1/support/overview", parameters, null, "", true, "management", false, null, new TypeReference<SupportOverview>() {});
+  }
+  public SupportOverview support(RootAnalyticsSupportParams params) { return support(params, RequestOptions.DEFAULT); }
+  public SupportOverview support(RootAnalyticsSupportParams params, RequestOptions options) { return transport.send(supportRequest(params), options); }
+  public CompletableFuture<SupportOverview> supportAsync(RootAnalyticsSupportParams params) { return supportAsync(params, RequestOptions.DEFAULT); }
+  public CompletableFuture<SupportOverview> supportAsync(RootAnalyticsSupportParams params, RequestOptions options) { return transport.sendAsync(supportRequest(params), options); }
+  public SupportOverview support() { return support(RootAnalyticsSupportParams.builder().build()); }
+  public CompletableFuture<SupportOverview> supportAsync() { return supportAsync(RootAnalyticsSupportParams.builder().build()); }
 
 }

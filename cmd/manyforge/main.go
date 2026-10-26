@@ -1615,6 +1615,9 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 				// Cross-business reporting applies mailing.read in SQL, not a path-id gate.
 				h.mailing.ReportingRoutes(pr)
 			}
+			// Spec 019 cross-business support overview: same shape — tickets.read is applied per
+			// business in SQL because there is no path id for RequirePermission to resolve.
+			h.ticketing.OverviewRoutes(pr)
 			// manyforge-p20 telemetry write slice: register + revoke clients, gated on
 			// telemetry.write. Same RLS-bound 404-on-lacking-perm semantics.
 			pr.Group(func(tw chi.Router) {

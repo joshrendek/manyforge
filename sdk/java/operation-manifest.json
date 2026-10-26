@@ -425,6 +425,14 @@
     "pagination": null
   },
   {
+    "operationId": "SupportOverviewGet",
+    "resource": "analytics",
+    "method": "support",
+    "audience": "management",
+    "businessParam": null,
+    "pagination": null
+  },
+  {
     "operationId": "TenantMergesConfirm",
     "resource": "tenantMerges",
     "method": "confirm",

@@ -22,6 +22,7 @@ from typing_extensions import Annotated
 from uuid import UUID
 from manyforge.models.analytics_overview import AnalyticsOverview
 from manyforge.models.mailing_report import MailingReport
+from manyforge.models.support_overview import SupportOverview
 
 class RootAnalyticsResource:
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -88,6 +89,33 @@ class RootAnalyticsResource:
         )
         return self._transport.request(request, request_options=request_options)
 
+    def support(
+        self,
+        *,
+
+        request_options: RequestOptions | None = None,
+    ) -> SupportOverview:
+        request = Request(
+            operation_id="SupportOverviewGet",
+            method="GET",
+            path="/api/v1/support/overview",
+            authenticated=True,
+            response=TypeAdapter(SupportOverview),
+            path_parameters={
+            },
+            query=(
+            ),
+            headers={
+            },
+            form={
+            },
+
+
+            accept="application/json",
+
+        )
+        return self._transport.request(request, request_options=request_options)
+
 class AsyncRootAnalyticsResource:
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -141,6 +169,33 @@ class AsyncRootAnalyticsResource:
             },
             query=(
                 QueryParameter("business_id", business_id, "form", True),
+            ),
+            headers={
+            },
+            form={
+            },
+
+
+            accept="application/json",
+
+        )
+        return await self._transport.request(request, request_options=request_options)
+
+    async def support(
+        self,
+        *,
+
+        request_options: RequestOptions | None = None,
+    ) -> SupportOverview:
+        request = Request(
+            operation_id="SupportOverviewGet",
+            method="GET",
+            path="/api/v1/support/overview",
+            authenticated=True,
+            response=TypeAdapter(SupportOverview),
+            path_parameters={
+            },
+            query=(
             ),
             headers={
             },

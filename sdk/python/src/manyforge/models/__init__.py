@@ -372,6 +372,12 @@ from .subscriber_patch import SubscriberPatch
 from .subscriber_patch_status import SubscriberPatchStatus
 from .subscriber_properties_consent_source_enum import SubscriberPropertiesConsentSourceEnum
 from .subscriber_status import SubscriberStatus
+from .support_overview import SupportOverview
+from .support_overview_business import SupportOverviewBusiness
+from .support_overview_counts import SupportOverviewCounts
+from .support_overview_ticket import SupportOverviewTicket
+from .support_overview_ticket_properties_priority_enum import SupportOverviewTicketPropertiesPriorityEnum
+from .support_overview_ticket_properties_status_enum import SupportOverviewTicketPropertiesStatusEnum
 from .support_portal_contact import SupportPortalContact
 from .support_portal_key import SupportPortalKey
 from .support_portal_key_request import SupportPortalKeyRequest

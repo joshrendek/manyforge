@@ -1,5 +1,5 @@
 import {
-  BarChart3, Bot, Building2, CheckCheck, GitBranch, GitPullRequest, Inbox, KeyRound,
+  BarChart3, Bot, Building2, CheckCheck, Gauge, GitBranch, GitPullRequest, Inbox, KeyRound,
   LayoutGrid, LucideIconData, Mail, MessageSquare, Plug, Receipt, Send, Server,
   SlidersHorizontal, SquareKanban, Users, Workflow,
 } from 'lucide-angular';
@@ -21,6 +21,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: 'Workspace', items: [
     { label: 'Dashboard', route: '/dashboard', testid: 'nav-dashboard', icon: LayoutGrid },
     { label: 'Support', route: '/support', testid: 'nav-support', icon: Inbox },
+    { label: 'Support Overview', route: '/support/overview', testid: 'nav-support-overview', icon: Gauge },
     { label: 'Approvals', route: '/approvals', testid: 'nav-approvals', icon: CheckCheck },
     { label: 'Work', route: '/work', testid: 'nav-work', icon: SquareKanban },
   ] },

@@ -14,7 +14,7 @@ func validSignedPageview(path, sessionID string) bool {
 		return false
 	}
 	id, err := uuid.Parse(sessionID)
-	if err != nil || strings.IndexAny(sessionID, "ABCDEF") >= 0 || id.Version() != 4 || id.Variant() != uuid.RFC4122 {
+	if err != nil || strings.ContainsAny(sessionID, "ABCDEF") || id.Version() != 4 || id.Variant() != uuid.RFC4122 {
 		return false
 	}
 	if path == "/" {
