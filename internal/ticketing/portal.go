@@ -278,7 +278,7 @@ func portalEmail(v string) (string, error) {
 }
 func portalChallengeHash(token, external, email string, nonce uuid.UUID, code string) []byte {
 	h := hmac.New(sha256.New, []byte(token))
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s", external, email, nonce.String(), code)
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s", external, email, nonce.String(), code)
 	return h.Sum(nil)
 }
 func portalAudit(ctx context.Context, tx pgx.Tx, pid, bid, root uuid.UUID, action string, target uuid.UUID) error {

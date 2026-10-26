@@ -128,7 +128,7 @@ func TestPortalSlowBodyReleasesAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 100\r\n\r\n{"); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestPortalSlowBodyReleasesAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != 200 {
 		t.Fatalf("normal request failed: %d", response.StatusCode)
 	}
