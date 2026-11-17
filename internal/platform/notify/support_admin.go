@@ -25,6 +25,8 @@ type SupportAdminSubscriber struct {
 	Suppression   mailer.SuppressionChecker
 }
 
+// Queue consumes message.received and atomically creates deduplicated alerts and
+// delivery events for all eligible admins. The database validates message scope.
 func (s SupportAdminSubscriber) Queue(ctx context.Context, tx pgx.Tx, e events.Event) error {
 	var p struct {
 		BusinessID uuid.UUID `json:"business_id"`
@@ -34,22 +36,15 @@ func (s SupportAdminSubscriber) Queue(ctx context.Context, tx pgx.Tx, e events.E
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("support admin: invalid inbound event")
 	}
-	rows, err := tx.Query(ctx, "SELECT notification_id FROM queue_support_admin_notifications($1,$2,$3,$4)", e.TenantRootID, p.BusinessID, p.TicketID, p.MessageID)
+	_, err := tx.Exec(ctx, "SELECT queue_support_admin_notifications($1,$2,$3,$4)", e.TenantRootID, p.BusinessID, p.TicketID, p.MessageID)
 	if err != nil {
 		return fmt.Errorf("support admin: queue: %w", err)
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := events.Enqueue(ctx, tx, e.TenantRootID, events.TopicSupportAdminNotify, map[string]any{"notification_id": id}); err != nil {
-			return err
-		}
 	}
 	return nil
 }
 
+// Send rechecks access and delivers one alert using the business support profile
+// or, when absent, the shared transport. Failures retry up to the event limit.
 func (s SupportAdminSubscriber) Send(ctx context.Context, tx pgx.Tx, e events.Event) error {
 	var p struct {
 		NotificationID uuid.UUID `json:"notification_id"`

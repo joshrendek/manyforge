@@ -5,8 +5,9 @@ CREATE UNIQUE INDEX notification_support_inbound_dedup
     WHERE kind = 'support.inbound';
 
 CREATE FUNCTION queue_support_admin_notifications(p_tenant uuid, p_business uuid, p_ticket uuid, p_message uuid)
-RETURNS TABLE (notification_id uuid)
+RETURNS void
 LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+    WITH inserted AS (
     INSERT INTO notification (tenant_root_id, principal_id, kind, ref)
     SELECT DISTINCT p_tenant, p.id, 'support.inbound',
         jsonb_build_object('business_id', p_business, 'ticket_id', p_ticket,
@@ -28,7 +29,11 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
       AND anc.deleted_at IS NULL AND anc.status <> 'archived'
       AND a.status = 'active' AND a.deleted_at IS NULL AND a.email_verified_at IS NOT NULL
     ON CONFLICT DO NOTHING
-    RETURNING id;
+    RETURNING id, tenant_root_id
+    )
+    INSERT INTO outbox (tenant_root_id, topic, payload)
+    SELECT tenant_root_id, 'support.admin.notify', jsonb_build_object('notification_id', id)
+    FROM inserted;
 $$;
 
 CREATE FUNCTION get_support_admin_notification(p_tenant uuid, p_notification uuid)

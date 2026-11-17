@@ -47,7 +47,7 @@ func TestSupportAdminNotifications(t *testing.T) {
 	exec("INSERT INTO business_closure (ancestor_id,descendant_id,depth,tenant_root_id) VALUES ($1,$1,0,$2),($2,$1,1,$2)", child, st.master)
 	addMember(child, "admin", true)
 	cap := &captureSender{}
-	sub := SupportAdminSubscriber{Sender: cap, From: "alerts@example.com", BaseURL: "https://app.example.com/"}
+	sub := SupportAdminSubscriber{Sender: cap, From: "alerts@example.com", BaseURL: "https://app.example.com/", Suppression: DBSuppression{DB: tdb.App}}
 	payload, _ := json.Marshal(map[string]any{"business_id": st.master, "ticket_id": ticketID, "message_id": st.messageRowID})
 	inbound := events.Event{ID: uuid.New(), TenantRootID: st.master, Topic: events.TopicMessageReceived, Payload: payload}
 	queue := func(e events.Event) {
@@ -93,9 +93,20 @@ func TestSupportAdminNotifications(t *testing.T) {
 	if len(deliveries) != 2 {
 		t.Fatalf("deliveries=%d", len(deliveries))
 	}
+	for i := range deliveries {
+		deliveries[i].MaxAttempts = 10
+	}
 	send := func(e events.Event) error {
 		return tdb.App.WithTx(ctx, func(tx pgx.Tx) error { return sub.Send(ctx, tx, e) })
 	}
+	sub.Suppression = failingSuppression{}
+	if err := send(deliveries[0]); err == nil {
+		t.Fatal("suppression lookup failure did not retry")
+	}
+	if cap.calls != 0 {
+		t.Fatal("suppression lookup failure dispatched email")
+	}
+	sub.Suppression = DBSuppression{DB: tdb.App}
 	cap.err = errors.New("secret upstream content")
 	if err := send(deliveries[0]); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("retry error=%v", err)
@@ -207,6 +218,12 @@ func TestSupportAdminNotifications(t *testing.T) {
 		t.Fatalf("auto reply or staff note fanned out: %d", n)
 	}
 	exec("UPDATE ticket_message SET direction='inbound',author_principal_id=NULL WHERE id=$1", autoID)
+	exec("UPDATE ticket SET redacted_at=now() WHERE id=$1", ticketID)
+	queue(inbound)
+	if n := count(); n != 6 {
+		t.Fatal("redacted ticket queued admin email")
+	}
+	exec("UPDATE ticket SET redacted_at=NULL WHERE id=$1", ticketID)
 	queue(inbound)
 	if n := count(); n != 7 {
 		t.Fatalf("fresh customer message did not fan out: %d", n)
@@ -215,6 +232,15 @@ func TestSupportAdminNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ = json.Marshal(map[string]any{"notification_id": pendingID})
+	exec("UPDATE ticket SET redacted_at=now() WHERE id=$1", ticketID)
+	profileCalls := profile.calls
+	if err := send(events.Event{TenantRootID: st.master, Payload: data, MaxAttempts: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if profile.calls != profileCalls {
+		t.Fatal("ticket redacted after queue dispatched email")
+	}
+	exec("UPDATE ticket SET redacted_at=NULL WHERE id=$1", ticketID)
 	profile.err = errors.New("private provider response")
 	if err := send(events.Event{TenantRootID: st.master, Payload: data, Attempts: 9, MaxAttempts: 10}); err != nil {
 		t.Fatal(err)
@@ -225,6 +251,27 @@ func TestSupportAdminNotifications(t *testing.T) {
 	}
 	if state != "failed" {
 		t.Fatalf("terminal state=%s", state)
+	}
+	// The production database suppression checker short-circuits the transport.
+	if err := tdb.Super.QueryRow(ctx, "SELECT id FROM notification WHERE principal_id=$1 AND ref->>'message_id'=$2", owner, childMessage.String()).Scan(&pendingID); err != nil {
+		t.Fatal(err)
+	}
+	exec("INSERT INTO email_suppression(email,reason) SELECT a.email,'hard_bounce' FROM account a JOIN principal p ON p.account_id=a.id WHERE p.id=$1", owner)
+	sub.Sender = cap
+	sub.From = "alerts@example.com"
+	data, _ = json.Marshal(map[string]any{"notification_id": pendingID})
+	calls = cap.calls
+	if err := send(events.Event{TenantRootID: st.master, Payload: data, MaxAttempts: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if cap.calls != calls {
+		t.Fatal("database-suppressed recipient reached transport")
+	}
+	if err := tdb.Super.QueryRow(ctx, "SELECT ref->>'email_state' FROM notification WHERE id=$1", pendingID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "suppressed" {
+		t.Fatalf("database suppression state=%s", state)
 	}
 	// Migration rollback and reapply must preserve the existing merge contract.
 	for _, filename := range []string{"0150_support_admin_notifications.down.sql", "0150_support_admin_notifications.up.sql"} {

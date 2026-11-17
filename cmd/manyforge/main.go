@@ -798,6 +798,8 @@ func main() {
 	}
 	eventBus.Subscribe(events.TopicTicketReplied, sendSub.Handle)
 
+	// Every fresh customer message, including followups, queues independent admin
+	// alerts. Separate delivery events isolate recipient failures from fanout.
 	adminNotify := notify.SupportAdminSubscriber{
 		Sender: sharedMail.Sender, From: cfg.OutboundFromEmail, BaseURL: cfg.PublicBaseURL,
 		Suppression: notify.DBSuppression{DB: database},
