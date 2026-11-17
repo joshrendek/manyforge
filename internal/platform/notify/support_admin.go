@@ -90,7 +90,7 @@ func (s SupportAdminSubscriber) Send(ctx context.Context, tx pgx.Tx, e events.Ev
 		BodyText:      fmt.Sprintf("A customer sent a support message to %s.\n\nSubject: %s\n\nView and reply in ManyForge:\n%s\n", business, subject, link),
 		MessageID:     "support-admin-" + p.NotificationID.String() + "@" + domain,
 		AutoSubmitted: "auto-generated",
-		ExtraHeaders:  map[string]string{"X-Auto-Response-Suppress": "All", "Auto-Submitted": "auto-generated"},
+		ExtraHeaders:  map[string]string{"X-Auto-Response-Suppress": "All"},
 	}
 	if hasProfile {
 		err = s.ProfileSender.SendSupportReply(ctx, identity.profileID, message)

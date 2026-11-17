@@ -125,6 +125,13 @@ func TestSupportAdminNotifications(t *testing.T) {
 	if cap.last.AutoSubmitted != "auto-generated" || cap.last.ReplyTo != "" {
 		t.Fatal("notification must not become a customer reply")
 	}
+	raw, err := BuildMIME(*cap.last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), "Auto-Submitted:") != 1 {
+		t.Fatal("automatic mail header must appear exactly once")
+	}
 	calls := cap.calls
 	if err := send(deliveries[0]); err != nil {
 		t.Fatal(err)
