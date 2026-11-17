@@ -295,4 +295,11 @@ func TestSupportAdminNotifications(t *testing.T) {
 	if !registered {
 		t.Fatal("notification topic missing from tenant merge contract")
 	}
+	var definition string
+	if err := tdb.Super.QueryRow(ctx, "SELECT pg_get_functiondef('tenant_merge_preflight_inventory_v1(uuid,uuid)'::regprocedure)").Scan(&definition); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(definition, events.TopicSupportAdminNotify) != 1 {
+		t.Fatal("notification registration must only change the topic allowlist")
+	}
 }

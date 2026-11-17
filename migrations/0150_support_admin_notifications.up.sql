@@ -81,12 +81,18 @@ GRANT EXECUTE ON FUNCTION finish_support_admin_notification(uuid, uuid, text) TO
 -- Notification IDs and message/ticket/business IDs survive tenant moves; only
 -- the envelope tenant root changes. Register the new topic with merge preflight.
 DO $migration$
-DECLARE v_definition text;
+DECLARE v_definition text; v_rewritten text;
 BEGIN
     SELECT pg_get_functiondef('tenant_merge_preflight_inventory_v1(uuid,uuid)'::regprocedure) INTO v_definition;
-    IF position('''automation.event.received''' IN v_definition) = 0 THEN
+    v_rewritten := replace(v_definition,
+        $old$AND topic NOT IN (
+          'business.created', 'ticket.replied', 'ticket.created',$old$,
+        $new$AND topic NOT IN (
+          'support.admin.notify',
+          'business.created', 'ticket.replied', 'ticket.created',$new$);
+    IF v_rewritten = v_definition THEN
         RAISE EXCEPTION 'tenant merge preflight topic patch did not apply';
     END IF;
-    EXECUTE replace(v_definition, '''automation.event.received''', '''automation.event.received'', ''support.admin.notify''');
+    EXECUTE v_rewritten;
 END;
 $migration$;

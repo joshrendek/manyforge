@@ -7,6 +7,11 @@ DO $migration$
 DECLARE v_definition text;
 BEGIN
     SELECT pg_get_functiondef('tenant_merge_preflight_inventory_v1(uuid,uuid)'::regprocedure) INTO v_definition;
-    EXECUTE replace(v_definition, '''automation.event.received'', ''support.admin.notify''', '''automation.event.received''');
+    EXECUTE replace(v_definition,
+        $new$AND topic NOT IN (
+          'support.admin.notify',
+          'business.created', 'ticket.replied', 'ticket.created',$new$,
+        $old$AND topic NOT IN (
+          'business.created', 'ticket.replied', 'ticket.created',$old$);
 END;
 $migration$;
