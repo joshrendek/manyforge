@@ -798,6 +798,16 @@ func main() {
 	}
 	eventBus.Subscribe(events.TopicTicketReplied, sendSub.Handle)
 
+	adminNotify := notify.SupportAdminSubscriber{
+		Sender: sharedMail.Sender, From: cfg.OutboundFromEmail, BaseURL: cfg.PublicBaseURL,
+		Suppression: notify.DBSuppression{DB: database},
+	}
+	if mailingSvc != nil {
+		adminNotify.ProfileSender = mailingSvc
+	}
+	eventBus.Subscribe(events.TopicMessageReceived, adminNotify.Queue)
+	eventBus.Subscribe(events.TopicSupportAdminNotify, adminNotify.Send)
+
 	// US5 redact: the attachment.purge worker deletes redacted attachment blobs out-of-
 	// band (the redact tx enqueues one event per blob). The handler is idempotent and
 	// touches no RLS tables, so the worker's principal-less tx is fine.

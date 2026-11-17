@@ -35,6 +35,9 @@ const (
 	// the reply re-triage trigger (manyforge-deo.1).
 	TopicMessageReceived = "message.received"
 
+	// TopicSupportAdminNotify delivers one inbound support alert to one admin.
+	TopicSupportAdminNotify = "support.admin.notify"
+
 	// TopicAttachmentPurge is emitted (one per blob) in the redact tx; the purge
 	// worker drains it to delete the attachment object from blob storage out-of-band
 	// (T066/FR-014). Payload carries {blob_key}. The handler is idempotent.
