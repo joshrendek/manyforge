@@ -39,8 +39,8 @@ import java.util.NoSuchElementException;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "created_at", "expires_at", "id", "label", "revoked_at", "token" })
-@com.manyforge.sdk.ModelShape(required = { "created_at", "expires_at", "id", "label",  }, nonNullable = { "created_at", "expires_at", "id", "label", "token",  })
+@JsonPropertyOrder({ "created_at", "expires_at", "id", "identity_namespace", "label", "revoked_at", "token" })
+@com.manyforge.sdk.ModelShape(required = { "created_at", "expires_at", "id", "label",  }, nonNullable = { "created_at", "expires_at", "id", "identity_namespace", "label", "token",  })
 public class SupportPortalKey {
 
   @JsonProperty("created_at")
@@ -63,6 +63,13 @@ public class SupportPortalKey {
   public UUID getId() { return id.orElse(null); }
   public JsonNullable<UUID> idPresence() { return id; }
   public SupportPortalKey id(UUID value) { this.id = JsonNullable.of(value); return this; }
+
+  @JsonProperty("identity_namespace")
+  private JsonNullable<String> identityNamespace = JsonNullable.undefined();
+
+  public String getIdentityNamespace() { return identityNamespace.orElse(null); }
+  public JsonNullable<String> identityNamespacePresence() { return identityNamespace; }
+  public SupportPortalKey identityNamespace(String value) { this.identityNamespace = JsonNullable.of(value); return this; }
 
   @JsonProperty("label")
   private JsonNullable<String> label = JsonNullable.undefined();
@@ -90,6 +97,7 @@ public class SupportPortalKey {
     public Builder createdAt(OffsetDateTime field) { value.createdAt(field); return this; }
     public Builder expiresAt(OffsetDateTime field) { value.expiresAt(field); return this; }
     public Builder id(UUID field) { value.id(field); return this; }
+    public Builder identityNamespace(String field) { value.identityNamespace(field); return this; }
     public Builder label(String field) { value.label(field); return this; }
     public Builder revokedAt(OffsetDateTime field) { value.revokedAt(field); return this; }
     public Builder token(String field) { value.token(field); return this; }

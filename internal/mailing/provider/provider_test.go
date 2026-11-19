@@ -739,12 +739,14 @@ func TestNewSESValidatesStaticConfiguration(t *testing.T) {
 // Resend request headers so the customer's client threads it under their message.
 func TestResendSendCarriesThreadingHeaders(t *testing.T) {
 	var headers map[string]any
+	var attachments []any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
 		headers, _ = body["headers"].(map[string]any)
+		attachments, _ = body["attachments"].([]any)
 		_, _ = io.WriteString(w, `{"id":"resend-thread"}`)
 	}))
 	defer server.Close()
@@ -752,7 +754,8 @@ func TestResendSendCarriesThreadingHeaders(t *testing.T) {
 	if _, err := r.Send(context.Background(), notify.Mail{
 		From: "support@example.com", To: "ada@example.net", Subject: "Re: Help", BodyText: "hi",
 		MessageID: "m-2@example.com", InReplyTo: "parent-1@example.com",
-		References: []string{"root-0@example.com", "parent-1@example.com"},
+		References:  []string{"root-0@example.com", "parent-1@example.com"},
+		Attachments: []notify.MailAttachment{{Filename: "example.txt", ContentType: "text/plain", Content: []byte("Synthetic attachment")}},
 	}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -763,6 +766,13 @@ func TestResendSendCarriesThreadingHeaders(t *testing.T) {
 	}
 	if fmt.Sprint(headers) != fmt.Sprint(want) {
 		t.Fatalf("headers = %#v, want %#v", headers, want)
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("expected one structured attachment, got %d", len(attachments))
+	}
+	file, ok := attachments[0].(map[string]any)
+	if !ok || file["filename"] != "example.txt" || file["content"] != base64.StdEncoding.EncodeToString([]byte("Synthetic attachment")) {
+		t.Fatalf("unexpected attachment payload: %#v", attachments[0])
 	}
 
 	headers = nil
@@ -776,5 +786,8 @@ func TestResendSendCarriesThreadingHeaders(t *testing.T) {
 	}
 	if _, ok := headers["References"]; ok {
 		t.Fatalf("unthreaded mail carried References: %#v", headers)
+	}
+	if attachments != nil {
+		t.Fatal("reply without files sent an attachments field")
 	}
 }

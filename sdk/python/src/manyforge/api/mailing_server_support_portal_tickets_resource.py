@@ -16,8 +16,8 @@ from collections.abc import Iterator, AsyncIterator, Mapping
 from pydantic import TypeAdapter, StrictBool, StrictBytes, StrictFloat, StrictInt, StrictStr
 from manyforge.model_support import JsonValue, UNSET, UnsetType
 from manyforge.transport import (SyncTransport, AsyncTransport, Request, RequestOptions, QueryParameter, Upload, ByteStream, AsyncByteStream, PaginationError)
-from pydantic import Field, field_validator
-from typing import Optional
+from pydantic import Field, StrictBytes, StrictStr, field_validator
+from typing import Optional, Tuple, Union
 from typing_extensions import Annotated
 from uuid import UUID
 from manyforge.models.create_support_portal_ticket201_response import CreateSupportPortalTicket201Response
@@ -72,6 +72,48 @@ class MailingServerSupportPortalTicketsResource:
 
         )
         return self._transport.request(request, request_options=request_options)
+
+    def download_attachment(
+        self,
+        *,
+
+        authorization: str,
+
+        x_mf_external_user: str,
+
+        ticket_id: UUID,
+
+        attachment_id: UUID,
+
+        x_mf_external_name: str | UnsetType = UNSET,
+
+        request_options: RequestOptions | None = None,
+    ) -> ByteStream:
+        request = Request(
+            operation_id="downloadSupportPortalAttachment",
+            method="GET",
+            path="/api/v1/support/portal/tickets/{ticketID}/attachments/{attachmentID}",
+            authenticated=False,
+            response=TypeAdapter(type(None)),
+            path_parameters={
+                "ticketID": ticket_id,
+                "attachmentID": attachment_id,
+            },
+            query=(
+            ),
+            headers={
+                "Authorization": authorization,
+                "X-MF-External-User": x_mf_external_user,
+                "X-MF-External-Name": x_mf_external_name,
+            },
+            form={
+            },
+
+
+            accept="application/octet-stream",
+
+        )
+        return self._transport.stream(request, request_options=request_options)
 
     def get(
         self,
@@ -240,6 +282,48 @@ class AsyncMailingServerSupportPortalTicketsResource:
 
         )
         return await self._transport.request(request, request_options=request_options)
+
+    async def download_attachment(
+        self,
+        *,
+
+        authorization: str,
+
+        x_mf_external_user: str,
+
+        ticket_id: UUID,
+
+        attachment_id: UUID,
+
+        x_mf_external_name: str | UnsetType = UNSET,
+
+        request_options: RequestOptions | None = None,
+    ) -> AsyncByteStream:
+        request = Request(
+            operation_id="downloadSupportPortalAttachment",
+            method="GET",
+            path="/api/v1/support/portal/tickets/{ticketID}/attachments/{attachmentID}",
+            authenticated=False,
+            response=TypeAdapter(type(None)),
+            path_parameters={
+                "ticketID": ticket_id,
+                "attachmentID": attachment_id,
+            },
+            query=(
+            ),
+            headers={
+                "Authorization": authorization,
+                "X-MF-External-User": x_mf_external_user,
+                "X-MF-External-Name": x_mf_external_name,
+            },
+            form={
+            },
+
+
+            accept="application/octet-stream",
+
+        )
+        return await self._transport.stream(request, request_options=request_options)
 
     async def get(
         self,

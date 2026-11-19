@@ -499,6 +499,14 @@
   {
     "audience": "management",
     "businessParam": "id",
+    "method": "downloadAttachment",
+    "operationId": "TicketsDownloadAttachment",
+    "pagination": null,
+    "resource": "tickets"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
     "method": "get",
     "operationId": "TicketsGet",
     "pagination": null,
@@ -1033,6 +1041,14 @@
     "operationId": "dismissConnectorFailedOps",
     "pagination": null,
     "resource": "connectors.failedOps"
+  },
+  {
+    "audience": "server",
+    "businessParam": null,
+    "method": "downloadAttachment",
+    "operationId": "downloadSupportPortalAttachment",
+    "pagination": null,
+    "resource": "support.portal.tickets"
   },
   {
     "audience": "management",

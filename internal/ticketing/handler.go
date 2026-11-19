@@ -2,6 +2,7 @@ package ticketing
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ func (h *Handler) ProtectedRoutes(r chi.Router) {
 	r.Get("/businesses/{id}/tickets", h.listTickets)
 	r.Get("/businesses/{id}/tickets/{tid}", h.getTicket)
 	r.Get("/businesses/{id}/tickets/{tid}/messages", h.listMessages)
+	r.Get("/businesses/{id}/tickets/{tid}/attachments/{aid}", h.downloadAttachment)
 	r.Get("/businesses/{id}/requesters", h.listRequesters)
 	r.Get("/businesses/{id}/requesters/{rid}", h.getRequester)
 }
@@ -78,8 +80,34 @@ func (h *Handler) DeleteRoutes(r chi.Router) {
 // --- request DTOs: exact OpenAPI component schemas ---
 
 type replyBody struct {
-	BodyText string  `json:"body_text"`
-	BodyHTML *string `json:"body_html"`
+	BodyText    string            `json:"body_text"`
+	BodyHTML    *string           `json:"body_html"`
+	Attachments []AttachmentInput `json:"attachments"`
+}
+
+func (h *Handler) downloadAttachment(w http.ResponseWriter, r *http.Request) {
+	pid, ok := httpx.PrincipalFromContext(r.Context())
+	bid, businessErr := pathUUID(r, "id")
+	tid, ticketErr := pathUUID(r, "tid")
+	id, attachmentErr := pathUUID(r, "aid")
+	if !ok || businessErr != nil || ticketErr != nil || attachmentErr != nil {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	file, content, err := h.svc.DownloadAttachment(r.Context(), pid, bid, tid, id)
+	if err != nil {
+		writeAttachmentError(w, r, err)
+		return
+	}
+	serveSupportAttachment(w, file, content)
+}
+
+func writeAttachmentError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, ErrAttachmentUnavailable) {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, httpx.ErrorBody{Code: "ATTACHMENT_UNAVAILABLE", Message: "attachment storage unavailable"})
+		return
+	}
+	httpx.WriteError(w, r, err)
 }
 
 type noteBody struct {
@@ -148,23 +176,24 @@ type attachmentResp struct {
 }
 
 type messageResp struct {
-	ID                 string              `json:"id"`
-	TicketID           string              `json:"ticket_id"`
-	Direction          string              `json:"direction"`
-	MessageID          *string             `json:"message_id"`
-	InReplyTo          *string             `json:"in_reply_to"`
-	References         []string            `json:"references"`
-	AuthorPrincipalID  *string             `json:"author_principal_id"`
-	BodyText           *string             `json:"body_text"`
-	BodyHTML           *string             `json:"body_html"`
-	Attachments        []attachmentResp    `json:"attachments"`
-	DroppedAttachments []DroppedAttachment `json:"dropped_attachments"`
-	SPFResult          string              `json:"spf_result"`
-	DKIMResult         string              `json:"dkim_result"`
-	DMARCResult        string              `json:"dmarc_result"`
-	AuthVerdicts       *AuthVerdicts       `json:"auth_verdicts,omitempty"`
-	DeliveryState      *string             `json:"delivery_state"`
-	CreatedAt          string              `json:"created_at"`
+	ID                   string              `json:"id"`
+	TicketID             string              `json:"ticket_id"`
+	Direction            string              `json:"direction"`
+	MessageID            *string             `json:"message_id"`
+	InReplyTo            *string             `json:"in_reply_to"`
+	References           []string            `json:"references"`
+	AuthorPrincipalID    *string             `json:"author_principal_id"`
+	HistoricalAuthorName string              `json:"historical_author_name,omitempty"`
+	BodyText             *string             `json:"body_text"`
+	BodyHTML             *string             `json:"body_html"`
+	Attachments          []attachmentResp    `json:"attachments"`
+	DroppedAttachments   []DroppedAttachment `json:"dropped_attachments"`
+	SPFResult            string              `json:"spf_result"`
+	DKIMResult           string              `json:"dkim_result"`
+	DMARCResult          string              `json:"dmarc_result"`
+	AuthVerdicts         *AuthVerdicts       `json:"auth_verdicts,omitempty"`
+	DeliveryState        *string             `json:"delivery_state"`
+	CreatedAt            string              `json:"created_at"`
 }
 
 const rfc3339 = "2006-01-02T15:04:05.999999999Z07:00"
@@ -225,23 +254,24 @@ func toMessageResp(m Message) messageResp {
 		dropped = []DroppedAttachment{}
 	}
 	return messageResp{
-		ID:                 m.ID.String(),
-		TicketID:           m.TicketID.String(),
-		Direction:          m.Direction,
-		MessageID:          m.MessageID,
-		InReplyTo:          m.InReplyTo,
-		References:         refs,
-		AuthorPrincipalID:  uuidStrPtr(m.AuthorPrincipalID),
-		BodyText:           m.BodyText,
-		BodyHTML:           m.BodyHTML,
-		Attachments:        atts,
-		DroppedAttachments: dropped,
-		SPFResult:          m.SPFResult,
-		DKIMResult:         m.DKIMResult,
-		DMARCResult:        m.DMARCResult,
-		AuthVerdicts:       m.AuthVerdicts,
-		DeliveryState:      m.DeliveryState,
-		CreatedAt:          m.CreatedAt.UTC().Format(rfc3339),
+		ID:                   m.ID.String(),
+		TicketID:             m.TicketID.String(),
+		Direction:            m.Direction,
+		MessageID:            m.MessageID,
+		InReplyTo:            m.InReplyTo,
+		References:           refs,
+		AuthorPrincipalID:    uuidStrPtr(m.AuthorPrincipalID),
+		HistoricalAuthorName: m.HistoricalAuthorName,
+		BodyText:             m.BodyText,
+		BodyHTML:             m.BodyHTML,
+		Attachments:          atts,
+		DroppedAttachments:   dropped,
+		SPFResult:            m.SPFResult,
+		DKIMResult:           m.DKIMResult,
+		DMARCResult:          m.DMARCResult,
+		AuthVerdicts:         m.AuthVerdicts,
+		DeliveryState:        m.DeliveryState,
+		CreatedAt:            m.CreatedAt.UTC().Format(rfc3339),
 	}
 }
 
@@ -449,7 +479,7 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body replyBody
-	if !httpx.DecodeJSON(w, r, &body) {
+	if !httpx.DecodeJSONLimit(w, r, &body, maxAttachmentJSONBytes) {
 		return
 	}
 	if strings.TrimSpace(body.BodyText) == "" {
@@ -458,9 +488,9 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 	}
 	// Field-by-field (not a struct conversion): IdempotencyKey is internal-only — the
 	// approvals executor sets it, the public HTTP body must never carry one.
-	m, err := h.svc.Reply(r.Context(), pid, bid, tid, ReplyInput{BodyText: body.BodyText, BodyHTML: body.BodyHTML})
+	m, err := h.svc.Reply(r.Context(), pid, bid, tid, ReplyInput{BodyText: body.BodyText, BodyHTML: body.BodyHTML, Attachments: body.Attachments})
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		writeAttachmentError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, toMessageResp(m))

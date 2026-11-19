@@ -16,7 +16,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Union
 from pydantic import Field, StrictBool, StrictBytes, StrictFloat, StrictInt, StrictStr, RootModel, field_validator, model_validator
 from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any, ClassVar, Dict, Optional
 from typing_extensions import Annotated
 
@@ -24,6 +24,7 @@ from typing_extensions import Annotated
 class SupportPortalKeyRequest(Model):
     """SupportPortalKeyRequest wire model. Unspecified fields are never sent."""
     expires_in_days: StrictInt | UnsetType = Field(default=UNSET, alias="expires_in_days")
+    identity_namespace: str | UnsetType = Field(default=UNSET, alias="identity_namespace")
     label: str = Field(..., alias="label")
 
 

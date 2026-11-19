@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/events"
 	"github.com/manyforge/manyforge/internal/platform/observability"
 )
@@ -42,14 +43,15 @@ type RecipientSuppression interface {
 // inbox.businessCreatedPayload). The json tags MUST match the keys Reply enqueues
 // EXACTLY, or a decode silently yields zero values.
 type repliedPayload struct {
-	MessageRowID uuid.UUID `json:"message_row_id"`
-	Recipient    string    `json:"recipient"`
-	Subject      string    `json:"subject"`
-	RFCMessageID string    `json:"rfc_message_id"`
-	InReplyTo    *string   `json:"in_reply_to"`
-	References   []string  `json:"references"`
-	ReplyToken   string    `json:"reply_token"`
-	BusinessID   uuid.UUID `json:"business_id"`
+	MessageRowID    uuid.UUID `json:"message_row_id"`
+	Recipient       string    `json:"recipient"`
+	Subject         string    `json:"subject"`
+	RFCMessageID    string    `json:"rfc_message_id"`
+	InReplyTo       *string   `json:"in_reply_to"`
+	References      []string  `json:"references"`
+	ReplyToken      string    `json:"reply_token"`
+	BusinessID      uuid.UUID `json:"business_id"`
+	AttachmentCount int       `json:"attachment_count"`
 }
 
 // SendSubscriber dispatches queued replies (FR-008): it drains a ticket.replied
@@ -73,6 +75,7 @@ type repliedPayload struct {
 type SendSubscriber struct {
 	Sender Sender
 	Logger *slog.Logger
+	Blob   blob.Store
 
 	// Sealer decrypts a verified domain's sealed DKIM private-key ref so the reply
 	// can be signed as that domain (US4/FR-013). nil ⇒ custom-identity signing is
@@ -151,6 +154,16 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 	if p.InReplyTo != nil {
 		mail.InReplyTo = *p.InReplyTo
 	}
+	if p.AttachmentCount != 0 {
+		files, err := s.replyAttachments(ctx, tx, e.TenantRootID, p)
+		if err != nil {
+			if e.IsFinalAttempt() {
+				return s.markFinalFailure(ctx, tx, e, p, "attachment", failSendError, "reply attachment unavailable")
+			}
+			return err
+		}
+		mail.Attachments = files
+	}
 	// Auto-Submitted is intentionally NOT set. Per RFC 3834 the header marks
 	// machine-generated mail; a US2 reply is human-authored (an agent composed it), so
 	// stamping "auto-submitted" would be incorrect and could cause well-behaved
@@ -202,6 +215,42 @@ func (s SendSubscriber) Handle(ctx context.Context, tx pgx.Tx, e events.Event) e
 	s.Metrics.Inc(observability.MetricOutboundSent)
 	s.logger().InfoContext(ctx, "notify: reply sent", "message_id", p.RFCMessageID)
 	return s.mark(ctx, tx, p.MessageRowID, e.TenantRootID, "sent", "")
+}
+
+func (s SendSubscriber) replyAttachments(ctx context.Context, tx pgx.Tx, root uuid.UUID, p repliedPayload) ([]MailAttachment, error) {
+	unavailable := errors.New("notify: reply attachment unavailable")
+	if s.Blob == nil || p.AttachmentCount < 1 || p.AttachmentCount > blob.MaxSupportUploadFiles {
+		return nil, unavailable
+	}
+	rows, err := tx.Query(ctx, `SELECT blob_key,filename,content_type,size FROM get_support_reply_attachments($1,$2,$3)`,
+		p.MessageRowID, p.BusinessID, root)
+	if err != nil {
+		return nil, unavailable
+	}
+	defer rows.Close()
+	var files []MailAttachment
+	var total int64
+	for rows.Next() {
+		var file MailAttachment
+		var key string
+		var size int64
+		if err := rows.Scan(&key, &file.Filename, &file.ContentType, &size); err != nil {
+			return nil, unavailable
+		}
+		if len(files) >= p.AttachmentCount || size < 1 || size > blob.MaxSupportUploadBytes-total {
+			return nil, unavailable
+		}
+		total += size
+		file.Content, err = s.Blob.Get(ctx, key)
+		if err != nil || int64(len(file.Content)) != size {
+			return nil, unavailable
+		}
+		files = append(files, file)
+	}
+	if err := rows.Err(); err != nil || len(files) != p.AttachmentCount {
+		return nil, unavailable
+	}
+	return files, nil
 }
 
 // mark records the delivery outcome via the SECURITY DEFINER (RLS-bypassing) function.

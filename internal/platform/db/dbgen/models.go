@@ -1211,6 +1211,8 @@ type Attachment struct {
 	ContentType     string    `json:"content_type"`
 	Size            int64     `json:"size"`
 	CreatedAt       time.Time `json:"created_at"`
+	StaffOnly       bool      `json:"staff_only"`
+	HistoricalID    *string   `json:"historical_id"`
 }
 
 type AuditEntry struct {
@@ -2106,6 +2108,7 @@ type SupportPortalKey struct {
 	CreatedAt          time.Time          `json:"created_at"`
 	ExpiresAt          time.Time          `json:"expires_at"`
 	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
+	IdentityNamespace  string             `json:"identity_namespace"`
 }
 
 type SupportPortalRequest struct {
@@ -2224,6 +2227,10 @@ type Ticket struct {
 	ConnectorID         pgtype.UUID        `json:"connector_id"`
 	ExternalID          *string            `json:"external_id"`
 	ExternalUrl         *string            `json:"external_url"`
+	HistoricalSource    *string            `json:"historical_source"`
+	HistoricalID        *string            `json:"historical_id"`
+	HistoricalHash      []byte             `json:"historical_hash"`
+	HistoricalMetadata  []byte             `json:"historical_metadata"`
 }
 
 type TicketMessage struct {
@@ -2247,6 +2254,8 @@ type TicketMessage struct {
 	ConnectorID          pgtype.UUID              `json:"connector_id"`
 	ExternalID           *string                  `json:"external_id"`
 	DroppedAttachments   []byte                   `json:"dropped_attachments"`
+	HistoricalID         *string                  `json:"historical_id"`
+	HistoricalMetadata   []byte                   `json:"historical_metadata"`
 }
 
 type TicketRequesterContext struct {

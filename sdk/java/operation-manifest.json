@@ -497,6 +497,14 @@
     "pagination": null
   },
   {
+    "operationId": "TicketsDownloadAttachment",
+    "resource": "tickets",
+    "method": "downloadAttachment",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
     "operationId": "TicketsGet",
     "resource": "tickets",
     "method": "get",
@@ -1032,6 +1040,14 @@
     "method": "dismiss",
     "audience": "management",
     "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "downloadSupportPortalAttachment",
+    "resource": "support.portal.tickets",
+    "method": "downloadAttachment",
+    "audience": "server",
+    "businessParam": null,
     "pagination": null
   },
   {

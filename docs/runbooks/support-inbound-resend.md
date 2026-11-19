@@ -181,14 +181,20 @@ A tenant-root or inherited locked Owner with `tickets.write` may manage
 `mfsp_` bearer once; only its SHA-256 hash is stored. Keys expire after 90 days by
 default (1–365 days configurable), are revocable, and stop working when their
 human creator is deactivated, deleted, or loses permission. Up to ten active keys
-may exist per business. Rotate by issuing a replacement, updating the integrating
+may exist per business. Rotate by issuing a replacement in the same identity
+namespace, updating the integrating
 backend's Secret through an owner-only file, verifying its delivery, then revoking
 the old key. Never embed this credential in a browser or use it as a URL parameter.
 
-The integrating backend sends this bearer to `/api/v1/support/portal` with
-`X-MF-External-User: tph:<canonical user UUID>` and an optional bounded display
-name in `X-MF-External-Name`. These assertions must come from its own authenticated
-session. A client-selected email, name, or UUID is not a verified customer identity.
+Create a key with an `identity_namespace` such as `example-app` for a new
+integration. The integrating backend sends the bearer to `/api/v1/support/portal`
+with a stable customer ID in `X-MF-External-User` and an optional display name in
+`X-MF-External-Name`. IDs may contain 1–128 ASCII letters, digits, dots,
+underscores, tildes or hyphens. Derive the ID from the backend's authenticated
+session. All keys in one business and namespace address the same identities.
+Choose a separate namespace for each independent identity system. Existing keys
+and keys created without a namespace use the legacy `tph:<canonical user UUID>`
+format and retain their customer history.
 Contact verification sends an eight-digit code through the exact business's
 verified Resend support profile; the code expires in ten minutes, is single-use,
 and allows six attempts. Resends require one minute and are capped at five/hour.
@@ -200,18 +206,44 @@ Portal ownership is independent of notification addresses: email proof neither
 imports existing email tickets nor grants access to another customer's thread.
 Contact replacement updates notification recipients only for already-owned portal
 tickets. Customer tickets/messages are native support records with normal
-outbox/audit behavior. Internal notes and attachments are excluded. Thread reads
+outbox/audit behavior. The portal excludes internal notes and files restricted to
+staff. Thread reads
 return newest-first pages, with `next_cursor` passed back as `before`; each page
 contains at most 20 complete messages. Individual messages are capped at 1 MiB
 before allocation; encoded pages are capped at 6 MiB plus envelope. Oversized
 legacy messages return an error rather than silently truncating private content.
 Consumers should allow an 8 MiB HTTP response cap and display pages chronologically.
 
-Customer and management endpoints enforce admission/rates before body reads,
-64 KiB strict JSON limits, and finite network/body deadlines. Validate creation,
+Customer and management endpoints enforce admission and rate limits before body
+reads and apply finite network and body deadlines. The ticket create, follow-up,
+and staff reply requests accept base64 attachments in JSON. Live uploads allow
+up to 10 files and 10 MiB of decoded data per message and use the inbound MIME
+allowlist. Downloads require ticket access and send the file as an attachment.
+Validate creation,
 resend failure/cancellation, creator lifecycle, two-user/two-business isolation,
 native operator replies/internal-note denial, and real provider delivery before
 calling an integration ready.
+
+### Restore a historical support conversation
+
+Run `manyforge import-support-ticket OWNER_PRINCIPAL_ID BUSINESS_ID < snapshot.json`
+from an operator environment configured for the destination database and support
+reply tokens. Use the same private attachment store as the application when the
+snapshot includes files. The command returns the native ticket ID and whether it
+created a record. Replaying the same snapshot returns the same ticket ID.
+
+Map the source ticket to a native status and priority. Supply the original status
+and resolution separately, with the source ticket ID, requester, and timestamps.
+Set each message's direction to `inbound`, `outbound`, or `note` and supply its
+original ID, author attribution, timestamps, and plain text. Set `owner` only
+when the destination namespace and stable customer ID are known. Email alone
+does not assign portal access. Import writes an audit entry without sending mail
+or triggering ticket automation.
+
+Historical attachments accept up to 64 MiB per file and 128 MiB total per ticket.
+Set `customer_visible` on files that should be available in the portal. Files
+on notes, files outside the live MIME allowlist, and files without that flag
+are available only in the staff thread. Keep snapshot files in private storage.
 
 ### Requesters shared by sibling businesses
 

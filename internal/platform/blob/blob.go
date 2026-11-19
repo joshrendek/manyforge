@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -22,6 +23,18 @@ type Store interface {
 	Delete(ctx context.Context, key string) error
 	Close() error
 }
+
+type StreamingStore interface {
+	Store
+	OpenReader(ctx context.Context, key string) (io.ReadCloser, int64, error)
+}
+
+// Live support uploads and outbound delivery share an aggregate limit that
+// leaves room for base64 expansion in the mail transports.
+const (
+	MaxSupportUploadBytes = 10 << 20
+	MaxSupportUploadFiles = 10
+)
 
 // Bucket wraps a gocloud.dev/blob bucket (fileblob | s3blob).
 type Bucket struct{ b *blob.Bucket }
@@ -49,6 +62,14 @@ func (s *Bucket) Put(ctx context.Context, key string, content []byte, contentTyp
 // Get reads the bytes stored under key.
 func (s *Bucket) Get(ctx context.Context, key string) ([]byte, error) {
 	return s.b.ReadAll(ctx, key)
+}
+
+func (s *Bucket) OpenReader(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	reader, err := s.b.NewReader(ctx, key, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	return reader, reader.Size(), nil
 }
 
 // Delete removes the object at key. It is idempotent — a key that is already gone is

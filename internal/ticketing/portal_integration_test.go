@@ -90,6 +90,56 @@ func portalTestVerify(t *testing.T, ctx context.Context, s *PortalService, p Por
 	}
 }
 
+func TestPortalIdentityNamespaceAndKeyRotation(t *testing.T) {
+	ctx, tdb := startReadDB(t)
+	business := seedReadTenant(ctx, t, tdb)
+	mailer := &portalTestMailer{}
+	portalTestSender(t, ctx, tdb, business)
+	service := &PortalService{DB: tdb.App, Resolve: portalTestResolver, Mailer: mailer, ReplyTokenKey: replyKey, SystemDomain: "portal.test"}
+	createKey := func(namespace string) PortalKey {
+		t.Helper()
+		key, err := service.CreateKeyForNamespace(ctx, business.owner, business.master, "Synthetic integration", 1, namespace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	authenticate := func(key PortalKey) PortalScope {
+		t.Helper()
+		scope, err := service.Authenticate(ctx, key.Token, "42", "Example Customer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scope
+	}
+	original := createKey("example-app")
+	scope := authenticate(original)
+	portalTestVerify(t, ctx, service, scope, mailer, "fixture@example.com")
+	ticket, err := service.CreateTicket(ctx, scope, "Example request", "Synthetic report", uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := authenticate(createKey("example-guest"))
+	portalTestVerify(t, ctx, service, other, mailer, "fixture@example.com")
+	if _, err := service.Thread(ctx, other, ticket.ID, ""); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("same ID and contact address crossed namespaces: %v", err)
+	}
+	if _, err := service.Authenticate(ctx, other.token, "example-app:42", "Example Customer"); !errors.Is(err, ErrPortalUnauthorized) {
+		t.Fatalf("header overrode credential namespace: %v", err)
+	}
+	replacement := authenticate(createKey("example-app"))
+	if err := service.RevokeKey(ctx, business.owner, business.master, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Thread(ctx, scope, ticket.ID, ""); !errors.Is(err, ErrPortalUnauthorized) {
+		t.Fatalf("revoked credential retained access: %v", err)
+	}
+	thread, err := service.Thread(ctx, replacement, ticket.ID, "")
+	if err != nil || thread.Ticket.ID != ticket.ID {
+		t.Fatalf("replacement lost ownership: %v", err)
+	}
+}
+
 func TestPortalNativeThreadOwnershipIdempotency(t *testing.T) {
 	ctx, tdb := startReadDB(t)
 	rt := seedReadTenant(ctx, t, tdb)

@@ -19,10 +19,12 @@ from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
+from manyforge.models.support_attachment_input import SupportAttachmentInput
 
 
 class ReplyBody(Model):
     """ReplyBody wire model. Unspecified fields are never sent."""
+    attachments: List[SupportAttachmentInput] | UnsetType = Field(default=UNSET, alias="attachments")
     body_html: str | None | UnsetType = Field(default=UNSET, alias="body_html")
     body_text: str = Field(..., alias="body_text")
 

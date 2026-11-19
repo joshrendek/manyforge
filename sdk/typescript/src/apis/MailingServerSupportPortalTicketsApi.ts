@@ -35,6 +35,21 @@ export interface MailingServerSupportPortalTicketsCreateParams {
 }
 
 
+export interface MailingServerSupportPortalTicketsDownloadAttachmentParams {
+
+    authorization: string;
+
+    xMFExternalUser: string;
+
+    ticketID: string;
+
+    attachmentID: string;
+
+    xMFExternalName?: string;
+
+}
+
+
 export interface MailingServerSupportPortalTicketsGetParams {
 
     authorization: string;
@@ -94,6 +109,22 @@ export class MailingServerSupportPortalTicketsApi extends Resource {
             response: 'json',
             responseSchema: {"properties":{"ticket":{"$ref":"#/components/schemas/SupportPortalTicket"}},"required":["ticket"],"type":"object"},
             decode: (text: string) => decodeJSON<CreateSupportPortalTicket201Response>(text, {"properties":{"ticket":{"$ref":"#/components/schemas/SupportPortalTicket"}},"required":["ticket"],"type":"object"}),
+        }, options);
+    }
+    downloadAttachment(params: MailingServerSupportPortalTicketsDownloadAttachmentParams, options?: RequestOptions): Promise<ByteStream> {
+        return this.transport.request({
+            operationId: 'downloadSupportPortalAttachment',
+            method: 'GET',
+            path: '/api/v1/support/portal/tickets/{ticketID}/attachments/{attachmentID}',
+            pathParams: { ...this.scope, 'ticketID': String(params.ticketID), 'attachmentID': String(params.attachmentID),  },
+            query: [],
+            headers: { 'Authorization': params.authorization, 'X-MF-External-User': params.xMFExternalUser, 'X-MF-External-Name': params.xMFExternalName,  },
+            authenticated: false,
+            audience: 'server',
+
+            response: 'stream',
+            responseSchema: {"format":"binary","type":"string"},
+            decode: (text: string) => { throw new TypeError('Streaming responses must not be JSON-decoded'); },
         }, options);
     }
     get(params: MailingServerSupportPortalTicketsGetParams, options?: RequestOptions): Promise<SupportPortalThread> {

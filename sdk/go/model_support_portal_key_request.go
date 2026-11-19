@@ -10,8 +10,9 @@ API version: 1.0.0
 package manyforge
 
 type SupportPortalKeyRequest struct {
-	ExpiresInDays Optional[int32] `json:"expires_in_days,omitzero"`
-	Label         string          `json:"label"`
+	ExpiresInDays     Optional[int32]  `json:"expires_in_days,omitzero"`
+	IdentityNamespace Optional[string] `json:"identity_namespace,omitzero"`
+	Label             string           `json:"label"`
 }
 
 // NewSupportPortalKeyRequest assigns only the supplied required fields, never schema defaults.
@@ -26,7 +27,7 @@ func (o *SupportPortalKeyRequest) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "expires_in_days", "label"); err != nil {
+	if err := nonNullFields(fields, "expires_in_days", "identity_namespace", "label"); err != nil {
 		return err
 	}
 	type plain SupportPortalKeyRequest

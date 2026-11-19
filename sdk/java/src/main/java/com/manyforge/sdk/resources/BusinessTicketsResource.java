@@ -29,6 +29,7 @@ import com.manyforge.sdk.models.TicketPage;
 import com.manyforge.sdk.models.TicketPriority;
 import com.manyforge.sdk.models.TicketStatus;
 import java.util.UUID;
+import com.manyforge.sdk.Upload;
 
 public class BusinessTicketsResource {
   protected final Transport transport;
@@ -131,6 +132,60 @@ public class BusinessTicketsResource {
   public Void delete(TicketDeleteParams params, RequestOptions options) { return transport.send(deleteRequest(params), options); }
   public CompletableFuture<Void> deleteAsync(TicketDeleteParams params) { return deleteAsync(params, RequestOptions.DEFAULT); }
   public CompletableFuture<Void> deleteAsync(TicketDeleteParams params, RequestOptions options) { return transport.sendAsync(deleteRequest(params), options); }
+
+  public static final class TicketDownloadAttachmentParams {
+
+    private final UUID tid;
+
+    private final UUID aid;
+
+    private TicketDownloadAttachmentParams(Builder builder) {
+
+      this.tid = builder.tid;
+
+      this.aid = builder.aid;
+
+    }
+    public static Builder builder() { return new Builder(); }
+    public Builder toBuilder() {
+      Builder builder = new Builder();
+
+      builder.tid = tid;
+
+      builder.aid = aid;
+
+      return builder;
+    }
+    public static final class Builder {
+
+      private UUID tid;
+      public Builder tid(UUID value) { this.tid = value; return this; }
+
+      private UUID aid;
+      public Builder aid(UUID value) { this.aid = value; return this; }
+
+      public TicketDownloadAttachmentParams build() { return new TicketDownloadAttachmentParams(this); }
+    }
+  }
+  private Request<InputStream> downloadAttachmentRequest(TicketDownloadAttachmentParams params) {
+    Objects.requireNonNull(params, "params");
+    List<Request.Parameter> parameters = new ArrayList<>();
+
+    parameters.add(new Request.Parameter("id", "path", Objects.requireNonNull(binding, "resource binding"), ""));
+
+    Objects.requireNonNull(params.tid, "tid");
+
+    parameters.add(new Request.Parameter("tid", "path", params.tid, ""));
+
+    Objects.requireNonNull(params.aid, "aid");
+
+    parameters.add(new Request.Parameter("aid", "path", params.aid, ""));
+    return new Request<>("GET", "/api/v1/businesses/{id}/tickets/{tid}/attachments/{aid}", parameters, null, "", true, "management", true, null, new TypeReference<InputStream>() {});
+  }
+  public InputStream downloadAttachment(TicketDownloadAttachmentParams params) { return downloadAttachment(params, RequestOptions.DEFAULT); }
+  public InputStream downloadAttachment(TicketDownloadAttachmentParams params, RequestOptions options) { return transport.send(downloadAttachmentRequest(params), options); }
+  public CompletableFuture<InputStream> downloadAttachmentAsync(TicketDownloadAttachmentParams params) { return downloadAttachmentAsync(params, RequestOptions.DEFAULT); }
+  public CompletableFuture<InputStream> downloadAttachmentAsync(TicketDownloadAttachmentParams params, RequestOptions options) { return transport.sendAsync(downloadAttachmentRequest(params), options); }
 
   public static final class TicketGetParams {
 

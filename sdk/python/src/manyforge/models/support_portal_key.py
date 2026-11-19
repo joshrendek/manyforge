@@ -17,7 +17,7 @@ from pydantic import Field, StrictBool, StrictBytes, StrictFloat, StrictInt, Str
 from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
 from uuid import UUID
@@ -28,6 +28,7 @@ class SupportPortalKey(Model):
     created_at: datetime = Field(..., alias="created_at")
     expires_at: datetime = Field(..., alias="expires_at")
     id: UUID = Field(..., alias="id")
+    identity_namespace: str | UnsetType = Field(default=UNSET, alias="identity_namespace")
     label: str = Field(..., alias="label")
     revoked_at: datetime | None | UnsetType = Field(default=UNSET, alias="revoked_at")
     token: str | UnsetType = Field(default=UNSET, alias="token")

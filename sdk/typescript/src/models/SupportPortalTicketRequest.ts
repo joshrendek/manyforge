@@ -13,9 +13,11 @@
 // Template derived from OpenAPI Generator 7.25.0 (Apache-2.0).
 import { convertModel, type JsonValue } from '../model-support.js';
 
+import type { SupportAttachmentInput } from './SupportAttachmentInput.js';
 
 
 export interface SupportPortalTicketRequest {
+    attachments?: Array<SupportAttachmentInput>;
     body: string;
     idempotencyKey: string;
     subject: string;

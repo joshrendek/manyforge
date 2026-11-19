@@ -19,6 +19,7 @@ export interface SupportPortalKey {
     createdAt: string;
     expiresAt: string;
     id: string;
+    identityNamespace?: string;
     label: string;
     revokedAt?: string | null;
     token?: string;

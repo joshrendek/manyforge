@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"sort"
@@ -140,32 +142,63 @@ func BuildMIME(m Mail) ([]byte, error) {
 	}
 	h("MIME-Version", "1.0")
 
-	// Single-part text/plain is the common case (US2's composer is text-only, so
-	// BodyHTML is usually empty). Only emit multipart when an HTML alternative is
-	// actually present — manyforge-7c0: BodyHTML is plumbed end-to-end but was
-	// previously dropped here, so an API-supplied body_html never reached the wire.
-	if m.BodyHTML == "" {
-		h("Content-Type", "text/plain; charset=utf-8")
+	if len(m.Attachments) != 0 {
+		mixed := mimeBoundary(m) + "-mixed"
+		h("Content-Type", mime.FormatMediaType("multipart/mixed", map[string]string{"boundary": mixed}))
 		if headerErr != nil {
 			return nil, headerErr
 		}
 		b.WriteString("\r\n")
-		writeBodyCRLF(&b, m.BodyText)
+		fmt.Fprintf(&b, "--%s\r\n", mixed)
+		writeMailBody(&b, m)
+		for _, attachment := range m.Attachments {
+			if err := writeMailAttachment(&b, mixed, attachment); err != nil {
+				return nil, err
+			}
+		}
+		fmt.Fprintf(&b, "--%s--\r\n", mixed)
 		return b.Bytes(), nil
+	}
+	if headerErr != nil {
+		return nil, headerErr
+	}
+	writeMailBody(&b, m)
+	return b.Bytes(), nil
+}
+
+func writeMailBody(b *bytes.Buffer, m Mail) {
+	if m.BodyHTML == "" {
+		b.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+		writeBodyCRLF(b, m.BodyText)
+		return
 	}
 
 	// multipart/alternative: text/plain first, text/html last (RFC 2046 §5.1.4 —
 	// parts ascend in preference, so a client renders the richest it supports).
 	boundary := mimeBoundary(m)
-	h("Content-Type", "multipart/alternative; boundary=\""+boundary+"\"")
-	if headerErr != nil {
-		return nil, headerErr
+	fmt.Fprintf(b, "Content-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n", boundary)
+	writeMIMEPart(b, boundary, "text/plain; charset=utf-8", m.BodyText)
+	writeMIMEPart(b, boundary, "text/html; charset=utf-8", m.BodyHTML)
+	fmt.Fprintf(b, "--%s--\r\n", boundary)
+}
+
+func writeMailAttachment(b *bytes.Buffer, boundary string, a MailAttachment) error {
+	contentType, params, err := mime.ParseMediaType(a.ContentType)
+	if err != nil || len(params) != 0 || a.Filename == "" || strings.ContainsAny(a.Filename, "\r\n\x00") || len(a.Content) == 0 {
+		return fmt.Errorf("notify: invalid email attachment")
 	}
-	b.WriteString("\r\n")
-	writeMIMEPart(&b, boundary, "text/plain; charset=utf-8", m.BodyText)
-	writeMIMEPart(&b, boundary, "text/html; charset=utf-8", m.BodyHTML)
-	fmt.Fprintf(&b, "--%s--\r\n", boundary)
-	return b.Bytes(), nil
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename})
+	fmt.Fprintf(b, "\r\n--%s\r\nContent-Type: %s\r\nContent-Disposition: %s\r\nContent-Transfer-Encoding: base64\r\n\r\n", boundary, contentType, disposition)
+	// 57 unencoded bytes fit one 76-character MIME line.
+	var line [76]byte
+	for remaining := a.Content; len(remaining) != 0; {
+		n := min(len(remaining), 57)
+		base64.StdEncoding.Encode(line[:], remaining[:n])
+		b.Write(line[:base64.StdEncoding.EncodedLen(n)])
+		b.WriteString("\r\n")
+		remaining = remaining[n:]
+	}
+	return nil
 }
 
 // buildMIME preserves the package-private seam used by older tests. New callers

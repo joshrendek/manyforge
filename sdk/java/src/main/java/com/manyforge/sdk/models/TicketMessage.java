@@ -46,8 +46,8 @@ import java.util.NoSuchElementException;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "attachments", "auth_verdicts", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id" })
-@com.manyforge.sdk.ModelShape(required = { "attachments", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id",  }, nonNullable = { "attachments", "created_at", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "id", "references", "spf_result", "ticket_id",  })
+@JsonPropertyOrder({ "attachments", "auth_verdicts", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "historical_author_name", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id" })
+@com.manyforge.sdk.ModelShape(required = { "attachments", "author_principal_id", "body_html", "body_text", "created_at", "delivery_state", "direction", "dkim_result", "dmarc_result", "id", "in_reply_to", "message_id", "references", "spf_result", "ticket_id",  }, nonNullable = { "attachments", "created_at", "direction", "dkim_result", "dmarc_result", "dropped_attachments", "historical_author_name", "id", "references", "spf_result", "ticket_id",  })
 public class TicketMessage {
 
   @JsonProperty("attachments")
@@ -149,6 +149,13 @@ public static final class DeliveryStateEnum {
   public JsonNullable<List<DroppedAttachment>> droppedAttachmentsPresence() { return droppedAttachments; }
   public TicketMessage droppedAttachments(List<DroppedAttachment> value) { this.droppedAttachments = JsonNullable.of(value); return this; }
 
+  @JsonProperty("historical_author_name")
+  private JsonNullable<String> historicalAuthorName = JsonNullable.undefined();
+
+  public String getHistoricalAuthorName() { return historicalAuthorName.orElse(null); }
+  public JsonNullable<String> historicalAuthorNamePresence() { return historicalAuthorName; }
+  public TicketMessage historicalAuthorName(String value) { this.historicalAuthorName = JsonNullable.of(value); return this; }
+
   @JsonProperty("id")
   private JsonNullable<UUID> id = JsonNullable.undefined();
 
@@ -204,6 +211,7 @@ public static final class DeliveryStateEnum {
     public Builder dkimResult(DnsRecordState field) { value.dkimResult(field); return this; }
     public Builder dmarcResult(DnsRecordState field) { value.dmarcResult(field); return this; }
     public Builder droppedAttachments(List<DroppedAttachment> field) { value.droppedAttachments(field); return this; }
+    public Builder historicalAuthorName(String field) { value.historicalAuthorName(field); return this; }
     public Builder id(UUID field) { value.id(field); return this; }
     public Builder inReplyTo(String field) { value.inReplyTo(field); return this; }
     public Builder messageId(String field) { value.messageId(field); return this; }

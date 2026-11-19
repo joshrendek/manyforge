@@ -27,17 +27,27 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.manyforge.sdk.models.SupportPortalAttachment;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 
 
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "body", "created_at", "direction", "id" })
-@com.manyforge.sdk.ModelShape(required = { "body", "created_at", "direction", "id",  }, nonNullable = { "body", "created_at", "direction", "id",  })
+@JsonPropertyOrder({ "attachments", "body", "created_at", "direction", "id" })
+@com.manyforge.sdk.ModelShape(required = { "body", "created_at", "direction", "id",  }, nonNullable = { "attachments", "body", "created_at", "direction", "id",  })
 public class SupportPortalMessage {
+
+  @JsonProperty("attachments")
+  private JsonNullable<List<SupportPortalAttachment>> attachments = JsonNullable.undefined();
+
+  public List<SupportPortalAttachment> getAttachments() { return attachments.orElse(null); }
+  public JsonNullable<List<SupportPortalAttachment>> attachmentsPresence() { return attachments; }
+  public SupportPortalMessage attachments(List<SupportPortalAttachment> value) { this.attachments = JsonNullable.of(value); return this; }
 
   @JsonProperty("body")
   private JsonNullable<String> body = JsonNullable.undefined();
@@ -89,6 +99,7 @@ public static final class DirectionEnum {
   public static Builder builder() { return new Builder(); }
   public static final class Builder {
     private final SupportPortalMessage value = new SupportPortalMessage();
+    public Builder attachments(List<SupportPortalAttachment> field) { value.attachments(field); return this; }
     public Builder body(String field) { value.body(field); return this; }
     public Builder createdAt(OffsetDateTime field) { value.createdAt(field); return this; }
     public Builder direction(DirectionEnum field) { value.direction(field); return this; }

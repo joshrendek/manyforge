@@ -16,8 +16,8 @@ from collections.abc import Iterator, AsyncIterator, Mapping
 from pydantic import TypeAdapter, StrictBool, StrictBytes, StrictFloat, StrictInt, StrictStr
 from manyforge.model_support import JsonValue, UNSET, UnsetType
 from manyforge.transport import (SyncTransport, AsyncTransport, Request, RequestOptions, QueryParameter, Upload, ByteStream, AsyncByteStream, PaginationError)
-from pydantic import Field, StrictStr
-from typing import Optional
+from pydantic import Field, StrictBytes, StrictStr
+from typing import Optional, Tuple, Union
 from typing_extensions import Annotated
 from uuid import UUID
 from manyforge.models.note_body import NoteBody
@@ -102,6 +102,40 @@ class BusinessTicketsResource:
 
         )
         return self._transport.request(request, request_options=request_options)
+
+    def download_attachment(
+        self,
+        *,
+
+        tid: UUID,
+
+        aid: UUID,
+
+        request_options: RequestOptions | None = None,
+    ) -> ByteStream:
+        request = Request(
+            operation_id="TicketsDownloadAttachment",
+            method="GET",
+            path="/api/v1/businesses/{id}/tickets/{tid}/attachments/{aid}",
+            authenticated=True,
+            response=TypeAdapter(type(None)),
+            path_parameters={
+                "id": self._bindings["id"],
+                "tid": tid,
+                "aid": aid,
+            },
+            query=(
+            ),
+            headers={
+            },
+            form={
+            },
+
+
+            accept="application/octet-stream",
+
+        )
+        return self._transport.stream(request, request_options=request_options)
 
     def get(
         self,
@@ -378,6 +412,40 @@ class AsyncBusinessTicketsResource:
 
         )
         return await self._transport.request(request, request_options=request_options)
+
+    async def download_attachment(
+        self,
+        *,
+
+        tid: UUID,
+
+        aid: UUID,
+
+        request_options: RequestOptions | None = None,
+    ) -> AsyncByteStream:
+        request = Request(
+            operation_id="TicketsDownloadAttachment",
+            method="GET",
+            path="/api/v1/businesses/{id}/tickets/{tid}/attachments/{aid}",
+            authenticated=True,
+            response=TypeAdapter(type(None)),
+            path_parameters={
+                "id": self._bindings["id"],
+                "tid": tid,
+                "aid": aid,
+            },
+            query=(
+            ),
+            headers={
+            },
+            form={
+            },
+
+
+            accept="application/octet-stream",
+
+        )
+        return await self._transport.stream(request, request_options=request_options)
 
     async def get(
         self,

@@ -12585,6 +12585,41 @@
                 }
               ]
             },
+            "pointer:DownloadAttachment": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "context.Context"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "string"
+                    },
+                    {
+                      "name": "2",
+                      "required": true,
+                      "type": "string"
+                    },
+                    {
+                      "name": "3",
+                      "required": false,
+                      "type": "[]github.com/joshrendek/manyforge/sdk/go.RequestOption"
+                    }
+                  ],
+                  "returns": [
+                    "io.ReadCloser",
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": true
+                }
+              ]
+            },
             "pointer:Get": {
               "kind": "method",
               "signatures": [
@@ -22306,6 +22341,35 @@
           "representation": "struct",
           "type_parameters": []
         },
+        "MailingServerSupportPortalTicketsDownloadAttachmentParams": {
+          "alias": false,
+          "kind": "type",
+          "members": {
+            "Authorization": {
+              "embedded": false,
+              "json": "",
+              "kind": "field",
+              "required": false,
+              "type": "string"
+            },
+            "XMFExternalName": {
+              "embedded": false,
+              "json": "",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+            },
+            "XMFExternalUser": {
+              "embedded": false,
+              "json": "",
+              "kind": "field",
+              "required": false,
+              "type": "string"
+            }
+          },
+          "representation": "struct",
+          "type_parameters": []
+        },
         "MailingServerSupportPortalTicketsGetParams": {
           "alias": false,
           "kind": "type",
@@ -22432,6 +22496,46 @@
                   ],
                   "returns": [
                     "github.com/joshrendek/manyforge/sdk/go.CreateSupportPortalTicket201Response",
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": true
+                }
+              ]
+            },
+            "pointer:DownloadAttachment": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "context.Context"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "string"
+                    },
+                    {
+                      "name": "2",
+                      "required": true,
+                      "type": "string"
+                    },
+                    {
+                      "name": "3",
+                      "required": true,
+                      "type": "github.com/joshrendek/manyforge/sdk/go.MailingServerSupportPortalTicketsDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "4",
+                      "required": false,
+                      "type": "[]github.com/joshrendek/manyforge/sdk/go.RequestOption"
+                    }
+                  ],
+                  "returns": [
+                    "io.ReadCloser",
                     "error"
                   ],
                   "type_parameters": [],
@@ -31654,6 +31758,30 @@
             }
           ]
         },
+        "NewSupportAttachmentInput": {
+          "kind": "function",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "type": "string"
+                },
+                {
+                  "name": "1",
+                  "required": true,
+                  "type": "string"
+                }
+              ],
+              "returns": [
+                "*github.com/joshrendek/manyforge/sdk/go.SupportAttachmentInput"
+              ],
+              "type_parameters": [],
+              "variadic": false
+            }
+          ]
+        },
         "NewSupportOverview": {
           "kind": "function",
           "signatures": [
@@ -31884,6 +32012,40 @@
               ],
               "returns": [
                 "*github.com/joshrendek/manyforge/sdk/go.SupportOverviewTicket"
+              ],
+              "type_parameters": [],
+              "variadic": false
+            }
+          ]
+        },
+        "NewSupportPortalAttachment": {
+          "kind": "function",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "type": "string"
+                },
+                {
+                  "name": "1",
+                  "required": true,
+                  "type": "string"
+                },
+                {
+                  "name": "2",
+                  "required": true,
+                  "type": "string"
+                },
+                {
+                  "name": "3",
+                  "required": true,
+                  "type": "int64"
+                }
+              ],
+              "returns": [
+                "*github.com/joshrendek/manyforge/sdk/go.SupportPortalAttachment"
               ],
               "type_parameters": [],
               "variadic": false
@@ -36788,6 +36950,13 @@
           "alias": false,
           "kind": "type",
           "members": {
+            "Attachments": {
+              "embedded": false,
+              "json": "attachments,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[[]github.com/joshrendek/manyforge/sdk/go.SupportAttachmentInput]"
+            },
             "BodyHtml": {
               "embedded": false,
               "json": "body_html,omitzero",
@@ -42199,6 +42368,47 @@
           "type": "github.com/joshrendek/manyforge/sdk/go.SubscriberStatus",
           "value": "\"unsubscribed\""
         },
+        "SupportAttachmentInput": {
+          "alias": false,
+          "kind": "type",
+          "members": {
+            "Content": {
+              "embedded": false,
+              "json": "content",
+              "kind": "field",
+              "required": true,
+              "type": "string"
+            },
+            "Filename": {
+              "embedded": false,
+              "json": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "string"
+            },
+            "pointer:UnmarshalJSON": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "[]byte"
+                    }
+                  ],
+                  "returns": [
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": false
+                }
+              ]
+            }
+          },
+          "representation": "struct",
+          "type_parameters": []
+        },
         "SupportOverview": {
           "alias": false,
           "kind": "type",
@@ -42603,6 +42813,61 @@
           "type": "github.com/joshrendek/manyforge/sdk/go.SupportOverviewTicketStatus",
           "value": "\"open\""
         },
+        "SupportPortalAttachment": {
+          "alias": false,
+          "kind": "type",
+          "members": {
+            "ContentType": {
+              "embedded": false,
+              "json": "content_type",
+              "kind": "field",
+              "required": true,
+              "type": "string"
+            },
+            "Filename": {
+              "embedded": false,
+              "json": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "string"
+            },
+            "Id": {
+              "embedded": false,
+              "json": "id",
+              "kind": "field",
+              "required": true,
+              "type": "string"
+            },
+            "Size": {
+              "embedded": false,
+              "json": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int64"
+            },
+            "pointer:UnmarshalJSON": {
+              "kind": "method",
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "[]byte"
+                    }
+                  ],
+                  "returns": [
+                    "error"
+                  ],
+                  "type_parameters": [],
+                  "variadic": false
+                }
+              ]
+            }
+          },
+          "representation": "struct",
+          "type_parameters": []
+        },
         "SupportPortalContact": {
           "alias": false,
           "kind": "type",
@@ -42669,6 +42934,13 @@
               "required": true,
               "type": "string"
             },
+            "IdentityNamespace": {
+              "embedded": false,
+              "json": "identity_namespace,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+            },
             "Label": {
               "embedded": false,
               "json": "label",
@@ -42724,6 +42996,13 @@
               "required": false,
               "type": "github.com/joshrendek/manyforge/sdk/go.Optional[int32]"
             },
+            "IdentityNamespace": {
+              "embedded": false,
+              "json": "identity_namespace,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
+            },
             "Label": {
               "embedded": false,
               "json": "label",
@@ -42758,6 +43037,13 @@
           "alias": false,
           "kind": "type",
           "members": {
+            "Attachments": {
+              "embedded": false,
+              "json": "attachments,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[[]github.com/joshrendek/manyforge/sdk/go.SupportPortalAttachment]"
+            },
             "Body": {
               "embedded": false,
               "json": "body",
@@ -42830,6 +43116,13 @@
           "alias": false,
           "kind": "type",
           "members": {
+            "Attachments": {
+              "embedded": false,
+              "json": "attachments,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[[]github.com/joshrendek/manyforge/sdk/go.SupportAttachmentInput]"
+            },
             "Body": {
               "embedded": false,
               "json": "body",
@@ -42981,6 +43274,13 @@
           "alias": false,
           "kind": "type",
           "members": {
+            "Attachments": {
+              "embedded": false,
+              "json": "attachments,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[[]github.com/joshrendek/manyforge/sdk/go.SupportAttachmentInput]"
+            },
             "Body": {
               "embedded": false,
               "json": "body",
@@ -46327,6 +46627,13 @@
               "kind": "field",
               "required": false,
               "type": "github.com/joshrendek/manyforge/sdk/go.Optional[[]github.com/joshrendek/manyforge/sdk/go.DroppedAttachment]"
+            },
+            "HistoricalAuthorName": {
+              "embedded": false,
+              "json": "historical_author_name,omitzero",
+              "kind": "field",
+              "required": false,
+              "type": "github.com/joshrendek/manyforge/sdk/go.Optional[string]"
             },
             "Id": {
               "embedded": false,
@@ -135645,6 +135952,34 @@
                 }
               ]
             },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.ReplyBody",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachmentsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>>",
+                  "throws": ""
+                }
+              ]
+            },
             "bodyHtml": {
               "kind": "method",
               "required": false,
@@ -135712,6 +136047,17 @@
                 }
               ]
             },
+            "getAttachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>",
+                  "throws": ""
+                }
+              ]
+            },
             "getBodyHtml": {
               "kind": "method",
               "required": false,
@@ -135736,10 +136082,12 @@
             }
           },
           "model_fields": [
+            "attachments",
             "body_html",
             "body_text"
           ],
           "non_nullable_fields": [
+            "attachments",
             "body_text"
           ],
           "required_fields": [
@@ -135757,6 +136105,23 @@
                 {
                   "params": [],
                   "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.ReplyBody$Builder",
                   "throws": ""
                 }
               ]
@@ -156827,6 +157192,186 @@
             }
           }
         },
+        "com.manyforge.sdk.models.SupportAttachmentInput": {
+          "declaration": "public class com.manyforge.sdk.models.SupportAttachmentInput",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.models.SupportAttachmentInput$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "content": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportAttachmentInput",
+                  "throws": ""
+                }
+              ]
+            },
+            "contentPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "filename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportAttachmentInput",
+                  "throws": ""
+                }
+              ]
+            },
+            "filenamePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "getContent": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "getFilename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            }
+          },
+          "model_fields": [
+            "content",
+            "filename"
+          ],
+          "non_nullable_fields": [
+            "content",
+            "filename"
+          ],
+          "required_fields": [
+            "content",
+            "filename"
+          ]
+        },
+        "com.manyforge.sdk.models.SupportAttachmentInput$Builder": {
+          "declaration": "public final class com.manyforge.sdk.models.SupportAttachmentInput$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.models.SupportAttachmentInput",
+                  "throws": ""
+                }
+              ]
+            },
+            "content": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportAttachmentInput$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "filename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportAttachmentInput$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
         "com.manyforge.sdk.models.SupportOverview": {
           "declaration": "public class com.manyforge.sdk.models.SupportOverview",
           "kind": "class",
@@ -159483,6 +160028,304 @@
             }
           }
         },
+        "com.manyforge.sdk.models.SupportPortalAttachment": {
+          "declaration": "public class com.manyforge.sdk.models.SupportPortalAttachment",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.models.SupportPortalAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "contentType": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "contentTypePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "filename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "filenamePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
+                  "throws": ""
+                }
+              ]
+            },
+            "getContentType": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "getFilename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "getId": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.util.UUID",
+                  "throws": ""
+                }
+              ]
+            },
+            "getSize": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.Long",
+                  "throws": ""
+                }
+              ]
+            },
+            "id": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "idPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.util.UUID>",
+                  "throws": ""
+                }
+              ]
+            },
+            "size": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.Long"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "sizePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.Long>",
+                  "throws": ""
+                }
+              ]
+            }
+          },
+          "model_fields": [
+            "content_type",
+            "filename",
+            "id",
+            "size"
+          ],
+          "non_nullable_fields": [
+            "content_type",
+            "filename",
+            "id",
+            "size"
+          ],
+          "required_fields": [
+            "content_type",
+            "filename",
+            "id",
+            "size"
+          ]
+        },
+        "com.manyforge.sdk.models.SupportPortalAttachment$Builder": {
+          "declaration": "public final class com.manyforge.sdk.models.SupportPortalAttachment$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment",
+                  "throws": ""
+                }
+              ]
+            },
+            "contentType": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "filename": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "id": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "size": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.Long"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalAttachment$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
         "com.manyforge.sdk.models.SupportPortalContact": {
           "declaration": "public class com.manyforge.sdk.models.SupportPortalContact",
           "kind": "class",
@@ -159778,6 +160621,17 @@
                 }
               ]
             },
+            "getIdentityNamespace": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
             "getLabel": {
               "kind": "method",
               "required": false,
@@ -159835,6 +160689,34 @@
                 {
                   "params": [],
                   "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.util.UUID>",
+                  "throws": ""
+                }
+              ]
+            },
+            "identityNamespace": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalKey",
+                  "throws": ""
+                }
+              ]
+            },
+            "identityNamespacePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
                   "throws": ""
                 }
               ]
@@ -159928,6 +160810,7 @@
             "created_at",
             "expires_at",
             "id",
+            "identity_namespace",
             "label",
             "revoked_at",
             "token"
@@ -159936,6 +160819,7 @@
             "created_at",
             "expires_at",
             "id",
+            "identity_namespace",
             "label",
             "token"
           ],
@@ -160016,6 +160900,23 @@
                       "name": "0",
                       "required": true,
                       "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalKey$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "identityNamespace": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
                     }
                   ],
                   "returns": "public com.manyforge.sdk.models.SupportPortalKey$Builder",
@@ -160141,6 +161042,17 @@
                 }
               ]
             },
+            "getIdentityNamespace": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
             "getLabel": {
               "kind": "method",
               "required": false,
@@ -160148,6 +161060,34 @@
                 {
                   "params": [],
                   "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
+            "identityNamespace": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalKeyRequest",
+                  "throws": ""
+                }
+              ]
+            },
+            "identityNamespacePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
                   "throws": ""
                 }
               ]
@@ -160183,10 +161123,12 @@
           },
           "model_fields": [
             "expires_in_days",
+            "identity_namespace",
             "label"
           ],
           "non_nullable_fields": [
             "expires_in_days",
+            "identity_namespace",
             "label"
           ],
           "required_fields": [
@@ -160236,6 +161178,23 @@
                 }
               ]
             },
+            "identityNamespace": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalKeyRequest$Builder",
+                  "throws": ""
+                }
+              ]
+            },
             "label": {
               "kind": "method",
               "required": false,
@@ -160266,6 +161225,34 @@
                 {
                   "params": [],
                   "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportPortalAttachment>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalMessage",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachmentsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.util.List<com.manyforge.sdk.models.SupportPortalAttachment>>",
                   "throws": ""
                 }
               ]
@@ -160365,6 +161352,17 @@
                 }
               ]
             },
+            "getAttachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.util.List<com.manyforge.sdk.models.SupportPortalAttachment>",
+                  "throws": ""
+                }
+              ]
+            },
             "getBody": {
               "kind": "method",
               "required": false,
@@ -160439,12 +161437,14 @@
             }
           },
           "model_fields": [
+            "attachments",
             "body",
             "created_at",
             "direction",
             "id"
           ],
           "non_nullable_fields": [
+            "attachments",
             "body",
             "created_at",
             "direction",
@@ -160468,6 +161468,23 @@
                 {
                   "params": [],
                   "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportPortalAttachment>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalMessage$Builder",
                   "throws": ""
                 }
               ]
@@ -160707,6 +161724,34 @@
                 }
               ]
             },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalMessageRequest",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachmentsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>>",
+                  "throws": ""
+                }
+              ]
+            },
             "body": {
               "kind": "method",
               "required": false,
@@ -160742,6 +161787,17 @@
                 {
                   "params": [],
                   "returns": "public static com.manyforge.sdk.models.SupportPortalMessageRequest$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "getAttachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>",
                   "throws": ""
                 }
               ]
@@ -160798,10 +161854,12 @@
             }
           },
           "model_fields": [
+            "attachments",
             "body",
             "idempotency_key"
           ],
           "non_nullable_fields": [
+            "attachments",
             "body",
             "idempotency_key"
           ],
@@ -160821,6 +161879,23 @@
                 {
                   "params": [],
                   "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalMessageRequest$Builder",
                   "throws": ""
                 }
               ]
@@ -161482,6 +162557,34 @@
                 }
               ]
             },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalTicketRequest",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachmentsPresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>>",
+                  "throws": ""
+                }
+              ]
+            },
             "body": {
               "kind": "method",
               "required": false,
@@ -161517,6 +162620,17 @@
                 {
                   "params": [],
                   "returns": "public static com.manyforge.sdk.models.SupportPortalTicketRequest$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "getAttachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>",
                   "throws": ""
                 }
               ]
@@ -161612,11 +162726,13 @@
             }
           },
           "model_fields": [
+            "attachments",
             "body",
             "idempotency_key",
             "subject"
           ],
           "non_nullable_fields": [
+            "attachments",
             "body",
             "idempotency_key",
             "subject"
@@ -161638,6 +162754,23 @@
                 {
                   "params": [],
                   "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachments": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.List<com.manyforge.sdk.models.SupportAttachmentInput>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.SupportPortalTicketRequest$Builder",
                   "throws": ""
                 }
               ]
@@ -179735,6 +180868,17 @@
                 }
               ]
             },
+            "getHistoricalAuthorName": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public java.lang.String",
+                  "throws": ""
+                }
+              ]
+            },
             "getId": {
               "kind": "method",
               "required": false,
@@ -179797,6 +180941,34 @@
                 {
                   "params": [],
                   "returns": "public java.util.UUID",
+                  "throws": ""
+                }
+              ]
+            },
+            "historicalAuthorName": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.TicketMessage",
+                  "throws": ""
+                }
+              ]
+            },
+            "historicalAuthorNamePresence": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public org.openapitools.jackson.nullable.JsonNullable<java.lang.String>",
                   "throws": ""
                 }
               ]
@@ -179982,6 +181154,7 @@
             "dkim_result",
             "dmarc_result",
             "dropped_attachments",
+            "historical_author_name",
             "id",
             "in_reply_to",
             "message_id",
@@ -179996,6 +181169,7 @@
             "dkim_result",
             "dmarc_result",
             "dropped_attachments",
+            "historical_author_name",
             "id",
             "references",
             "spf_result",
@@ -180225,6 +181399,23 @@
                       "name": "0",
                       "required": true,
                       "type": "java.util.List<com.manyforge.sdk.models.DroppedAttachment>"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.models.TicketMessage$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "historicalAuthorName": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
                     }
                   ],
                   "returns": "public com.manyforge.sdk.models.TicketMessage$Builder",
@@ -223490,6 +224681,72 @@
                 }
               ]
             },
+            "downloadAttachment": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "com.manyforge.sdk.RequestOptions"
+                    }
+                  ],
+                  "returns": "public java.io.InputStream",
+                  "throws": ""
+                },
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams"
+                    }
+                  ],
+                  "returns": "public java.io.InputStream",
+                  "throws": ""
+                }
+              ]
+            },
+            "downloadAttachmentAsync": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "com.manyforge.sdk.RequestOptions"
+                    }
+                  ],
+                  "returns": "public java.util.concurrent.CompletableFuture<java.io.InputStream>",
+                  "throws": ""
+                },
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams"
+                    }
+                  ],
+                  "returns": "public java.util.concurrent.CompletableFuture<java.io.InputStream>",
+                  "throws": ""
+                }
+              ]
+            },
             "get": {
               "kind": "method",
               "required": false,
@@ -223956,6 +225213,96 @@
                     }
                   ],
                   "returns": "public com.manyforge.sdk.resources.BusinessTicketsResource$TicketDeleteParams$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams": {
+          "declaration": "public final class com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams",
+          "kind": "class",
+          "members": {
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "toBuilder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams$Builder": {
+          "declaration": "public final class com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "aid": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams",
+                  "throws": ""
+                }
+              ]
+            },
+            "tid": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.BusinessTicketsResource$TicketDownloadAttachmentParams$Builder",
                   "throws": ""
                 }
               ]
@@ -227799,6 +229146,72 @@
                 }
               ]
             },
+            "downloadAttachment": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "com.manyforge.sdk.RequestOptions"
+                    }
+                  ],
+                  "returns": "public java.io.InputStream",
+                  "throws": ""
+                },
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams"
+                    }
+                  ],
+                  "returns": "public java.io.InputStream",
+                  "throws": ""
+                }
+              ]
+            },
+            "downloadAttachmentAsync": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": true,
+                      "type": "com.manyforge.sdk.RequestOptions"
+                    }
+                  ],
+                  "returns": "public java.util.concurrent.CompletableFuture<java.io.InputStream>",
+                  "throws": ""
+                },
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams"
+                    }
+                  ],
+                  "returns": "public java.util.concurrent.CompletableFuture<java.io.InputStream>",
+                  "throws": ""
+                }
+              ]
+            },
             "get": {
               "kind": "method",
               "required": false,
@@ -228117,6 +229530,147 @@
                     }
                   ],
                   "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsCreateParams$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams": {
+          "declaration": "public final class com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams",
+          "kind": "class",
+          "members": {
+            "builder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public static com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "toBuilder": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            }
+          }
+        },
+        "com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder": {
+          "declaration": "public final class com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
+          "kind": "class",
+          "members": {
+            "<init>": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public",
+                  "throws": ""
+                }
+              ]
+            },
+            "attachmentID": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "authorization": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "build": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams",
+                  "throws": ""
+                }
+              ]
+            },
+            "ticketID": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.util.UUID"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "xMFExternalName": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
+                  "throws": ""
+                }
+              ]
+            },
+            "xMFExternalUser": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "type": "java.lang.String"
+                    }
+                  ],
+                  "returns": "public com.manyforge.sdk.resources.MailingServerSupportPortalTicketsResource$MailingServerSupportPortalTicketsDownloadAttachmentParams$Builder",
                   "throws": ""
                 }
               ]
@@ -312850,6 +314404,12 @@
               "required": true,
               "type": "uuid.UUID"
             },
+            "identity_namespace": {
+              "alias": "identity_namespace",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "label": {
               "alias": "label",
               "kind": "field",
@@ -312987,6 +314547,12 @@
                   "returns": "Self"
                 }
               ]
+            },
+            "identity_namespace": {
+              "alias": "identity_namespace",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
             },
             "label": {
               "alias": "label",
@@ -318862,6 +320428,12 @@
                 }
               ]
             },
+            "historical_author_name": {
+              "alias": "historical_author_name",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "id": {
               "alias": "id",
               "kind": "field",
@@ -319243,6 +320815,37 @@
                     }
                   ],
                   "returns": "None"
+                }
+              ]
+            },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "tid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "aid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.AsyncByteStream"
                 }
               ]
             },
@@ -319724,6 +321327,37 @@
                     }
                   ],
                   "returns": "None"
+                }
+              ]
+            },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "tid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "aid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.ByteStream"
                 }
               ]
             },
@@ -320385,6 +322019,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body_html": {
               "alias": "body_html",
               "kind": "field",
@@ -321085,6 +322725,12 @@
                   "returns": "Self"
                 }
               ]
+            },
+            "historical_author_name": {
+              "alias": "historical_author_name",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
             },
             "id": {
               "alias": "id",
@@ -333398,6 +335044,55 @@
                 }
               ]
             },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "authorization",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_user",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "ticket_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "attachment_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_name",
+                      "required": false,
+                      "type": "manyforge.model_support.UnsetType | str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.AsyncByteStream"
+                }
+              ]
+            },
             "get": {
               "binding": "instance",
               "kind": "method",
@@ -334043,6 +335738,55 @@
                 }
               ]
             },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "authorization",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_user",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "ticket_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "attachment_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_name",
+                      "required": false,
+                      "type": "manyforge.model_support.UnsetType | str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.ByteStream"
+                }
+              ]
+            },
             "get": {
               "binding": "instance",
               "kind": "method",
@@ -334574,6 +336318,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -334832,6 +336582,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -387300,6 +389056,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body_html": {
               "alias": "body_html",
               "kind": "field",
@@ -394414,6 +396176,132 @@
             }
           }
         },
+        "manyforge.models.SupportAttachmentInput": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content": {
+              "alias": "content",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.SupportOverview": {
           "bases": [
             "manyforge.model_support.Model"
@@ -395132,6 +397020,144 @@
             }
           }
         },
+        "manyforge.models.SupportPortalAttachment": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content_type": {
+              "alias": "content_type",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "id": {
+              "alias": "id",
+              "kind": "field",
+              "required": true,
+              "type": "uuid.UUID"
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "size": {
+              "alias": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.SupportPortalContact": {
           "bases": [
             "manyforge.model_support.Model"
@@ -395320,6 +397346,12 @@
               "required": true,
               "type": "uuid.UUID"
             },
+            "identity_namespace": {
+              "alias": "identity_namespace",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "label": {
               "alias": "label",
               "kind": "field",
@@ -395458,6 +397490,12 @@
                 }
               ]
             },
+            "identity_namespace": {
+              "alias": "identity_namespace",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "label": {
               "alias": "label",
               "kind": "field",
@@ -395540,6 +397578,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_portal_attachment.SupportPortalAttachment] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -395696,6 +397740,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -396098,6 +398148,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -402293,6 +404349,12 @@
                   "returns": "Self"
                 }
               ]
+            },
+            "historical_author_name": {
+              "alias": "historical_author_name",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
             },
             "id": {
               "alias": "id",
@@ -476038,6 +478100,12 @@
               "required": true,
               "type": "uuid.UUID"
             },
+            "identity_namespace": {
+              "alias": "identity_namespace",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "label": {
               "alias": "label",
               "kind": "field",
@@ -499025,6 +501093,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body_html": {
               "alias": "body_html",
               "kind": "field",
@@ -499033,6 +501107,132 @@
             },
             "body_text": {
               "alias": "body_text",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.reply_body.SupportAttachmentInput": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content": {
+              "alias": "content",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
               "kind": "field",
               "required": true,
               "type": "str"
@@ -499408,6 +501608,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_portal_attachment.SupportPortalAttachment] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -519007,6 +521213,269 @@
           "kind": "class",
           "members": {}
         },
+        "manyforge.models.support_attachment_input.JsonValue": {
+          "kind": "value",
+          "type": "JsonValue"
+        },
+        "manyforge.models.support_attachment_input.Model": {
+          "bases": [
+            "pydantic.main.BaseModel"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.support_attachment_input.OpenEnum": {
+          "bases": [
+            "str",
+            "enum.Enum"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.support_attachment_input.SupportAttachmentInput": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content": {
+              "alias": "content",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.support_attachment_input.UNSET": {
+          "kind": "value",
+          "type": "manyforge.model_support.UnsetType"
+        },
+        "manyforge.models.support_attachment_input.UnsetType": {
+          "bases": [
+            "object"
+          ],
+          "kind": "class",
+          "members": {}
+        },
         "manyforge.models.support_overview.JsonValue": {
           "kind": "value",
           "type": "JsonValue"
@@ -521127,6 +523596,281 @@
           "kind": "class",
           "members": {}
         },
+        "manyforge.models.support_portal_attachment.JsonValue": {
+          "kind": "value",
+          "type": "JsonValue"
+        },
+        "manyforge.models.support_portal_attachment.Model": {
+          "bases": [
+            "pydantic.main.BaseModel"
+          ],
+          "kind": "class",
+          "members": {
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.support_portal_attachment.OpenEnum": {
+          "bases": [
+            "str",
+            "enum.Enum"
+          ],
+          "kind": "class",
+          "members": {}
+        },
+        "manyforge.models.support_portal_attachment.SupportPortalAttachment": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content_type": {
+              "alias": "content_type",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "id": {
+              "alias": "id",
+              "kind": "field",
+              "required": true,
+              "type": "uuid.UUID"
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "size": {
+              "alias": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
+        "manyforge.models.support_portal_attachment.UNSET": {
+          "kind": "value",
+          "type": "manyforge.model_support.UnsetType"
+        },
+        "manyforge.models.support_portal_attachment.UnsetType": {
+          "bases": [
+            "object"
+          ],
+          "kind": "class",
+          "members": {}
+        },
         "manyforge.models.support_portal_contact.JsonValue": {
           "kind": "value",
           "type": "JsonValue"
@@ -521578,6 +524322,12 @@
               "required": true,
               "type": "uuid.UUID"
             },
+            "identity_namespace": {
+              "alias": "identity_namespace",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "label": {
               "alias": "label",
               "kind": "field",
@@ -521853,6 +524603,12 @@
                 }
               ]
             },
+            "identity_namespace": {
+              "alias": "identity_namespace",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "label": {
               "alias": "label",
               "kind": "field",
@@ -522066,12 +524822,156 @@
           "kind": "class",
           "members": {}
         },
+        "manyforge.models.support_portal_message.SupportPortalAttachment": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content_type": {
+              "alias": "content_type",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "id": {
+              "alias": "id",
+              "kind": "field",
+              "required": true,
+              "type": "uuid.UUID"
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "size": {
+              "alias": "size",
+              "kind": "field",
+              "required": true,
+              "type": "int"
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.support_portal_message.SupportPortalMessage": {
           "bases": [
             "manyforge.model_support.Model"
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_portal_attachment.SupportPortalAttachment] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -522514,12 +525414,144 @@
           "kind": "class",
           "members": {}
         },
+        "manyforge.models.support_portal_message_request.SupportAttachmentInput": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content": {
+              "alias": "content",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.support_portal_message_request.SupportPortalMessageRequest": {
           "bases": [
             "manyforge.model_support.Model"
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -522783,6 +525815,12 @@
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_portal_attachment.SupportPortalAttachment] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -523609,12 +526647,144 @@
           "kind": "class",
           "members": {}
         },
+        "manyforge.models.support_portal_ticket_request.SupportAttachmentInput": {
+          "bases": [
+            "manyforge.model_support.Model"
+          ],
+          "kind": "class",
+          "members": {
+            "content": {
+              "alias": "content",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "filename": {
+              "alias": "filename",
+              "kind": "field",
+              "required": true,
+              "type": "str"
+            },
+            "from_dict": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "dict[str,JsonValue]"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "from_json": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "str"
+                    }
+                  ],
+                  "returns": "Self"
+                }
+              ]
+            },
+            "omit_unset": {
+              "binding": "class",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "value",
+                      "required": true,
+                      "type": "Any"
+                    }
+                  ],
+                  "returns": "Any"
+                }
+              ]
+            },
+            "serialize_supplied": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "handler",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializerFunctionWrapHandler"
+                    },
+                    {
+                      "kind": "POSITIONAL_OR_KEYWORD",
+                      "name": "info",
+                      "required": true,
+                      "type": "pydantic_core.core_schema.SerializationInfo"
+                    }
+                  ],
+                  "returns": "dict[str,Any]"
+                }
+              ]
+            },
+            "to_dict": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "dict[str,JsonValue]"
+                }
+              ]
+            },
+            "to_json": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [],
+                  "returns": "str"
+                }
+              ]
+            }
+          }
+        },
         "manyforge.models.support_portal_ticket_request.SupportPortalTicketRequest": {
           "bases": [
             "manyforge.model_support.Model"
           ],
           "kind": "class",
           "members": {
+            "attachments": {
+              "alias": "attachments",
+              "kind": "field",
+              "required": false,
+              "type": "list[manyforge.models.support_attachment_input.SupportAttachmentInput] | manyforge.model_support.UnsetType"
+            },
             "body": {
               "alias": "body",
               "kind": "field",
@@ -541664,6 +544834,12 @@
                 }
               ]
             },
+            "historical_author_name": {
+              "alias": "historical_author_name",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
+            },
             "id": {
               "alias": "id",
               "kind": "field",
@@ -542039,6 +545215,12 @@
                   "returns": "Self"
                 }
               ]
+            },
+            "historical_author_name": {
+              "alias": "historical_author_name",
+              "kind": "field",
+              "required": false,
+              "type": "manyforge.model_support.UnsetType | str"
             },
             "id": {
               "alias": "id",
@@ -574157,6 +577339,37 @@
                 }
               ]
             },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "tid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "aid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.AsyncByteStream"
+                }
+              ]
+            },
             "get": {
               "binding": "instance",
               "kind": "method",
@@ -574458,6 +577671,37 @@
                     }
                   ],
                   "returns": "None"
+                }
+              ]
+            },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "tid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "aid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.AsyncByteStream"
                 }
               ]
             },
@@ -576718,6 +579962,55 @@
                 }
               ]
             },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "authorization",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_user",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "ticket_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "attachment_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_name",
+                      "required": false,
+                      "type": "manyforge.model_support.UnsetType | str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.AsyncByteStream"
+                }
+              ]
+            },
             "get": {
               "binding": "instance",
               "kind": "method",
@@ -576926,6 +580219,55 @@
                     }
                   ],
                   "returns": "manyforge.models.create_support_portal_ticket201_response.CreateSupportPortalTicket201Response"
+                }
+              ]
+            },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": true,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "authorization",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_user",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "ticket_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "attachment_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_name",
+                      "required": false,
+                      "type": "manyforge.model_support.UnsetType | str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.AsyncByteStream"
                 }
               ]
             },
@@ -596166,6 +599508,37 @@
                 }
               ]
             },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "tid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "aid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.ByteStream"
+                }
+              ]
+            },
             "get": {
               "binding": "instance",
               "kind": "method",
@@ -596467,6 +599840,37 @@
                     }
                   ],
                   "returns": "None"
+                }
+              ]
+            },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "tid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "aid",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.ByteStream"
                 }
               ]
             },
@@ -598727,6 +602131,55 @@
                 }
               ]
             },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "authorization",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_user",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "ticket_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "attachment_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_name",
+                      "required": false,
+                      "type": "manyforge.model_support.UnsetType | str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.ByteStream"
+                }
+              ]
+            },
             "get": {
               "binding": "instance",
               "kind": "method",
@@ -598935,6 +602388,55 @@
                     }
                   ],
                   "returns": "manyforge.models.create_support_portal_ticket201_response.CreateSupportPortalTicket201Response"
+                }
+              ]
+            },
+            "download_attachment": {
+              "binding": "instance",
+              "kind": "method",
+              "signatures": [
+                {
+                  "async": false,
+                  "async_generator": false,
+                  "params": [
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "authorization",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_user",
+                      "required": true,
+                      "type": "str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "ticket_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "attachment_id",
+                      "required": true,
+                      "type": "uuid.UUID"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "x_mf_external_name",
+                      "required": false,
+                      "type": "manyforge.model_support.UnsetType | str"
+                    },
+                    {
+                      "kind": "KEYWORD_ONLY",
+                      "name": "request_options",
+                      "required": false,
+                      "type": "None | manyforge.transport.RequestOptions"
+                    }
+                  ],
+                  "returns": "manyforge.transport.ByteStream"
                 }
               ]
             },
@@ -607560,6 +611062,10 @@
         "import:index.BusinessTicketsDeleteParams": {
           "kind": "export",
           "target": "type:BusinessTicketsDeleteParams"
+        },
+        "import:index.BusinessTicketsDownloadAttachmentParams": {
+          "kind": "export",
+          "target": "type:BusinessTicketsDownloadAttachmentParams"
         },
         "import:index.BusinessTicketsGetParams": {
           "kind": "export",
@@ -616728,6 +620234,44 @@
             }
           ]
         },
+        "import:index.SupportAttachmentInput": {
+          "kind": "export",
+          "target": "type:SupportAttachmentInput"
+        },
+        "import:index.SupportAttachmentInputFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportAttachmentInput",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:index.SupportAttachmentInputToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportAttachmentInput"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:index.SupportOverview": {
           "kind": "export",
           "target": "type:SupportOverview"
@@ -616881,6 +620425,44 @@
                   "required": true,
                   "rest": false,
                   "type": "SupportOverview"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:index.SupportPortalAttachment": {
+          "kind": "export",
+          "target": "type:SupportPortalAttachment"
+        },
+        "import:index.SupportPortalAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportPortalAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:index.SupportPortalAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportPortalAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -627563,6 +631145,30 @@
                 }
               ]
             },
+            "downloadAttachment": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "rest": false,
+                      "type": "BusinessTicketsDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": false,
+                      "rest": false,
+                      "type": "RequestOptions | undefined"
+                    }
+                  ],
+                  "returns": "Promise<ByteStream>",
+                  "type_parameters": []
+                }
+              ]
+            },
             "get": {
               "kind": "method",
               "required": false,
@@ -635469,6 +639075,25 @@
           },
           "type_parameters": []
         },
+        "import:index.type:BusinessTicketsDownloadAttachmentParams": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "aid": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "tid": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "import:index.type:BusinessTicketsGetParams": {
           "bases": [],
           "kind": "interface",
@@ -641142,6 +644767,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "bodyHtml": {
               "kind": "field",
               "readonly": false,
@@ -643639,6 +647270,25 @@
           "kind": "type",
           "type": "(string & {}) | \"bounced\" | \"complained\" | \"pending\" | \"active\" | \"unsubscribed\""
         },
+        "import:index.type:SupportAttachmentInput": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "content": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "import:index.type:SupportOverview": {
           "bases": [],
           "kind": "interface",
@@ -643891,6 +647541,37 @@
           "kind": "type",
           "type": "(string & {}) | \"open\" | \"new\""
         },
+        "import:index.type:SupportPortalAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "contentType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "id": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "import:index.type:SupportPortalContact": {
           "bases": [],
           "kind": "interface",
@@ -643932,6 +647613,12 @@
               "required": true,
               "type": "string"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -643963,6 +647650,12 @@
               "required": false,
               "type": "number | undefined"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -643976,6 +647669,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportPortalAttachment[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -644011,6 +647710,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -644092,6 +647797,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -645874,6 +649585,12 @@
               "readonly": false,
               "required": false,
               "type": "DroppedAttachment[] | undefined"
+            },
+            "historicalAuthorName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
             },
             "id": {
               "kind": "field",
@@ -658618,6 +662335,44 @@
             }
           ]
         },
+        "import:public.SupportAttachmentInput": {
+          "kind": "export",
+          "target": "type:SupportAttachmentInput"
+        },
+        "import:public.SupportAttachmentInputFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportAttachmentInput",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.SupportAttachmentInputToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportAttachmentInput"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:public.SupportOverview": {
           "kind": "export",
           "target": "type:SupportOverview"
@@ -658771,6 +662526,44 @@
                   "required": true,
                   "rest": false,
                   "type": "SupportOverview"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.SupportPortalAttachment": {
+          "kind": "export",
+          "target": "type:SupportPortalAttachment"
+        },
+        "import:public.SupportPortalAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportPortalAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:public.SupportPortalAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportPortalAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -670896,6 +674689,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "bodyHtml": {
               "kind": "field",
               "readonly": false,
@@ -672828,6 +676627,25 @@
           "kind": "type",
           "type": "(string & {}) | \"bounced\" | \"complained\" | \"pending\" | \"active\" | \"unsubscribed\""
         },
+        "import:public.type:SupportAttachmentInput": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "content": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "import:public.type:SupportOverview": {
           "bases": [],
           "kind": "interface",
@@ -673080,6 +676898,37 @@
           "kind": "type",
           "type": "(string & {}) | \"open\" | \"new\""
         },
+        "import:public.type:SupportPortalAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "contentType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "id": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "import:public.type:SupportPortalContact": {
           "bases": [],
           "kind": "interface",
@@ -673121,6 +676970,12 @@
               "required": true,
               "type": "string"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -673152,6 +677007,12 @@
               "required": false,
               "type": "number | undefined"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -673165,6 +677026,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportPortalAttachment[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -673200,6 +677067,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -673281,6 +677154,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -675087,6 +678966,12 @@
               "readonly": false,
               "required": false,
               "type": "DroppedAttachment[] | undefined"
+            },
+            "historicalAuthorName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
             },
             "id": {
               "kind": "field",
@@ -684092,6 +687977,10 @@
           "kind": "export",
           "target": "type:MailingServerSupportPortalTicketsCreateParams"
         },
+        "import:server.MailingServerSupportPortalTicketsDownloadAttachmentParams": {
+          "kind": "export",
+          "target": "type:MailingServerSupportPortalTicketsDownloadAttachmentParams"
+        },
         "import:server.MailingServerSupportPortalTicketsGetParams": {
           "kind": "export",
           "target": "type:MailingServerSupportPortalTicketsGetParams"
@@ -687854,6 +691743,44 @@
             }
           ]
         },
+        "import:server.SupportAttachmentInput": {
+          "kind": "export",
+          "target": "type:SupportAttachmentInput"
+        },
+        "import:server.SupportAttachmentInputFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportAttachmentInput",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.SupportAttachmentInputToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportAttachmentInput"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "import:server.SupportOverview": {
           "kind": "export",
           "target": "type:SupportOverview"
@@ -688007,6 +691934,44 @@
                   "required": true,
                   "rest": false,
                   "type": "SupportOverview"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.SupportPortalAttachment": {
+          "kind": "export",
+          "target": "type:SupportPortalAttachment"
+        },
+        "import:server.SupportPortalAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportPortalAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "import:server.SupportPortalAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportPortalAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -692075,6 +696040,30 @@
                 }
               ]
             },
+            "downloadAttachment": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "rest": false,
+                      "type": "MailingServerSupportPortalTicketsDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": false,
+                      "rest": false,
+                      "type": "RequestOptions | undefined"
+                    }
+                  ],
+                  "returns": "Promise<ByteStream>",
+                  "type_parameters": []
+                }
+              ]
+            },
             "get": {
               "kind": "method",
               "required": false,
@@ -694977,6 +698966,30 @@
               "readonly": false,
               "required": true,
               "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
+        "import:server.type:ByteStream": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "close": {
+              "kind": "method",
+              "required": true,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "Promise<void>",
+                  "type_parameters": []
+                }
+              ]
+            },
+            "stream": {
+              "kind": "field",
+              "readonly": true,
+              "required": true,
+              "type": "ReadableStream<Uint8Array<ArrayBufferLike>>"
             }
           },
           "type_parameters": []
@@ -699236,6 +703249,43 @@
           },
           "type_parameters": []
         },
+        "import:server.type:MailingServerSupportPortalTicketsDownloadAttachmentParams": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "attachmentID": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "authorization": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "ticketID": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "xMFExternalName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "xMFExternalUser": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "import:server.type:MailingServerSupportPortalTicketsGetParams": {
           "bases": [],
           "kind": "interface",
@@ -700649,6 +704699,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "bodyHtml": {
               "kind": "field",
               "readonly": false,
@@ -702659,6 +706715,25 @@
           "kind": "type",
           "type": "(string & {}) | \"bounced\" | \"complained\" | \"pending\" | \"active\" | \"unsubscribed\""
         },
+        "import:server.type:SupportAttachmentInput": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "content": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "import:server.type:SupportOverview": {
           "bases": [],
           "kind": "interface",
@@ -702911,6 +706986,37 @@
           "kind": "type",
           "type": "(string & {}) | \"open\" | \"new\""
         },
+        "import:server.type:SupportPortalAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "contentType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "id": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "import:server.type:SupportPortalContact": {
           "bases": [],
           "kind": "interface",
@@ -702952,6 +707058,12 @@
               "required": true,
               "type": "string"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -702983,6 +707095,12 @@
               "required": false,
               "type": "number | undefined"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -702996,6 +707114,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportPortalAttachment[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -703031,6 +707155,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -703112,6 +707242,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -704918,6 +709054,12 @@
               "readonly": false,
               "required": false,
               "type": "DroppedAttachment[] | undefined"
+            },
+            "historicalAuthorName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
             },
             "id": {
               "kind": "field",
@@ -709705,6 +713847,10 @@
         "require:index.BusinessTicketsDeleteParams": {
           "kind": "export",
           "target": "type:BusinessTicketsDeleteParams"
+        },
+        "require:index.BusinessTicketsDownloadAttachmentParams": {
+          "kind": "export",
+          "target": "type:BusinessTicketsDownloadAttachmentParams"
         },
         "require:index.BusinessTicketsGetParams": {
           "kind": "export",
@@ -718873,6 +723019,44 @@
             }
           ]
         },
+        "require:index.SupportAttachmentInput": {
+          "kind": "export",
+          "target": "type:SupportAttachmentInput"
+        },
+        "require:index.SupportAttachmentInputFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportAttachmentInput",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.SupportAttachmentInputToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportAttachmentInput"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "require:index.SupportOverview": {
           "kind": "export",
           "target": "type:SupportOverview"
@@ -719026,6 +723210,44 @@
                   "required": true,
                   "rest": false,
                   "type": "SupportOverview"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.SupportPortalAttachment": {
+          "kind": "export",
+          "target": "type:SupportPortalAttachment"
+        },
+        "require:index.SupportPortalAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportPortalAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:index.SupportPortalAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportPortalAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -729708,6 +733930,30 @@
                 }
               ]
             },
+            "downloadAttachment": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "rest": false,
+                      "type": "BusinessTicketsDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": false,
+                      "rest": false,
+                      "type": "RequestOptions | undefined"
+                    }
+                  ],
+                  "returns": "Promise<ByteStream>",
+                  "type_parameters": []
+                }
+              ]
+            },
             "get": {
               "kind": "method",
               "required": false,
@@ -737614,6 +741860,25 @@
           },
           "type_parameters": []
         },
+        "require:index.type:BusinessTicketsDownloadAttachmentParams": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "aid": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "tid": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "require:index.type:BusinessTicketsGetParams": {
           "bases": [],
           "kind": "interface",
@@ -743287,6 +747552,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "bodyHtml": {
               "kind": "field",
               "readonly": false,
@@ -745784,6 +750055,25 @@
           "kind": "type",
           "type": "(string & {}) | \"bounced\" | \"complained\" | \"pending\" | \"active\" | \"unsubscribed\""
         },
+        "require:index.type:SupportAttachmentInput": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "content": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "require:index.type:SupportOverview": {
           "bases": [],
           "kind": "interface",
@@ -746036,6 +750326,37 @@
           "kind": "type",
           "type": "(string & {}) | \"open\" | \"new\""
         },
+        "require:index.type:SupportPortalAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "contentType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "id": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "require:index.type:SupportPortalContact": {
           "bases": [],
           "kind": "interface",
@@ -746077,6 +750398,12 @@
               "required": true,
               "type": "string"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -746108,6 +750435,12 @@
               "required": false,
               "type": "number | undefined"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -746121,6 +750454,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportPortalAttachment[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -746156,6 +750495,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -746237,6 +750582,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -748019,6 +752370,12 @@
               "readonly": false,
               "required": false,
               "type": "DroppedAttachment[] | undefined"
+            },
+            "historicalAuthorName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
             },
             "id": {
               "kind": "field",
@@ -760763,6 +765120,44 @@
             }
           ]
         },
+        "require:public.SupportAttachmentInput": {
+          "kind": "export",
+          "target": "type:SupportAttachmentInput"
+        },
+        "require:public.SupportAttachmentInputFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportAttachmentInput",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.SupportAttachmentInputToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportAttachmentInput"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "require:public.SupportOverview": {
           "kind": "export",
           "target": "type:SupportOverview"
@@ -760916,6 +765311,44 @@
                   "required": true,
                   "rest": false,
                   "type": "SupportOverview"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.SupportPortalAttachment": {
+          "kind": "export",
+          "target": "type:SupportPortalAttachment"
+        },
+        "require:public.SupportPortalAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportPortalAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:public.SupportPortalAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportPortalAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -773041,6 +777474,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "bodyHtml": {
               "kind": "field",
               "readonly": false,
@@ -774973,6 +779412,25 @@
           "kind": "type",
           "type": "(string & {}) | \"bounced\" | \"complained\" | \"pending\" | \"active\" | \"unsubscribed\""
         },
+        "require:public.type:SupportAttachmentInput": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "content": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "require:public.type:SupportOverview": {
           "bases": [],
           "kind": "interface",
@@ -775225,6 +779683,37 @@
           "kind": "type",
           "type": "(string & {}) | \"open\" | \"new\""
         },
+        "require:public.type:SupportPortalAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "contentType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "id": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "require:public.type:SupportPortalContact": {
           "bases": [],
           "kind": "interface",
@@ -775266,6 +779755,12 @@
               "required": true,
               "type": "string"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -775297,6 +779792,12 @@
               "required": false,
               "type": "number | undefined"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -775310,6 +779811,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportPortalAttachment[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -775345,6 +779852,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -775426,6 +779939,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -777232,6 +781751,12 @@
               "readonly": false,
               "required": false,
               "type": "DroppedAttachment[] | undefined"
+            },
+            "historicalAuthorName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
             },
             "id": {
               "kind": "field",
@@ -786237,6 +790762,10 @@
           "kind": "export",
           "target": "type:MailingServerSupportPortalTicketsCreateParams"
         },
+        "require:server.MailingServerSupportPortalTicketsDownloadAttachmentParams": {
+          "kind": "export",
+          "target": "type:MailingServerSupportPortalTicketsDownloadAttachmentParams"
+        },
         "require:server.MailingServerSupportPortalTicketsGetParams": {
           "kind": "export",
           "target": "type:MailingServerSupportPortalTicketsGetParams"
@@ -789999,6 +794528,44 @@
             }
           ]
         },
+        "require:server.SupportAttachmentInput": {
+          "kind": "export",
+          "target": "type:SupportAttachmentInput"
+        },
+        "require:server.SupportAttachmentInputFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportAttachmentInput",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.SupportAttachmentInputToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportAttachmentInput"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
         "require:server.SupportOverview": {
           "kind": "export",
           "target": "type:SupportOverview"
@@ -790152,6 +794719,44 @@
                   "required": true,
                   "rest": false,
                   "type": "SupportOverview"
+                }
+              ],
+              "returns": "JsonValue",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.SupportPortalAttachment": {
+          "kind": "export",
+          "target": "type:SupportPortalAttachment"
+        },
+        "require:server.SupportPortalAttachmentFromJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "unknown"
+                }
+              ],
+              "returns": "SupportPortalAttachment",
+              "type_parameters": []
+            }
+          ]
+        },
+        "require:server.SupportPortalAttachmentToJSON": {
+          "kind": "method",
+          "signatures": [
+            {
+              "params": [
+                {
+                  "name": "0",
+                  "required": true,
+                  "rest": false,
+                  "type": "SupportPortalAttachment"
                 }
               ],
               "returns": "JsonValue",
@@ -794220,6 +798825,30 @@
                 }
               ]
             },
+            "downloadAttachment": {
+              "kind": "method",
+              "required": false,
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "name": "0",
+                      "required": true,
+                      "rest": false,
+                      "type": "MailingServerSupportPortalTicketsDownloadAttachmentParams"
+                    },
+                    {
+                      "name": "1",
+                      "required": false,
+                      "rest": false,
+                      "type": "RequestOptions | undefined"
+                    }
+                  ],
+                  "returns": "Promise<ByteStream>",
+                  "type_parameters": []
+                }
+              ]
+            },
             "get": {
               "kind": "method",
               "required": false,
@@ -797122,6 +801751,30 @@
               "readonly": false,
               "required": true,
               "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
+        "require:server.type:ByteStream": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "close": {
+              "kind": "method",
+              "required": true,
+              "signatures": [
+                {
+                  "params": [],
+                  "returns": "Promise<void>",
+                  "type_parameters": []
+                }
+              ]
+            },
+            "stream": {
+              "kind": "field",
+              "readonly": true,
+              "required": true,
+              "type": "ReadableStream<Uint8Array<ArrayBufferLike>>"
             }
           },
           "type_parameters": []
@@ -801381,6 +806034,43 @@
           },
           "type_parameters": []
         },
+        "require:server.type:MailingServerSupportPortalTicketsDownloadAttachmentParams": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "attachmentID": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "authorization": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "ticketID": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "xMFExternalName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
+            "xMFExternalUser": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "require:server.type:MailingServerSupportPortalTicketsGetParams": {
           "bases": [],
           "kind": "interface",
@@ -802794,6 +807484,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "bodyHtml": {
               "kind": "field",
               "readonly": false,
@@ -804804,6 +809500,25 @@
           "kind": "type",
           "type": "(string & {}) | \"bounced\" | \"complained\" | \"pending\" | \"active\" | \"unsubscribed\""
         },
+        "require:server.type:SupportAttachmentInput": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "content": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type_parameters": []
+        },
         "require:server.type:SupportOverview": {
           "bases": [],
           "kind": "interface",
@@ -805056,6 +809771,37 @@
           "kind": "type",
           "type": "(string & {}) | \"open\" | \"new\""
         },
+        "require:server.type:SupportPortalAttachment": {
+          "bases": [],
+          "kind": "interface",
+          "members": {
+            "contentType": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "filename": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "id": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "string"
+            },
+            "size": {
+              "kind": "field",
+              "readonly": false,
+              "required": true,
+              "type": "bigint"
+            }
+          },
+          "type_parameters": []
+        },
         "require:server.type:SupportPortalContact": {
           "bases": [],
           "kind": "interface",
@@ -805097,6 +809843,12 @@
               "required": true,
               "type": "string"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -805128,6 +809880,12 @@
               "required": false,
               "type": "number | undefined"
             },
+            "identityNamespace": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
+            },
             "label": {
               "kind": "field",
               "readonly": false,
@@ -805141,6 +809899,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportPortalAttachment[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -805176,6 +809940,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -805257,6 +810027,12 @@
           "bases": [],
           "kind": "interface",
           "members": {
+            "attachments": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "SupportAttachmentInput[] | undefined"
+            },
             "body": {
               "kind": "field",
               "readonly": false,
@@ -807063,6 +811839,12 @@
               "readonly": false,
               "required": false,
               "type": "DroppedAttachment[] | undefined"
+            },
+            "historicalAuthorName": {
+              "kind": "field",
+              "readonly": false,
+              "required": false,
+              "type": "string | undefined"
             },
             "id": {
               "kind": "field",

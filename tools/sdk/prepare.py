@@ -67,16 +67,21 @@ def prepare(document: dict) -> dict:
         operation["x-sdk-path"] = path
         operation["x-sdk-http-method"] = method.upper()
         operation["x-sdk-pagination"] = "x-manyforge-pagination" in operation
+        success_responses = [
+            resolve(result, response["$ref"]) if "$ref" in response else response
+            for status, response in operation["responses"].items()
+            if status.startswith("2")
+        ]
         if operation["x-sdk-pagination"]:
             # The SDK explicitly accepts an omitted terminal cursor, even when
             # the current handler always emits it. Keep all other fields strict.
-            for status, response in operation["responses"].items():
-                if not status.startswith("2"):
-                    continue
-                response = resolve(result, response["$ref"]) if "$ref" in response else response
+            for response in success_responses:
                 for media in response.get("content", {}).values():
                     _allow_missing_cursor(result, media["schema"], operation["x-manyforge-pagination"]["next"], set())
-        operation["x-sdk-stream"] = any("text/csv" in response.get("content", {}) for response in operation["responses"].values())
+        operation["x-sdk-stream"] = any(
+            {"text/csv", "application/octet-stream"}.intersection(response.get("content", {}))
+            for response in success_responses
+        )
         parameters = path_item.get("parameters", []) + operation.get("parameters", [])
         operation["parameters"] = []
         for parameter in parameters:

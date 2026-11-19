@@ -20,6 +20,7 @@ import (
 
 	"github.com/manyforge/manyforge/internal/crm"
 	"github.com/manyforge/manyforge/internal/platform/audit"
+	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/errs"
@@ -36,6 +37,7 @@ import (
 // unauthorized all collapse to ErrNotFound (→ 404, no existence oracle).
 type Service struct {
 	DB              *db.DB
+	Blob            blob.StreamingStore
 	ReplyTokenKey   []byte                    // signs the VERP Reply-To token
 	SystemDomain    string                    // outbound mail domain for minted Message-IDs
 	OutboundLimiter ratelimit.Limiter         // nil ⇒ no limit (tests/dev)
@@ -50,8 +52,9 @@ type Service struct {
 
 // ReplyInput is the validated reply payload for Reply.
 type ReplyInput struct {
-	BodyText string
-	BodyHTML *string
+	BodyText    string
+	BodyHTML    *string
+	Attachments []AttachmentInput
 	// IdempotencyKey, when non-nil, dedups the produced outbound message: a second
 	// Reply with the same key inserts no new message and enqueues no second send
 	// (used by the approvals executor so an at-least-once outbox redelivery sends once).
@@ -144,16 +147,17 @@ const (
 // Message is the API view of one entry in a ticket thread, with SPF/DKIM/DMARC
 // projected from the stored auth_results jsonb into three typed fields.
 type Message struct {
-	ID                uuid.UUID
-	TicketID          uuid.UUID
-	Direction         string
-	MessageID         *string
-	InReplyTo         *string
-	References        []string
-	AuthorPrincipalID *uuid.UUID
-	BodyText          *string
-	BodyHTML          *string
-	Attachments       []Attachment
+	ID                   uuid.UUID
+	TicketID             uuid.UUID
+	Direction            string
+	MessageID            *string
+	InReplyTo            *string
+	References           []string
+	AuthorPrincipalID    *uuid.UUID
+	HistoricalAuthorName string
+	BodyText             *string
+	BodyHTML             *string
+	Attachments          []Attachment
 	// DroppedAttachments is never nil (always a JSON array in the API).
 	DroppedAttachments []DroppedAttachment
 	SPFResult          string
@@ -290,8 +294,18 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 	if len(in.BodyText) == 0 {
 		return Message{}, fmt.Errorf("ticketing: empty reply: %w", errs.ErrValidation)
 	}
+	files, err := prepareLiveAttachments(in.Attachments)
+	if err != nil {
+		return Message{}, err
+	}
+	batch := attachmentBatch{store: s.Blob}
 	var out Message
-	err := s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) error {
+	err = s.DB.WithPrincipal(ctx, principalID, func(tx pgx.Tx) (retErr error) {
+		defer func() {
+			if retErr != nil {
+				batch.discard(ctx)
+			}
+		}()
 		q := dbgen.New(tx)
 
 		// Load + own-check the ticket (ErrNoRows ⇒ ErrNotFound, no oracle). This stays
@@ -299,6 +313,16 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 		tk, terr := q.GetTicket(ctx, dbgen.GetTicketParams{ID: ticketID, BusinessID: businessID})
 		if terr != nil {
 			return terr
+		}
+		if len(files) > 0 {
+			if tk.ConnectorID.Valid {
+				return fmt.Errorf("attachments require a native ticket: %w", errs.ErrValidation)
+			}
+			var present bool
+			if err := tx.QueryRow(ctx, `SELECT true FROM ticket WHERE id=$1 AND business_id=$2 AND redacted_at IS NULL FOR UPDATE`,
+				ticketID, businessID).Scan(&present); err != nil {
+				return err
+			}
 		}
 
 		// Idempotent re-execution (US4): if this approval already produced a message,
@@ -460,21 +484,30 @@ func (s *Service) Reply(ctx context.Context, principalID, businessID, ticketID u
 		if !suppressNativeEmail {
 			replyToken := SignReplyToken(ticketID, s.ReplyTokenKey)
 			if eerr := events.Enqueue(ctx, tx, tk.TenantRootID, events.TopicTicketReplied, map[string]any{
-				"message_row_id": msgID,
-				"ticket_id":      ticketID,
-				"business_id":    businessID,
-				"recipient":      recipient,
-				"subject":        replySubject(tk.Subject),
-				"rfc_message_id": rfcMessageID,
-				"in_reply_to":    inReplyTo,
-				"references":     refs,
-				"reply_token":    replyToken,
+				"message_row_id":   msgID,
+				"ticket_id":        ticketID,
+				"business_id":      businessID,
+				"recipient":        recipient,
+				"subject":          replySubject(tk.Subject),
+				"rfc_message_id":   rfcMessageID,
+				"in_reply_to":      inReplyTo,
+				"references":       refs,
+				"reply_token":      replyToken,
+				"attachment_count": len(files),
 			}); eerr != nil {
 				return eerr
 			}
 		}
 
-		m, merr := toMessage(row, nil)
+		attachments := make([]Attachment, 0, len(files))
+		for _, file := range files {
+			a, err := batch.add(ctx, tx, tk.TenantRootID, businessID, ticketID, msgID, file)
+			if err != nil {
+				return err
+			}
+			attachments = append(attachments, a)
+		}
+		m, merr := toMessage(row, attachments)
 		if merr != nil {
 			return merr
 		}
@@ -1218,6 +1251,14 @@ func toRequester(r dbgen.Requester) Requester {
 }
 
 func toMessage(m dbgen.TicketMessage, atts []Attachment) (Message, error) {
+	var history struct {
+		AuthorName string `json:"author_name"`
+	}
+	if len(m.HistoricalMetadata) > 0 {
+		if err := json.Unmarshal(m.HistoricalMetadata, &history); err != nil {
+			return Message{}, fmt.Errorf("ticketing: decode historical attribution of message %s: %w", m.ID, err)
+		}
+	}
 	spf, dkim, dmarc := projectAuthResults(m.AuthResults)
 	refs := m.References
 	if refs == nil {
@@ -1241,23 +1282,24 @@ func toMessage(m dbgen.TicketMessage, atts []Attachment) (Message, error) {
 		}
 	}
 	return Message{
-		ID:                 m.ID,
-		TicketID:           m.TicketID,
-		Direction:          string(m.Direction),
-		MessageID:          mid,
-		InReplyTo:          m.InReplyTo,
-		References:         refs,
-		AuthorPrincipalID:  pgUUIDPtr(m.AuthorPrincipalID),
-		BodyText:           m.BodyText,
-		BodyHTML:           m.BodyHtml,
-		Attachments:        atts,
-		DroppedAttachments: dropped,
-		SPFResult:          spf,
-		DKIMResult:         dkim,
-		DMARCResult:        dmarc,
-		AuthVerdicts:       projectAuthVerdicts(m.AuthResults),
-		DeliveryState:      deliveryStatePtr(m.DeliveryState),
-		CreatedAt:          m.CreatedAt,
+		ID:                   m.ID,
+		TicketID:             m.TicketID,
+		Direction:            string(m.Direction),
+		MessageID:            mid,
+		InReplyTo:            m.InReplyTo,
+		References:           refs,
+		AuthorPrincipalID:    pgUUIDPtr(m.AuthorPrincipalID),
+		HistoricalAuthorName: history.AuthorName,
+		BodyText:             m.BodyText,
+		BodyHTML:             m.BodyHtml,
+		Attachments:          atts,
+		DroppedAttachments:   dropped,
+		SPFResult:            spf,
+		DKIMResult:           dkim,
+		DMARCResult:          dmarc,
+		AuthVerdicts:         projectAuthVerdicts(m.AuthResults),
+		DeliveryState:        deliveryStatePtr(m.DeliveryState),
+		CreatedAt:            m.CreatedAt,
 	}, nil
 }
 

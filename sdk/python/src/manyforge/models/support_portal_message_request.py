@@ -17,13 +17,15 @@ from pydantic import Field, StrictBool, StrictBytes, StrictFloat, StrictInt, Str
 from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
 from uuid import UUID
+from manyforge.models.support_attachment_input import SupportAttachmentInput
 
 
 class SupportPortalMessageRequest(Model):
     """SupportPortalMessageRequest wire model. Unspecified fields are never sent."""
+    attachments: List[SupportAttachmentInput] | UnsetType = Field(default=UNSET, alias="attachments")
     body: str = Field(..., alias="body")
     idempotency_key: UUID = Field(..., alias="idempotency_key")
 
