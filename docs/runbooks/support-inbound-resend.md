@@ -219,6 +219,7 @@ reads and apply finite network and body deadlines. The ticket create, follow-up,
 and staff reply requests accept base64 attachments in JSON. Live uploads allow
 up to 10 files and 10 MiB of decoded data per message and use the inbound MIME
 allowlist. Downloads require ticket access and send the file as an attachment.
+Staff reply text and HTML share a 1 MiB limit.
 Validate creation,
 resend failure/cancellation, creator lifecycle, two-user/two-business isolation,
 native operator replies/internal-note denial, and real provider delivery before

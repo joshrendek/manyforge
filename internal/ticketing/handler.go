@@ -482,6 +482,14 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSONLimit(w, r, &body, maxAttachmentJSONBytes) {
 		return
 	}
+	bodySize := len(body.BodyText)
+	if body.BodyHTML != nil {
+		bodySize += len(*body.BodyHTML)
+	}
+	if int64(bodySize) > httpx.MaxJSONBodyBytes {
+		httpx.WriteJSON(w, http.StatusRequestEntityTooLarge, httpx.ErrorBody{Code: "PAYLOAD_TOO_LARGE", Message: "reply text and HTML exceed 1 MiB"})
+		return
+	}
 	if strings.TrimSpace(body.BodyText) == "" {
 		httpx.WriteError(w, r, errValidation("body_text required"))
 		return
