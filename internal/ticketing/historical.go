@@ -262,7 +262,12 @@ func (s *PortalService) insertHistoricalTicket(ctx context.Context, tx pgx.Tx, b
 }
 
 func (s *PortalService) insertHistoricalMessage(ctx context.Context, tx pgx.Tx, batch *attachmentBatch, business, root, ticket uuid.UUID, m HistoricalMessage) error {
-	message := uuid.New()
+	// Thread queries use the message ID to break timestamp ties. Use ordered IDs
+	// so those messages follow their order in the source snapshot.
+	message, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
 	meta, _ := json.Marshal(map[string]any{
 		"author_id": m.AuthorID, "author_name": m.AuthorName, "author_kind": m.AuthorKind, "updated_at": m.UpdatedAt, "metadata": m.Metadata,
 	})

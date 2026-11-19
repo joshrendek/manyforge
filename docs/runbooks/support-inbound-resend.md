@@ -236,7 +236,8 @@ created a record. Replaying the same snapshot returns the same ticket ID.
 Map the source ticket to a native status and priority. Supply the original status
 and resolution separately, with the source ticket ID, requester, and timestamps.
 Set each message's direction to `inbound`, `outbound`, or `note` and supply its
-original ID, author attribution, timestamps, and plain text. Set `owner` only
+original ID, author attribution, timestamps, and plain text. List messages that
+share a timestamp in source order. Set `owner` only
 when the destination namespace and stable customer ID are known. Email alone
 does not assign portal access. Import writes an audit entry without sending mail
 or triggering ticket automation.

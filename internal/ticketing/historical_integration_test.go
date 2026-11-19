@@ -48,7 +48,7 @@ func TestHistoricalTicketAndAttachmentVisibility(t *testing.T) {
 		CreatedAt: created, UpdatedAt: updated, RequesterEmail: "fixture@example.com", RequesterName: "Example Customer",
 		Owner: &HistoricalOwner{Namespace: "example-app", Subject: "42"},
 		Messages: []HistoricalMessage{
-			{ID: "public-in", Direction: "inbound", Body: "Synthetic request", CreatedAt: created, UpdatedAt: created,
+			{ID: "public-in", Direction: "inbound", Body: "Synthetic request", CreatedAt: updated, UpdatedAt: updated,
 				AuthorID: "customer-42", AuthorName: "Example Customer", AuthorKind: "customer",
 				Attachments: []HistoricalAttachment{{AttachmentInput: public, ID: "public-file", CreatedAt: created, CustomerVisible: true}}},
 			{ID: "public-out", Direction: "outbound", Body: "Synthetic answer", CreatedAt: updated, UpdatedAt: updated,
@@ -104,6 +104,9 @@ func TestHistoricalTicketAndAttachmentVisibility(t *testing.T) {
 	if err != nil || len(thread.Messages) != 2 {
 		t.Fatalf("public thread: %+v, %v", thread, err)
 	}
+	if thread.Messages[0].Body != snapshot.Messages[1].Body || thread.Messages[1].Body != snapshot.Messages[0].Body {
+		t.Fatal("portal thread is not in newest-first source order")
+	}
 	var publicID uuid.UUID
 	for _, message := range thread.Messages {
 		switch message.Direction {
@@ -149,7 +152,10 @@ func TestHistoricalTicketAndAttachmentVisibility(t *testing.T) {
 	if err != nil || len(staffMessages.Items) != 3 {
 		t.Fatalf("staff thread: %+v, %v", staffMessages, err)
 	}
-	for _, message := range staffMessages.Items {
+	for i, message := range staffMessages.Items {
+		if message.BodyText == nil || *message.BodyText != snapshot.Messages[i].Body {
+			t.Fatalf("message %d is out of source order", i)
+		}
 		if message.Direction != "inbound" && message.HistoricalAuthorName != "Example Agent" {
 			t.Fatalf("missing historical author on %s message", message.Direction)
 		}
