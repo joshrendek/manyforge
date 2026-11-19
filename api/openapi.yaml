@@ -34,8 +34,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -111,8 +110,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -205,8 +203,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -299,8 +296,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -383,8 +379,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -471,8 +466,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -560,8 +554,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -655,8 +648,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: '^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$'
-          description: Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false

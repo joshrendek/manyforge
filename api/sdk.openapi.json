@@ -31044,8 +31044,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
@@ -31164,8 +31163,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
@@ -31311,8 +31309,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
@@ -31458,8 +31455,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
@@ -31588,8 +31584,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
@@ -31726,8 +31721,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
@@ -31864,8 +31858,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
@@ -31944,8 +31937,7 @@
             "name": "X-MF-External-User",
             "required": true,
             "schema": {
-              "description": "Stable opaque customer ID supplied by the authenticated backend. Legacy keys require the existing prefixed UUID format. The credential determines the identity namespace.",
-              "pattern": "^(tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9._~-]{1,128})$",
+              "description": "Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.",
               "type": "string"
             }
           },
