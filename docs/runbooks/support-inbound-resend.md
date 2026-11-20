@@ -247,6 +247,31 @@ Set `customer_visible` on files that should be available in the portal. Files
 on notes, files outside the live MIME allowlist, and files without that flag
 are available only in the staff thread. Keep snapshot files in private storage.
 
+### Restore a bundle of historical support conversations
+
+Put each ticket snapshot in its own JSON file in a private directory. Add a
+`manifest.json` with `version` set to `1` and a `snapshots` array. Each entry has
+the snapshot's local filename under `file` and the SHA-256 of its exact file bytes
+under `sha256`. Use plain filenames ending in `.json`.
+
+```sh
+manyforge import-support-tickets --dry-run BUNDLE_DIR
+manyforge import-support-tickets --apply --expected-sha256 DIGEST OWNER_PRINCIPAL_ID BUSINESS_ID BUNDLE_DIR
+```
+
+Compare the dry-run ticket, message, note, and attachment totals with the source
+inventory. Use the reported `manifest_sha256` as `DIGEST` after review. The dry run
+checks every input without opening the destination. Apply revalidates the bundle
+before writing and rechecks each snapshot's checksum before restoring it. Use an
+owner and the production database and blob configuration for the intended
+destination.
+
+Apply reports counts for created, replayed, and reconciled records. Reconciliation
+checks the stored snapshot checksum, archive messages, attachment metadata and
+file bytes. If a batch stops partway, resolve the reported error and rerun the
+same apply command with the same digest and destination. Exact snapshots replay
+without duplicates. Reports identify failures by their 1-based manifest position.
+
 ### Requesters shared by sibling businesses
 
 A sender is deduplicated within the tenant. Business-only support staff can list,
