@@ -92,6 +92,16 @@ func newAnalyticsPublicHandler(
 func main() {
 	logger := observability.NewLogger(os.Getenv("LOG_LEVEL"))
 	slog.SetDefault(logger)
+	if len(os.Args) > 1 && os.Args[1] == "import-support-tickets" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err := importSupportTickets(ctx, os.Args[2:], os.Stdout)
+		stop()
+		if err != nil {
+			logger.Error("bulk historical support import", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 	metrics := observability.NewMetrics()
 
 	cfg, err := config.Load()

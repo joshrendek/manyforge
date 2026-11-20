@@ -81,7 +81,8 @@ func historicalJSON(v json.RawMessage) bool {
 	return len(v) <= 1<<20 && len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
 }
 
-func validateHistoricalTicket(in HistoricalTicket) error {
+// ValidateHistoricalTicket checks a snapshot without opening the database or blob store.
+func ValidateHistoricalTicket(in HistoricalTicket) error {
 	bad := func(field string) error { return fmt.Errorf("%w: invalid historical %s", errs.ErrValidation, field) }
 	if !portalNamespacePattern.MatchString(in.Source) || !portalSubjectPattern.MatchString(in.ID) {
 		return bad("source identity")
@@ -139,24 +140,13 @@ func validateHistoricalTicket(in HistoricalTicket) error {
 	return nil
 }
 
-// ImportHistoricalTicket creates a native thread from a snapshot. It writes an
-// audit entry and intentionally does not enter live notification or AI flows.
-// Exact replays return the original ID. A different snapshot for the same source
-// ID is a conflict, so retries cannot overwrite operator changes.
-func (s *PortalService) ImportHistoricalTicket(ctx context.Context, principal, business uuid.UUID, in HistoricalTicket) (HistoricalResult, error) {
-	var out HistoricalResult
-	if err := validateHistoricalTicket(in); err != nil {
-		return out, err
-	}
-	if len(s.ReplyTokenKey) < 32 || s.SystemDomain == "" {
-		return out, ErrPortalUnavailable
-	}
+func historicalDigest(in HistoricalTicket) ([]byte, error) {
 	email, _ := portalEmail(in.RequesterEmail)
-	in.RequesterEmail = email
 	h := sha256.New()
 	// Hash file bytes directly and omit them from the JSON encoding, which
 	// keeps the encoded snapshot small even for a large attachment.
 	digestInput := in
+	digestInput.RequesterEmail = email
 	digestInput.Messages = append([]HistoricalMessage(nil), in.Messages...)
 	for i, m := range in.Messages {
 		files := append([]HistoricalAttachment(nil), m.Attachments...)
@@ -167,11 +157,28 @@ func (s *PortalService) ImportHistoricalTicket(ctx context.Context, principal, b
 		digestInput.Messages[i].Attachments = files
 	}
 	if err := json.NewEncoder(h).Encode(digestInput); err != nil {
-		return out, errs.ErrValidation
+		return nil, errs.ErrValidation
 	}
-	digest := h.Sum(nil)
+	return h.Sum(nil), nil
+}
+
+// ImportHistoricalTicket creates a native thread and audit entry without emitting
+// live ticket events. Exact replays return the original ID. Changed snapshots conflict.
+func (s *PortalService) ImportHistoricalTicket(ctx context.Context, principal, business uuid.UUID, in HistoricalTicket) (HistoricalResult, error) {
+	var out HistoricalResult
+	if err := ValidateHistoricalTicket(in); err != nil {
+		return out, err
+	}
+	if len(s.ReplyTokenKey) < 32 || s.SystemDomain == "" {
+		return out, ErrPortalUnavailable
+	}
+	digest, err := historicalDigest(in)
+	if err != nil {
+		return out, err
+	}
+	in.RequesterEmail, _ = portalEmail(in.RequesterEmail)
 	batch := attachmentBatch{store: s.Blob}
-	err := s.DB.WithPrincipal(ctx, principal, func(tx pgx.Tx) error {
+	err = s.DB.WithPrincipal(ctx, principal, func(tx pgx.Tx) error {
 		if err := s.allowed(ctx, tx, principal, business, true); err != nil {
 			return err
 		}
@@ -278,17 +285,21 @@ func (s *PortalService) insertHistoricalMessage(ctx context.Context, tx pgx.Tx, 
 		return err
 	}
 	for _, file := range m.Attachments {
-		contentType, err := blob.Sniff(file.Content)
-		if err != nil {
-			contentType = "application/octet-stream"
-		}
-		prepared := preparedAttachment{
-			AttachmentInput: file.AttachmentInput, contentType: contentType, createdAt: file.CreatedAt,
-			staffOnly: !file.CustomerVisible || m.Direction == "note" || err != nil, historicalID: &file.ID,
-		}
+		prepared := prepareHistoricalAttachment(m.Direction, file)
 		if _, err := batch.add(ctx, tx, root, business, ticket, message, prepared); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func prepareHistoricalAttachment(direction string, file HistoricalAttachment) preparedAttachment {
+	contentType, err := blob.Sniff(file.Content)
+	if err != nil {
+		contentType = "application/octet-stream"
+	}
+	return preparedAttachment{
+		AttachmentInput: file.AttachmentInput, contentType: contentType, createdAt: file.CreatedAt,
+		staffOnly: !file.CustomerVisible || direction == "note" || err != nil, historicalID: &file.ID,
+	}
 }
