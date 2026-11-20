@@ -15,6 +15,8 @@ import (
 
 	"net/url"
 	"strings"
+
+	"io"
 )
 
 type BusinessTicketsResource struct {
@@ -48,6 +50,17 @@ func (r *BusinessTicketsResource) Delete(ctx context.Context, tid string, option
 	request := Request{OperationID: "TicketsDelete", Method: "DELETE", Path: path, Query: url.Values{}, Headers: map[string]string{}, Authenticated: true, Audience: "management", Signing: "", BodyKey: ""}
 
 	return r.transport.Do(ctx, request, nil, options...)
+
+}
+
+// DownloadAttachment invokes TicketsDownloadAttachment.
+func (r *BusinessTicketsResource) DownloadAttachment(ctx context.Context, tid string, aid string, options ...RequestOption) (io.ReadCloser, error) {
+	path := "/api/v1/businesses/{id}/tickets/{tid}/attachments/{aid}"
+	path = strings.ReplaceAll(path, "{"+"id"+"}", url.PathEscape(fmt.Sprint(r.binding)))
+	path = strings.ReplaceAll(path, "{"+"tid"+"}", url.PathEscape(fmt.Sprint(tid)))
+	path = strings.ReplaceAll(path, "{"+"aid"+"}", url.PathEscape(fmt.Sprint(aid)))
+	request := Request{OperationID: "TicketsDownloadAttachment", Method: "GET", Path: path, Query: url.Values{}, Headers: map[string]string{}, Authenticated: true, Audience: "management", Signing: "", BodyKey: ""}
+	return r.transport.OpenStream(ctx, request, options...)
 
 }
 

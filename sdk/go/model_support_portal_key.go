@@ -12,12 +12,13 @@ package manyforge
 import "time"
 
 type SupportPortalKey struct {
-	CreatedAt time.Time           `json:"created_at"`
-	ExpiresAt time.Time           `json:"expires_at"`
-	Id        string              `json:"id"`
-	Label     string              `json:"label"`
-	RevokedAt Optional[time.Time] `json:"revoked_at,omitzero"`
-	Token     Optional[string]    `json:"token,omitzero"`
+	CreatedAt         time.Time           `json:"created_at"`
+	ExpiresAt         time.Time           `json:"expires_at"`
+	Id                string              `json:"id"`
+	IdentityNamespace Optional[string]    `json:"identity_namespace,omitzero"`
+	Label             string              `json:"label"`
+	RevokedAt         Optional[time.Time] `json:"revoked_at,omitzero"`
+	Token             Optional[string]    `json:"token,omitzero"`
 }
 
 // NewSupportPortalKey assigns only the supplied required fields, never schema defaults.
@@ -35,7 +36,7 @@ func (o *SupportPortalKey) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "created_at", "expires_at", "id", "label", "token"); err != nil {
+	if err := nonNullFields(fields, "created_at", "expires_at", "id", "identity_namespace", "label", "token"); err != nil {
 		return err
 	}
 	type plain SupportPortalKey

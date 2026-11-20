@@ -13,9 +13,11 @@
 // Template derived from OpenAPI Generator 7.25.0 (Apache-2.0).
 import { convertModel, type JsonValue } from '../model-support.js';
 
+import type { SupportPortalAttachment } from './SupportPortalAttachment.js';
 
 
 export interface SupportPortalMessage {
+    attachments?: Array<SupportPortalAttachment>;
     body: string;
     createdAt: string;
     direction: SupportPortalMessageDirectionEnum;

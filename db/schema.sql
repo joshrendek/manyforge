@@ -221,6 +221,10 @@ CREATE TABLE ticket (
     connector_id          uuid,
     external_id           text,
     external_url          text,
+    historical_source     text,
+    historical_id         text,
+    historical_hash       bytea,
+    historical_metadata   jsonb,
     UNIQUE (id, tenant_root_id),
     UNIQUE (tenant_root_id, reply_token),
     CONSTRAINT ticket_connector_external_chk CHECK (connector_id IS NULL OR external_id IS NOT NULL)
@@ -256,6 +260,8 @@ CREATE TABLE ticket_message (
     connector_id        uuid,
     external_id         text,
     dropped_attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+    historical_id       text,
+    historical_metadata jsonb,
     UNIQUE (tenant_root_id, message_id),
     UNIQUE (id, tenant_root_id),
     CONSTRAINT ticket_message_connector_external_chk CHECK (connector_id IS NULL OR external_id IS NOT NULL)
@@ -276,6 +282,8 @@ CREATE TABLE attachment (
     content_type      text NOT NULL,
     size              bigint NOT NULL,
     created_at        timestamptz NOT NULL,
+    staff_only        boolean NOT NULL DEFAULT false,
+    historical_id     text,
     UNIQUE (tenant_root_id, blob_key)
 );
 
@@ -1621,12 +1629,16 @@ CREATE TABLE support_portal_key (
  creator_principal_id uuid NOT NULL REFERENCES principal(id), label text NOT NULL CHECK(length(label) BETWEEN 1 AND 100 AND octet_length(label)<=400 AND label !~ '[[:cntrl:]]'),
  token_hash bytea NOT NULL UNIQUE CHECK(octet_length(token_hash)=32),
  created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, revoked_at timestamptz,
+ identity_namespace text NOT NULL DEFAULT 'tph' CHECK (identity_namespace COLLATE "C" ~ '^[a-z][a-z0-9-]{0,31}$'),
  UNIQUE(id,business_id,tenant_root_id),
  CONSTRAINT portal_key_business_fk FOREIGN KEY(business_id,tenant_root_id) REFERENCES business(id,tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE,
  CHECK(expires_at > created_at AND expires_at <= created_at + interval '366 days')
 );
 CREATE TABLE support_portal_contact (
- business_id uuid NOT NULL, tenant_root_id uuid NOT NULL, external_id text NOT NULL CHECK(external_id ~ '^tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+ business_id uuid NOT NULL, tenant_root_id uuid NOT NULL, external_id text NOT NULL
+ CHECK (CASE WHEN split_part(external_id, ':', 1) = 'tph'
+   THEN external_id COLLATE "C" ~ '^tph:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+   ELSE external_id COLLATE "C" ~ '^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._~-]{1,128}$' END),
  display_name text NOT NULL CHECK(length(display_name)<=100 AND octet_length(display_name)<=400 AND display_name !~ '[[:cntrl:]]'),
  verified_email text, requester_id uuid,
  pending_email text, challenge_hash bytea, challenge_nonce uuid, challenge_key_id uuid,

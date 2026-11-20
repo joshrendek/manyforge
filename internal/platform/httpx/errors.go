@@ -35,7 +35,12 @@ const MaxJSONBodyBytes int64 = 1 << 20 // 1 MiB
 // holds even when no global request-size middleware is mounted — defense-in-depth,
 // manyforge-0yv). The pre-existing 400-on-malformed contract is unchanged.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
+	return DecodeJSONLimit(w, r, v, MaxJSONBodyBytes)
+}
+
+// DecodeJSONLimit applies a route-specific ceiling to a JSON request.
+func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {

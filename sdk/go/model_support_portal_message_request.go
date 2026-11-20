@@ -10,8 +10,9 @@ API version: 1.0.0
 package manyforge
 
 type SupportPortalMessageRequest struct {
-	Body           string `json:"body"`
-	IdempotencyKey string `json:"idempotency_key"`
+	Attachments    Optional[[]SupportAttachmentInput] `json:"attachments,omitzero"`
+	Body           string                             `json:"body"`
+	IdempotencyKey string                             `json:"idempotency_key"`
 }
 
 // NewSupportPortalMessageRequest assigns only the supplied required fields, never schema defaults.
@@ -27,7 +28,7 @@ func (o *SupportPortalMessageRequest) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "body", "idempotency_key"); err != nil {
+	if err := nonNullFields(fields, "attachments", "body", "idempotency_key"); err != nil {
 		return err
 	}
 	type plain SupportPortalMessageRequest

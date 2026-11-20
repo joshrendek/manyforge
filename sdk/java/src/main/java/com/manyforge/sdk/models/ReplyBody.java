@@ -27,7 +27,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.manyforge.sdk.models.SupportAttachmentInput;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import org.openapitools.jackson.nullable.JsonNullable;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.openapitools.jackson.nullable.JsonNullable;
@@ -37,9 +40,16 @@ import java.util.NoSuchElementException;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "body_html", "body_text" })
-@com.manyforge.sdk.ModelShape(required = { "body_text",  }, nonNullable = { "body_text",  })
+@JsonPropertyOrder({ "attachments", "body_html", "body_text" })
+@com.manyforge.sdk.ModelShape(required = { "body_text",  }, nonNullable = { "attachments", "body_text",  })
 public class ReplyBody {
+
+  @JsonProperty("attachments")
+  private JsonNullable<List<SupportAttachmentInput>> attachments = JsonNullable.undefined();
+
+  public List<SupportAttachmentInput> getAttachments() { return attachments.orElse(null); }
+  public JsonNullable<List<SupportAttachmentInput>> attachmentsPresence() { return attachments; }
+  public ReplyBody attachments(List<SupportAttachmentInput> value) { this.attachments = JsonNullable.of(value); return this; }
 
   @JsonProperty("body_html")
   private JsonNullable<String> bodyHtml = JsonNullable.undefined();
@@ -57,6 +67,7 @@ public class ReplyBody {
   public static Builder builder() { return new Builder(); }
   public static final class Builder {
     private final ReplyBody value = new ReplyBody();
+    public Builder attachments(List<SupportAttachmentInput> field) { value.attachments(field); return this; }
     public Builder bodyHtml(String field) { value.bodyHtml(field); return this; }
     public Builder bodyText(String field) { value.bodyText(field); return this; }
     public ReplyBody build() { return value; }

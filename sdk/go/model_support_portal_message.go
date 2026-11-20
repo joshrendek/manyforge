@@ -12,10 +12,11 @@ package manyforge
 import "time"
 
 type SupportPortalMessage struct {
-	Body      string                        `json:"body"`
-	CreatedAt time.Time                     `json:"created_at"`
-	Direction SupportPortalMessageDirection `json:"direction"`
-	Id        string                        `json:"id"`
+	Attachments Optional[[]SupportPortalAttachment] `json:"attachments,omitzero"`
+	Body        string                              `json:"body"`
+	CreatedAt   time.Time                           `json:"created_at"`
+	Direction   SupportPortalMessageDirection       `json:"direction"`
+	Id          string                              `json:"id"`
 }
 
 // NewSupportPortalMessage assigns only the supplied required fields, never schema defaults.
@@ -33,7 +34,7 @@ func (o *SupportPortalMessage) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "body", "created_at", "direction", "id"); err != nil {
+	if err := nonNullFields(fields, "attachments", "body", "created_at", "direction", "id"); err != nil {
 		return err
 	}
 	type plain SupportPortalMessage

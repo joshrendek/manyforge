@@ -39,7 +39,8 @@ func (q *Queries) BlankTicketAttachments(ctx context.Context, arg BlankTicketAtt
 
 const blankTicketMessages = `-- name: BlankTicketMessages :execrows
 UPDATE ticket_message
-SET body_text = '', body_html = NULL, dropped_attachments = '[]'::jsonb
+SET body_text = '', body_html = NULL, dropped_attachments = '[]'::jsonb,
+    historical_metadata = NULL
 WHERE ticket_id = $1 AND business_id = $2
 `
 
@@ -112,7 +113,7 @@ func (q *Queries) DeleteTicketTags(ctx context.Context, arg DeleteTicketTagsPara
 }
 
 const getOutboundMessageByApproval = `-- name: GetOutboundMessageByApproval :one
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments, historical_id, historical_metadata FROM ticket_message
 WHERE source_approval_item_id = $1 AND business_id = $2
 `
 
@@ -147,6 +148,8 @@ func (q *Queries) GetOutboundMessageByApproval(ctx context.Context, arg GetOutbo
 		&i.ConnectorID,
 		&i.ExternalID,
 		&i.DroppedAttachments,
+		&i.HistoricalID,
+		&i.HistoricalMetadata,
 	)
 	return i, err
 }
@@ -244,7 +247,7 @@ func (q *Queries) GetThreadingParent(ctx context.Context, arg GetThreadingParent
 }
 
 const getTicket = `-- name: GetTicket :one
-SELECT id, business_id, tenant_root_id, requester_id, subject, status, priority, assignee_principal_id, reply_token, last_message_at, redacted_at, created_at, updated_at, connector_id, external_id, external_url FROM ticket
+SELECT id, business_id, tenant_root_id, requester_id, subject, status, priority, assignee_principal_id, reply_token, last_message_at, redacted_at, created_at, updated_at, connector_id, external_id, external_url, historical_source, historical_id, historical_hash, historical_metadata FROM ticket
 WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL
 `
 
@@ -277,6 +280,10 @@ func (q *Queries) GetTicket(ctx context.Context, arg GetTicketParams) (Ticket, e
 		&i.ConnectorID,
 		&i.ExternalID,
 		&i.ExternalUrl,
+		&i.HistoricalSource,
+		&i.HistoricalID,
+		&i.HistoricalHash,
+		&i.HistoricalMetadata,
 	)
 	return i, err
 }
@@ -288,7 +295,7 @@ INSERT INTO ticket_message (
 VALUES ($1, $2, $3, $4, 'note', $5, $6, $7, $8,
     $9)
 ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments, historical_id, historical_metadata
 `
 
 type InsertNoteMessageParams struct {
@@ -345,6 +352,8 @@ func (q *Queries) InsertNoteMessage(ctx context.Context, arg InsertNoteMessagePa
 		&i.ConnectorID,
 		&i.ExternalID,
 		&i.DroppedAttachments,
+		&i.HistoricalID,
+		&i.HistoricalMetadata,
 	)
 	return i, err
 }
@@ -357,7 +366,7 @@ INSERT INTO ticket_message (
 VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'pending',
     $11)
 ON CONFLICT (source_approval_item_id) WHERE source_approval_item_id IS NOT NULL DO NOTHING
-RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments
+RETURNING id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments, historical_id, historical_metadata
 `
 
 type InsertOutboundMessageParams struct {
@@ -414,6 +423,8 @@ func (q *Queries) InsertOutboundMessage(ctx context.Context, arg InsertOutboundM
 		&i.ConnectorID,
 		&i.ExternalID,
 		&i.DroppedAttachments,
+		&i.HistoricalID,
+		&i.HistoricalMetadata,
 	)
 	return i, err
 }
@@ -507,7 +518,7 @@ func (q *Queries) ListAssignableMembers(ctx context.Context, arg ListAssignableM
 }
 
 const listAttachmentsForMessages = `-- name: ListAttachmentsForMessages :many
-SELECT id, ticket_message_id, business_id, tenant_root_id, blob_key, filename, content_type, size, created_at FROM attachment
+SELECT id, ticket_message_id, business_id, tenant_root_id, blob_key, filename, content_type, size, created_at, staff_only, historical_id FROM attachment
 WHERE business_id = $1 AND ticket_message_id = ANY($2::uuid[])
 ORDER BY ticket_message_id, created_at ASC, id ASC
 `
@@ -538,6 +549,8 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, arg ListAttach
 			&i.ContentType,
 			&i.Size,
 			&i.CreatedAt,
+			&i.StaffOnly,
+			&i.HistoricalID,
 		); err != nil {
 			return nil, err
 		}
@@ -551,7 +564,7 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, arg ListAttach
 
 const listMessages = `-- name: ListMessages :many
 
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments, historical_id, historical_metadata FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
 ORDER BY created_at ASC, id ASC
@@ -599,6 +612,8 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 			&i.ConnectorID,
 			&i.ExternalID,
 			&i.DroppedAttachments,
+			&i.HistoricalID,
+			&i.HistoricalMetadata,
 		); err != nil {
 			return nil, err
 		}
@@ -611,7 +626,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]T
 }
 
 const listMessagesAfter = `-- name: ListMessagesAfter :many
-SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments FROM ticket_message
+SELECT id, ticket_id, business_id, tenant_root_id, direction, author_principal_id, message_id, in_reply_to, "references", body_text, body_html, auth_results, is_auto_reply, created_at, delivery_state, delivery_error, source_approval_item_id, connector_id, external_id, dropped_attachments, historical_id, historical_metadata FROM ticket_message
 WHERE ticket_message.ticket_id = $1 AND ticket_message.business_id = $2
   AND EXISTS (SELECT 1 FROM ticket t WHERE t.id = ticket_message.ticket_id AND t.redacted_at IS NULL)
   AND (ticket_message.created_at, ticket_message.id) > ($3::timestamptz, $4::uuid)
@@ -664,6 +679,8 @@ func (q *Queries) ListMessagesAfter(ctx context.Context, arg ListMessagesAfterPa
 			&i.ConnectorID,
 			&i.ExternalID,
 			&i.DroppedAttachments,
+			&i.HistoricalID,
+			&i.HistoricalMetadata,
 		); err != nil {
 			return nil, err
 		}
@@ -852,7 +869,7 @@ const listTickets = `-- name: ListTickets :many
 
 
 SELECT
-  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url,
+  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url, t.historical_source, t.historical_id, t.historical_hash, t.historical_metadata,
   r.ticket_id, r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
   COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
             FROM ticket_tag tt
@@ -942,6 +959,10 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.Ticket.ConnectorID,
 			&i.Ticket.ExternalID,
 			&i.Ticket.ExternalUrl,
+			&i.Ticket.HistoricalSource,
+			&i.Ticket.HistoricalID,
+			&i.Ticket.HistoricalHash,
+			&i.Ticket.HistoricalMetadata,
 			&i.TicketRequesterContext.TicketID,
 			&i.TicketRequesterContext.ID,
 			&i.TicketRequesterContext.BusinessID,
@@ -968,7 +989,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 
 const listTicketsAfter = `-- name: ListTicketsAfter :many
 SELECT
-  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url,
+  t.id, t.business_id, t.tenant_root_id, t.requester_id, t.subject, t.status, t.priority, t.assignee_principal_id, t.reply_token, t.last_message_at, t.redacted_at, t.created_at, t.updated_at, t.connector_id, t.external_id, t.external_url, t.historical_source, t.historical_id, t.historical_hash, t.historical_metadata,
   r.ticket_id, r.id, r.business_id, r.tenant_root_id, r.email, r.display_name, r.contact_id, r.first_seen_at, r.last_seen_at, r.created_at, r.updated_at,
   COALESCE((SELECT array_agg(tt.tag::text ORDER BY tt.tag)
             FROM ticket_tag tt
@@ -1051,6 +1072,10 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 			&i.Ticket.ConnectorID,
 			&i.Ticket.ExternalID,
 			&i.Ticket.ExternalUrl,
+			&i.Ticket.HistoricalSource,
+			&i.Ticket.HistoricalID,
+			&i.Ticket.HistoricalHash,
+			&i.Ticket.HistoricalMetadata,
 			&i.TicketRequesterContext.TicketID,
 			&i.TicketRequesterContext.ID,
 			&i.TicketRequesterContext.BusinessID,
@@ -1078,7 +1103,8 @@ func (q *Queries) ListTicketsAfter(ctx context.Context, arg ListTicketsAfterPara
 const redactTicket = `-- name: RedactTicket :one
 
 UPDATE ticket
-SET subject = '', redacted_at = now(), updated_at = now()
+SET subject = '', redacted_at = now(), updated_at = now(),
+    historical_metadata = NULL, historical_hash = NULL
 WHERE id = $1 AND business_id = $2 AND redacted_at IS NULL
 RETURNING tenant_root_id, redacted_at
 `

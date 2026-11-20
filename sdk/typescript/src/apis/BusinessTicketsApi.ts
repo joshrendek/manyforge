@@ -39,6 +39,15 @@ export interface BusinessTicketsDeleteParams {
 }
 
 
+export interface BusinessTicketsDownloadAttachmentParams {
+
+    tid: string;
+
+    aid: string;
+
+}
+
+
 export interface BusinessTicketsGetParams {
 
     tid: string;
@@ -117,6 +126,22 @@ export class BusinessTicketsApi extends Resource {
             response: 'empty',
             responseSchema: {},
             decode: (text: string) => undefined,
+        }, options);
+    }
+    downloadAttachment(params: BusinessTicketsDownloadAttachmentParams, options?: RequestOptions): Promise<ByteStream> {
+        return this.transport.request({
+            operationId: 'TicketsDownloadAttachment',
+            method: 'GET',
+            path: '/api/v1/businesses/{id}/tickets/{tid}/attachments/{aid}',
+            pathParams: { ...this.scope, 'tid': String(params.tid), 'aid': String(params.aid),  },
+            query: [],
+            headers: {  },
+            authenticated: true,
+            audience: 'management',
+
+            response: 'stream',
+            responseSchema: {"format":"binary","type":"string"},
+            decode: (text: string) => { throw new TypeError('Streaming responses must not be JSON-decoded'); },
         }, options);
     }
     get(params: BusinessTicketsGetParams, options?: RequestOptions): Promise<Ticket> {

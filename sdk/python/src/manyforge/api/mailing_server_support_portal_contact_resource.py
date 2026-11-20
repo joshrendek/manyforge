@@ -16,7 +16,7 @@ from collections.abc import Iterator, AsyncIterator, Mapping
 from pydantic import TypeAdapter, StrictBool, StrictBytes, StrictFloat, StrictInt, StrictStr
 from manyforge.model_support import JsonValue, UNSET, UnsetType
 from manyforge.transport import (SyncTransport, AsyncTransport, Request, RequestOptions, QueryParameter, Upload, ByteStream, AsyncByteStream, PaginationError)
-from pydantic import Field, field_validator
+from pydantic import Field, StrictStr, field_validator
 from typing import Optional
 from typing_extensions import Annotated
 from manyforge.models.send_support_portal_verification200_response import SendSupportPortalVerification200Response

@@ -41,6 +41,7 @@ class TicketMessage(Model):
     dkim_result: DnsRecordState = Field(..., alias="dkim_result")
     dmarc_result: DnsRecordState = Field(..., alias="dmarc_result")
     dropped_attachments: List[DroppedAttachment] | UnsetType = Field(default=UNSET, alias="dropped_attachments")
+    historical_author_name: str | UnsetType = Field(default=UNSET, alias="historical_author_name")
     id: UUID = Field(..., alias="id")
     in_reply_to: str | None = Field(..., alias="in_reply_to")
     message_id: str | None = Field(..., alias="message_id")

@@ -46,6 +46,12 @@ export interface Attachment {
   blob_key: string;
 }
 
+export interface AttachmentInput {
+  filename: string;
+  /** Standard base64 encoded file bytes. */
+  content: string;
+}
+
 // Ticket embeds the full Requester inline. Does NOT expose reply_token (DB-only).
 export interface Ticket {
   id: string;
@@ -87,6 +93,7 @@ export interface TicketMessage {
   references: string[];
   // Member who authored an outbound reply or note; null for inbound.
   author_principal_id: string | null;
+  historical_author_name?: string;
   body_text: string | null;
   body_html: string | null;
   attachments: Attachment[];
@@ -332,11 +339,18 @@ export class TicketService {
   reply(
     businessId: string,
     ticketId: string,
-    body: { body_text: string; body_html?: string },
+    body: { body_text: string; body_html?: string; attachments?: AttachmentInput[] },
   ): Observable<TicketMessage> {
     return this.http.post<TicketMessage>(
       `/api/v1/businesses/${businessId}/tickets/${ticketId}/reply`,
       body,
+    );
+  }
+
+  downloadAttachment(businessId: string, ticketId: string, attachmentId: string): Observable<Blob> {
+    return this.http.get(
+      `/api/v1/businesses/${businessId}/tickets/${ticketId}/attachments/${attachmentId}`,
+      { responseType: 'blob' },
     );
   }
 

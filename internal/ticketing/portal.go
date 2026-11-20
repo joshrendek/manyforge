@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/manyforge/manyforge/internal/platform/blob"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/errs"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
@@ -38,6 +40,7 @@ type PortalSupportMailer interface {
 
 type PortalService struct {
 	DB            *db.DB
+	Blob          blob.StreamingStore
 	Resolve       httpx.PermissionResolver
 	Mailer        PortalSupportMailer
 	ReplyTokenKey []byte
@@ -51,16 +54,18 @@ type PortalScope struct {
 	PrincipalID  uuid.UUID
 	ExternalID   string
 	DisplayName  string
+	namespace    string
 	token        string
 }
 
 type PortalKey struct {
-	ID        uuid.UUID  `json:"id"`
-	Label     string     `json:"label"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
-	Token     string     `json:"token,omitempty"`
+	ID                uuid.UUID  `json:"id"`
+	Label             string     `json:"label"`
+	IdentityNamespace string     `json:"identity_namespace"`
+	CreatedAt         time.Time  `json:"created_at"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	Token             string     `json:"token,omitempty"`
 }
 
 type PortalContact struct {
@@ -76,13 +81,30 @@ func portalUUID(v string) (uuid.UUID, error) {
 	return id, nil
 }
 
+const legacyPortalNamespace = "tph"
+
+var (
+	portalNamespacePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+	portalSubjectPattern   = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
+)
+
+func legacyPortalIdentity(external string) bool {
+	subject, ok := strings.CutPrefix(external, legacyPortalNamespace+":")
+	if !ok {
+		return false
+	}
+	_, err := portalUUID(subject)
+	return err == nil
+}
+
 func portalIdentity(external, name string) bool {
-	if len(external) != 40 || !strings.HasPrefix(external, "tph:") {
+	if len(external) > 128 || (!portalSubjectPattern.MatchString(external) && !legacyPortalIdentity(external)) {
 		return false
 	}
-	if _, err := portalUUID(strings.TrimPrefix(external, "tph:")); err != nil {
-		return false
-	}
+	return validPortalDisplayName(name)
+}
+
+func validPortalDisplayName(name string) bool {
 	if len(name) > 400 || !utf8.ValidString(name) || utf8.RuneCountInString(name) > 100 {
 		return false
 	}
@@ -92,6 +114,18 @@ func portalIdentity(external, name string) bool {
 		}
 	}
 	return true
+}
+
+// portalExternalID derives the ownership key only after resolving the bearer.
+// Integrations cannot claim a namespace through the customer ID header.
+func portalExternalID(namespace, subject string) (string, bool) {
+	if namespace == legacyPortalNamespace {
+		return subject, legacyPortalIdentity(subject)
+	}
+	if !portalNamespacePattern.MatchString(namespace) || !portalSubjectPattern.MatchString(subject) {
+		return "", false
+	}
+	return namespace + ":" + subject, true
 }
 
 func (s *PortalService) allowed(ctx context.Context, tx pgx.Tx, pid, bid uuid.UUID, owner bool) error {
@@ -129,6 +163,14 @@ func (s *PortalService) allowed(ctx context.Context, tx pgx.Tx, pid, bid uuid.UU
 }
 
 func (s *PortalService) CreateKey(ctx context.Context, pid, bid uuid.UUID, label string, days int) (PortalKey, error) {
+	return s.CreateKeyForNamespace(ctx, pid, bid, label, days, legacyPortalNamespace)
+}
+
+// CreateKeyForNamespace establishes a credential in a stable business identity namespace.
+func (s *PortalService) CreateKeyForNamespace(ctx context.Context, pid, bid uuid.UUID, label string, days int, namespace string) (PortalKey, error) {
+	if !portalNamespacePattern.MatchString(namespace) {
+		return PortalKey{}, ErrPortalInvalid
+	}
 	label = strings.TrimSpace(label)
 	if label == "" || utf8.RuneCountInString(label) > 100 || len(label) > 400 {
 		return PortalKey{}, ErrPortalInvalid
@@ -150,7 +192,7 @@ func (s *PortalService) CreateKey(ctx context.Context, pid, bid uuid.UUID, label
 	}
 	raw := "mfsp_" + base64.RawURLEncoding.EncodeToString(entropy[:])
 	hash := sha256.Sum256([]byte(raw))
-	out := PortalKey{ID: uuid.New(), Label: label}
+	out := PortalKey{ID: uuid.New(), Label: label, IdentityNamespace: namespace}
 	err := s.DB.WithPrincipal(ctx, pid, func(tx pgx.Tx) error {
 		if err := s.allowed(ctx, tx, pid, bid, true); err != nil {
 			return err
@@ -166,7 +208,7 @@ func (s *PortalService) CreateKey(ctx context.Context, pid, bid uuid.UUID, label
 		if count >= 10 || total >= 100 {
 			return ErrPortalConflict
 		}
-		if err := tx.QueryRow(ctx, `INSERT INTO support_portal_key(id,business_id,tenant_root_id,creator_principal_id,label,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+make_interval(days=>$7)) RETURNING created_at,expires_at`, out.ID, bid, root, pid, label, hash[:], days).Scan(&out.CreatedAt, &out.ExpiresAt); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO support_portal_key(id,business_id,tenant_root_id,creator_principal_id,label,token_hash,expires_at,identity_namespace) VALUES($1,$2,$3,$4,$5,$6,now()+make_interval(days=>$7),$8) RETURNING created_at,expires_at`, out.ID, bid, root, pid, label, hash[:], days, namespace).Scan(&out.CreatedAt, &out.ExpiresAt); err != nil {
 			return err
 		}
 		return portalAudit(ctx, tx, pid, bid, root, "support.portal_key.created", out.ID)
@@ -183,14 +225,14 @@ func (s *PortalService) ListKeys(ctx context.Context, pid, bid uuid.UUID) ([]Por
 		if err := s.allowed(ctx, tx, pid, bid, true); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT id,label,created_at,expires_at,revoked_at FROM support_portal_key WHERE business_id=$1 ORDER BY created_at DESC LIMIT 100`, bid)
+		rows, err := tx.Query(ctx, `SELECT id,label,created_at,expires_at,revoked_at,identity_namespace FROM support_portal_key WHERE business_id=$1 ORDER BY created_at DESC LIMIT 100`, bid)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var k PortalKey
-			if err := rows.Scan(&k.ID, &k.Label, &k.CreatedAt, &k.ExpiresAt, &k.RevokedAt); err != nil {
+			if err := rows.Scan(&k.ID, &k.Label, &k.CreatedAt, &k.ExpiresAt, &k.RevokedAt, &k.IdentityNamespace); err != nil {
 				return err
 			}
 			out = append(out, k)
@@ -223,14 +265,18 @@ func (s *PortalService) Authenticate(ctx context.Context, raw, external, name st
 		return out, ErrPortalUnauthorized
 	}
 	hash := sha256.Sum256([]byte(raw))
-	err = s.DB.Pool().QueryRow(ctx, `SELECT id,business_id,tenant_root_id,creator_principal_id FROM resolve_support_portal_key($1)`, hash[:]).Scan(&out.KeyID, &out.BusinessID, &out.TenantRootID, &out.PrincipalID)
+	err = s.DB.Pool().QueryRow(ctx, `SELECT id,business_id,tenant_root_id,creator_principal_id,identity_namespace FROM resolve_support_portal_identity_key($1)`, hash[:]).Scan(&out.KeyID, &out.BusinessID, &out.TenantRootID, &out.PrincipalID, &out.namespace)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PortalScope{}, ErrPortalUnauthorized
 		}
 		return PortalScope{}, ErrPortalUnavailable
 	}
-	out.ExternalID = external
+	canonical, ok := portalExternalID(out.namespace, external)
+	if !ok {
+		return PortalScope{}, ErrPortalUnauthorized
+	}
+	out.ExternalID = canonical
 	out.DisplayName = name
 	out.token = raw
 	err = s.withScope(ctx, out, func(pgx.Tx) error { return nil })
@@ -238,7 +284,12 @@ func (s *PortalService) Authenticate(ctx context.Context, raw, external, name st
 }
 
 func (s *PortalService) withScope(ctx context.Context, p PortalScope, fn func(pgx.Tx) error) error {
-	if p.token == "" || !portalIdentity(p.ExternalID, p.DisplayName) {
+	subject := p.ExternalID
+	if p.namespace != legacyPortalNamespace {
+		subject = strings.TrimPrefix(subject, p.namespace+":")
+	}
+	canonical, ok := portalExternalID(p.namespace, subject)
+	if p.token == "" || !ok || canonical != p.ExternalID || !validPortalDisplayName(p.DisplayName) {
 		return ErrPortalUnauthorized
 	}
 	return s.DB.WithPrincipal(ctx, p.PrincipalID, func(tx pgx.Tx) error {
@@ -251,7 +302,7 @@ func (s *PortalService) withScope(ctx context.Context, p PortalScope, fn func(pg
 		var ok bool
 		hash := sha256.Sum256([]byte(p.token))
 		// Lock the credential through commit: revocation cannot race an accepted write.
-		err := tx.QueryRow(ctx, `SELECT true FROM support_portal_key WHERE id=$1 AND business_id=$2 AND tenant_root_id=$3 AND creator_principal_id=$4 AND token_hash=$5 AND revoked_at IS NULL AND expires_at>now() FOR SHARE`, p.KeyID, p.BusinessID, p.TenantRootID, p.PrincipalID, hash[:]).Scan(&ok)
+		err := tx.QueryRow(ctx, `SELECT true FROM support_portal_key WHERE id=$1 AND business_id=$2 AND tenant_root_id=$3 AND creator_principal_id=$4 AND token_hash=$5 AND identity_namespace=$6 AND revoked_at IS NULL AND expires_at>now() FOR SHARE`, p.KeyID, p.BusinessID, p.TenantRootID, p.PrincipalID, hash[:], p.namespace).Scan(&ok)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPortalUnauthorized
 		}

@@ -15,6 +15,8 @@ import (
 
 	"net/url"
 	"strings"
+
+	"io"
 )
 
 type MailingServerSupportPortalTicketsResource struct {
@@ -42,6 +44,28 @@ func (r *MailingServerSupportPortalTicketsResource) Create(ctx context.Context, 
 	var result CreateSupportPortalTicket201Response
 	err := r.transport.Do(ctx, request, &result, options...)
 	return result, err
+
+}
+
+type MailingServerSupportPortalTicketsDownloadAttachmentParams struct {
+	Authorization   string
+	XMFExternalUser string
+	XMFExternalName Optional[string]
+}
+
+// DownloadAttachment invokes downloadSupportPortalAttachment.
+func (r *MailingServerSupportPortalTicketsResource) DownloadAttachment(ctx context.Context, ticketID string, attachmentID string, params MailingServerSupportPortalTicketsDownloadAttachmentParams, options ...RequestOption) (io.ReadCloser, error) {
+	path := "/api/v1/support/portal/tickets/{ticketID}/attachments/{attachmentID}"
+	path = strings.ReplaceAll(path, "{"+"ticketID"+"}", url.PathEscape(fmt.Sprint(ticketID)))
+	path = strings.ReplaceAll(path, "{"+"attachmentID"+"}", url.PathEscape(fmt.Sprint(attachmentID)))
+	request := Request{OperationID: "downloadSupportPortalAttachment", Method: "GET", Path: path, Query: url.Values{}, Headers: map[string]string{}, Authenticated: false, Audience: "server", Signing: "", BodyKey: ""}
+	request.Headers["Authorization"] = fmt.Sprint(params.Authorization)
+	request.Headers["X-MF-External-User"] = fmt.Sprint(params.XMFExternalUser)
+
+	if value, ok := params.XMFExternalName.Get(); ok {
+		request.Headers["X-MF-External-Name"] = fmt.Sprint(value)
+	}
+	return r.transport.OpenStream(ctx, request, options...)
 
 }
 

@@ -75,6 +75,17 @@ func (r *Resend) Send(ctx context.Context, mail notify.Mail) (SendResult, error)
 	if mail.ReplyTo != "" {
 		payload["reply_to"] = mail.ReplyTo
 	}
+	if len(mail.Attachments) != 0 {
+		type attachment struct {
+			Filename string `json:"filename"`
+			Content  []byte `json:"content"`
+		}
+		files := make([]attachment, 0, len(mail.Attachments))
+		for _, file := range mail.Attachments {
+			files = append(files, attachment{Filename: file.Filename, Content: file.Content})
+		}
+		payload["attachments"] = files
+	}
 	headers := make(map[string]string, len(mail.ExtraHeaders)+4)
 	for key, value := range mail.ExtraHeaders {
 		headers[key] = value

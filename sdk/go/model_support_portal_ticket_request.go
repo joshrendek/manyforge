@@ -10,9 +10,10 @@ API version: 1.0.0
 package manyforge
 
 type SupportPortalTicketRequest struct {
-	Body           string `json:"body"`
-	IdempotencyKey string `json:"idempotency_key"`
-	Subject        string `json:"subject"`
+	Attachments    Optional[[]SupportAttachmentInput] `json:"attachments,omitzero"`
+	Body           string                             `json:"body"`
+	IdempotencyKey string                             `json:"idempotency_key"`
+	Subject        string                             `json:"subject"`
 }
 
 // NewSupportPortalTicketRequest assigns only the supplied required fields, never schema defaults.
@@ -29,7 +30,7 @@ func (o *SupportPortalTicketRequest) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "body", "idempotency_key", "subject"); err != nil {
+	if err := nonNullFields(fields, "attachments", "body", "idempotency_key", "subject"); err != nil {
 		return err
 	}
 	type plain SupportPortalTicketRequest

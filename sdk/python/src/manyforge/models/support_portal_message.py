@@ -18,13 +18,15 @@ from manyforge.model_support import Model, OpenEnum, JsonValue, UNSET, UnsetType
 
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
+from manyforge.models.support_portal_attachment import SupportPortalAttachment
 from manyforge.models.support_portal_message_properties_direction_enum import SupportPortalMessagePropertiesDirectionEnum
 
 
 class SupportPortalMessage(Model):
     """SupportPortalMessage wire model. Unspecified fields are never sent."""
+    attachments: List[SupportPortalAttachment] | UnsetType = Field(default=UNSET, alias="attachments")
     body: str = Field(..., alias="body")
     created_at: datetime = Field(..., alias="created_at")
     direction: SupportPortalMessagePropertiesDirectionEnum = Field(..., alias="direction")

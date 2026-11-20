@@ -27,16 +27,26 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.manyforge.sdk.models.SupportAttachmentInput;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 
 
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "body", "idempotency_key", "subject" })
-@com.manyforge.sdk.ModelShape(required = { "body", "idempotency_key", "subject",  }, nonNullable = { "body", "idempotency_key", "subject",  })
+@JsonPropertyOrder({ "attachments", "body", "idempotency_key", "subject" })
+@com.manyforge.sdk.ModelShape(required = { "body", "idempotency_key", "subject",  }, nonNullable = { "attachments", "body", "idempotency_key", "subject",  })
 public class SupportPortalTicketRequest {
+
+  @JsonProperty("attachments")
+  private JsonNullable<List<SupportAttachmentInput>> attachments = JsonNullable.undefined();
+
+  public List<SupportAttachmentInput> getAttachments() { return attachments.orElse(null); }
+  public JsonNullable<List<SupportAttachmentInput>> attachmentsPresence() { return attachments; }
+  public SupportPortalTicketRequest attachments(List<SupportAttachmentInput> value) { this.attachments = JsonNullable.of(value); return this; }
 
   @JsonProperty("body")
   private JsonNullable<String> body = JsonNullable.undefined();
@@ -61,6 +71,7 @@ public class SupportPortalTicketRequest {
   public static Builder builder() { return new Builder(); }
   public static final class Builder {
     private final SupportPortalTicketRequest value = new SupportPortalTicketRequest();
+    public Builder attachments(List<SupportAttachmentInput> field) { value.attachments(field); return this; }
     public Builder body(String field) { value.body(field); return this; }
     public Builder idempotencyKey(UUID field) { value.idempotencyKey(field); return this; }
     public Builder subject(String field) { value.subject(field); return this; }

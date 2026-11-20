@@ -34,8 +34,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^tph:[0-9a-f-]{36}$
-          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -111,8 +110,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^tph:[0-9a-f-]{36}$
-          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -205,8 +203,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^tph:[0-9a-f-]{36}$
-          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -299,8 +296,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^tph:[0-9a-f-]{36}$
-          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -383,8 +379,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^tph:[0-9a-f-]{36}$
-          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -471,8 +466,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^tph:[0-9a-f-]{36}$
-          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -560,8 +554,7 @@ paths:
         required: true
         schema:
           type: string
-          pattern: ^tph:[0-9a-f-]{36}$
-          description: Immutable customer UUID supplied only by the authenticated integrating backend.
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
       - name: X-MF-External-Name
         in: header
         required: false
@@ -632,6 +625,60 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SupportPortalMessageRequest'
+  /api/v1/support/portal/tickets/{ticketID}/attachments/{attachmentID}:
+    get:
+      operationId: downloadSupportPortalAttachment
+      summary: Download a public attachment from a ticket owned by this customer.
+      security: []
+      tags:
+      - SupportPortalTickets
+      x-manyforge-audience: server
+      x-manyforge-resource: support.portal.tickets
+      x-manyforge-method: downloadAttachment
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^Bearer mfsp_[A-Za-z0-9_-]{43}$
+          description: Server-only business portal bearer; never expose to browsers.
+      - name: X-MF-External-User
+        in: header
+        required: true
+        schema:
+          type: string
+          description: Stable opaque customer ID supplied by the authenticated backend. Namespaced keys accept 1–128 ASCII letters, digits, dots, underscores, tildes, or hyphens. Legacy keys require the existing prefixed UUID format.
+      - name: X-MF-External-Name
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+        description: Display name, never authority.
+      - name: ticketID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/SupportAttachmentDownload'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/SupportCRMNotFound'
+        '429':
+          $ref: '#/components/responses/SupportCRMRateLimited'
+        '503':
+          $ref: '#/components/responses/SupportAttachmentUnavailable'
   /api/v1/businesses/{id}/support/portal-keys:
     get:
       operationId: listSupportPortalKeys
@@ -1337,6 +1384,35 @@ paths:
       x-manyforge-method: delete
       operationId: TicketsDelete
       x-manyforge-business-param: id
+  /api/v1/businesses/{id}/tickets/{tid}/attachments/{aid}:
+    parameters:
+    - $ref: '#/components/parameters/id'
+    - $ref: '#/components/parameters/tid'
+    get:
+      operationId: TicketsDownloadAttachment
+      summary: Download a ticket attachment. Requires tickets.read.
+      tags:
+      - Tickets
+      x-manyforge-audience: management
+      x-manyforge-resource: tickets
+      x-manyforge-method: downloadAttachment
+      x-manyforge-business-param: id
+      parameters:
+      - name: aid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/SupportAttachmentDownload'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/SupportCRMNotFound'
+        '503':
+          $ref: '#/components/responses/SupportAttachmentUnavailable'
   /api/v1/businesses/{id}/tickets/{tid}/reply:
     parameters:
     - $ref: '#/components/parameters/id'
@@ -1399,7 +1475,7 @@ paths:
               schema:
                 type: string
         '503':
-          description: Tenant maintenance is in progress; request cannot proceed.
+          description: Attachment storage is unavailable or tenant maintenance is in progress.
           content:
             application/json:
               schema:
@@ -1410,7 +1486,7 @@ paths:
               schema:
                 type: string
         '413':
-          description: JSON request body exceeds the 1 MiB handler limit.
+          description: JSON request body exceeds the handler limit, including base64-encoded attachments.
           content:
             application/json:
               schema:
@@ -14926,7 +15002,49 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    SupportAttachmentDownload:
+      description: Attachment bytes. The response forces a download and is private and uncached.
+      headers:
+        Content-Disposition:
+          schema:
+            type: string
+      content:
+        application/octet-stream:
+          schema:
+            type: string
+            format: binary
+    SupportAttachmentUnavailable:
+      description: Attachment storage unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
+    SupportAttachmentInput:
+      type: object
+      properties:
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        content:
+          type: string
+          description: Standard base64 encoded file bytes.
+      required: [filename, content]
+    SupportPortalAttachment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        content_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+      required: [id, filename, content_type, size]
     SupportPortalContact:
       type: object
       properties:
@@ -14964,6 +15082,10 @@ components:
     SupportPortalMessage:
       type: object
       properties:
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportPortalAttachment'
         id:
           type: string
           format: uuid
@@ -14988,6 +15110,10 @@ components:
         id:
           type: string
           format: uuid
+        identity_namespace:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,31}$'
+          description: Stable identity namespace within the business. Credentials in the same namespace share customer IDs.
         label:
           type: string
           maxLength: 100
@@ -15028,6 +15154,12 @@ components:
     SupportPortalTicketRequest:
       type: object
       properties:
+        attachments:
+          type: array
+          maxItems: 10
+          description: Up to 10 MiB of decoded content in total. Content type is detected from the bytes.
+          items:
+            $ref: '#/components/schemas/SupportAttachmentInput'
         subject:
           type: string
           minLength: 1
@@ -15048,6 +15180,12 @@ components:
     SupportPortalMessageRequest:
       type: object
       properties:
+        attachments:
+          type: array
+          maxItems: 10
+          description: Up to 10 MiB of decoded content in total. Content type is detected from the bytes.
+          items:
+            $ref: '#/components/schemas/SupportAttachmentInput'
         body:
           type: string
           minLength: 1
@@ -15063,6 +15201,10 @@ components:
     SupportPortalKeyRequest:
       type: object
       properties:
+        identity_namespace:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,31}$'
+          description: Stable identity namespace within the business. Credentials in the same namespace share customer IDs. Omit on creation to retain the legacy identity format.
         label:
           type: string
           minLength: 1
@@ -21221,6 +21363,12 @@ components:
       required:
       - body_text
       properties:
+        attachments:
+          type: array
+          maxItems: 10
+          description: Up to 10 MiB of decoded content in total. Content type is detected from the bytes.
+          items:
+            $ref: '#/components/schemas/SupportAttachmentInput'
         body_text:
           type: string
           minLength: 1
@@ -23605,8 +23753,11 @@ components:
         author_principal_id:
           type: string
           format: uuid
-          description: member who authored an outbound reply or note; null for inbound
+          description: Member who authored an outbound reply or note. Null for inbound and historical messages.
           nullable: true
+        historical_author_name:
+          type: string
+          description: Display name recorded for the author of a historical message.
         body_text:
           type: string
           nullable: true
@@ -23643,7 +23794,7 @@ components:
           - sent
           - failed
           - null
-          description: outbound delivery lifecycle; null for inbound/note
+          description: Outbound delivery lifecycle. Null for inbound, notes, and historical messages.
           nullable: true
         created_at:
           type: string

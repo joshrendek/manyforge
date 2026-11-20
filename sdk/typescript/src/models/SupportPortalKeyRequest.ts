@@ -17,6 +17,7 @@ import { convertModel, type JsonValue } from '../model-support.js';
 
 export interface SupportPortalKeyRequest {
     expiresInDays?: number;
+    identityNamespace?: string;
     label: string;
 }
 

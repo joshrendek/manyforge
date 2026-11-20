@@ -33,8 +33,8 @@ import java.util.Arrays;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
-@JsonPropertyOrder({ "expires_in_days", "label" })
-@com.manyforge.sdk.ModelShape(required = { "label",  }, nonNullable = { "expires_in_days", "label",  })
+@JsonPropertyOrder({ "expires_in_days", "identity_namespace", "label" })
+@com.manyforge.sdk.ModelShape(required = { "label",  }, nonNullable = { "expires_in_days", "identity_namespace", "label",  })
 public class SupportPortalKeyRequest {
 
   @JsonProperty("expires_in_days")
@@ -43,6 +43,13 @@ public class SupportPortalKeyRequest {
   public Integer getExpiresInDays() { return expiresInDays.orElse(null); }
   public JsonNullable<Integer> expiresInDaysPresence() { return expiresInDays; }
   public SupportPortalKeyRequest expiresInDays(Integer value) { this.expiresInDays = JsonNullable.of(value); return this; }
+
+  @JsonProperty("identity_namespace")
+  private JsonNullable<String> identityNamespace = JsonNullable.undefined();
+
+  public String getIdentityNamespace() { return identityNamespace.orElse(null); }
+  public JsonNullable<String> identityNamespacePresence() { return identityNamespace; }
+  public SupportPortalKeyRequest identityNamespace(String value) { this.identityNamespace = JsonNullable.of(value); return this; }
 
   @JsonProperty("label")
   private JsonNullable<String> label = JsonNullable.undefined();
@@ -54,6 +61,7 @@ public class SupportPortalKeyRequest {
   public static final class Builder {
     private final SupportPortalKeyRequest value = new SupportPortalKeyRequest();
     public Builder expiresInDays(Integer field) { value.expiresInDays(field); return this; }
+    public Builder identityNamespace(String field) { value.identityNamespace(field); return this; }
     public Builder label(String field) { value.label(field); return this; }
     public SupportPortalKeyRequest build() { return value; }
   }

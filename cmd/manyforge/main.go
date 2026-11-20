@@ -110,6 +110,14 @@ func main() {
 		return
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "import-support-ticket" {
+		if err := importSupportTicket(cfg, os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			logger.Error("historical support import", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Serve-only requirements (the migrate Job above does not carry them).
 	if err := cfg.ValidateServe(); err != nil {
 		logger.Error("load config", "err", err)
@@ -670,7 +678,7 @@ func main() {
 	// file://|s3:// bucket; empty (dev) leaves the store nil — NewService tolerates
 	// a nil store by emitting no attachment rows (each part is recorded as a dropped
 	// attachment instead), so nothing references a blob that is never written.
-	var blobStore blob.Store
+	var blobStore blob.StreamingStore
 	if cfg.BlobURL != "" {
 		b, err := blob.Open(ctx, cfg.BlobURL)
 		if err != nil {
@@ -683,6 +691,7 @@ func main() {
 		logger.Warn("MANYFORGE_BLOB_URL unset; inbound attachments disabled")
 	}
 	tenSvc.Blob = blobStore
+	ticketSvc.Blob = blobStore
 	// mailingSvc is nil when the mailing master key is unset; the brand logo
 	// endpoints are unreachable in that mode so there is nothing to wire.
 	if mailingSvc != nil {
@@ -785,7 +794,7 @@ func main() {
 	// SMTP retains per-business custom DKIM identities. API transports use their
 	// configured verified From identity while retaining the support Reply-To token.
 	sendSub := notify.SendSubscriber{
-		Sender: sharedMail.Sender, Logger: logger, Metrics: metrics,
+		Sender: sharedMail.Sender, Logger: logger, Metrics: metrics, Blob: blobStore,
 		Suppression: notify.DBSuppression{DB: database},
 	}
 	// Spec 017: replies for a business with a Resend support identity go through
@@ -856,7 +865,7 @@ func main() {
 	// a spoofed X-Forwarded-For cannot evade it.
 	trusted := parseTrustedCIDRs(cfg.TrustedProxyCIDR, logger)
 	portalSvc := &ticketing.PortalService{
-		DB: database, Resolve: permResolve,
+		DB: database, Resolve: permResolve, Blob: blobStore,
 		ReplyTokenKey: cfg.InboundReplyTokenSecret, SystemDomain: cfg.InboundSystemDomain,
 	}
 	if mailingSvc != nil {

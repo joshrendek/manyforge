@@ -4,6 +4,8 @@ import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import {
+  Attachment,
+  AttachmentInput,
   AssignableMember,
   PatchTicket,
   Ticket,
@@ -109,6 +111,9 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                     }
                   }
                 </span>
+                @if (m.historical_author_name) {
+                  <span>{{ m.historical_author_name }}</span>
+                }
                 <span class="when">{{ m.created_at | date: 'medium' }}</span>
               </div>
 
@@ -124,7 +129,11 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
                 <ul class="attachments" data-testid="message-attachments">
                   @for (a of m.attachments; track a.id) {
                     <li class="attachment" data-testid="attachment">
-                      <span class="filename">{{ a.filename }}</span>
+                      <button
+                        type="button"
+                        class="mf-btn mf-btn-ghost mf-btn-sm filename"
+                        (click)="downloadAttachment(a)"
+                      >{{ a.filename || 'Download attachment' }}</button>
                       <span class="muted">{{ a.content_type }} · {{ bytes(a.size) }}</span>
                     </li>
                   }
@@ -212,6 +221,27 @@ import { TagChipInput } from '../../ui/tag-chip-input/tag-chip-input';
             [disabled]="sending()"
             rows="4"
           ></textarea>
+          @if (!noteMode()) {
+            <div class="mf-field">
+              <label for="support-reply-files">Attachments</label>
+              <input
+                id="support-reply-files"
+                type="file"
+                multiple
+                [disabled]="sending()"
+                (change)="selectAttachments($event)"
+              />
+              @if (replyFiles().length) {
+                <span class="muted">{{ replyFileNames() }}</span>
+                <button
+                  type="button"
+                  class="mf-btn mf-btn-ghost mf-btn-sm"
+                  [disabled]="sending()"
+                  (click)="replyFiles.set([])"
+                >Clear attachments</button>
+              }
+            </div>
+          }
           @if (sendError()) {
             <p class="mf-err" data-testid="composer-error">{{ sendError() }}</p>
           }
@@ -721,6 +751,8 @@ export class ThreadViewComponent implements OnInit {
   // Composer state (US2)
   noteMode = signal(false);
   composerText = '';
+  replyFiles = signal<File[]>([]);
+  readonly replyFileNames = () => this.replyFiles().map((file) => file.name).join(', ');
   sending = signal(false);
   sendError = signal('');
 
@@ -748,11 +780,11 @@ export class ThreadViewComponent implements OnInit {
   members = signal<AssignableMember[]>([]);
 
   messageInitials(message: TicketMessage): string {
-    const name = message.direction === 'inbound'
+    const name = message.historical_author_name || (message.direction === 'inbound'
       ? this.ticket()?.requester.display_name || this.ticket()?.requester.email || ''
       : this.members().find((member) => member.id === message.author_principal_id)?.display_name
         || (message.author_principal_id === this.profile()?.id ? this.profile()?.display_name : '')
-        || 'Team';
+        || 'Team');
     return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   }
 
@@ -834,24 +866,78 @@ export class ThreadViewComponent implements OnInit {
   }
 
   // Submit reply or note from the composer (US2).
-  submitComposer(): void {
+  async submitComposer(): Promise<void> {
     const text = this.composerText.trim();
     if (!text || this.sending()) return;
     this.sending.set(true);
     this.sendError.set('');
-    const req$ = this.noteMode()
+    const note = this.noteMode();
+    let attachments: AttachmentInput[] = [];
+    if (!note && this.replyFiles().length) {
+      try {
+        attachments = await Promise.all(this.replyFiles().map((file) => this.encodeAttachment(file)));
+      } catch {
+        this.sendError.set('Could not read the selected attachments.');
+        this.sending.set(false);
+        return;
+      }
+    }
+    const req$ = note
       ? this.api.addNote(this.businessId, this.ticketId, { body_text: text })
-      : this.api.reply(this.businessId, this.ticketId, { body_text: text });
+      : this.api.reply(this.businessId, this.ticketId, {
+          body_text: text,
+          ...(attachments.length ? { attachments } : {}),
+        });
     req$.subscribe({
       next: (msg) => {
         this.messages.update((cur) => [...cur, msg]);
         this.composerText = '';
+        if (!note) this.replyFiles.set([]);
         this.sending.set(false);
       },
       error: () => {
         this.sendError.set('Failed to send. Please try again.');
         this.sending.set(false);
       },
+    });
+  }
+
+  selectAttachments(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    if (files.length > 10 || files.some((file) => file.size === 0) ||
+        files.reduce((sum, file) => sum + file.size, 0) > 10 * 1024 * 1024) {
+      this.sendError.set('Choose up to 10 nonempty files, totaling no more than 10 MiB.');
+      return;
+    }
+    this.sendError.set('');
+    this.replyFiles.set(files);
+  }
+
+  downloadAttachment(attachment: Attachment): void {
+    this.api.downloadAttachment(this.businessId, this.ticketId, attachment.id).subscribe({
+      next: (content) => {
+        const url = URL.createObjectURL(content);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = attachment.filename || 'attachment';
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      },
+      error: () => this.toast.error('Could not download the attachment.'),
+    });
+  }
+
+  private encodeAttachment(file: File): Promise<AttachmentInput> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = () => {
+        const encoded = String(reader.result);
+        resolve({ filename: file.name, content: encoded.slice(encoded.indexOf(',') + 1) });
+      };
+      reader.readAsDataURL(file);
     });
   }
 

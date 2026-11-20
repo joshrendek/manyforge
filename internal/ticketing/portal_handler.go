@@ -42,6 +42,7 @@ func (h *PortalHandler) CustomerRoutes(r chi.Router) {
 		r.Get("/tickets", h.list)
 		r.Post("/tickets", h.create)
 		r.Get("/tickets/{ticketID}", h.thread)
+		r.Get("/tickets/{ticketID}/attachments/{attachmentID}", h.downloadAttachment)
 		r.Post("/tickets/{ticketID}/messages", h.message)
 	})
 }
@@ -107,13 +108,17 @@ func (h *PortalHandler) customerGate(next http.Handler) http.Handler {
 		token := strings.TrimPrefix(auth[0], "Bearer ")
 		hash := sha256.Sum256([]byte(token))
 		rateKey := hex.EncodeToString(hash[:])
-		if !h.key.Allow(rateKey) || !h.customer.Allow(external[0]) {
+		if !h.key.Allow(rateKey) {
 			portalHTTPError(w, ErrPortalRate)
 			return
 		}
 		p, err := h.svc.Authenticate(r.Context(), token, external[0], name)
 		if err != nil {
 			portalHTTPError(w, err)
+			return
+		}
+		if !h.customer.Allow(p.BusinessID.String() + ":" + p.ExternalID) {
+			portalHTTPError(w, ErrPortalRate)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), portalScopeContextKey{}, p)))
@@ -153,11 +158,15 @@ func portalHTTPError(w http.ResponseWriter, err error) {
 	portalJSON(w, status, map[string]string{"error": message})
 }
 func portalDecode(w http.ResponseWriter, r *http.Request, out any) bool {
+	return portalDecodeLimit(w, r, out, 64<<10)
+}
+
+func portalDecodeLimit(w http.ResponseWriter, r *http.Request, out any, limit int64) bool {
 	if r.URL.RawQuery != "" {
 		portalHTTPError(w, ErrPortalInvalid)
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
@@ -222,11 +231,12 @@ func (h *PortalHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 func (h *PortalHandler) create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Subject        string `json:"subject"`
-		Body           string `json:"body"`
-		IdempotencyKey string `json:"idempotency_key"`
+		Subject        string            `json:"subject"`
+		Body           string            `json:"body"`
+		IdempotencyKey string            `json:"idempotency_key"`
+		Attachments    []AttachmentInput `json:"attachments"`
 	}
-	if !portalDecode(w, r, &in) {
+	if !portalDecodeLimit(w, r, &in, maxAttachmentJSONBytes) {
 		return
 	}
 	id, err := portalUUID(in.IdempotencyKey)
@@ -234,12 +244,26 @@ func (h *PortalHandler) create(w http.ResponseWriter, r *http.Request) {
 		portalHTTPError(w, err)
 		return
 	}
-	out, err := h.svc.CreateTicket(r.Context(), portalScope(r), in.Subject, in.Body, id)
+	out, err := h.svc.CreateTicketWithAttachments(r.Context(), portalScope(r), in.Subject, in.Body, id, in.Attachments)
 	if err != nil {
 		portalHTTPError(w, err)
 		return
 	}
 	portalJSON(w, 201, map[string]any{"ticket": out})
+}
+func (h *PortalHandler) downloadAttachment(w http.ResponseWriter, r *http.Request) {
+	ticket, ticketErr := portalUUID(chi.URLParam(r, "ticketID"))
+	file, fileErr := portalUUID(chi.URLParam(r, "attachmentID"))
+	if ticketErr != nil || fileErr != nil || r.URL.RawQuery != "" {
+		portalHTTPError(w, errs.ErrNotFound)
+		return
+	}
+	info, content, err := h.svc.DownloadAttachment(r.Context(), portalScope(r), ticket, file)
+	if err != nil {
+		portalHTTPError(w, err)
+		return
+	}
+	serveSupportAttachment(w, info, content)
 }
 func (h *PortalHandler) thread(w http.ResponseWriter, r *http.Request) {
 	id, err := portalUUID(chi.URLParam(r, "ticketID"))
@@ -266,10 +290,11 @@ func (h *PortalHandler) message(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Body           string `json:"body"`
-		IdempotencyKey string `json:"idempotency_key"`
+		Body           string            `json:"body"`
+		IdempotencyKey string            `json:"idempotency_key"`
+		Attachments    []AttachmentInput `json:"attachments"`
 	}
-	if !portalDecode(w, r, &in) {
+	if !portalDecodeLimit(w, r, &in, maxAttachmentJSONBytes) {
 		return
 	}
 	request, err := portalUUID(in.IdempotencyKey)
@@ -277,7 +302,7 @@ func (h *PortalHandler) message(w http.ResponseWriter, r *http.Request) {
 		portalHTTPError(w, err)
 		return
 	}
-	out, err := h.svc.AddMessage(r.Context(), portalScope(r), id, in.Body, request)
+	out, err := h.svc.AddMessageWithAttachments(r.Context(), portalScope(r), id, in.Body, request, in.Attachments)
 	if err != nil {
 		portalHTTPError(w, err)
 		return
@@ -302,8 +327,9 @@ func (h *PortalHandler) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Label string `json:"label"`
-		Days  *int   `json:"expires_in_days"`
+		Label             string  `json:"label"`
+		Days              *int    `json:"expires_in_days"`
+		IdentityNamespace *string `json:"identity_namespace"`
 	}
 	if !portalDecode(w, r, &in) {
 		return
@@ -316,7 +342,11 @@ func (h *PortalHandler) createKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := h.svc.CreateKey(r.Context(), pid, bid, in.Label, days)
+	namespace := legacyPortalNamespace
+	if in.IdentityNamespace != nil {
+		namespace = *in.IdentityNamespace
+	}
+	out, err := h.svc.CreateKeyForNamespace(r.Context(), pid, bid, in.Label, days, namespace)
 	if err != nil {
 		portalHTTPError(w, err)
 		return

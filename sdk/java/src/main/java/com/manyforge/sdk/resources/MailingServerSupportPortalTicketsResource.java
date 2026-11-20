@@ -20,6 +20,7 @@ import java.io.InputStream;
 import java.time.*;
 import java.math.BigDecimal;
 import com.manyforge.sdk.models.CreateSupportPortalTicket201Response;
+import com.manyforge.sdk.models.Error;
 import com.manyforge.sdk.models.ListSupportPortalTickets200Response;
 import com.manyforge.sdk.models.PublicError;
 import com.manyforge.sdk.models.ReplySupportPortalTicket201Response;
@@ -27,6 +28,7 @@ import com.manyforge.sdk.models.SupportPortalMessageRequest;
 import com.manyforge.sdk.models.SupportPortalThread;
 import com.manyforge.sdk.models.SupportPortalTicketRequest;
 import java.util.UUID;
+import com.manyforge.sdk.Upload;
 
 public class MailingServerSupportPortalTicketsResource {
   protected final Transport transport;
@@ -110,6 +112,95 @@ public class MailingServerSupportPortalTicketsResource {
   public CreateSupportPortalTicket201Response create(MailingServerSupportPortalTicketsCreateParams params, RequestOptions options) { return transport.send(createRequest(params), options); }
   public CompletableFuture<CreateSupportPortalTicket201Response> createAsync(MailingServerSupportPortalTicketsCreateParams params) { return createAsync(params, RequestOptions.DEFAULT); }
   public CompletableFuture<CreateSupportPortalTicket201Response> createAsync(MailingServerSupportPortalTicketsCreateParams params, RequestOptions options) { return transport.sendAsync(createRequest(params), options); }
+
+  public static final class MailingServerSupportPortalTicketsDownloadAttachmentParams {
+
+    private final String authorization;
+
+    private final String xMFExternalUser;
+
+    private final UUID ticketID;
+
+    private final UUID attachmentID;
+
+    private final String xMFExternalName;
+
+    private MailingServerSupportPortalTicketsDownloadAttachmentParams(Builder builder) {
+
+      this.authorization = builder.authorization;
+
+      this.xMFExternalUser = builder.xMFExternalUser;
+
+      this.ticketID = builder.ticketID;
+
+      this.attachmentID = builder.attachmentID;
+
+      this.xMFExternalName = builder.xMFExternalName;
+
+    }
+    public static Builder builder() { return new Builder(); }
+    public Builder toBuilder() {
+      Builder builder = new Builder();
+
+      builder.authorization = authorization;
+
+      builder.xMFExternalUser = xMFExternalUser;
+
+      builder.ticketID = ticketID;
+
+      builder.attachmentID = attachmentID;
+
+      builder.xMFExternalName = xMFExternalName;
+
+      return builder;
+    }
+    public static final class Builder {
+
+      private String authorization;
+      public Builder authorization(String value) { this.authorization = value; return this; }
+
+      private String xMFExternalUser;
+      public Builder xMFExternalUser(String value) { this.xMFExternalUser = value; return this; }
+
+      private UUID ticketID;
+      public Builder ticketID(UUID value) { this.ticketID = value; return this; }
+
+      private UUID attachmentID;
+      public Builder attachmentID(UUID value) { this.attachmentID = value; return this; }
+
+      private String xMFExternalName;
+      public Builder xMFExternalName(String value) { this.xMFExternalName = value; return this; }
+
+      public MailingServerSupportPortalTicketsDownloadAttachmentParams build() { return new MailingServerSupportPortalTicketsDownloadAttachmentParams(this); }
+    }
+  }
+  private Request<InputStream> downloadAttachmentRequest(MailingServerSupportPortalTicketsDownloadAttachmentParams params) {
+    Objects.requireNonNull(params, "params");
+    List<Request.Parameter> parameters = new ArrayList<>();
+
+    Objects.requireNonNull(params.authorization, "authorization");
+
+    parameters.add(new Request.Parameter("Authorization", "header", params.authorization, ""));
+
+    Objects.requireNonNull(params.xMFExternalUser, "xMFExternalUser");
+
+    parameters.add(new Request.Parameter("X-MF-External-User", "header", params.xMFExternalUser, ""));
+
+    Objects.requireNonNull(params.ticketID, "ticketID");
+
+    parameters.add(new Request.Parameter("ticketID", "path", params.ticketID, ""));
+
+    Objects.requireNonNull(params.attachmentID, "attachmentID");
+
+    parameters.add(new Request.Parameter("attachmentID", "path", params.attachmentID, ""));
+
+    parameters.add(new Request.Parameter("X-MF-External-Name", "header", params.xMFExternalName, ""));
+    return new Request<>("GET", "/api/v1/support/portal/tickets/{ticketID}/attachments/{attachmentID}", parameters, null, "", false, "server", true, null, new TypeReference<InputStream>() {});
+  }
+  public InputStream downloadAttachment(MailingServerSupportPortalTicketsDownloadAttachmentParams params) { return downloadAttachment(params, RequestOptions.DEFAULT); }
+  public InputStream downloadAttachment(MailingServerSupportPortalTicketsDownloadAttachmentParams params, RequestOptions options) { return transport.send(downloadAttachmentRequest(params), options); }
+  public CompletableFuture<InputStream> downloadAttachmentAsync(MailingServerSupportPortalTicketsDownloadAttachmentParams params) { return downloadAttachmentAsync(params, RequestOptions.DEFAULT); }
+  public CompletableFuture<InputStream> downloadAttachmentAsync(MailingServerSupportPortalTicketsDownloadAttachmentParams params, RequestOptions options) { return transport.sendAsync(downloadAttachmentRequest(params), options); }
 
   public static final class MailingServerSupportPortalTicketsGetParams {
 

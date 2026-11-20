@@ -10,8 +10,9 @@ API version: 1.0.0
 package manyforge
 
 type ReplyBody struct {
-	BodyHtml Optional[string] `json:"body_html,omitzero"`
-	BodyText string           `json:"body_text"`
+	Attachments Optional[[]SupportAttachmentInput] `json:"attachments,omitzero"`
+	BodyHtml    Optional[string]                   `json:"body_html,omitzero"`
+	BodyText    string                             `json:"body_text"`
 }
 
 // NewReplyBody assigns only the supplied required fields, never schema defaults.
@@ -26,7 +27,7 @@ func (o *ReplyBody) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := nonNullFields(fields, "body_text"); err != nil {
+	if err := nonNullFields(fields, "attachments", "body_text"); err != nil {
 		return err
 	}
 	type plain ReplyBody
