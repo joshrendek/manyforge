@@ -31,6 +31,7 @@ type Service struct {
 	RefreshTTL time.Duration
 	TokenTTL   time.Duration
 	Now        func() time.Time
+	Passkeys   *Passkeys
 }
 
 // TokenPair is the access + refresh token result of sign-in/refresh.
@@ -130,22 +131,41 @@ func (s *Service) Login(ctx context.Context, email, password string) (TokenPair,
 		if acc.Status != "active" {
 			return ErrInvalidCredentials
 		}
-		prin, err := q.GetPrincipalByAccount(ctx, db.PGUUID(acc.ID))
+		// Serialize minting an interactive login with a concurrent password reset.
+		// The password check ran before this lock, so confirm it is still current.
+		current, err := q.LockActiveAccount(ctx, acc.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
 		if err != nil {
 			return err
 		}
-		access, err := s.Ring.Sign(prin.ID, s.AccessTTL, s.now())
-		if err != nil {
-			return err
+		if current.PasswordHash == nil || *current.PasswordHash != *acc.PasswordHash {
+			return ErrInvalidCredentials
 		}
-		refresh, err := auth.IssueRefresh(ctx, tx, prin.ID, s.RefreshTTL, s.now())
-		if err != nil {
-			return err
-		}
-		tp = TokenPair{Access: access, Refresh: refresh, ExpiresIn: int(s.AccessTTL.Seconds())}
-		return nil
+		tp, err = s.issueLoginSession(ctx, tx, acc.ID)
+		return err
 	})
 	return tp, err
+}
+
+// issueLoginSession is used only after a fresh credential check. Refresh omits
+// the authentication timestamp so a stolen refresh token cannot change passkeys.
+func (s *Service) issueLoginSession(ctx context.Context, tx pgx.Tx, accountID uuid.UUID) (TokenPair, error) {
+	prin, err := dbgen.New(tx).GetPrincipalByAccount(ctx, db.PGUUID(accountID))
+	if err != nil {
+		return TokenPair{}, err
+	}
+	now := s.now()
+	refresh, refreshID, err := auth.IssueRefresh(ctx, tx, prin.ID, s.RefreshTTL, now)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	access, err := s.Ring.SignForLogin(prin.ID, refreshID, s.AccessTTL, now)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	return TokenPair{Access: access, Refresh: refresh, ExpiresIn: int(s.AccessTTL.Seconds())}, nil
 }
 
 // Refresh rotates a refresh token and issues a fresh access token. On detected

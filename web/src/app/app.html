@@ -52,6 +52,7 @@
                 Signed in as <b>{{ p.display_name }}</b><br /><span class="faint">{{ p.email }}</span>
               </p>
             }
+            <a class="mf-btn mf-btn-ghost mf-btn-sm" routerLink="/account/security">Account security</a>
             <div class="mf-sidebar-foot-row">
               <mf-theme-toggle />
               <button class="mf-btn mf-btn-ghost mf-btn-sm" (click)="logout()" data-testid="sign-out">Sign out</button>

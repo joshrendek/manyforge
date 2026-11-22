@@ -63,6 +63,9 @@ func (s *Service) Delete(ctx context.Context, principalID uuid.UUID) (time.Time,
 		if err := q.SoftDeleteAccount(ctx, acc.ID); err != nil {
 			return err
 		}
+		if err := q.DeleteAccountPasskeys(ctx, acc.ID); err != nil {
+			return err
+		}
 		if err := q.RevokeAllRefreshForPrincipal(ctx, principalID); err != nil {
 			return err
 		}

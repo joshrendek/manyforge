@@ -18,6 +18,7 @@ type ctxKey int
 const (
 	ctxKeyRequestID ctxKey = iota
 	ctxKeyPrincipal
+	ctxKeyRecentLogin
 )
 
 var sensitiveCapabilityPaths = [...]struct {
@@ -101,8 +102,12 @@ func AuthToPrincipal(ring *auth.KeyRing) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-				if pid, err := ring.Parse(strings.TrimPrefix(h, "Bearer ")); err == nil {
-					r = r.WithContext(context.WithValue(r.Context(), ctxKeyPrincipal, pid))
+				if pid, login, err := ring.ParseWithRecentLogin(strings.TrimPrefix(h, "Bearer ")); err == nil {
+					ctx := WithPrincipal(r.Context(), pid)
+					if login.RefreshID != uuid.Nil {
+						ctx = context.WithValue(ctx, ctxKeyRecentLogin, login)
+					}
+					r = r.WithContext(ctx)
 				}
 			}
 			next.ServeHTTP(w, r)
@@ -114,6 +119,12 @@ func AuthToPrincipal(ring *auth.KeyRing) func(http.Handler) http.Handler {
 func PrincipalFromContext(ctx context.Context) (uuid.UUID, bool) {
 	pid, ok := ctx.Value(ctxKeyPrincipal).(uuid.UUID)
 	return pid, ok
+}
+
+// RecentLoginFromContext returns the signed interactive sign-in, if any.
+func RecentLoginFromContext(ctx context.Context) auth.RecentLogin {
+	login, _ := ctx.Value(ctxKeyRecentLogin).(auth.RecentLogin)
+	return login
 }
 
 // WithPrincipal returns a context carrying principalID, as AuthToPrincipal would.

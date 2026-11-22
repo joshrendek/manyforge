@@ -160,24 +160,13 @@ func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string) (TokenP
 			return fmt.Errorf("invalid or expired token: %w", errs.ErrValidation)
 		}
 		accountID := uuid.UUID(tok.AccountID.Bytes)
-		acc, err := q.GetAccountByID(ctx, accountID)
-		if err != nil || acc.Status != "active" {
+		if _, err := q.LockActiveAccount(ctx, accountID); errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("invalid or expired token: %w", errs.ErrValidation)
-		}
-		prin, err := q.GetPrincipalByAccount(ctx, db.PGUUID(accountID))
-		if err != nil {
+		} else if err != nil {
 			return err
 		}
-		access, err := s.Ring.Sign(prin.ID, s.AccessTTL, s.now())
-		if err != nil {
-			return err
-		}
-		refresh, err := auth.IssueRefresh(ctx, tx, prin.ID, s.RefreshTTL, s.now())
-		if err != nil {
-			return err
-		}
-		tp = TokenPair{Access: access, Refresh: refresh, ExpiresIn: int(s.AccessTTL.Seconds())}
-		return nil
+		tp, err = s.issueLoginSession(ctx, tx, accountID)
+		return err
 	})
 	return tp, err
 }

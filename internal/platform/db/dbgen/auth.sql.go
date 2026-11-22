@@ -142,6 +142,26 @@ func (q *Queries) GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash 
 	return i, err
 }
 
+const lockActiveLoginRefresh = `-- name: LockActiveLoginRefresh :one
+SELECT id FROM refresh_token
+WHERE id = $1 AND principal_id = $2 AND parent_id IS NULL
+  AND revoked_at IS NULL AND used_at IS NULL AND expires_at > now()
+FOR UPDATE
+`
+
+type LockActiveLoginRefreshParams struct {
+	ID          uuid.UUID `json:"id"`
+	PrincipalID uuid.UUID `json:"principal_id"`
+}
+
+// Serialize sensitive account updates with refresh, logout, and password reset.
+func (q *Queries) LockActiveLoginRefresh(ctx context.Context, arg LockActiveLoginRefreshParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockActiveLoginRefresh, arg.ID, arg.PrincipalID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const markRefreshTokenUsed = `-- name: MarkRefreshTokenUsed :exec
 UPDATE refresh_token SET used_at = now() WHERE id = $1
 `

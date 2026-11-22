@@ -280,6 +280,29 @@ func (q *Queries) ListOwnerRootMembershipsForPrincipal(ctx context.Context, prin
 	return items, nil
 }
 
+const lockActiveAccount = `-- name: LockActiveAccount :one
+SELECT id, email, email_verified_at, password_hash, display_name, status, deleted_at, created_at, updated_at FROM account
+WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
+FOR UPDATE
+`
+
+func (q *Queries) LockActiveAccount(ctx context.Context, id uuid.UUID) (Account, error) {
+	row := q.db.QueryRow(ctx, lockActiveAccount, id)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerifiedAt,
+		&i.PasswordHash,
+		&i.DisplayName,
+		&i.Status,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markEmailVerified = `-- name: MarkEmailVerified :exec
 UPDATE account SET email_verified_at = now(), updated_at = now() WHERE id = $1
 `

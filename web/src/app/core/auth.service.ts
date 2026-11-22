@@ -40,7 +40,7 @@ export class AuthService {
   login(email: string, password: string): Observable<TokenPair> {
     return this.http
       .post<TokenPair>('/api/v1/auth/login', { email, password })
-      .pipe(tap((r) => this.setTokens(r.access_token, r.refresh_token)));
+      .pipe(tap((r) => this.startSession(r)));
   }
 
   logout(): Observable<unknown> {
@@ -65,7 +65,7 @@ export class AuthService {
       return throwError(() => new Error('no refresh token'));
     }
     this.refresh$ = this.http.post<TokenPair>('/api/v1/auth/refresh', { refresh_token: refresh }).pipe(
-      tap((r) => this.setTokens(r.access_token, r.refresh_token)),
+      tap((r) => this.startSession(r)),
       map((r) => r.access_token),
       shareReplay(1),
       finalize(() => (this.refresh$ = null)),
@@ -79,10 +79,10 @@ export class AuthService {
     this.clear();
   }
 
-  private setTokens(access: string, refresh: string): void {
-    localStorage.setItem(ACCESS, access);
-    localStorage.setItem(REFRESH, refresh);
-    this.accessToken.set(access);
+  startSession(pair: TokenPair): void {
+    localStorage.setItem(ACCESS, pair.access_token);
+    localStorage.setItem(REFRESH, pair.refresh_token);
+    this.accessToken.set(pair.access_token);
   }
 
   private clear(): void {

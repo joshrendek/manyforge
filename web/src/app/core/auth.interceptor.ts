@@ -3,6 +3,7 @@ import { inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { catchError, switchMap, throwError } from 'rxjs';
 import { AuthService } from './auth.service';
+import { PASSKEY_API } from './passkey.service';
 
 // Attaches the bearer access token and transparently recovers from an expired
 // one: on a 401, it refreshes the token pair (single-flight, see AuthService)
@@ -24,6 +25,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   //    bounced to /login when a publishable key is unknown or revoked.
   const skipRefresh =
     req.url.includes('/api/v1/auth/') ||
+    req.url.startsWith(PASSKEY_API + '/login/') ||
     req.url.includes('/api/v1/feedback/public/') ||
     req.url.includes('/api/v1/mailing/public/');
 
