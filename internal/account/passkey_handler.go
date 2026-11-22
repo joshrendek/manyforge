@@ -136,6 +136,7 @@ func (h *Handler) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 func (p *Passkeys) loginCookie(token string, maxAge int) *http.Cookie {
 	name := "mf_passkey_login"
 	if p.secure {
+		// The prefix prevents a sibling subdomain from setting this cookie.
 		name = "__Host-" + name
 	}
 	return &http.Cookie{

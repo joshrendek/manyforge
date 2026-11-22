@@ -55,7 +55,7 @@ func NewPasskeys(publicURL string) (*Passkeys, error) {
 		return nil, err
 	}
 	if net.ParseIP(u.Hostname()) != nil {
-		return nil, nil // WebAuthn relies on a domain name, including localhost for development.
+		return nil, errors.New("the passkey origin must use a hostname")
 	}
 	timeout := webauthn.TimeoutConfig{Enforce: true, Timeout: passkeyTTL}
 	server, err := webauthn.New(&webauthn.Config{
@@ -340,7 +340,7 @@ func (s *Service) storePasskeyChallenge(ctx context.Context, session *webauthn.S
 
 func (s *Service) consumePasskeyChallenge(ctx context.Context, token string, accountID pgtype.UUID, purpose string) (webauthn.SessionData, error) {
 	var session webauthn.SessionData
-	if len(token) != 43 {
+	if token == "" {
 		return session, ErrInvalidCredentials
 	}
 	// Consume in its own statement so failed verification cannot make a
