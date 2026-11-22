@@ -24,7 +24,7 @@ test('invalid login surfaces a generic error (no oracle)', async ({ page }) => {
   await page.locator('input[name="email"]').fill('nobody@manyforge.test');
   await page.locator('input[name="password"]').fill('definitely-wrong');
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByText('Invalid email or password.')).toBeVisible();
+  await expect(page.getByText('Could not sign in with email and password.', { exact: false })).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
 });
 

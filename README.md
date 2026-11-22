@@ -25,8 +25,12 @@ cd web && npm install && npm run start
 
 ### Passkeys
 
-Account holders can add or remove passkeys under **Account security** after a
-recent sign-in. Set `MANYFORGE_PUBLIC_BASE_URL` (Helm `publicBaseURL`) to the
+Add a passkey under **Account security** after a recent sign-in. While your
+account has an enrolled passkey, passkeys are required for sign-in and for
+changing passkeys. Add a backup passkey you can access if you lose your
+primary one. Removing the last passkey restores password and email sign-in.
+
+Set `MANYFORGE_PUBLIC_BASE_URL` (Helm `publicBaseURL`) to the
 browser's HTTPS origin to enable passkeys. For local development use the
 browser's `http://localhost` origin, including its port. Existing passkeys are
 bound to the hostname where they were created.

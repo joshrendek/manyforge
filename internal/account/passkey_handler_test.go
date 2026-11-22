@@ -30,11 +30,11 @@ func TestPasskeyManagementRequiresFreshLoginAndExactOrigin(t *testing.T) {
 	})
 	principalID := uuid.New()
 	now := time.Now()
-	fresh, err := ring.SignForLogin(principalID, uuid.New(), time.Hour, now)
+	fresh, err := ring.SignForLogin(principalID, uuid.New(), auth.LoginPassword, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale, err := ring.SignForLogin(principalID, uuid.New(), time.Hour, now.Add(-11*time.Minute))
+	stale, err := ring.SignForLogin(principalID, uuid.New(), auth.LoginPassword, time.Hour, now.Add(-11*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

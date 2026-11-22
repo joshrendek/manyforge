@@ -13,6 +13,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const accountHasPasskeys = `-- name: AccountHasPasskeys :one
+SELECT EXISTS (SELECT 1 FROM account_passkey WHERE account_id = $1)
+`
+
+func (q *Queries) AccountHasPasskeys(ctx context.Context, accountID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, accountHasPasskeys, accountID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const consumePasskeyChallenge = `-- name: ConsumePasskeyChallenge :one
 DELETE FROM account_passkey_challenge
 WHERE token_hash = $1 AND purpose = $2

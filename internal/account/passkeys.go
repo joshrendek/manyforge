@@ -105,10 +105,10 @@ func (s *Service) isRecentPasskeyLogin(login auth.RecentLogin) bool {
 	return login.RefreshID != uuid.Nil && age >= 0 && age < passkeyFreshness
 }
 
-// lockPasskeyLogin checks that the session which granted recent authentication
-// is still active. Within a mutation transaction the lock holds through commit.
-func (s *Service) lockPasskeyLogin(ctx context.Context, q *dbgen.Queries, principalID uuid.UUID, login auth.RecentLogin) error {
-	if !s.isRecentPasskeyLogin(login) {
+// lockPasskeyLogin checks the live login session and requires passkey
+// authentication after enrollment. Within a mutation transaction the lock holds through commit.
+func (s *Service) lockPasskeyLogin(ctx context.Context, q *dbgen.Queries, principalID uuid.UUID, login auth.RecentLogin, enrolled bool) error {
+	if !s.isRecentPasskeyLogin(login) || (enrolled && login.Method != auth.LoginPasskey) {
 		return errs.ErrReauthenticationRequired
 	}
 	_, err := q.LockActiveLoginRefresh(ctx, dbgen.LockActiveLoginRefreshParams{ID: login.RefreshID, PrincipalID: principalID})
@@ -145,7 +145,7 @@ func (s *Service) listPasskeys(ctx context.Context, principalID uuid.UUID, login
 	for _, row := range rows {
 		items = append(items, summarizePasskey(row.ID, row.Name, row.CreatedAt, row.LastUsedAt))
 	}
-	err = s.lockPasskeyLogin(ctx, q, principalID, login)
+	err = s.lockPasskeyLogin(ctx, q, principalID, login, len(rows) > 0)
 	if err != nil && !errors.Is(err, errs.ErrReauthenticationRequired) {
 		return passkeyList{}, err
 	}
@@ -154,15 +154,15 @@ func (s *Service) listPasskeys(ctx context.Context, principalID uuid.UUID, login
 
 func (s *Service) beginPasskeyRegistration(ctx context.Context, principalID uuid.UUID, login auth.RecentLogin) (*protocol.CredentialCreation, string, error) {
 	q := dbgen.New(s.DB.Pool())
-	if err := s.lockPasskeyLogin(ctx, q, principalID, login); err != nil {
-		return nil, "", err
-	}
 	account, err := accountForPasskeys(ctx, q, principalID)
 	if err != nil {
 		return nil, "", err
 	}
 	rows, err := q.ListAccountPasskeyCredentials(ctx, account.ID)
 	if err != nil {
+		return nil, "", err
+	}
+	if err := s.lockPasskeyLogin(ctx, q, principalID, login, len(rows) > 0); err != nil {
 		return nil, "", err
 	}
 	if len(rows) >= maxAccountPasskeys {
@@ -224,11 +224,11 @@ func (s *Service) finishPasskeyRegistration(ctx context.Context, principalID uui
 			}
 			return err
 		}
-		if err := s.lockPasskeyLogin(ctx, q, principalID, login); err != nil {
-			return err
-		}
 		rows, err := q.ListAccountPasskeys(ctx, account.ID)
 		if err != nil {
+			return err
+		}
+		if err := s.lockPasskeyLogin(ctx, q, principalID, login, len(rows) > 0); err != nil {
 			return err
 		}
 		if len(rows) >= maxAccountPasskeys {
@@ -252,7 +252,7 @@ func (s *Service) finishPasskeyRegistration(ctx context.Context, principalID uui
 	return summary, err
 }
 
-func (s *Service) removePasskey(ctx context.Context, principalID uuid.UUID, login auth.RecentLogin, passkeyID uuid.UUID) error {
+func (s *Service) removePasskey(ctx context.Context, principalID uuid.UUID, login auth.RecentLogin, passkeyID uuid.UUID, allowLast bool) error {
 	return s.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		account, err := accountForPasskeys(ctx, q, principalID)
@@ -265,7 +265,7 @@ func (s *Service) removePasskey(ctx context.Context, principalID uuid.UUID, logi
 			}
 			return err
 		}
-		if err := s.lockPasskeyLogin(ctx, q, principalID, login); err != nil {
+		if err := s.lockPasskeyLogin(ctx, q, principalID, login, true); err != nil {
 			return err
 		}
 		removed, err := q.RemoveAccountPasskey(ctx, dbgen.RemoveAccountPasskeyParams{AccountID: account.ID, ID: passkeyID})
@@ -274,6 +274,15 @@ func (s *Service) removePasskey(ctx context.Context, principalID uuid.UUID, logi
 		}
 		if removed == 0 {
 			return errs.ErrNotFound
+		}
+		if !allowLast {
+			enrolled, err := q.AccountHasPasskeys(ctx, account.ID)
+			if err != nil {
+				return err
+			}
+			if !enrolled {
+				return errs.ErrConflict
+			}
 		}
 		target := "account_passkey"
 		return audit.Write(ctx, tx, audit.Entry{
@@ -344,7 +353,7 @@ func (s *Service) finishPasskeyLogin(ctx context.Context, token string, response
 		}); err != nil {
 			return err
 		}
-		pair, err = s.issueLoginSession(ctx, tx, account.ID)
+		pair, err = s.issueLoginSession(ctx, tx, account.ID, auth.LoginPasskey)
 		return err
 	})
 	return pair, err

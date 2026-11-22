@@ -92,11 +92,11 @@ export class LoginComponent {
       error: (err: unknown) => {
         this.loading.set(null);
         if (method === 'password') {
-          this.error.set('Invalid email or password.');
+          this.error.set('Could not sign in with email and password. If you added a passkey, use it to sign in.');
         } else if (err instanceof DOMException && err.name === 'NotAllowedError') {
-          this.error.set('No passkey was selected. Try again or sign in with your password.');
+          this.error.set('No passkey was selected. Try again.');
         } else {
-          this.error.set('Could not sign in with that passkey. Try again or sign in with your password.');
+          this.error.set('Could not sign in with that passkey. Try another passkey for your account.');
         }
       },
     });

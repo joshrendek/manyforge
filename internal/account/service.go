@@ -22,6 +22,8 @@ import (
 // ErrInvalidCredentials is the single, generic sign-in failure (no oracle).
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
+var errPasskeyRequired = errors.New("passkey required")
+
 // Service implements the account use cases.
 type Service struct {
 	DB         *db.DB
@@ -143,16 +145,29 @@ func (s *Service) Login(ctx context.Context, email, password string) (TokenPair,
 		if current.PasswordHash == nil || *current.PasswordHash != *acc.PasswordHash {
 			return ErrInvalidCredentials
 		}
-		tp, err = s.issueLoginSession(ctx, tx, acc.ID)
+		tp, err = s.issueLoginSession(ctx, tx, acc.ID, auth.LoginPassword)
+		if errors.Is(err, errPasskeyRequired) {
+			return ErrInvalidCredentials
+		}
 		return err
 	})
 	return tp, err
 }
 
-// issueLoginSession is used only after a fresh credential check. Refresh omits
-// the authentication timestamp so a stolen refresh token cannot change passkeys.
-func (s *Service) issueLoginSession(ctx context.Context, tx pgx.Tx, accountID uuid.UUID) (TokenPair, error) {
-	prin, err := dbgen.New(tx).GetPrincipalByAccount(ctx, db.PGUUID(accountID))
+// issueLoginSession requires a verified credential and the account row lock.
+// The lock serializes the passkey requirement with enrollment and removal.
+func (s *Service) issueLoginSession(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, method auth.LoginMethod) (TokenPair, error) {
+	q := dbgen.New(tx)
+	if method != auth.LoginPasskey {
+		enrolled, err := q.AccountHasPasskeys(ctx, accountID)
+		if err != nil {
+			return TokenPair{}, err
+		}
+		if enrolled {
+			return TokenPair{}, errPasskeyRequired
+		}
+	}
+	prin, err := q.GetPrincipalByAccount(ctx, db.PGUUID(accountID))
 	if err != nil {
 		return TokenPair{}, err
 	}
@@ -161,7 +176,7 @@ func (s *Service) issueLoginSession(ctx context.Context, tx pgx.Tx, accountID uu
 	if err != nil {
 		return TokenPair{}, err
 	}
-	access, err := s.Ring.SignForLogin(prin.ID, refreshID, s.AccessTTL, now)
+	access, err := s.Ring.SignForLogin(prin.ID, refreshID, method, s.AccessTTL, now)
 	if err != nil {
 		return TokenPair{}, err
 	}

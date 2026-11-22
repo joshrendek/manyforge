@@ -38,15 +38,25 @@ func NewKeyRing(issuer, audience, activeKID string, signing ed25519.PrivateKey, 
 	return &KeyRing{issuer: issuer, audience: audience, activeKID: activeKID, signing: signing, verify: verify}, nil
 }
 
+type LoginMethod string
+
+const (
+	LoginPassword  LoginMethod = "password"
+	LoginMagicLink LoginMethod = "magic_link"
+	LoginPasskey   LoginMethod = "passkey"
+)
+
 // RecentLogin identifies the interactive sign-in that issued an access token.
 type RecentLogin struct {
 	RefreshID       uuid.UUID
 	AuthenticatedAt time.Time
+	Method          LoginMethod
 }
 
 type accessClaims struct {
 	jwt.RegisteredClaims
-	AuthTime *jwt.NumericDate `json:"auth_time,omitempty"`
+	AuthTime    *jwt.NumericDate `json:"auth_time,omitempty"`
+	LoginMethod LoginMethod      `json:"login_method,omitempty"`
 }
 
 // Sign issues an access token for principalID valid for ttl.
@@ -55,8 +65,8 @@ func (k *KeyRing) Sign(principalID uuid.UUID, ttl time.Duration, now time.Time) 
 }
 
 // SignForLogin records a fresh authentication on the initial access token.
-func (k *KeyRing) SignForLogin(principalID, refreshID uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
-	return k.sign(principalID, ttl, now, RecentLogin{RefreshID: refreshID, AuthenticatedAt: now})
+func (k *KeyRing) SignForLogin(principalID, refreshID uuid.UUID, method LoginMethod, ttl time.Duration, now time.Time) (string, error) {
+	return k.sign(principalID, ttl, now, RecentLogin{RefreshID: refreshID, AuthenticatedAt: now, Method: method})
 }
 
 func (k *KeyRing) sign(principalID uuid.UUID, ttl time.Duration, now time.Time, login RecentLogin) (string, error) {
@@ -70,6 +80,7 @@ func (k *KeyRing) sign(principalID uuid.UUID, ttl time.Duration, now time.Time, 
 	if login.RefreshID != uuid.Nil {
 		claims.ID = login.RefreshID.String()
 		claims.AuthTime = jwt.NewNumericDate(login.AuthenticatedAt)
+		claims.LoginMethod = login.Method
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	tok.Header["kid"] = k.activeKID
@@ -108,7 +119,7 @@ func (k *KeyRing) ParseWithRecentLogin(tokenStr string) (uuid.UUID, RecentLogin,
 	var login RecentLogin
 	if claims.AuthTime != nil {
 		if refreshID, parseErr := uuid.Parse(claims.ID); parseErr == nil {
-			login = RecentLogin{RefreshID: refreshID, AuthenticatedAt: claims.AuthTime.Time}
+			login = RecentLogin{RefreshID: refreshID, AuthenticatedAt: claims.AuthTime.Time, Method: claims.LoginMethod}
 		}
 	}
 	return principalID, login, err

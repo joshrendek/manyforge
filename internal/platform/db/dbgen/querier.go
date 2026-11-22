@@ -12,6 +12,7 @@ import (
 )
 
 type Querier interface {
+	AccountHasPasskeys(ctx context.Context, accountID uuid.UUID) (bool, error)
 	// Per-agent usage rollup for a business over [from_ts, to_ts). LEFT JOIN so agents
 	// with zero runs in the window still appear (with zeros). RLS on agent + agent_run
 	// (under WithPrincipal) scopes to the caller's businesses; the business_id arg narrows.
