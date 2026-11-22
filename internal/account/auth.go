@@ -160,11 +160,12 @@ func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string) (TokenP
 			return fmt.Errorf("invalid or expired token: %w", errs.ErrValidation)
 		}
 		accountID := uuid.UUID(tok.AccountID.Bytes)
-		acc, err := q.GetAccountByID(ctx, accountID)
-		if err != nil || acc.Status != "active" {
+		if _, err := q.LockActiveAccount(ctx, accountID); errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("invalid or expired token: %w", errs.ErrValidation)
+		} else if err != nil {
+			return err
 		}
-		tp, err = s.issueLoginSession(ctx, tx, acc.ID)
+		tp, err = s.issueLoginSession(ctx, tx, accountID)
 		return err
 	})
 	return tp, err

@@ -64,10 +64,8 @@ func (h *Handler) requirePasskeyOrigin(next http.Handler) http.Handler {
 
 func (h *Handler) requireRecentPasskeyAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !h.svc.canManagePasskeys(httpx.AuthenticatedAt(r.Context())) {
-			httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorBody{
-				Code: "REAUTHENTICATION_REQUIRED", Message: "sign in again to manage passkeys",
-			})
+		if !h.svc.isRecentPasskeyLogin(httpx.RecentLoginFromContext(r.Context())) {
+			writePasskeyManagementError(w, r, errs.ErrReauthenticationRequired)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -80,22 +78,19 @@ func (h *Handler) passkeyList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pid, _ := httpx.PrincipalFromContext(r.Context())
-	items, err := h.svc.listPasskeys(r.Context(), pid)
+	result, err := h.svc.listPasskeys(r.Context(), pid, httpx.RecentLoginFromContext(r.Context()))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, struct {
-		Items     []passkeySummary `json:"items"`
-		CanManage bool             `json:"can_manage"`
-	}{items, h.svc.canManagePasskeys(httpx.AuthenticatedAt(r.Context()))})
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	pid, _ := httpx.PrincipalFromContext(r.Context())
-	options, token, err := h.svc.beginPasskeyRegistration(r.Context(), pid)
+	options, token, err := h.svc.beginPasskeyRegistration(r.Context(), pid, httpx.RecentLoginFromContext(r.Context()))
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		writePasskeyManagementError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"publicKey": options.Response, "ceremony_token": token})
@@ -111,9 +106,9 @@ func (h *Handler) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	pid, _ := httpx.PrincipalFromContext(r.Context())
-	item, err := h.svc.finishPasskeyRegistration(r.Context(), pid, in.Token, in.Name, in.Credential)
+	item, err := h.svc.finishPasskeyRegistration(r.Context(), pid, httpx.RecentLoginFromContext(r.Context()), in.Token, in.Name, in.Credential)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		writePasskeyManagementError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, item)
@@ -126,11 +121,21 @@ func (h *Handler) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
-	if err := h.svc.removePasskey(r.Context(), pid, keyID); err != nil {
-		httpx.WriteError(w, r, err)
+	if err := h.svc.removePasskey(r.Context(), pid, httpx.RecentLoginFromContext(r.Context()), keyID); err != nil {
+		writePasskeyManagementError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writePasskeyManagementError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errs.ErrReauthenticationRequired) {
+		httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorBody{
+			Code: "REAUTHENTICATION_REQUIRED", Message: "sign in again to manage passkeys",
+		})
+		return
+	}
+	httpx.WriteError(w, r, err)
 }
 
 func (p *Passkeys) loginCookie(token string, maxAge int) *http.Cookie {

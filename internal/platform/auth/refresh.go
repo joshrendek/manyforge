@@ -40,21 +40,22 @@ func HashToken(raw string) string {
 }
 
 // IssueRefresh creates a new refresh-token family root for principal and returns
-// the raw token (the only time it exists in plaintext).
-func IssueRefresh(ctx context.Context, tx pgx.Tx, principalID uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
+// the raw token (the only time it exists in plaintext) and its record ID.
+func IssueRefresh(ctx context.Context, tx pgx.Tx, principalID uuid.UUID, ttl time.Duration, now time.Time) (string, uuid.UUID, error) {
 	raw, err := NewOpaqueToken()
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
+	id := uuid.New()
 	_, err = dbgen.New(tx).CreateRefreshToken(ctx, dbgen.CreateRefreshTokenParams{
-		ID:          uuid.New(),
+		ID:          id,
 		PrincipalID: principalID,
 		TokenHash:   HashToken(raw),
 		FamilyID:    uuid.New(),
 		ParentID:    db.PGUUIDPtr(nil),
 		ExpiresAt:   now.Add(ttl),
 	})
-	return raw, err
+	return raw, id, err
 }
 
 // RotateRefresh validates raw and issues a child token. Presenting an

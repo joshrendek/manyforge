@@ -38,6 +38,12 @@ func NewKeyRing(issuer, audience, activeKID string, signing ed25519.PrivateKey, 
 	return &KeyRing{issuer: issuer, audience: audience, activeKID: activeKID, signing: signing, verify: verify}, nil
 }
 
+// RecentLogin identifies the interactive sign-in that issued an access token.
+type RecentLogin struct {
+	RefreshID       uuid.UUID
+	AuthenticatedAt time.Time
+}
+
 type accessClaims struct {
 	jwt.RegisteredClaims
 	AuthTime *jwt.NumericDate `json:"auth_time,omitempty"`
@@ -45,22 +51,26 @@ type accessClaims struct {
 
 // Sign issues an access token for principalID valid for ttl.
 func (k *KeyRing) Sign(principalID uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
-	return k.sign(principalID, ttl, now, nil)
+	return k.sign(principalID, ttl, now, RecentLogin{})
 }
 
 // SignForLogin records a fresh authentication on the initial access token.
-func (k *KeyRing) SignForLogin(principalID uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
-	return k.sign(principalID, ttl, now, jwt.NewNumericDate(now))
+func (k *KeyRing) SignForLogin(principalID, refreshID uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
+	return k.sign(principalID, ttl, now, RecentLogin{RefreshID: refreshID, AuthenticatedAt: now})
 }
 
-func (k *KeyRing) sign(principalID uuid.UUID, ttl time.Duration, now time.Time, authTime *jwt.NumericDate) (string, error) {
-	claims := accessClaims{AuthTime: authTime, RegisteredClaims: jwt.RegisteredClaims{
+func (k *KeyRing) sign(principalID uuid.UUID, ttl time.Duration, now time.Time, login RecentLogin) (string, error) {
+	claims := accessClaims{RegisteredClaims: jwt.RegisteredClaims{
 		Issuer:    k.issuer,
 		Audience:  jwt.ClaimStrings{k.audience},
 		Subject:   principalID.String(),
 		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		IssuedAt:  jwt.NewNumericDate(now),
 	}}
+	if login.RefreshID != uuid.Nil {
+		claims.ID = login.RefreshID.String()
+		claims.AuthTime = jwt.NewNumericDate(login.AuthenticatedAt)
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	tok.Header["kid"] = k.activeKID
 	return tok.SignedString(k.signing)
@@ -69,13 +79,13 @@ func (k *KeyRing) sign(principalID uuid.UUID, ttl time.Duration, now time.Time, 
 // Parse validates a token (pinning alg=EdDSA, issuer, audience, expiry, and a
 // known kid) and returns the principal id.
 func (k *KeyRing) Parse(tokenStr string) (uuid.UUID, error) {
-	principalID, _, err := k.ParseWithAuthTime(tokenStr)
+	principalID, _, err := k.ParseWithRecentLogin(tokenStr)
 	return principalID, err
 }
 
-// ParseWithAuthTime validates an access token and returns its principal and
-// original authentication time, if the token was issued directly at sign-in.
-func (k *KeyRing) ParseWithAuthTime(tokenStr string) (uuid.UUID, time.Time, error) {
+// ParseWithRecentLogin validates an access token and returns the interactive
+// sign-in when the token was issued directly at sign-in.
+func (k *KeyRing) ParseWithRecentLogin(tokenStr string) (uuid.UUID, RecentLogin, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{"EdDSA"}),
 		jwt.WithIssuer(k.issuer),
@@ -92,12 +102,14 @@ func (k *KeyRing) ParseWithAuthTime(tokenStr string) (uuid.UUID, time.Time, erro
 		return pub, nil
 	})
 	if err != nil {
-		return uuid.Nil, time.Time{}, err
+		return uuid.Nil, RecentLogin{}, err
 	}
 	principalID, err := uuid.Parse(claims.Subject)
-	var authenticatedAt time.Time
+	var login RecentLogin
 	if claims.AuthTime != nil {
-		authenticatedAt = claims.AuthTime.Time
+		if refreshID, parseErr := uuid.Parse(claims.ID); parseErr == nil {
+			login = RecentLogin{RefreshID: refreshID, AuthenticatedAt: claims.AuthTime.Time}
+		}
 	}
-	return principalID, authenticatedAt, err
+	return principalID, login, err
 }

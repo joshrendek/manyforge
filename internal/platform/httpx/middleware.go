@@ -18,7 +18,7 @@ type ctxKey int
 const (
 	ctxKeyRequestID ctxKey = iota
 	ctxKeyPrincipal
-	ctxKeyAuthenticatedAt
+	ctxKeyRecentLogin
 )
 
 var sensitiveCapabilityPaths = [...]struct {
@@ -102,10 +102,10 @@ func AuthToPrincipal(ring *auth.KeyRing) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-				if pid, authenticatedAt, err := ring.ParseWithAuthTime(strings.TrimPrefix(h, "Bearer ")); err == nil {
+				if pid, login, err := ring.ParseWithRecentLogin(strings.TrimPrefix(h, "Bearer ")); err == nil {
 					ctx := WithPrincipal(r.Context(), pid)
-					if !authenticatedAt.IsZero() {
-						ctx = context.WithValue(ctx, ctxKeyAuthenticatedAt, authenticatedAt)
+					if login.RefreshID != uuid.Nil {
+						ctx = context.WithValue(ctx, ctxKeyRecentLogin, login)
 					}
 					r = r.WithContext(ctx)
 				}
@@ -121,10 +121,10 @@ func PrincipalFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return pid, ok
 }
 
-// AuthenticatedAt returns the signed login time, or zero for other access tokens.
-func AuthenticatedAt(ctx context.Context) time.Time {
-	authenticatedAt, _ := ctx.Value(ctxKeyAuthenticatedAt).(time.Time)
-	return authenticatedAt
+// RecentLoginFromContext returns the signed interactive sign-in, if any.
+func RecentLoginFromContext(ctx context.Context) auth.RecentLogin {
+	login, _ := ctx.Value(ctxKeyRecentLogin).(auth.RecentLogin)
+	return login
 }
 
 // WithPrincipal returns a context carrying principalID, as AuthToPrincipal would.

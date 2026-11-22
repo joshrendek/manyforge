@@ -6,6 +6,13 @@ RETURNING *;
 -- name: GetRefreshTokenByHashForUpdate :one
 SELECT * FROM refresh_token WHERE token_hash = $1 FOR UPDATE;
 
+-- name: LockActiveLoginRefresh :one
+-- Serialize sensitive account updates with refresh, logout, and password reset.
+SELECT id FROM refresh_token
+WHERE id = $1 AND principal_id = $2 AND parent_id IS NULL
+  AND revoked_at IS NULL AND used_at IS NULL AND expires_at > now()
+FOR UPDATE;
+
 -- name: MarkRefreshTokenUsed :exec
 UPDATE refresh_token SET used_at = now() WHERE id = $1;
 

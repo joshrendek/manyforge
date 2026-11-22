@@ -793,7 +793,9 @@ type Querier interface {
 	// ListWorkTasksSince is the sync pull: every task whose rev moved past the client's cursor.
 	ListWorkTasksSince(ctx context.Context, arg ListWorkTasksSinceParams) ([]WorkTask, error)
 	ListWorkTokens(ctx context.Context, arg ListWorkTokensParams) ([]ListWorkTokensRow, error)
-	LockActivePasskeyAccount(ctx context.Context, id uuid.UUID) (Account, error)
+	LockActiveAccount(ctx context.Context, id uuid.UUID) (Account, error)
+	// Serialize sensitive account updates with refresh, logout, and password reset.
+	LockActiveLoginRefresh(ctx context.Context, arg LockActiveLoginRefreshParams) (uuid.UUID, error)
 	LockAutomationVersion(ctx context.Context, arg LockAutomationVersionParams) (AutomationVersion, error)
 	// LockWorkProject serializes every task write in a project (web UI and sync alike).
 	LockWorkProject(ctx context.Context, arg LockWorkProjectParams) (WorkProject, error)

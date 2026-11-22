@@ -1,8 +1,3 @@
--- name: LockActivePasskeyAccount :one
-SELECT * FROM account
-WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
-FOR UPDATE;
-
 -- name: ListAccountPasskeys :many
 SELECT id, name, created_at, last_used_at
 FROM account_passkey

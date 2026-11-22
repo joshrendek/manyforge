@@ -9,6 +9,11 @@ SELECT * FROM account WHERE email = $1 AND deleted_at IS NULL;
 -- name: GetAccountByID :one
 SELECT * FROM account WHERE id = $1 AND deleted_at IS NULL;
 
+-- name: LockActiveAccount :one
+SELECT * FROM account
+WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
+FOR UPDATE;
+
 -- name: MarkEmailVerified :exec
 UPDATE account SET email_verified_at = now(), updated_at = now() WHERE id = $1;
 

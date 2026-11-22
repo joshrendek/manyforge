@@ -100,9 +100,22 @@ func summarizePasskey(id uuid.UUID, name string, createdAt time.Time, lastUsedAt
 	return summary
 }
 
-func (s *Service) canManagePasskeys(at time.Time) bool {
-	age := s.now().Sub(at)
-	return !at.IsZero() && age >= 0 && age < passkeyFreshness
+func (s *Service) isRecentPasskeyLogin(login auth.RecentLogin) bool {
+	age := s.now().Sub(login.AuthenticatedAt)
+	return login.RefreshID != uuid.Nil && age >= 0 && age < passkeyFreshness
+}
+
+// lockPasskeyLogin checks that the session which granted recent authentication
+// is still active. Within a mutation transaction the lock holds through commit.
+func (s *Service) lockPasskeyLogin(ctx context.Context, q *dbgen.Queries, principalID uuid.UUID, login auth.RecentLogin) error {
+	if !s.isRecentPasskeyLogin(login) {
+		return errs.ErrReauthenticationRequired
+	}
+	_, err := q.LockActiveLoginRefresh(ctx, dbgen.LockActiveLoginRefreshParams{ID: login.RefreshID, PrincipalID: principalID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrReauthenticationRequired
+	}
+	return err
 }
 
 func accountForPasskeys(ctx context.Context, q *dbgen.Queries, principalID uuid.UUID) (dbgen.Account, error) {
@@ -113,25 +126,37 @@ func accountForPasskeys(ctx context.Context, q *dbgen.Queries, principalID uuid.
 	return account, err
 }
 
-func (s *Service) listPasskeys(ctx context.Context, principalID uuid.UUID) ([]passkeySummary, error) {
+type passkeyList struct {
+	Items     []passkeySummary `json:"items"`
+	CanManage bool             `json:"can_manage"`
+}
+
+func (s *Service) listPasskeys(ctx context.Context, principalID uuid.UUID, login auth.RecentLogin) (passkeyList, error) {
 	q := dbgen.New(s.DB.Pool())
 	account, err := accountForPasskeys(ctx, q, principalID)
 	if err != nil {
-		return nil, err
+		return passkeyList{}, err
 	}
 	rows, err := q.ListAccountPasskeys(ctx, account.ID)
 	if err != nil {
-		return nil, err
+		return passkeyList{}, err
 	}
-	result := make([]passkeySummary, 0, len(rows))
+	items := make([]passkeySummary, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, summarizePasskey(row.ID, row.Name, row.CreatedAt, row.LastUsedAt))
+		items = append(items, summarizePasskey(row.ID, row.Name, row.CreatedAt, row.LastUsedAt))
 	}
-	return result, nil
+	err = s.lockPasskeyLogin(ctx, q, principalID, login)
+	if err != nil && !errors.Is(err, errs.ErrReauthenticationRequired) {
+		return passkeyList{}, err
+	}
+	return passkeyList{Items: items, CanManage: err == nil}, nil
 }
 
-func (s *Service) beginPasskeyRegistration(ctx context.Context, principalID uuid.UUID) (*protocol.CredentialCreation, string, error) {
+func (s *Service) beginPasskeyRegistration(ctx context.Context, principalID uuid.UUID, login auth.RecentLogin) (*protocol.CredentialCreation, string, error) {
 	q := dbgen.New(s.DB.Pool())
+	if err := s.lockPasskeyLogin(ctx, q, principalID, login); err != nil {
+		return nil, "", err
+	}
 	account, err := accountForPasskeys(ctx, q, principalID)
 	if err != nil {
 		return nil, "", err
@@ -160,7 +185,7 @@ func (s *Service) beginPasskeyRegistration(ctx context.Context, principalID uuid
 	return options, token, err
 }
 
-func (s *Service) finishPasskeyRegistration(ctx context.Context, principalID uuid.UUID, token, name string, response []byte) (passkeySummary, error) {
+func (s *Service) finishPasskeyRegistration(ctx context.Context, principalID uuid.UUID, login auth.RecentLogin, token, name string, response []byte) (passkeySummary, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > 80 ||
 		strings.ContainsFunc(name, unicode.IsControl) {
@@ -193,10 +218,13 @@ func (s *Service) finishPasskeyRegistration(ctx context.Context, principalID uui
 	var summary passkeySummary
 	err = s.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
-		if _, err := q.LockActivePasskeyAccount(ctx, account.ID); err != nil {
+		if _, err := q.LockActiveAccount(ctx, account.ID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errs.ErrNotFound
 			}
+			return err
+		}
+		if err := s.lockPasskeyLogin(ctx, q, principalID, login); err != nil {
 			return err
 		}
 		rows, err := q.ListAccountPasskeys(ctx, account.ID)
@@ -224,17 +252,20 @@ func (s *Service) finishPasskeyRegistration(ctx context.Context, principalID uui
 	return summary, err
 }
 
-func (s *Service) removePasskey(ctx context.Context, principalID, passkeyID uuid.UUID) error {
+func (s *Service) removePasskey(ctx context.Context, principalID uuid.UUID, login auth.RecentLogin, passkeyID uuid.UUID) error {
 	return s.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		account, err := accountForPasskeys(ctx, q, principalID)
 		if err != nil {
 			return err
 		}
-		if _, err := q.LockActivePasskeyAccount(ctx, account.ID); err != nil {
+		if _, err := q.LockActiveAccount(ctx, account.ID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errs.ErrNotFound
 			}
+			return err
+		}
+		if err := s.lockPasskeyLogin(ctx, q, principalID, login); err != nil {
 			return err
 		}
 		removed, err := q.RemoveAccountPasskey(ctx, dbgen.RemoveAccountPasskeyParams{AccountID: account.ID, ID: passkeyID})
@@ -277,7 +308,7 @@ func (s *Service) finishPasskeyLogin(ctx context.Context, token string, response
 	var pair TokenPair
 	err = s.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
-		account, err := q.LockActivePasskeyAccount(ctx, accountID)
+		account, err := q.LockActiveAccount(ctx, accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidCredentials
 		}

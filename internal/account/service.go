@@ -131,6 +131,18 @@ func (s *Service) Login(ctx context.Context, email, password string) (TokenPair,
 		if acc.Status != "active" {
 			return ErrInvalidCredentials
 		}
+		// Serialize minting an interactive login with a concurrent password reset.
+		// The password check ran before this lock, so confirm it is still current.
+		current, err := q.LockActiveAccount(ctx, acc.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
+		if err != nil {
+			return err
+		}
+		if current.PasswordHash == nil || *current.PasswordHash != *acc.PasswordHash {
+			return ErrInvalidCredentials
+		}
 		tp, err = s.issueLoginSession(ctx, tx, acc.ID)
 		return err
 	})
@@ -145,11 +157,11 @@ func (s *Service) issueLoginSession(ctx context.Context, tx pgx.Tx, accountID uu
 		return TokenPair{}, err
 	}
 	now := s.now()
-	access, err := s.Ring.SignForLogin(prin.ID, s.AccessTTL, now)
+	refresh, refreshID, err := auth.IssueRefresh(ctx, tx, prin.ID, s.RefreshTTL, now)
 	if err != nil {
 		return TokenPair{}, err
 	}
-	refresh, err := auth.IssueRefresh(ctx, tx, prin.ID, s.RefreshTTL, now)
+	access, err := s.Ring.SignForLogin(prin.ID, refreshID, s.AccessTTL, now)
 	if err != nil {
 		return TokenPair{}, err
 	}

@@ -16,12 +16,14 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/db"
 	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
+	"github.com/manyforge/manyforge/internal/platform/errs"
 )
 
 func TestPasskeyChallengeIsBoundToAccountAndPurposeAndConsumedOnce(t *testing.T) {
@@ -96,11 +98,22 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := &Service{DB: tdb.App, Ring: ring, Passkeys: p, TokenTTL: time.Hour, AccessTTL: time.Hour, RefreshTTL: time.Hour}
-	accountID, _, err := svc.Signup(ctx, "passkey-lifecycle@example.test", "Passkey user", "test-password-that-is-long")
+	const email = "passkey-lifecycle@example.test"
+	const password = "test-password-that-is-long"
+	accountID, _, err := svc.Signup(ctx, email, "Passkey user", password)
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal, err := dbgen.New(tdb.App.Pool()).GetPrincipalByAccount(ctx, db.PGUUID(accountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	passwordPair, err := svc.Login(ctx, email, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, passwordLogin, err := ring.ParseWithRecentLogin(passwordPair.Access)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +148,7 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 		return encodeJSON(map[string]any{"type": "public-key", "id": id, "rawId": id, "response": response})
 	}
 
-	options, token, err := svc.beginPasskeyRegistration(ctx, principal.ID)
+	options, token, err := svc.beginPasskeyRegistration(ctx, principal.ID, passwordLogin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +169,16 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 		"attestationObject": protocol.URLEncodedBase64(attestation),
 		"transports":        []string{"internal"},
 	})
-	passkey, err := svc.finishPasskeyRegistration(ctx, principal.ID, token, "Test key", creation)
+	passkey, err := svc.finishPasskeyRegistration(ctx, principal.ID, passwordLogin, token, "Test key", creation)
 	if err != nil || passkey.LastUsedAt != nil {
 		t.Fatalf("register: %+v, %v", passkey, err)
+	}
+
+	if err := svc.Logout(ctx, passwordPair.Refresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.beginPasskeyRegistration(ctx, principal.ID, passwordLogin); !errors.Is(err, errs.ErrReauthenticationRequired) {
+		t.Fatalf("registration with signed-out session: %v", err)
 	}
 
 	signIn := func(counter uint32) (TokenPair, error) {
@@ -190,21 +210,56 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 	if err != nil || pair.Refresh == "" {
 		t.Fatalf("passkey sign-in failed or omitted refresh token: %v", err)
 	}
-	pid, authenticatedAt, err := ring.ParseWithAuthTime(pair.Access)
-	if err != nil || pid != principal.ID || !svc.canManagePasskeys(authenticatedAt) {
-		t.Fatalf("passkey sign-in token principal=%v auth_time=%v error=%v", pid, authenticatedAt, err)
+	pid, passkeyLogin, err := ring.ParseWithRecentLogin(pair.Access)
+	if err != nil || pid != principal.ID {
+		t.Fatalf("passkey sign-in token principal=%v error=%v", pid, err)
 	}
-	items, err := svc.listPasskeys(ctx, principal.ID)
-	if err != nil || len(items) != 1 || items[0].ID != passkey.ID || items[0].LastUsedAt == nil {
-		t.Fatalf("last-used metadata: %+v, %v", items, err)
+	list, err := svc.listPasskeys(ctx, principal.ID, passkeyLogin)
+	if err != nil || !list.CanManage || len(list.Items) != 1 || list.Items[0].ID != passkey.ID || list.Items[0].LastUsedAt == nil {
+		t.Fatalf("last-used metadata and recent sign-in: %+v, %v", list, err)
 	}
+	t.Run("serializes with session revocation", func(t *testing.T) {
+		tx, err := tdb.App.Pool().Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := svc.lockPasskeyLogin(ctx, dbgen.New(tx), principal.ID, passkeyLogin); err != nil {
+			t.Fatal(err)
+		}
+		var id uuid.UUID
+		err = tdb.App.Pool().QueryRow(ctx, "SELECT id FROM refresh_token WHERE id = $1 FOR UPDATE NOWAIT", passkeyLogin.RefreshID).Scan(&id)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+			t.Fatalf("expected the session row to stay locked through the mutation, got %v", err)
+		}
+	})
 	if _, err := signIn(1); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("non-increasing hardware signature counter: %v", err)
 	}
-	if err := svc.removePasskey(ctx, principal.ID, passkey.ID); err != nil {
+	resetToken, err := svc.RequestPasswordReset(ctx, email)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := signIn(2); !errors.Is(err, ErrInvalidCredentials) {
+	if err := svc.ConfirmPasswordReset(ctx, resetToken, "new-test-password-that-is-long"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.removePasskey(ctx, principal.ID, passkeyLogin, passkey.ID); !errors.Is(err, errs.ErrReauthenticationRequired) {
+		t.Fatalf("removal with session from before password reset: %v", err)
+	}
+
+	pair, err = signIn(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, passkeyLogin, err = ring.ParseWithRecentLogin(pair.Access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.removePasskey(ctx, principal.ID, passkeyLogin, passkey.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := signIn(3); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("removed passkey sign-in: %v", err)
 	}
 }

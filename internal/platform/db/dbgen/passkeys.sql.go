@@ -195,29 +195,6 @@ func (q *Queries) ListAccountPasskeys(ctx context.Context, accountID uuid.UUID) 
 	return items, nil
 }
 
-const lockActivePasskeyAccount = `-- name: LockActivePasskeyAccount :one
-SELECT id, email, email_verified_at, password_hash, display_name, status, deleted_at, created_at, updated_at FROM account
-WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
-FOR UPDATE
-`
-
-func (q *Queries) LockActivePasskeyAccount(ctx context.Context, id uuid.UUID) (Account, error) {
-	row := q.db.QueryRow(ctx, lockActivePasskeyAccount, id)
-	var i Account
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.EmailVerifiedAt,
-		&i.PasswordHash,
-		&i.DisplayName,
-		&i.Status,
-		&i.DeletedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const markAccountPasskeyUsed = `-- name: MarkAccountPasskeyUsed :exec
 UPDATE account_passkey SET credential = $3, last_used_at = now()
 WHERE account_id = $1 AND credential_id = $2
