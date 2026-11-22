@@ -200,8 +200,13 @@ func main() {
 	if !cfg.OutboundMailDisabled && cfg.Environment == "production" && cfg.OutboundFromEmail == "" {
 		logger.Warn("MANYFORGE_OUTBOUND_FROM_EMAIL unset; account and invitation mail unavailable")
 	}
+	passkeys, err := account.NewPasskeys(cfg.PublicBaseURL)
+	if err != nil {
+		logger.Warn("passkeys unavailable for the configured public base URL", "err", err)
+	}
 	acctSvc := &account.Service{
-		DB: database, Ring: ring, Mailer: sharedMail.Mailer,
+		Passkeys: passkeys,
+		DB:       database, Ring: ring, Mailer: sharedMail.Mailer,
 		AccessTTL: cfg.AccessTokenTTL, RefreshTTL: 30 * 24 * time.Hour, TokenTTL: 24 * time.Hour,
 	}
 	tenSvc := &tenancy.Service{DB: database, Metrics: metrics}
@@ -1015,6 +1020,8 @@ func main() {
 			func(r *http.Request) string { return ratelimit.ClientIP(r, trusted) },
 		),
 	})
+
+	acctH.BrowserPasskeyRoutes(mux, httpx.RateLimit(authLimiter, ipKey))
 
 	// Same-origin Angular SPA (Task 1.2). Only registered in ui_embed builds —
 	// webui.Handler() returns (nil, false) otherwise, so dev/test/`make test`

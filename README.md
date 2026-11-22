@@ -23,6 +23,14 @@ make dev                             # API on :8080  (MANYFORGE_ADDR to override
 cd web && npm install && npm run start
 ```
 
+### Passkeys
+
+Account holders can add or remove passkeys under **Account security** after a
+recent sign-in. Set `MANYFORGE_PUBLIC_BASE_URL` (Helm `publicBaseURL`) to the
+browser's HTTPS origin to enable passkeys. For local development use the
+browser's `http://localhost` origin, including its port. Existing passkeys are
+bound to the hostname where they were created.
+
 ### Seed demo data
 
 With the dev DB up, `make seed-demo` idempotently creates the `live-demo@manyforge.test`

@@ -18,6 +18,7 @@ type ctxKey int
 const (
 	ctxKeyRequestID ctxKey = iota
 	ctxKeyPrincipal
+	ctxKeyAuthenticatedAt
 )
 
 var sensitiveCapabilityPaths = [...]struct {
@@ -101,8 +102,12 @@ func AuthToPrincipal(ring *auth.KeyRing) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-				if pid, err := ring.Parse(strings.TrimPrefix(h, "Bearer ")); err == nil {
-					r = r.WithContext(context.WithValue(r.Context(), ctxKeyPrincipal, pid))
+				if pid, authenticatedAt, err := ring.ParseWithAuthTime(strings.TrimPrefix(h, "Bearer ")); err == nil {
+					ctx := WithPrincipal(r.Context(), pid)
+					if !authenticatedAt.IsZero() {
+						ctx = context.WithValue(ctx, ctxKeyAuthenticatedAt, authenticatedAt)
+					}
+					r = r.WithContext(ctx)
 				}
 			}
 			next.ServeHTTP(w, r)
@@ -114,6 +119,12 @@ func AuthToPrincipal(ring *auth.KeyRing) func(http.Handler) http.Handler {
 func PrincipalFromContext(ctx context.Context) (uuid.UUID, bool) {
 	pid, ok := ctx.Value(ctxKeyPrincipal).(uuid.UUID)
 	return pid, ok
+}
+
+// AuthenticatedAt returns the signed login time, or zero for other access tokens.
+func AuthenticatedAt(ctx context.Context) time.Time {
+	authenticatedAt, _ := ctx.Value(ctxKeyAuthenticatedAt).(time.Time)
+	return authenticatedAt
 }
 
 // WithPrincipal returns a context carrying principalID, as AuthToPrincipal would.

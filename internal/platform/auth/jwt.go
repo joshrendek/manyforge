@@ -38,15 +38,29 @@ func NewKeyRing(issuer, audience, activeKID string, signing ed25519.PrivateKey, 
 	return &KeyRing{issuer: issuer, audience: audience, activeKID: activeKID, signing: signing, verify: verify}, nil
 }
 
+type accessClaims struct {
+	jwt.RegisteredClaims
+	AuthTime *jwt.NumericDate `json:"auth_time,omitempty"`
+}
+
 // Sign issues an access token for principalID valid for ttl.
 func (k *KeyRing) Sign(principalID uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
-	claims := jwt.RegisteredClaims{
+	return k.sign(principalID, ttl, now, nil)
+}
+
+// SignForLogin records a fresh authentication on the initial access token.
+func (k *KeyRing) SignForLogin(principalID uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
+	return k.sign(principalID, ttl, now, jwt.NewNumericDate(now))
+}
+
+func (k *KeyRing) sign(principalID uuid.UUID, ttl time.Duration, now time.Time, authTime *jwt.NumericDate) (string, error) {
+	claims := accessClaims{AuthTime: authTime, RegisteredClaims: jwt.RegisteredClaims{
 		Issuer:    k.issuer,
 		Audience:  jwt.ClaimStrings{k.audience},
 		Subject:   principalID.String(),
 		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		IssuedAt:  jwt.NewNumericDate(now),
-	}
+	}}
 	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	tok.Header["kid"] = k.activeKID
 	return tok.SignedString(k.signing)
@@ -55,13 +69,20 @@ func (k *KeyRing) Sign(principalID uuid.UUID, ttl time.Duration, now time.Time) 
 // Parse validates a token (pinning alg=EdDSA, issuer, audience, expiry, and a
 // known kid) and returns the principal id.
 func (k *KeyRing) Parse(tokenStr string) (uuid.UUID, error) {
+	principalID, _, err := k.ParseWithAuthTime(tokenStr)
+	return principalID, err
+}
+
+// ParseWithAuthTime validates an access token and returns its principal and
+// original authentication time, if the token was issued directly at sign-in.
+func (k *KeyRing) ParseWithAuthTime(tokenStr string) (uuid.UUID, time.Time, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{"EdDSA"}),
 		jwt.WithIssuer(k.issuer),
 		jwt.WithAudience(k.audience),
 		jwt.WithExpirationRequired(),
 	)
-	claims := &jwt.RegisteredClaims{}
+	claims := &accessClaims{}
 	_, err := parser.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
 		kid, _ := t.Header["kid"].(string)
 		pub, ok := k.verify[kid]
@@ -71,7 +92,12 @@ func (k *KeyRing) Parse(tokenStr string) (uuid.UUID, error) {
 		return pub, nil
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, time.Time{}, err
 	}
-	return uuid.Parse(claims.Subject)
+	principalID, err := uuid.Parse(claims.Subject)
+	var authenticatedAt time.Time
+	if claims.AuthTime != nil {
+		authenticatedAt = claims.AuthTime.Time
+	}
+	return principalID, authenticatedAt, err
 }

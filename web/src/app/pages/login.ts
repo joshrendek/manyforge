@@ -1,7 +1,10 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, DestroyRef, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
-import { AuthService } from '../core/auth.service';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Observable, tap } from 'rxjs';
+import { AuthService, TokenPair } from '../core/auth.service';
+import { PasskeyService, supportsPasskeys } from '../core/passkey.service';
 
 @Component({
   selector: 'app-login',
@@ -20,9 +23,15 @@ import { AuthService } from '../core/auth.service';
           <label for="password">Password</label>
           <input class="mf-input" id="password" type="password" name="password" [(ngModel)]="password" autocomplete="current-password" required data-testid="login-password" />
         </div>
-        <button class="mf-btn mf-btn-primary" type="submit" [disabled]="loading()" data-testid="login-submit">{{ loading() ? 'Signing in…' : 'Sign in' }}</button>
+        <button class="mf-btn mf-btn-primary" type="submit" [disabled]="loading() !== null" data-testid="login-submit">{{ loading() === 'password' ? 'Signing in…' : 'Sign in' }}</button>
+        @if (passkeysAvailable()) {
+          <button class="mf-btn mf-btn-ghost" type="button" [disabled]="loading() !== null"
+            (click)="signInWithPasskey()" data-testid="login-passkey">
+            {{ loading() === 'passkey' ? 'Waiting for passkey…' : 'Sign in with a passkey' }}
+          </button>
+        }
       </form>
-      @if (error()) { <p class="mf-err" data-testid="login-error">{{ error() }}</p> }
+      @if (error()) { <p class="mf-err" role="alert" data-testid="login-error">{{ error() }}</p> }
       <p class="auth-footer">New here? <a class="mf-btn-link" routerLink="/signup">Create an account</a></p>
     </div>
   `,
@@ -37,23 +46,58 @@ import { AuthService } from '../core/auth.service';
 export class LoginComponent {
   private auth = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
+  private passkeys = inject(PasskeyService);
+  private destroyRef = inject(DestroyRef);
+  private passkeyPrompt = new AbortController();
 
   email = '';
   password = '';
-  loading = signal(false);
+  loading = signal<'password' | 'passkey' | null>(null);
   error = signal('');
+  readonly passkeysAvailable = signal(false);
+
+  constructor() {
+    this.destroyRef.onDestroy(() => this.passkeyPrompt.abort());
+    if (supportsPasskeys()) {
+      this.passkeys.available().pipe(takeUntilDestroyed()).subscribe({
+        next: (enabled) => this.passkeysAvailable.set(enabled),
+        error: () => {},
+      });
+    }
+  }
 
   submit(): void {
-    this.loading.set(true);
+    if (this.loading()) return;
+    this.signIn('password', this.auth.login(this.email, this.password));
+  }
+
+  signInWithPasskey(): void {
+    if (this.loading()) return;
+    this.signIn('passkey', this.passkeys.login(this.passkeyPrompt.signal).pipe(
+      tap((pair) => this.auth.startSession(pair)),
+    ));
+  }
+
+  private signIn(method: 'password' | 'passkey', request: Observable<TokenPair>): void {
+    this.loading.set(method);
     this.error.set('');
-    this.auth.login(this.email, this.password).subscribe({
+    request.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
-        this.loading.set(false);
-        void this.router.navigateByUrl('/dashboard');
+        this.loading.set(null);
+        const destination = this.route.snapshot.queryParamMap.get('returnTo') === 'security'
+          ? '/account/security' : '/dashboard';
+        void this.router.navigateByUrl(destination);
       },
-      error: () => {
-        this.loading.set(false);
-        this.error.set('Invalid email or password.');
+      error: (err: unknown) => {
+        this.loading.set(null);
+        if (method === 'password') {
+          this.error.set('Invalid email or password.');
+        } else if (err instanceof DOMException && err.name === 'NotAllowedError') {
+          this.error.set('No passkey was selected. Try again or sign in with your password.');
+        } else {
+          this.error.set('Could not sign in with that passkey. Try again or sign in with your password.');
+        }
       },
     });
   }

@@ -1099,6 +1099,24 @@ type AccountErasure struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type AccountPasskey struct {
+	ID           uuid.UUID          `json:"id"`
+	AccountID    uuid.UUID          `json:"account_id"`
+	CredentialID []byte             `json:"credential_id"`
+	Credential   []byte             `json:"credential"`
+	Name         string             `json:"name"`
+	CreatedAt    time.Time          `json:"created_at"`
+	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
+}
+
+type AccountPasskeyChallenge struct {
+	TokenHash string      `json:"token_hash"`
+	AccountID pgtype.UUID `json:"account_id"`
+	Purpose   string      `json:"purpose"`
+	Session   []byte      `json:"session"`
+	ExpiresAt time.Time   `json:"expires_at"`
+}
+
 type ActivityEntry struct {
 	ID           uuid.UUID   `json:"id"`
 	TenantRootID uuid.UUID   `json:"tenant_root_id"`

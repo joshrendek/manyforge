@@ -51,6 +51,7 @@ type Querier interface {
 	// DEFINER fn to return base_url + allow_private_base_url; the inline query mirrors that.
 	ConnectorWebhookContext(ctx context.Context, id uuid.UUID) (ConnectorWebhookContextRow, error)
 	ConsumeOneTimeToken(ctx context.Context, arg ConsumeOneTimeTokenParams) (OneTimeToken, error)
+	ConsumePasskeyChallenge(ctx context.Context, arg ConsumePasskeyChallengeParams) ([]byte, error)
 	CountActiveChildren(ctx context.Context, parentID pgtype.UUID) (int64, error)
 	// CountAgentsInBusiness counts how many of the given agent IDs exist AND are visible to
 	// the caller in this business. Used to validate a review fallback chain: count != len(ids)
@@ -68,6 +69,7 @@ type Querier interface {
 	CountTicketMessages(ctx context.Context, arg CountTicketMessagesParams) (int64, error)
 	CountUnreadNotifications(ctx context.Context, principalID uuid.UUID) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
+	CreateAccountPasskey(ctx context.Context, arg CreateAccountPasskeyParams) (CreateAccountPasskeyRow, error)
 	// CreateAgent inserts an agent definition. tenant_root_id is derived from the
 	// business row (RLS-gated). Duplicate (business_id, name) → 23505 → 409.
 	CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error)
@@ -107,6 +109,7 @@ type Querier interface {
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) error
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) error
 	CreateOneTimeToken(ctx context.Context, arg CreateOneTimeTokenParams) (OneTimeToken, error)
+	CreatePasskeyChallenge(ctx context.Context, arg CreatePasskeyChallengeParams) error
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateRole(ctx context.Context, arg CreateRoleParams) error
 	// ---- Account lifecycle (T077, FR-028) ----
@@ -118,6 +121,7 @@ type Querier interface {
 	// DeleteAIProviderCredential deletes a credential by (id, business_id).
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteAIProviderCredential(ctx context.Context, arg DeleteAIProviderCredentialParams) (int64, error)
+	DeleteAccountPasskeys(ctx context.Context, accountID uuid.UUID) error
 	// DeleteAgent atomically deletes the agent and its kind='agent' principal. The agent
 	// row is deleted first (it FKs the principal), then the principal. rows-affected (the
 	// principal delete) = 0 when the agent doesn't exist / isn't visible → 404 (no oracle).
@@ -140,6 +144,7 @@ type Querier interface {
 	DeleteConnectorSyncState(ctx context.Context, connectorID uuid.UUID) (int64, error)
 	// DeleteConnectorWebhookDeliveries cascades the inbound webhook-dedup rows for a connector.
 	DeleteConnectorWebhookDeliveries(ctx context.Context, connectorID uuid.UUID) (int64, error)
+	DeleteExpiredPasskeyChallenges(ctx context.Context) error
 	// DeleteMCPServer deletes an MCP server by (id, business_id).
 	// Returns rows-affected so the service can map 0 => ErrNotFound.
 	DeleteMCPServer(ctx context.Context, arg DeleteMCPServerParams) (int64, error)
@@ -237,6 +242,7 @@ type Querier interface {
 	GetAccountByEmail(ctx context.Context, email string) (Account, error)
 	GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error)
 	GetAccountByPrincipal(ctx context.Context, id uuid.UUID) (Account, error)
+	GetAccountPasskeyCredential(ctx context.Context, arg GetAccountPasskeyCredentialParams) ([]byte, error)
 	// GetAgent loads an agent by (id, business_id) — the ownership predicate. RLS
 	// scopes rows to the caller's authorized businesses; the explicit business_id is
 	// defense in depth. pgx.ErrNoRows => ErrNotFound.
@@ -572,6 +578,8 @@ type Querier interface {
 	// ListAIProviderCredentials lists all credentials for a business, ordered
 	// by provider name for a stable, deterministic result.
 	ListAIProviderCredentials(ctx context.Context, businessID uuid.UUID) ([]AiProviderCredential, error)
+	ListAccountPasskeyCredentials(ctx context.Context, accountID uuid.UUID) ([][]byte, error)
+	ListAccountPasskeys(ctx context.Context, accountID uuid.UUID) ([]ListAccountPasskeysRow, error)
 	// ListActivityForContact is the first timeline page: newest-first, tenant+contact scoped.
 	ListActivityForContact(ctx context.Context, arg ListActivityForContactParams) ([]ActivityEntry, error)
 	// ListActivityForContactAfter is the keyset continuation. Order is DESC, so the row-value
@@ -785,9 +793,11 @@ type Querier interface {
 	// ListWorkTasksSince is the sync pull: every task whose rev moved past the client's cursor.
 	ListWorkTasksSince(ctx context.Context, arg ListWorkTasksSinceParams) ([]WorkTask, error)
 	ListWorkTokens(ctx context.Context, arg ListWorkTokensParams) ([]ListWorkTokensRow, error)
+	LockActivePasskeyAccount(ctx context.Context, id uuid.UUID) (Account, error)
 	LockAutomationVersion(ctx context.Context, arg LockAutomationVersionParams) (AutomationVersion, error)
 	// LockWorkProject serializes every task write in a project (web UI and sync alike).
 	LockWorkProject(ctx context.Context, arg LockWorkProjectParams) (WorkProject, error)
+	MarkAccountPasskeyUsed(ctx context.Context, arg MarkAccountPasskeyUsedParams) error
 	// Idempotency claim: flip approved -> executed iff still approved. Zero rows means a
 	// prior delivery already executed it (or it was denied) -> the executor skips.
 	MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExecutedParams) (ApprovalItem, error)
@@ -841,6 +851,7 @@ type Querier interface {
 	// satisfy ticket_message_connector_external_chk (connector_id set ⇒ external_id present); messages
 	// without an external id correctly stay native.
 	RelinkReadoptedMessages(ctx context.Context, arg RelinkReadoptedMessagesParams) error
+	RemoveAccountPasskey(ctx context.Context, arg RemoveAccountPasskeyParams) (int64, error)
 	// Subtree move is performed by the SECURITY DEFINER move_business() function
 	// (migration 0009), invoked via tx.Exec from the service so the closure rewrite
 	// is RLS-exempt (the moved subtree is transiently unauthorized mid-rewrite).
