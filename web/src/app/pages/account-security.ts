@@ -23,9 +23,12 @@ import { Passkey, PasskeyService, supportsPasskeys } from '../core/passkey.servi
       } @else if (unavailable()) {
         <p>Passkeys are unavailable for this account.</p>
       } @else if (loaded()) {
+        @if (items().length) {
+          <p>Your account requires a passkey for sign-in. Add a backup passkey in case you lose access to this one.</p>
+        }
         @if (!canManage()) {
           <div class="passkey-actions">
-            <p>Sign in again to add or remove passkeys.</p>
+            <p>{{ items().length ? 'Sign in again with a passkey to make changes.' : 'Sign in again to add a passkey.' }}</p>
             <button class="mf-btn mf-btn-ghost" type="button" [disabled]="busy()" (click)="signInAgain()">Sign in again</button>
           </div>
         }
@@ -42,6 +45,9 @@ import { Passkey, PasskeyService, supportsPasskeys } from '../core/passkey.servi
                 </div>
                 @if (removing() === item.id) {
                   <div class="passkey-actions">
+                    @if (items().length === 1) {
+                      <p>Removing your last passkey restores password and email sign-in.</p>
+                    }
                     <button class="mf-btn mf-btn-ghost" type="button" [disabled]="busy()" (click)="removing.set(null)">Cancel</button>
                     <button class="mf-btn mf-btn-danger" type="button" [disabled]="busy()" (click)="remove(item)">Confirm removal</button>
                   </div>
@@ -53,7 +59,7 @@ import { Passkey, PasskeyService, supportsPasskeys } from '../core/passkey.servi
             }
           </ul>
         } @else {
-          <p>No passkeys added.</p>
+          <p>Adding your first passkey will require a passkey for future sign-ins. Use one you can recover or access from another device.</p>
         }
         @if (!supported) {
           <p>Use an up-to-date browser over a secure connection to add a passkey.</p>
@@ -149,6 +155,7 @@ export class AccountSecurityComponent {
     this.startChange();
     this.passkeys.register(name, this.passkeyPrompt.signal).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (key) => {
+        if (this.items().length === 0) this.canManage.set(false);
         this.items.update((items) => [...items, key]);
         this.name = '';
         this.busy.set(false);
@@ -167,7 +174,7 @@ export class AccountSecurityComponent {
   remove(item: Passkey): void {
     if (this.busy() || !this.canManage()) return;
     this.startChange();
-    this.passkeys.remove(item.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.passkeys.remove(item.id, this.items().length === 1).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.items.update((items) => items.filter((key) => key.id !== item.id));
         this.busy.set(false);

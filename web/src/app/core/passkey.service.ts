@@ -74,7 +74,9 @@ export class PasskeyService {
     );
   }
 
-  remove(id: string): Observable<void> {
-    return this.http.delete<void>(PASSKEY_API + '/' + encodeURIComponent(id));
+  remove(id: string, allowLast: boolean): Observable<void> {
+    return this.http.delete<void>(PASSKEY_API + '/' + encodeURIComponent(id), {
+      params: { allow_last: allowLast },
+    });
   }
 }

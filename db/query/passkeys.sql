@@ -1,3 +1,6 @@
+-- name: AccountHasPasskeys :one
+SELECT EXISTS (SELECT 1 FROM account_passkey WHERE account_id = $1);
+
 -- name: ListAccountPasskeys :many
 SELECT id, name, created_at, last_used_at
 FROM account_passkey

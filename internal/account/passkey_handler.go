@@ -121,7 +121,8 @@ func (h *Handler) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
-	if err := h.svc.removePasskey(r.Context(), pid, httpx.RecentLoginFromContext(r.Context()), keyID); err != nil {
+	allowLast := r.URL.Query().Get("allow_last") == "true"
+	if err := h.svc.removePasskey(r.Context(), pid, httpx.RecentLoginFromContext(r.Context()), keyID, allowLast); err != nil {
 		writePasskeyManagementError(w, r, err)
 		return
 	}

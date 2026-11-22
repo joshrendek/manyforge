@@ -109,6 +109,10 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	magicBeforeEnrollment, err := svc.RequestMagicLink(ctx, email)
+	if err != nil || magicBeforeEnrollment == "" {
+		t.Fatalf("request magic link before enrollment: %v", err)
+	}
 	passwordPair, err := svc.Login(ctx, email, password)
 	if err != nil {
 		t.Fatal(err)
@@ -152,6 +156,10 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pendingOptions, pendingToken, err := svc.beginPasskeyRegistration(ctx, principal.ID, passwordLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := append(authData(protocol.FlagAttestedCredentialData, 0), make([]byte, 16)...)
 	data = binary.BigEndian.AppendUint16(data, uint16(len(credentialID)))
 	data = append(data, credentialID[:]...)
@@ -162,23 +170,37 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	creation := credentialResponse(map[string]any{
-		"clientDataJSON": protocol.URLEncodedBase64(encodeJSON(protocol.CollectedClientData{
-			Type: protocol.CreateCeremony, Challenge: options.Response.Challenge.String(), Origin: origin,
-		})),
-		"attestationObject": protocol.URLEncodedBase64(attestation),
-		"transports":        []string{"internal"},
-	})
-	passkey, err := svc.finishPasskeyRegistration(ctx, principal.ID, passwordLogin, token, "Test key", creation)
+	creation := func(challenge string) []byte {
+		return credentialResponse(map[string]any{
+			"clientDataJSON": protocol.URLEncodedBase64(encodeJSON(protocol.CollectedClientData{
+				Type: protocol.CreateCeremony, Challenge: challenge, Origin: origin,
+			})),
+			"attestationObject": protocol.URLEncodedBase64(attestation),
+			"transports":        []string{"internal"},
+		})
+	}
+	passkey, err := svc.finishPasskeyRegistration(ctx, principal.ID, passwordLogin, token, "Test key", creation(options.Response.Challenge.String()))
 	if err != nil || passkey.LastUsedAt != nil {
 		t.Fatalf("register: %+v, %v", passkey, err)
 	}
 
-	if err := svc.Logout(ctx, passwordPair.Refresh); err != nil {
-		t.Fatal(err)
+	if pair, err := svc.Login(ctx, email, password); !errors.Is(err, ErrInvalidCredentials) || pair != (TokenPair{}) {
+		t.Fatalf("password sign-in after enrollment issued a session or surfaced the wrong error: %v", err)
+	}
+	if pair, err := svc.ConsumeMagicLink(ctx, magicBeforeEnrollment); !errors.Is(err, errs.ErrValidation) || pair != (TokenPair{}) {
+		t.Fatalf("magic link issued before enrollment allowed sign-in or surfaced the wrong error: %v", err)
+	}
+	if raw, err := svc.RequestMagicLink(ctx, email); err != nil || raw != "" {
+		t.Fatalf("magic link request after enrollment issued a link or failed: %v", err)
 	}
 	if _, _, err := svc.beginPasskeyRegistration(ctx, principal.ID, passwordLogin); !errors.Is(err, errs.ErrReauthenticationRequired) {
-		t.Fatalf("registration with signed-out session: %v", err)
+		t.Fatalf("registration begin with existing password session: %v", err)
+	}
+	if _, err := svc.finishPasskeyRegistration(ctx, principal.ID, passwordLogin, pendingToken, "Test key", creation(pendingOptions.Response.Challenge.String())); !errors.Is(err, errs.ErrReauthenticationRequired) {
+		t.Fatalf("registration began before enrollment and finished with a password session: %v", err)
+	}
+	if err := svc.removePasskey(ctx, principal.ID, passwordLogin, passkey.ID, true); !errors.Is(err, errs.ErrReauthenticationRequired) {
+		t.Fatalf("last passkey removal with existing password session: %v", err)
 	}
 
 	signIn := func(counter uint32) (TokenPair, error) {
@@ -224,7 +246,7 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		if err := svc.lockPasskeyLogin(ctx, dbgen.New(tx), principal.ID, passkeyLogin); err != nil {
+		if err := svc.lockPasskeyLogin(ctx, dbgen.New(tx), principal.ID, passkeyLogin, true); err != nil {
 			t.Fatal(err)
 		}
 		var id uuid.UUID
@@ -237,15 +259,11 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 	if _, err := signIn(1); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("non-increasing hardware signature counter: %v", err)
 	}
-	resetToken, err := svc.RequestPasswordReset(ctx, email)
-	if err != nil {
+	if err := svc.Logout(ctx, pair.Refresh); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ConfirmPasswordReset(ctx, resetToken, "new-test-password-that-is-long"); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.removePasskey(ctx, principal.ID, passkeyLogin, passkey.ID); !errors.Is(err, errs.ErrReauthenticationRequired) {
-		t.Fatalf("removal with session from before password reset: %v", err)
+	if _, _, err := svc.beginPasskeyRegistration(ctx, principal.ID, passkeyLogin); !errors.Is(err, errs.ErrReauthenticationRequired) {
+		t.Fatalf("registration with signed-out passkey session: %v", err)
 	}
 
 	pair, err = signIn(2)
@@ -256,10 +274,42 @@ func TestPasskeyCredentialLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.removePasskey(ctx, principal.ID, passkeyLogin, passkey.ID); err != nil {
+	resetToken, err := svc.RequestPasswordReset(ctx, email)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := signIn(3); !errors.Is(err, ErrInvalidCredentials) {
+	const newPassword = "new-test-password-that-is-long"
+	if err := svc.ConfirmPasswordReset(ctx, resetToken, newPassword); err != nil {
+		t.Fatal(err)
+	}
+	if pair, err := svc.Login(ctx, email, newPassword); !errors.Is(err, ErrInvalidCredentials) || pair != (TokenPair{}) {
+		t.Fatalf("password reset cleared the passkey sign-in requirement: %v", err)
+	}
+	if err := svc.removePasskey(ctx, principal.ID, passkeyLogin, passkey.ID, true); !errors.Is(err, errs.ErrReauthenticationRequired) {
+		t.Fatalf("removal with session from before password reset: %v", err)
+	}
+
+	pair, err = signIn(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, passkeyLogin, err = ring.ParseWithRecentLogin(pair.Access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.removePasskey(ctx, principal.ID, passkeyLogin, passkey.ID, false); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("unconfirmed removal of the last passkey: %v", err)
+	}
+	if err := svc.removePasskey(ctx, principal.ID, passkeyLogin, passkey.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := signIn(4); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("removed passkey sign-in: %v", err)
+	}
+	if pair, err := svc.Login(ctx, email, newPassword); err != nil || pair.Access == "" {
+		t.Fatalf("password sign-in after deliberate removal of last passkey: %v", err)
+	}
+	if _, err := svc.ConsumeMagicLink(ctx, magicBeforeEnrollment); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("blocked magic link should remain consumed: %v", err)
 	}
 }

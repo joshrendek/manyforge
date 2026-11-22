@@ -141,6 +141,10 @@ func (s *Service) RequestMagicLink(ctx context.Context, email string) (string, e
 		if err != nil {
 			return nil // no existence oracle: silent success
 		}
+		enrolled, err := q.AccountHasPasskeys(ctx, acc.ID)
+		if err != nil || enrolled {
+			return err
+		}
 		raw, err = s.issueOneTimeToken(ctx, q, acc.ID, email, "magic_link", nil, "Your sign-in link")
 		return err
 	})
@@ -151,6 +155,7 @@ func (s *Service) RequestMagicLink(ctx context.Context, email string) (string, e
 // (works for password-less accounts). A non-active or deleted account is denied.
 func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string) (TokenPair, error) {
 	var tp TokenPair
+	var requiresPasskey bool
 	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		q := dbgen.New(tx)
 		tok, err := q.ConsumeOneTimeToken(ctx, dbgen.ConsumeOneTimeTokenParams{
@@ -165,8 +170,15 @@ func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string) (TokenP
 		} else if err != nil {
 			return err
 		}
-		tp, err = s.issueLoginSession(ctx, tx, accountID)
+		tp, err = s.issueLoginSession(ctx, tx, accountID, auth.LoginMagicLink)
+		if errors.Is(err, errPasskeyRequired) {
+			requiresPasskey = true
+			return nil // Commit consumption of the link without issuing a session.
+		}
 		return err
 	})
+	if err == nil && requiresPasskey {
+		return TokenPair{}, fmt.Errorf("invalid or expired token: %w", errs.ErrValidation)
+	}
 	return tp, err
 }
