@@ -54,6 +54,7 @@ function mockInboundAddress(over: Partial<InboundAddress> = {}): InboundAddress 
 
 const domainsUrl = `/api/v1/businesses/${biz}/email-domains`;
 const addressesUrl = `/api/v1/businesses/${biz}/inbound-addresses`;
+const portalUrl = `/api/v1/businesses/${biz}/portal-domains`;
 
 describe('InboxSettingsComponent (US4)', () => {
   let fixture: ComponentFixture<InboxSettingsComponent>;
@@ -70,6 +71,9 @@ describe('InboxSettingsComponent (US4)', () => {
     const aPage: Page<InboundAddress> = { items: addresses, next_cursor: null };
     mock.expectOne(domainsUrl).flush(dPage);
     mock.expectOne(addressesUrl).flush(aPage);
+    fixture.detectChanges(); // renders the embedded portal-domains section
+    // The embedded section loads its own list; it has its own spec.
+    mock.expectOne((r) => r.url === portalUrl).flush({ items: [], next_cursor: null });
     fixture.detectChanges();
   }
 
