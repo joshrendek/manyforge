@@ -108,6 +108,7 @@ One middleware ahead of every route decides by normalised host:
 | Host | Behaviour |
 |---|---|
 | The instance host (from `MANYFORGE_PUBLIC_BASE_URL`), or no public base URL configured | Unchanged. |
+| An internal name: IP literal, `localhost`, or a name ending `.localhost`, `.svc` or `.svc.cluster.local` | Treated as the instance host. Probes and in-cluster callers use these; they cannot be registered and cannot arrive through the edge. |
 | A verified portal domain | The business is put in the request context. Only the public allowlist is served; everything else is 404. |
 | Anything else | 404, with no detail. |
 
@@ -118,18 +119,24 @@ The public allowlist is explicit, kept in one place, and starts as: the
 public feedback pages and their API, the public mailing pages and their API,
 the static assets the web app needs to render those pages, and the analytics
 snippet and collect endpoint. The support portal adds its own entries when it
-ships. A public endpoint that takes a key resolving to a business must match
-the business the hostname resolved to, or 404.
+ships. A public endpoint that takes a key resolving to a business (a feedback
+board key, a mailing list key) must match the business the hostname resolved
+to, or behave as for an unknown key. Routes that take an opaque single-purpose
+token (mailing confirm, unsubscribe, open, click, brand logo) are allowed on
+any verified hostname without that match: the token is the capability and
+does not resolve a business in the application today. The root path `/` is
+404 on a custom hostname until the support portal defines a home page.
 
 The verified-hostname lookup is cached in memory with a short expiry (on the
 order of a minute), so a request does not cost a query and removal is prompt.
 
 ### Sessions
 
-Operator session cookies carry no `Domain` attribute, so browsers never send
-them to another hostname. The middleware does not rely on that alone: on a
-custom hostname the authenticated routes are not reachable at all. A test
-pins both.
+Operator sessions are bearer tokens kept in per-origin browser storage, so a
+browser never presents them on another hostname. The only cookie, used during
+passkey sign-in, carries the `__Host-` prefix when secure and so cannot be
+scoped to a wider domain. The middleware does not rely on either: on a custom
+hostname the authenticated routes are not reachable at all. A test pins both.
 
 ### Ingress
 
@@ -139,9 +146,15 @@ as extra rules on the same Ingress, so the source-range restriction, the
 
 ### Links in mail
 
-Where mail sent for a business builds a public link from the instance base
-URL, it uses `https://<verified portal hostname>` when the business has one.
-With more than one verified hostname, the earliest verified wins.
+The mailing double-opt-in confirmation link uses
+`https://<verified portal hostname>` when the business has one. With more
+than one verified hostname, the earliest verified wins.
+
+Unsubscribe, open-tracking, click-tracking and brand-logo links stay on the
+instance hostname. They sit in delivered mail indefinitely, and a domain that
+is later removed or whose DNS lapses must not break an unsubscribe link or
+every link in an old message. Customer-facing support links are decided with
+the support portal.
 
 ### Settings and API
 
@@ -174,13 +187,17 @@ use an address record).
 - **Security regression:** one file pinning that authenticated routes are
   unreachable on a custom hostname and that the session cookie has no
   `Domain` attribute.
-- **Mail links:** verified hostname used when present, instance URL
-  otherwise.
+- **Mail links:** the confirmation link uses the verified hostname when
+  present and the instance URL otherwise; unsubscribe, tracking and logo
+  links always use the instance URL.
 - **Chart:** rendering with and without `extraHosts`; restrictions present
   on every rule.
-- **Browser (Playwright):** on a custom hostname a public page renders and
-  the login page is refused; the settings section adds, shows records for,
-  verifies and removes a domain.
+- **Browser (Playwright, mocked API):** the settings section adds, shows
+  records for, verifies and removes a domain.
+- **Host routing** is tested at HTTP level in Go, because the browser suite
+  runs against the development server with a mocked API and has no host
+  routing. A real browser checks a custom hostname once against the deployed
+  instance: a public page renders and the login page is refused.
 - **Contract:** OpenAPI drift test and SDK generation gates.
 
 ## Done means
