@@ -3,9 +3,13 @@
 package portaldomain
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -162,6 +166,9 @@ func TestCreateNormalisesAndReturnsChallenge(t *testing.T) {
 	}
 	if len(d.Verification.Value) <= len("mf-portal-verify=") || d.Verification.Value[:len("mf-portal-verify=")] != "mf-portal-verify=" {
 		t.Errorf("challenge value = %q", d.Verification.Value)
+	}
+	if raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(d.Verification.Value, "mf-portal-verify=")); err != nil || len(raw) != 32 {
+		t.Errorf("challenge token must be 32 random bytes, raw base64url: %d bytes, err %v", len(raw), err)
 	}
 	if d.VerifiedAt != nil {
 		t.Errorf("new domain must be unverified")
@@ -417,5 +424,27 @@ func TestBaseURLFor(t *testing.T) {
 	}
 	if u, ok := f.svc.BaseURLFor(f.ctx, f.a.business); !ok || u != "https://two.example.test" {
 		t.Errorf("BaseURLFor = %q %v, want the earlier verified (two)", u, ok)
+	}
+
+	// A failed lookup still answers "no portal host" but is logged, with the
+	// business, rather than silently degrading every confirmation link.
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	cancelled, cancel := context.WithCancel(f.ctx)
+	cancel()
+	if u, ok := f.svc.BaseURLFor(cancelled, f.a.business); ok || u != "" {
+		t.Errorf("cancelled context: %q %v, want \"\", false", u, ok)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, f.a.business.String()) {
+		t.Errorf("lookup failure not logged with the business id: %q", out)
+	}
+	buf.Reset()
+	if _, ok := f.svc.BaseURLFor(f.ctx, f.b.business); ok {
+		t.Error("business without domains reported a portal host")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("no-rows must not log: %q", buf.String())
 	}
 }

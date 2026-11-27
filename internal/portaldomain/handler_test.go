@@ -165,3 +165,40 @@ func TestHandlerListCursor(t *testing.T) {
 		t.Errorf("more: body=%s", rec.Body)
 	}
 }
+
+// Validation messages reach the client verbatim, so they must read as plain
+// sentences: no package prefix and no wrapped sentinel text.
+func TestHandlerValidationMessagesAreClean(t *testing.T) {
+	real := &Service{InstanceHost: "app.example.test", Reserved: []string{"mail.example.test"}}
+	svc := &fakeSvc{
+		create: func(h string) (Domain, error) {
+			return real.Create(context.Background(), uuid.New(), uuid.New(), h)
+		},
+		list: func() ([]Domain, string, error) {
+			// List decodes the cursor inside its transaction; exercise the decoder directly.
+			_, _, err := decodeCursor("not-a-cursor")
+			return nil, "", mapErr(err)
+		},
+	}
+	path := "/businesses/" + uuid.NewString() + "/portal-domains"
+	for _, tc := range []struct{ method, path, body, want string }{
+		{http.MethodPost, path, `{"hostname":"bad host!"}`, "hostname is not valid"},
+		{http.MethodPost, path, `{"hostname":"api.ns.svc"}`, "hostname is an internal name"},
+		{http.MethodPost, path, `{"hostname":"App.Example.Test"}`, "hostname is the platform's own host"},
+		{http.MethodPost, path, `{"hostname":"x.mail.example.test"}`, "hostname is reserved"},
+		{http.MethodPost, path, `{"hostname":"  "}`, "hostname required"},
+		{http.MethodGet, path + "?cursor=not-a-cursor", "", "cursor is not valid"},
+	} {
+		rec := serve(t, svc, tc.method, tc.path, tc.body)
+		var body httpx.ErrorBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: decode %q: %v", tc.body, rec.Body.String(), err)
+		}
+		if rec.Code != http.StatusBadRequest || body.Code != "VALIDATION" {
+			t.Errorf("%s %s: %d %+v, want 400 VALIDATION", tc.method, tc.body, rec.Code, body)
+		}
+		if strings.HasPrefix(body.Message, "portaldomain:") || strings.Contains(body.Message, "validation") || body.Message != tc.want {
+			t.Errorf("%s %s: message %q, want %q", tc.method, tc.body, body.Message, tc.want)
+		}
+	}
+}

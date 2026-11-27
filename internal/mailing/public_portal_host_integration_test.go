@@ -180,5 +180,32 @@ func TestPublicKeyBoundToPortalHostBusiness(t *testing.T) {
 		if st, _ := subscriberStatus(ctx, t, tdb, confirmList.ID, "second@example.com"); st != "active" {
 			t.Fatalf("instance-host confirm status = %q, want active", st)
 		}
+
+		// A well-formed token minted by the codec but never stored behaves exactly
+		// like a malformed one on a portal hostname, and changes no subscriber.
+		seedPendingSubscriber(ctx, t, tdb, codec, a, confirmList.ID, "third@example.com")
+		snapshot := func() string {
+			t.Helper()
+			var out string
+			if err := tdb.Super.QueryRow(ctx, `SELECT coalesce(string_agg(
+				email || ':' || status::text || ':' || coalesce(encode(confirm_token_hash, 'hex'), '-') || ':' || coalesce(confirmed_at::text, '-') || ':' || updated_at::text,
+				',' ORDER BY email), '') FROM list_subscriber`).Scan(&out); err != nil {
+				t.Fatal(err)
+			}
+			return out
+		}
+		minted, _, err := codec.NewConfirmation()
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := snapshot()
+		for _, portal := range []string{pa, pb} {
+			if code, body := do(http.MethodPost, "/m/confirm/"+minted, portal, ""); code != unknownCode || body != unknownBody {
+				t.Fatalf("portal %s unstored well-formed token = %d %q, unknown = %d %q", portal, code, body, unknownCode, unknownBody)
+			}
+		}
+		if after := snapshot(); after != before {
+			t.Fatalf("unstored token changed subscribers:\nbefore %s\nafter  %s", before, after)
+		}
 	})
 }

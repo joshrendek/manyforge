@@ -2,7 +2,6 @@ package portaldomain
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -145,7 +144,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(body.Hostname) == "" {
-		httpx.WriteError(w, r, fmt.Errorf("hostname required: %w", errs.ErrValidation))
+		httpx.WriteError(w, r, errValidation("hostname required"))
 		return
 	}
 	d, err := h.svc.Create(r.Context(), pid, bid, body.Hostname)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -73,11 +74,9 @@ func (s *Service) forget(host string) {
 }
 
 func (s *Service) validateNew(hostname string) error {
-	bad := func(why string) error {
-		return fmt.Errorf("portaldomain: hostname %s: %w", why, errs.ErrValidation)
-	}
+	bad := func(why string) error { return errValidation("hostname " + why) }
 	if !ValidHostname(hostname) {
-		return bad("is not a valid fully qualified name")
+		return bad("is not valid")
 	}
 	if IsInternalHost(hostname) {
 		return bad("is an internal name")
@@ -268,7 +267,7 @@ func (s *Service) Delete(ctx context.Context, principalID, businessID, domainID 
 }
 
 // BaseURLFor returns "https://"+hostname of the business's earliest verified
-// domain, or ("", false) when it has none (or the lookup fails).
+// domain, or ("", false) when it has none or the lookup fails (logged).
 func (s *Service) BaseURLFor(ctx context.Context, businessID uuid.UUID) (string, bool) {
 	var host string
 	err := s.DB.WithTx(ctx, func(tx pgx.Tx) error {
@@ -279,13 +278,30 @@ func (s *Service) BaseURLFor(ctx context.Context, businessID uuid.UUID) (string,
 		host = h
 		return nil
 	})
-	if err != nil || host == "" {
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			// Callers fall back to the instance host; say why the portal host was skipped.
+			slog.ErrorContext(ctx, "portal base URL lookup failed", "business_id", businessID, "err", err)
+		}
+		return "", false
+	}
+	if host == "" {
 		return "", false
 	}
 	return "https://" + host, true
 }
 
 var targetType = "portal_domain"
+
+// errValidation returns an error whose message is a plain sentence safe to show
+// the client (httpx.WriteError echoes it) and which satisfies
+// errors.Is(err, errs.ErrValidation).
+func errValidation(msg string) error { return &validationError{msg: msg} }
+
+type validationError struct{ msg string }
+
+func (e *validationError) Error() string        { return e.msg }
+func (e *validationError) Is(target error) bool { return target == errs.ErrValidation }
 
 func challengeName(hostname string) string { return challengePrefix + hostname }
 
@@ -330,7 +346,7 @@ func encodeCursor(ts time.Time, id uuid.UUID) string {
 
 func decodeCursor(token string) (time.Time, uuid.UUID, error) {
 	bad := func() (time.Time, uuid.UUID, error) {
-		return time.Time{}, uuid.Nil, fmt.Errorf("portaldomain: invalid cursor: %w", errs.ErrValidation)
+		return time.Time{}, uuid.Nil, errValidation("cursor is not valid")
 	}
 	dec, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
