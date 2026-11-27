@@ -491,11 +491,13 @@ func main() {
 	if u, perr := url.Parse(cfg.PublicBaseURL); perr == nil {
 		portalInstanceHost = portaldomain.NormalizeHost(u.Host)
 	}
+	portalHosts := portaldomain.NewHostResolver(database, 60*time.Second)
 	portalDomainH := portaldomain.NewHandler(&portaldomain.Service{
 		DB:           database,
 		Resolver:     ticketing.NetTXTResolver{},
 		InstanceHost: portalInstanceHost,
 		Reserved:     []string{cfg.InboundSystemDomain, cfg.MailingMessageDomain},
+		Forget:       portalHosts.Forget,
 	})
 
 	// US6 MCP server sealer: seals per-server bearer tokens at rest using a dedicated
@@ -1064,7 +1066,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mux,
+		Handler:           portaldomain.HostRouting(portalInstanceHost, portalHosts.Lookup, mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
