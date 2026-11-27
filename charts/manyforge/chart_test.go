@@ -277,3 +277,138 @@ func TestSupportEmailSecretAndBlobWiring(t *testing.T) {
 		})
 	}
 }
+
+// renderChartFails renders the chart with the given --set pairs and returns
+// the combined output, failing the test if the render unexpectedly succeeds.
+func renderChartFails(t *testing.T, settings ...string) string {
+	t.Helper()
+	args := []string{"template", "mailing", ".", "--set", "jwt.activeKid=test-key", "--set", "trustedProxyCidr=10.0.0.0/8"}
+	for _, setting := range settings {
+		args = append(args, "--set", setting)
+	}
+	cmd := exec.Command("helm", args...)
+	cmd.Dir = "."
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("helm template succeeded, want failure for %v\n%s", settings, out)
+	}
+	return string(out)
+}
+
+// Portal custom domains: extra hostnames are extra rules on the SAME Ingress so
+// its annotations (source-range restriction, /metrics denial) cover them all.
+func TestIngressExtraHosts(t *testing.T) {
+	hostRule := func(host string) string { return "- host: \"" + host + "\"" }
+
+	def := renderedSource(t, renderChart(t, nil), "templates/ingress.yaml")
+	if got := strings.Count(def, "- host:"); got != 1 {
+		t.Fatalf("default render has %d host rules, want 1:\n%s", got, def)
+	}
+
+	out := renderChart(t, map[string]string{
+		"publicBaseURL":                          "https://app.example.test",
+		"ingress.extraHosts":                     "{portal.example.test,Help.Example.Test}",
+		"analytics.cloudflareSourceRanges":       "203.0.113.0/24",
+		"analytics.trustedIngressNamespace":      "ingress",
+		"analytics.trustCloudflareCountryHeader": "true",
+	})
+	if got := strings.Count(out, "kind: Ingress"); got != 1 {
+		t.Fatalf("rendered %d Ingress objects, want exactly 1", got)
+	}
+	ing := renderedSource(t, out, "templates/ingress.yaml")
+	if got := strings.Count(ing, "- host:"); got != 3 {
+		t.Fatalf("got %d host rules, want 3:\n%s", got, ing)
+	}
+	for _, host := range []string{"portal.example.test", "help.example.test"} {
+		if !strings.Contains(ing, hostRule(host)) {
+			t.Errorf("ingress missing rule for %s", host)
+		}
+	}
+	if got := strings.Count(ing, "service:\n"); got != 3 {
+		t.Errorf("got %d backends, want 3", got)
+	}
+	var doc struct {
+		Spec struct {
+			Rules []struct {
+				HTTP struct {
+					Paths []struct {
+						Backend struct {
+							Service struct {
+								Name string `yaml:"name"`
+								Port struct {
+									Number int `yaml:"number"`
+								} `yaml:"port"`
+							} `yaml:"service"`
+						} `yaml:"backend"`
+					} `yaml:"paths"`
+				} `yaml:"http"`
+			} `yaml:"rules"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(ing), &doc); err != nil {
+		t.Fatalf("parse ingress: %v", err)
+	}
+	first := doc.Spec.Rules[0].HTTP.Paths[0].Backend.Service
+	for i, rule := range doc.Spec.Rules {
+		if len(rule.HTTP.Paths) != 1 || rule.HTTP.Paths[0].Backend.Service != first {
+			t.Errorf("rule %d backend %+v differs from primary %+v", i, rule.HTTP.Paths, first)
+		}
+	}
+	for _, once := range []string{"whitelist-source-range:", "location /metrics"} {
+		if got := strings.Count(ing, once); got != 1 {
+			t.Errorf("%q appears %d times, want 1", once, got)
+		}
+	}
+
+	const base = "publicBaseURL=https://app.example.test"
+	if msg := renderChartFails(t, base, "ingress.host=hub.example.test", "ingress.extraHosts={HUB.example.test}"); !strings.Contains(msg, "extraHosts") || !strings.Contains(msg, "duplicates") {
+		t.Errorf("duplicate-of-host failure should mention extraHosts: %s", msg)
+	}
+	if msg := renderChartFails(t, base, "ingress.extraHosts={a.example.test,a.example.test}"); !strings.Contains(msg, "extraHosts") || !strings.Contains(msg, "duplicates") {
+		t.Errorf("duplicate-entry failure should mention extraHosts: %s", msg)
+	}
+}
+
+// Every extra hostname must be a plain lower-case FQDN: an empty entry would
+// render a catch-all rule, a wildcard would match hosts nobody verified, and a
+// port, scheme or space renders a rule that never matches what was meant.
+func TestIngressExtraHostsRejectMalformedEntries(t *testing.T) {
+	const base = "publicBaseURL=https://app.example.test"
+	for _, entries := range []string{
+		"{a.example.test,}",
+		"{*.example.test}",
+		"{portal.example.test:8443}",
+		"{https://portal.example.test}",
+		"{portal example.test}",
+		"{example}",
+	} {
+		msg := renderChartFails(t, base, "ingress.extraHosts="+entries)
+		if !strings.Contains(msg, "extraHosts") || !strings.Contains(msg, "not a plain hostname") {
+			t.Errorf("%s: failure should explain the bad extraHosts entry: %s", entries, msg)
+		}
+	}
+}
+
+// Host routing is off without an instance host, so a custom hostname would be
+// served the whole operator app: extra hosts need an http(s) publicBaseURL.
+func TestIngressExtraHostsRequirePublicBaseURL(t *testing.T) {
+	for _, settings := range [][]string{
+		{"ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=app.example.test", "ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=ftp://app.example.test", "ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=https://:8443", "ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=https://app.example.test:abc", "ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=https://user@", "ingress.extraHosts={portal.example.test}"},
+	} {
+		msg := renderChartFails(t, settings...)
+		if !strings.Contains(msg, "extraHosts") || !strings.Contains(msg, "publicBaseURL") {
+			t.Errorf("%v: failure should name extraHosts and publicBaseURL: %s", settings, msg)
+		}
+	}
+	// Values InstanceHost accepts render, including mixed case, a port and a path.
+	for _, base := range []string{"https://app.example.test", "https://APP.example.test:8443/"} {
+		renderChart(t, map[string]string{"publicBaseURL": base, "ingress.extraHosts": "{portal.example.test}"})
+	}
+	// Without extra hosts an empty publicBaseURL is still fine (the default).
+	renderChart(t, map[string]string{"ingress.extraHosts": "null"})
+}

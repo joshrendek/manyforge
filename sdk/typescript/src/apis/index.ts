@@ -47,6 +47,7 @@ export * from './BusinessMcpServersApi.js';
 export * from './BusinessMcpServersToolPoliciesApi.js';
 export * from './BusinessMcpServersToolsApi.js';
 export * from './BusinessMembersApi.js';
+export * from './BusinessPortalDomainsApi.js';
 export * from './BusinessRepoConnectorsApi.js';
 export * from './BusinessRepoConnectorsDimensionOverridesApi.js';
 export * from './BusinessRequestersApi.js';

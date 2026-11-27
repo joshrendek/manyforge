@@ -1705,3 +1705,29 @@ CREATE TABLE ticket_requester_context (
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL
 );
+
+-- 0155: business-scoped custom portal hostnames.
+CREATE TABLE portal_domain (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id    uuid NOT NULL,
+    tenant_root_id uuid NOT NULL,
+    hostname       citext NOT NULL,
+    verify_token   text NOT NULL,
+    verified_at    timestamptz,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (business_id, hostname),
+    CONSTRAINT portal_domain_business_fk FOREIGN KEY (business_id, tenant_root_id)
+        REFERENCES business (id, tenant_root_id) DEFERRABLE INITIALLY IMMEDIATE
+);
+CREATE UNIQUE INDEX portal_domain_verified_uq ON portal_domain (hostname) WHERE verified_at IS NOT NULL;
+
+CREATE FUNCTION portal_domain_resolve(p_hostname citext) RETURNS TABLE (business_id uuid) LANGUAGE sql STABLE SECURITY DEFINER AS $$
+    SELECT d.business_id FROM portal_domain d
+    WHERE d.hostname = p_hostname AND d.verified_at IS NOT NULL LIMIT 1;
+$$;
+CREATE FUNCTION portal_domain_primary(p_business_id uuid) RETURNS TABLE (hostname citext) LANGUAGE sql STABLE SECURITY DEFINER AS $$
+    SELECT d.hostname FROM portal_domain d
+    WHERE d.business_id = p_business_id AND d.verified_at IS NOT NULL
+    ORDER BY d.verified_at, d.id LIMIT 1;
+$$;

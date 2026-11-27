@@ -14,6 +14,7 @@ import { EmptyState } from '../../ui/empty-state/empty-state';
 import { Spinner } from '../../ui/spinner/spinner';
 import { Tone } from '../../ui/status';
 import { DnsChecklistRow, resendDnsChecklist } from './resend-dns';
+import { PortalDomainsComponent } from './portal-domains';
 
 const MODES: EmailDomainMode[] = ['forward_in', 'subdomain_mx', 'provider_route'];
 
@@ -49,7 +50,7 @@ function dkimSpfTone(s: string): Tone {
 // Custom rows also carry a "Send replies as" field (spec 017 addendum).
 @Component({
   selector: 'app-inbox-settings',
-  imports: [FormsModule, RouterLink, PageHeader, StatusPill, EmptyState, Spinner],
+  imports: [FormsModule, RouterLink, PageHeader, StatusPill, EmptyState, Spinner, PortalDomainsComponent],
   template: `
     <div class="mf-card">
       <mf-page-header
@@ -343,6 +344,8 @@ function dkimSpfTone(s: string): Tone {
             <mf-empty-state title="No inbound addresses yet." data-testid="address-empty" />
           }
         </div>
+
+        <app-portal-domains [businessId]="businessId" />
       }
 
       @if (error() && !loadFailed()) {
@@ -459,7 +462,7 @@ export class InboxSettingsComponent implements OnInit {
 
   readonly modes = MODES;
 
-  private businessId = '';
+  protected businessId = '';
 
   domains = signal<EmailDomain[]>([]);
   addresses = signal<InboundAddress[]>([]);

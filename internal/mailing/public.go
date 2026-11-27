@@ -78,7 +78,15 @@ func resolvePublicList(ctx context.Context, tx pgx.Tx, key string) (publicListCo
 	if errors.Is(err, pgx.ErrNoRows) {
 		return publicListContext{}, false, nil
 	}
-	return out, err == nil, err
+	if err != nil {
+		return out, false, err
+	}
+	// On a custom hostname only that business's keys resolve; another business's key
+	// is indistinguishable from an unknown one.
+	if portal, ok := httpx.PortalBusiness(ctx); ok && portal != out.businessID {
+		return publicListContext{}, false, nil
+	}
+	return out, true, nil
 }
 
 func resolveUnsubscribeList(ctx context.Context, tx pgx.Tx, key string) (publicListContext, bool, error) {
@@ -178,7 +186,7 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID, listID uuid.
 		logger.ErrorContext(ctx, "mailing confirmation provider resolution failed", "err", err)
 		return
 	}
-	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
+	link := s.confirmBaseURL(ctx, businessID) + "/m/confirm/" + url.PathEscape(raw)
 	input := mailrender.Input{
 		BodyMarkdown: "# Confirm your subscription\n\n[Confirm your subscription](" + link + ")",
 		FromName:     profile.fromName, PostalAddress: stringValue(profile.postalAddress),
@@ -652,4 +660,15 @@ func (h *PublicHandler) logger() *slog.Logger {
 		return h.Logger
 	}
 	return slog.Default()
+}
+
+// confirmBaseURL is the origin for the confirmation link: the business's
+// verified portal hostname when it has one, otherwise the instance base URL.
+func (s *Service) confirmBaseURL(ctx context.Context, businessID uuid.UUID) string {
+	if s.PortalBaseURL != nil {
+		if base, ok := s.PortalBaseURL(ctx, businessID); ok && strings.TrimSpace(base) != "" {
+			return strings.TrimRight(base, "/")
+		}
+	}
+	return strings.TrimRight(s.PublicBaseURL, "/")
 }

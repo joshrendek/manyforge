@@ -129,6 +129,28 @@ jobs:
           grep -Fq 'nginx.ingress.kubernetes.io/whitelist-source-range: "203.0.113.0/24"' \
             <<<"$isolated_disabled_render"
           grep -Fq 'name: manyforge-trusted-ingress' <<<"$isolated_disabled_render"
+          extra_hosts_render="$(helm template manyforge charts/manyforge "${common[@]}" \
+            --set publicBaseURL=https://app.example.test \
+            --set 'ingress.extraHosts={portal.example.test}')"
+          grep -Fq -- '- host: "portal.example.test"' <<<"$extra_hosts_render"
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set publicBaseURL=https://app.example.test \
+            --set ingress.host=hub.example.test \
+            --set 'ingress.extraHosts={HUB.example.test}' >/dev/null 2>&1; then
+            echo "extra ingress host rendered although it duplicates ingress.host" >&2
+            exit 1
+          fi
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set publicBaseURL=https://app.example.test \
+            --set 'ingress.extraHosts={*.example.test}' >/dev/null 2>&1; then
+            echo "malformed extra ingress host rendered" >&2
+            exit 1
+          fi
+          if helm template manyforge charts/manyforge "${common[@]}" \
+            --set 'ingress.extraHosts={portal.example.test}' >/dev/null 2>&1; then
+            echo "extra ingress host rendered without publicBaseURL" >&2
+            exit 1
+          fi
           default_checksum="$(awk 'index($0, "checksum/config:") { print $2; exit }' <<<"$default_render")"
           enabled_checksum="$(awk 'index($0, "checksum/config:") { print $2; exit }' <<<"$enabled_render")"
           test -n "$default_checksum"

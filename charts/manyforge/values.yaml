@@ -54,6 +54,16 @@ ingress:
   enabled: true
   className: nginx
   host: hub.bluescripts.net
+  # Additional hostnames routed to the app, e.g. a business's portal domain
+  # (docs/runbooks/portal-custom-domains.md). Each entry is a plain hostname and
+  # becomes one more rule on this same Ingress, so the annotations below apply to
+  # it. The app serves only public routes on these hostnames. Entries are
+  # lower-cased; the render fails for an entry that is not a plain FQDN (empty,
+  # wildcard, port, scheme, path or spaces), an entry equal to `host`
+  # (case-insensitive), a duplicate entry, or any entry while `publicBaseURL`
+  # (below) is not an http(s) URL with a host: without it host routing is off
+  # and these hostnames would be served the whole app.
+  extraHosts: []
   # HTTP only — no tls: block, no cert-manager annotation. Cloudflare
   # terminates TLS in front of the cluster.
   annotations:

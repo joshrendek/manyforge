@@ -1972,6 +1972,17 @@ type Permission struct {
 	Description string `json:"description"`
 }
 
+type PortalDomain struct {
+	ID           uuid.UUID          `json:"id"`
+	BusinessID   uuid.UUID          `json:"business_id"`
+	TenantRootID uuid.UUID          `json:"tenant_root_id"`
+	Hostname     string             `json:"hostname"`
+	VerifyToken  string             `json:"verify_token"`
+	VerifiedAt   pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+}
+
 type Principal struct {
 	ID             uuid.UUID   `json:"id"`
 	Kind           string      `json:"kind"`

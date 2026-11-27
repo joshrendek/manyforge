@@ -31,6 +31,7 @@ import (
 	"github.com/manyforge/manyforge/internal/mailing"
 	"github.com/manyforge/manyforge/internal/platform/auth"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
+	"github.com/manyforge/manyforge/internal/portaldomain"
 	"github.com/manyforge/manyforge/internal/telemetry"
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
@@ -74,6 +75,7 @@ func testHandlers() apiHandlers {
 		portal:           ticketing.NewPortalHandler(&ticketing.PortalService{}, nil),
 		ticketing:        ticketing.NewHandler(&ticketing.Service{}, nil, nil),
 		identity:         ticketing.NewIdentityHandler(&ticketing.IdentityService{}),
+		portalDomains:    portaldomain.NewHandler(&portaldomain.Service{}),
 		inboxWebhook:     inbox.NewWebhookHandler(nil, "", 0, inbox.Config{}, nil),
 		bounce:           inbox.NewBounceHandler(nil, "", 0, nil),
 		authLimit:        noop,

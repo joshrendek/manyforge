@@ -372,6 +372,43 @@
     }
   },
   {
+    "operationId": "PortalDomainsCreate",
+    "resource": "portal.domains",
+    "method": "create",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "PortalDomainsDelete",
+    "resource": "portal.domains",
+    "method": "delete",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
+    "operationId": "PortalDomainsList",
+    "resource": "portal.domains",
+    "method": "list",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": {
+      "cursor": "cursor",
+      "limit": "limit",
+      "items": "items",
+      "next": "next_cursor"
+    }
+  },
+  {
+    "operationId": "PortalDomainsVerify",
+    "resource": "portal.domains",
+    "method": "verify",
+    "audience": "management",
+    "businessParam": "id",
+    "pagination": null
+  },
+  {
     "operationId": "RequestersGet",
     "resource": "requesters",
     "method": "get",

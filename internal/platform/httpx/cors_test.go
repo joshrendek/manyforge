@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/manyforge/manyforge/internal/feedback"
 	"github.com/manyforge/manyforge/internal/platform/httpx"
@@ -243,5 +244,70 @@ func TestPublicIngestRegisteredPreflightsBypassKeysAndLimiter(t *testing.T) {
 	}
 	if limited != 3 {
 		t.Fatalf("actual requests spent limiter budget %d times, want 3", limited)
+	}
+}
+
+// A page served on a verified custom hostname posts to its own origin. Browsers
+// send Origin on same-origin POSTs, so with an allowlist configured those must
+// reach the handler (without CORS grants) instead of ORIGIN_NOT_ALLOWED.
+func TestPublicIngestCORSSameOriginOnPortalHost(t *testing.T) {
+	business := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	send := func(portal bool, method, host string, headers http.Header) (*httptest.ResponseRecorder, int) {
+		calls := 0
+		h := httpx.PublicIngestCORS([]string{corsSite}, corsInstance, http.MethodPost)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		r := httptest.NewRequest(method, "/public/key", strings.NewReader("a simple write"))
+		r.Host = host
+		r.Header = headers
+		if portal {
+			r = r.WithContext(httpx.WithPortalBusiness(r.Context(), business))
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w, calls
+	}
+
+	for _, tc := range []struct{ host, origin string }{
+		{"portal.example.test", "https://portal.example.test"},
+		{"Portal.Example.Test:443", "https://portal.example.test"},
+		{"portal.example.test", "https://PORTAL.example.test:443"},
+	} {
+		w, calls := send(true, http.MethodPost, tc.host, http.Header{"Origin": {tc.origin}, "Content-Type": {"text/plain"}})
+		if w.Code != http.StatusAccepted || calls != 1 {
+			t.Errorf("portal same-origin %s on %s: status=%d calls=%d, want handler", tc.origin, tc.host, w.Code, calls)
+		}
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("portal same-origin %s: granted CORS %q", tc.origin, got)
+		}
+	}
+
+	for _, origin := range []string{"https://other.example.test", "http://portal.example.test", "https://portal.example.test:8443", "null"} {
+		w, calls := send(true, http.MethodPost, "portal.example.test", http.Header{"Origin": {origin}})
+		requireCORSError(t, w, "ORIGIN_NOT_ALLOWED")
+		if calls != 0 {
+			t.Errorf("portal cross-origin %s reached handler", origin)
+		}
+	}
+
+	// Two Origin values never count as same-origin.
+	w, calls := send(true, http.MethodPost, "portal.example.test", http.Header{"Origin": {"https://portal.example.test", "https://portal.example.test"}})
+	requireCORSError(t, w, "ORIGIN_NOT_ALLOWED")
+	if calls != 0 {
+		t.Error("duplicate Origin reached handler")
+	}
+
+	// The same Host/Origin pair without the portal context keeps today's policy.
+	w, calls = send(false, http.MethodPost, "portal.example.test", http.Header{"Origin": {"https://portal.example.test"}})
+	requireCORSError(t, w, "ORIGIN_NOT_ALLOWED")
+	if calls != 0 {
+		t.Error("non-portal request with an unlisted origin reached handler")
+	}
+
+	// Configured origins still get their CORS grant on a portal host.
+	w, calls = send(true, http.MethodPost, "portal.example.test", http.Header{"Origin": {corsSite}})
+	if w.Code != http.StatusAccepted || calls != 1 || w.Header().Get("Access-Control-Allow-Origin") != corsSite {
+		t.Errorf("listed origin on portal host: status=%d calls=%d headers=%v", w.Code, calls, w.Header())
 	}
 }
