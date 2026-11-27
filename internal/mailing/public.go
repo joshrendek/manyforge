@@ -186,7 +186,7 @@ func (s *Service) sendConfirmation(ctx context.Context, businessID, listID uuid.
 		logger.ErrorContext(ctx, "mailing confirmation provider resolution failed", "err", err)
 		return
 	}
-	link := strings.TrimSuffix(s.PublicBaseURL, "/") + "/m/confirm/" + url.PathEscape(raw)
+	link := s.confirmBaseURL(ctx, businessID) + "/m/confirm/" + url.PathEscape(raw)
 	input := mailrender.Input{
 		BodyMarkdown: "# Confirm your subscription\n\n[Confirm your subscription](" + link + ")",
 		FromName:     profile.fromName, PostalAddress: stringValue(profile.postalAddress),
@@ -660,4 +660,15 @@ func (h *PublicHandler) logger() *slog.Logger {
 		return h.Logger
 	}
 	return slog.Default()
+}
+
+// confirmBaseURL is the origin for the confirmation link: the business's
+// verified portal hostname when it has one, otherwise the instance base URL.
+func (s *Service) confirmBaseURL(ctx context.Context, businessID uuid.UUID) string {
+	if s.PortalBaseURL != nil {
+		if base, ok := s.PortalBaseURL(ctx, businessID); ok && strings.TrimSpace(base) != "" {
+			return strings.TrimRight(base, "/")
+		}
+	}
+	return strings.TrimRight(s.PublicBaseURL, "/")
 }

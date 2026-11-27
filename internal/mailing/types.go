@@ -55,8 +55,12 @@ type Service struct {
 	MessageDomain   string
 	Logger          *slog.Logger
 	PublicBaseURL   string
-	Now             func() time.Time
-	Rand            io.Reader
+	// PortalBaseURL optionally resolves a business's verified portal origin.
+	// It is used only for the double-opt-in confirmation link; every other
+	// link in delivered mail stays on PublicBaseURL so it outlives a domain.
+	PortalBaseURL func(ctx context.Context, businessID uuid.UUID) (string, bool)
+	Now           func() time.Time
+	Rand          io.Reader
 }
 
 type Page[T any] struct {

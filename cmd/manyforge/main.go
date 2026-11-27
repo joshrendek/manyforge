@@ -492,13 +492,17 @@ func main() {
 		portalInstanceHost = portaldomain.NormalizeHost(u.Host)
 	}
 	portalHosts := portaldomain.NewHostResolver(database, 60*time.Second)
-	portalDomainH := portaldomain.NewHandler(&portaldomain.Service{
+	portalDomainSvc := &portaldomain.Service{
 		DB:           database,
 		Resolver:     ticketing.NetTXTResolver{},
 		InstanceHost: portalInstanceHost,
 		Reserved:     []string{cfg.InboundSystemDomain, cfg.MailingMessageDomain},
 		Forget:       portalHosts.Forget,
-	})
+	}
+	portalDomainH := portaldomain.NewHandler(portalDomainSvc)
+	if mailingSvc != nil {
+		mailingSvc.PortalBaseURL = portalDomainSvc.BaseURLFor
+	}
 
 	// US6 MCP server sealer: seals per-server bearer tokens at rest using a dedicated
 	// master key (MANYFORGE_MCP_MASTER_KEY), mirroring EXACTLY the DKIM sealer pattern.
