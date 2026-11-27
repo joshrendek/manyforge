@@ -94,6 +94,11 @@ func (h *PublicHandler) resolveBoard(r *http.Request, tx pgx.Tx, key string) (pu
 	if err != nil {
 		return publicBoard{}, false, err
 	}
+	// On a custom hostname only that business's keys resolve; another business's key
+	// is indistinguishable from an unknown one.
+	if portal, ok := httpx.PortalBusiness(r.Context()); ok && portal != b.businessID {
+		return publicBoard{}, false, nil
+	}
 	return b, true, nil
 }
 

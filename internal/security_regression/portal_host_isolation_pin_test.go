@@ -52,6 +52,7 @@ func TestPin_PortalDomainDefinersLockedDown(t *testing.T) {
 	}{
 		{"../../migrations/0155_portal_domains.up.sql", []string{"portal_domain_resolve", "portal_domain_primary"}},
 		{"../../migrations/0156_portal_domain_takeover.up.sql", []string{"portal_domain_takeover_stale"}},
+		{"../../migrations/0157_mailing_confirm_business_binding.up.sql", []string{"mailing_confirm_for_business"}},
 	}
 	for _, c := range cases {
 		src := mustRead(t, c.file)
@@ -72,6 +73,22 @@ func TestPin_PortalDomainDefinersLockedDown(t *testing.T) {
 			}
 			if !regexp.MustCompile(`(?is)GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+` + fn + `\s*\([^)]*\)\s+TO\s+manyforge_app`).MatchString(src) {
 				t.Errorf("%s: %s is not granted to manyforge_app", c.file, fn)
+			}
+		}
+	}
+}
+
+// Public keys and confirmation tokens must be bound to the custom hostname's business.
+func TestPortalHostKeyBindingPins(t *testing.T) {
+	for file, want := range map[string][]string{
+		"../feedback/public.go": {"httpx.PortalBusiness(r.Context())", "portal != b.businessID"},
+		"../mailing/public.go":  {"httpx.PortalBusiness(ctx)", "portal != out.businessID"},
+		"../mailing/track.go":   {"mailing_confirm_for_business", "httpx.PortalBusiness(ctx)"},
+	} {
+		src := mustRead(t, file)
+		for _, w := range want {
+			if !strings.Contains(src, w) {
+				t.Errorf("%s: missing %q", file, w)
 			}
 		}
 	}

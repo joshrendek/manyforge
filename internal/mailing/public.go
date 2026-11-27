@@ -78,7 +78,15 @@ func resolvePublicList(ctx context.Context, tx pgx.Tx, key string) (publicListCo
 	if errors.Is(err, pgx.ErrNoRows) {
 		return publicListContext{}, false, nil
 	}
-	return out, err == nil, err
+	if err != nil {
+		return out, false, err
+	}
+	// On a custom hostname only that business's keys resolve; another business's key
+	// is indistinguishable from an unknown one.
+	if portal, ok := httpx.PortalBusiness(ctx); ok && portal != out.businessID {
+		return publicListContext{}, false, nil
+	}
+	return out, true, nil
 }
 
 func resolveUnsubscribeList(ctx context.Context, tx pgx.Tx, key string) (publicListContext, bool, error) {

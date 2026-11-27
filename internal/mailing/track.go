@@ -26,6 +26,11 @@ func (s *Service) Confirm(ctx context.Context, raw string) error {
 	}
 	return s.DB.WithTx(ctx, func(tx pgx.Tx) error {
 		var rows int
+		// On a custom hostname the token only confirms a subscriber of that business;
+		// otherwise it is a silent no-op and the token stays usable.
+		if portal, ok := httpx.PortalBusiness(ctx); ok {
+			return tx.QueryRow(ctx, `SELECT mailing_confirm_for_business($1,$2)`, hash, portal).Scan(&rows)
+		}
 		return tx.QueryRow(ctx, `SELECT mailing_confirm($1)`, hash).Scan(&rows)
 	})
 }

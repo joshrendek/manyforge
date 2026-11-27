@@ -77,9 +77,8 @@ func allowedOnPortalHost(method, p string) bool {
 	case strings.HasPrefix(p, "/api/v1/feedback/public/"), strings.HasPrefix(p, "/api/v1/mailing/public/"):
 		return isMethod(method, http.MethodGet, http.MethodPost, http.MethodOptions)
 	case p == "/a.js":
-		return isMethod(method, http.MethodGet, http.MethodHead)
-	case p == "/a/e":
-		return isMethod(method, http.MethodPost, http.MethodOptions)
+		// Served by the analytics module with an unbound site key; never on a custom host.
+		return false
 	case strings.HasPrefix(p, "/media/"):
 		return isMethod(method, http.MethodGet, http.MethodHead)
 	}
