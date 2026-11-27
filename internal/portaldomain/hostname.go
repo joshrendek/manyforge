@@ -63,9 +63,13 @@ func ValidHostname(h string) bool {
 }
 
 // IsInternalHost reports whether h names the platform's own network rather than a
-// public customer hostname: an IP literal, localhost, or a cluster-internal name.
+// public customer hostname: an IP literal, localhost, a cluster-internal name, or
+// any non-empty single-label name (no dot), such as a bare in-cluster service name.
 func IsInternalHost(h string) bool {
 	h = strings.ToLower(h)
+	if h != "" && !strings.Contains(h, ".") {
+		return true
+	}
 	if _, err := netip.ParseAddr(h); err == nil {
 		return true
 	}

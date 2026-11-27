@@ -101,7 +101,7 @@ func TestHealthOnAnyHost(t *testing.T) {
 
 func TestInternalHostsAreInstance(t *testing.T) {
 	rh := newHarness(testInstance)
-	for _, host := range []string{"10.0.0.7:8080", "localhost:8081", "api.ns.svc.cluster.local"} {
+	for _, host := range []string{"10.0.0.7:8080", "localhost:8081", "api.ns.svc.cluster.local", "manyforge:8080"} {
 		if rec := rh.do("GET", host, "/metrics"); rec.Code != http.StatusTeapot {
 			t.Errorf("host %q: status %d", host, rec.Code)
 		}
@@ -215,7 +215,7 @@ func TestUnknownAndInvalidHosts(t *testing.T) {
 		t.Errorf("lookups = %d, want 1", rh.lookups)
 	}
 	rh.lookups = 0
-	for _, host := range []string{"bad_host!", "*.example.test", ""} {
+	for _, host := range []string{"bad_host!.example.test", "*.example.test", ""} {
 		if rec := rh.do("GET", host, "/p/abc"); rec.Code != http.StatusNotFound {
 			t.Errorf("host %q status %d", host, rec.Code)
 		}

@@ -11,8 +11,8 @@ import (
 
 func TestPin_PortalHostRoutingWrapsServer(t *testing.T) {
 	main := mustRead(t, "../../cmd/manyforge/main.go")
-	if !strings.Contains(main, "portaldomain.HostRouting(") {
-		t.Error("cmd/manyforge/main.go must wrap the server handler in portaldomain.HostRouting")
+	if !regexp.MustCompile(`Handler:\s*portaldomain\.HostRouting\(`).MatchString(main) {
+		t.Error("cmd/manyforge/main.go must set the server Handler to portaldomain.HostRouting(...)")
 	}
 }
 

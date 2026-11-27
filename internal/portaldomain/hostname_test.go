@@ -41,12 +41,12 @@ func TestValidHostname(t *testing.T) {
 }
 
 func TestIsInternalHost(t *testing.T) {
-	for _, h := range []string{"127.0.0.1", "localhost", "app.localhost", "api.ns.svc", "api.ns.svc.cluster.local"} {
+	for _, h := range []string{"127.0.0.1", "localhost", "app.localhost", "api.ns.svc", "api.ns.svc.cluster.local", "manyforge", "api"} {
 		if !IsInternalHost(h) {
 			t.Errorf("IsInternalHost(%q) = false, want true", h)
 		}
 	}
-	for _, h := range []string{"portal.example.com", "svc.example.com"} {
+	for _, h := range []string{"", "portal.example.com", "svc.example.com"} {
 		if IsInternalHost(h) {
 			t.Errorf("IsInternalHost(%q) = true, want false", h)
 		}
