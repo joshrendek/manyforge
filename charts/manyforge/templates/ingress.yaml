@@ -25,14 +25,22 @@ spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
     {{- /* Extra hostnames are extra rules on this same Ingress so the annotations above apply to every host. */}}
+    {{- /* Without an instance host the app turns host routing off and would serve every route on these hostnames. */}}
+    {{- if and .Values.ingress.extraHosts (not (regexMatch "^https?://[^/]+" (toString .Values.publicBaseURL))) }}
+    {{- fail "manyforge: ingress.extraHosts requires publicBaseURL to be an http(s) URL with a host (for example https://app.example.test); without it host routing is off" }}
+    {{- end }}
     {{- $seen := list (lower .Values.ingress.host) }}
     {{- $hosts := list .Values.ingress.host }}
     {{- range .Values.ingress.extraHosts }}
-    {{- if has (lower .) $seen }}
-    {{- fail (printf "manyforge: ingress.extraHosts entry %q duplicates ingress.host or another entry" .) }}
+    {{- $h := lower (toString .) }}
+    {{- if not (regexMatch "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" $h) }}
+    {{- fail (printf "manyforge: ingress.extraHosts entry %q is not a plain hostname (letters, digits and hyphens in two or more dot-separated labels; no wildcard, port, scheme or path)" (toString .)) }}
     {{- end }}
-    {{- $seen = append $seen (lower .) }}
-    {{- $hosts = append $hosts . }}
+    {{- if has $h $seen }}
+    {{- fail (printf "manyforge: ingress.extraHosts entry %q duplicates ingress.host or another entry" (toString .)) }}
+    {{- end }}
+    {{- $seen = append $seen $h }}
+    {{- $hosts = append $hosts $h }}
     {{- end }}
     {{- range $hosts }}
     - host: {{ . | quote }}
