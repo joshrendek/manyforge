@@ -121,10 +121,12 @@ the static assets the web app needs to render those pages, and the analytics
 snippet and collect endpoint. The support portal adds its own entries when it
 ships. A public endpoint that takes a key resolving to a business (a feedback
 board key, a mailing list key) must match the business the hostname resolved
-to, or behave as for an unknown key. Routes that take an opaque single-purpose
-token (mailing confirm, unsubscribe, open, click, brand logo) are allowed on
-any verified hostname without that match: the token is the capability and
-does not resolve a business in the application today. The root path `/` is
+to, or behave as for an unknown key. Token links are tied too (owner
+decision): the mailing confirmation link is the only token link generated on
+a custom hostname, so it is the only token route served there, and it only
+activates a subscription belonging to the hostname's business. Unsubscribe,
+open, click and brand-logo routes are not served on custom hostnames; their
+links are always generated on the instance hostname. The root path `/` is
 404 on a custom hostname until the support portal defines a home page.
 
 The verified-hostname lookup is cached in memory with a short expiry (on the

@@ -29,7 +29,7 @@ The spec has been updated to match each of these.
 
 1. **Sessions.** Operator sessions are bearer tokens in per-origin `localStorage`, not cookies. The only cookie is the passkey login cookie, which uses the `__Host-` prefix when secure. Isolation is therefore: authenticated routes are unreachable on a custom hostname, and the pin test covers the `__Host-` cookie.
 2. **Internal hostnames.** IP literals, `localhost`, and names ending `.localhost`, `.svc` or `.svc.cluster.local` are treated as the instance hostname. Probes and in-cluster callers use them, they cannot be registered, and they cannot arrive through the edge.
-3. **Opaque token routes are not matched to the hostname's business.** `/m/confirm`, `/m/u`, `/m/o`, `/m/c` and `/m/b/{bid}/logo` take unguessable tokens that never resolve a business in Go today. They are allowed on any verified hostname. Key-based endpoints (feedback board key, mailing list key) are matched.
+3. **Token links are tied to the hostname's business (owner decision).** The confirmation link is the only token link generated on a custom hostname (decision 4), so it is the only token route served there, and it only activates a subscription that belongs to the hostname's business. `/m/u`, `/m/o`, `/m/c` and `/m/b/{bid}/logo` are not served on custom hostnames at all: their links are always generated on the instance hostname. Key-based endpoints (feedback board key, mailing list key) are matched as well.
 4. **Only the double-opt-in confirmation link moves to the custom hostname.** Unsubscribe, open, click and logo links stay on the instance hostname: they live in mail forever, and a removed or lapsed domain must not break them.
 5. **`/` on a custom hostname is 404** until the hosted support portal defines a home page.
 6. **Host routing is tested at HTTP level in Go, not in Playwright.** Playwright here runs against `ng serve` with a mocked API, which has no host routing. A real-browser check happens once against the deployed instance (Task 9).
@@ -220,8 +220,7 @@ The allowlist, in one unexported function `allowedOnPortalHost(method, path stri
 | Methods | Path |
 |---|---|
 | GET, HEAD | `/p/<one or more characters>`, `/m/s/<…>` (served by the web app) |
-| GET, HEAD, POST | `/m/confirm/<…>`, `/m/u/<…>` |
-| GET, HEAD | `/m/o/<…>`, `/m/c/<…>`, `/m/b/<…>/logo` |
+| GET, HEAD, POST | `/m/confirm/<…>` |
 | GET, POST, OPTIONS | prefix `/api/v1/feedback/public/`, prefix `/api/v1/mailing/public/` |
 | GET, HEAD | `/a.js` |
 | POST, OPTIONS | `/a/e` |
@@ -235,7 +234,7 @@ The allowlist, in one unexported function `allowedOnPortalHost(method, path stri
   - `TestHealthOnAnyHost`: `/healthz` and `/readyz` with host `nobody.example.test` reach `next`.
   - `TestInternalHostsAreInstance`: `10.0.0.7:8080`, `localhost:8081`, `api.ns.svc.cluster.local` reach `next` for `/metrics`.
   - `TestPortalHostAllowlist`: every row of the table reaches `next` with context business `B`; host given as `PORTAL.Example.Test:443` and `portal.example.test.` behaves the same.
-  - `TestPortalHostDenies`: `GET /`, `GET /login`, `POST /api/v1/auth/login`, `GET /api/v1/me`, `GET /metrics`, `GET /cli/install.sh`, `POST /api/v1/support/portal/tickets`, `POST /api/v1/mailing/s2s/k/subscribers`, `POST /api/v1/inbound/email/x`, `DELETE /p/abc`, `GET /assets/x.js` → 404 and `next` not called.
+  - `TestPortalHostDenies`: `GET /`, `GET /login`, `POST /api/v1/auth/login`, `GET /api/v1/me`, `GET /metrics`, `GET /cli/install.sh`, `POST /api/v1/support/portal/tickets`, `POST /api/v1/mailing/s2s/k/subscribers`, `POST /api/v1/inbound/email/x`, `DELETE /p/abc`, `GET /assets/x.js`, `GET /m/u/tok`, `POST /m/u/tok`, `GET /m/o/tok`, `GET /m/c/tok`, `GET /m/b/abc/logo` → 404 and `next` not called.
   - `TestPortalHostPathTricks` (Review Focus 1): `/p/../api/v1/auth/login`, `//api/v1/me`, `/p/abc/../../login`, and a request whose `RawPath` contains `%2f` → 404.
   - `TestUnknownAndInvalidHosts` (Review Focus 2): `nobody.example.test` → 404 after one lookup; `bad_host!`, `*.example.test`, `""` → 404 with lookup count 0.
   - `TestLookupErrorFailsClosed` (Review Focus 3): lookup error → 503 on the portal host; the instance host still reaches `next`.
@@ -248,23 +247,29 @@ The allowlist, in one unexported function `allowedOnPortalHost(method, path stri
 - [ ] **Step 8: Run** `go test ./internal/portaldomain/ ./internal/platform/httpx/ ./internal/security_regression/ ./cmd/manyforge/` and the integration command from Task 2 — PASS.
 - [ ] **Step 9: Commit** `feat(portal): serve only public routes on verified custom hostnames`
 
-### Task 5: Key-based public endpoints must match the hostname's business
+### Task 5: Public keys and confirmation tokens must match the hostname's business
 
 **Files:**
 - Modify: `internal/feedback/public.go` (`resolveBoard`, ~84)
 - Modify: `internal/mailing/public.go` (`resolvePublicList`, ~72), `internal/mailing/brand.go` (`PublicBrandForKey`, ~294)
+- Modify: `internal/mailing/track.go` (`Service.Confirm`, ~19)
+- Create: `migrations/0156_mailing_confirm_business_binding.up.sql`, `.down.sql`; mirror the function in `db/schema.sql`
 - Test: `internal/feedback/public_portal_host_integration_test.go`, `internal/mailing/public_portal_host_integration_test.go`
 
 **Interfaces:**
 - Consumes: `httpx.PortalBusiness(ctx)` (Task 4).
+- Produces: SQL function `mailing_confirm_for_business(p_token_hash <same type as mailing_confirm's argument>, p_business_id uuid) RETURNS integer`, SECURITY DEFINER with a pinned `search_path`, `EXECUTE` granted to `manyforge_app`. It returns 0 without changing anything when the token's subscriber does not belong to `p_business_id`, and otherwise returns `mailing_confirm(p_token_hash)`. Read `mailing_confirm` in `migrations/0133_mailing_consent_lifecycle.up.sql` for the tables involved.
 
-Rule: after a key resolves to a business, if `httpx.PortalBusiness(ctx)` is set and differs, return the same "not found" result an unknown key returns (`ok == false`, no error). With no portal business in context, behaviour is unchanged.
+Rule for keys: after a key resolves to a business, if `httpx.PortalBusiness(ctx)` is set and differs, return the same "not found" result an unknown key returns (`ok == false`, no error). With no portal business in context, behaviour is unchanged.
+
+Rule for confirmation: `Service.Confirm` calls `mailing_confirm_for_business` when `httpx.PortalBusiness(ctx)` is set, and `mailing_confirm` otherwise. The HTTP response stays byte-identical in every case, as it is today for unknown tokens.
 
 - [ ] **Step 1: Write failing integration tests**, each with two businesses `A` and `B` and a public key belonging to `A`:
   - Feedback: listing posts with context business `A` succeeds; with `B` the response is byte-identical to an unknown key's response; with no portal business it succeeds. Same for submit and vote.
   - Mailing: subscribe and brand with `A` succeed; with `B` they match the unknown-key response; with none they succeed.
+  - Confirmation: a pending subscriber of `A` with a valid token. `Confirm` with context business `B` returns nil and the subscriber stays pending; the token is still usable afterwards; with context business `A` the subscriber becomes confirmed; a second subscriber confirmed with no portal business in context behaves as today.
 - [ ] **Step 2: Run** `go test -tags integration -timeout 600s -p 1 -run PortalHost ./internal/feedback/ ./internal/mailing/` — FAIL.
-- [ ] **Step 3: Add the check** in the three functions (one comparison each, immediately after the row is read).
+- [ ] **Step 3: Add the check** in the three key functions (one comparison each, immediately after the row is read), write the migration and schema mirror, and branch in `Service.Confirm`. Add the new function to any definer-function inventory test that fails for it.
 - [ ] **Step 4: Run** the same command plus the packages' existing integration tests — PASS.
 - [ ] **Step 5: Commit** `feat(portal): bind public keys to the custom hostname's business`
 
@@ -327,5 +332,5 @@ Behaviour: signals and per-action in-flight flags as in `inbox-settings.ts`; unv
 - [ ] **Step 2: Search the diff for private names** (`git diff origin/master... | grep -i -E '<private terms>'` using the list kept in the private tracker); expect no matches.
 - [ ] **Step 3: Open the PR** titled `feat(sdk): custom portal domains per business`, base `master`. Confirm `mergeable` is clean and that CI actually ran before merging. Merge manually, never with auto-merge. Delete the branch.
 - [ ] **Step 4: Watch the image build and rollout;** confirm `/healthz` and `/readyz` return 200 and the operator app loads on the instance hostname.
-- [ ] **Step 5: Production check with a test hostname** (needs the owner to create the DNS record and approve the `ingress.extraHosts` line in the infrastructure repository): register and verify the hostname in settings; in a real browser confirm a public feedback page renders on it; confirm `/login`, `/api/v1/me` and `/` return 404 on it; confirm the instance hostname is unchanged; then remove the test hostname and confirm it returns 404.
+- [ ] **Step 5: Production check with a test hostname** (the owner has delegated this: create the proxied DNS record with the `cf` CLI at `~/.bun/bin/cf`, and add the `ingress.extraHosts` line in the infrastructure repository; the hostname itself is never written in this repository): register and verify the hostname in settings; in a real browser confirm a public feedback page renders on it; confirm `/login`, `/api/v1/me` and `/` return 404 on it; confirm the instance hostname is unchanged; then remove the test hostname and confirm it returns 404.
 - [ ] **Step 6: Close `manyforge-20cz`** with the evidence, `bd dolt push`.
