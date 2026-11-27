@@ -80,8 +80,8 @@ type InsertPortalDomainParams struct {
 
 // Custom portal hostnames (0155). Every table query carries a business_id predicate
 // (dual enforcement alongside RLS; see the header of identity.sql). The principal-less
-// host routing primitives are SECURITY DEFINER functions: ResolvePortalDomain returns
-// NULL when no verified row exists for the hostname (callers treat that as not found).
+// host routing primitives are SECURITY DEFINER functions: the lookups
+// return no row on a miss, so :one yields pgx.ErrNoRows (callers treat that as not found).
 // InsertPortalDomain derives tenant_root_id from the business row (RLS-scoped: an
 // unknown or unauthorized business yields no row, which the service maps to not found).
 func (q *Queries) InsertPortalDomain(ctx context.Context, arg InsertPortalDomainParams) (PortalDomain, error) {
@@ -215,7 +215,7 @@ func (q *Queries) MarkPortalDomainVerified(ctx context.Context, arg MarkPortalDo
 }
 
 const primaryPortalDomain = `-- name: PrimaryPortalDomain :one
-SELECT portal_domain_primary($1::uuid) AS hostname
+SELECT p.hostname::citext AS hostname FROM portal_domain_primary($1::uuid) AS p(hostname)
 `
 
 func (q *Queries) PrimaryPortalDomain(ctx context.Context, businessID uuid.UUID) (string, error) {
@@ -226,7 +226,7 @@ func (q *Queries) PrimaryPortalDomain(ctx context.Context, businessID uuid.UUID)
 }
 
 const resolvePortalDomain = `-- name: ResolvePortalDomain :one
-SELECT portal_domain_resolve($1::citext) AS business_id
+SELECT r.business_id::uuid AS business_id FROM portal_domain_resolve($1::citext) AS r(business_id)
 `
 
 func (q *Queries) ResolvePortalDomain(ctx context.Context, hostname string) (uuid.UUID, error) {

@@ -1,7 +1,7 @@
 -- Custom portal hostnames (0155). Every table query carries a business_id predicate
 -- (dual enforcement alongside RLS; see the header of identity.sql). The principal-less
--- host routing primitives are SECURITY DEFINER functions: ResolvePortalDomain returns
--- NULL when no verified row exists for the hostname (callers treat that as not found).
+-- host routing primitives are SECURITY DEFINER functions: the lookups
+-- return no row on a miss, so :one yields pgx.ErrNoRows (callers treat that as not found).
 
 -- InsertPortalDomain derives tenant_root_id from the business row (RLS-scoped: an
 -- unknown or unauthorized business yields no row, which the service maps to not found).
@@ -45,7 +45,7 @@ DELETE FROM portal_domain
 WHERE id = $1 AND business_id = $2;
 
 -- name: ResolvePortalDomain :one
-SELECT portal_domain_resolve(sqlc.arg('hostname')::citext) AS business_id;
+SELECT r.business_id::uuid AS business_id FROM portal_domain_resolve(sqlc.arg('hostname')::citext) AS r(business_id);
 
 -- name: PrimaryPortalDomain :one
-SELECT portal_domain_primary(sqlc.arg('business_id')::uuid) AS hostname;
+SELECT p.hostname::citext AS hostname FROM portal_domain_primary(sqlc.arg('business_id')::uuid) AS p(hostname);

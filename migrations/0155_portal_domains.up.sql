@@ -24,14 +24,14 @@ CREATE TRIGGER portal_domain_root_immutable BEFORE UPDATE ON portal_domain
 GRANT SELECT, INSERT, UPDATE, DELETE ON portal_domain TO manyforge_app;
 
 -- Principal-less host routing: the hostname is the only input, so these run as the
--- owner. NULL means "not found"; only verified rows ever resolve.
+-- owner. No row means "not found"; only verified rows ever resolve.
 CREATE OR REPLACE FUNCTION portal_domain_resolve(p_hostname citext)
-    RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+    RETURNS TABLE (business_id uuid) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
     SELECT d.business_id FROM portal_domain d
     WHERE d.hostname = p_hostname AND d.verified_at IS NOT NULL LIMIT 1;
 $$;
 CREATE OR REPLACE FUNCTION portal_domain_primary(p_business_id uuid)
-    RETURNS citext LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+    RETURNS TABLE (hostname citext) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
     SELECT d.hostname FROM portal_domain d
     WHERE d.business_id = p_business_id AND d.verified_at IS NOT NULL
     ORDER BY d.verified_at, d.id LIMIT 1;

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/manyforge/manyforge/internal/platform/db/dbgen"
 	"github.com/manyforge/manyforge/internal/platform/db/testdb"
 )
 
@@ -76,15 +77,18 @@ func TestPortalDomainsMigration(t *testing.T) {
 		t.Helper()
 		var got *uuid.UUID
 		err := database.App.WithTx(ctx, func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `SELECT portal_domain_resolve($1)`, host).Scan(&got)
+			return tx.QueryRow(ctx, `SELECT business_id FROM portal_domain_resolve($1)`, host).Scan(&got)
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 		return got
 	}
 	if got := resolve(); got != nil {
-		t.Fatalf("pending hostname resolved to %v, want NULL", *got)
+		t.Fatalf("pending hostname resolved to %v, want no row", *got)
 	}
 
 	if _, err := database.Super.Exec(ctx, `UPDATE portal_domain SET verified_at = now() WHERE business_id = $1`, a); err != nil {
@@ -109,12 +113,51 @@ func TestPortalDomainsMigration(t *testing.T) {
 	}
 	var primary *string
 	err = database.App.WithTx(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT portal_domain_primary($1)`, a).Scan(&primary)
+		return tx.QueryRow(ctx, `SELECT hostname FROM portal_domain_primary($1)`, a).Scan(&primary)
 	})
 	if err != nil {
 		t.Fatalf("primary: %v", err)
 	}
 	if primary == nil || *primary != "early.example.test" {
 		t.Fatalf("primary = %v, want early.example.test", primary)
+	}
+}
+
+// The generated queries must report a miss as pgx.ErrNoRows (never NULL into a
+// non-pointer type) so services can treat it as "not found".
+func TestPortalDomainLookupsThroughDbgen(t *testing.T) {
+	ctx := context.Background()
+	database, err := testdb.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close(ctx)
+
+	biz, empty := seedResendBusiness(ctx, t, database), seedResendBusiness(ctx, t, database)
+	if _, err := database.Super.Exec(ctx, `INSERT INTO portal_domain
+		(business_id,tenant_root_id,hostname,verify_token,verified_at) VALUES ($1,$1,'Portal.Example.Test','t',now())`, biz); err != nil {
+		t.Fatal(err)
+	}
+
+	err = database.App.WithTx(ctx, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		got, err := q.ResolvePortalDomain(ctx, "portal.example.test")
+		if err != nil || got != biz {
+			t.Errorf("resolve hit = %v, %v; want %v", got, err, biz)
+		}
+		if _, err := q.ResolvePortalDomain(ctx, "other.example.test"); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("resolve miss err = %v, want pgx.ErrNoRows", err)
+		}
+		host, err := q.PrimaryPortalDomain(ctx, biz)
+		if err != nil || host != "Portal.Example.Test" {
+			t.Errorf("primary hit = %q, %v", host, err)
+		}
+		if _, err := q.PrimaryPortalDomain(ctx, empty); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("primary miss err = %v, want pgx.ErrNoRows", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
