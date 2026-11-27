@@ -157,6 +157,7 @@ type Querier interface {
 	// Removes a principal's DIRECT membership at a business (revoke / leave).
 	// Inherited access from ancestors is unaffected (edge: grants are independent).
 	DeleteMembershipAt(ctx context.Context, arg DeleteMembershipAtParams) error
+	DeletePortalDomain(ctx context.Context, arg DeletePortalDomainParams) (int64, error)
 	// DeleteRepoConnector removes one connector scoped to the business (RLS + explicit
 	// predicate). Cascades to its code_review rows via the existing FK.
 	DeleteRepoConnector(ctx context.Context, arg DeleteRepoConnectorParams) (int64, error)
@@ -327,6 +328,7 @@ type Querier interface {
 	// for the dedup short-circuit. Business-scoped; pgx.ErrNoRows ⇒ none yet.
 	GetOutboundMessageByApproval(ctx context.Context, arg GetOutboundMessageByApprovalParams) (TicketMessage, error)
 	GetPendingInvitation(ctx context.Context, arg GetPendingInvitationParams) (GetPendingInvitationRow, error)
+	GetPortalDomain(ctx context.Context, arg GetPortalDomainParams) (PortalDomain, error)
 	GetPrincipalByAccount(ctx context.Context, accountID pgtype.UUID) (Principal, error)
 	// The kind ('human'|'agent') of a principal; ownership may pass only to a human.
 	GetPrincipalKind(ctx context.Context, id uuid.UUID) (string, error)
@@ -530,6 +532,13 @@ type Querier interface {
 	// approval execution conflicts on the partial UNIQUE index and inserts no second row
 	// (NULL for ordinary human replies — NULLs never conflict, so existing behavior holds).
 	InsertOutboundMessage(ctx context.Context, arg InsertOutboundMessageParams) (TicketMessage, error)
+	// Custom portal hostnames (0155). Every table query carries a business_id predicate
+	// (dual enforcement alongside RLS; see the header of identity.sql). The principal-less
+	// host routing primitives are SECURITY DEFINER functions: ResolvePortalDomain returns
+	// NULL when no verified row exists for the hostname (callers treat that as not found).
+	// InsertPortalDomain derives tenant_root_id from the business row (RLS-scoped: an
+	// unknown or unauthorized business yields no row, which the service maps to not found).
+	InsertPortalDomain(ctx context.Context, arg InsertPortalDomainParams) (PortalDomain, error)
 	InsertRepoConnector(ctx context.Context, arg InsertRepoConnectorParams) (RepoConnector, error)
 	// tenant_root_id is derived from the RLS-visible business, so a foreign/invisible business
 	// yields no row (NOT NULL rejects) — the ownership predicate is pushed into SQL, not the caller.
@@ -717,6 +726,8 @@ type Querier interface {
 	// Keyset pagination over the global catalog; pass '' as the cursor for the first
 	// page and the last returned key thereafter. Fetch limit+1 to detect a next page.
 	ListPermissions(ctx context.Context, arg ListPermissionsParams) ([]Permission, error)
+	ListPortalDomains(ctx context.Context, arg ListPortalDomainsParams) ([]PortalDomain, error)
+	ListPortalDomainsAfter(ctx context.Context, arg ListPortalDomainsAfterParams) ([]PortalDomain, error)
 	// NOTE: claim/requeue/fail are NOT sqlc queries. The CodeReviewWorker is a system
 	// process that runs principal-less (no manyforge.principal_id GUC), but code_review
 	// has RLS ENABLEd (0071) and the app connects as manyforge_app (NOBYPASSRLS), so a
@@ -824,10 +835,13 @@ type Querier interface {
 	// Keep updated_at unchanged so provisioning persistence can compare the same revision.
 	MarkMailingResendWebhookMutation(ctx context.Context, arg MarkMailingResendWebhookMutationParams) (uuid.UUID, error)
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) error
+	// MarkPortalDomainVerified is idempotent: it only touches a still-pending row.
+	MarkPortalDomainVerified(ctx context.Context, arg MarkPortalDomainVerifiedParams) (int64, error)
 	MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error
 	OwnerRoleID(ctx context.Context) (uuid.UUID, error)
 	// The id of a built-in preset role by key (owner/admin/member/viewer).
 	PresetRoleID(ctx context.Context, key string) (uuid.UUID, error)
+	PrimaryPortalDomain(ctx context.Context, businessID uuid.UUID) (string, error)
 	PruneAutomationVersions(ctx context.Context, arg PruneAutomationVersionsParams) (int64, error)
 	// ReadCodexCredential is the lazy fast-path read (no lock): if the access token is still fresh
 	// the caller returns it without a network refresh.
@@ -866,6 +880,7 @@ type Querier interface {
 	// during a contact merge (runs in the same tx as the loser's soft-delete). Scoped by
 	// contact_id, whose tenant ownership the service validates before calling.
 	RepointRequesters(ctx context.Context, arg RepointRequestersParams) error
+	ResolvePortalDomain(ctx context.Context, hostname string) (uuid.UUID, error)
 	// RetryFailedOps re-enqueues a connector's terminally-failed outbound ops for another dispatch
 	// attempt: failed → pending, attempts reset to 0 (the maxOutboundAttempts cap starts fresh) and
 	// last_error cleared. The dispatcher only claims status='pending', so this is the sole exit from
