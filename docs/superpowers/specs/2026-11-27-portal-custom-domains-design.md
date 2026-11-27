@@ -113,7 +113,7 @@ One middleware ahead of every route decides by normalised host:
 | Host | Behaviour |
 |---|---|
 | The instance host (from `MANYFORGE_PUBLIC_BASE_URL`), or no public base URL configured | Unchanged. |
-| An internal name: IP literal, `localhost`, or a name ending `.localhost`, `.svc` or `.svc.cluster.local` | Treated as the instance host. Probes and in-cluster callers use these; they cannot be registered and cannot arrive through the edge. |
+| An internal name: IP literal, `localhost`, any single-label name, or a name ending `.localhost`, `.svc` or `.svc.cluster.local` | Treated as the instance host. Probes and in-cluster callers use these; they cannot be registered and cannot arrive through the edge. |
 | A verified portal domain | The business is put in the request context. Only the public allowlist is served; everything else is 404. |
 | Anything else | 404, with no detail. |
 
@@ -122,9 +122,10 @@ do not send the public hostname.
 
 The public allowlist is explicit, kept in one place, and starts as: the
 public feedback pages and their API, the public mailing pages and their API,
-the static assets the web app needs to render those pages, and the analytics
-snippet and collect endpoint. The support portal adds its own entries when it
-ships. A public endpoint that takes a key resolving to a business (a feedback
+and the static assets the web app needs to render those pages. The analytics
+snippet and collect endpoint are not served on custom hostnames: their site
+key is not bound to the hostname's business and no page there uses them. The
+support portal adds its own entries when it ships. A public endpoint that takes a key resolving to a business (a feedback
 board key, a mailing list key) must match the business the hostname resolved
 to, or behave as for an unknown key. Token links are tied too (owner
 decision): the mailing confirmation link is the only token link generated on

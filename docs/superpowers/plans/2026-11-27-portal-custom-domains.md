@@ -28,7 +28,7 @@
 The spec has been updated to match each of these.
 
 1. **Sessions.** Operator sessions are bearer tokens in per-origin `localStorage`, not cookies. The only cookie is the passkey login cookie, which uses the `__Host-` prefix when secure. Isolation is therefore: authenticated routes are unreachable on a custom hostname, and the pin test covers the `__Host-` cookie.
-2. **Internal hostnames.** IP literals, `localhost`, and names ending `.localhost`, `.svc` or `.svc.cluster.local` are treated as the instance hostname. Probes and in-cluster callers use them, they cannot be registered, and they cannot arrive through the edge.
+2. **Internal hostnames.** IP literals, `localhost`, any single-label name (no dot), and names ending `.localhost`, `.svc` or `.svc.cluster.local` are treated as the instance hostname. Probes and in-cluster callers use them, they cannot be registered, and they cannot arrive through the edge.
 3. **Token links are tied to the hostname's business (owner decision).** The confirmation link is the only token link generated on a custom hostname (decision 4), so it is the only token route served there, and it only activates a subscription that belongs to the hostname's business. `/m/u`, `/m/o`, `/m/c` and `/m/b/{bid}/logo` are not served on custom hostnames at all: their links are always generated on the instance hostname. Key-based endpoints (feedback board key, mailing list key) are matched as well.
 4. **Only the double-opt-in confirmation link moves to the custom hostname.** Unsubscribe, open, click and logo links stay on the instance hostname: they live in mail forever, and a removed or lapsed domain must not break them.
 5. **`/` on a custom hostname is 404** until the hosted support portal defines a home page.
@@ -254,6 +254,7 @@ The allowlist, in one unexported function `allowedOnPortalHost(method, path stri
 - Modify: `internal/feedback/public.go` (`resolveBoard`, ~84)
 - Modify: `internal/mailing/public.go` (`resolvePublicList`, ~72), `internal/mailing/brand.go` (`PublicBrandForKey`, ~294)
 - Modify: `internal/mailing/track.go` (`Service.Confirm`, ~19)
+- Modify: `internal/portaldomain/hostrouting.go`, `internal/portaldomain/hostrouting_test.go` (remove the analytics rows, see below)
 - Create: `migrations/0157_mailing_confirm_business_binding.up.sql`, `.down.sql` (use the next free number); mirror the function in `db/schema.sql`
 - Test: `internal/feedback/public_portal_host_integration_test.go`, `internal/mailing/public_portal_host_integration_test.go`
 
@@ -264,6 +265,8 @@ The allowlist, in one unexported function `allowedOnPortalHost(method, path stri
 Rule for keys: after a key resolves to a business, if `httpx.PortalBusiness(ctx)` is set and differs, return the same "not found" result an unknown key returns (`ok == false`, no error). With no portal business in context, behaviour is unchanged.
 
 Rule for confirmation: `Service.Confirm` calls `mailing_confirm_for_business` when `httpx.PortalBusiness(ctx)` is set, and `mailing_confirm` otherwise. The HTTP response stays byte-identical in every case, as it is today for unknown tokens.
+
+Rule for analytics (added after Task 4's security review): the analytics snippet and collect endpoint take a site key that is not bound to the hostname's business, and no page served on a custom hostname uses them. Remove the `/a.js` and `/a/e` rows from `allowedOnPortalHost`; move those two requests from `TestPortalHostAllowlist` to `TestPortalHostDenies` (`GET /a.js`, `POST /a/e`, `OPTIONS /a/e` → 404). Everything a custom hostname serves is then either static web-app assets or bound to its business.
 
 - [ ] **Step 1: Write failing integration tests**, each with two businesses `A` and `B` and a public key belonging to `A`:
   - Feedback: listing posts with context business `A` succeeds; with `B` the response is byte-identical to an unknown key's response; with no portal business it succeeds. Same for submit and vote.
