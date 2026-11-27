@@ -15,7 +15,7 @@
 - This repository is public. Use only neutral names (`example.com`, `portal.example.test`) in code, tests, fixtures, docs, commit messages and PR text.
 - sqlc reads `db/schema.sql`, not migrations: edit it by hand to match each migration. Generate with the pinned binary `/opt/homebrew/bin/sqlc generate` (v1.27.0). Never hand-edit `internal/platform/db/dbgen`.
 - TXT record name is `_manyforge-portal.<hostname>`; token format is `mf-portal-verify=` followed by base64url (no padding) of 32 random bytes.
-- A hostname may be pending for several businesses and verified for exactly one.
+- A hostname may be pending for several businesses and verified for exactly one. A verified business keeps the hostname until it removes it, or until another business proves control while the incumbent's proof is no longer published (same rule as email domains).
 - The `Host` header is untrusted. It is normalised (lower-case, port stripped, one trailing dot stripped) and matched exactly. `X-Forwarded-Host` is never read.
 - On a verified custom hostname only the allowlist in Task 4 is reachable. Foreign and unknown ids return the same not-found shape (`errs.ErrNotFound`).
 - New endpoints are gated by the existing `inbox.manage` permission middleware (`h.inboxManage`).
@@ -136,12 +136,13 @@ func (s *Service) BaseURLFor(ctx context.Context, businessID uuid.UUID) (string,
   - `TestCreateNormalisesAndReturnsChallenge`: input `" Portal.Example.TEST. "` stores `portal.example.test`; `Verification.Name == "_manyforge-portal.portal.example.test"`; value has prefix `mf-portal-verify=`; an audit row `portal_domain.created` exists.
   - `TestCreateRejects`: each invalid form from Step 1, the instance host, a subdomain of a reserved domain, and an internal host return `errs.ErrValidation`; the same hostname twice for one business returns `errs.ErrConflict`.
   - `TestVerify`: no record → returned unverified, no error; wrong value → unverified; resolver error → unverified; exact value → `VerifiedAt` set, audit `portal_domain.verified`, `Forget` called with the hostname; verifying again is a no-op success.
-  - `TestVerifiedHostnameIsExclusive`: two tenants hold the same hostname pending; the first verifies; the second's `Verify` with a valid record returns `errs.ErrConflict` and stays unverified.
+  - `TestVerifiedHostnameIsExclusive`: two tenants hold the same hostname pending; the first verifies; while the first's record is still published, the second's `Verify` with its own valid record also published returns `errs.ErrConflict` and stays unverified.
+  - `TestVerifyTakesOverStaleIncumbent`: as above, but the first tenant's record is no longer published and the second's is. The second's `Verify` succeeds; the first's row is now unverified (not deleted); audit rows `portal_domain.verified` for the claimant and `portal_domain.verification_revoked` for the incumbent exist; `Forget` was called. With the resolver returning an error for the lookup, `Verify` returns unverified and nothing changes.
   - `TestDelete`: removes the row, audit `portal_domain.deleted`, `Forget` called; after deleting a verified domain the other tenant can verify.
   - `TestTenantIsolation`: a principal of another tenant gets `errs.ErrNotFound` from `Verify` and `Delete` for a real id, identical to an unknown id, and an empty `List`.
   - `TestBaseURLFor`: none verified → `"", false`; two verified → the earlier one, as `https://<hostname>`.
 - [ ] **Step 5: Run** `go test -tags integration -timeout 600s -p 1 ./internal/portaldomain/` — FAIL.
-- [ ] **Step 6: Implement `service.go`.** Map errors as `mapIdentityErr` in `internal/ticketing/identity.go` does (no rows → not found, 23505 → conflict). `BaseURLFor` uses `PrimaryPortalDomain` under `DB.WithTx` (no principal). Cursor encoding copies `encodeEmailDomainCursor`.
+- [ ] **Step 6: Implement `service.go`** and the takeover migration `migrations/0156_portal_domain_takeover.up.sql` / `.down.sql` (mirrored in `db/schema.sql`). Stale takeover mirrors the email-domain feature: read `email_domain_takeover_stale` (search `migrations/` for its definition) and how `VerifyEmailDomain` in `internal/ticketing/identity.go` (~343-382) calls it, and build the portal equivalent `portal_domain_takeover_stale`. The rule: a claimant whose own token is published may displace a verified incumbent only when the incumbent's token is absent from the same TXT lookup result; a resolver error never displaces anyone. The single TXT lookup at `_manyforge-portal.<hostname>` returns all records, so one lookup decides both. Map errors as `mapIdentityErr` in `internal/ticketing/identity.go` does (no rows → not found, 23505 → conflict). `BaseURLFor` uses `PrimaryPortalDomain` under `DB.WithTx` (no principal). Cursor encoding copies `encodeEmailDomainCursor`.
 - [ ] **Step 7: Run both test commands** — PASS.
 - [ ] **Step 8: Commit** `feat(portal): portal domain service with DNS verification`
 
@@ -253,7 +254,7 @@ The allowlist, in one unexported function `allowedOnPortalHost(method, path stri
 - Modify: `internal/feedback/public.go` (`resolveBoard`, ~84)
 - Modify: `internal/mailing/public.go` (`resolvePublicList`, ~72), `internal/mailing/brand.go` (`PublicBrandForKey`, ~294)
 - Modify: `internal/mailing/track.go` (`Service.Confirm`, ~19)
-- Create: `migrations/0156_mailing_confirm_business_binding.up.sql`, `.down.sql`; mirror the function in `db/schema.sql`
+- Create: `migrations/0157_mailing_confirm_business_binding.up.sql`, `.down.sql` (use the next free number); mirror the function in `db/schema.sql`
 - Test: `internal/feedback/public_portal_host_integration_test.go`, `internal/mailing/public_portal_host_integration_test.go`
 
 **Interfaces:**

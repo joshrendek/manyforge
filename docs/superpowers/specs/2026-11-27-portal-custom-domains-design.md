@@ -89,7 +89,12 @@ New table `portal_domain`, business-scoped:
   `business_id`, `tenant_root_id`.
 - A hostname may be pending for more than one business, but verified for
   only one: a partial unique index on `hostname` where `verified_at` is not
-  null. Verification of an already verified hostname fails as a conflict.
+  null. Verification of a hostname another business has verified fails as a
+  conflict while that business's TXT proof is still published. If its proof
+  is gone and the claimant's is published, DNS control has moved: the
+  claimant becomes verified and the incumbent reverts to pending, with both
+  changes audited. This is the rule email domains already follow, and it
+  keeps a verification from outliving the control it proved.
 - Hostname validation at the service boundary: a fully qualified DNS name,
   at most 253 characters, no wildcard, no IP literal, not the instance
   hostname or any platform-owned mail domain.
