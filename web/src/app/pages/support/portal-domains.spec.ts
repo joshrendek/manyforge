@@ -105,7 +105,7 @@ describe('PortalDomainsComponent', () => {
     expect((q('portal-domain-input') as HTMLInputElement).value).toBe('');
   });
 
-  it('shows both DNS records for an unverified row and none for a verified row', () => {
+  it('shows both DNS records for an unverified row and only the target record once verified', () => {
     load([domain(), domain({ id: 'pd2', hostname: 'v.example.test', verified: true })]);
     const rows = all('portal-domain-row');
     expect(rows[0].querySelectorAll('.mf-dns-rec').length).toBe(2);
@@ -117,11 +117,35 @@ describe('PortalDomainsComponent', () => {
     expect(rows[0].querySelector('[data-testid="portal-domain-status"]')?.textContent).toContain(
       'Pending',
     );
-    expect(rows[1].querySelector('[data-testid="portal-domain-dns"]')).toBeNull();
+    const verifiedDns = rows[1].querySelector('[data-testid="portal-domain-dns"]');
+    expect(verifiedDns).not.toBeNull();
+    expect(verifiedDns?.querySelectorAll('.mf-dns-rec').length).toBe(1);
+    expect(verifiedDns?.textContent).toContain('CNAME');
+    expect(verifiedDns?.textContent).toContain('app.example.test');
+    expect(verifiedDns?.textContent).not.toContain('TXT');
+    expect(verifiedDns?.textContent).not.toContain('mf-portal-verify=abc123');
     expect(rows[1].querySelector('[data-testid="portal-domain-verify"]')).toBeNull();
     expect(rows[1].querySelector('[data-testid="portal-domain-status"]')?.textContent).toContain(
       'Verified',
     );
+  });
+
+  it('warns on unverified rows that verifying is not routing', () => {
+    load([domain(), domain({ id: 'pd2', hostname: 'v.example.test', verified: true })]);
+    const rows = all('portal-domain-row');
+    expect(
+      rows[0].querySelector('[data-testid="portal-domain-routing-hint"]')?.textContent?.trim(),
+    ).toBe(
+      'Verify only after your administrator confirms this hostname is routed here. Once verified, sign-up confirmation emails link to it.',
+    );
+    expect(rows[1].querySelector('[data-testid="portal-domain-routing-hint"]')).toBeNull();
+  });
+
+  it('hides the DNS block on a verified row whose target value is empty', () => {
+    const d = domain({ verified: true });
+    d.dns.target.value = '';
+    load([d]);
+    expect(q('portal-domain-dns')).toBeNull();
   });
 
   it('omits the target record when its value is empty', () => {
@@ -180,11 +204,21 @@ describe('PortalDomainsComponent', () => {
     expect(q('portal-domain-empty')).not.toBeNull();
   });
 
-  it('add 409 shows the already-verified message', () => {
+  it('add 409 shows the already-added message', () => {
     load([]);
     type('portal.example.test');
     (q('portal-domain-add') as HTMLButtonElement).click();
     mock.expectOne(base).flush({ code: 'CONFLICT' }, { status: 409, statusText: 'Conflict' });
+    fixture.detectChanges();
+    expect(text('portal-domain-error')).toBe('This hostname is already added.');
+  });
+
+  it('verify 409 shows the already-verified message', () => {
+    load([domain()]);
+    (q('portal-domain-verify') as HTMLButtonElement).click();
+    mock
+      .expectOne(`${base}/pd1/verify`)
+      .flush({ code: 'CONFLICT' }, { status: 409, statusText: 'Conflict' });
     fixture.detectChanges();
     expect(text('portal-domain-error')).toBe(
       'That hostname is already verified by another business.',

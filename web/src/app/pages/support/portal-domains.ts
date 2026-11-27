@@ -75,7 +75,7 @@ import { StatusPill } from '../../ui/status-pill/status-pill';
                 />
               </div>
 
-              @if (!d.verified) {
+              @if (!d.verified || d.dns.target.value) {
                 <div class="mf-dns-challenge" data-testid="portal-domain-dns">
                   @if (d.dns.target.value) {
                     <div class="mf-dns-rec">
@@ -84,12 +84,21 @@ import { StatusPill } from '../../ui/status-pill/status-pill';
                       <code>{{ d.dns.target.value }}</code>
                     </div>
                   }
-                  <div class="mf-dns-rec">
-                    <span class="mf-dns-kind">TXT</span>
-                    <code>{{ d.dns.verification_txt.name }}</code>
-                    <code>{{ d.dns.verification_txt.value }}</code>
-                  </div>
+                  @if (!d.verified) {
+                    <div class="mf-dns-rec">
+                      <span class="mf-dns-kind">TXT</span>
+                      <code>{{ d.dns.verification_txt.name }}</code>
+                      <code>{{ d.dns.verification_txt.value }}</code>
+                    </div>
+                  }
                 </div>
+              }
+
+              @if (!d.verified) {
+                <p class="mf-hint" data-testid="portal-domain-routing-hint">
+                  Verify only after your administrator confirms this hostname is routed here. Once
+                  verified, sign-up confirmation emails link to it.
+                </p>
               }
 
               <div class="pd-actions">
@@ -145,6 +154,11 @@ import { StatusPill } from '../../ui/status-pill/status-pill';
       .pd-wrap .mf-hint,
       .pd-wrap .mf-err {
         margin: 0;
+      }
+      /* The global hint style only applies under .mf-field. */
+      .pd-wrap .mf-hint {
+        font-size: var(--mf-fs-xs);
+        color: var(--mf-text-faint);
       }
       .pd-add {
         display: flex;
@@ -265,7 +279,7 @@ export class PortalDomainsComponent implements OnInit {
       },
       error: (e: HttpErrorResponse) => {
         this.adding.set(false);
-        this.error.set(this.describeError(e));
+        this.error.set(this.describeError(e, 'add'));
       },
     });
   }
@@ -284,7 +298,7 @@ export class PortalDomainsComponent implements OnInit {
       },
       error: (e: HttpErrorResponse) => {
         this.verifyingId.set(null);
-        this.error.set(this.describeError(e));
+        this.error.set(this.describeError(e, 'verify'));
       },
     });
   }
@@ -306,7 +320,10 @@ export class PortalDomainsComponent implements OnInit {
     });
   }
 
-  private describeError(e: HttpErrorResponse): string {
+  // A 409 on add can only mean this business already added the hostname; on verify
+  // it means another business holds it verified.
+  private describeError(e: HttpErrorResponse, op?: 'add' | 'verify'): string {
+    if (e.status === 409 && op === 'add') return 'This hostname is already added.';
     if (e.status === 409) return 'That hostname is already verified by another business.';
     if (e.status === 403 || e.status === 404) return "You don't have access to do that.";
     if (e.status === 400) {

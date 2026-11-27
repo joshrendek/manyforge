@@ -25,15 +25,21 @@ a domain cannot break mail that was already delivered.
 
 ## Onboarding a hostname
 
-Until self-service registration exists, the operator does steps 1 and 2 for each
-hostname and the business does step 3.
+The operator does steps 1 and 2 for each hostname and the business does step 3.
 
 1. **DNS.** In Cloudflare, create a proxied (orange cloud) record for
-   `portal.example.com` that points where `app.example.com` points.
+   `portal.example.com` that points where `app.example.com` points. Two checks:
+
+   - **TLS mode.** The origin is HTTP behind the edge. The hostname's DNS zone
+     must use the same TLS mode to the origin as the instance hostname's zone. If
+     the zone is stricter, add a per-hostname rule that relaxes it.
+   - **CNAME scope.** A CNAME to the instance hostname only works when both zones
+     are in the same edge account. Otherwise use an address record.
 2. **Ingress.** Add the hostname to `ingress.extraHosts` in the deployment's
    values and roll out:
 
    ```yaml
+   publicBaseURL: https://app.example.com
    ingress:
      extraHosts:
        - portal.example.com
@@ -42,19 +48,24 @@ hostname and the business does step 3.
    Each entry becomes one more rule on the existing Ingress, so its source-range
    restriction, `/metrics` denial and body-size and timeout limits apply to every
    hostname. Only hostnames listed here reach the app. The render fails if an
-   entry equals `ingress.host` (case-insensitive) or appears twice.
+   entry is not a plain hostname (empty, wildcard, port, scheme, path or spaces),
+   equals `ingress.host` (case-insensitive) or appears twice, and whenever
+   `extraHosts` is set while `publicBaseURL` is not an `http(s)://` URL with a
+   host: without it the app turns host routing off and would serve the whole
+   operator app on these hostnames. At startup the app logs the instance host it
+   routes by (`portal host routing on`), or an error if `publicBaseURL` has no
+   usable host.
 3. **Verify.** In **Support → Inbox settings → Portal domain** the business adds
    `portal.example.com`, publishes a TXT record named
    `_manyforge-portal.portal.example.com` with the value shown, and clicks
    **Verify**.
 
-Two checks before step 3:
-
-- **TLS mode.** The origin is HTTP behind the edge. The hostname's DNS zone must
-  use the same TLS mode to the origin as the instance hostname's zone. If the
-  zone is stricter, add a per-hostname rule that relaxes it.
-- **CNAME scope.** A CNAME to the instance hostname only works when both zones are
-  in the same edge account. Otherwise use an address record.
+   Verify only after the operator confirms steps 1 and 2 are live. Verifying
+   proves control of the DNS name, not that traffic reaches the app, and once a
+   hostname is verified sign-up confirmation emails link to it. A hostname
+   verified before it routes here sends customers confirmation links that do not
+   load. The settings page shows this warning beside **Verify**, and keeps
+   showing the target record after verification.
 
 ## Verification and takeover
 

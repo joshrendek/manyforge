@@ -101,6 +101,9 @@ test('add, verify (pending then verified) and remove a portal domain', async ({ 
   await expect(dns).toContainText('TXT');
   await expect(dns).toContainText(`_manyforge-portal.${HOST}`);
   await expect(dns).toContainText('mf-portal-verify=TESTTOKEN');
+  await expect(row.getByTestId('portal-domain-routing-hint')).toContainText(
+    'Verify only after your administrator confirms this hostname is routed here.',
+  );
 
   // Verify, still pending: hint, no error
   await row.getByTestId('portal-domain-verify').click();
@@ -111,7 +114,11 @@ test('add, verify (pending then verified) and remove a portal domain', async ({ 
   verifyResult = true;
   await row.getByTestId('portal-domain-verify').click();
   await expect(row.getByTestId('portal-domain-status')).toContainText('Verified');
-  await expect(row.getByTestId('portal-domain-dns')).toHaveCount(0);
+  // The target record stays visible once verified; the TXT challenge does not.
+  await expect(row.getByTestId('portal-domain-dns').locator('.mf-dns-rec')).toHaveCount(1);
+  await expect(row.getByTestId('portal-domain-dns')).toContainText('CNAME');
+  await expect(row.getByTestId('portal-domain-dns')).not.toContainText('TXT');
+  await expect(row.getByTestId('portal-domain-routing-hint')).toHaveCount(0);
   await expect(row.getByTestId('portal-domain-verify')).toHaveCount(0);
 
   // Remove, accepting the confirm
