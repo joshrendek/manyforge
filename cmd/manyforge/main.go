@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -487,9 +486,15 @@ func main() {
 	identityH := ticketing.NewIdentityHandler(identitySvc)
 
 	// Custom portal hostnames: DNS-verified per business, served by host routing.
-	portalInstanceHost := ""
-	if u, perr := url.Parse(cfg.PublicBaseURL); perr == nil {
-		portalInstanceHost = portaldomain.NormalizeHost(u.Host)
+	portalInstanceHost, perr := portaldomain.InstanceHost(cfg.PublicBaseURL)
+	switch {
+	case perr != nil:
+		logger.Error("portal host routing off: MANYFORGE_PUBLIC_BASE_URL has no usable host", "err", perr)
+		portalInstanceHost = ""
+	case portalInstanceHost != "":
+		logger.Info("portal host routing on", "instance_host", portalInstanceHost)
+	default:
+		logger.Info("portal host routing off: no MANYFORGE_PUBLIC_BASE_URL")
 	}
 	portalHosts := portaldomain.NewHostResolver(database, 60*time.Second)
 	portalDomainSvc := &portaldomain.Service{

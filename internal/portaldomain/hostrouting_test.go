@@ -1,10 +1,14 @@
 package portaldomain
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -68,6 +72,19 @@ func TestInstanceHostUnchanged(t *testing.T) {
 		if rh.gotOK {
 			t.Errorf("%s: portal business must not be set on the instance host", p)
 		}
+	}
+	if rh.lookups != 0 {
+		t.Errorf("lookups = %d, want 0", rh.lookups)
+	}
+}
+
+func TestInstanceHostIsNormalised(t *testing.T) {
+	rh := newHarness("App.Example.Test:443")
+	if rec := rh.do("GET", testInstance, "/login"); rec.Code != http.StatusTeapot {
+		t.Fatalf("instance host %q: status %d, want pass-through", testInstance, rec.Code)
+	}
+	if rh.gotOK {
+		t.Error("portal business must not be set on the instance host")
 	}
 	if rh.lookups != 0 {
 		t.Errorf("lookups = %d, want 0", rh.lookups)
@@ -153,6 +170,7 @@ func TestPortalHostDenies(t *testing.T) {
 		{"POST", "/a.js"}, {"GET", "/a/e"}, {"POST", "/media/x"}, {"POST", "/main.js"},
 		{"GET", "/api/passkeys/login/begin"}, {"GET", "/sub/main.js"}, {"GET", "/main.js.map"},
 		{"DELETE", "/api/v1/feedback/public/k"}, {"GET", "/api/v1/feedback/public"},
+		{"GET", "/p/abc/extra"}, {"GET", "/m/s/k/extra"}, {"GET", "/m/confirm/t/extra"}, {"POST", "/m/confirm/t/extra"},
 	}
 	for _, c := range cases {
 		rec := rh.do(c.method, testPortal, c.path)
@@ -253,4 +271,52 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// Every wrapper denial leaves one structured Info line naming why.
+func TestDenialsAreLogged(t *testing.T) {
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+	long := strings.Repeat("a", 300) + ".example.test"
+	cases := []struct {
+		method, host, path, reason, wantHost, wantPath string
+	}{
+		{"GET", "bad_host!.example.test", "/p/abc", "invalid_host", "bad_host!.example.test", "/p/abc"},
+		{"GET", long, "/p/abc", "invalid_host", long[:253], "/p/abc"},
+		{"GET", "Nobody.Example.Test:443", "/p/abc", "unknown_host", "nobody.example.test", "/p/abc"},
+		{"POST", testPortal, "/api/v1/auth/login", "not_allowlisted", testPortal, "/api/v1/auth/login"},
+		{"GET", testPortal, "/m/confirm/secret-token/extra", "not_allowlisted", testPortal, "/m/confirm/{token}"},
+	}
+	for _, c := range cases {
+		buf.Reset()
+		rh := newHarness(testInstance)
+		if rec := rh.do(c.method, c.host, c.path); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s %s %s: status %d, want 404", c.method, c.host, c.path, rec.Code)
+		}
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		if len(lines) != 1 || lines[0] == "" {
+			t.Fatalf("%s %s %s: want exactly one log line, got %q", c.method, c.host, c.path, buf.String())
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {
+			t.Fatalf("parse log line %q: %v", lines[0], err)
+		}
+		if rec["level"] != "INFO" || rec["reason"] != c.reason || rec["host"] != c.wantHost || rec["method"] != c.method || rec["path"] != c.wantPath {
+			t.Errorf("%s %s %s: log = %v, want reason=%s host=%s path=%s", c.method, c.host, c.path, rec, c.reason, c.wantHost, c.wantPath)
+		}
+		if strings.Contains(lines[0], "secret-token") {
+			t.Errorf("log line leaks a token: %s", lines[0])
+		}
+	}
+
+	buf.Reset()
+	rh := newHarness(testInstance)
+	rh.do("GET", testPortal, "/p/abc")
+	rh.do("GET", testInstance, "/login")
+	if buf.Len() != 0 {
+		t.Errorf("allowed requests must not log a denial: %s", buf.String())
+	}
 }

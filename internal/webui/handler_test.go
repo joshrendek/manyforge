@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/google/uuid"
+
+	"github.com/manyforge/manyforge/internal/platform/httpx"
 )
 
 func testFS() fstest.MapFS {
@@ -88,5 +92,49 @@ func TestSPA_TraversalRejected(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "INDEX_MARKER") {
 		t.Fatalf("traversal request must never resolve into the SPA filesystem")
+	}
+}
+
+// On a custom portal hostname only the public page routes may fall back to
+// index.html; any other miss must be a plain 404, or the web app would route an
+// unknown path to the operator sign-in screen. Without the portal context the
+// fallback is unchanged.
+func TestSPA_PortalHostFallbackOnlyForPublicPages(t *testing.T) {
+	h := newSPAHandler(testFS())
+	business := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	serve := func(portal bool, target string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Header.Set("Accept", "text/html,application/xhtml+xml")
+		if portal {
+			req = req.WithContext(httpx.WithPortalBusiness(req.Context(), business))
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	isIndex := func(rec *httptest.ResponseRecorder) bool {
+		return rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "INDEX_MARKER")
+	}
+
+	for _, target := range []string{"/media/nope", "/nope.js", "/p/abc/extra", "/tickets/123", "/"} {
+		rec := serve(true, target)
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "INDEX_MARKER") {
+			t.Errorf("portal %s: status %d body %q, want plain 404", target, rec.Code, rec.Body.String())
+		}
+	}
+	for _, target := range []string{"/p/abc", "/m/s/abc"} {
+		if rec := serve(true, target); !isIndex(rec) {
+			t.Errorf("portal %s: status %d, want index.html", target, rec.Code)
+		}
+	}
+	if rec := serve(true, "/assets/app.js"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "console.log") {
+		t.Errorf("portal real asset: status %d, want the file", rec.Code)
+	}
+
+	// Without the portal context every one of these still falls back as before.
+	for _, target := range []string{"/media/nope", "/nope.js", "/p/abc/extra", "/tickets/123", "/", "/p/abc", "/m/s/abc"} {
+		if rec := serve(false, target); !isIndex(rec) {
+			t.Errorf("instance %s: status %d, want index.html fallback", target, rec.Code)
+		}
 	}
 }

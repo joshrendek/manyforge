@@ -52,3 +52,28 @@ func TestIsInternalHost(t *testing.T) {
 		}
 	}
 }
+
+func TestInstanceHost(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"", "", false},
+		{"https://app.example.test", "app.example.test", false},
+		{"https://app.example.test:8443", "app.example.test", false},
+		{"https://app.example.test/", "app.example.test", false},
+		{"HTTPS://APP.Example.Test", "app.example.test", false},
+		{"http://app.example.test", "app.example.test", false},
+		{"app.example.test", "", true},
+		{"ftp://app.example.test", "", true},
+		{"https://", "", true},
+		{"https:///path", "", true},
+	}
+	for _, c := range cases {
+		got, err := InstanceHost(c.in)
+		if (err != nil) != c.wantErr || got != c.want {
+			t.Errorf("InstanceHost(%q) = %q, %v; want %q, err=%v", c.in, got, err, c.want, c.wantErr)
+		}
+	}
+}

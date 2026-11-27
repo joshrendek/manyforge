@@ -4,10 +4,35 @@
 package portaldomain
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strings"
 )
+
+// InstanceHost returns the normalised host of the instance's public base URL. An
+// empty URL yields "", nil (host routing off). A URL that does not parse, has no
+// host, or has a scheme other than http or https is an error, so a schemeless
+// value such as "app.example.test" is never silently treated as "no host".
+func InstanceHost(baseURL string) (string, error) {
+	if baseURL == "" {
+		return "", nil
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse public base URL: %w", err)
+	}
+	if s := strings.ToLower(u.Scheme); s != "http" && s != "https" {
+		return "", errors.New("public base URL must use http or https")
+	}
+	h := NormalizeHost(u.Host)
+	if h == "" {
+		return "", errors.New("public base URL has no host")
+	}
+	return h, nil
+}
 
 // NormalizeHost lower-cases a Host value and strips its port and one trailing dot.
 func NormalizeHost(hostport string) string {
@@ -55,7 +80,7 @@ func ValidHostname(h string) bool {
 	}
 	for i := 0; i < len(tld); i++ {
 		c := tld[i]
-		if !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
 			return false
 		}
 	}

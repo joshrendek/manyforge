@@ -56,6 +56,12 @@ func PublicIngestCORS(allowedOrigins []string, instanceOrigin string, methods ..
 				return
 			}
 			origin, err := weborigin.FromHeader(origins)
+			if err == nil && !preflight && portalSameOrigin(r, origin) {
+				// A page on a verified custom hostname posting to its own origin:
+				// not a cross-origin request, so no CORS grant is needed or added.
+				next.ServeHTTP(w, r)
+				return
+			}
 			if _, ok := allowed[origin]; err != nil || !ok {
 				originNotAllowed(w)
 				return
@@ -81,6 +87,22 @@ func PublicIngestCORS(allowedOrigins []string, instanceOrigin string, methods ..
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// portalSameOrigin reports whether a request on a verified custom portal hostname
+// carries an Origin naming that same hostname. origin is already canonical
+// (lower-case, default port stripped); the request Host is canonicalised the
+// same way under the origin's scheme before the exact comparison.
+func portalSameOrigin(r *http.Request, origin string) bool {
+	if _, ok := PortalBusiness(r.Context()); !ok {
+		return false
+	}
+	scheme, _, ok := strings.Cut(origin, "://")
+	if !ok {
+		return false
+	}
+	self, err := weborigin.Normalize(scheme + "://" + r.Host)
+	return err == nil && self == origin
 }
 
 func publicIngestHeadersAllowed(values []string) bool {
