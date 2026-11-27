@@ -277,3 +277,92 @@ func TestSupportEmailSecretAndBlobWiring(t *testing.T) {
 		})
 	}
 }
+
+// renderChartFails renders the chart with the given --set pairs and returns
+// the combined output, failing the test if the render unexpectedly succeeds.
+func renderChartFails(t *testing.T, settings ...string) string {
+	t.Helper()
+	args := []string{"template", "mailing", ".", "--set", "jwt.activeKid=test-key", "--set", "trustedProxyCidr=10.0.0.0/8"}
+	for _, setting := range settings {
+		args = append(args, "--set", setting)
+	}
+	cmd := exec.Command("helm", args...)
+	cmd.Dir = "."
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("helm template succeeded, want failure for %v\n%s", settings, out)
+	}
+	return string(out)
+}
+
+// Portal custom domains: extra hostnames are extra rules on the SAME Ingress so
+// its annotations (source-range restriction, /metrics denial) cover them all.
+func TestIngressExtraHosts(t *testing.T) {
+	hostRule := func(host string) string { return "- host: \"" + host + "\"" }
+
+	def := renderedSource(t, renderChart(t, nil), "templates/ingress.yaml")
+	if got := strings.Count(def, "- host:"); got != 1 {
+		t.Fatalf("default render has %d host rules, want 1:\n%s", got, def)
+	}
+
+	out := renderChart(t, map[string]string{
+		"ingress.extraHosts":                     "{portal.example.test,help.example.test}",
+		"analytics.cloudflareSourceRanges":       "203.0.113.0/24",
+		"analytics.trustedIngressNamespace":      "ingress",
+		"analytics.trustCloudflareCountryHeader": "true",
+	})
+	if got := strings.Count(out, "kind: Ingress"); got != 1 {
+		t.Fatalf("rendered %d Ingress objects, want exactly 1", got)
+	}
+	ing := renderedSource(t, out, "templates/ingress.yaml")
+	if got := strings.Count(ing, "- host:"); got != 3 {
+		t.Fatalf("got %d host rules, want 3:\n%s", got, ing)
+	}
+	for _, host := range []string{"portal.example.test", "help.example.test"} {
+		if !strings.Contains(ing, hostRule(host)) {
+			t.Errorf("ingress missing rule for %s", host)
+		}
+	}
+	if got := strings.Count(ing, "service:\n"); got != 3 {
+		t.Errorf("got %d backends, want 3", got)
+	}
+	var doc struct {
+		Spec struct {
+			Rules []struct {
+				HTTP struct {
+					Paths []struct {
+						Backend struct {
+							Service struct {
+								Name string `yaml:"name"`
+								Port struct {
+									Number int `yaml:"number"`
+								} `yaml:"port"`
+							} `yaml:"service"`
+						} `yaml:"backend"`
+					} `yaml:"paths"`
+				} `yaml:"http"`
+			} `yaml:"rules"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(ing), &doc); err != nil {
+		t.Fatalf("parse ingress: %v", err)
+	}
+	first := doc.Spec.Rules[0].HTTP.Paths[0].Backend.Service
+	for i, rule := range doc.Spec.Rules {
+		if len(rule.HTTP.Paths) != 1 || rule.HTTP.Paths[0].Backend.Service != first {
+			t.Errorf("rule %d backend %+v differs from primary %+v", i, rule.HTTP.Paths, first)
+		}
+	}
+	for _, once := range []string{"whitelist-source-range:", "location /metrics"} {
+		if got := strings.Count(ing, once); got != 1 {
+			t.Errorf("%q appears %d times, want 1", once, got)
+		}
+	}
+
+	if msg := renderChartFails(t, "ingress.host=hub.example.test", "ingress.extraHosts={HUB.example.test}"); !strings.Contains(msg, "extraHosts") {
+		t.Errorf("duplicate-of-host failure should mention extraHosts: %s", msg)
+	}
+	if msg := renderChartFails(t, "ingress.extraHosts={a.example.test,a.example.test}"); !strings.Contains(msg, "extraHosts") {
+		t.Errorf("duplicate-entry failure should mention extraHosts: %s", msg)
+	}
+}

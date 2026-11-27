@@ -24,14 +24,26 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
+    {{- /* Extra hostnames are extra rules on this same Ingress so the annotations above apply to every host. */}}
+    {{- $seen := list (lower .Values.ingress.host) }}
+    {{- $hosts := list .Values.ingress.host }}
+    {{- range .Values.ingress.extraHosts }}
+    {{- if has (lower .) $seen }}
+    {{- fail (printf "manyforge: ingress.extraHosts entry %q duplicates ingress.host or another entry" .) }}
+    {{- end }}
+    {{- $seen = append $seen (lower .) }}
+    {{- $hosts = append $hosts . }}
+    {{- end }}
+    {{- range $hosts }}
+    - host: {{ . | quote }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ include "manyforge.fullname" . }}
+                name: {{ include "manyforge.fullname" $ }}
                 port:
-                  number: {{ .Values.service.port }}
+                  number: {{ $.Values.service.port }}
+    {{- end }}
 {{- end }}
