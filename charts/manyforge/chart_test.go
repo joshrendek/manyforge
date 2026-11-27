@@ -396,11 +396,18 @@ func TestIngressExtraHostsRequirePublicBaseURL(t *testing.T) {
 		{"ingress.extraHosts={portal.example.test}"},
 		{"publicBaseURL=app.example.test", "ingress.extraHosts={portal.example.test}"},
 		{"publicBaseURL=ftp://app.example.test", "ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=https://:8443", "ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=https://app.example.test:abc", "ingress.extraHosts={portal.example.test}"},
+		{"publicBaseURL=https://user@", "ingress.extraHosts={portal.example.test}"},
 	} {
 		msg := renderChartFails(t, settings...)
 		if !strings.Contains(msg, "extraHosts") || !strings.Contains(msg, "publicBaseURL") {
 			t.Errorf("%v: failure should name extraHosts and publicBaseURL: %s", settings, msg)
 		}
+	}
+	// Values InstanceHost accepts render, including mixed case, a port and a path.
+	for _, base := range []string{"https://app.example.test", "https://APP.example.test:8443/"} {
+		renderChart(t, map[string]string{"publicBaseURL": base, "ingress.extraHosts": "{portal.example.test}"})
 	}
 	// Without extra hosts an empty publicBaseURL is still fine (the default).
 	renderChart(t, map[string]string{"ingress.extraHosts": "null"})

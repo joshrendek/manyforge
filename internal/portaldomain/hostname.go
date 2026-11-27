@@ -27,11 +27,39 @@ func InstanceHost(baseURL string) (string, error) {
 	if s := strings.ToLower(u.Scheme); s != "http" && s != "https" {
 		return "", errors.New("public base URL must use http or https")
 	}
+	if u.User != nil {
+		return "", errors.New("public base URL must not contain userinfo")
+	}
 	h := NormalizeHost(u.Host)
 	if h == "" {
 		return "", errors.New("public base URL has no host")
 	}
+	if !routableHost(h) {
+		return "", errors.New("public base URL host is not a plain ASCII hostname or IP literal")
+	}
 	return h, nil
+}
+
+// routableHost reports whether h is something a client can send as a Host header:
+// an IP literal, or dot-separated labels of ASCII lower-case letters, digits and
+// hyphens with no empty label and no label starting or ending with a hyphen.
+// Single-label names such as localhost are accepted.
+func routableHost(h string) bool {
+	if _, err := netip.ParseAddr(h); err == nil {
+		return true
+	}
+	for _, l := range strings.Split(h, ".") {
+		if l == "" || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(l); i++ {
+			c := l[i]
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // NormalizeHost lower-cases a Host value and strips its port and one trailing dot.

@@ -118,7 +118,14 @@ func TestPortalHostAllowlistAgainstRouter(t *testing.T) {
 		if !strings.HasPrefix(route, "/api/") {
 			rootLevel++
 		}
-		if portaldomain.AllowedOnPortalHost(strings.ToUpper(method), concretePath(route)) {
+		m := strings.ToUpper(method)
+		admitted := portaldomain.AllowedOnPortalHost(m, concretePath(route))
+		// A bare root parameter or wildcard (/{slug}, /*) also matches a single-segment
+		// file such as /x.js, which the predicate admits; test that form too.
+		if !admitted && isBareRootCatchAll(route) {
+			admitted = portaldomain.AllowedOnPortalHost(m, "/x.js")
+		}
+		if admitted {
 			got = append(got, strings.ToUpper(method)+" "+route)
 		}
 		return nil
@@ -151,4 +158,14 @@ func concretePath(pattern string) string {
 		}
 	}
 	return strings.Join(segs, "/")
+}
+
+// isBareRootCatchAll reports whether the pattern is a single root segment that is
+// a parameter or a wildcard.
+func isBareRootCatchAll(pattern string) bool {
+	seg := strings.TrimPrefix(pattern, "/")
+	if seg == "" || strings.Contains(seg, "/") {
+		return false
+	}
+	return seg == "*" || (strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}"))
 }

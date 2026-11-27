@@ -57,7 +57,7 @@ func HostRouting(instanceHost string, lookup Lookup, next http.Handler) http.Han
 func deny(w http.ResponseWriter, r *http.Request, host, reason string) {
 	slog.InfoContext(r.Context(), "portal host request denied",
 		"host", truncate(host, 253),
-		"method", r.Method,
+		"method", truncate(r.Method, 16),
 		"path", truncate(httpx.SafePath(r), 256),
 		"reason", reason,
 	)

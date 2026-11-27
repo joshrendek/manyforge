@@ -69,6 +69,16 @@ func TestInstanceHost(t *testing.T) {
 		{"ftp://app.example.test", "", true},
 		{"https://", "", true},
 		{"https:///path", "", true},
+		{"https://:8443", "", true},
+		{"https://app.example.test:abc", "", true},
+		{"https://user@app.example.test", "", true},
+		{"https://bücher.example", "", true},
+		{"https://app.example.test,x", "", true},
+		{"https://-bad.example.test", "", true},
+		{"http://localhost:8081", "localhost", false},
+		{"http://127.0.0.1:8081", "127.0.0.1", false},
+		{"http://[::1]:8081", "::1", false},
+		{"https://xn--bcher-kva.example", "xn--bcher-kva.example", false},
 	}
 	for _, c := range cases {
 		got, err := InstanceHost(c.in)

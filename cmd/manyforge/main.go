@@ -486,11 +486,12 @@ func main() {
 	identityH := ticketing.NewIdentityHandler(identitySvc)
 
 	// Custom portal hostnames: DNS-verified per business, served by host routing.
-	portalInstanceHost, perr := portaldomain.InstanceHost(cfg.PublicBaseURL)
+	portalInstanceHost, perr := resolveInstanceHost(cfg.PublicBaseURL)
 	switch {
 	case perr != nil:
-		logger.Error("portal host routing off: MANYFORGE_PUBLIC_BASE_URL has no usable host", "err", perr)
-		portalInstanceHost = ""
+		// Never log the raw URL (it may carry userinfo); the reason is enough.
+		logger.Error("MANYFORGE_PUBLIC_BASE_URL is unusable", "err", perr)
+		os.Exit(1)
 	case portalInstanceHost != "":
 		logger.Info("portal host routing on", "instance_host", portalInstanceHost)
 	default:
