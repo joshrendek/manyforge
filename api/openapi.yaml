@@ -2160,6 +2160,328 @@ paths:
       x-manyforge-method: update
       operationId: InboxInboundAddressesUpdate
       x-manyforge-business-param: id
+  /api/v1/businesses/{id}/portal-domains:
+    parameters:
+    - $ref: '#/components/parameters/id'
+    get:
+      tags:
+      - PortalDomains
+      summary: List the business's custom portal hostnames with verification state and the DNS records to publish.
+        Keyset-paginated, server-capped. Requires inbox.manage. 404 if the business is unknown/unauthorized.
+      parameters:
+      - $ref: '#/components/parameters/cursor'
+      - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalDomainPage'
+          description: paginated portal domains
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/SupportCRMNotFound'
+        '401':
+          description: Missing or invalid bearer access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '503':
+          description: Tenant maintenance is in progress; request cannot proceed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '400':
+          description: Invalid cursor or filter value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        default:
+          description: Unexpected HTTP error. Intermediaries may return non-JSON bodies; preserve the actual status,
+            headers and bounded raw body.
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+      x-manyforge-audience: management
+      x-manyforge-resource: portal.domains
+      x-manyforge-method: list
+      operationId: PortalDomainsList
+      x-manyforge-business-param: id
+      x-manyforge-pagination:
+        cursor: cursor
+        limit: limit
+        items: items
+        next: next_cursor
+    post:
+      tags:
+      - PortalDomains
+      summary: Add a custom hostname for the business's public customer pages. Returns it unverified with the DNS
+        records to publish (a TXT ownership challenge and a CNAME to the platform host) before calling verify. Audited
+        in-transaction. Requires inbox.manage. 404 if the business is unknown/unauthorized.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePortalDomain'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalDomain'
+          description: created (unverified; publish the DNS records then verify)
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/SupportCRMValidationError'
+        '404':
+          $ref: '#/components/responses/SupportCRMNotFound'
+        '409':
+          $ref: '#/components/responses/SupportCRMConflict'
+        '401':
+          description: Missing or invalid bearer access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '503':
+          description: Tenant maintenance is in progress; request cannot proceed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '413':
+          description: JSON request body exceeds the 1 MiB handler limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        default:
+          description: Unexpected HTTP error. Intermediaries may return non-JSON bodies; preserve the actual status,
+            headers and bounded raw body.
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+      x-manyforge-audience: management
+      x-manyforge-resource: portal.domains
+      x-manyforge-method: create
+      operationId: PortalDomainsCreate
+      x-manyforge-business-param: id
+  /api/v1/businesses/{id}/portal-domains/{did}:
+    parameters:
+    - $ref: '#/components/parameters/id'
+    - name: did
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: portal-domain id
+    delete:
+      tags:
+      - PortalDomains
+      summary: Remove a custom portal hostname. Requires inbox.manage. Unknown and foreign ids both return 404.
+      responses:
+        '204':
+          description: Deleted
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/SupportCRMNotFound'
+        '401':
+          description: Missing or invalid bearer access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '503':
+          description: Tenant maintenance is in progress; request cannot proceed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        default:
+          description: Unexpected HTTP error. Intermediaries may return non-JSON bodies; preserve the actual status,
+            headers and bounded raw body.
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+      x-manyforge-audience: management
+      x-manyforge-resource: portal.domains
+      x-manyforge-method: delete
+      operationId: PortalDomainsDelete
+      x-manyforge-business-param: id
+  /api/v1/businesses/{id}/portal-domains/{did}/verify:
+    parameters:
+    - $ref: '#/components/parameters/id'
+    - name: did
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: portal-domain id
+    post:
+      tags:
+      - PortalDomains
+      summary: Verify custom hostname ownership
+      description: Requires inbox.manage. Polls the ownership TXT record. A missing or wrong record returns the
+        current unverified domain with 200. Returns 409 when another business already holds the hostname verified.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalDomain'
+          description: verification result (verified, or still pending)
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/SupportCRMNotFound'
+        '409':
+          $ref: '#/components/responses/SupportCRMConflict'
+        '401':
+          description: Missing or invalid bearer access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        '503':
+          description: Tenant maintenance is in progress; request cannot proceed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+        default:
+          description: Unexpected HTTP error. Intermediaries may return non-JSON bodies; preserve the actual status,
+            headers and bounded raw body.
+          headers:
+            X-Request-Id:
+              description: Request correlation identifier when available.
+              schema:
+                type: string
+      x-manyforge-audience: management
+      x-manyforge-resource: portal.domains
+      x-manyforge-method: verify
+      operationId: PortalDomainsVerify
+      x-manyforge-business-param: id
   /api/v1/businesses/{id}/email-domains:
     parameters:
     - $ref: '#/components/parameters/id'
@@ -19284,6 +19606,80 @@ components:
       required:
       - items
       - next_cursor
+    CreatePortalDomain:
+      type: object
+      required:
+      - hostname
+      properties:
+        hostname:
+          type: string
+          description: the fully qualified hostname to serve public customer pages on (e.g. portal.example.com)
+    PortalDomain:
+      type: object
+      description: a custom portal hostname with its verification state and the DNS records to publish.
+      properties:
+        id:
+          type: string
+          format: uuid
+        hostname:
+          type: string
+        verified:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        dns:
+          $ref: '#/components/schemas/PortalDomainDns'
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - hostname
+      - verified
+      - verified_at
+      - dns
+      - created_at
+    PortalDomainDns:
+      type: object
+      properties:
+        verification_txt:
+          $ref: '#/components/schemas/DnsTxtRecord'
+        target:
+          $ref: '#/components/schemas/PortalDomainCnameTarget'
+      required:
+      - verification_txt
+      - target
+    PortalDomainCnameTarget:
+      type: object
+      description: CNAME record pointing the hostname at the platform host (value is empty when the platform host is not configured).
+      properties:
+        type:
+          type: string
+          enum:
+          - CNAME
+        name:
+          type: string
+        value:
+          type: string
+      required:
+      - type
+      - name
+      - value
+    PortalDomainPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortalDomain'
+        next_cursor:
+          type: string
+          nullable: true
+      required:
+      - items
+      - next_cursor
     EmailDomainVerification:
       type: string
       enum:
@@ -24280,6 +24676,7 @@ tags:
 - name: McpServersTools
 - name: Members
 - name: Permissions
+- name: PortalDomains
 - name: Posts
 - name: RepoConnectors
 - name: RepoConnectorsDimensionOverrides

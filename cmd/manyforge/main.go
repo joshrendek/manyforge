@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -58,6 +59,7 @@ import (
 	"github.com/manyforge/manyforge/internal/platform/ratelimit"
 	"github.com/manyforge/manyforge/internal/platform/secrets"
 	"github.com/manyforge/manyforge/internal/platform/timeseries"
+	"github.com/manyforge/manyforge/internal/portaldomain"
 	"github.com/manyforge/manyforge/internal/telemetry"
 	"github.com/manyforge/manyforge/internal/tenancy"
 	"github.com/manyforge/manyforge/internal/ticketing"
@@ -483,6 +485,18 @@ func main() {
 		SystemMailHost: cfg.InboundSystemDomain,
 	}
 	identityH := ticketing.NewIdentityHandler(identitySvc)
+
+	// Custom portal hostnames: DNS-verified per business, served by host routing.
+	portalInstanceHost := ""
+	if u, perr := url.Parse(cfg.PublicBaseURL); perr == nil {
+		portalInstanceHost = portaldomain.NormalizeHost(u.Host)
+	}
+	portalDomainH := portaldomain.NewHandler(&portaldomain.Service{
+		DB:           database,
+		Resolver:     ticketing.NetTXTResolver{},
+		InstanceHost: portalInstanceHost,
+		Reserved:     []string{cfg.InboundSystemDomain, cfg.MailingMessageDomain},
+	})
 
 	// US6 MCP server sealer: seals per-server bearer tokens at rest using a dedicated
 	// master key (MANYFORGE_MCP_MASTER_KEY), mirroring EXACTLY the DKIM sealer pattern.
@@ -970,6 +984,7 @@ func main() {
 		ticketing:        ticketH,
 		portal:           portalH,
 		identity:         identityH,
+		portalDomains:    portalDomainH,
 		inboxWebhook:     inboxWebhookH,
 		bounce:           bounceH,
 		authLimit:        httpx.RateLimit(authLimiter, ipKey),
@@ -1235,15 +1250,16 @@ func main() {
 // single function (called by main and by the OpenAPI-drift contract test) keeps
 // production route registration and the test's view of it from drifting apart.
 type apiHandlers struct {
-	account      *account.Handler
-	tenancy      *tenancy.Handler
-	authz        *authz.Handler
-	invitations  *invitations.Handler
-	ticketing    *ticketing.Handler
-	portal       *ticketing.PortalHandler
-	identity     *ticketing.IdentityHandler
-	inboxWebhook *inbox.Handler
-	bounce       *inbox.BounceHandler
+	account       *account.Handler
+	tenancy       *tenancy.Handler
+	authz         *authz.Handler
+	invitations   *invitations.Handler
+	ticketing     *ticketing.Handler
+	portal        *ticketing.PortalHandler
+	identity      *ticketing.IdentityHandler
+	portalDomains *portaldomain.Handler
+	inboxWebhook  *inbox.Handler
+	bounce        *inbox.BounceHandler
 	// connWebhookH is the Spec 004 public connector webhook handler. Nil when
 	// MANYFORGE_CONNECTOR_MASTER_KEY is unset (connectors disabled); mountAPIRoutes
 	// guards on nil so the route is not registered in that case.
@@ -1538,6 +1554,7 @@ func mountAPIRoutes(mux chi.Router, h apiHandlers) {
 			pr.Group(func(im chi.Router) {
 				im.Use(h.inboxManage)
 				h.identity.Routes(im)
+				h.portalDomains.Routes(im)
 			})
 			// US2 agent-definition slice: CRUD agents under a business, gated on
 			// agents.configure (migration-0027 catalog). Same RLS-bound

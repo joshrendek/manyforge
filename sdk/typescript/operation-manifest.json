@@ -374,6 +374,43 @@
   {
     "audience": "management",
     "businessParam": "id",
+    "method": "create",
+    "operationId": "PortalDomainsCreate",
+    "pagination": null,
+    "resource": "portal.domains"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "delete",
+    "operationId": "PortalDomainsDelete",
+    "pagination": null,
+    "resource": "portal.domains"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "list",
+    "operationId": "PortalDomainsList",
+    "pagination": {
+      "cursor": "cursor",
+      "items": "items",
+      "limit": "limit",
+      "next": "next_cursor"
+    },
+    "resource": "portal.domains"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
+    "method": "verify",
+    "operationId": "PortalDomainsVerify",
+    "pagination": null,
+    "resource": "portal.domains"
+  },
+  {
+    "audience": "management",
+    "businessParam": "id",
     "method": "get",
     "operationId": "RequestersGet",
     "pagination": null,

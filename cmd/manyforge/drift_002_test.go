@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -127,6 +128,57 @@ func TestRedactTicketEndpointContract(t *testing.T) {
 			t.Errorf("002 openapi: DELETE /businesses/{id}/tickets/{tid} must document response %s", code)
 		}
 	}
+}
+
+// TestPortalDomainEndpointContract pins the response codes and schema shape of the
+// portal-domain management endpoints. Pure spec-file assertion, like
+// TestEmailDomainEndpointContract.
+func TestPortalDomainEndpointContract(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+
+	cases := []struct {
+		path, method string
+		codes        []string
+	}{
+		{"/api/v1/businesses/{id}/portal-domains", "get", []string{"200", "400", "404"}},
+		{"/api/v1/businesses/{id}/portal-domains", "post", []string{"201", "400", "404", "409"}},
+		{"/api/v1/businesses/{id}/portal-domains/{did}/verify", "post", []string{"200", "404", "409"}},
+		{"/api/v1/businesses/{id}/portal-domains/{did}", "delete", []string{"204", "404"}},
+	}
+	for _, c := range cases {
+		name := strings.ToUpper(c.method) + " " + c.path
+		t.Run(name+" response codes", func(t *testing.T) {
+			opNode, ok := doc.Paths[c.path][c.method]
+			if !ok {
+				t.Fatalf("openapi: missing %s", name)
+			}
+			codes := responseCodesFor(t, opNode, name)
+			for _, code := range c.codes {
+				if _, ok := codes[code]; !ok {
+					t.Errorf("openapi: %s must document response %s", name, code)
+				}
+			}
+		})
+	}
+
+	t.Run("PortalDomain schema documents dns with verification_txt and target", func(t *testing.T) {
+		schemaNode, ok := doc.Components.Schemas["PortalDomain"]
+		if !ok {
+			t.Fatalf("openapi: components/schemas/PortalDomain not found")
+		}
+		properties, _ := schemaFields(t, doc, schemaNode)
+		for _, f := range []string{"id", "hostname", "verified", "verified_at", "dns", "created_at"} {
+			if _, ok := properties[f]; !ok {
+				t.Errorf("openapi: PortalDomain must document %q", f)
+			}
+		}
+		dns, _ := schemaFields(t, doc, properties["dns"])
+		for _, sub := range []string{"verification_txt", "target"} {
+			if _, ok := dns[sub]; !ok {
+				t.Errorf("openapi: PortalDomain.dns must document %q", sub)
+			}
+		}
+	})
 }
 
 // TestInboundAddressEndpointContract (T052) pins the response-code shape for the

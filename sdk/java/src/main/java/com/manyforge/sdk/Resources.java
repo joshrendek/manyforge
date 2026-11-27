@@ -32,6 +32,7 @@ public final class Resources {
     private final BusinessMailing mailing;
     private final BusinessMcpServers mcpServers;
     private final BusinessMembers members;
+    private final BusinessPortal portal;
     private final BusinessRepoConnectors repoConnectors;
     private final BusinessRequesters requesters;
     private final BusinessReviewConfig reviewConfig;
@@ -61,6 +62,7 @@ public final class Resources {
       this.mailing = new BusinessMailing(transport, binding);
       this.mcpServers = new BusinessMcpServers(transport, binding);
       this.members = new BusinessMembers(transport, binding);
+      this.portal = new BusinessPortal(transport, binding);
       this.repoConnectors = new BusinessRepoConnectors(transport, binding);
       this.requesters = new BusinessRequesters(transport, binding);
       this.reviewConfig = new BusinessReviewConfig(transport, binding);
@@ -89,6 +91,7 @@ public final class Resources {
     public BusinessMailing mailing() { return mailing; }
     public BusinessMcpServers mcpServers() { return mcpServers; }
     public BusinessMembers members() { return members; }
+    public BusinessPortal portal() { return portal; }
     public BusinessRepoConnectors repoConnectors() { return repoConnectors; }
     public BusinessRequesters requesters() { return requesters; }
     public BusinessReviewConfig reviewConfig() { return reviewConfig; }
@@ -458,6 +461,21 @@ public final class Resources {
   }
   public static class BusinessMembers extends BusinessMembersResource {
     public BusinessMembers(Transport transport, String binding) {
+      super(transport, binding);
+    }
+  }
+  public static class BusinessPortal {
+    protected final Transport transport;
+    protected final String binding;
+    private final BusinessPortalDomains domains;
+    public BusinessPortal(Transport transport, String binding) {
+      this.transport = Objects.requireNonNull(transport); this.binding = binding;
+      this.domains = new BusinessPortalDomains(transport, binding);
+    }
+    public BusinessPortalDomains domains() { return domains; }
+  }
+  public static class BusinessPortalDomains extends BusinessPortalDomainsResource {
+    public BusinessPortalDomains(Transport transport, String binding) {
       super(transport, binding);
     }
   }

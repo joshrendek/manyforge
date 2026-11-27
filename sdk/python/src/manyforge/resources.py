@@ -51,6 +51,7 @@ from manyforge.api.business_mcp_servers_resource import BusinessMcpServersResour
 from manyforge.api.business_mcp_servers_tool_policies_resource import BusinessMcpServersToolPoliciesResource, AsyncBusinessMcpServersToolPoliciesResource
 from manyforge.api.business_mcp_servers_tools_resource import BusinessMcpServersToolsResource, AsyncBusinessMcpServersToolsResource
 from manyforge.api.business_members_resource import BusinessMembersResource, AsyncBusinessMembersResource
+from manyforge.api.business_portal_domains_resource import BusinessPortalDomainsResource, AsyncBusinessPortalDomainsResource
 from manyforge.api.business_repo_connectors_resource import BusinessRepoConnectorsResource, AsyncBusinessRepoConnectorsResource
 from manyforge.api.business_repo_connectors_dimension_overrides_resource import BusinessRepoConnectorsDimensionOverridesResource, AsyncBusinessRepoConnectorsDimensionOverridesResource
 from manyforge.api.business_requesters_resource import BusinessRequestersResource, AsyncBusinessRequestersResource
@@ -287,6 +288,11 @@ class BusinessMcpServersToolsScope(BusinessMcpServersToolsResource):
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class BusinessPortalDomainsScope(BusinessPortalDomainsResource):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class BusinessRepoConnectorsDimensionOverridesScope(BusinessRepoConnectorsDimensionOverridesResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -449,6 +455,10 @@ class BusinessScope(object):
     @property
     def members(self) -> BusinessMembersScope:
         return BusinessMembersScope(self._transport, self._bindings)
+
+    @property
+    def portal(self) -> BusinessPortalScope:
+        return BusinessPortalScope(self._transport, self._bindings)
 
     @property
     def repo_connectors(self) -> BusinessRepoConnectorsScope:
@@ -691,6 +701,15 @@ class BusinessMembersScope(BusinessMembersResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class BusinessPortalScope(object):
+    def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def domains(self) -> BusinessPortalDomainsScope:
+        return BusinessPortalDomainsScope(self._transport, self._bindings)
 
 class BusinessRepoConnectorsScope(BusinessRepoConnectorsResource):
     def __init__(self, transport: SyncTransport, bindings: Mapping[str, str] | None = None) -> None:
@@ -1123,6 +1142,11 @@ class AsyncBusinessMcpServersToolsScope(AsyncBusinessMcpServersToolsResource):
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
 
+class AsyncBusinessPortalDomainsScope(AsyncBusinessPortalDomainsResource):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
 class AsyncBusinessRepoConnectorsDimensionOverridesScope(AsyncBusinessRepoConnectorsDimensionOverridesResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
@@ -1285,6 +1309,10 @@ class AsyncBusinessScope(object):
     @property
     def members(self) -> AsyncBusinessMembersScope:
         return AsyncBusinessMembersScope(self._transport, self._bindings)
+
+    @property
+    def portal(self) -> AsyncBusinessPortalScope:
+        return AsyncBusinessPortalScope(self._transport, self._bindings)
 
     @property
     def repo_connectors(self) -> AsyncBusinessRepoConnectorsScope:
@@ -1527,6 +1555,15 @@ class AsyncBusinessMembersScope(AsyncBusinessMembersResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
         self._transport = transport
         self._bindings = MappingProxyType(dict(bindings or {}))
+
+class AsyncBusinessPortalScope(object):
+    def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:
+        self._transport = transport
+        self._bindings = MappingProxyType(dict(bindings or {}))
+
+    @property
+    def domains(self) -> AsyncBusinessPortalDomainsScope:
+        return AsyncBusinessPortalDomainsScope(self._transport, self._bindings)
 
 class AsyncBusinessRepoConnectorsScope(AsyncBusinessRepoConnectorsResource):
     def __init__(self, transport: AsyncTransport, bindings: Mapping[str, str] | None = None) -> None:

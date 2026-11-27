@@ -137,6 +137,7 @@ from .create_default_endpoint_ai_credential_request_properties_provider_enum imp
 from .create_email_domain import CreateEmailDomain
 from .create_inbound_address import CreateInboundAddress
 from .create_mcp_server_request import CreateMCPServerRequest
+from .create_portal_domain import CreatePortalDomain
 from .create_repo_connector_input import CreateRepoConnectorInput
 from .create_repo_connector_input_properties_type_enum import CreateRepoConnectorInputPropertiesTypeEnum
 from .create_support_portal_ticket201_response import CreateSupportPortalTicket201Response
@@ -277,6 +278,11 @@ from .patch_ticket_properties_priority_enum import PatchTicketPropertiesPriority
 from .patch_ticket_properties_status_enum import PatchTicketPropertiesStatusEnum
 from .permission import Permission
 from .permission_page import PermissionPage
+from .portal_domain import PortalDomain
+from .portal_domain_cname_target import PortalDomainCnameTarget
+from .portal_domain_cname_target_properties_type_enum import PortalDomainCnameTargetPropertiesTypeEnum
+from .portal_domain_dns import PortalDomainDns
+from .portal_domain_page import PortalDomainPage
 from .post import Post
 from .post_create import PostCreate
 from .post_page import PostPage
