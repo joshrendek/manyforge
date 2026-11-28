@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1773,8 +1774,15 @@ func TestPropertyRules_SiteLimit(t *testing.T) {
 		t.Fatalf("SQL replace with 33 rules = %q, %v; want invalid", outcome, err)
 	}
 	listed, err := analytics.NewService(e.tdb.App).ListPropertyRules(ctx, e.prin, e.biz, e.site)
-	if err != nil || !reflect.DeepEqual(listed, result.Rules) {
-		t.Fatalf("list after rejected replacements = %d rules, %v; want the original 32 rules", len(listed), err)
+	if err != nil {
+		t.Fatalf("list rules after rejected replacements: %v", err)
+	}
+	if !slices.EqualFunc(listed, result.Rules, func(actual, saved analytics.PropertyRule) bool {
+		return actual.ID == saved.ID && actual.EventName == saved.EventName &&
+			actual.PropertyKey == saved.PropertyKey && actual.Label == saved.Label &&
+			actual.EnabledAt.Equal(saved.EnabledAt)
+	}) {
+		t.Fatalf("list after rejected replacements = %+v, want the original rules %+v", listed, result.Rules)
 	}
 
 	for _, rule := range listed {
