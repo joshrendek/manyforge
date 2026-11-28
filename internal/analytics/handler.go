@@ -177,6 +177,12 @@ func (h *Handler) replacePropertyRules(w http.ResponseWriter, r *http.Request) {
 		r.Context(), principalID, businessID, clientID, *req.Rules,
 	)
 	if err != nil {
+		if errors.Is(err, errPropertyRulesLimit) {
+			httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorBody{
+				Code: "VALIDATION", Message: propertyRulesLimitMessage + ": validation",
+			})
+			return
+		}
 		httpx.WriteError(w, r, err)
 		return
 	}

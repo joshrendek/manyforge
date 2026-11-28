@@ -232,7 +232,7 @@ paths:
       summary: Replace the custom-event property retention allowlist
       description: |
         Requires `telemetry.write`. This is a complete replacement, including an empty list to
-        clear retention. At most 20 rules are allowed per site and six per event. Event/key pairs
+        clear retention. At most 32 rules are allowed per site and six per event. Event/key pairs
         must be unique. Direct identifiers, secrets, network identifiers, and persistent IDs are
         prohibited. Enabling a rule is not retroactive: older raw JSON is neither restored nor
         aggregated, and any pre-governance raw properties age out with the 90-day event retention.
@@ -250,7 +250,7 @@ paths:
               properties:
                 rules:
                   type: array
-                  maxItems: 20
+                  maxItems: 32
                   items: { $ref: '#/components/schemas/AnalyticsPropertyRuleInput' }
       responses:
         '200':
@@ -373,7 +373,7 @@ components:
       properties:
         rules:
           type: array
-          maxItems: 20
+          maxItems: 32
           items: { $ref: '#/components/schemas/AnalyticsPropertyRule' }
     AnalyticsOverviewSite:
       type: object

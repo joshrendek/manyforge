@@ -35,13 +35,23 @@ func TestPropertyRuleInputJSONIsClosedWorld(t *testing.T) {
 	}
 }
 
-func TestNormalizePropertyRulesRejectsUnsafeOrUnboundedConfig(t *testing.T) {
-	tooMany := make([]PropertyRuleInput, MaxPropertyRules+1)
-	for i := range tooMany {
-		tooMany[i] = PropertyRuleInput{
-			EventName: "event", PropertyKey: fmt.Sprintf("safe%d", i), Label: "Safe",
+func TestNormalizePropertyRulesSiteLimit(t *testing.T) {
+	rules := make([]PropertyRuleInput, 33)
+	for i := range rules {
+		rules[i] = PropertyRuleInput{
+			EventName: fmt.Sprintf("event_%d", i), PropertyKey: "mode", Label: "Mode",
 		}
 	}
+	got, err := normalizePropertyRules(rules[:32])
+	if err != nil || len(got) != 32 {
+		t.Errorf("normalize 32 rules = %d rules, %v; want 32 rules and no error", len(got), err)
+	}
+	if _, err := normalizePropertyRules(rules); !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("normalize 33 rules = %v, want validation", err)
+	}
+}
+
+func TestNormalizePropertyRulesRejectsUnsafeOrUnboundedConfig(t *testing.T) {
 	tooManyForEvent := make([]PropertyRuleInput, MaxPropertyRulesPerEvent+1)
 	for i := range tooManyForEvent {
 		tooManyForEvent[i] = PropertyRuleInput{
@@ -49,7 +59,6 @@ func TestNormalizePropertyRulesRejectsUnsafeOrUnboundedConfig(t *testing.T) {
 		}
 	}
 	for name, values := range map[string][]PropertyRuleInput{
-		"too many":           tooMany,
 		"per event":          tooManyForEvent,
 		"bad event":          {{EventName: "has space", PropertyKey: "mode", Label: "Mode"}},
 		"reserved event":     {{EventName: "pageview", PropertyKey: "mode", Label: "Mode"}},

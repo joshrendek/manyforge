@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1709,6 +1710,95 @@ func TestPropertyRules_APIStableIdentityValidationAndClear(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("rules after clear = %d, want 0", count)
+	}
+}
+
+func TestPropertyRules_SiteLimit(t *testing.T) {
+	ctx, e := newEnv(t)
+	path := e.srv.URL + "/businesses/" + e.biz.String() + "/analytics/sites/" + e.site.String() + "/property-rules"
+	rules := make([]analytics.PropertyRuleInput, 33)
+	for i := range rules {
+		rules[i] = analytics.PropertyRuleInput{
+			EventName: fmt.Sprintf("event_%d", i), PropertyKey: "mode", Label: "Mode",
+		}
+	}
+	put := func(rules []analytics.PropertyRuleInput) *http.Response {
+		t.Helper()
+		body, err := json.Marshal(map[string][]analytics.PropertyRuleInput{"rules": rules})
+		if err != nil {
+			t.Fatalf("encode rules: %v", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, path, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("create property rule request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := e.srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT property rules: %v", err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+
+	saved := put(rules[:32])
+	if saved.StatusCode != http.StatusOK {
+		t.Fatalf("PUT 32 rules = %d, want 200", saved.StatusCode)
+	}
+	var result struct {
+		Rules []analytics.PropertyRule `json:"rules"`
+	}
+	if err := json.NewDecoder(saved.Body).Decode(&result); err != nil || len(result.Rules) != 32 {
+		t.Fatalf("PUT 32 rules returned %d rules, decode error %v", len(result.Rules), err)
+	}
+
+	rejected := put(rules)
+	var validation httpx.ErrorBody
+	if err := json.NewDecoder(rejected.Body).Decode(&validation); err != nil {
+		t.Fatalf("decode validation response: %v", err)
+	}
+	if rejected.StatusCode != http.StatusBadRequest || validation.Code != "VALIDATION" ||
+		validation.Message != "analytics: at most 32 property rules are allowed: validation" {
+		t.Fatalf("PUT 33 rules = %d %+v, want the site-limit validation error", rejected.StatusCode, validation)
+	}
+
+	payload, err := json.Marshal(rules)
+	if err != nil {
+		t.Fatalf("encode SQL payload: %v", err)
+	}
+	var outcome string
+	if err := e.tdb.App.WithPrincipal(ctx, e.prin, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT analytics_replace_property_rules($1,$2,$3::jsonb)`,
+			e.biz, e.site, payload).Scan(&outcome)
+	}); err != nil || outcome != "invalid" {
+		t.Fatalf("SQL replace with 33 rules = %q, %v; want invalid", outcome, err)
+	}
+	listed, err := analytics.NewService(e.tdb.App).ListPropertyRules(ctx, e.prin, e.biz, e.site)
+	if err != nil {
+		t.Fatalf("list rules after rejected replacements: %v", err)
+	}
+	if !slices.EqualFunc(listed, result.Rules, func(actual, saved analytics.PropertyRule) bool {
+		return actual.ID == saved.ID && actual.EventName == saved.EventName &&
+			actual.PropertyKey == saved.PropertyKey && actual.Label == saved.Label &&
+			actual.EnabledAt.Equal(saved.EnabledAt)
+	}) {
+		t.Fatalf("list after rejected replacements = %+v, want the original rules %+v", listed, result.Rules)
+	}
+
+	for _, rule := range listed {
+		if status := e.collectEvent(t, rule.EventName, map[string]any{"mode": "test"}, humanUA, "203.0.113.1"); status != http.StatusNoContent {
+			t.Fatalf("collect %q = %d, want 204", rule.EventName, status)
+		}
+	}
+	e.rollup(t, ctx)
+	status, summary := e.summary(t, e.site)
+	if status != http.StatusOK || len(summary.PropertyBreakdowns) != 32 {
+		t.Fatalf("summary = %d with %d property breakdowns, want 200 with 32", status, len(summary.PropertyBreakdowns))
+	}
+	for _, breakdown := range summary.PropertyBreakdowns {
+		if len(breakdown.Values) != 1 || breakdown.Values[0].Value != "test" || breakdown.Values[0].Events != 1 {
+			t.Errorf("values for %q = %+v, want one event with value test", breakdown.EventName, breakdown.Values)
+		}
 	}
 }
 

@@ -16,12 +16,17 @@ import (
 )
 
 const (
-	// MaxPropertyRules bounds configuration, collector work, response size, and the later rollup's
-	// maximum number of per-site dimensions.
-	MaxPropertyRules = 20
+	// MaxPropertyRules bounds configuration, collector work, response size, and the property
+	// rollup's maximum number of per-site dimensions. Keep the SQL validation limit in sync.
+	MaxPropertyRules = 32
 	// MaxPropertyRulesPerEvent prevents one event from consuming the site's entire rule budget.
 	MaxPropertyRulesPerEvent = 6
 	maxPropertyLabelLen      = 64
+)
+
+var (
+	propertyRulesLimitMessage = fmt.Sprintf("analytics: at most %d property rules are allowed", MaxPropertyRules)
+	errPropertyRulesLimit     = fmt.Errorf("%s: %w", propertyRulesLimitMessage, errs.ErrValidation)
 )
 
 // PropertyRuleInput is one exact custom-event property an operator chooses to retain and report.
@@ -113,8 +118,7 @@ func propertyKeyProhibited(value string) bool {
 
 func normalizePropertyRules(values []PropertyRuleInput) ([]PropertyRuleInput, error) {
 	if len(values) > MaxPropertyRules {
-		return nil, fmt.Errorf("analytics: at most %d property rules are allowed: %w",
-			MaxPropertyRules, errs.ErrValidation)
+		return nil, errPropertyRulesLimit
 	}
 	out := make([]PropertyRuleInput, 0, len(values))
 	seen := make(map[string]struct{}, len(values))

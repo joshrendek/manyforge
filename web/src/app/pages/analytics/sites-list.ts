@@ -285,7 +285,7 @@ import { Tone } from '../../ui/status';
                     90 days and are never enabled retroactively.
                   </p>
                 </div>
-                <span class="mf-muted">{{ propertyDrafts().length }}/20</span>
+                <span class="mf-muted">{{ propertyDrafts().length }}/{{ propertyRuleLimit }}</span>
               </div>
               @if (loadingProperties()) {
                 <span class="mf-loading-row"><mf-spinner /> Loading properties…</span>
@@ -348,7 +348,7 @@ import { Tone } from '../../ui/status';
                     type="button"
                     class="mf-btn mf-btn-sm"
                     data-testid="site-property-add"
-                    [disabled]="propertyDrafts().length >= 20 || savingProperties()"
+                    [disabled]="propertyDrafts().length >= propertyRuleLimit || savingProperties()"
                     (click)="addProperty()"
                   >
                     Add property
@@ -618,6 +618,7 @@ export class AnalyticsSitesListComponent implements OnInit {
   originsDraft = '';
   savingOrigins = signal(false);
   editingPropertiesSiteId = signal('');
+  protected readonly propertyRuleLimit = 32;
   propertyDrafts = signal<AnalyticsPropertyRuleInput[]>([]);
   loadingProperties = signal(false);
   savingProperties = signal(false);
@@ -740,7 +741,7 @@ export class AnalyticsSitesListComponent implements OnInit {
   }
 
   addProperty(): void {
-    if (this.propertyDrafts().length >= 20) return;
+    if (this.propertyDrafts().length >= this.propertyRuleLimit) return;
     this.propertyDrafts.update((rules) => [
       ...rules,
       { event_name: '', property_key: '', label: '' },
@@ -759,7 +760,7 @@ export class AnalyticsSitesListComponent implements OnInit {
 
   propertyDraftsValid(): boolean {
     const rules = this.propertyDrafts();
-    if (rules.length > 20) return false;
+    if (rules.length > this.propertyRuleLimit) return false;
     return rules.every(
       (rule) => rule.event_name.trim() && rule.property_key.trim() && rule.label.trim(),
     );
