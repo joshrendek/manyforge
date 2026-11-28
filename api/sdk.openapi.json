@@ -2065,7 +2065,7 @@
             "items": {
               "$ref": "#/components/schemas/AnalyticsPropertyRuleInput"
             },
-            "maxItems": 20,
+            "maxItems": 32,
             "type": "array"
           }
         },
@@ -2080,7 +2080,7 @@
             "items": {
               "$ref": "#/components/schemas/AnalyticsPropertyRule"
             },
-            "maxItems": 20,
+            "maxItems": 32,
             "type": "array"
           }
         },
@@ -14992,7 +14992,7 @@
         "x-manyforge-resource": "analytics.propertyRules"
       },
       "put": {
-        "description": "Requires `telemetry.write`. This is a complete replacement, including an empty list to\nclear retention. At most 20 rules are allowed per site and six per event. Event/key pairs\nmust be unique. Direct identifiers, secrets, network identifiers, and persistent IDs are\nprohibited. Enabling a rule is not retroactive: older raw JSON is neither restored nor\naggregated, and any pre-governance raw properties age out with the 90-day event retention.\n",
+        "description": "Requires `telemetry.write`. This is a complete replacement, including an empty list to\nclear retention. At most 32 rules are allowed per site and six per event. Event/key pairs\nmust be unique. Direct identifiers, secrets, network identifiers, and persistent IDs are\nprohibited. Enabling a rule is not retroactive: older raw JSON is neither restored nor\naggregated, and any pre-governance raw properties age out with the 90-day event retention.\n",
         "operationId": "replaceAnalyticsPropertyRules",
         "parameters": [
           {

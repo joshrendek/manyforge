@@ -212,6 +212,54 @@ test('replaces a site origin without rotating its embed key', async ({ page }) =
   await expect(page.getByTestId('site-embed')).toContainText(KEY);
 });
 
+test('the properties editor allows 32 rules per site', async ({ page }) => {
+  await installStack(page);
+  const rules = Array.from({ length: 31 }, (_, i) => ({
+    event_name: `event_${i}`,
+    property_key: 'mode',
+    label: 'Mode',
+  }));
+  await page.route(
+    `**/api/v1/businesses/${BIZ_ID}/analytics/sites/${SITE_ID}/property-rules`,
+    async (route) => {
+      const saved: typeof rules =
+        route.request().method() === 'PUT' ? route.request().postDataJSON().rules : rules;
+      await route.fulfill({
+        json: {
+          rules: saved.map((rule, i) => ({
+            ...rule,
+            id: `rule-${i}`,
+            enabled_at: '2026-07-25T00:00:00Z',
+          })),
+        },
+      });
+    },
+  );
+
+  await page.goto('/analytics/sites');
+  await page.getByTestId('site-manage-properties').click();
+  const panel = page.getByTestId('site-property-panel');
+  await expect(panel.getByText('31/32', { exact: true })).toBeVisible();
+  const add = panel.getByTestId('site-property-add');
+  await add.click();
+  const rows = panel.getByTestId('site-property-row');
+  await expect(rows).toHaveCount(32);
+  await expect(panel.getByText('32/32', { exact: true })).toBeVisible();
+  await expect(add).toBeDisabled();
+  const last = rows.last();
+  const added = { event_name: 'event_31', property_key: 'platform', label: 'Platform' };
+  await last.getByLabel('Event name').fill(added.event_name);
+  await last.getByLabel('Property key').fill(added.property_key);
+  await last.getByLabel('Dashboard label').fill(added.label);
+  const [request] = await Promise.all([
+    page.waitForRequest((request) =>
+      request.method() === 'PUT' && request.url().endsWith('/property-rules'),
+    ),
+    panel.getByTestId('site-property-save').click(),
+  ]);
+  expect(request.postDataJSON()).toEqual({ rules: [...rules, added] });
+});
+
 test('installation check recovers a never-seen site after data arrives', async ({ page }) => {
   await installStack(page);
   let listCalls = 0;

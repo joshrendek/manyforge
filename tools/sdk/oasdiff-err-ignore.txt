@@ -1,0 +1,4 @@
+# Existing generated SDK decoders accept rule lists of any length. This exception covers only
+# the intentional 20-to-32 expansion of the two property-rule responses.
+GET /api/v1/businesses/{id}/analytics/sites/{clientID}/property-rules the `rules` response property's maxItems was increased from `20` to `32` for the response status `200`
+PUT /api/v1/businesses/{id}/analytics/sites/{clientID}/property-rules the `rules` response property's maxItems was increased from `20` to `32` for the response status `200`
